@@ -1,5 +1,7 @@
 {
-  "annotations": {"list": []},
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -11,8 +13,16 @@
       "type": "timeseries",
       "title": "Wake latency (p50 / p95)",
       "id": 1,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le))",
@@ -31,24 +41,45 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 0.35},
-              {"color": "red", "value": 1.5}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.35
+              },
+              {
+                "color": "red",
+                "value": 1.5
+              }
             ]
           }
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "p50"},
+            "matcher": {
+              "id": "byName",
+              "options": "p50"
+            },
             "properties": [
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    {"color": "green", "value": null},
-                    {"color": "yellow", "value": 0.35},
-                    {"color": "red", "value": 0.8}
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.35
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.8
+                    }
                   ]
                 }
               }
@@ -61,8 +92,16 @@
       "type": "timeseries",
       "title": "Wake queue wait p95",
       "id": 2,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(gateway_wake_queue_wait_seconds_bucket[5m])) by (le))",
@@ -70,14 +109,26 @@
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "s"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Cold-boot fallback rate (5m)",
       "id": 3,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "rate(vmmd_cold_boot_fallback_total[5m]) / sum(rate(vmmd_ops_total{op=~\"CreateFromSnapshot|CreateColdBoot\"}[5m]))",
@@ -91,9 +142,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 0.02},
-              {"color": "red", "value": 0.10}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.02
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
             ]
           }
         }
@@ -103,8 +163,16 @@
       "type": "timeseries",
       "title": "Snapshot fleet avg / p95 (MB)",
       "id": 4,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "fcvm_snapshot_fleet_avg_bytes / 1024 / 1024",
@@ -123,22 +191,37 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 160},
-              {"color": "red", "value": 200}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 160
+              },
+              {
+                "color": "red",
+                "value": 200
+              }
             ]
           }
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "p95"},
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
             "properties": [
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    {"color": "green", "value": null}
+                    {
+                      "color": "green",
+                      "value": null
+                    }
                   ]
                 }
               }
@@ -151,8 +234,16 @@
       "type": "gauge",
       "title": "Resident RAM (% of ceiling)",
       "id": 5,
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "max(fcvm_resident_ram_pct)",
@@ -167,21 +258,41 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 80},
-              {"color": "red", "value": 92}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 92
+              }
             ]
           }
         }
       },
-      "options": {"showThresholdLabels": false, "showThresholdMarkers": true}
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      }
     },
     {
       "type": "gauge",
       "title": "lv-fc used (%)",
       "id": 6,
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "max(fcvm_lv_fc_used_pct)",
@@ -196,21 +307,41 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 80},
-              {"color": "red", "value": 90}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
             ]
           }
         }
       },
-      "options": {"showThresholdLabels": false, "showThresholdMarkers": true}
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      }
     },
     {
       "type": "timeseries",
       "title": "Wake rate (req/s)",
       "id": 7,
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(rate(gateway_requests_total[5m]))",
@@ -218,14 +349,26 @@
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "reqps"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
     },
     {
       "type": "gauge",
       "title": "Build success rate (non-user_error, 5m)",
       "id": 8,
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(rate(builderd_ops_total{op=\"build\",code!=\"user_error\"}[5m])) / sum(rate(builderd_ops_total{op=\"build\"}[5m])) * 100",
@@ -240,21 +383,41 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 95},
-              {"color": "green", "value": 99}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
             ]
           }
         }
       },
-      "options": {"showThresholdLabels": false, "showThresholdMarkers": true}
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      }
     },
     {
       "type": "timeseries",
       "title": "Build queue wait p95",
       "id": 9,
-      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 24},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(builderd_build_queue_wait_seconds_bucket[5m])) by (le))",
@@ -268,9 +431,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 60},
-              {"color": "red", "value": 300}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
             ]
           }
         }
@@ -280,8 +452,16 @@
       "type": "timeseries",
       "title": "Build duration p95 (by outcome)",
       "id": 10,
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "Per-outcome p95 build wall-clock time. cache_hit should stay <5s; ok is the real-build latency up to the 600s BuildTimeoutSeconds cap; failed mixes vm-spawn-fail + spawn-ok-but-vm-failed.",
       "targets": [
         {
@@ -306,9 +486,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 60},
-              {"color": "red", "value": 300}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
             ]
           }
         }
@@ -318,8 +507,16 @@
       "type": "stat",
       "title": "API availability (5m)",
       "id": 11,
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 40},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(rate(gateway_requests_total{code=~\"2..\"}[5m])) / sum(rate(gateway_requests_total[5m])) * 100",
@@ -334,9 +531,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 99.0},
-              {"color": "green", "value": 99.5}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 99.0
+              },
+              {
+                "color": "green",
+                "value": 99.5
+              }
             ]
           }
         }
@@ -344,7 +550,13 @@
       "options": {
         "colorMode": "background",
         "graphMode": "none",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       }
     },
@@ -352,8 +564,16 @@
       "type": "stat",
       "title": "Resident GB per paying customer (per plan)",
       "id": 12,
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 40},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "meterd_resident_gb_per_customer{plan=~\".+\"}",
@@ -367,9 +587,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 0.305},
-              {"color": "red", "value": 0.45}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.305
+              },
+              {
+                "color": "red",
+                "value": 0.45
+              }
             ]
           }
         }
@@ -377,7 +606,13 @@
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value_and_name"
       }
     },
@@ -385,38 +620,95 @@
       "type": "timeseries",
       "title": "apid traffic vs 3d baseline (per route)",
       "id": 80,
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 56},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "faas_apid_request_rate_5m:by_route", "legendFormat": "5m — {{route}}", "refId": "A"},
-        {"expr": "faas_apid_request_rate_3d_baseline:by_route", "legendFormat": "3d — {{route}}", "refId": "B"}
+        {
+          "expr": "faas_apid_request_rate_5m:by_route",
+          "legendFormat": "5m \u2014 {{route}}",
+          "refId": "A"
+        },
+        {
+          "expr": "faas_apid_request_rate_3d_baseline:by_route",
+          "legendFormat": "3d \u2014 {{route}}",
+          "refId": "B"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 5}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 5
+          }
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "^3d — .*"},
-            "properties": [{"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^3d \u2014 .*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "stat",
       "title": "max ratio (current / 3d)",
       "id": 81,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 64},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "max(faas_apid_request_rate_ratio:by_route)", "legendFormat": "rps ratio", "refId": "A"},
-        {"expr": "max(faas_apid_error_rate_ratio:by_route)", "legendFormat": "err ratio", "refId": "B"}
+        {
+          "expr": "max(faas_apid_request_rate_ratio:by_route)",
+          "legendFormat": "rps ratio",
+          "refId": "A"
+        },
+        {
+          "expr": "max(faas_apid_error_rate_ratio:by_route)",
+          "legendFormat": "err ratio",
+          "refId": "B"
+        }
       ],
       "fieldConfig": {
         "defaults": {
@@ -424,9 +716,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 2},
-              {"color": "red", "value": 3}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
             ]
           }
         }
@@ -435,7 +736,13 @@
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value_and_name"
       }
     },
@@ -443,10 +750,22 @@
       "type": "stat",
       "title": "top 5 routes by current rate",
       "id": 82,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 64},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "topk(5, faas_apid_request_rate_5m:by_route)", "legendFormat": "{{route}}", "refId": "A"}
+        {
+          "expr": "topk(5, faas_apid_request_rate_5m:by_route)",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
@@ -454,7 +773,10 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null}
+              {
+                "color": "green",
+                "value": null
+              }
             ]
           }
         }
@@ -462,7 +784,13 @@
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value_and_name"
       }
     },
@@ -470,56 +798,119 @@
       "type": "timeseries",
       "title": "top 10 accounts by 5m rate",
       "id": 83,
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 72},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 72
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "topk(10, sum by (account_id) (rate(apid_request_total{account_id!=\"__other__\"}[5m])))", "legendFormat": "{{account_id}}", "refId": "A"}
+        {
+          "expr": "topk(10, sum by (account_id) (rate(apid_request_total{account_id!=\"__other__\"}[5m])))",
+          "legendFormat": "{{account_id}}",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 5}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 5
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Anomaly spikes (last 7d)",
       "id": 90,
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 80},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 80
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "topk(20, max_over_time(faas_apid_anomaly_score:by_account{account_id!=\"__other__\"}[7d]) > 2)", "legendFormat": "{{account_id}}", "refId": "A"}
+        {
+          "expr": "topk(20, max_over_time(faas_apid_anomaly_score:by_account{account_id!=\"__other__\"}[7d]) > 2)",
+          "legendFormat": "{{account_id}}",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 5},
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 5
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 2},
-              {"color": "red", "value": 5}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
             ]
           }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Streaming flushes (top 10 apps, by plan)",
       "id": 100,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 88},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 88
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "topk(10, sum by (app, plan) (rate(gateway_stream_flushes_total[5m])))",
@@ -530,20 +921,39 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Streaming egress bytes (top 10 apps, by plan)",
       "id": 101,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 88},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 88
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "topk(10, sum by (app, plan) (rate(gateway_response_bytes_total[5m])))",
@@ -554,20 +964,39 @@
       "fieldConfig": {
         "defaults": {
           "unit": "Bps",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "stat",
       "title": "Active streaming responses",
       "id": 102,
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 96},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 96
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(gateway_stream_active{app!=\"__other__\"})",
@@ -581,168 +1010,388 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 100},
-              {"color": "red", "value": 1000}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
             ]
           }
         }
       },
       "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false},
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
         "colorMode": "value",
         "graphMode": "area",
-        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "gatewayd top 10 routes by 5m rate + error rate (ADR-093)",
       "id": 103,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 104},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 104
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "topk(10, faas_gateway_request_rate_5m:by_route)", "legendFormat": "reqps — {{route}}", "refId": "A"},
-        {"expr": "topk(10, faas_gateway_error_rate_5m:by_route)", "legendFormat": "err — {{route}}", "refId": "B"}
+        {
+          "expr": "topk(10, faas_gateway_request_rate_5m:by_route)",
+          "legendFormat": "reqps \u2014 {{route}}",
+          "refId": "A"
+        },
+        {
+          "expr": "topk(10, faas_gateway_error_rate_5m:by_route)",
+          "legendFormat": "err \u2014 {{route}}",
+          "refId": "B"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 5}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 5
+          }
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "^err — .*"},
-            "properties": [{"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^err \u2014 .*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "gatewayd top 10 routes by p95 latency (ADR-093)",
       "id": 104,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 104},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 104
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "topk(10, faas_gateway_p95_seconds:by_route)", "legendFormat": "p95 — {{route}}", "refId": "A"}
+        {
+          "expr": "topk(10, faas_gateway_p95_seconds:by_route)",
+          "legendFormat": "p95 \u2014 {{route}}",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 5}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 5
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "schedd ESM polls / sec by source (ADR-118)",
       "id": 200,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 112},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 112
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"success\"}[5m]))", "legendFormat": "success — {{source}}", "refId": "A"},
-        {"expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"error\"}[5m]))", "legendFormat": "error — {{source}}", "refId": "B"},
-        {"expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"empty\"}[5m]))", "legendFormat": "empty — {{source}}", "refId": "C"}
+        {
+          "expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"success\"}[5m]))",
+          "legendFormat": "success \u2014 {{source}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"error\"}[5m]))",
+          "legendFormat": "error \u2014 {{source}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"empty\"}[5m]))",
+          "legendFormat": "empty \u2014 {{source}}",
+          "refId": "C"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "polls/s",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 8, "stacking": {"mode": "normal"}}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "^error — .*"},
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^error \u2014 .*"
+            },
             "properties": [
-              {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}},
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
             ]
           }
         ]
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "schedd ESM records consumed / sec by source (ADR-118)",
       "id": 201,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 112},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 112
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "sum by (source) (rate(schedd_esm_records_consumed_total[5m]))", "legendFormat": "{{source}}", "refId": "A"}
+        {
+          "expr": "sum by (source) (rate(schedd_esm_records_consumed_total[5m]))",
+          "legendFormat": "{{source}}",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "rec/s",
-          "custom": {"drawStyle": "bars", "lineWidth": 1, "fillOpacity": 60}
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "schedd ESM lag p99 by source (ADR-118)",
       "id": 202,
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 120},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 120
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "histogram_quantile(0.99, sum by (source, le) (rate(schedd_esm_lag_seconds_bucket{shard=\"_agg\"}[5m])))", "legendFormat": "p99 — {{source}}", "refId": "A"}
+        {
+          "expr": "histogram_quantile(0.99, sum by (source, le) (rate(schedd_esm_lag_seconds_bucket{shard=\"_agg\"}[5m])))",
+          "legendFormat": "p99 \u2014 {{source}}",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Wake failures by reason (24h)",
       "id": 130,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 128},
-      "description": "Rate of *_wake_failure_total{reason=...} (issue #1059 / ADR-127). Stacked by reason to surface the dominant failure mode at a glance; legend doubles as the triage table (cross-reference with docs/runbooks/FaasColdBootRatioHigh.md). `mem_backend_err` is pre-instantiated today even though unreachable in production — the row should read 0.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 128
+      },
+      "description": "Rate of *_wake_failure_total{reason=...} (issue #1059 / ADR-127). Stacked by reason to surface the dominant failure mode at a glance; legend doubles as the triage table (cross-reference with docs/runbooks/FaasColdBootRatioHigh.md). `mem_backend_err` is pre-instantiated today even though unreachable in production \u2014 the row should read 0.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "sum by (reason) (rate(vmmd_wake_failure_total[5m]))", "legendFormat": "{{reason}}", "refId": "A"}
+        {
+          "expr": "sum by (reason) (rate(vmmd_wake_failure_total[5m]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
-          "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 60, "stacking": {"mode": "normal", "group": "A"}}
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "right", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Cold-boot ratio (24h)",
       "id": 131,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 128},
-      "description": "vmmd_cold_boot_ratio (recording rule — issue #1059 / ADR-127 §5). Threshold 0.30 (yellow) gates FaasColdBootRatioHigh page alert; 0.50 (red) is the fleet-snapshot-saturation point (matches the §12 snapshot_fleet_avg_mb > 200 alert). Sibling of the existing 'Cold-boot fallback rate (5m)' panel (id: 3) which uses the older vmmd_cold_boot_fallback_total counter; this one uses the §6.1 tier split (ADR-074) for the canonical ratio.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 128
+      },
+      "description": "vmmd_cold_boot_ratio (recording rule \u2014 issue #1059 / ADR-127 \u00a75). Threshold 0.30 (yellow) gates FaasColdBootRatioHigh page alert; 0.50 (red) is the fleet-snapshot-saturation point (matches the \u00a712 snapshot_fleet_avg_mb > 200 alert). Sibling of the existing 'Cold-boot fallback rate (5m)' panel (id: 3) which uses the older vmmd_cold_boot_fallback_total counter; this one uses the \u00a76.1 tier split (ADR-074) for the canonical ratio.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "vmmd_cold_boot_ratio", "legendFormat": "cold-boot ratio", "refId": "A"}
+        {
+          "expr": "vmmd_cold_boot_ratio",
+          "legendFormat": "cold-boot ratio",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
@@ -752,46 +1401,93 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 0.30},
-              {"color": "red", "value": 0.50}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.3
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
             ]
           }
         }
       },
       "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false},
-        "tooltip": {"mode": "single", "sort": "none"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Per-box p99 wake latency (24h)",
       "id": 132,
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 136},
-      "description": "p99 wake latency per box — derived from vmmd_wake_latency_seconds_bucket{box,phase} (issue #1059 / ADR-127 §1). With single-control-plane the box label resolves to 'local'; the multi-host rollout replaces this with compute_nodes.id. The aggregated fleet histogram (vmmd_wake_phase_duration_seconds{phase}) is preserved as a sibling for §12 dashboard back-compat — this panel is the operator-facing per-box view.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 136
+      },
+      "description": "p99 wake latency per box \u2014 derived from vmmd_wake_latency_seconds_bucket{box,phase} (issue #1059 / ADR-127 \u00a71). With single-control-plane the box label resolves to 'local'; the multi-host rollout replaces this with compute_nodes.id. The aggregated fleet histogram (vmmd_wake_phase_duration_seconds{phase}) is preserved as a sibling for \u00a712 dashboard back-compat \u2014 this panel is the operator-facing per-box view.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "histogram_quantile(0.99, sum by (le, box) (rate(vmmd_wake_latency_seconds_bucket[5m])))", "legendFormat": "{{box}}", "refId": "A"}
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, box) (rate(vmmd_wake_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{box}}",
+          "refId": "A"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Deployment cancel rate by outcome (5m)",
       "id": 200,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 144},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 144
+      },
       "description": "Stacked rate of POST /v1/apps/{slug}/deployments/{id}/cancel per outcome (ADR-124 + PR #1024 + PR #1181). Counter: apid_ops_total{op=\"deployment_cancel\",outcome} via ObserveDeploymentCancelled at pkg/wire/metrics.go:5686. Closed outcome set: ok / live_forbidden / not_cancellable / error. Free-plan cancel is allowed (no plan_disabled label).",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (outcome) (rate(apid_ops_total{op=\"deployment_cancel\"}[5m]))",
@@ -802,21 +1498,44 @@
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 60, "stacking": {"mode": "normal", "group": "A"}}
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Deployment reorder rate by outcome (5m)",
       "id": 201,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 144},
-      "description": "Stacked rate of POST /v1/deployments/{id}/reorder per outcome (ADR-124 + PR #1024). Counter: apid_ops_total{op=\"deployment_reorder\",outcome} via ObserveDeploymentReorder at pkg/wire/metrics.go:5720. Closed outcome set: ok / plan_disabled / not_pending / out_of_range / error. Reorder is Hobby/Pro/Scale only — Free plan hits plan_disabled.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 144
+      },
+      "description": "Stacked rate of POST /v1/deployments/{id}/reorder per outcome (ADR-124 + PR #1024). Counter: apid_ops_total{op=\"deployment_reorder\",outcome} via ObserveDeploymentReorder at pkg/wire/metrics.go:5720. Closed outcome set: ok / plan_disabled / not_pending / out_of_range / error. Reorder is Hobby/Pro/Scale only \u2014 Free plan hits plan_disabled.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (outcome) (rate(apid_ops_total{op=\"deployment_reorder\"}[5m]))",
@@ -827,21 +1546,44 @@
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 60, "stacking": {"mode": "normal", "group": "A"}}
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Deployment clear (single) rate by outcome (5m)",
       "id": 202,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 152},
-      "description": "Stacked rate of DELETE /v1/deployments/{id} per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear\",outcome} via ObserveDeploymentCleared at pkg/wire/metrics.go:5727. Closed outcome set: ok / live_forbidden / error. Mirror of cancel/clear §12 success-rate tile (cancel + clear joined on op ∈ {deployment_cancel, deployment_clear}).",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 152
+      },
+      "description": "Stacked rate of DELETE /v1/deployments/{id} per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear\",outcome} via ObserveDeploymentCleared at pkg/wire/metrics.go:5727. Closed outcome set: ok / live_forbidden / error. Mirror of cancel/clear \u00a712 success-rate tile (cancel + clear joined on op \u2208 {deployment_cancel, deployment_clear}).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (outcome) (rate(apid_ops_total{op=\"deployment_clear\"}[5m]))",
@@ -852,21 +1594,44 @@
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 60, "stacking": {"mode": "normal", "group": "A"}}
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Deployment clear-obsolete (bulk) rate by outcome (5m)",
       "id": 203,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 152},
-      "description": "Stacked rate of POST /v1/apps/{slug}/deployments/clear-obsolete per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear_obsolete\",outcome} via ObserveDeploymentClearObsolete at pkg/wire/metrics.go:5748. Closed outcome set: ok / plan_disabled / error. Hobby/Pro/Scale only — Free plan hits plan_disabled. count=0 still emits ok (caller asked, store found nothing).",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 152
+      },
+      "description": "Stacked rate of POST /v1/apps/{slug}/deployments/clear-obsolete per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear_obsolete\",outcome} via ObserveDeploymentClearObsolete at pkg/wire/metrics.go:5748. Closed outcome set: ok / plan_disabled / error. Hobby/Pro/Scale only \u2014 Free plan hits plan_disabled. count=0 still emits ok (caller asked, store found nothing).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (outcome) (rate(apid_ops_total{op=\"deployment_clear_obsolete\"}[5m]))",
@@ -877,21 +1642,44 @@
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 60, "stacking": {"mode": "normal", "group": "A"}}
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
         }
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
       "type": "stat",
-      "title": "Deployment queue controls — overall success rate (5m)",
+      "title": "Deployment queue controls \u2014 overall success rate (5m)",
       "id": 204,
-      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 160},
-      "description": "§12 success-rate tile across all 4 queue-control ops (cancel / reorder / clear / clear-obsolete). Numerator: apid_ops_total{op=~\"deployment_(cancel|reorder|clear|clear_obsolete)\",outcome=\"ok\"}; denominator: same set, all outcomes. Thresholds mirror build-success tile: green ≥0.95, yellow 0.80-0.95, red <0.80. A sustained red means either a state-machine regression (live_forbidden, not_pending, not_cancellable) or a real error burst.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 160
+      },
+      "description": "\u00a712 success-rate tile across all 4 queue-control ops (cancel / reorder / clear / clear-obsolete). Numerator: apid_ops_total{op=~\"deployment_(cancel|reorder|clear|clear_obsolete)\",outcome=\"ok\"}; denominator: same set, all outcomes. Thresholds mirror build-success tile: green \u22650.95, yellow 0.80-0.95, red <0.80. A sustained red means either a state-machine regression (live_forbidden, not_pending, not_cancellable) or a real error burst.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(rate(apid_ops_total{op=~\"deployment_(cancel|reorder|clear|clear_obsolete)\",outcome=\"ok\"}[5m])) / clamp_min(sum(rate(apid_ops_total{op=~\"deployment_(cancel|reorder|clear|clear_obsolete)\"}[5m])), 0.001)",
@@ -905,28 +1693,292 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 0.80},
-              {"color": "green", "value": 0.95}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.8
+              },
+              {
+                "color": "green",
+                "value": 0.95
+              }
             ]
           }
         }
       },
       "options": {
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "colorMode": "background"
+      }
+    },
+    {
+      "id": 300,
+      "type": "timeseries",
+      "title": "Canary advanced/sec by preset",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 166
+      },
+      "targets": [
+        {
+          "expr": "sum by (canary_preset) (rate(canary_progression_advanced_total[5m]))",
+          "legendFormat": "{{canary_preset}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 15,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 301,
+      "type": "stat",
+      "title": "In-flight rollouts",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 166
+      },
+      "targets": [
+        {
+          "expr": "safedeploy_in_flight_rollouts",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10.0
+              },
+              {
+                "color": "red",
+                "value": 50.0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 302,
+      "type": "timeseries",
+      "title": "Stuck canary rate",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 174
+      },
+      "targets": [
+        {
+          "expr": "rate(safedeploy_orchestrator_stuck_detected_total[5m])",
+          "legendFormat": "stuck/sec",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 303,
+      "type": "timeseries",
+      "title": "Audit emit failures (orchestrator + fleet-wide)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 174
+      },
+      "targets": [
+        {
+          "expr": "rate(safedeploy_orchestrator_audit_emit_failed_total[5m])",
+          "legendFormat": "orchestrator failures/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (kind) (rate(deployment_audit_emitted_total{outcome=\"failed\"}[5m]))",
+          "legendFormat": "fleet {{kind}} failures/sec",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 304,
+      "type": "piechart",
+      "title": "Rollout state transitions (24h)",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 182
+      },
+      "targets": [
+        {
+          "expr": "increase(safedeploy_orchestrator_started_total[24h])",
+          "legendFormat": "started",
+          "refId": "A"
+        },
+        {
+          "expr": "increase(safedeploy_orchestrator_completed_total[24h])",
+          "legendFormat": "completed",
+          "refId": "B"
+        },
+        {
+          "expr": "increase(safedeploy_orchestrator_aborted_total[24h])",
+          "legendFormat": "aborted",
+          "refId": "C"
+        }
+      ],
+      "options": {
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
       }
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["faas", "m8", "slo"],
-  "templating": {"list": []},
-  "time": {"from": "now-1h", "to": "now"},
+  "tags": [
+    "faas",
+    "m8",
+    "slo"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "",
-  "title": "faas fleet (M8 §12)",
+  "title": "faas fleet (M8 \u00a712)",
   "uid": "faas-fleet-m8",
   "version": 2,
   "weekStart": ""

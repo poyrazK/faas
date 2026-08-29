@@ -1261,6 +1261,58 @@ type AuditEventsData struct {
 	IncludeAnonymous bool
 }
 
+// SafeReleasesData is the dashboard-facing payload for
+// /dashboard/safe-releases — the operator's "everything
+// in-flight" surface (issue #976 / ADR-122 / SAFE-RELEASES-OBS
+// PR-C). Three sections, each backed by a single Store call so the
+// page renders in bounded time even on a busy fleet:
+//
+//	InFlight   — every deployment currently in 'pending' or
+//	             'rolling_out' (state.Store.SafedeployListPendingRollouts).
+//	RecentAudit — the latest deployment_audit rows for each
+//	             in-flight deployment, filtered to the 5 audit kinds
+//	             PR-A widened (deploy.rollout_started,
+//	             deploy.rollout_completed, deploy.rollout_aborted,
+//	             deploy.canary_step_advanced,
+//	             deploy.alert_rule_fired). N+1 query — one
+//	             ListDeploymentAudit per in-flight deployment —
+//	             acceptable because in-flight count is bounded by
+//	             safedeploy_in_flight_rollouts (PR-B's
+//	             canary_fleet_in_flight_high alert tripwires at 50).
+//	ActiveAlerts — every alert_rule whose metric is one of the 4
+//	             PR-B safe-releases kinds and which is currently
+//	             enabled. Operator uses this to see "who's
+//	             subscribed to my canary_stuck_step alert right now".
+type SafeReleasesData struct {
+	InFlight     []DeploymentItem
+	RecentAudit  []SafeReleasesAuditRow
+	ActiveAlerts []SafeReleasesAlertRow
+}
+
+// SafeReleasesAuditRow is one row of the recent-audit table.
+// DeploymentID + AppSlug are surfaced so the template can deep-link
+// back to /dashboard/apps/{slug}/deployments/{id}. TimeLabel is the
+// same pre-formatted relative-timestamp shape as AuditEventRow.
+type SafeReleasesAuditRow struct {
+	DeploymentID string
+	AppSlug      string
+	Kind         string
+	TimeLabel    string
+	Actor        string
+}
+
+// SafeReleasesAlertRow is one row of the active-alerts table.
+// Name + Metric come straight from alert_rules; the plan-gate lives
+// on the alert_presets catalog row (alert_rules only carries rows
+// that already passed the gate) so MinPlan is empty here.
+// Enabled reflects the per-rule toggle (separate from the catalog
+// enabled_in_catalog flag).
+type SafeReleasesAlertRow struct {
+	Name    string
+	Metric  string
+	Enabled bool
+}
+
 // AuditEventRow is one row of the audit table. TimeLabel is a
 // pre-formatted relative timestamp ("3m ago" / "just now" / "—")
 // computed at the handler edge so the template stays a pure renderer.
