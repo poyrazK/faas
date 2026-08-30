@@ -1686,6 +1686,28 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// correct auth shape.
 		above, diffs, err := h.aboveBaseLayers(ctx, mp, dep.ImageDigest, app.Runtime, manifest, appAuth)
 		if err != nil {
+			// ADR-141 §Decision 3 + §Decision 2: when the app image is
+			// not built FROM our runner-* base, dispatch on the
+			// tri-state FullRootfsAllowAuto / FullRootfsOverride
+			// fields (commit 6 widens state.Deployment). The
+			// typed sentinel is the ONLY signal the dispatch
+			// consults — never a string match — so future wrapping
+			// (telemetry, retries) cannot bypass the gate.
+			//
+			// Commit 4 lands the dispatch skeleton with a stub that
+			// returns ErrLayersNotAboveBase until commit 6 wires
+			// buildFullRootfsLayer (BuildFullRootfs itself ships
+			// in commit 5). Forcing today-equivalent failure
+			// surfaces the canonical sentinel so customers can
+			// opt in via `--full-rootfs` once commit 6 lands.
+			if errors.Is(err, oci.ErrLayersNotAboveBase) {
+				fullErr := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth)
+				if fullErr != nil {
+					_ = h.markDeployFailed(ctx, dep.ID, fullErr, "imaged: full-rootfs dispatch")
+					return fullErr
+				}
+				return nil
+			}
 			// aboveBaseLayers can surface any of the three puller-side
 			// sentinels (image-not-found on app manifest 404, manifest-list
 			// rejection on multi-arch images, egress-denial on a private
@@ -3333,4 +3355,34 @@ func (h *Handler) emitWarmSnapshotStale(ctx context.Context, fcVersion string, b
 			"stale_count": staleThisApp,
 		})
 	}
+}
+
+// dispatchFullRootfs is the typed-sentinel gate that decides whether
+// the deployment proceeds via the full-rootfs build path (commit 5)
+// or surfaces today-equivalent failure (ADR-141 §Decision 2 +
+// §Decision 3).
+//
+// Commit 4 lands the dispatch skeleton: it returns a stub error
+// until commit 5 (BuildFullRootfs) and commit 6 (state.Deployment
+// widening + override resolution + buildFullRootfsLayer wiring)
+// replace the stub with the real BuildFullRootfs call. The stub
+// intentionally surfaces oci.ErrLayersNotAboveBase so callers
+// continue to see the canonical sentinel and pkg/api.SentinelToCode
+// maps it to CodeImageManifestInvalid (422).
+//
+// Tri-state resolution (commit 6):
+//   - dep.FullRootfsOverride=&false → today-equivalent failure (force-off).
+//   - dep.FullRootfsOverride=&true  → full-rootfs (force-on, even on Free).
+//   - dep.FullRootfsOverride=nil:
+//     - dep.FullRootfsAllowAuto && paid plan → full-rootfs (auto).
+//     - else                              → today-equivalent failure.
+func (h *Handler) dispatchFullRootfs(
+	_ context.Context,
+	_ state.App,
+	_ state.Deployment,
+	_ state.Account,
+	_ api.AppManifest,
+	_ *oci.BasicAuth,
+) error {
+	return fmt.Errorf("%w: full-rootfs build path is not yet wired (M-3 commit 6 will replace this stub)", oci.ErrLayersNotAboveBase)
 }

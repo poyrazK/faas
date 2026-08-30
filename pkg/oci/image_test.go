@@ -1,6 +1,7 @@
 package oci
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -22,16 +23,29 @@ func TestLayersAboveBaseRejectsMismatch(t *testing.T) {
 	// App not built FROM base — must error, never silently proceed.
 	base := []string{"sha256:aaa", "sha256:xxx"}
 	app := []string{"sha256:aaa", "sha256:bbb", "sha256:ccc"}
-	if _, err := LayersAboveBase(base, app); err == nil {
-		t.Error("expected error when base is not a prefix of app")
+	_, err := LayersAboveBase(base, app)
+	if err == nil {
+		t.Fatal("expected error when base is not a prefix of app")
+	}
+	// ADR-141 §Decision 3: the prefix-check failure lifts to the
+	// typed ErrLayersNotAboveBase sentinel so the imaged
+	// dispatch in buildImageLayer can branch via errors.Is.
+	if !errors.Is(err, ErrLayersNotAboveBase) {
+		t.Errorf("err = %v, want errors.Is(_, ErrLayersNotAboveBase) true", err)
 	}
 }
 
 func TestLayersAboveBaseRejectsEmptyDiff(t *testing.T) {
 	// App identical to base => nothing above => empty app layer is an error.
 	base := []string{"sha256:aaa", "sha256:bbb"}
-	if _, err := LayersAboveBase(base, base); err == nil {
-		t.Error("expected error when app has no layers above base")
+	_, err := LayersAboveBase(base, base)
+	if err == nil {
+		t.Fatal("expected error when app has no layers above base")
+	}
+	// ADR-141 §Decision 3: empty-above is the same dispatch class
+	// as not-a-prefix — both lift to ErrLayersNotAboveBase.
+	if !errors.Is(err, ErrLayersNotAboveBase) {
+		t.Errorf("err = %v, want errors.Is(_, ErrLayersNotAboveBase) true", err)
 	}
 }
 

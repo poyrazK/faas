@@ -109,18 +109,27 @@ func ParseConfig(r io.Reader) (Config, error) {
 // requires the base's diff_ids to be an exact prefix of the app's — i.e. the app
 // really was built FROM base. Otherwise the two-drive assumption is violated and
 // we must not proceed (a mismatched base would produce a broken overlay).
+//
+// ADR-141 §Decision 3: when the strict-prefix check fails, the function
+// returns ErrLayersNotAboveBase via fmt.Errorf("%w: …") so the imaged
+// dispatch in buildImageLayer can branch on errors.Is. Today the
+// dispatch surfaces this as today-equivalent failure (customers must
+// `faas deploy --full-rootfs` to opt into the full-rootfs path).
+// Auto-fallback on paid plans lands in commit 6.
 func LayersAboveBase(baseDiffIDs, appDiffIDs []string) ([]string, error) {
 	if len(baseDiffIDs) > len(appDiffIDs) {
 		return nil, fmt.Errorf("oci: base has more layers (%d) than app (%d)", len(baseDiffIDs), len(appDiffIDs))
 	}
 	for i, d := range baseDiffIDs {
 		if appDiffIDs[i] != d {
-			return nil, fmt.Errorf("oci: app not built FROM base: layer %d differs (base %s, app %s)", i, short(d), short(appDiffIDs[i]))
+			return nil, fmt.Errorf("%w: app not built FROM base: layer %d differs (base %s, app %s)",
+				ErrLayersNotAboveBase, i, short(d), short(appDiffIDs[i]))
 		}
 	}
 	above := appDiffIDs[len(baseDiffIDs):]
 	if len(above) == 0 {
-		return nil, fmt.Errorf("oci: app has no layers above the base (empty app layer)")
+		return nil, fmt.Errorf("%w: app has no layers above the base (empty app layer)",
+			ErrLayersNotAboveBase)
 	}
 	// Return a copy so callers can't mutate the app's slice.
 	out := make([]string, len(above))
