@@ -7740,8 +7740,8 @@ paths:
         The drain transitions a row here once it has failed
         `MaxQueueAttempts` times for the app's plan (Hobby 3, Pro 10,
         Scale 25). NO lease is acquired and no row is mutated. Replaying
-        a dead-letter row is out of scope for this endpoint — the
-        customer re-sends via `queues/send`.
+        a dead-letter row is out of scope for this endpoint — see
+        `POST /v1/apps/{slug}/queues/dead_letter/{id}/replay`.
       x-faas-queue-leases: false
       parameters:
         - $ref: '#/components/parameters/Slug'
@@ -7753,6 +7753,42 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueDeadLetterResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/queues/dead_letter/{id}/replay:
+    post:
+      tags: [queues]
+      operationId: queueDeadLetterReplay
+      summary: Reset a dead-letter queue row back to pending.
+      description: |
+        ADR-134 PR-C. Resets the row's `state` to `pending` with
+        `attempts=0`, `last_error=null`, `due_at=now()`,
+        `last_replayed_at=now()`. Distinct from
+        `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
+        tagged Source=InvocationReplay. This endpoint mutates the
+        existing row in place so the dashboard's replay history view
+        tracks the chain on a single row id.
+
+        Idempotent: a second POST after the first has succeeded
+        finds the row in 'pending' and returns 404. The
+        Idempotency-Key middleware (issued automatically by the SDK)
+        covers double-POST across network retries.
+      x-faas-queue-leases: false
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+          description: The invocation id of the dead-letter row to replay.
+      responses:
+        '202':
+          description: Replay accepted; row is back to pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -18663,6 +18699,18 @@ components:
         attempts: { type: integer, description: "Number of dispatch attempts so far; 0 on the first try." }
         lease_expires_at: { type: [string, "null"], format: date-time, description: "When the in-flight dispatch lease expires; null when no lease is held." }
         received_at: { type: [string, "null"], format: date-time, description: "When the drain first claimed the row; null until claimed." }
+        # ADR-134 PR-B: per-row async fields. All three are
+        # optional; the drain falls back to plan-level defaults
+        # (Limits.MaxAsyncInvocationDeadlineSeconds and
+        # Limits.MaxAsyncResultRetentionSeconds) when NULL.
+        deadline_at:
+          { type: [string, "null"], format: date-time, description: "ADR-134 PR-B. Optional hard-stop. Drain transitions the row to dead_letter when this time passes while still pending|dispatching." }
+        retry_policy:
+          { type: [object, "null"], additionalProperties: true, description: "ADR-134 PR-B. Optional per-row retry curve override; decodes into dispatch.RetryPolicy (max_attempts, base_seconds, max_seconds, jitter_seconds)." }
+        result_retention_until:
+          { type: [string, "null"], format: date-time, description: "ADR-134 PR-B. Optional explicit retention horizon. NULL means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds)." }
+        last_replayed_at:
+          { type: [string, "null"], format: date-time, description: "ADR-134 PR-C. When this row was most recently replayed from dead_letter via POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay." }
 
     ListInvocationsResponse:
       description: "Page of invocations; ordered by created_at DESC, id DESC. Pass the LAST id of the returned slice as the next `?before=` to load older."
@@ -18681,12 +18729,42 @@ components:
         headers: { type: object, additionalProperties: true }
         method: { type: string, default: POST }
         path: { type: string, default: "/" }
+        # ADR-134 PR-B: per-row async overrides. All three are
+        # optional; the handler validates deadline_at against
+        # Limits.MaxAsyncInvocationDeadlineSeconds and rejects
+        # with invalid_deadline_at when out of range.
+        deadline_at:
+          { type: [string, "null"], format: date-time, description: "ADR-134 PR-B. Hard-stop timestamp. Must be within now+Limits.MaxAsyncInvocationDeadlineSeconds." }
+        retry_policy:
+          type: [object, "null"]
+          additionalProperties: true
+          description: "ADR-134 PR-B. Per-row retry curve override. Shape mirrors dispatch.RetryPolicy: { max_attempts, base_seconds, max_seconds, jitter_seconds }."
+          properties:
+            max_attempts:    { type: integer }
+            base_seconds:    { type: number }
+            max_seconds:     { type: number }
+            jitter_seconds:  { type: number, description: "Fraction (0..1). 0.2 means ±20%." }
+        retention_seconds:
+          { type: [integer, "null"], description: "ADR-134 PR-B. Retention horizon in seconds. NULL/0 means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds)." }
 
     QueueSendRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth."
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
+
+    RetryPolicyDTO:
+      description: |
+        ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. The handler
+        decodes this DTO into a dispatch.RetryPolicy before persisting
+        to invocations.retry_policy JSONB. Lives in pkg/api so the SDK
+        can type the override without importing pkg/dispatch directly.
+      type: object
+      properties:
+        max_attempts:    { type: integer }
+        base_seconds:    { type: number }
+        max_seconds:     { type: number }
+        jitter_seconds:  { type: number, description: "Fraction (0..1) added to the backoff delay. 0.2 means ±20% jitter on top of the exponential curve." }
 
     DelayedTaskRequest:
       description: "Body for POST /v1/apps/{slug}/delayed-tasks. scheduled_at must be in the future (UTC)."

@@ -17,10 +17,7 @@ import (
 )
 
 // docsURL is the canonical link printed at the bottom of the usage string.
-// Computed (not a const) so the tripwire that bans DOMAIN-shaped literals
-// in source keeps working; the only host that surfaces in the binary is
-// wire.DocsHost.
-var docsURL = "https://" + wire.DocsHost
+var docsURL = docsSiteURL
 
 var usage = `gregale — deploy apps and functions that scale to zero.
 

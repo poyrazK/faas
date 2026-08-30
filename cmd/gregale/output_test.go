@@ -235,13 +235,13 @@ func TestPrintWarn_DropsBangWhenDisabled(t *testing.T) {
 // per-command usage error surfaces:
 //
 //	usage: gregale <cmd> <args>
-//	  Docs: https://docs.gregale.dev/cli/<topic>
+//	  Docs: https://gregale.dev/docs/cli
 //
 // Two lines, leading-whitespace on the second, exact namespace, no
 // glyphs (usage errors go to stderr; customers grep them — the
-// progress arrow would just be noise). Locks the /cli/<topic>
-// namespace the §3.2 PR establishes so a future refactor can't
-// silently rename it.
+// progress arrow would just be noise). Locks the live consolidated
+// CLI docs route so a future refactor can't silently reintroduce a
+// dead per-command path.
 func TestPrintUsage_EmitsTwoLinesWithTopic(t *testing.T) {
 	var buf bytes.Buffer
 	PrintUsage(&buf, "usage: gregale ps <app>", "ps")
@@ -253,7 +253,7 @@ func TestPrintUsage_EmitsTwoLinesWithTopic(t *testing.T) {
 	if lines[0] != "usage: gregale ps <app>" {
 		t.Errorf("line 0 = %q, want exact usage string", lines[0])
 	}
-	want := "  Docs: https://docs.gregale.dev/cli/ps"
+	want := "  Docs: " + cliDocsURL
 	if lines[1] != want {
 		t.Errorf("line 1 = %q, want %q", lines[1], want)
 	}

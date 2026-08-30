@@ -81,6 +81,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -1027,6 +1028,13 @@ func computeRetryBackoff(attempts int32) time.Duration {
 
 // Compile-time guarantee the helpers we use are wired.
 var _ = slog.Default
+
+// Compile-time guarantee the trigger dispatcher depends on the
+// pkg/dispatch contract (ADR-134 §6.7). The dispatcher consumes
+// RetryPolicy (PR-C migrates computeRetryBackoff onto
+// dispatch.RetryPolicy.Backoff), DeadlinePolicy, and dispatch.Job
+// once per-row fields land on trigger_records.
+var _ dispatch.JobKind = dispatch.JobKindTriggerRecord
 
 // observeESMPoll is the Loop-side wrapper around
 // OpsMetrics.ObserveESMPoll that nil-checks the loop's *wire.OpsMetrics

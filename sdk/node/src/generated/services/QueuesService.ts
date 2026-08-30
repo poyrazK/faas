@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { QueueDeadLetterResponse } from '../models/QueueDeadLetterResponse.js';
 import type { QueuePeekResponse } from '../models/QueuePeekResponse.js';
 import type { QueueReceiveResponse } from '../models/QueueReceiveResponse.js';
@@ -226,8 +227,8 @@ export class QueuesService {
    * The drain transitions a row here once it has failed
    * `MaxQueueAttempts` times for the app's plan (Hobby 3, Pro 10,
    * Scale 25). NO lease is acquired and no row is mutated. Replaying
-   * a dead-letter row is out of scope for this endpoint — the
-   * customer re-sends via `queues/send`.
+   * a dead-letter row is out of scope for this endpoint — see
+   * `POST /v1/apps/{slug}/queues/dead_letter/{id}/replay`.
    *
    * @returns QueueDeadLetterResponse A page of dead-letter rows.
    * @throws ApiError
@@ -259,6 +260,54 @@ export class QueuesService {
       query: {
         'limit': limit,
         'before': before,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Reset a dead-letter queue row back to pending.
+   * ADR-134 PR-C. Resets the row's `state` to `pending` with
+   * `attempts=0`, `last_error=null`, `due_at=now()`,
+   * `last_replayed_at=now()`. Distinct from
+   * `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
+   * tagged Source=InvocationReplay. This endpoint mutates the
+   * existing row in place so the dashboard's replay history view
+   * tracks the chain on a single row id.
+   *
+   * Idempotent: a second POST after the first has succeeded
+   * finds the row in 'pending' and returns 404. The
+   * Idempotency-Key middleware (issued automatically by the SDK)
+   * covers double-POST across network retries.
+   *
+   * @returns AsyncInvokeResponse Replay accepted; row is back to pending.
+   * @throws ApiError
+   */
+  public static queueDeadLetterReplay({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The invocation id of the dead-letter row to replay.
+     */
+    id: string,
+  }): CancelablePromise<AsyncInvokeResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/queues/dead_letter/{id}/replay',
+      path: {
+        'slug': slug,
+        'id': id,
       },
       errors: {
         401: `code: unauthorized`,

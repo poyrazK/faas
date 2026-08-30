@@ -508,6 +508,9 @@ func renderAPIError(w io.Writer, e *APIError) {
 		return
 	}
 	p := e.Problem
+	if p.DocsURL != "" {
+		p.DocsURL = normalizeDocsURL(p.DocsURL)
+	}
 	if p.DocsURL == "" && p.Code != "" {
 		p.DocsURL = docsURLForCode(p.Code)
 	}

@@ -90,8 +90,8 @@ def sync_detailed(
     The drain transitions a row here once it has failed
     `MaxQueueAttempts` times for the app's plan (Hobby 3, Pro 10,
     Scale 25). NO lease is acquired and no row is mutated. Replaying
-    a dead-letter row is out of scope for this endpoint — the
-    customer re-sends via `queues/send`.
+    a dead-letter row is out of scope for this endpoint — see
+    `POST /v1/apps/{slug}/queues/dead_letter/{id}/replay`.
 
     Args:
         slug (str):
@@ -132,8 +132,8 @@ def sync(
     The drain transitions a row here once it has failed
     `MaxQueueAttempts` times for the app's plan (Hobby 3, Pro 10,
     Scale 25). NO lease is acquired and no row is mutated. Replaying
-    a dead-letter row is out of scope for this endpoint — the
-    customer re-sends via `queues/send`.
+    a dead-letter row is out of scope for this endpoint — see
+    `POST /v1/apps/{slug}/queues/dead_letter/{id}/replay`.
 
     Args:
         slug (str):
@@ -169,8 +169,8 @@ async def asyncio_detailed(
     The drain transitions a row here once it has failed
     `MaxQueueAttempts` times for the app's plan (Hobby 3, Pro 10,
     Scale 25). NO lease is acquired and no row is mutated. Replaying
-    a dead-letter row is out of scope for this endpoint — the
-    customer re-sends via `queues/send`.
+    a dead-letter row is out of scope for this endpoint — see
+    `POST /v1/apps/{slug}/queues/dead_letter/{id}/replay`.
 
     Args:
         slug (str):
@@ -209,8 +209,8 @@ async def asyncio(
     The drain transitions a row here once it has failed
     `MaxQueueAttempts` times for the app's plan (Hobby 3, Pro 10,
     Scale 25). NO lease is acquired and no row is mutated. Replaying
-    a dead-letter row is out of scope for this endpoint — the
-    customer re-sends via `queues/send`.
+    a dead-letter row is out of scope for this endpoint — see
+    `POST /v1/apps/{slug}/queues/dead_letter/{id}/replay`.
 
     Args:
         slug (str):

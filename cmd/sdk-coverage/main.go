@@ -410,19 +410,20 @@ var methodRouteMap = map[string]string{
 	// hyphens (e.g. "DeleteDelayed-tasksId") because the spec path uses
 	// the k8s-style hyphen; the explicit map below drops the hyphen and
 	// conforms to the SDK's flat resource naming.
-	"POST /v1/apps/{slug}/invoke":            "InvokeApp",
-	"POST /v1/apps/{slug}/invoke/async":      "InvokeAppAsync",
-	"POST /v1/apps/{slug}/queues/send":       "QueueSend",
-	"POST /v1/apps/{slug}/queues/receive":    "QueueReceive",
-	"POST /v1/apps/{slug}/queues/{id}/ack":   "AckQueueRow",
-	"GET /v1/apps/{slug}/queues/state":       "QueueState",
-	"GET /v1/apps/{slug}/queues/peek":        "QueuePeek",
-	"GET /v1/apps/{slug}/queues/dead_letter": "QueueDeadLetter",
-	"POST /v1/apps/{slug}/delayed-tasks":     "CreateDelayedTask",
-	"GET /v1/delayed-tasks/{id}":             "GetDelayedTask",
-	"DELETE /v1/delayed-tasks/{id}":          "CancelDelayedTask",
-	"GET /v1/invocations":                    "ListInvocations",
-	"GET /v1/invocations/{id}":               "GetInvocation",
+	"POST /v1/apps/{slug}/invoke":                         "InvokeApp",
+	"POST /v1/apps/{slug}/invoke/async":                   "InvokeAppAsync",
+	"POST /v1/apps/{slug}/queues/send":                    "QueueSend",
+	"POST /v1/apps/{slug}/queues/receive":                 "QueueReceive",
+	"POST /v1/apps/{slug}/queues/{id}/ack":                "AckQueueRow",
+	"GET /v1/apps/{slug}/queues/state":                    "QueueState",
+	"GET /v1/apps/{slug}/queues/peek":                     "QueuePeek",
+	"GET /v1/apps/{slug}/queues/dead_letter":              "QueueDeadLetter",
+	"POST /v1/apps/{slug}/queues/dead_letter/{id}/replay": "QueueDeadLetterReplay",
+	"POST /v1/apps/{slug}/delayed-tasks":                  "CreateDelayedTask",
+	"GET /v1/delayed-tasks/{id}":                          "GetDelayedTask",
+	"DELETE /v1/delayed-tasks/{id}":                       "CancelDelayedTask",
+	"GET /v1/invocations":                                 "ListInvocations",
+	"GET /v1/invocations/{id}":                            "GetInvocation",
 	// Issue #279 — operator credits. The auto-derivation produces
 	// "PostAdminAccountsIdCredits" which reads as a Swagger-style
 	// artifact; the SDK verb is "issue" (the operator's mental

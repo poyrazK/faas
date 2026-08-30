@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -560,11 +561,9 @@ func TestCmdDeployment_HappyPath_DetailRendered(t *testing.T) {
 
 // --- --before forwarding ----------------------------------------------------
 
-// TestCmdDeployments_BeforeCursorForwarding pins the SDK's current
-// (broken) behaviour: `before` is concatenated unescaped onto the URL.
-// When pkg/api/client.go:441 is fixed (issue #203) this test will need
-// to flip its assertion from "raw verbatim" to "percent-encoded".
-// From PR #202 review.
+// TestCmdDeployments_BeforeCursorForwarding pins URL-safe cursor forwarding.
+// RFC3339Nano cursors contain colons and must be query-escaped before they are
+// handed to net/http.
 func TestCmdDeployments_BeforeCursorForwarding(t *testing.T) {
 	var seenRaw string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -580,11 +579,9 @@ func TestCmdDeployments_BeforeCursorForwarding(t *testing.T) {
 	if code := cmdDeployments([]string{"--before", cursor}); code != 0 {
 		t.Errorf("cmdDeployments --before = %d, want 0", code)
 	}
-	// Pin verbatim forwarding today. The expected wire form when
-	// pkg/api/client.go is fixed to net/url.Values is
-	// "before=2026-07-23T11%3A25%3A00.000000000Z" — flip then.
-	if !strings.Contains(seenRaw, "before="+cursor) {
-		t.Errorf("expected `before=<cursor>` verbatim in %q (current SDK behaviour)", seenRaw)
+	want := "before=" + url.QueryEscape(cursor) + "&limit=50"
+	if seenRaw != want {
+		t.Errorf("RawQuery = %q, want %q", seenRaw, want)
 	}
 }
 

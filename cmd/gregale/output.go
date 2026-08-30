@@ -27,7 +27,6 @@ import (
 	"sync/atomic"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // stdoutIsTTY is defined per-platform: isatty_unix.go calls
@@ -130,16 +129,6 @@ func writeStatus(w io.Writer, glyph, format string, a ...any) {
 // `atomic.Pointer[bool]` (Go 1.22+). Documented here so a future
 // contributor doesn't silently introduce a race.
 var testOnlyTTY *bool
-
-// docsURLBase is the canonical root for the customer-facing CLI docs.
-// Used by PrintUsage so every `usage:` line carries a stable, namespaced
-// link to the docs site. Mirrors how the systemd unit files use
-// `https://docs.gregale.dev/ops/<daemon>` — same host, same convention.
-// The host is sourced from pkg/wire.DocsHost (issue #420) so the
-// tripwire TestLintTripwire_NoLiteralDocsDomainEverywhere
-// (cmd/gregale/lint_tripwires_test.go) sees only one canonical home
-// for the literal.
-const docsURLBase = "https://" + wire.DocsHost + "/cli/"
 
 // RenderTitle emits the title row of an APIError render. When Enabled()
 // the leading `✗ ` glyph prefixes the title; otherwise the row is just
@@ -267,14 +256,12 @@ func RenderRelevantLogs(w io.Writer, logs []api.LogExcerpt) {
 }
 
 // PrintUsage emits a one-line "usage:" hint followed by a "Docs:" line
-// pointing at docs.gregale.dev/cli/<topic>. Always plain (no glyphs) —
-// usage lines go to stderr on bad argv and customers grep them; the
-// glyph would just be noise there. Topic is the slug from the table in
-// the §3.2 plan (cli/apps, cli/ps, cli/logs, etc.). Fprintf errors
-// intentionally discarded — same convention as writeStatus / RenderTitle.
+// pointing at a live public docs route. Always plain (no glyphs) — usage
+// lines go to stderr on bad argv and customers grep them; the glyph would
+// just be noise there. Unknown command topics use the consolidated CLI page.
 func PrintUsage(w io.Writer, usage, topic string) {
 	_, _ = fmt.Fprintf(w, "%s\n", usage)
-	_, _ = fmt.Fprintf(w, "  Docs: %s%s\n", docsURLBase, topic)
+	_, _ = fmt.Fprintf(w, "  Docs: %s\n", docsURLForTopic(topic))
 }
 
 // LiveTicker is a per-command redraw buffer for tabular progress UI

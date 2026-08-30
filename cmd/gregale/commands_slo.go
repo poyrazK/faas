@@ -33,7 +33,7 @@ import (
 // pointer.
 const sloCmdUsage = "usage: gregale slo <slug> [--window 24h]"
 
-// sloCmdDocsTopic is the docs topic slug appended to docsURLBase
+// sloCmdDocsTopic is the docs topic slug passed to PrintUsage
 // when PrintUsage emits the trailing "Docs:" row. Keeps the CLI's
 // help line stable across command additions.
 const sloCmdDocsTopic = "slo"

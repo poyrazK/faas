@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.invocation_headers import InvocationHeaders
     from ..models.invocation_payload import InvocationPayload
     from ..models.invocation_result_type_0 import InvocationResultType0
+    from ..models.invocation_retry_policy_type_0 import InvocationRetryPolicyType0
 
 
 T = TypeVar("T", bound="Invocation")
@@ -48,10 +49,23 @@ class Invocation:
     """When the in-flight dispatch lease expires; null when no lease is held."""
     received_at: datetime.datetime | None | Unset = UNSET
     """When the drain first claimed the row; null until claimed."""
+    deadline_at: datetime.datetime | None | Unset = UNSET
+    """ADR-134 PR-B. Optional hard-stop. Drain transitions the row to dead_letter when this time passes while still
+    pending|dispatching."""
+    retry_policy: InvocationRetryPolicyType0 | None | Unset = UNSET
+    """ADR-134 PR-B. Optional per-row retry curve override; decodes into dispatch.RetryPolicy (max_attempts,
+    base_seconds, max_seconds, jitter_seconds)."""
+    result_retention_until: datetime.datetime | None | Unset = UNSET
+    """ADR-134 PR-B. Optional explicit retention horizon. NULL means 'use plan default'
+    (Limits.MaxAsyncResultRetentionSeconds)."""
+    last_replayed_at: datetime.datetime | None | Unset = UNSET
+    """ADR-134 PR-C. When this row was most recently replayed from dead_letter via POST
+    /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.invocation_result_type_0 import InvocationResultType0
+        from ..models.invocation_retry_policy_type_0 import InvocationRetryPolicyType0
 
         id = self.id
 
@@ -141,6 +155,38 @@ class Invocation:
         else:
             received_at = self.received_at
 
+        deadline_at: None | str | Unset
+        if isinstance(self.deadline_at, Unset):
+            deadline_at = UNSET
+        elif isinstance(self.deadline_at, datetime.datetime):
+            deadline_at = self.deadline_at.isoformat()
+        else:
+            deadline_at = self.deadline_at
+
+        retry_policy: dict[str, Any] | None | Unset
+        if isinstance(self.retry_policy, Unset):
+            retry_policy = UNSET
+        elif isinstance(self.retry_policy, InvocationRetryPolicyType0):
+            retry_policy = self.retry_policy.to_dict()
+        else:
+            retry_policy = self.retry_policy
+
+        result_retention_until: None | str | Unset
+        if isinstance(self.result_retention_until, Unset):
+            result_retention_until = UNSET
+        elif isinstance(self.result_retention_until, datetime.datetime):
+            result_retention_until = self.result_retention_until.isoformat()
+        else:
+            result_retention_until = self.result_retention_until
+
+        last_replayed_at: None | str | Unset
+        if isinstance(self.last_replayed_at, Unset):
+            last_replayed_at = UNSET
+        elif isinstance(self.last_replayed_at, datetime.datetime):
+            last_replayed_at = self.last_replayed_at.isoformat()
+        else:
+            last_replayed_at = self.last_replayed_at
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -181,6 +227,14 @@ class Invocation:
             field_dict["lease_expires_at"] = lease_expires_at
         if received_at is not UNSET:
             field_dict["received_at"] = received_at
+        if deadline_at is not UNSET:
+            field_dict["deadline_at"] = deadline_at
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
+        if result_retention_until is not UNSET:
+            field_dict["result_retention_until"] = result_retention_until
+        if last_replayed_at is not UNSET:
+            field_dict["last_replayed_at"] = last_replayed_at
 
         return field_dict
 
@@ -189,6 +243,7 @@ class Invocation:
         from ..models.invocation_headers import InvocationHeaders
         from ..models.invocation_payload import InvocationPayload
         from ..models.invocation_result_type_0 import InvocationResultType0
+        from ..models.invocation_retry_policy_type_0 import InvocationRetryPolicyType0
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -342,6 +397,74 @@ class Invocation:
 
         received_at = _parse_received_at(d.pop("received_at", UNSET))
 
+        def _parse_deadline_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                deadline_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return deadline_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        deadline_at = _parse_deadline_at(d.pop("deadline_at", UNSET))
+
+        def _parse_retry_policy(data: object) -> InvocationRetryPolicyType0 | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                retry_policy_type_0 = InvocationRetryPolicyType0.from_dict(data)
+
+                return retry_policy_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(InvocationRetryPolicyType0 | None | Unset, data)
+
+        retry_policy = _parse_retry_policy(d.pop("retry_policy", UNSET))
+
+        def _parse_result_retention_until(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                result_retention_until_type_0 = datetime.datetime.fromisoformat(data)
+
+                return result_retention_until_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        result_retention_until = _parse_result_retention_until(d.pop("result_retention_until", UNSET))
+
+        def _parse_last_replayed_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                last_replayed_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return last_replayed_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        last_replayed_at = _parse_last_replayed_at(d.pop("last_replayed_at", UNSET))
+
         invocation = cls(
             id=id,
             app_id=app_id,
@@ -363,6 +486,10 @@ class Invocation:
             attempts=attempts,
             lease_expires_at=lease_expires_at,
             received_at=received_at,
+            deadline_at=deadline_at,
+            retry_policy=retry_policy,
+            result_retention_until=result_retention_until,
+            last_replayed_at=last_replayed_at,
         )
 
         invocation.additional_properties = d

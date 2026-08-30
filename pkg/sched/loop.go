@@ -69,27 +69,29 @@ type Loop struct {
 	// NotifyTriggerChanged payload (commit #16). The Loop's run
 	// selects on it alongside the 1s ticker so an idle broker
 	// doesn't sit for a full 1s tick before the first batch.
-	triggerWakeup      chan struct{}
-	triggerWakeupOnce  sync.Once
-	now                func() time.Time
-	flowCounts         FlowCounter
-	ops                *wire.OpsMetrics       // issue #171 shared registry; nil safe
-	audit              *audit.Auditor         // cron-fired audit row writer; nil opts out (no row written)
-	watchdog           *Watchdog              // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
-	retention          *Retention             // §17 retention sweep; nil means "no retention" (tests can opt out)
-	heartbeat          *Heartbeat             // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
-	diskDrift          *DiskDrift             // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
-	migratingWatchdog  *MigratingWatchdog     // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
-	deadNodeReconciler *DeadNodeReconciler    // dead-node billing-leak self-healer; nil opts out (no ticker arm)
-	instStats          InstanceStatsPoller    // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
-	scaleup            *scaleup.Trigger       // issue #169 / #172 reactive scale-up trigger; nil opts out
-	targets            *targets.Trigger       // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
-	floor              *floor.Trigger         // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
-	recentLoad         *recentload.RecentLoad // issue #171 aggressive-reaper signal mirror; nil opts out
-	livenessWindow     *LivenessWindow        // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
-	appDelete          *AppDeleteSubscriber   // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
-	reaperAggressive   bool                   // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
-	reaperParkCap      int                    // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
+	triggerWakeup        chan struct{}
+	triggerWakeupOnce    sync.Once
+	now                  func() time.Time
+	flowCounts           FlowCounter
+	ops                  *wire.OpsMetrics       // issue #171 shared registry; nil safe
+	audit                *audit.Auditor         // cron-fired audit row writer; nil opts out (no row written)
+	watchdog             *Watchdog              // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
+	retention            *Retention             // §17 retention sweep; nil means "no retention" (tests can opt out)
+	invocationsRetention *InvocationsRetention  // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
+	triggersRetention    *TriggersRetention     // ADR-134 PR-E: trigger_records retention sweep; nil opts out
+	heartbeat            *Heartbeat             // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
+	diskDrift            *DiskDrift             // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
+	migratingWatchdog    *MigratingWatchdog     // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
+	deadNodeReconciler   *DeadNodeReconciler    // dead-node billing-leak self-healer; nil opts out (no ticker arm)
+	instStats            InstanceStatsPoller    // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
+	scaleup              *scaleup.Trigger       // issue #169 / #172 reactive scale-up trigger; nil opts out
+	targets              *targets.Trigger       // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
+	floor                *floor.Trigger         // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
+	recentLoad           *recentload.RecentLoad // issue #171 aggressive-reaper signal mirror; nil opts out
+	livenessWindow       *LivenessWindow        // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
+	appDelete            *AppDeleteSubscriber   // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
+	reaperAggressive     bool                   // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
+	reaperParkCap        int                    // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
 	// lastFloorByApp (issue #557 closure / ADR-072): per-app
 	// effective floor from the previous reaper tick, used to emit
 	// `instances.parked_min_instances_released` when the floor
@@ -160,6 +162,22 @@ func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
 // window + interval live in pkg/api/limits.
 func (l *Loop) WithRetention(r *Retention) *Loop {
 	l.retention = r
+	return l
+}
+
+// WithInvocationsRetention attaches the ADR-134 PR-B invocations
+// sweep: deletes rows whose result_retention_until has passed and
+// transitions (pending|dispatching) rows whose deadline_at has
+// passed to dead_letter. Same nil-skip semantics as WithRetention.
+func (l *Loop) WithInvocationsRetention(r *InvocationsRetention) *Loop {
+	l.invocationsRetention = r
+	return l
+}
+
+// WithTriggersRetention attaches the ADR-134 PR-E trigger_records
+// retention sweep. Same nil-skip semantics as WithInvocationsRetention.
+func (l *Loop) WithTriggersRetention(r *TriggersRetention) *Loop {
+	l.triggersRetention = r
 	return l
 }
 
@@ -580,6 +598,25 @@ func (l *Loop) Run(ctx context.Context) error {
 		defer delay.Stop()
 		retentionFirst = delay.C
 	}
+	// ADR-134 PR-B: invocations retention + deadline-breach sweep.
+	// 60s cadence matches the cron sweep (cronT below); both
+	// sweeps are read-only SELECTs over partial indexes and cost
+	// single-digit ms each. nil = no ticker fires the case.
+	var invocationsRetentionT *time.Ticker
+	if l.invocationsRetention != nil {
+		invocationsRetentionT = time.NewTicker(60 * time.Second)
+		defer invocationsRetentionT.Stop()
+	}
+	// ADR-134 PR-E: trigger_records retention sweep. 5-minute
+	// cadence — terminal trigger_records are produced at a much
+	// lower rate than terminal invocations (every batch creates
+	// one row, not one row per event), so a 5-min sweep is
+	// plenty resolution. nil = opt out.
+	var triggersRetentionT *time.Ticker
+	if l.triggersRetention != nil {
+		triggersRetentionT = time.NewTicker(5 * time.Minute)
+		defer triggersRetentionT.Stop()
+	}
 	// Heartbeat ticker (issue #97 / ADR-025 axis 3, PR #114).
 	// Per-node liveness sweep: ping each active compute_node,
 	// stamp last_heartbeat_at on success or flip active=false
@@ -784,6 +821,10 @@ func (l *Loop) Run(ctx context.Context) error {
 			retentionFirst = nil
 		case <-retentionTick(retentionT):
 			l.runRetention(ctx)
+		case <-invocationsRetentionTick(invocationsRetentionT):
+			l.runInvocationsRetention(ctx)
+		case <-triggersRetentionTick(triggersRetentionT):
+			l.runTriggersRetention(ctx)
 		case <-fireNowT.C:
 			// PR-D / issue #791: safety sweep. Picks up rows that
 			// missed a NotifyCronRunNow delivery (Postgres bounce,
@@ -838,6 +879,24 @@ func watchdogTick(t *time.Ticker) <-chan time.Time {
 // separate so each ticker type's name shows up in stack traces if
 // a future regression corrupts the channel wiring.
 func retentionTick(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
+// invocationsRetentionTick mirrors retentionTick for the ADR-134
+// PR-B invocations sweep.
+func invocationsRetentionTick(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
+// triggersRetentionTick mirrors retentionTick for the ADR-134
+// PR-E trigger_records sweep.
+func triggersRetentionTick(t *time.Ticker) <-chan time.Time {
 	if t == nil {
 		return nil
 	}
@@ -1051,6 +1110,42 @@ func (l *Loop) runRetention(ctx context.Context) {
 	}
 	if deleted > 0 {
 		l.log.Info("retention: swept", "deleted", deleted)
+	}
+}
+
+// runInvocationsRetention dispatches one tick of the ADR-134 PR-B
+// invocations sweep (retention + deadline breach). Mirrors
+// runRetention's shape: tick errors are logged + swallowed (the
+// sweep is idempotent and a transient DB blip retries next tick).
+func (l *Loop) runInvocationsRetention(ctx context.Context) {
+	if l.invocationsRetention == nil {
+		return
+	}
+	retentionDeleted, deadlineForced, err := l.invocationsRetention.SweepOnce(ctx)
+	if err != nil {
+		l.log.Warn("invocations retention: sweep failed", "err", err)
+		return
+	}
+	if retentionDeleted > 0 || deadlineForced > 0 {
+		l.log.Info("invocations retention: swept",
+			"deleted", retentionDeleted,
+			"deadline_forced", deadlineForced)
+	}
+}
+
+// runTriggersRetention dispatches one tick of the ADR-134 PR-E
+// trigger_records sweep. Same shape as runInvocationsRetention.
+func (l *Loop) runTriggersRetention(ctx context.Context) {
+	if l.triggersRetention == nil {
+		return
+	}
+	deleted, err := l.triggersRetention.SweepOnce(ctx, 1000)
+	if err != nil {
+		l.log.Warn("trigger_records retention: sweep failed", "err", err)
+		return
+	}
+	if deleted > 0 {
+		l.log.Info("trigger_records retention: swept", "deleted", deleted)
 	}
 }
 

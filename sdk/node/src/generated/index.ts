@@ -270,6 +270,7 @@ export type { RekeyProgress } from './models/RekeyProgress.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';
 export type { RepoResponse } from './models/RepoResponse.js';
 export type { RetryDeploymentRequest } from './models/RetryDeploymentRequest.js';
+export type { RetryPolicyDTO } from './models/RetryPolicyDTO.js';
 export type { RollbackOperatorRuntimeConfigRequest } from './models/RollbackOperatorRuntimeConfigRequest.js';
 export type { RollbackRequest } from './models/RollbackRequest.js';
 export type { RolloutTransitionResponse } from './models/RolloutTransitionResponse.js';

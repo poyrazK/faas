@@ -228,7 +228,7 @@ func NameIsValid(name string) bool {
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
 //	""                   — unknown / not in Names
 //
-// The grouping mirrors the doc structure on docs.gregale.dev/templates:
+// The grouping mirrors the template sections in the public docs site:
 // hello/function are the "just run it" tier, stateless-contract
 // scaffolds are the "BYO managed service" tier, ai is the LLM tier.
 // Adding a template means a new entry in BOTH Names AND this switch.

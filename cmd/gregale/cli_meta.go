@@ -22,7 +22,7 @@
 // Field naming tracks the conventional "what the user typed"
 // shape — Short is the one-line summary that surfaces in
 // `gregale help` and `gregale completion <shell>`; DocSlug is
-// the docs.gregale.dev/cli/<DocSlug> page; Subcommands lists the
+// consolidated CLI docs page; Subcommands lists the
 // verbs the dispatcher recognises (the dispatcher in each
 // commands_*.go file is the source of truth for verb spellings —
 // the manifest mirrors them).
@@ -33,8 +33,8 @@ package main
 type cliCommand struct {
 	// Name is the literal the user types: "apps", "delayed-task", etc.
 	Name string
-	// DocSlug is the slug appended to docs.gregale.dev/cli/<DocSlug>;
-	// mirrors the second arg of every PrintUsage call (output.go:156).
+	// DocSlug is the stable manifest topic passed to PrintUsage. The
+	// public web app resolves command topics on its consolidated CLI page.
 	DocSlug string
 	// Short is the one-line summary shown in `gregale help` and the
 	// per-shell completion script's description list. Should fit on
@@ -401,7 +401,7 @@ var cliCommands = []cliCommand{
 			// preview flags. The Short text mirrors the wire-
 			// contract headline (slug, mutex with --only) without
 			// re-litigating the ADR-124 partition semantic — that's
-			// docs.gregale.dev territory.
+			// public docs site territory.
 			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)"},
 			{Name: "show-affected", Short: "render the WillDeploy + Skipped + Unaffected + Removed partition (ADR-124)"},
 			// ADR-124 follow-up #3 (PR-B commit 5): write-side

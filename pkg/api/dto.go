@@ -3162,6 +3162,32 @@ type InvokeRequest struct {
 	Headers json.RawMessage `json:"headers,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Path    string          `json:"path,omitempty"`
+	// DeadlineAt (ADR-134 PR-B): optional hard-stop. Must be
+	// within (now + Limits.MaxAsyncInvocationDeadlineSeconds) or
+	// the handler rejects with invalid_deadline_at.
+	DeadlineAt *time.Time `json:"deadline_at,omitempty"`
+	// RetryPolicy (ADR-134 PR-B): optional per-row override of
+	// the plan-default retry curve. Stored verbatim in
+	// invocations.retry_policy JSONB; the drain decodes it
+	// through dispatch.RetryPolicy.
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	// RetentionSeconds (ADR-134 PR-B): optional override of the
+	// plan-default retention horizon. 0 means "use the plan
+	// default" (Limits.MaxAsyncResultRetentionSeconds); any
+	// positive integer sets invocations.result_retention_until =
+	// completed_at + RetentionSeconds.
+	RetentionSeconds *int `json:"retention_seconds,omitempty"`
+}
+
+// RetryPolicyDTO is the wire shape for dispatch.RetryPolicy. Lives
+// in pkg/api so the SDK can type the override without importing
+// pkg/dispatch directly; the handler decodes the DTO into a
+// dispatch.RetryPolicy before persisting to JSONB.
+type RetryPolicyDTO struct {
+	MaxAttempts   int     `json:"max_attempts,omitempty"`
+	BaseSeconds   float64 `json:"base_seconds,omitempty"`
+	MaxSeconds    float64 `json:"max_seconds,omitempty"`
+	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
 }
 
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
@@ -3207,6 +3233,22 @@ type Invocation struct {
 	Attempts       int             `json:"attempts"`
 	LastError      string          `json:"last_error,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
+	// DeadlineAt (ADR-134 PR-B): optional hard-stop. The drain
+	// transitions the row to dead_letter when this time passes.
+	DeadlineAt *time.Time `json:"deadline_at,omitempty"`
+	// RetryPolicyJSON (ADR-134 PR-B): optional JSON-encoded
+	// dispatch.RetryPolicy. Lazy-decoded by the drain via
+	// state.Invocation.RetryPolicy().
+	RetryPolicyJSON json.RawMessage `json:"retry_policy,omitempty"`
+	// ResultRetentionUntil (ADR-134 PR-B): optional explicit
+	// retention horizon. NULL means "use the plan default"
+	// (Limits.MaxAsyncResultRetentionSeconds).
+	ResultRetentionUntil *time.Time `json:"result_retention_until,omitempty"`
+	// LastReplayedAt (ADR-134 PR-C): when this row was most
+	// recently replayed from a dead_letter parent via
+	// POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL
+	// until the first replay.
+	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 }
 
 // ListInvocationsResponse is the wire shape for GET /v1/invocations.

@@ -135,11 +135,11 @@ func renderManTop(w io.Writer) {
 		_, _ = fmt.Fprintln(w, ".RE")
 	})
 	manSection(w, "SEE ALSO", func(w io.Writer) {
-		_, _ = fmt.Fprintf(w, ".UR %scompletion\n", docsURLBase)
+		_, _ = fmt.Fprintf(w, ".UR %s\n", cliDocsURL)
 		_, _ = fmt.Fprintln(w, "gregale completion (bash|zsh|fish|powershell)")
 		_, _ = fmt.Fprintln(w, ".UE")
 		_, _ = fmt.Fprintln(w, ".PP")
-		_, _ = fmt.Fprintf(w, ".UR %s\n", docsURLBase)
+		_, _ = fmt.Fprintf(w, ".UR %s\n", docsSiteURL)
 		_, _ = fmt.Fprintln(w, "gregale docs")
 		_, _ = fmt.Fprintln(w, ".UE")
 	})
@@ -214,11 +214,11 @@ func renderManCommand(w io.Writer, c cliCommand) {
 		})
 	}
 	manSection(w, "SEE ALSO", func(w io.Writer) {
-		_, _ = fmt.Fprintf(w, ".UR %s%s\n", docsURLBase, c.DocSlug)
+		_, _ = fmt.Fprintf(w, ".UR %s\n", cliDocsURL)
 		_, _ = fmt.Fprintf(w, "gregale %s (docs)\n", c.Name)
 		_, _ = fmt.Fprintln(w, ".UE")
 		_, _ = fmt.Fprintln(w, ".PP")
-		_, _ = fmt.Fprintf(w, ".UR %s\n", docsURLBase)
+		_, _ = fmt.Fprintf(w, ".UR %s\n", docsSiteURL)
 		_, _ = fmt.Fprintln(w, "gregale(1) top-level manual")
 		_, _ = fmt.Fprintln(w, ".UE")
 	})

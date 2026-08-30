@@ -373,7 +373,7 @@ func envPush(args []string) int {
 			}
 			return printErr("Secret scan rejected the push",
 				&StrictSecretScanError{Findings: wireFindings,
-					Hint: "move detected secrets to `gregale secrets set` (see https://docs.gregale.dev/cli/secrets)"})
+					Hint: "move detected secrets to `gregale secrets set` (see " + cliDocsURL + ")"})
 		}
 		if len(findings) > 0 {
 			renderEnvPushScanWarnings(findings, osStderr)

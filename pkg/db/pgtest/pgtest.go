@@ -11,11 +11,13 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 )
@@ -58,7 +60,15 @@ func Open(t *testing.T) *pgxpool.Pool {
 	// them per-schema instead would register the extension against a schema we
 	// later drop, hiding the type from the next test (and racing across packages
 	// that share the cluster).
-	if _, err := boot.Exec(ctx, "create extension if not exists citext schema public"); err != nil {
+	//
+	// pg_extension's unique constraint on name races when two packages install
+	// concurrently — the CREATE EXTENSION IF NOT EXISTS does an internal
+	// existence check + insert that isn't atomic against itself. Hold a
+	// session-scoped advisory lock keyed on the extension name so the second
+	// caller waits for the first to commit; the IF NOT EXISTS makes the
+	// second call a no-op on retry. Review finding on PR #1205 / pg shard 2b
+	// flake (2026-08-30).
+	if err := installExtensionOnce(ctx, boot, "citext", "public"); err != nil {
 		boot.Close()
 		t.Fatalf("pgtest: install citext: %v", err)
 	}
@@ -120,6 +130,53 @@ func randomSchema(t *testing.T) string {
 		t.Fatalf("pgtest: rand: %v", err)
 	}
 	return "faas_test_" + hex.EncodeToString(b[:])
+}
+
+// installExtensionOnce creates ext in schema (typically "public") and is safe
+// under parallel callers. pg_extension has a unique constraint on name, and
+// the `CREATE EXTENSION IF NOT EXISTS` path is two SQL operations (select +
+// insert) that race against itself when two test packages on the same cluster
+// install at once — the second call hits 23505 ("duplicate key value violates
+// unique constraint pg_extension_name_index"). Serialise on a session-scoped
+// advisory lock keyed off a stable hash of (ext, schema), then retry once if
+// the constraint still trips. Lock releases on session close so we don't leak
+// it across the cluster.
+func installExtensionOnce(ctx context.Context, pool *pgxpool.Pool, ext, schema string) error {
+	lockID := int64(0xfa05_0001) ^ int64(hashKey(ext+":"+schema))
+	if _, err := pool.Exec(ctx, "select pg_advisory_lock($1)", lockID); err != nil {
+		return err
+	}
+	defer func() { _, _ = pool.Exec(ctx, "select pg_advisory_unlock($1)", lockID) }()
+	if _, err := pool.Exec(ctx, fmt.Sprintf("create extension if not exists %s schema %s", ext, schema)); err != nil {
+		// 23505 = unique_violation. The race is a 1-in-N transient — retry once
+		// after a short sleep and assume the other caller committed.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			time.Sleep(50 * time.Millisecond)
+			if _, err2 := pool.Exec(ctx, fmt.Sprintf("create extension if not exists %s schema %s", ext, schema)); err2 == nil {
+				return nil
+			} else {
+				return err2
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// hashKey is FNV-1a 64-bit — used to derive an int64 advisory-lock key from
+// a short string. We don't need crypto strength; collisions across the
+// handful of (ext, schema) pairs in pgtest are not a problem because the
+// lock is only contention-fencing, not a security boundary.
+func hashKey(s string) uint64 {
+	const offset uint64 = 0xcbf29ce484222325
+	const prime uint64 = 0x100000001b3
+	h := offset
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= prime
+	}
+	return h
 }
 
 // SchemaOf returns the search_path the pool was opened with (the per-test

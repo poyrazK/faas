@@ -1559,7 +1559,7 @@ func scanAndRedactEnvFiles(srcDir string, mode secretScanMode) (overrides map[st
 	// findings (not just the first) so the customer sees the full list
 	// and can fix every line in one pass.
 	if mode.isStrict() && len(findings) > 0 {
-		return overrides, findings, &StrictSecretScanError{Findings: findings, Hint: "move detected secrets to `gregale secrets set` (see https://docs.gregale.dev/cli/secrets)"}
+		return overrides, findings, &StrictSecretScanError{Findings: findings, Hint: "move detected secrets to `gregale secrets set` (see " + cliDocsURL + ")"}
 	}
 	return overrides, findings, errors.Join(errs...)
 }

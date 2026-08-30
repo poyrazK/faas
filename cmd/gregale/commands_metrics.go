@@ -38,7 +38,7 @@ import (
 // the line carries the stable docs site pointer.
 const metricsCmdUsage = "usage: gregale metrics <slug> [--range 5m] | --account [--range 5m]"
 
-// metricsCmdDocsTopic is the docs topic slug appended to docsURLBase
+// metricsCmdDocsTopic is the docs topic slug passed to PrintUsage
 // when PrintUsage emits the trailing "Docs:" row. Keeps the CLI's
 // help line stable across command additions.
 const metricsCmdDocsTopic = "metrics"
@@ -172,7 +172,7 @@ func sortStrings(xs []string) { sort.Strings(xs) }
 const throttleSuggestionsCmdUsage = "usage: gregale throttle-suggestions <slug> [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]"
 
 // throttleSuggestionsCmdDocsTopic is the docs topic slug appended
-// to docsURLBase when PrintUsage emits the trailing "Docs:" row.
+// when PrintUsage emits the trailing "Docs:" row.
 const throttleSuggestionsCmdDocsTopic = "throttle-suggestions"
 
 // cmdThrottleSuggestions implements

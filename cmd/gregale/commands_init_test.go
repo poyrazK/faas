@@ -123,7 +123,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			// The "next steps" hint must mention the storage docs URL
 			// (the canonical external-storage page, UX spec §8) so the
 			// customer lands on the right docs regardless of template.
-			if !strings.Contains(stdout.String(), "https://docs.gregale.dev/storage") {
+			if !strings.Contains(stdout.String(), storageDocsURL) {
 				t.Errorf("stdout missing docs URL; got: %q", stdout.String())
 			}
 		})
@@ -282,7 +282,7 @@ func TestCmdInit_HelpFlagShowsDocs(t *testing.T) {
 	if !strings.Contains(got, "--template") || !strings.Contains(got, "--path") {
 		t.Errorf("usage missing flags; got: %q", got)
 	}
-	if !strings.Contains(got, "docs.gregale.dev") {
+	if !strings.Contains(got, docsSiteURL) {
 		t.Errorf("usage missing docs URL; got: %q", got)
 	}
 }
@@ -373,7 +373,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		}
 	}
 	// Trailing docs link so the customer lands on the canonical page.
-	if !strings.Contains(out, "docs.gregale.dev/templates") {
+	if !strings.Contains(out, cliDocsURL) {
 		t.Errorf("--list missing docs URL; output:\n%s", out)
 	}
 }
@@ -444,7 +444,7 @@ func TestCmdInit_PreservesStdoutBytes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("runCmdInit = %d, want 0; captured=%q", code, captured.String())
 	}
-	if !strings.Contains(captured.String(), "https://docs.gregale.dev/storage") {
+	if !strings.Contains(captured.String(), storageDocsURL) {
 		t.Errorf("explicit stdout buffer missing docs URL; got: %q", captured.String())
 	}
 	if throwaway.Len() != 0 {

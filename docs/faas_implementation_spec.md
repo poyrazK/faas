@@ -1162,6 +1162,66 @@ with the templated peak MB ≈ 384 + plan cap 256 within the tripwire
 budget. Runs on `make test-metal` (x86_64) or `make metal-lima`
 (M3+ Mac).
 
+### 6.7 Durable async-job contract (ADR-134, ADR-135)
+
+Every durable background job in Gregale — async invocations,
+delayed tasks, queues, cron, trigger records — runs against the same
+ten semantic guarantees. Producers migrate onto the contract
+gradually; the two schedd drains (`pkg/sched/drain.go` for
+`invocations`, `pkg/sched/dispatch_triggers.go` for `trigger_records`)
+already share the `pkg/dispatch.Job` interface.
+
+| # | Capability | Where it lives | Plan cap |
+|---|---|---|---|
+| 1 | Idempotency keys | `cmd/apid/server.go` idempotency middleware on every async route | n/a |
+| 2 | Durable leases | `pkg/lease.Manager` (CAS-with-token, `UPDATE ... WHERE lease_token=$N AND lease_expires_at<now()`) | n/a |
+| 3 | Explicit retry policy | per-row `retry_policy JSONB` on `invocations` + `trigger_records` | `MaxQueueAttempts` (plan-wide fallback) |
+| 4 | Exponential backoff with jitter | `pkg/dispatch.RetryPolicy.Backoff(attempt)` — same curve as the trigger drain's `computeRetryBackoff` | derived |
+| 5 | Cancellation | `state.CancelInvocation` + `state.CancelTriggerRecord` | n/a |
+| 6 | Deadline / timeout | per-row `deadline_at TIMESTAMPTZ` on both tables; reaper drops breaches to `state='dead_letter'` | `MaxAsyncInvocationDeadlineSeconds` |
+| 7 | DLQ replay | `state.RetryQueueDeadLetter` (same row → `state='pending'`), `state.RetryTriggerRecordByOperator` (new row tagged `Source=TriggerRecordReplay`) | n/a |
+| 8 | Per-account concurrency | counter-table pattern: `account_async_quota` with `current_inflight` atomic-increment under `current_inflight < max_inflight` cap-check | `MaxAsyncInvocationsPerAccount` |
+| 9 | Result retention | per-row `result_retention_until` + `pkg/sched/retention_invocations.go` (60s tick) / `retention_triggers.go` (5-min tick) | `MaxAsyncResultRetentionSeconds` |
+| 10 | Shared dispatch contract | `pkg/dispatch.Job` interface — both drains consume | n/a |
+
+**Why counter-table not live-count:** the per-account cap must be
+advisory across producers (async + queue + delayed + cron all share
+the same `current_inflight` counter). Live-count would require `SELECT
+COUNT(*)` per claim with an unlocked window — fine at low QPS, broken
+at the §12 200-invocations/sec/tenant target. Counter-table is one
+`UPDATE ... WHERE current_inflight < max_inflight RETURNING` row
+update per claim, atomic, no TOCTOU.
+
+**Why a wrapper type for `state.Invocation` to satisfy `dispatch.Job`:**
+Go forbids a field and a method of the same name on a struct, and
+`Job.ID()`, `Job.AppID()`, `Job.AccountID()` collide with the
+`Invocation` row's primary-key columns. `state.InvocationJobAdapter`
+embeds `Invocation` and proxies the three accessors; the other six
+methods are inherited via embedding. Compile-time check lives at
+`pkg/sched/drain_compile_test.go::TestDispatch_ContractCompiles`.
+
+**Migration slot dance:** PR-B claims slots 517-519; PR-C claims 520-522;
+PR-E claims 523-524. PR-A + PR-D ship with no migration (pure refactors).
+Real migrations land at 518, 519, 521, 522, 524; the `00XXX_reserve_slot.sql`
+fences are placeholders so a sibling PR branching from main does not
+accidentally land a real migration at one of those slots.
+
+**Two drains, one contract — NOT merging them.** The unified `invocations`
+drain (async / queue / delayed / cron share one row type) is migrated
+to `dispatch.Job` end-to-end. The `trigger_records` drain keeps its
+own FSM but now consumes the same `dispatch.RetryPolicy`,
+`dispatch.Lease`, `dispatch.DeadlinePolicy` types — see PR-C for the
+trigger-side wiring.
+
+**Spec compliance:** every `Limits` field added in ADR-134 lives in
+`pkg/api/limits.go` and is mirrored in `limits_test.go`'s 4-row parity
+table (Free / Hobby / Pro / Scale) — no inline limits anywhere in the
+codebase. Test `TestPlanLimitsMatchSpec` is the gate; it fails CI if
+any row drifts.
+
+**§17 gap closure:** G-Async-Retention and G-Account-Concurrency close
+on this PR landing.
+
 ---
 
 ## 7. Networking
@@ -1619,6 +1679,8 @@ Conventions (agents: treat as lint): errors wrapped with `%w` + operation contex
 | G17 | **Wake-boot telemetry is blind** — `wake.boot_started` / `wake.boot_completed` events carry no info on *why* an instance started or what was queueing when it admitted. Cloud Run's per-cold-start `trigger` field has no Gregale analog; operators investigating Hobby-tier latency regressions cannot distinguish a request-driven cold-boot from a cron fire from a scale-up | **RESOLVED (ADR-123, this PR + PR-A follow-on):** additive fields on `BootStarted` + `BootCompleted` payloads — closed `trigger` enum (`gateway` / `floor` / `floor.deployment` / `scaleup` / `targets` / `cron.schedule` / `cron.manual` / `meterd`, see `pkg/sched/triggers.go`), `queued_count` (`ledger.Concurrency(app.ID)` at admit), `concurrency_at_admit` (same reading; 0 is cold start), `at_capacity` (true when `admitGate`'s `wakeAdmit` branch observed `concurrency+1 >= maxConc`, PR-A), `ready_in_ms` (`boot_completed.at - boot_started.at` via LEFT JOIN LATERAL, PR-A). Stamped via new `bootInput` fields + new `trigger string` parameter on `Engine.Wake` / `Engine.AdmitInstance` / `Engine.AdmitInstanceForDeployment` / `Engine.EnsureWake` / `scheddgrpc.Server.{Wake,AdmitInstance,EnsureWake}` / `gateway.Backend.Admit` / `gateway.Scheduler.{AdmitInstance,EnsureWake}` / `scheddgrpc.Client.{AdmitInstance,EnsureWake}`. Gated by the existing `events_wake_id_idx` partial index (migration 00114); no new migration strictly required (the optional analytics index is deferred). Surfaced via the existing `/v1/apps/{slug}/wakes/{wake_id}/timeline` endpoint, the CLI `gregale wake-timeline` (new `triggers: …` histogram header + per-event `trigger=… q=N c=N` context line), the dashboard "Recent wakes" table on `/dashboard/apps/{slug}` (five columns: Trigger / Queued / Concurrency / At cap / Ready), the new dedicated `/dashboard/apps/{slug}/wake-timeline` per-app wake-narrative page (24h summary card + 50-row table, PR-A), and the wake-boot telemetry pre-fill on `RecentInstanceItem`. Wire is additive per ADR-016 — pre-ADR-123 schedd + gateway pairs observe byte-identical behaviour | M8.5 |
 | G18 | **`gregalectl` operator CLI surface drift** — the operator-only CLI (`cmd/gregalectl/`, 15 top-level commands, 44 leaf verbs) shipped per issue #911 / ADR-110 PR-6.5 is referenced by `Makefile` (build-clis, manifest-ansible, metal-lima-splitbox), 5 ansible roles (`control_plane_service`, `vmmd_service`, `log_archive`, `compute_only_service`, `githubd_service`, `builderd_service`, `firecracker`), `cmd/deployctl/upgrade.go` (4 verbs), `scripts/pre-release-check.sh`, and 4 e2e suites — but had no spec row, no docs/ops coverage beyond ~5 verbs, and no CI-pinned wire-shape discipline. The pre-investigation audit found: `backup init` dispatched-but-unimplemented; `manifest ansible` referenced by Makefile but absent from `cli_meta.go`; `release kgv init` aliased-but-deprecated with no deprecation line; `host-age status` / `prune-previous` / `sign-keys status` / `sign-keys rotate` had explicit "future patch" TODOs for `--json`; `compute-nodes list|show` and `pki list` (--daemon filter) were missing read-only introspection leaves; the doctor had literal panics in argument parsing; the operator quickstart covered ~10% of the binary | **RESOLVED (this mega-PR, no ADR — no architecture change):** wired `backup init` (Cluster A1); added `manifest ansible` to `cli_meta.go` (A2); corrected the stale header comment (A3); added `release kgv init` alias with deprecation line (A4); added `--json` to host-age status/prune-previous + sign-keys status/rotate + `--keep-old-pub` archive (B1-B4); added `compute-nodes list|show --json [--active-only]` + `pki list --json [--daemon] [--box-role]` (C1-C2); replaced doctor panics with error-returning parse + defensive-default finding (E1); rewrote `docs/ops/gregalectl-operator-quickstart.md` to cover all 44 verbs across 8 lifecycle sections (D1); added `gregalectl checks` section to `docs/ci-required-checks.md` (D2); documented the gate matrix here (G18 row, D3). Drift guards `commands_completion_test.go::TestCompletion_ManifestDrift` (dispatcher ↔ cli_meta ↔ comment header) and `json_parity_test.go::TestJSONOutputHonored` (every `--json`-honouring dispatcher has a `_test.go` exercise) prevent regressions on future PRs | M8 |
 | G19 | **Per-deployment protocol selector knob never reached the wire** — PR #1023 / ADR-124 landed the customer-facing `apps.app_protocol ∈ {http1, http2, grpc}` closed-set field (default `http1`), and `gatewayd-internal` stamps `x-faas-protocol` for downstream observability, but the framing the guest's `:8080` actually receives is still HTTP/1.1 + chunked regardless of the customer's choice. A customer running `app_protocol=grpc` gets their gRPC trailers back through the edge as plain `Trailer:` headers over H1+chunked; the in-guest server only sees H1. The reason is `cmd/vmmd-stream-bridge` (issue #686 / PR #750): it speaks H2C inbound from the vmmd side but **re-frames to H1+chunked** before talking to the guest at `10.0.0.2:<port>`. The framing transition is the load-bearing gap; ADR-124 was the customer-side knob, the inner-leg wire-shape follow-on was always a separate ADR | **RESOLVED (ADR-126, this PR):** the bridge grew a per-stream framing switch (`FAAS_BRIDGE_PROTOCOL ∈ {h1, h2c}` read per-request from env, mirroring `FAAS_STREAM_BRIDGE_VERSION` per ADR-028). `app_protocol=http1` rides the legacy H1+chunked path verbatim (zero behavior change for every existing customer); `app_protocol ∈ {http2, grpc}` rides the new H2C terminator (`handleH2CStream` in `cmd/vmmd-stream-bridge/h2c_terminator.go`) which originates HTTP/2 prior-knowledge frames to the guest via `golang.org/x/net/http2.Transport{AllowHTTP:true}`. Wire-additive proto bump per ADR-016 (`ForwardHTTPRequestInit.app_protocol = string`; `ForwardHTTPResponseInit.trailers` for gRPC trailer HEADERS forwarding). Guest-side listener opts into H2C via stdlib `srv.Protocols.SetUnencryptedHTTP2(true)` (Go 1.24+); every shipped runner (`go124`, `node22`, `node24`, `python312`, `python313`) routes through the shared `internal.ListenAndServeH2C` helper so the closed-set behavior is uniform. Two rollback switches: `FAAS_BRIDGE_PROTOCOL=h1` (per-vmmd surgical, per ADR-126 §Decision 7) and `FAAS_STREAM_BRIDGE_VERSION=v1` (wholesale shell-bridge fallback, pre-existing ADR-028 amendment). Snapshot invalidation is contained to the opt-in slice — every app adopting `app_protocol ∈ {http2, grpc}` must adopt the new h2c-capable base image; the `app_protocol=http1` slice stays valid forever. Coverage: `pkg/vmmdgrpc/forward_v2_internal_test.go::TestStreamBridgeEnv_AppProtocolWiring`, `TestAppProtocolToBridgeProtocol_ClosedSet`; `cmd/vmmd-stream-bridge/framing_test.go` (per-stream env lookup + hop-by-hop); `cmd/vmmd-stream-bridge/h2c_terminator_test.go` (unary + gRPC trailers + dial-failure); `guest/runners/internal/h2c_listener_test.go` (H2 prior-knowledge + H1 fallback); `cmd/e2e/bridge_h2c_terminator_e2e_test.go` (real bridge binary against a loopback H2C guest listener); metal sibling at `cmd/e2e/bridge_h2c_terminator_metal_test.go` documents the §14 M8 row 5 acceptance gates for `make test-metal` | M8.5 |
+| G-Async-Retention | **Async result retention unbounded** — `pkg/sched/retention.go` only prunes `instances`; `invocations` and `trigger_records` rows accumulate forever. A Hobby tenant running 1 RPS of async triggers for a year ends up with 31.5 M rows, ~3 GB of dead data the dashboard has to scan past on every list. | **RESOLVED (ADR-135, this PR):** per-row `result_retention_until TIMESTAMPTZ` on `invocations` + `trigger_records`, customer-controlled via `InvokeRequest.RetentionSeconds` (clamped by `Limits.MaxAsyncResultRetentionSeconds` per plan: Free 86400 / Hobby 604800 / Pro 2592000 / Scale 7776000). Reapers: `pkg/sched/retention_invocations.go` 60s tick / batch 500 (terminal-state rows with `result_retention_until < now()`), `pkg/sched/retention_triggers.go` 300s tick / batch 1000 (terminal-state rows). Partial index `(account_id, result_retention_until) WHERE result_retention_until IS NOT NULL` keeps the reaper scan cheap. Emits `invocations_reaped_total` + `trigger_records_reaped_total` Prometheus counters. Default retention for unset rows: plan-max ceiling (customers opt down, never up). | M7 |
+| G-Account-Concurrency | **No per-account async concurrency cap** — `MaxQueueDepth` was per-app (`apps.max_queue_depth`, plan-bounded), but a customer could register N apps each with `max_queue_depth=plan_max` and run N × cap concurrent invocations across the account. The financial model assumes one cap per account (the GB-h math depends on it) | **RESOLVED (ADR-134, this PR):** counter-table pattern `account_async_quota (account_id UUID PK, max_inflight INT, current_inflight INT DEFAULT 0, updated_at TIMESTAMPTZ, CHECK max_inflight >= 0, CHECK current_inflight >= 0)`. `pkg/sched.drain.ClaimInvocationWithCap` does `UPDATE ... SET current_inflight = current_inflight + 1 WHERE account_id = $1 AND current_inflight < max_inflight RETURNING ...` in the same tx as the claim — atomic, no TOCTOU. `DecrementAccountAsyncInflight` fires from every terminal transition (`CompleteInvocation`, `FailInvocation`, `CancelInvocation`) so the counter stays balanced even on crash + drain-loop restart. `EnsureAccountAsyncQuota` lazily creates the row on first invoke with `max_inflight = Limits.MaxAsyncInvocationsPerAccount` (Free 100 / Hobby 1000 / Pro 10000 / Scale 100000). On cap hit, the drain leaves the row in `state='pending'` and the next tick retries — no error returned to the customer until the call attempts to claim through a downstream gate. Plan matrix lives at `pkg/api/limits.go`; `TestPlanLimitsMatchSpec` is the gate | M7 |
 
 ---
 

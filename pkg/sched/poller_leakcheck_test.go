@@ -61,7 +61,12 @@ func TestTriggerPollers_RegistryComplete(t *testing.T) {
 // Close() coverage in pkg/sched/poller_<kind>_test.go (commits
 // #9-12).
 func TestTriggerPollers_BrokerCloseIsIdempotent(t *testing.T) {
-	t.Parallel()
+	// NOT t.Parallel(): the leakcheck measures runtime.NumGoroutine(),
+	// which is package-global. With t.Parallel, sibling tests' goroutines
+	// (pgxpool workers, NATS dials, etc.) race the before/after snapshot
+	// and produce false positives under CI load — review finding on
+	// PR #1205 / pure Go shard 1 flake (2026-08-30). Serial execution
+	// keeps the goroutine budget clean for this test to own.
 
 	p := &queuePoller{
 		pool:          nil, // Close must not dereference this
@@ -77,8 +82,10 @@ func TestTriggerPollers_BrokerCloseIsIdempotent(t *testing.T) {
 		t.Errorf("Close #2 returned %v", err)
 	}
 
-	// Wait + GC so the runtime retires idle goroutines.
-	deadline := time.Now().Add(500 * time.Millisecond)
+	// Wait + GC so the runtime retires idle goroutines. 2s is generous
+	// but pgxpool worker teardown + the finalizer that pgxpool uses to
+	// close idle conns can take >500ms under CI load.
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		runtime.Gosched()
 	}

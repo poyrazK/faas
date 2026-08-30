@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -50,11 +49,8 @@ func TestDocsURLForCode_KnownCodes(t *testing.T) {
 	for _, code := range codes {
 		t.Run(code, func(t *testing.T) {
 			got := docsURLForCode(code)
-			if got == docsURLPrefix {
-				t.Errorf("code %q has no per-code entry; add one to errorDocsURL", code)
-			}
-			if !strings.HasPrefix(got, docsURLPrefix) {
-				t.Errorf("code %q → URL %q should start with %q", code, got, docsURLPrefix)
+			if got != cliDocsURL && got != deployFromSourceDocsURL {
+				t.Errorf("code %q → URL %q is not a valid public docs route", code, got)
 			}
 		})
 	}

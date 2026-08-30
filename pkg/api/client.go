@@ -1188,18 +1188,16 @@ func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResp
 // need to scope the call. See ADR-045.
 func (c *Client) GetInstances(ctx context.Context, before string, limit int) (ListInstancesResponse, error) {
 	var out ListInstancesResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
 	path := "/v1/instances"
-	if before != "" || limit > 0 {
-		path += "?"
-		if before != "" {
-			path += "before=" + before
-		}
-		if limit > 0 {
-			if before != "" {
-				path += "&"
-			}
-			path += "limit=" + strconv.Itoa(limit)
-		}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
@@ -1329,7 +1327,9 @@ func (c *Client) GetCron(ctx context.Context, id string) (CronResponse, error) {
 func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, error) {
 	path := "/v1/crons"
 	if slug != "" {
-		path += "?slug=" + slug
+		q := url.Values{}
+		q.Set("slug", slug)
+		path += "?" + q.Encode()
 	}
 	var out []CronResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
@@ -1414,7 +1414,9 @@ func (c *Client) PostTriggersIdResume(ctx context.Context, id string) error {
 func (c *Client) GetTriggersIdRecords(ctx context.Context, id, state string) (ListTriggerRecordsResponse, error) {
 	path := "/v1/triggers/" + id + "/records"
 	if state != "" {
-		path += "?state=" + state
+		q := url.Values{}
+		q.Set("state", state)
+		path += "?" + q.Encode()
 	}
 	var out ListTriggerRecordsResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
@@ -1436,7 +1438,9 @@ func (c *Client) PostTriggersIdRecordsRidDrop(ctx context.Context, id, recordID 
 func (c *Client) GetTriggersIdDlq(ctx context.Context, id, reason string) (ListTriggerDeadLetterResponse, error) {
 	path := "/v1/triggers/" + id + "/dlq"
 	if reason != "" {
-		path += "?reason=" + reason
+		q := url.Values{}
+		q.Set("reason", reason)
+		path += "?" + q.Encode()
 	}
 	var out ListTriggerDeadLetterResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
@@ -1930,6 +1934,18 @@ func (c *Client) GetInvocation(ctx context.Context, id string) (Invocation, erro
 func (c *Client) ReplayInvocation(ctx context.Context, id string) (AsyncInvokeResponse, error) {
 	var out AsyncInvokeResponse
 	return out, c.do(ctx, "POST", "/v1/invocations/"+id+"/replay", nil, &out)
+}
+
+// QueueDeadLetterReplay resets a dead-letter queue row back to
+// 'pending' with attempts=0 so the drain picks it up again. ADR-134
+// PR-C closes the previously-missing queue DLQ replay path —
+// distinct from ReplayInvocation (which enqueues a NEW row tagged
+// Source=InvocationReplay). This endpoint mutates the row in place
+// so the dashboard's replay history view can track the chain on a
+// single row id.
+func (c *Client) QueueDeadLetterReplay(ctx context.Context, slug, id string) (AsyncInvokeResponse, error) {
+	var out AsyncInvokeResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/dead_letter/"+id+"/replay", nil, &out)
 }
 
 // API keys.
@@ -2477,7 +2493,13 @@ func (c *Client) DeleteAppsSlugEnvKey(ctx context.Context, slug, key string) err
 // Empty month falls back to the server's default (current month).
 func (c *Client) GetUsage(ctx context.Context, month string) ([]UsageResponse, error) {
 	var out []UsageResponse
-	return out, c.do(ctx, "GET", "/v1/usage?month="+month, nil, &out)
+	path := "/v1/usage"
+	if month != "" {
+		q := url.Values{}
+		q.Set("month", month)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // GetAppMetrics returns the per-app metrics snapshot for slug over
@@ -2488,7 +2510,9 @@ func (c *Client) GetAppMetrics(ctx context.Context, slug, rng string) (AppMetric
 	var out AppMetricsResponse
 	path := "/v1/apps/" + slug + "/metrics"
 	if rng != "" {
-		path += "?range=" + rng
+		q := url.Values{}
+		q.Set("range", rng)
+		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
@@ -2676,7 +2700,9 @@ func (c *Client) GetAppsMetrics(ctx context.Context, rng string) (AppsMetricsRes
 	var out AppsMetricsResponse
 	path := "/v1/apps/metrics"
 	if rng != "" {
-		path += "?range=" + rng
+		q := url.Values{}
+		q.Set("range", rng)
+		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
@@ -2691,7 +2717,9 @@ func (c *Client) GetAppSLO(ctx context.Context, slug, window string) (AppSLOResp
 	var out AppSLOResponse
 	path := "/v1/apps/" + slug + "/slo"
 	if window != "" {
-		path += "?window=" + window
+		q := url.Values{}
+		q.Set("window", window)
+		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
@@ -2704,7 +2732,9 @@ func (c *Client) GetAccountSLO(ctx context.Context, window string) (AccountSLORe
 	var out AccountSLOResponse
 	path := "/v1/account/slo"
 	if window != "" {
-		path += "?window=" + window
+		q := url.Values{}
+		q.Set("window", window)
+		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
@@ -2833,7 +2863,9 @@ func (c *Client) UsageSummary(ctx context.Context, month string) (UsageSummaryRe
 	var out UsageSummaryResponse
 	path := "/v1/usage/summary"
 	if month != "" {
-		path += "?month=" + month
+		q := url.Values{}
+		q.Set("month", month)
+		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
@@ -2844,7 +2876,9 @@ func (c *Client) UsageSummary(ctx context.Context, month string) (UsageSummaryRe
 // ambiguous "current day" semantics from the SDK side.
 func (c *Client) UsageDaily(ctx context.Context, day string) (DailyUsageListResponse, error) {
 	var out DailyUsageListResponse
-	return out, c.do(ctx, "GET", "/v1/usage/daily?day="+day, nil, &out)
+	q := url.Values{}
+	q.Set("day", day)
+	return out, c.do(ctx, "GET", "/v1/usage/daily?"+q.Encode(), nil, &out)
 }
 
 // StorageUsage returns the per-(app, day) snapshot+layer byte rollup
@@ -2852,7 +2886,9 @@ func (c *Client) UsageDaily(ctx context.Context, day string) (DailyUsageListResp
 // 400s on empty. Informational only — not billed today.
 func (c *Client) StorageUsage(ctx context.Context, day string) (StorageUsageListResponse, error) {
 	var out StorageUsageListResponse
-	return out, c.do(ctx, "GET", "/v1/usage/storage?day="+day, nil, &out)
+	q := url.Values{}
+	q.Set("day", day)
+	return out, c.do(ctx, "GET", "/v1/usage/storage?"+q.Encode(), nil, &out)
 }
 
 // ListDeployments returns a single page of deployments with a
@@ -2860,12 +2896,16 @@ func (c *Client) StorageUsage(ctx context.Context, day string) (StorageUsageList
 // commit 2) to walk every page automatically.
 func (c *Client) ListDeployments(ctx context.Context, before string, limit int) (DeploymentListResponse, error) {
 	var out DeploymentListResponse
-	path := "/v1/deployments?"
+	q := url.Values{}
 	if before != "" {
-		path += "before=" + before + "&"
+		q.Set("before", before)
 	}
 	if limit > 0 {
-		path += "limit=" + fmt.Sprintf("%d", limit)
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/deployments"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
@@ -3277,16 +3317,15 @@ func (c *Client) ListOrgInvitationsAll(ctx context.Context, slug string) ([]OrgI
 func (c *Client) ListOrgInvitations(ctx context.Context, slug, before string, limit int) (InvitationListResponse, error) {
 	var out InvitationListResponse
 	path := "/v1/orgs/" + slug + "/invitations"
-	if before != "" || limit > 0 {
-		path += "?"
-		sep := ""
-		if before != "" {
-			path += "before=" + before
-			sep = "&"
-		}
-		if limit > 0 {
-			path += sep + "limit=" + strconv.Itoa(limit)
-		}
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
@@ -3541,7 +3580,9 @@ func (c *Client) ListAppDataUpstreams(ctx context.Context, slug string) ([]DataU
 func (c *Client) ListAppDataUpstreamsWithQuota(ctx context.Context, slug, scope string) ([]DataUpstreamResponse, int, int, error) {
 	path := "/v1/apps/" + slug + "/upstreams"
 	if scope != "" {
-		path += "?scope=" + scope
+		q := url.Values{}
+		q.Set("scope", scope)
+		path += "?" + q.Encode()
 	}
 	var out DataUpstreamListResponse
 	if err := c.do(ctx, "GET", path, nil, &out); err != nil {

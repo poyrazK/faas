@@ -10,8 +10,17 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// Compile-time guarantee the unified invocations drain depends on
+// the pkg/dispatch contract (ADR-134 §6.7). The drain consumes
+// RetryPolicy, DeadlinePolicy, and dispatch.Job once per-row
+// fields land on the invocations table in PR-B; today only the
+// type dependency is wired so a future API change to pkg/dispatch
+// surfaces in this file's compile, not at runtime.
+var _ dispatch.JobKind = dispatch.JobKindInvocation
 
 // ErrPermanentInvoke is the sentinel the gateway returns when an
 // envelope is permanently undeliverable (4xx — bad payload, app
@@ -310,7 +319,17 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	// 3. Claim.
-	if _, err := d.store.ClaimInvocation(ctx, inv.ID, "", d.wakeLeaseSeconds); err != nil {
+	cap := d.accountAsyncCap(ctx, inv)
+	if _, err := d.store.ClaimInvocationWithCap(ctx, inv.ID, "", d.wakeLeaseSeconds, cap); err != nil {
+		if errors.Is(err, state.ErrQuotaExceeded) {
+			// Per-account cap hit (ADR-134 PR-B). Leave the row
+			// in 'pending' so the next tick retries after a
+			// sibling completes. Counting it as a 'skip' here
+			// keeps the drain from looping hot on a full cap.
+			d.log.Info("drain: account async cap hit; deferring claim",
+				"inv", inv.ID, "app_id", inv.AppID, "cap", cap)
+			return
+		}
 		// Already-claimed (MemStore ErrNotFound, PgStore race): the
 		// "skip locked" path caught us on the next LIST. Skip.
 		return
@@ -489,4 +508,26 @@ func (d *Drain) queueAttemptBudget(ctx context.Context, inv state.Invocation) in
 		return 0
 	}
 	return api.MustLimitsFor(acct.Plan).MaxQueueAttempts
+}
+
+// accountAsyncCap (ADR-134 PR-B) returns the per-plan cap on
+// concurrent in-flight async invocations for the account owning
+// inv. Resolved via the same AppByID → AccountByID → MustLimitsFor
+// chain as queueAttemptBudget. Returns 0 on any lookup error so
+// the drain refuses to claim (the safe degrade — see comment on
+// queueAttemptBudget for the rationale).
+func (d *Drain) accountAsyncCap(ctx context.Context, inv state.Invocation) int {
+	app, err := d.engine.Store().AppByID(ctx, inv.AppID)
+	if err != nil {
+		d.log.WarnContext(ctx, "accountAsyncCap: AppByID failed; falling back to 0 cap",
+			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
+		return 0
+	}
+	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
+	if err != nil {
+		d.log.WarnContext(ctx, "accountAsyncCap: AccountByID failed; falling back to 0 cap",
+			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
+		return 0
+	}
+	return api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
 }

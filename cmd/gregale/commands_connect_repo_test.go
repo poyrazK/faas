@@ -15,9 +15,9 @@ import (
 )
 
 // TestCmdConnectRepo_OpensDashboard pins the happy-path URL.
-// The dashboard's /dashboard/apps/new?repo=OWNER/NAME route is
-// wired in PR-3; until then the URL 404s server-side but the CLI
-// shape is what the customer-facing contract locks in.
+// The dashboard's /dashboard/apps/new?repo=OWNER%2FNAME route is
+// the browser handoff. The encoded query value is decoded by the
+// dashboard router back to the GitHub owner/name string.
 func TestCmdConnectRepo_OpensDashboard(t *testing.T) {
 	rec := withRecorder(t)
 	t.Setenv("FAAS_API", "https://api.example.test")
@@ -27,7 +27,7 @@ func TestCmdConnectRepo_OpensDashboard(t *testing.T) {
 	if len(rec.urls) != 1 {
 		t.Fatalf("recorded urls = %d, want 1", len(rec.urls))
 	}
-	want := "https://api.example.test/dashboard/apps/new?repo=poyrazK/gregale"
+	want := "https://api.example.test/dashboard/apps/new?repo=poyrazK%2Fgregale"
 	if rec.urls[0] != want {
 		t.Errorf("url = %q, want %q", rec.urls[0], want)
 	}
@@ -111,7 +111,7 @@ func TestCmdConnectRepo_JSONOutput(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout not valid JSON: %v\noutput: %s", err, stdout.String())
 	}
-	if got["url"] != "https://api.example.test/dashboard/apps/new?repo=poyrazK/gregale" {
+	if got["url"] != "https://api.example.test/dashboard/apps/new?repo=poyrazK%2Fgregale" {
 		t.Errorf("json url = %v, want the dashboard apps-new URL", got["url"])
 	}
 	if got["service"] != svcRepo {
@@ -138,7 +138,7 @@ func TestCmdConnect_RepoRoutesToCmdConnectRepoEndToEnd(t *testing.T) {
 	if len(rec.urls) != 1 {
 		t.Fatalf("recorded urls = %d, want 1", len(rec.urls))
 	}
-	want := "https://api.example.test/dashboard/apps/new?repo=poyrazK/gregale"
+	want := "https://api.example.test/dashboard/apps/new?repo=poyrazK%2Fgregale"
 	if rec.urls[0] != want {
 		t.Errorf("url = %q, want %q", rec.urls[0], want)
 	}
@@ -155,17 +155,14 @@ func TestCmdConnect_RepoUnknownServiceErrors(t *testing.T) {
 	}
 }
 
-// TestDashboardAppsNewURL pins the URL helper. query-parameter
-// encoding is intentional (validateRepoSlug constrains the input
-// to [A-Za-z0-9._-], so the separator '/' is the only character
-// that needs to be preserved verbatim).
+// TestDashboardAppsNewURL pins the URL helper's query-parameter encoding.
 func TestDashboardAppsNewURL(t *testing.T) {
 	cases := []struct {
 		api, repo, want string
 	}{
-		{"https://api.example.test", "poyrazK/gregale", "https://api.example.test/dashboard/apps/new?repo=poyrazK/gregale"},
-		{"https://api.example.test/", "poyrazK/gregale", "https://api.example.test/dashboard/apps/new?repo=poyrazK/gregale"},
-		{"http://localhost:8080", "octo/api", "http://localhost:8080/dashboard/apps/new?repo=octo/api"},
+		{"https://api.example.test", "poyrazK/gregale", "https://api.example.test/dashboard/apps/new?repo=poyrazK%2Fgregale"},
+		{"https://api.example.test/", "poyrazK/gregale", "https://api.example.test/dashboard/apps/new?repo=poyrazK%2Fgregale"},
+		{"http://localhost:8080", "octo/api", "http://localhost:8080/dashboard/apps/new?repo=octo%2Fapi"},
 	}
 	for _, c := range cases {
 		if got := dashboardAppsNewURL(c.api, c.repo); got != c.want {

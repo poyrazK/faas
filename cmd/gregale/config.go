@@ -112,10 +112,7 @@ func effectiveKeyring() keyringStub {
 
 // apiBase returns the API base URL, overridable via $FAAS_API for local/dev.
 func apiBase() string {
-	if v := os.Getenv("FAAS_API"); v != "" {
-		return strings.TrimRight(v, "/")
-	}
-	return defaultAPIBase
+	return normalizeAPIBase(os.Getenv("FAAS_API"))
 }
 
 // tokenPath is where the CLI persists the auth token (legacy file

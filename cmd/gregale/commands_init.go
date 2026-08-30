@@ -39,7 +39,6 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // initCmdUsage is the top-of-failure-line shown for `gregale init` errors.
@@ -47,9 +46,7 @@ import (
 // carries the stable docs site pointer.
 const initCmdUsage = "usage: gregale init --template <name> --path <dir> [--deploy] [--name <slug>] | --list"
 
-// initCmdDocsTopic is the docs topic slug appended to docsURLBase when
-// PrintUsage emits the trailing "Docs:" row. Keeps the CLI's help line
-// stable across template additions.
+// initCmdDocsTopic identifies the CLI help topic passed to PrintUsage.
 const initCmdDocsTopic = "init"
 
 // cmdInit is the dispatcher for `gregale init`. Parses flags, validates,
@@ -113,7 +110,7 @@ func runCmdInitList(stdout io.Writer) int {
 			_, _ = fmt.Fprintf(stdout, "  %s\n", n)
 		}
 	}
-	_, _ = fmt.Fprintf(stdout, "Docs: https://"+wire.DocsHost+"/templates\n")
+	_, _ = fmt.Fprintf(stdout, "Docs: %s\n", cliDocsURL)
 	return 0
 }
 
@@ -176,7 +173,7 @@ func runCmdInit(tpl, dest string, deploy bool, name string, stdout, stderr io.Wr
 	for _, line := range nextStepsFor(tpl) {
 		_, _ = fmt.Fprintf(stdout, "  %s\n", line)
 	}
-	PrintProgress(stdout, "Docs: https://"+wire.DocsHost+"/storage")
+	PrintProgress(stdout, "Docs: %s", storageDocsURL)
 
 	// Step 7: optional deploy chain. When --deploy is set, we hand off
 	// to cmdDeployTarball with --template + --name; cmdDeployTarball

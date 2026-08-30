@@ -38,6 +38,20 @@ func TestAPIBase_OverrideTrimsTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestAPIBase_NormalizesBareHost(t *testing.T) {
+	t.Setenv("FAAS_API", " api.example.com/// ")
+	if got := apiBase(); got != "https://api.example.com" {
+		t.Errorf("apiBase() = %q, want https scheme and no trailing slashes", got)
+	}
+}
+
+func TestAPIBase_PreservesExplicitScheme(t *testing.T) {
+	t.Setenv("FAAS_API", "http://127.0.0.1:8081///")
+	if got := apiBase(); got != "http://127.0.0.1:8081" {
+		t.Errorf("apiBase() = %q, want explicit http scheme preserved", got)
+	}
+}
+
 func TestTokenPath_UsesUserConfigDir(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir) // honour on Linux; ignored on macOS where ~/Library/Application Support is used.
@@ -947,10 +961,10 @@ func TestAPIError_FallbackURLAlwaysThreeLines(t *testing.T) {
 		code string
 		want string // substring the third line should contain
 	}{
-		{"plan_limit_apps", api.CodePlanLimitApps, docsURLPrefix + "/plan-limit-apps"},
-		{"build_undetected", api.CodeBuildUndetected, docsURLPrefix + "/build/detect"},
-		{"billing_past_due", api.CodeBillingPastDue, docsURLPrefix + "/billing"},
-		{"capacity", api.CodeCapacity, docsURLPrefix + "/capacity"},
+		{"plan_limit_apps", api.CodePlanLimitApps, cliDocsURL},
+		{"build_undetected", api.CodeBuildUndetected, deployFromSourceDocsURL},
+		{"billing_past_due", api.CodeBillingPastDue, cliDocsURL},
+		{"capacity", api.CodeCapacity, cliDocsURL},
 		{"unknown_code_falls_back_to_generic", "no_such_code_xyz", docsURLPrefix},
 	}
 	for _, tc := range cases {

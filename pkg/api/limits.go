@@ -372,6 +372,36 @@ type Limits struct {
 	// 'dead_letter' state value + partial index).
 	MaxQueueAttempts int
 
+	// MaxAsyncInvocationsPerAccount (ADR-134 PR-B) is the cap on
+	// concurrent in-flight async invocations (state='dispatching')
+	// per account. Enforced atomically with the claim transition
+	// via the account_async_quota counter table. Scale plan
+	// (100k) is well below the published
+	// MaxInvocationsPerAccountTotal so the gauge has headroom for
+	// bursts. Free=100, Hobby=1k, Pro=10k, Scale=100k mirror the
+	// MaxQueueAttempts ratio.
+	MaxAsyncInvocationsPerAccount int
+
+	// MaxAsyncInvocationDeadlineSeconds (ADR-134 PR-B) is the
+	// per-plan default deadline (seconds) the drain enforces when
+	// the invocation row carries no per-row deadline_at override.
+	// Free=300s (5m), Hobby=3600s (1h), Pro=21600s (6h),
+	// Scale=86400s (24h). The handler validates that any
+	// per-row DeadlineAt is <= MaxAsyncInvocationDeadlineSeconds
+	// from now (or 0 means unlimited if the plan is the top tier).
+	MaxAsyncInvocationDeadlineSeconds int
+
+	// MaxAsyncResultRetentionSeconds (ADR-134 PR-B) is the
+	// per-plan default retention horizon for completed / failed /
+	// dead_letter / cancelled invocations. Rows older than
+	// completed_at + this many seconds are eligible for deletion
+	// by pkg/sched/retention_invocations.go. Free=86400s (1d),
+	// Hobby=604800s (7d), Pro=2592000s (30d), Scale=7776000s (90d).
+	// Customers who need longer set the per-row
+	// result_retention_until override on enqueue (or via the SDK's
+	// RetentionSeconds hint on InvokeRequest).
+	MaxAsyncResultRetentionSeconds int
+
 	// LogDeploymentFilterMax (issue #517 / PR-B, AC3) caps how
 	// many concurrent `?deployment=` filters a customer may scope
 	// their log stream to. The wire surface is single-valued today
@@ -1385,6 +1415,13 @@ var planLimits = map[Plan]Limits{
 		// budget == 0, but Free customers never reach the queue
 		// surface so the path is unreachable.
 		MaxQueueAttempts: 0,
+		// ADR-134 PR-B: Free's per-account cap is 100 — enough for
+		// the documented Hobby-customer-trying-Free path; tighter than
+		// Hobby so a customer mid-upgrade sees the cap before the
+		// plan flips. Deadline defaults to 5m, retention to 1d.
+		MaxAsyncInvocationsPerAccount:     100,
+		MaxAsyncInvocationDeadlineSeconds: 300,
+		MaxAsyncResultRetentionSeconds:    86400,
 		// Autoscale (issue #169 / #172): Free stays off. The per-request
 		// cost envelope already covers Free's load shape, and a "scale
 		// up" trigger on a 1-concurrency plan is meaningless.
@@ -1707,6 +1744,11 @@ var planLimits = map[Plan]Limits{
 		// keeps re-trying a bad payload would otherwise burn the
 		// per-app rps budget and starve the rest of the queue.
 		MaxQueueAttempts: 3,
+		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
+		// from Free's 100/5m/1d.
+		MaxAsyncInvocationsPerAccount:     1000,
+		MaxAsyncInvocationDeadlineSeconds: 3600,
+		MaxAsyncResultRetentionSeconds:    604800,
 		// Autoscale: Hobby is gated on Pro+ for both RPS and CPU
 		// (2026-07-28: ADR-037 amendment — Hobby→Pro re-tier on
 		// ScaleUpTargetRPSAllowed). CPU-driven scaling is gated
@@ -2059,6 +2101,11 @@ var planLimits = map[Plan]Limits{
 		// exits the worker pool within ~50 s at the default retry
 		// backoff (5 s).
 		MaxQueueAttempts: 10,
+		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
+		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
+		MaxAsyncInvocationsPerAccount:     10000,
+		MaxAsyncInvocationDeadlineSeconds: 21600,
+		MaxAsyncResultRetentionSeconds:    2592000,
 		// ADR-031: Pro gets 16 CIDR entries — enough for "1 SaaS +
 		// 1 webhook + 1 monitoring + ~10 partner integrations" which
 		// is the typical Pro-tier reachability graph.
@@ -2388,6 +2435,13 @@ var planLimits = map[Plan]Limits{
 		// minute. Above 25 is irrational — that's 2 minutes at the
 		// 5 s default backoff.
 		MaxQueueAttempts: 25,
+		// ADR-134 PR-B: Scale 100k / 24h / 90d. The 24h deadline
+		// matches the cron-handler SLA spec ("must finish by 09:00"
+		// pattern); 90d retention matches the audit-grade trace
+		// retention target.
+		MaxAsyncInvocationsPerAccount:     100000,
+		MaxAsyncInvocationDeadlineSeconds: 86400,
+		MaxAsyncResultRetentionSeconds:    7776000,
 		// ADR-031: Scale gets 64 CIDR entries — broad enough for
 		// SaaS-scale apps with many upstream integrations; doubling
 		// the Pro budget tracks the doubling in DeployedApps (25 -> 100).

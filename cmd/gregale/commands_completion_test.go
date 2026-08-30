@@ -590,9 +590,9 @@ func firstLine(s string) string {
 // The completion + man subsystem (Tier A8, PR #752) treats the manifest
 // as the source of truth — every manifest entry shows up in completion
 // scripts and gets a man page. PrintUsage(..., topic) (cmd/gregale/output.go:156)
-// builds the docs URL the same way (`docs.gregale.dev/cli/<topic>`),
-// so the topic string must resolve to a cliCommand.DocSlug or Name;
-// otherwise the man page and the --help URL point at a 404.
+// resolves command topics through the public consolidated CLI docs page,
+// so the topic string must still resolve to a cliCommand.DocSlug or Name;
+// otherwise the manifest and the --help URL can drift.
 //
 // The test walks every PrintUsage(...) call site in cmd/gregale/ via
 // go/ast (same machinery as extractMainCaseArms above) and asserts
@@ -621,7 +621,7 @@ func TestUsageDocSlugParity(t *testing.T) {
 		"auth":        "login/logout/whoami share the auth docs page",
 		"apps":        "gregale app <slug> family uses apps (manifest entry app has DocSlug=apps)",
 		"park-wake":   "park + wake share the park-wake docs page",
-		"account-slo": "gregale account slo [--window X] is a sibling docs page under /cli/slo",
+		"account-slo": "gregale account slo [--window X] is a sibling topic under the CLI docs page",
 		// ADR-124 code-review fix #2 — `deployments exclude clear` is
 		// the operator escape hatch for dropping a stale persisted
 		// exclusion. The dispatch lives on the parent `deployments`

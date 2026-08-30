@@ -164,6 +164,12 @@ func resolveScanSource(
 		return path, filepath.Base(path) + ".tar.gz", func() { _ = os.Remove(path) }, nil
 	}
 	if repo != "" {
+		if err := validateRepoSlug(repo); err != nil {
+			return "", "", func() {}, fmt.Errorf("invalid --repo: %w", err)
+		}
+		if err := validateGitHubRef(ref); err != nil {
+			return "", "", func() {}, fmt.Errorf("invalid --ref: %w", err)
+		}
 		if installID <= 0 {
 			return "", "", func() {}, errors.New("--repo requires --install-id")
 		}
@@ -203,6 +209,10 @@ func resolveScanSource(
 // Curl+sha256+tar pattern mirrors CI's vacuum binary download
 // (memory note: ci-vacuum-binary-download).
 func fetchRepoTarball(repoFullName, ref string, installID int64) (string, error) {
+	downloadURL, err := githubTarballURL(repoFullName, ref)
+	if err != nil {
+		return "", err
+	}
 	f, err := os.CreateTemp("", "gregale-repo-*.tar.gz")
 	if err != nil {
 		return "", err
@@ -214,11 +224,10 @@ func fetchRepoTarball(repoFullName, ref string, installID int64) (string, error)
 		_ = os.Remove(path)
 		return "", fmt.Errorf("read install token: %w", err)
 	}
-	url := fmt.Sprintf("https://api.github.com/repos/%s/tarball/%s", repoFullName, ref)
 	cmd := exec.Command("curl", "-sSL", "--fail-with-body",
 		"-H", "Authorization: Bearer "+token,
 		"-H", "Accept: application/vnd.github+json",
-		"-o", path, url)
+		"-o", path, downloadURL)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.Remove(path)
 		return "", fmt.Errorf("curl: %w: %s", err, string(out))

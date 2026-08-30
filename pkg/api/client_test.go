@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -434,6 +435,46 @@ func TestListDeploymentsAll_WalksCursor(t *testing.T) {
 	}
 	if got[0].ID != "d1" || got[2].ID != "d3" {
 		t.Errorf("ordering: got %v, want [d1 d2 d3]", []string{got[0].ID, got[1].ID, got[2].ID})
+	}
+}
+
+func TestListDeployments_EncodesCursor(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	cursor := "2026-08-30T12:34:56.123456789Z"
+	if _, err := c.ListDeployments(context.Background(), cursor, 25); err != nil {
+		t.Fatalf("ListDeployments: %v", err)
+	}
+	want := "before=" + url.QueryEscape(cursor) + "&limit=25"
+	if gotQuery != want {
+		t.Errorf("RawQuery = %q, want %q", gotQuery, want)
+	}
+}
+
+func TestListOrgInvitations_EncodesCursor(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"invitations":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	cursor := "cursor+/="
+	if _, err := c.ListOrgInvitations(context.Background(), "acme", cursor, 50); err != nil {
+		t.Fatalf("ListOrgInvitations: %v", err)
+	}
+	want := "before=" + url.QueryEscape(cursor) + "&limit=50"
+	if gotQuery != want {
+		t.Errorf("RawQuery = %q, want %q", gotQuery, want)
 	}
 }
 

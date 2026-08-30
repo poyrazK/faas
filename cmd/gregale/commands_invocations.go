@@ -40,7 +40,7 @@ import (
 const invocationGetCmdUsage = "usage: gregale invocations get [--json|--replay] <id>"
 
 // invocationCmdDocsTopic is the docs topic slug appended to
-// docsURLBase when PrintUsage emits the trailing "Docs:" row. Kept
+// PrintUsage when it emits the trailing "Docs:" row. Kept
 // on the plural "invocations" namespace since the singular form is
 // gone (issue #315 collapsed into `invocations get`).
 const invocationCmdDocsTopic = "invocations"

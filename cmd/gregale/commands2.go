@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -2595,8 +2596,8 @@ func cmdConnect(args []string) int {
 //
 // Subcommands (Tier A8.1):
 //   - docs [--slug <slug>]
-//     Opens docs.gregale.dev/cli/<slug> (or the top-level
-//     docs.gregale.dev when no slug is given) in the default
+//     Opens a public /docs/<slug> page when one exists, or the
+//     consolidated /docs/cli reference when no page exists, in the default
 //     browser. No API call needed — the docs site is the
 //     canonical help surface and is reachable without an
 //     authenticated session.
@@ -2680,12 +2681,12 @@ const docsOpenTopic = "open"
 // still gets the right page.
 //
 // Slug resolution:
-//   - positional arg: `gregale open docs apps` → /cli/apps
-//   - --slug flag:    `gregale open docs --slug queue` → /cli/queue
+//   - positional arg: `gregale open docs storage` → /docs/storage
+//   - --slug flag:    `gregale open docs --slug queue` → /docs/cli
 //   - both or neither is an error (mutually exclusive, but at
 //     least one is required — opening the bare docs root would
 //     be confusing; `gregale man` already covers that case).
-//   - empty slug defaults to the docs root (docs.gregale.dev).
+//   - empty slug defaults to the public docs root (/docs).
 //
 // The DocsTopic constant docsOpenTopic is exposed so the manifest
 // entry below can pin the docs URL slug for the `open` command's
@@ -2712,10 +2713,9 @@ func cmdOpenDocs(args []string) int {
 		PrintFail(os.Stderr, "too many positional args (got %d, want 0 or 1)", fs.NArg())
 		return 1
 	}
-	// Slug sanitization — the docs URL is rooted at /cli/<slug>,
-	// so any non-path-safe character (slash, percent, etc.) is
-	// stripped to '_' rather than silently percent-encoded. The
-	// caller gets a path that cannot escape /cli/.
+	// Slug sanitization keeps the JSON result deterministic. The public docs
+	// site has one consolidated CLI page, so command topics are resolved by
+	// docsURLForTopic rather than appended to a retired per-command route.
 	safeSlug := sanitizeSlugForURL(slug)
 	// sanitizeSlugForURL returns appSlugFallback ("app") for the
 	// empty string — that's the dashboardAppURL contract (never
@@ -2726,15 +2726,7 @@ func cmdOpenDocs(args []string) int {
 	if slug == "" {
 		safeSlug = ""
 	}
-	var target string
-	switch safeSlug {
-	case "":
-		// Top-level docs — strips the trailing /cli/ from
-		// docsURLBase so the landing page renders.
-		target = strings.TrimSuffix(docsURLBase, "/cli/")
-	default:
-		target = docsURLBase + safeSlug
-	}
+	target := docsURLForTopic(safeSlug)
 	if jsonOutput {
 		// JSON path — emit the resolved URL and exit without
 		// touching the browser. Scripting wrappers can pipe the
@@ -2776,12 +2768,12 @@ func dashboardAccountURL(api string) string {
 // The query parameter is the GitHub-style "owner/name" string the
 // customer already knows. The dashboard wizard decodes it (after
 // sessionAuth) and lists the customer's installable repos for the
-// selected installation. We deliberately do NOT url-encode here:
-// validateRepoSlug already constrained the input to [A-Za-z0-9._-],
-// so any '/' is the inseparable owner/name separator and '-_.'
-// are reserved per RFC 3986 unreserved set.
+// selected installation. Encode it as a query value so this helper
+// remains correct even when called outside the validated CLI path.
 func dashboardAppsNewURL(api, ownerRepo string) string {
-	return dashboardBaseURL(api) + "/dashboard/apps/new?repo=" + ownerRepo
+	q := url.Values{}
+	q.Set("repo", ownerRepo)
+	return dashboardBaseURL(api) + "/dashboard/apps/new?" + q.Encode()
 }
 
 // dashboardStatelessURL is the customer-facing landing page for the
@@ -3576,9 +3568,9 @@ func mapFailureMessage(err string) string {
 	case "user_error":
 		return "Build failed — see log above for the failing command."
 	case "oom":
-		return "Build ran out of memory (2 GB limit). Try fewer/smaller dependencies, or upgrade for a larger build. Docs: https://docs.gregale.dev/build/limits#memory"
+		return "Build ran out of memory (2 GB limit). Try fewer/smaller dependencies, or upgrade for a larger build. Docs: " + deployFromSourceDocsURL
 	case "timeout":
-		return "Build exceeded 10 min. Docs: https://docs.gregale.dev/build/limits#timeout"
+		return "Build exceeded 10 min. Docs: " + deployFromSourceDocsURL
 	case "infra":
 		return "Our build system hiccuped — we've been alerted and requeued your build automatically."
 	}

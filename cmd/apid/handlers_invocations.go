@@ -149,6 +149,17 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		Payload:   req.Payload,
 		Headers:   req.Headers,
 		DueAt:     time.Now().UTC(),
+		// PR-B fixup (code-review #1185 findings #7 + #8): wire the
+		// customer's deadline / retry-policy / retention overrides
+		// into the row. deadlineForRequest / retentionForRequest
+		// clamp each field to the plan's ceiling so a customer
+		// cannot bypass MaxAsyncInvocationDeadlineSeconds /
+		// MaxAsyncResultRetentionSeconds by sending an out-of-range
+		// value. RetryPolicy is the typed DTO; marshal to JSON for
+		// the JSONB column.
+		DeadlineAt:           deadlineForRequest(req.DeadlineAt, acct),
+		RetryPolicyJSON:      marshalRetryPolicy(req.RetryPolicy),
+		ResultRetentionUntil: retentionForRequest(req.RetentionSeconds, acct),
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("enqueue sync invoke"))
@@ -434,6 +445,78 @@ func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct 
 
 // ptrTime is a tiny adapter so delayedTaskGet can format *time.Time
 // without a nil-check at the call site.
+// retentionForRequest (ADR-134 PR-B / ADR-135) clamps the customer's
+// requested retention to the plan's MaxAsyncResultRetentionSeconds and
+// stamps ResultRetentionUntil for EnqueueInvocation.
+//
+// PR-B fixup (code-review #1185 finding #7): without this helper, the
+// per-plan Limits field is unreachable from production code — the
+// spec §17 G-Async-Retention gap closure requires the reaper to
+// actually have rows to delete. The "opt-down, never up" rule is
+// enforced by clamping: a customer asking for N seconds > plan max
+// gets plan max; N seconds <= plan max is honored verbatim; nil
+// (no override) defaults to the plan max.
+//
+// Returns nil only if the customer's plan has zero retention (a
+// configuration error — every plan row in limits.go has a positive
+// value, so nil is a defensive guard for a future PR that adds a
+// no-retention plan).
+func retentionForRequest(reqRetentionSeconds *int, acct state.Account) *time.Time {
+	limits := api.MustLimitsFor(acct.Plan)
+	if limits.MaxAsyncResultRetentionSeconds <= 0 {
+		return nil
+	}
+	seconds := limits.MaxAsyncResultRetentionSeconds
+	if reqRetentionSeconds != nil {
+		if *reqRetentionSeconds < 0 {
+			*reqRetentionSeconds = 0
+		}
+		if *reqRetentionSeconds < seconds {
+			seconds = *reqRetentionSeconds
+		}
+	}
+	t := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
+	return &t
+}
+
+// deadlineForRequest (ADR-134 PR-B / ADR-135) clamps the customer's
+// requested deadline to the plan's MaxAsyncInvocationDeadlineSeconds.
+// nil or past-now deadlines return nil (no enforcement); a future
+// deadline beyond the plan max is clamped to now + plan max.
+func deadlineForRequest(reqDeadline *time.Time, acct state.Account) *time.Time {
+	if reqDeadline == nil {
+		return nil
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if limits.MaxAsyncInvocationDeadlineSeconds <= 0 {
+		return nil
+	}
+	maxDeadline := time.Now().UTC().Add(time.Duration(limits.MaxAsyncInvocationDeadlineSeconds) * time.Second)
+	if reqDeadline.After(maxDeadline) {
+		return &maxDeadline
+	}
+	return reqDeadline
+}
+
+// marshalRetryPolicy (ADR-134 PR-B) converts the wire DTO into
+// the JSONB blob pgstore stores verbatim. Returns nil when the
+// customer didn't override — EnqueueInvocation's nullable column
+// then leaves retry_policy NULL and the drain falls back to the
+// plan default.
+func marshalRetryPolicy(p *api.RetryPolicyDTO) json.RawMessage {
+	if p == nil {
+		return nil
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		// json.Marshal on a typed struct cannot fail at runtime;
+		// the closure-form MarshalJSON could but RetryPolicyDTO
+		// has none. Defensive nil-return keeps the row consistent.
+		return nil
+	}
+	return raw
+}
+
 func ptrTime(t *time.Time) time.Time {
 	if t == nil {
 		return time.Time{}

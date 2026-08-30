@@ -1,6 +1,7 @@
 package state
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dispatch"
 )
 
 // Domain types mirroring the schema (spec §5). These are the rows apid and
@@ -2587,6 +2589,116 @@ type Invocation struct {
 	// nil while the row is non-terminal (pending / dispatching); the
 	// read surfaces render nil as "running". See InvocationOutcome.
 	Outcome *InvocationOutcome `json:"outcome,omitempty"`
+	// DeadlineAt is the absolute hard-stop time for this invocation
+	// (ADR-134 PR-B). NULL means "use the plan default"
+	// (MaxAsyncInvocationDeadlineSeconds from pkg/api.Limits). The
+	// drain's deadline-breach reaper reads this column and forces
+	// state='dead_letter' on rows whose deadline_at < now() while
+	// still in (pending|dispatching). Wired via pkg/dispatch.Job
+	// (accessor .Deadline() below).
+	DeadlineAt *time.Time `json:"deadline_at,omitempty"`
+	// RetryPolicyJSON is the per-row override of dispatch.RetryPolicy
+	// (ADR-134 PR-B). Raw JSON so pkg/state stays free of the
+	// dispatch import — pkg/sched unmarshals it lazily in
+	// (*Invocation).RetryPolicy() and falls back to the plan default
+	// when NULL.
+	RetryPolicyJSON json.RawMessage `json:"retry_policy,omitempty"`
+	// ResultRetentionUntil is the absolute horizon past which the
+	// retention reaper may DELETE this row (ADR-134 PR-B). NULL
+	// means "use the plan default"
+	// (MaxAsyncResultRetentionSeconds from pkg/api.Limits). The
+	// reaper is conservative: rows without an explicit override get
+	// MaxAsyncResultRetentionSeconds applied relative to
+	// completed_at; only rows whose override has actually elapsed
+	// are deleted.
+	ResultRetentionUntil *time.Time `json:"result_retention_until,omitempty"`
+	// LastReplayedAt (ADR-134 PR-C) is when this row was most
+	// recently replayed from a dead_letter parent via
+	// POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL
+	// until the first replay. Read by the dashboard's
+	// "DLQ replay history" view.
+	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
+}
+
+// RetryPolicy unmarshals RetryPolicyJSON into a pkg/dispatch.RetryPolicy.
+// Falls back to a zero-valued RetryPolicy when JSON is missing or
+// malformed — pkg/sched treats a zero RetryPolicy as "use the
+// plan default" (see pkg/dispatch.(*RetryPolicy).Backoff: returns 0
+// for an empty policy). The lazy decode keeps pkg/state free of a
+// pkg/dispatch import, which would otherwise invert the layer cake
+// (pkg/state is below pkg/sched which is below pkg/dispatch).
+func (inv Invocation) RetryPolicy() dispatch.RetryPolicy {
+	if len(inv.RetryPolicyJSON) == 0 {
+		return dispatch.RetryPolicy{}
+	}
+	var p dispatch.RetryPolicy
+	if err := json.Unmarshal(inv.RetryPolicyJSON, &p); err != nil {
+		return dispatch.RetryPolicy{}
+	}
+	return p
+}
+
+// Deadline returns the effective dispatch.DeadlinePolicy for this
+// invocation. Today only DeadlineAt is honoured (StartToCloseTimeout
+// is a future extension; the wire DTO does not yet expose it). When
+// DeadlineAt is nil the returned policy is the Zero value and the
+// drain falls back to the plan's MaxAsyncInvocationDeadlineSeconds.
+func (inv Invocation) Deadline() dispatch.DeadlinePolicy {
+	if inv.DeadlineAt == nil {
+		return dispatch.DeadlinePolicy{}
+	}
+	return dispatch.DeadlinePolicy{
+		DeadlineAt:          sql.NullTime{Time: *inv.DeadlineAt, Valid: true},
+		StartToCloseTimeout: 0,
+	}
+}
+
+// ID, AppID, AccountID dispatch.Job accessors cannot live on
+// Invocation directly: Go forbids a field and method of the same
+// name on the same struct, and those three names already exist as
+// fields. The adapter in `invocation_job_adapter.go` wraps
+// Invocation and proxies the accessors. Putting the adapter in
+// pkg/state (not pkg/sched) keeps the Job shape co-located with
+// the row type.
+//
+// The remaining dispatch.Job methods (Kind, Origin, RetryPolicy,
+// Deadline, CurrentAttempts, ErrorText, Snapshot) live on
+// Invocation directly because their method names do not collide
+// with the existing field names (Origin vs Source, ErrorText vs
+// LastError, the rest are derived). The adapter in
+// invocation_job_adapter.go inherits them via embedding.
+
+// Kind implements dispatch.Job. Every *state.Invocation is the
+// "invocation" JobKind.
+func (inv Invocation) Kind() dispatch.JobKind { return dispatch.JobKindInvocation }
+
+// Origin implements dispatch.Job. Mirrors the dispatchable surface
+// (async / queue / delayed / cron) so the drain can route on Origin
+// without re-reading Source. Named Origin because *state.Invocation
+// has a Source field of type InvocationSource.
+func (inv Invocation) Origin() string { return string(inv.Source) }
+
+// CurrentAttempts implements dispatch.Job. Mirrors the column-stored
+// Attempts counter so the drain's retry budget check can run via the
+// dispatch.Job interface without leaking through to state.Invocation's
+// struct shape.
+func (inv Invocation) CurrentAttempts() int { return inv.Attempts }
+
+// ErrorText implements dispatch.Job. Mirrors LastError. Named
+// ErrorText because *state.Invocation has a LastError string field.
+func (inv Invocation) ErrorText() string { return inv.LastError }
+
+// Snapshot implements dispatch.Job. Returns the row marshalled as
+// JSON so a later replay can reconstruct the row without re-reading
+// the table (PR-B's result-retention snapshot column). Returns nil
+// when the row fails to marshal — drains that want a non-nil
+// snapshot must guard.
+func (inv Invocation) Snapshot() []byte {
+	b, err := json.Marshal(inv)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // InvocationOutcome is the normalized, durable classification of a

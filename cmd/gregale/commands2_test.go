@@ -1368,12 +1368,12 @@ func TestMapFailureMessage_BuildLimitsDocsLinks(t *testing.T) {
 		{
 			name:       "oom",
 			errClass:   "oom",
-			wantSubstr: "https://docs.gregale.dev/build/limits#memory",
+			wantSubstr: deployFromSourceDocsURL,
 		},
 		{
 			name:       "timeout",
 			errClass:   "timeout",
-			wantSubstr: "https://docs.gregale.dev/build/limits#timeout",
+			wantSubstr: deployFromSourceDocsURL,
 		},
 	}
 	for _, tc := range cases {
@@ -1401,8 +1401,8 @@ func TestMapFailureMessage_BuildLimitsDocsLinks(t *testing.T) {
 }
 
 // TestCmdOpenDocs pins the open docs subcommand (Tier A8.1):
-//   - positional slug resolves to /cli/<slug>
-//   - --slug flag resolves to /cli/<slug>
+//   - command topics resolve to the consolidated /docs/cli page
+//   - curated page slugs resolve to their /docs/<slug> route
 //   - empty slug resolves to the docs root (not /cli/app —
 //     sanitizeSlugForURL's empty-input fallback is bypassed here)
 //   - two positionals is rejected
@@ -1427,13 +1427,13 @@ func TestCmdOpenDocs(t *testing.T) {
 		wantURLFrag string
 		wantSlug    string
 	}{
-		{"positional_slug", []string{"apps"}, 0, "/cli/apps", "apps"},
-		{"flag_slug", []string{"--slug", "queue"}, 0, "/cli/queue", "queue"},
+		{"positional_slug", []string{"apps"}, 0, cliDocsURL, "apps"},
+		{"flag_slug", []string{"--slug", "queue"}, 0, cliDocsURL, "queue"},
 		// "open docs" with no args at all resolves to the docs
 		// root, NOT /cli/app. This is the smoke-test case that
 		// catches the bug where sanitizeSlugForURL("") falls back
 		// to "app" instead of "".
-		{"no_args_resolves_to_root", []string{}, 0, "https://docs.gregale.dev", ""},
+		{"no_args_resolves_to_root", []string{}, 0, docsSiteURL, ""},
 		// Two positionals is rejected (the docs subcommand takes
 		// at most one positional).
 		{"two_positional_rejected", []string{"a", "b"}, 1, "", ""},
@@ -1500,8 +1500,8 @@ func TestCmdOpenDocs_DispatchesFromCmdOpen(t *testing.T) {
 	if got.Slug != "queue" {
 		t.Errorf("slug = %q, want %q", got.Slug, "queue")
 	}
-	if !strings.Contains(got.URL, "/cli/queue") {
-		t.Errorf("url = %q, want it to contain /cli/queue", got.URL)
+	if got.URL != cliDocsURL {
+		t.Errorf("url = %q, want %q", got.URL, cliDocsURL)
 	}
 }
 
