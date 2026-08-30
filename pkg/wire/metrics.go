@@ -1611,6 +1611,17 @@ type OpsMetrics struct {
 	// pkg/events/wake.go (extended by ADR-098 C11 to surface
 	// the three vmmd-side phase-decomposed wake timings).
 	wakePhaseEmitted *prometheus.CounterVec
+	// recoveryEventEmitted: Workstream B / issue #1184. Per-(kind,
+	// result) counter for pkg/events.Platform.EmitRecovery. kind is
+	// the substring after `node.` / `instance.` (e.g. "draining",
+	// "recovered", "migrated", "recreated"); result ∈ {ok, failed}.
+	// Closed kind set is pre-instantiated at boot so the recovery
+	// dashboard panel has a series to bucket into from the moment
+	// the daemon starts. Mirrors wakePhaseEmitted's single-registry
+	// shape — registered on every daemon, only schedd / apid
+	// increment via Platform.EmitRecovery in production; others sit
+	// at zero.
+	recoveryEventEmitted *prometheus.CounterVec
 	// wakePhaseDur: lifecycle histogram for wake phases. Same
 	// (phase, result) tuple as wakePhaseEmitted. Buckets sized
 	// for the wake envelope: queue→admit <100ms; boot <30s;
@@ -2914,6 +2925,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60,
 		},
 	}, []string{"phase", "result"})
+	// recoveryEventEmitted: Workstream B / issue #1184. Per-(kind,
+	// result) counter for pkg/events.Platform.EmitRecovery. kind is
+	// the substring after `node.` / `instance.` (e.g. "draining",
+	// "recovered", "migrated", "recreated", "failed"); result ∈
+	// {ok, failed}. Mirrors the wakePhaseEmitted single-registry
+	// pattern — registered on every daemon, only schedd / apid
+	// increment in production.
+	recoveryEventEmitted := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_recovery_event_emitted_total",
+		Help: "Count of recovery-timeline events emitted via pkg/events.Platform.EmitRecovery, labelled by kind (the substring after `node.` / `instance.`, e.g. `draining`, `drained`, `failed`, `recovered`, `migrated`, `recreated`) and result ∈ {ok, failed} (Workstream B / issue #1184, ADR-137). Single-registry: registered on every daemon; only schedd / apid increment via Platform.EmitRecovery. The closed 7-kind set is pre-instantiated at boot so the recovery-dashboard panel surfaces zero on an idle daemon.",
+	}, []string{"kind", "result"})
 	// commonCollectors is the per-daemon collector set that every
 	// prefix registers. PR-E adds ociEgressDeny to the set when
 	// prefix == "imaged" — keeping the common slice as a single source
@@ -2960,7 +2982,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		githubdPathFilterTotal,
 		throttleSecondsTotal, throttleRatio,
 		egressSourceErrors,
-		wakePhaseEmitted, wakePhaseDur,
+		wakePhaseEmitted, wakePhaseDur, recoveryEventEmitted,
 		// ADR-124 follow-up #2: plan_gate_rescued_by_exclude counter
 		// (12 pre-instantiated series). See planGateRescuedByExclude
 		// field declaration at line 292.
@@ -3733,6 +3755,22 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			wakePhaseDur.WithLabelValues(phase, result)
 		}
 	}
+	// Workstream B / issue #1184: pre-instantiate the closed
+	// 7-kind × 2-result label set for recoveryEventEmitted so the
+	// recovery-dashboard panel reads zero on an idle fleet rather
+	// than "no data" (mirrors the wakePhaseEmitted precedent
+	// above). The kind list mirrors the 7 constants in
+	// pkg/events/recovery.go — extending the recovery vocabulary
+	// requires extending this loop in lock-step. result ∈ {ok,
+	// failed}.
+	for _, kind := range []string{
+		"draining", "drained", "failed", "recovered",
+		"migrated", "recreated",
+	} {
+		for _, result := range []string{"ok", "failed"} {
+			recoveryEventEmitted.WithLabelValues(kind, result)
+		}
+	}
 	// Issue #667 / ADR-078: pre-instantiate the (plan × runtime ×
 	// outcome) cartesian for guestTailSeconds, the (plan × reason)
 	// cartesian for guestTailFailedTotal, and the plan set for
@@ -4080,6 +4118,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		githubdPathFilterTotal:               githubdPathFilterTotal,
 		wakePhaseEmitted:                     wakePhaseEmitted,
 		wakePhaseDur:                         wakePhaseDur,
+		recoveryEventEmitted:                 recoveryEventEmitted,
 		esmPollsTotal:                        esmPollsTotal,
 		esmRecordsConsumedTotal:              esmRecordsConsumedTotal,
 		esmLagSeconds:                        esmLagSeconds,
@@ -5875,6 +5914,24 @@ func (m *OpsMetrics) WakePhaseEmitted(phase, result string) prometheus.Counter {
 		return nil
 	}
 	return m.wakePhaseEmitted.WithLabelValues(phase, result)
+}
+
+// RecoveryEventEmitted returns the per-(kind, result) counter for
+// pkg/events.Platform.EmitRecovery (Workstream B / issue #1184,
+// ADR-137). kind is the substring after `node.` / `instance.`
+// (e.g. "draining", "drained", "failed", "recovered", "migrated",
+// "recreated"); result is "ok" on AppendEvent success or "failed"
+// on AppendEvent error. The returned Counter is safe to cache;
+// the underlying CounterVec is shared across labels. The callsite
+// (pkg/events) lives on the per-daemon Platform — the collector is
+// single-registry so any daemon can call it without a per-daemon
+// switch (matching the WakePhaseEmitted precedent above).
+// nil-safe on a nil receiver.
+func (m *OpsMetrics) RecoveryEventEmitted(kind, result string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.recoveryEventEmitted.WithLabelValues(kind, result)
 }
 
 // WakePhaseDuration returns the per-(phase, result) observer for
