@@ -3397,7 +3397,7 @@ func (h *Handler) dispatchFullRootfs(
 		// Force-on: honor regardless of plan / AllowAuto.
 		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
 	}
-	if dep.FullRootfsAllowAuto && api.PlanMeetsMinimumPlan(acct.Plan, api.PlanHobby) {
+	if dep.FullRootfsAllowAuto && api.PlanMeetsFullRootfs(acct.Plan) {
 		// Auto-dispatch: paid plans opt-in by default. Free plans
 		// must explicitly opt in via FullRootfsOverride=&true.
 		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)

@@ -325,10 +325,11 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	// /etc/passwd file is also written, mirroring the standard
 	// layout for any tooling that expects it. ADR-142 §Decision 3.
 	//
-	// Commit 7 reads a hard cap (256 entries). Commit 9 replaces
-	// the constant with the per-plan api.UserUIDOverrideMax table
-	// without changing the on-disk binary format.
-	if err := writePasswdTable(staging, passwdEntries, defaultPasswdTableMaxEntries); err != nil {
+	// Cap is the per-plan api.UserUIDOverrideMax[plan] (M-3 commit
+	// 9). Unknown plan → 0 cap (no entries written); the metric
+	// fires `over_cap` and the build still proceeds. Hobby 16 /
+	// Pro 64 / Scale 256.
+	if err := writePasswdTable(staging, passwdEntries, api.UserUIDOverrideMax[in.Plan]); err != nil {
 		return BuildResult{}, fmt.Errorf("rootfs: build passwd table: %w", err)
 	}
 
@@ -339,6 +340,17 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	sizeMB, err := CheckCapForStaging(limits, stats)
 	if err != nil {
 		return BuildResult{}, err
+	}
+	// M-3 commit 9 / ADR-141 §Decision 5: per-plan ceiling on
+	// the unpacked full-rootfs staging tree size. Hobby 256 MB /
+	// Pro 1 GB / Scale 4 GB; unknown plan → no extra cap (the
+	// two-drive AppLayerMaxMB check above still applies). The
+	// error path returns a stable CodeImageManifestInvalid so
+	// the dispatch site can map it via api.SentinelToCode.
+	if maxBytes, ok := api.MaxFullRootfsLayerBytes[in.Plan]; ok && maxBytes > 0 {
+		if stats.ContentBytes > maxBytes {
+			return BuildResult{}, api.ErrAppLayerTooLarge(limits, stats.ContentBytes)
+		}
 	}
 
 	// ADR-141 §Decision 5: SBOM emission runs on the full-rootfs
@@ -365,16 +377,6 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	}
 	return res, nil
 }
-
-// defaultPasswdTableMaxEntries is the per-build cap on the merged
-// /etc/passwd entries BuildFullRootfs writes into /etc/faas/app_passwd
-// (ADR-142 §Decision 4). Commit 9 widens this with the per-plan
-// api.UserUIDOverrideMax table (Hobby 16 / Pro 64 / Scale 256);
-// commit 7 ships a single fixed ceiling to keep the wire-up
-// reviewable in isolation. Images with more entries still build —
-// the excess is silently dropped at write time, with a metric
-// tripwire (`imaged_passwd_entries_total{outcome="over_cap"}`).
-const defaultPasswdTableMaxEntries = 256
 
 // passwdTablePath is the on-disk location of the binary passwd
 // table guest-init reads at boot. ADR-142 §Decision 3.

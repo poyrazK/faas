@@ -3025,3 +3025,88 @@ func TestPlanOpenAPIDocConstants(t *testing.T) {
 		t.Errorf("Scale.OpenAPIDocMaxBytes = %d, want %d", got, want)
 	}
 }
+
+// TestFullRootfsAllowedPlans_PlanMembership (M-3 commit 9 / ADR-141
+// §Decision 2). PlanFree must be absent; Hobby/Pro/Scale must be
+// present. Closed-set posture mirrors PlanMeetsMinimumPlan.
+func TestFullRootfsAllowedPlans_PlanMembership(t *testing.T) {
+	for _, p := range FullRootfsAllowedPlans {
+		if p == PlanFree {
+			t.Errorf("FullRootfsAllowedPlans must NOT include PlanFree (no auto-dispatch on Free)")
+		}
+	}
+	if !PlanMeetsFullRootfs(PlanHobby) {
+		t.Errorf("PlanMeetsFullRootfs(PlanHobby) = false; want true")
+	}
+	if !PlanMeetsFullRootfs(PlanPro) {
+		t.Errorf("PlanMeetsFullRootfs(PlanPro) = false; want true")
+	}
+	if !PlanMeetsFullRootfs(PlanScale) {
+		t.Errorf("PlanMeetsFullRootfs(PlanScale) = false; want true")
+	}
+	if PlanMeetsFullRootfs(PlanFree) {
+		t.Errorf("PlanMeetsFullRootfs(PlanFree) = true; want false (Free has no auto-dispatch)")
+	}
+	if PlanMeetsFullRootfs(Plan("unknown")) {
+		t.Errorf("PlanMeetsFullRootfs(unknown) = true; want false (closed-set)")
+	}
+}
+
+// TestUserUIDOverrideMax_PerPlan (M-3 commit 9 / ADR-142 §Decision 4).
+// Hobby 16 / Pro 64 / Scale 256. Free is 0 (Free cannot auto-dispatch).
+// Monotonic ladder: Hobby ≤ Pro ≤ Scale.
+func TestUserUIDOverrideMax_PerPlan(t *testing.T) {
+	cases := []struct {
+		plan Plan
+		want int
+	}{
+		{PlanFree, 0},
+		{PlanHobby, 16},
+		{PlanPro, 64},
+		{PlanScale, 256},
+	}
+	for _, tc := range cases {
+		if got := UserUIDOverrideMax[tc.plan]; got != tc.want {
+			t.Errorf("UserUIDOverrideMax[%s] = %d; want %d", tc.plan, got, tc.want)
+		}
+	}
+	// Monotonic ladder.
+	if !(UserUIDOverrideMax[PlanHobby] <= UserUIDOverrideMax[PlanPro] &&
+		UserUIDOverrideMax[PlanPro] <= UserUIDOverrideMax[PlanScale]) {
+		t.Errorf("UserUIDOverrideMax is not monotonic Hobby ≤ Pro ≤ Scale")
+	}
+}
+
+// TestMaxFullRootfsLayerBytes_PerPlan (M-3 commit 9 / ADR-141
+// §Decision 5). Hobby 256 MB / Pro 1 GB / Scale 4 GB. Closed set:
+// unknown plan → zero value.
+func TestMaxFullRootfsLayerBytes_PerPlan(t *testing.T) {
+	cases := []struct {
+		plan Plan
+		want int64
+	}{
+		{PlanHobby, 256 << 20},
+		{PlanPro, 1 << 30},
+		{PlanScale, 4 << 30},
+	}
+	for _, tc := range cases {
+		if got := MaxFullRootfsLayerBytes[tc.plan]; got != tc.want {
+			t.Errorf("MaxFullRootfsLayerBytes[%s] = %d; want %d", tc.plan, got, tc.want)
+		}
+	}
+	// Closed-set: unknown plan returns the zero value (no panic).
+	_ = MaxFullRootfsLayerBytes[Plan("unknown")]
+}
+
+// TestFullRootfsAllowAutoDefault_PerPlan (M-3 commit 9 / ADR-141
+// §Decision 2). Free → false (no auto-dispatch). Paid plans → true.
+func TestFullRootfsAllowAutoDefault_PerPlan(t *testing.T) {
+	if FullRootfsAllowAutoDefault[PlanFree] {
+		t.Errorf("FullRootfsAllowAutoDefault[PlanFree] = true; want false")
+	}
+	for _, p := range []Plan{PlanHobby, PlanPro, PlanScale} {
+		if !FullRootfsAllowAutoDefault[p] {
+			t.Errorf("FullRootfsAllowAutoDefault[%s] = false; want true", p)
+		}
+	}
+}
