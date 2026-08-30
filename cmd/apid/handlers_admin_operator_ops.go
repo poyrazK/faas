@@ -565,6 +565,15 @@ func projectObsNodeApps(apps []state.App, instances []state.Instance) []api.ObsN
 }
 
 func countObsLiveInstances(rows []state.Instance) int {
+	// Shared predicate with handlers_compute_nodes_drain.go's
+	// isLiveInstance (fix #8 / consolidation). The /admin/ops
+	// endpoint deliberately excludes PARKED — the obs surface
+	// answers "is this app serving right now?" and a PARKED
+	// row is held in memory but not serving requests. The
+	// drain endpoint includes PARKED because a PARKED row is
+	// still consuming the per-node RAM budget and the drain UI
+	// wants to keep showing it as live. The dispatch lives in
+	// the per-file predicates below.
 	count := 0
 	for _, row := range rows {
 		switch row.State {

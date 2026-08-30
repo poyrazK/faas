@@ -41,6 +41,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -81,6 +82,12 @@ type drainResponse struct {
 // the per-instance migration / recreation decision and emits the
 // node.drained / instance.migrated / instance.recreated events
 // when the sweep completes.
+//
+// Extracted helpers (fix #8 / 50-line handler ceiling): the
+// pre-CAS state switch + the CAS error mapping live in
+// parseDrainLifecycleTransition; the audit + recovery event
+// emission lives in emitDrainAuditAndEvent. The wait loop is
+// already waitForDrainComplete. Net handler body is ≤50 lines.
 func (s *server) postComputeNodeDrain(w http.ResponseWriter, r *http.Request, _ state.Account) {
 	nodeName := r.PathValue("name")
 	if nodeName == "" {
@@ -92,72 +99,21 @@ func (s *server) postComputeNodeDrain(w http.ResponseWriter, r *http.Request, _ 
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Node not found", err.Error()))
 		return
 	}
-	switch node.Lifecycle {
-	case state.NodeLifecycleDraining:
-		api.WriteProblem(w, api.ErrNodeDraining(node.Name, string(node.Lifecycle)))
-		return
-	case state.NodeLifecycleUnavailable:
-		api.WriteProblem(w, api.ErrNodeLifecycleInvalid(string(node.Lifecycle), string(state.NodeLifecycleDraining)))
-		return
-	case state.NodeLifecycleRecovering:
-		api.WriteProblem(w, api.ErrNodeRecoveryInProgress(node.Name))
-		return
-	case state.NodeLifecycleActive, "":
-		// Empty lifecycle is legacy pre-#1184 — treat as active.
-	default:
-		api.WriteProblem(w, api.ErrNodeLifecycleInvalid(string(node.Lifecycle), string(state.NodeLifecycleDraining)))
-		return
-	}
-	expected := node.Lifecycle
-	if expected == "" {
-		expected = state.NodeLifecycleActive
-	}
-	if err := s.store.NodeSetLifecycle(r.Context(), node.ID, expected, state.NodeLifecycleDraining); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Node not found", err.Error()))
-			return
-		}
-		if errors.Is(err, state.ErrConflict) {
-			// Race: heartbeat flipped to unavailable while we
-			// were validating. Re-read + surface the precise
-			// 409 / 422 code.
-			fresh, ferr := s.store.ComputeNodeByName(r.Context(), nodeName)
-			if ferr == nil {
-				switch fresh.Lifecycle {
-				case state.NodeLifecycleUnavailable:
-					api.WriteProblem(w, api.ErrNodeLifecycleInvalid(string(fresh.Lifecycle), string(state.NodeLifecycleDraining)))
-				case state.NodeLifecycleDraining:
-					api.WriteProblem(w, api.ErrNodeDraining(node.Name, string(fresh.Lifecycle)))
-				default:
-					api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeCapacity, "drain CAS race", "please retry"))
-				}
-				return
-			}
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeCapacity, "drain CAS race", "please retry"))
-			return
-		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "could not change compute-node lifecycle", err.Error()))
-		return
-	}
-	if s.audit != nil {
-		subject := node.ID
-		s.audit.Emit(r.Context(), "operator.action.node_drain", &subject, map[string]any{
-			"node_id":   node.ID,
-			"node_name": node.Name,
-		})
-	}
-	if s.eventsPlatform != nil {
-		s.eventsPlatform.EmitRecovery(r.Context(), events.NodeDrainingEvent{
-			EmitAt:      time.Now().UTC(),
-			NodeID:      node.ID,
-			NodeName:    node.Name,
-			InitiatedAt: time.Now().UTC(),
-		})
-	}
 	if r.URL.Query().Get("wait") == "1" {
+		// ?wait=1 runs the CAS first; if it fails, surface the
+		// same parse-error path the synchronous handler would.
+		// If it lands, hand off to the polling loop.
+		if !s.parseDrainLifecycleTransition(r.Context(), w, node) {
+			return
+		}
+		s.emitDrainAuditAndEvent(r.Context(), node)
 		s.waitForDrainComplete(w, r, nodeName)
 		return
 	}
+	if !s.parseDrainLifecycleTransition(r.Context(), w, node) {
+		return
+	}
+	s.emitDrainAuditAndEvent(r.Context(), node)
 	fresh, ferr := s.store.ComputeNodeByName(r.Context(), nodeName)
 	if ferr != nil {
 		// Drain landed; follow-up read failed. Return 202
@@ -167,6 +123,92 @@ func (s *server) postComputeNodeDrain(w http.ResponseWriter, r *http.Request, _ 
 		return
 	}
 	writeDrainJSON(w, http.StatusOK, fresh, 0, "ok")
+}
+
+// parseDrainLifecycleTransition validates the pre-CAS state,
+// runs the lifecycle CAS, and writes the appropriate RFC 7807
+// problem on rejection. Returns true if the caller should
+// proceed (CAS landed); false if the handler has already
+// written a problem and the caller should return.
+//
+// Two rejections short-circuit the handler: the node's current
+// lifecycle is incompatible with a drain, OR the CAS lost a
+// race with a peer writer (the heartbeat staleness gate is the
+// load-bearing peer — it can flip active → unavailable between
+// our ComputeNodeByName read and our NodeSetLifecycle CAS).
+func (s *server) parseDrainLifecycleTransition(ctx context.Context, w http.ResponseWriter, node state.ComputeNode) bool {
+	switch node.Lifecycle {
+	case state.NodeLifecycleDraining:
+		api.WriteProblem(w, api.ErrNodeDraining(node.Name, string(node.Lifecycle)))
+		return false
+	case state.NodeLifecycleUnavailable:
+		api.WriteProblem(w, api.ErrNodeLifecycleInvalid(string(node.Lifecycle), string(state.NodeLifecycleDraining)))
+		return false
+	case state.NodeLifecycleRecovering:
+		api.WriteProblem(w, api.ErrNodeRecoveryInProgress(node.Name))
+		return false
+	case state.NodeLifecycleActive, "":
+		// Empty lifecycle is legacy pre-#1184 — treat as active.
+	default:
+		api.WriteProblem(w, api.ErrNodeLifecycleInvalid(string(node.Lifecycle), string(state.NodeLifecycleDraining)))
+		return false
+	}
+	expected := node.Lifecycle
+	if expected == "" {
+		expected = state.NodeLifecycleActive
+	}
+	if err := s.store.NodeSetLifecycle(ctx, node.ID, expected, state.NodeLifecycleDraining); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Node not found", err.Error()))
+			return false
+		}
+		if errors.Is(err, state.ErrConflict) {
+			// Race: heartbeat flipped to unavailable while we
+			// were validating. Re-read + surface the precise
+			// 409 / 422 code.
+			fresh, ferr := s.store.ComputeNodeByName(ctx, node.Name)
+			if ferr == nil {
+				switch fresh.Lifecycle {
+				case state.NodeLifecycleUnavailable:
+					api.WriteProblem(w, api.ErrNodeLifecycleInvalid(string(fresh.Lifecycle), string(state.NodeLifecycleDraining)))
+				case state.NodeLifecycleDraining:
+					api.WriteProblem(w, api.ErrNodeDraining(node.Name, string(fresh.Lifecycle)))
+				default:
+					api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeCapacity, "drain CAS race", "please retry"))
+				}
+				return false
+			}
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeCapacity, "drain CAS race", "please retry"))
+			return false
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "could not change compute-node lifecycle", err.Error()))
+		return false
+	}
+	return true
+}
+
+// emitDrainAuditAndEvent stamps the operator-action audit row
+// and emits the typed NodeDrainingEvent recovery envelope. Both
+// are best-effort: nil platform / audit is the bootstrap-window
+// pattern (cmd/apid main.go wires both before opening the
+// listener, but the helper must not panic during a partial
+// wire-up test).
+func (s *server) emitDrainAuditAndEvent(ctx context.Context, node state.ComputeNode) {
+	if s.audit != nil {
+		subject := node.ID
+		s.audit.Emit(ctx, "operator.action.node_drain", &subject, map[string]any{
+			"node_id":   node.ID,
+			"node_name": node.Name,
+		})
+	}
+	if s.eventsPlatform != nil {
+		s.eventsPlatform.EmitRecovery(ctx, events.NodeDrainingEvent{
+			EmitAt:      time.Now().UTC(),
+			NodeID:      node.ID,
+			NodeName:    node.Name,
+			InitiatedAt: time.Now().UTC(),
+		})
+	}
 }
 
 // getComputeNodeDrainProgress handles GET
@@ -253,14 +295,26 @@ func writeDrainJSON(w http.ResponseWriter, status int, n state.ComputeNode, drai
 }
 
 // isLiveInstance is the dashboard-friendly predicate. We treat
-// only the four non-terminal states (running, waking,
-// cold_booting, parked-but-warming) as live; everything else
-// counts toward drained. The exact predicate is the same one
+// only the four non-terminal states (RUNNING, WAKING,
+// COLD_BOOTING, PARKED) as live; everything else counts toward
+// drained. The exact predicate is the same one
 // countObsLiveInstances uses (handlers_admin_operator_ops.go) so
 // the two endpoints don't disagree on the per-node totals.
+//
+// Fix #8 / consolidation: the drain-progress endpoint counts
+// "non-live" instances (already drained) so the operator UI can
+// render a "N of M drained" badge. The /admin/ops endpoint
+// counts "live" instances (RUNNING/WAKING/COLD_BOOTING, excluding
+// PARKED — PARKED is held memory but not serving). They used to
+// be two near-identical but disagreeing functions; both now
+// delegate to this canonical helper, with PARKED explicitly
+// classified as "live" for the drain-progress response (a
+// PARKED row is still consuming the per-node RAM budget until
+// the reaper sweeps it, so the drain UI wants to keep showing
+// it as live).
 func isLiveInstance(ins state.Instance) bool {
 	switch ins.State {
-	case "running", "waking", "cold_booting", "parked":
+	case "RUNNING", "WAKING", "COLD_BOOTING", "PARKED":
 		return true
 	}
 	return false
