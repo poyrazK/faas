@@ -1570,6 +1570,18 @@ type OpsMetrics struct {
 	// rate. Single-registry: registered on every daemon, only
 	// schedd increments via RecreateDecisions.
 	recreateDecisions *prometheus.CounterVec
+	// snapshotBackoffStamp: Workstream B / issue #1184 / ADR-137.
+	// Counts the per-deployment snapshot-cache-miss backoff
+	// stamps. outcome ∈ {recorded, cleared} — the closed set
+	// Engine.RecordSnapshotMiss + Engine.ClearSnapshotBackoff
+	// emit. A sustained non-zero `recorded` rate at the same
+	// magnitude as the wake rate signals a stuck deployment
+	// (FC upgrade race, imaged-side write race, GC reaper
+	// evicted the snapshot row); the §12 panel pairs with
+	// snapshot_fleet_avg_mb so operators see both signals
+	// together. Single-registry: registered on every daemon,
+	// only schedd increments via SnapshotBackoffStamp.
+	snapshotBackoffStamp *prometheus.CounterVec
 	// githubdPathFilterTotal: issue #432 phase 5 / ADR-050
 	// §109. Counter labelled by `mode` ∈ {paths, full_fallback,
 	// truncated, error, breaker_open} — the closed set
@@ -3387,6 +3399,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Recovery-arbiter recreate primitive decisions, labelled by outcome ∈ {succeeded, skipped, not_found}. `succeeded` counts stranded RUNNING/COLD_BOOTING/WAKING rows the arbiter transitioned to PARKED with kind=recovery_recreate (the §12 recovery panel's recreate-rate numerator). `skipped` is the benign \"row already terminal\" case (peer-wins — another schedd or the deadnode reconciler already parked/failed the row). `not_found` is the benign \"row vanished\" case. A sustained non-zero `succeeded` rate is the recovery arbiter doing its job; a non-zero `skipped` rate at the same magnitude signals the dedup with the deadnode_reconciler is racing more than expected (Task #62 source-ledger backstop is the long-term fix).",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, recreateDecisions)
+	// Snapshot-cache-miss backoff stamps (Workstream B / ADR-137).
+	// Single-registry: registered on every daemon, only schedd
+	// increments it in production (via Engine.RecordSnapshotMiss
+	// / Engine.ClearSnapshotBackoff in pkg/sched/snapshot_backoff.go).
+	snapshotBackoffStamp := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_snapshot_backoff_stamp_total",
+		Help: "Per-deployment snapshot-cache-miss backoff stamps, labelled by outcome ∈ {recorded, cleared}. `recorded` counts the per-deployment cooldown stamps after a snapshot cache miss (the §12 snapshot_backoff panel's miss-rate numerator). A sustained non-zero `recorded` rate at the same magnitude as the wake rate signals a stuck deployment — FC upgrade race, imaged-side write race, or GC reaper evicted the snapshot row — and pairs with snapshot_fleet_avg_mb so operators see both signals together. `cleared` counts the resets on a successful snapshot_written event; an imbalance where `recorded` rate exceeds `cleared` rate by more than 5x for 5m is the §12 snapshot_backoff_uncleared tripwire.",
+	}, []string{"outcome"})
+	commonCollectors = append(commonCollectors, snapshotBackoffStamp)
 	// ADR-087 / Tier A9: pressure-rebalancer decision counter.
 	// Single-registry: registered on every daemon (mirrors
 	// deadNodeReconcileDecisions); only schedd increments via
@@ -3756,6 +3777,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// this loop in lock-step with Engine.RecreateInstance.
 	for _, outcome := range []string{"succeeded", "skipped", "not_found"} {
 		recreateDecisions.WithLabelValues(outcome)
+	}
+	// Pre-instantiate the snapshot-backoff stamp set so the
+	// §12 panel reads zero on a healthy fleet. The closed set
+	// matches Engine.RecordSnapshotMiss / Engine.ClearSnapshotBackoff
+	// in pkg/sched/snapshot_backoff.go.
+	for _, outcome := range []string{"recorded", "cleared"} {
+		snapshotBackoffStamp.WithLabelValues(outcome)
 	}
 	// Issue #517 / PR-C / ADR-064: pre-instantiate the closed
 	// 15-phase × 2-result label set for wakePhaseEmitted and
@@ -4138,6 +4166,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		standbyStateValue:                    StandbyStateWarming, // mirrors the gauge.Set(StandbyStateWarming) above
 		deadNodeReconcileDecisions:           deadNodeReconcileDecisions,
 		recreateDecisions:                   recreateDecisions,
+		snapshotBackoffStamp:                snapshotBackoffStamp,
 		registryCredentialMarkUsedFailures:   registryCredentialMarkUsedFailures,
 		storageCacheStaleFallback:            storageCacheStaleFallback,
 		apidLogsEmittedTotal:                 apidLogsEmittedTotal,
@@ -5008,6 +5037,16 @@ func (m *OpsMetrics) DeadNodeReconcileDecisions(outcome string) prometheus.Count
 // the underlying CounterVec entry).
 func (m *OpsMetrics) RecreateDecisions(outcome string) prometheus.Counter {
 	return m.recreateDecisions.WithLabelValues(outcome)
+}
+
+// SnapshotBackoffStamp returns the labelled counter for the
+// per-deployment snapshot-cache-miss backoff (Workstream B /
+// ADR-137). Called from Engine.RecordSnapshotMiss + Engine.
+// ClearSnapshotBackoff once per deployment per stamp.
+// outcome ∈ {recorded, cleared}. Same caching rules as
+// RecreateDecisions.
+func (m *OpsMetrics) SnapshotBackoffStamp(outcome string) prometheus.Counter {
+	return m.snapshotBackoffStamp.WithLabelValues(outcome)
 }
 
 // EventsWriteFailures returns the unlabelled counter for audit-log
