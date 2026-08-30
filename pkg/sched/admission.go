@@ -381,7 +381,31 @@ func (l *NodeLedger) BeginSnapshot(instance string) {
 // Unknown instances are ignored. The reservation remembers its nodeID, so
 // the per-node resident counter is decremented without a second lookup
 // against the store.
+// ResidentFor returns true if the ledger holds a slot for the
+// given instance (Task #62 source-ledger release backstop).
+// Read-only — does not mutate state. Used by the recovery
+// reconciler (Engine.ReconcileDeadNodeInstances) after a
+// conditional UPDATE returns ErrConflict: when the peer has
+// already moved the row but the ledger slot wasn't freed by
+// the peer's path (the single-point-of-failure race the
+// gateway-listener used to leave open), this returns true so
+// the caller can call Release as a backstop.
+//
+// Safe on a nil receiver — returns false (no slot held).
+func (l *NodeLedger) ResidentFor(instance string) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.entries[instance]
+	return ok
+}
+
 func (l *NodeLedger) Release(instance string) {
+	if l == nil {
+		return
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entries[instance]

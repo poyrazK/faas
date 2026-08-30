@@ -4079,7 +4079,22 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 				"ram_mb", ins.RAMMB)
 			reconciled++
 		case errors.Is(recErr, state.ErrConflict):
-			// Node recovered, or a peer moved the row first. Benign.
+			// Node recovered, or a peer moved the row first. Benign
+			// at the row level — but Task #62 source-ledger
+			// backstop closes the billing side of the same race:
+			// the peer's failure path might not have freed the
+			// admission slot (the gateway-listener used to be the
+			// only path that called Release on terminal transitions;
+			// a peer that crashed before reaching it leaked the
+			// slot). ResidentFor + Release is the idempotent
+			// cleanup so the deadnode reconciler is the canonical
+			// path for "row is no longer billable" regardless of
+			// who moved it.
+			if e.ledger.ResidentFor(ins.ID) {
+				e.ledger.Release(ins.ID)
+				e.log.Info("sched: reconcile dead-node instances: ledger backstop released",
+					"instance_id", ins.ID, "node_id", ins.NodeID)
+			}
 			if e.ops != nil {
 				e.ops.DeadNodeReconcileDecisions("conflict").Inc()
 			}
