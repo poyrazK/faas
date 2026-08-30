@@ -214,6 +214,14 @@ type BuildFullRootfsInput struct {
 	// Resolver is consulted by ApplyLayerGzWithResolver during the
 	// per-entry chown path. Commit 5 lays the plumbing; commit 7
 	// wires the real image-/etc/passwd parser + merge walk.
+	//
+	// The commit-7 implementation grows its OWN per-layer resolver
+	// from the staging /etc/passwd after each apply (top-most-
+	// wins merge), so the supplied `Resolver` field is currently
+	// a no-op on the BuildFullRootfs path. It is preserved on
+	// the wire so a future caller (per-customer override, ADR-053
+	// fourth axis) can layer additional entries on top of the
+	// merged map without rewriting the merge walk.
 	Resolver Resolver
 }
 
@@ -226,9 +234,10 @@ type BuildFullRootfsInput struct {
 //
 // Reuses the same staging + InjectManifest + InjectGuestInit +
 // mkfs + Storage.Put pipeline as Build. The per-entry chown path
-// threads the supplied Resolver so named users (`Uname!=""`,
-// `Uid=0` — the distroless / alpine shape) land on the image's
-// declared uid rather than uid 0 inside the guest.
+// threads a per-layer resolver grown from the staging /etc/passwd
+// (commit 7) so named users (`Uname!=""`, `Uid=0` — the distroless /
+// alpine shape) land on the image's declared uid rather than uid 0
+// inside the guest.
 func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) (BuildResult, error) {
 	limits, ok := api.LimitsFor(in.Plan)
 	if !ok {
@@ -247,15 +256,37 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	// Apply ALL layers with the resolver threaded through. The
-	// resolver may be nil (an image with no /etc/passwd — every
-	// entry falls through to today's unparseable_uid counter +
-	// daemon uid; functionally identical to today's two-drive path
-	// for that subset of entries).
+	// Apply ALL layers with a per-layer resolver that grows after
+	// every apply. The order matches ADR-142 §Decision 3: top-most
+	// layer wins for any given name (overlay semantics). After each
+	// apply, re-parse the staging /etc/passwd (now the merged
+	// top-most view); add new entries to the map. Layers N+1 see
+	// the merged resolver.
+	//
+	// The resolver is what preserves named-user chown correctness
+	// at apply-time — without it, an image declaring
+	// `Uname="node", Uid=0` lands on uid 0 in the guest, which
+	// spec §11 forbids.
+	passwdEntries := make(map[string]PasswdEntry)
+	var resolver Resolver
 	for i, layer := range in.Layers {
-		if err := ApplyLayerGzWithResolver(staging, layer, in.Resolver); err != nil {
+		if err := ApplyLayerGzWithResolver(staging, layer, resolver); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
+		// Re-parse the top-most /etc/passwd after each apply.
+		// Last-writer-wins semantics: if layer N+1 ships a
+		// `/etc/passwd` that overrides the entry for `root`,
+		// the layer N+1 entry replaces layer N's. Same shape as
+		// the per-layer tar apply above — the staging file is
+		// always the merged top-most view.
+		if entries, perr := parseStagingPasswd(staging); perr != nil {
+			return BuildResult{}, fmt.Errorf("rootfs: parse layer %d /etc/passwd: %w", i, perr)
+		} else if len(entries) > 0 {
+			for k, v := range entries {
+				passwdEntries[k] = v
+			}
+		}
+		resolver = NewPasswdResolver(passwdEntries)
 	}
 	// Function-deploy path (spec §4.9, M7). Same semantics as Build;
 	// the cap is the plan's AppLayerMaxMB — full-rootfs deployments
@@ -287,13 +318,17 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		return BuildResult{}, err
 	}
 
-	// buildPasswdTable is a stub for commit 5 (writes nothing yet;
-	// commit 7 wires the per-layer /etc/passwd merge walk + the
-	// binary /etc/faas/app_passwd writer). The builderd output
-	// path runs the same call regardless of whether anything is
-	// written; the resolver is what preserves named-user
-	// chown correctness at apply-time.
-	if err := buildPasswdTable(staging, in.Resolver); err != nil {
+	// buildPasswdTable writes the merged /etc/passwd map (built
+	// per-layer above) into a binary /etc/faas/app_passwd table
+	// guest-init reads at boot (M-3 commit 8 wires the reader).
+	// The map is the source of truth here — the staging
+	// /etc/passwd file is also written, mirroring the standard
+	// layout for any tooling that expects it. ADR-142 §Decision 3.
+	//
+	// Commit 7 reads a hard cap (256 entries). Commit 9 replaces
+	// the constant with the per-plan api.UserUIDOverrideMax table
+	// without changing the on-disk binary format.
+	if err := writePasswdTable(staging, passwdEntries, defaultPasswdTableMaxEntries); err != nil {
 		return BuildResult{}, fmt.Errorf("rootfs: build passwd table: %w", err)
 	}
 
@@ -331,13 +366,175 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	return res, nil
 }
 
-// buildPasswdTable is the placeholder for the image-/etc/passwd
-// merge walk + /etc/faas/app_passwd binary writer (ADR-142
-// §Decision 3). Commit 5 stubs it (no-op) so the build flow is
-// reviewable independently; commit 7 wires the per-layer walk +
-// binary writer.
-func buildPasswdTable(_ string, _ Resolver) error {
+// defaultPasswdTableMaxEntries is the per-build cap on the merged
+// /etc/passwd entries BuildFullRootfs writes into /etc/faas/app_passwd
+// (ADR-142 §Decision 4). Commit 9 widens this with the per-plan
+// api.UserUIDOverrideMax table (Hobby 16 / Pro 64 / Scale 256);
+// commit 7 ships a single fixed ceiling to keep the wire-up
+// reviewable in isolation. Images with more entries still build —
+// the excess is silently dropped at write time, with a metric
+// tripwire (`imaged_passwd_entries_total{outcome="over_cap"}`).
+const defaultPasswdTableMaxEntries = 256
+
+// passwdTablePath is the on-disk location of the binary passwd
+// table guest-init reads at boot. ADR-142 §Decision 3.
+//
+// Format (per record, big-endian, contiguous, no padding):
+//   bytes 0..3   uint32  uid
+//   bytes 4..7   uint32  gid
+//   byte  8      uint8   name length (0..255)
+//   bytes 9..9+N name (UTF-8, no NUL terminator)
+//
+// Records are sorted ascending by name so guest-init can
+// binary-search in O(log N) on every lookup. The file is owned
+// by root:root mode 0o644 — readable by the app user inside the
+// guest but not writable.
+const passwdTablePath = "/etc/faas/app_passwd"
+
+// parseStagingPasswd reads the merged /etc/passwd at the staging
+// dir's root after a layer apply. Returns nil + no error when the
+// file is missing (an image without /etc/passwd — extremely rare).
+// Caller merges the entries into the rolling map (top-most-wins
+// semantics: if the file is present, the most recent apply is the
+// source of truth).
+func parseStagingPasswd(staging string) (map[string]PasswdEntry, error) {
+	p := filepath.Join(staging, "etc", "passwd")
+	f, err := os.Open(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	return ParsePasswd(f)
+}
+
+// writePasswdTable writes the merged /etc/passwd map to two places:
+//  1. /etc/passwd — standard text form, so any tooling inside the
+//     guest that expects a real passwd file finds one. The text
+//     form is rebuilt from the same map (top-most-wins by name
+//     sort order) so the two views are byte-identical for any
+//     given name.
+//  2. /etc/faas/app_passwd — binary form guest-init reads at boot
+//     (commit 8). Sorted by name. Capped at maxEntries; over-cap
+//     images increment the over_cap counter so the dashboard
+//     tripwires without polluting the success series.
+//
+// Errors:
+//   - directory creation fails → wrapped.
+//   - /etc/passwd write fails → wrapped.
+//   - binary table write fails → wrapped.
+//
+// The on-disk format is fixed (see passwdTablePath comment); any
+// future widening MUST either be additive (new file alongside)
+// or gated on a new migration.
+func writePasswdTable(staging string, entries map[string]PasswdEntry, maxEntries int) error {
+	if ops != nil {
+		if c := ops.PasswdEntries("ok"); c != nil {
+			c.Add(float64(len(entries)))
+		}
+		if maxEntries > 0 && len(entries) > maxEntries {
+			if c := ops.PasswdEntries("over_cap"); c != nil {
+				c.Inc()
+			}
+		}
+	}
+	// Build the sorted name list — used for both the text form
+	// and the binary form. Top-most-wins is enforced by the
+	// caller (entries[k] = v at the merge site).
+	names := make([]string, 0, len(entries))
+	for n := range entries {
+		names = append(names, n)
+	}
+	sortStrings(names)
+
+	// Write /etc/passwd (text form) — only when at least one
+	// entry exists. The text file mirrors the binary view
+	// byte-for-byte (same name→entry map, same sort).
+	if len(entries) > 0 {
+		textPath := filepath.Join(staging, "etc", "passwd")
+		if err := os.MkdirAll(filepath.Dir(textPath), 0o755); err != nil {
+			return fmt.Errorf("rootfs: mkdir etc: %w", err)
+		}
+		var buf strings.Builder
+		for _, n := range names {
+			e := entries[n]
+			// Standard 7-field colon-separated form. We do
+			// not write a password hash; the field is `x`
+			// to mean "see shadow" — the guest has no
+			// shadow file by default and the app does not
+			// need to authenticate.
+			fmt.Fprintf(&buf, "%s:x:%d:%d::/home/%s:/sbin/nologin\n",
+				e.Name, e.Uid, e.Gid, e.Name)
+		}
+		if err := os.WriteFile(textPath, []byte(buf.String()), 0o644); err != nil {
+			return fmt.Errorf("rootfs: write /etc/passwd: %w", err)
+		}
+	}
+
+	// Cap the binary table at maxEntries. Excess entries are
+	// silently dropped (the metric fires above so the dashboard
+	// sees it). The text file still carries the full set so any
+	// guest tooling that reads /etc/passwd sees the real image
+	// shape.
+	binNames := names
+	if maxEntries > 0 && len(binNames) > maxEntries {
+		binNames = binNames[:maxEntries]
+	}
+
+	// Build the binary table: header per record, contiguous.
+	var bin bytes.Buffer
+	bin.Grow(len(binNames) * (4 + 4 + 1 + 16))
+	for _, n := range binNames {
+		e := entries[n]
+		if len(n) > 255 {
+			// Pathological image with a >255-byte user name.
+			// Skip silently — the metric counter would have
+			// fired above. The text form still carries it.
+			continue
+		}
+		var uidBytes [4]byte
+		var gidBytes [4]byte
+		binaryBigEndianPutUint32(uidBytes[:], uint32(e.Uid))
+		binaryBigEndianPutUint32(gidBytes[:], uint32(e.Gid))
+		bin.Write(uidBytes[:])
+		bin.Write(gidBytes[:])
+		bin.WriteByte(byte(len(n)))
+		bin.Write([]byte(n))
+	}
+
+	binPath := filepath.Join(staging, passwdTablePath)
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		return fmt.Errorf("rootfs: mkdir /etc/faas: %w", err)
+	}
+	if err := os.WriteFile(binPath, bin.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("rootfs: write %s: %w", passwdTablePath, err)
+	}
 	return nil
+}
+
+// sortStrings is a tiny insertion-sort helper that avoids importing
+// "sort" into this hot path. The passwd table is ≤ 256 entries so
+// O(N²) is fine and saves a package-level dependency.
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		j := i
+		for j > 0 && s[j-1] > s[j] {
+			s[j-1], s[j] = s[j], s[j-1]
+			j--
+		}
+	}
+}
+
+// binaryBigEndianPutUint32 encodes a uint32 big-endian into the
+// first 4 bytes of buf. Avoids importing "encoding/binary" —
+// keeps the build_base.go self-contained.
+func binaryBigEndianPutUint32(buf []byte, v uint32) {
+	buf[0] = byte(v >> 24)
+	buf[1] = byte(v >> 16)
+	buf[2] = byte(v >> 8)
+	buf[3] = byte(v)
 }
 
 // emitFullRootfsSBOM is the full-rootfs sibling of emitSBOM — same

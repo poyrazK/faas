@@ -1372,6 +1372,14 @@ type OpsMetrics struct {
 	// increments via the public accessors in cmd/imaged/main.go.
 	ownershipClamp    *prometheus.CounterVec
 	layerEntrySkipped prometheus.Counter
+	// passwdEntries (M-3 commit 7 / ADR-142 §Decision 4) counts the
+	// merged /etc/passwd entries pkg/rootfs.BuildFullRootfs writes
+	// into /etc/faas/app_passwd at build time. The closed `outcome`
+	// label disambiguates {ok, over_cap} so a customer image with
+	// >256 entries triggers the cap-tripwire without polluting the
+	// success series. Imaged-only (the build path is the only
+	// producer); accessor PasswdEntries(outcome) is nil-safe.
+	passwdEntries *prometheus.CounterVec
 	// egressSourceErrors: counter of per-instance sysfs read
 	// failures from cmd/vmmd/network_poller.go (ADR-046, step
 	// 7). The loop polls /sys/class/net/<vethHost>/statistics/
@@ -2920,6 +2928,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Write, mirroring OCIEgressDeny).
 	var ownershipClamp *prometheus.CounterVec
 	var layerEntrySkipped prometheus.Counter
+	var passwdEntries *prometheus.CounterVec
 	// Issue #517 / PR-C / ADR-064 — wake-phase collector pair.
 	// Counter gauges per-phase emit counts; histogram buckets
 	// the per-phase duration. Both labelled by the same closed
@@ -3045,6 +3054,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			Help: "Layer entries dropped by applyEntry (char/block/fifo). A non-zero rate is a tripwire for hostile or misbuilt layers that ship device entries.",
 		})
 		commonCollectors = append(commonCollectors, layerEntrySkipped)
+		// M-3 commit 7 / ADR-142 §Decision 4: per-build /etc/passwd
+		// entry counter for the full-rootfs build path. outcome ∈
+		// {ok, over_cap}; `ok` increments by the merged entry count
+		// (capped at the per-plan UserUIDOverrideMax ceiling), and
+		// `over_cap` increments once per build whose raw entry
+		// count exceeds the cap so the dashboard can tripwire on
+		// misbuilt images without polluting the success series.
+		passwdEntries = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_passwd_entries_total",
+			Help: "Per-build /etc/passwd entry counts the full-rootfs path merged into /etc/faas/app_passwd (M-3 commit 7, ADR-142 §Decision 4). outcome ∈ {ok, over_cap}; `ok` increments by the merged count (≤ per-plan UserUIDOverrideMax ceiling), `over_cap` increments once when the raw count exceeds the cap so a customer can dial the plan or trim their image's passwd.",
+		}, []string{"outcome"})
+		commonCollectors = append(commonCollectors, passwdEntries)
 	}
 	// issue #299: Grype scan findings, per (image, severity). The
 	// `image` label is the OCI ref of the staged base ext4; the
@@ -4090,6 +4111,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		ociEgressDeny:                        ociEgressDeny,
 		ownershipClamp:                       ownershipClamp,
 		layerEntrySkipped:                    layerEntrySkipped,
+		passwdEntries:                        passwdEntries,
 		provenanceWrites:                     provenanceWrites,
 		imageScanVulns:                       imageScanVulns,
 		deployScanDuration:                   deployScanDuration,
@@ -5778,6 +5800,20 @@ func (m *OpsMetrics) LayerEntrySkipped() prometheus.Counter {
 		return nil
 	}
 	return m.layerEntrySkipped
+}
+
+// PasswdEntries returns the per-outcome counter for the merged
+// /etc/passwd entries BuildFullRootfs writes into /etc/faas/app_passwd
+// (M-3 commit 7, ADR-142 §Decision 4). outcome ∈ {ok, over_cap}.
+// Nil-safe on a nil receiver and on non-imaged OpsMetrics (the
+// counter is registered only when prefix == "imaged" — the build
+// path is the only producer). pkg/rootfs.buildPasswdTable calls
+// this on every full-rootfs build.
+func (m *OpsMetrics) PasswdEntries(outcome string) prometheus.Counter {
+	if m == nil || m.passwdEntries == nil {
+		return nil
+	}
+	return m.passwdEntries.WithLabelValues(outcome)
 }
 
 // EgressSourceErrors returns the bare Counter that records per-
