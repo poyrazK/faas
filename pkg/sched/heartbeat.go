@@ -34,6 +34,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -106,6 +107,15 @@ type Heartbeat struct {
 	// nodeRegistry is the notification-backed active-node snapshot. Nil keeps
 	// the store enumeration path for compatibility with older fixtures.
 	nodeRegistry *NodeRegistry
+	// events is the recovery-timeline fan-out (Workstream B /
+	// issue #1184 / ADR-137). Wired by cmd/schedd via
+	// WithEvents to share the same pkg/events.Platform the wake
+	// path uses (one per daemon, single-registry metric +
+	// recovery-counter pattern). Nil opts out (no row written;
+	// task #66 fills in the actual Emit calls). Keeping the field
+	// now means Task #66's commits are diff-only — no struct
+	// change required when the emit sites land.
+	events *events.Platform
 	// Concurrency bounds simultaneous node probes. Zero uses the default.
 	Concurrency int
 	// ProbeTimeout bounds each dial + Ping. Zero uses the default.
@@ -133,6 +143,18 @@ func (h *Heartbeat) WithNodeRegistry(reg *NodeRegistry) *Heartbeat {
 		return h
 	}
 	h.nodeRegistry = reg
+	return h
+}
+
+// WithEvents attaches the recovery-timeline fan-out (Workstream B).
+// Mirrors Engine.WithEvents — the heartbeat shares the per-daemon
+// pkg/events.Platform so recovery events surface on the same SSE
+// topic the wake timeline uses (TopicRecovery). Nil opts out.
+func (h *Heartbeat) WithEvents(p *events.Platform) *Heartbeat {
+	if h == nil {
+		return h
+	}
+	h.events = p
 	return h
 }
 
@@ -270,38 +292,75 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 // probeNode performs one bounded probe and applies its result. It is called by
 // the bounded worker pool in Tick; each node is processed exactly once.
 func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow time.Time, staleness time.Duration) {
+	// Workstream B (issue #1184 / ADR-137): the heartbeat owns
+	// the lifecycle enum on compute_nodes. The legacy bool
+	// `active` column is preserved as a STORED GENERATED column
+	// (`lifecycle IN ('active','recovering')`) so placement +
+	// pg_notify consumers continue to work unchanged. Helper
+	// markLifecycle keeps the CAS shape consistent across the
+	// three failure / recovery call sites below.
+	markLifecycle := func(expected, next state.NodeLifecycle) {
+		if err := h.store.NodeSetLifecycle(ctx, n.ID, expected, next); err != nil {
+			// ErrConflict means another writer (drain handler,
+			// recovery arbiter) raced us; that's fine — they own
+			// the row now. ErrNotFound means admin DELETE / retention
+			// removed the row between the ActiveComputeNodes scan
+			// and this CAS — also fine.
+			if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
+				return
+			}
+			h.log.Warn("heartbeat: lifecycle CAS failed",
+				"node_id", n.ID, "expected", expected,
+				"next", next, "err", err)
+		}
+	}
+
 	// Staleness gate (issue #98): even if Ping below succeeds,
 	// a node whose last_heartbeat_at is older than the
-	// threshold is stale and gets flipped inactive. The ping
-	// then continues on the next tick, post-deactivation.
+	// threshold is stale and gets flipped unavailable. The ping
+	// then continues on the next tick, post-deactivation. We
+	// try both `active` and `recovering` as the expected state
+	// because a node that just came back from a previous outage
+	// is in `recovering` (still admitting) and shouldn't be
+	// demoted by the staleness gate on the way out.
 	if !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness {
-		h.log.Info("heartbeat: node stale, deactivating",
+		h.log.Info("heartbeat: node stale, marking unavailable",
 			"node_id", n.ID, "node_name", n.Name,
 			"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
+			"prior_lifecycle", string(n.Lifecycle),
 			"staleness", staleness.String())
-		if mErr := h.store.MarkComputeNodeInactive(ctx, n.ID); mErr != nil && !errors.Is(mErr, state.ErrNotFound) {
-			h.log.Warn("heartbeat: mark-inactive failed",
-				"node_id", n.ID, "err", mErr)
-		}
+		markLifecycle(n.Lifecycle, state.NodeLifecycleUnavailable)
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
 		}
 		return
 	}
 	if _, err := h.heartbeatPing(ctx, n); err != nil {
-		// A dead node gets flipped inactive so placement
+		// A dead node gets flipped unavailable so placement
 		// skips it on the next Wake. We don't fail the
 		// sweep — one bad node must not block the others.
-		h.log.Warn("heartbeat: ping failed; marking inactive",
-			"node_id", n.ID, "node_name", n.Name, "err", err)
-		if mErr := h.store.MarkComputeNodeInactive(ctx, n.ID); mErr != nil && !errors.Is(mErr, state.ErrNotFound) {
-			h.log.Warn("heartbeat: mark-inactive failed",
-				"node_id", n.ID, "err", mErr)
-		}
+		// Same expected-state fan-out as the staleness gate.
+		h.log.Warn("heartbeat: ping failed; marking unavailable",
+			"node_id", n.ID, "node_name", n.Name,
+			"prior_lifecycle", string(n.Lifecycle), "err", err)
+		markLifecycle(n.Lifecycle, state.NodeLifecycleUnavailable)
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
 		}
 		return
+	}
+	// Ping succeeded: stamp last_heartbeat_at, and if the node
+	// was previously unavailable, transition it to `recovering`
+	// (still admitting, but the recovery arbiter now owns the
+	// sweep). A subsequent tick after the recovery sweep will
+	// flip it back to `active`. We don't transition from
+	// `recovering` to `active` here — that's the arbiter's job
+	// (it has the full recovery context: migration / recreate
+	// counts, last_recovery_outcome).
+	if n.Lifecycle == state.NodeLifecycleUnavailable {
+		h.log.Info("heartbeat: node recovered to recovering",
+			"node_id", n.ID, "node_name", n.Name)
+		markLifecycle(state.NodeLifecycleUnavailable, state.NodeLifecycleRecovering)
 	}
 	if err := h.store.HeartbeatComputeNode(ctx, n.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {

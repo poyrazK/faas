@@ -9587,6 +9587,15 @@ func (m *MemStore) NodeList(_ context.Context, lifecycle NodeLifecycle) ([]Compu
 // NodeSetLifecycle is the CAS transition. Returns ErrNotFound when
 // the id is unknown, ErrConflict when the CAS predicate doesn't
 // match (the in-memory equivalent of pgstore's CAS).
+//
+// In-memory simulation of the Postgres STORED GENERATED column
+// (migration 00579): whenever lifecycle changes, the boolean
+// `active` field is updated to `lifecycle IN ('active','recovering')`
+// so existing in-memory tests + the ActiveComputeNodes filter
+// continue to work without a parallel migration in Go. Mirrors
+// the pg semantics exactly; the only divergence is that the
+// in-memory version skips the IMMUTABLE predicate that PG
+// enforces on partial indexes (none exist in this layer).
 func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next NodeLifecycle) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -9598,6 +9607,7 @@ func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next
 		return ErrConflict
 	}
 	n.Lifecycle = next
+	n.Active = next == NodeLifecycleActive || next == NodeLifecycleRecovering
 	now := time.Now()
 	switch next {
 	case NodeLifecycleDraining:
