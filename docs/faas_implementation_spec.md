@@ -1320,6 +1320,14 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `meterd_data_upstream_rtt_ms_bucket{kind,region,le}` p95 | < 5 ms | > 200 ms page (runbook `FaasUpstreamRttDegraded.md`); info at < 5 ms (`FaasUpstreamRttHealthy`) — connection-aware placement health (ADR-098 §9.A) |
 | `meterd_data_upstream_probes_total{outcome}` rate | n/a (per-outcome) | `outcome="timeout"` / `outcome="refused"` > 5 % of `outcome="ok"` for 10 m warn (runbook `FaasUpstreamProbeHighFailureRate.md`); `outcome="tls_handshake"` > 0 page (cert validation is non-bypassable per ADR-098 §11) |
 | `meterd_data_upstream_probe_duration_seconds` p95 | < 0.5 s | > 1 s warn (runbook `FaasUpstreamProbeSlow.md`); interaction with `meterd_data_upstream_rtt_ms` — payload size of the TLS handshake is bounded by the customer's CA chain, not our control |
+| `safedeploy_orchestrator_started_total` rate | n/a (fleet rollup) | none (PR-B's `canary_fleet_in_flight_high` alert pair) — paired with `_completed_total` / `_aborted_total` for the rollout-state panel |
+| `safedeploy_orchestrator_completed_total` rate | n/a (fleet rollup) | none — per-rollout termination is the §12.6 audit timeline |
+| `safedeploy_orchestrator_aborted_total` rate | n/a (fleet rollup) | rate > 1 / 5 m warn (runbook `FaasSafedeployAbortSurge.md` — fleet-wide abort signal, distinct from PR-B's per-rollout stuck detection) |
+| `safedeploy_orchestrator_stuck_detected_total` rate | 0 | > 0 / 5 m page (PR-B's `canary_stuck_step` alert — orchestrator detected a rollout past StuckAfterDuration at the same step) |
+| `safedeploy_orchestrator_audit_emit_failed_total` rate | 0 | > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` alert — audit writes failing; rollout state machine advances anyway, audit trail silently broken) |
+| `safedeploy_orchestrator_stuck_check_missing_timestamp_total` rate | 0 | > 0 / 15 m warn (runbook `FaasSafedeployMissingTimestamp.md` — deployments rows landing without `canary_step_started_at`, the stuck-detection predicate becomes a no-op for that row) |
+| `deployment_audit_emitted_total{kind,outcome}` rate | n/a (per-kind × {ok,failed}) | `outcome="failed"` rate > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` aggregate — single source of truth across all 13 audit emit sites, not just the orchestrator) |
+| `deployment_audit_gc_failed_total` rate | 0 | > 0 / 1 h warn (PR-B's `deployment_audit_gc_failing` alert — 90-day GC cron failing, disk-fill risk) |
 
 The four `schedd_instance_*` gauges (ADR-036, issue #170) are the
 new per-`(app,node)` rolled-up surfaces — max CPU, sum RSS, sum

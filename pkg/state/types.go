@@ -3351,7 +3351,7 @@ const (
 	DeployHealthRecovered   DeploymentAuditKind = "deploy.health_recovered"
 	DeployRolledBack        DeploymentAuditKind = "deploy.rolled_back"
 	DeployRemoved           DeploymentAuditKind = "deploy.removed"
-	// SAFE-RELEASES-OBS PR-A (migrations/00520_deployment_audit_kinds_widen.sql):
+	// SAFE-RELEASES-OBS PR-A (migrations/00530_deployment_audit_kinds_widen.sql):
 	// orchestrator emit surface. Closed-set widening that
 	// migration 00477 promised-but-never-shipped when Mega PR #2
 	// added the orchestrator goroutine. Without this widening the
