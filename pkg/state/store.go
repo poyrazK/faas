@@ -5724,6 +5724,15 @@ type Store interface {
 	// commits — see ExpireUploadSession's doc for the race-safe
 	// sequencing rationale.
 	ReapExpiredUploadSessions(ctx context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error)
+	// ReapStaleUploadPartFiles scans up to 100 terminal-row
+	// sessions (status ∈ committed, cancelled, expired) whose
+	// last_patched_at < now() - 1h. The 1h grace bounds the leak
+	// of .part files left in place after a commit for builderd
+	// to consume (pkg/builderd/builderd.go:407). Bounded by 100
+	// rows/tick to mirror ReapExpiredUploadSessions's memory
+	// guarantee. The reaper os.Removes the .part file in place
+	// (no DB UPDATE needed — the row is already terminal).
+	ReapStaleUploadPartFiles(ctx context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error)
 	// ExpireUploadSession marks a single session expired after the
 	// reaper deletes its .part file. The status='open' predicate
 	// means a session that was committed / cancelled between the

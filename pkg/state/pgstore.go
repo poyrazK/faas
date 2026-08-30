@@ -23490,6 +23490,15 @@ func (s *PgStore) ReapExpiredUploadSessions(ctx context.Context) ([]sqlc.ReapExp
 	return s.uploadSessionQueries().ReapExpiredUploadSessions(ctx, s.pool)
 }
 
+// ReapStaleUploadPartFiles returns terminal-row sessions whose
+// last_patched_at < now() - 1h. The reaper os.Removes each
+// part_path; the in-DB row stays terminal (no UPDATE needed —
+// status IN ('committed','cancelled','expired') is already the
+// irreversible end state).
+func (s *PgStore) ReapStaleUploadPartFiles(ctx context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
+	return s.uploadSessionQueries().ReapStaleUploadPartFiles(ctx, s.pool)
+}
+
 // ExpireUploadSession marks a single session expired.
 func (s *PgStore) ExpireUploadSession(ctx context.Context, id string) error {
 	return s.uploadSessionQueries().ExpireUploadSession(ctx, s.pool, id)

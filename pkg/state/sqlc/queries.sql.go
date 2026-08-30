@@ -5773,6 +5773,65 @@ func (q *Queries) ReapExpiredUploadSessions(ctx context.Context, db DBTX) ([]Rea
 	return items, nil
 }
 
+const reapStaleUploadPartFiles = `-- name: ReapStaleUploadPartFiles :many
+SELECT id, part_path
+FROM upload_sessions
+WHERE status IN ('committed', 'cancelled', 'expired')
+  AND last_patched_at < now() - INTERVAL '1 hour'
+ORDER BY last_patched_at ASC
+LIMIT 100
+`
+
+type ReapStaleUploadPartFilesRow struct {
+	ID       string
+	PartPath string
+}
+
+// PR-1 fixup #5: sweep .part files for terminal rows whose
+// builderd consumption window has closed. The commit handler
+// leaves .part in place for builderd to consume
+// (pkg/builderd/builderd.go:407 hashFile(SourcePath)); the
+// cancel handler removes its .part at the same time it flips
+// status='cancelled'; but neither has a 1-hour cleanup guarantee
+// for committed rows. This query returns rows in terminal
+// status whose last_patched_at is >1h old AND part_path still
+// exists on disk; the reaper then os.Removes the file.
+//
+// The status IN (committed, cancelled, expired) predicate is
+// load-bearing — we never sweep open sessions (could race a
+// PATCH). The last_patched_at < now() - '1 hour' guard stops
+// us from racing a builderd that's mid-consumption right after
+// commit. The 100-row LIMIT bounds the per-tick work the same
+// way ReapExpiredUploadSessions does.
+//
+// Index strategy: pg doesn't have an index on (status,
+// last_patched_at) today; the scan is sequential over the
+// terminal-status rows. At expected volumes (≪ 1k terminal
+// rows/day per apid) this is fine. If terminal-row volume
+// grows, add a partial index on (last_patched_at) WHERE
+// status IN ('committed', 'cancelled', 'expired') — leaving
+// as a follow-up ADR rather than conflated into PR-1's
+// migration slot 533.
+func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error) {
+	rows, err := db.Query(ctx, reapStaleUploadPartFiles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReapStaleUploadPartFilesRow{}
+	for rows.Next() {
+		var i ReapStaleUploadPartFilesRow
+		if err := rows.Scan(&i.ID, &i.PartPath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordUploadCommitOutcome = `-- name: RecordUploadCommitOutcome :one
 INSERT INTO upload_commit_outcomes (upload_id, deployment_id, build_id)
 VALUES ($1, $2, $3)
