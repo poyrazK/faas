@@ -81,16 +81,22 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 	}
 	deleted := 0
 	for _, row := range rows {
-		// Mark the row expired first, then remove the .part
-		// file. Race order: the row flip is the source of truth
-		// for "this session is dead"; the .part file removal is
-		// opportunistic cleanup. If os.Remove fails, the row
-		// stays 'expired' and the next boot's reaper sweep
-		// re-attempts — but the WHERE status='open' predicate
-		// excludes 'expired' rows, so the .part leak is
-		// unbounded. Documented as out-of-scope follow-up work
-		// (also see the commit handler's .part-left-in-place
-		// note in handlers_upload_session.go).
+		// Race order matters: do .part removal FIRST, then flip
+		// status. The reverse ordering leaves a leaked .part if
+		// os.Remove fails (the WHERE status='open' partial index
+		// would then exclude the row from the next sweep,
+		// bounding nothing). On os.Remove failure we leave the
+		// row at status='open' so the next tick re-attempts the
+		// removal — but the 24h TTL bounds the leak (worst case:
+		// one sweep cycle of staleness).
+		if row.PartPath != "" {
+			if rmErr := removeUploadPart(row.PartPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				log.Warn("upload session reaper: .part remove failed, will retry next sweep",
+					"upload_id", row.ID, "path", row.PartPath, "err", rmErr)
+				uploadSessionReaperFailedTotal().Inc()
+				continue
+			}
+		}
 		if err := s.store.ExpireUploadSession(ctx, row.ID); err != nil {
 			if errors.Is(err, state.ErrConflict) {
 				// Already expired by a racing reaper (or by
@@ -102,14 +108,6 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 				"upload_id", row.ID, "err", err)
 			uploadSessionReaperFailedTotal().Inc()
 			continue
-		}
-		if row.PartPath != "" {
-			if rmErr := removeUploadPart(row.PartPath); rmErr != nil {
-				log.Warn("upload session reaper: .part remove failed",
-					"upload_id", row.ID, "path", row.PartPath, "err", rmErr)
-				uploadSessionReaperFailedTotal().Inc()
-				continue
-			}
 		}
 		deleted++
 	}

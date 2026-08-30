@@ -1204,6 +1204,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("apid")
 	wire.BootStamps(ctx, "apid", ops)
 	wire.RegisterDefaultOps(ops)
+	// Issue #1182 §P1 PR-1: wire the 5 apid_upload_session_*
+	// counters from (*OpsMetrics) into the package-level state the
+	// upload handlers read via uploadSessionCreatedTotal() etc.
+	// Without this, the package-level noop default absorbs every
+	// increment and /metrics shows zero series — see
+	// cmd/apid/handlers_upload_session.go:SetUploadSessionCounters.
+	SetUploadSessionCounters(uploadSessionCounters{
+		CreatedTotal:           promCounterVecAdapter{ops.UploadSessionCreatedTotal()},
+		CommittedTotal:         promCounterVecAdapter{ops.UploadSessionCommittedTotal()},
+		ExpiredTotal:           promCounterAdapter{c: ops.UploadSessionExpiredTotal()},
+		ReaperRowsDeletedTotal: promCounterAdapter{c: ops.UploadSessionReaperRowsDeletedTotal()},
+		ReaperFailedTotal:      promCounterAdapter{c: ops.UploadSessionReaperFailedTotal()},
+	})
 	srv.WithOpsMetrics(ctx, ops)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
