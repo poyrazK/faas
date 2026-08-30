@@ -24,7 +24,7 @@
 // binary-search. No mmap, no sysfs, no vsock. Falls back to
 // DefaultAppUID on any error so a misbuilt / corrupt table
 // degrades to today's behavior.
-package init
+package main
 
 import (
 	"bytes"
@@ -70,38 +70,50 @@ func searchPasswdTable(body []byte, name string) (int, bool) {
 	for lo < hi {
 		// Mid-record offsets are unsafe (mid-record slicing
 		// would split a record). Walk forward from the lower
-		// bound until we find a record boundary. The record
-		// count is bounded by the builder cap (256) so the
-		// per-iteration cost is constant in practice.
+		// bound until we find a record boundary at or past
+		// `mid`; if we walked past mid (because mid landed
+		// mid-record), step back to the boundary BEFORE mid.
+		// The record count is bounded by the builder cap (256)
+		// so the per-iteration cost is constant in practice.
 		mid := (lo + hi) / 2
+		prev := lo
 		off := lo
 		for off < mid {
 			if off+recordHeader > len(body) {
 				return 0, false
 			}
 			nameLen := int(body[off+8])
+			prev = off
 			off += recordHeader + nameLen
 		}
-		if off+recordHeader > len(body) {
+		target := off
+		if off > mid {
+			// mid was inside a record. The closest valid
+			// comparison target is the record whose start
+			// is just before mid — that record's name field
+			// is well-formed and the comparison is correct.
+			target = prev
+		}
+		if target+recordHeader > len(body) {
 			return 0, false
 		}
-		nameLen := int(body[off+8])
-		if off+recordHeader+nameLen > len(body) {
+		nameLen := int(body[target+8])
+		if target+recordHeader+nameLen > len(body) {
 			return 0, false
 		}
-		got := string(body[off+9 : off+9+nameLen])
+		got := string(body[target+9 : target+9+nameLen])
 		cmp := bytes.Compare([]byte(got), []byte(name))
 		switch {
 		case cmp < 0:
 			// The search range is the byte-indexed slice;
 			// we want to skip THIS record. Compute the
 			// next record boundary.
-			lo = off + recordHeader + nameLen
+			lo = target + recordHeader + nameLen
 		case cmp > 0:
-			hi = off
+			hi = target
 		default:
 			// Hit.
-			uid := binary.BigEndian.Uint32(body[off : off+4])
+			uid := binary.BigEndian.Uint32(body[target : target+4])
 			return int(uid), true
 		}
 	}

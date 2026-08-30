@@ -3,7 +3,7 @@
 // Tests for the binary /etc/faas/app_passwd reader. The
 // table-lookup core is testable without a real /etc mount —
 // searchPasswdTable takes the file body as a []byte.
-package init
+package main
 
 import (
 	"encoding/binary"
@@ -87,6 +87,48 @@ func TestReadPasswdTable_SingleEntry(t *testing.T) {
 	}
 	if _, ok := searchPasswdTable(body, "root"); ok {
 		t.Errorf("root miss: got ok; want false")
+	}
+}
+
+// TestReadPasswdTable_MidRecordBoundaryRegression — when `mid`
+// lands inside a record (not at a record boundary), the search
+// must compare against the record CONTAINING mid's predecessor
+// boundary, not the record that starts at-or-after mid. The first
+// implementation read the comparison record at off>=mid and used
+// that record's nameLen to narrow the search, which (a) missed
+// the first record on single-record tables and (b) infinite-looped
+// when off landed exactly at mid for the second record of a
+// 2-record table. This regression pins both failures.
+//
+// 3 records sorted ascending: alpine(uid=1000), root(uid=0),
+// sshd(uid=74). Body size = 15+13+13 = 41 bytes. mid values:
+//   - lo=0, hi=41 → mid=20 → mid is inside the root record
+//     (15..28). The previous record (alpine) must compare as
+//     "alpine vs root" on a hit-or-narrow; the next record
+//     (sshd) must NOT be the comparison target.
+//   - lo=0, hi=28 → mid=14 → mid is inside the alpine record
+//     (0..15). alpine is the comparison target.
+func TestReadPasswdTable_MidRecordBoundaryRegression(t *testing.T) {
+	body := append([]byte{},
+		append(makePasswdRow(1000, 1000, "alpine"),
+			append(makePasswdRow(0, 0, "root"),
+				makePasswdRow(74, 74, "sshd")...)...)...,
+	)
+	// Hit cases.
+	if uid, ok := searchPasswdTable(body, "alpine"); !ok || uid != 1000 {
+		t.Errorf("alpine: got (%d, %v); want (1000, true)", uid, ok)
+	}
+	if uid, ok := searchPasswdTable(body, "root"); !ok || uid != 0 {
+		t.Errorf("root: got (%d, %v); want (0, true)", uid, ok)
+	}
+	if uid, ok := searchPasswdTable(body, "sshd"); !ok || uid != 74 {
+		t.Errorf("sshd: got (%d, %v); want (74, true)", uid, ok)
+	}
+	// Miss cases — must NOT infinite-loop.
+	for _, name := range []string{"aardvark", "ghost", "zebra"} {
+		if uid, ok := searchPasswdTable(body, name); ok || uid != 0 {
+			t.Errorf("%q: got (%d, %v); want (0, false)", name, uid, ok)
+		}
 	}
 }
 
