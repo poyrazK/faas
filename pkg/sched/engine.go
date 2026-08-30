@@ -1879,8 +1879,35 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
 	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan))
+
+	// ADR-137 / Workstream B / fix #4: consult the per-deployment
+	// snapshot-miss backoff gate BEFORE honoring a warm-tier restore.
+	// Under sustained misses (FC upgrade in flight, image registry
+	// unreachable, deployment misconfigured) the snapshot-cache-miss
+	// branch was burning RAM + capacity on every wake. The gate is
+	// a stamp on `deployments.snapshot_miss_backoff_until` (migration
+	// 00585) — when set and in the future, force the cold-boot tier
+	// so the wake still completes (ADR-005: cold boot always works),
+	// and emit the dedicated backoff counter so the dashboard can
+	// distinguish "gated by 00585" from "natural cold-boot". The
+	// wake is NOT blocked; the customer's bill is the same. MemStore
+	// returns (Deployment{}, false, nil) so tests that don't seed a
+	// backoff row are unaffected.
+	var backoffActive bool
+	if _, active, err := e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID); err != nil {
+		e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", err)
+	} else if active {
+		backoffActive = true
+		haveSnap = false
+		chosenTier = "cold_boot_backoff_gate"
+	}
 	if e.ops != nil {
 		e.ops.WakeSnapshotTier(chosenTier).Inc()
+		if backoffActive {
+			if c := e.ops.SnapshotBackoffGateOutcome("gated"); c != nil {
+				c.Inc()
+			}
+		}
 	}
 
 	initState := state.StateColdBooting
@@ -6194,6 +6221,53 @@ func (e *Engine) transition(ctx context.Context, instanceID, appID string, to st
 // KillStuck's "watchdog_timeout", snapshotAndPark's "park_snapshot_error")
 // go through here. The transition body itself is unchanged from
 // transition() — only the appended events row differs.
+// transitionWithKindCAS is the CAS-aware sibling of transitionWithKind,
+// added by ADR-137 follow-up / fix #5. It performs the same
+// load → validate edge → write → audit-log flow but returns
+// (ok, error) so race-losers can suppress their metric / event
+// emission. ok=true means the state write landed AND the
+// from→to edge was legal AND the row existed; ok=false means the
+// row wasn't found, the edge was refused, or the write failed
+// (the error distinguishes the failure shape).
+//
+// Used by callers that race with peers on the same row —
+// Engine.RecreateInstance is the load-bearing one (the recovery
+// arbiter and the deadnode reconciler can both target the same
+// stranded row; the loser must not double-count).
+func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID string, to state.State, kind, reason string) (bool, error) {
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		return false, err
+	}
+	from := state.State(ins.State)
+	if from == to {
+		return false, nil // benign no-op (idempotent re-entry); not a CAS win
+	}
+	if !state.CanTransition(from, to) {
+		e.log.Error("transition: illegal edge refused", "instance", instanceID, "from", from, "to", to)
+		return false, nil
+	}
+	if to == state.StateStopped || to == state.StateFailed {
+		if err := e.store.UpdateInstanceStateToTerminal(ctx, instanceID, string(to), time.Now().UTC()); err != nil {
+			return false, err
+		}
+	} else if err := e.store.UpdateInstanceState(ctx, instanceID, string(to)); err != nil {
+		return false, err
+	}
+	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
+	subject := instanceID
+	data, _ := json.Marshal(map[string]any{
+		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, data); err != nil {
+		e.log.Warn("transition: append event", "instance", instanceID, "from", from, "to", to, "kind", kind, "err", err)
+		if e.ops != nil {
+			e.ops.EventsWriteFailures().Inc()
+		}
+	}
+	return true, nil
+}
+
 func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID string, to state.State, kind, reason string) {
 	ins, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {

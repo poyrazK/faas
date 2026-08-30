@@ -1582,6 +1582,17 @@ type OpsMetrics struct {
 	// together. Single-registry: registered on every daemon,
 	// only schedd increments via SnapshotBackoffStamp.
 	snapshotBackoffStamp *prometheus.CounterVec
+	// snapshotBackoffGate: Workstream B / ADR-137 follow-up /
+	// fix #4. Counts wake-side consultations of the
+	// snapshot-miss backoff gate. outcome ∈ {gated, miss}
+	// where `gated` means the deployment was in backoff
+	// (warm-tier restore was forced to cold-boot) and `miss`
+	// means no gate was active (normal wake path). Pair with
+	// snapshotBackoffStamp{outcome="recorded"} to see the
+	// gap between stamping a backoff and the wake actually
+	// hitting it. Single-registry: registered on every
+	// daemon; only schedd increments via SnapshotBackoffGateOutcome.
+	snapshotBackoffGate *prometheus.CounterVec
 	// githubdPathFilterTotal: issue #432 phase 5 / ADR-050
 	// §109. Counter labelled by `mode` ∈ {paths, full_fallback,
 	// truncated, error, breaker_open} — the closed set
@@ -3408,6 +3419,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Per-deployment snapshot-cache-miss backoff stamps, labelled by outcome ∈ {recorded, cleared}. `recorded` counts the per-deployment cooldown stamps after a snapshot cache miss (the §12 snapshot_backoff panel's miss-rate numerator). A sustained non-zero `recorded` rate at the same magnitude as the wake rate signals a stuck deployment — FC upgrade race, imaged-side write race, or GC reaper evicted the snapshot row — and pairs with snapshot_fleet_avg_mb so operators see both signals together. `cleared` counts the resets on a successful snapshot_written event; an imbalance where `recorded` rate exceeds `cleared` rate by more than 5x for 5m is the §12 snapshot_backoff_uncleared tripwire.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, snapshotBackoffStamp)
+	// Snapshot-cache-miss backoff gate consultations (Workstream B /
+	// ADR-137 follow-up / fix #4). Single-registry: registered on
+	// every daemon, only schedd increments it in production (via
+	// Engine.wakeSnapshotBackoffGate in pkg/sched/engine.go).
+	snapshotBackoffGate := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_snapshot_backoff_gate_total",
+		Help: "Wake-side consultations of the per-deployment snapshot-miss backoff gate, labelled by outcome ∈ {gated, miss}. `gated` means the deployment was in backoff and the warm-tier restore was forced to cold-boot (the §12 snapshot_backoff_gate panel's gated-rate numerator). `miss` means no gate was active and the wake proceeded normally. Pair with snapshot_backoff_stamp_total{outcome=\"recorded\"} — a sustained non-zero `gated` rate confirms the 00585 stamp is reaching the wake path; a flat-zero `gated` rate at non-zero `recorded` rate means the stamp is being written but the wake never consults it (the §12 snapshot_backoff_gate_unreached tripwire).",
+	}, []string{"outcome"})
+	commonCollectors = append(commonCollectors, snapshotBackoffGate)
 	// ADR-087 / Tier A9: pressure-rebalancer decision counter.
 	// Single-registry: registered on every daemon (mirrors
 	// deadNodeReconcileDecisions); only schedd increments via
@@ -4167,6 +4187,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		deadNodeReconcileDecisions:           deadNodeReconcileDecisions,
 		recreateDecisions:                   recreateDecisions,
 		snapshotBackoffStamp:                snapshotBackoffStamp,
+		snapshotBackoffGate:                 snapshotBackoffGate,
 		registryCredentialMarkUsedFailures:   registryCredentialMarkUsedFailures,
 		storageCacheStaleFallback:            storageCacheStaleFallback,
 		apidLogsEmittedTotal:                 apidLogsEmittedTotal,
@@ -5047,6 +5068,16 @@ func (m *OpsMetrics) RecreateDecisions(outcome string) prometheus.Counter {
 // RecreateDecisions.
 func (m *OpsMetrics) SnapshotBackoffStamp(outcome string) prometheus.Counter {
 	return m.snapshotBackoffStamp.WithLabelValues(outcome)
+}
+
+// SnapshotBackoffGateOutcome returns the labelled counter for the
+// wake-side consultation of the per-deployment snapshot-miss
+// backoff gate (Workstream B / ADR-137 follow-up / fix #4).
+// Called from Engine.wakeSnapshotBackoffGate once per wake.
+// outcome ∈ {gated, miss}. Same caching rules as
+// SnapshotBackoffStamp.
+func (m *OpsMetrics) SnapshotBackoffGateOutcome(outcome string) prometheus.Counter {
+	return m.snapshotBackoffGate.WithLabelValues(outcome)
 }
 
 // EventsWriteFailures returns the unlabelled counter for audit-log
