@@ -28,6 +28,7 @@ package sched
 
 import (
 	"context"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -139,6 +140,24 @@ func NewArbiter(lm MigrationDispatcher, rp RecreateDispatcher) *Arbiter {
 func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance) Decision {
 	switch instance.State {
 	case "parked", "failed", "terminated":
+		return DecisionNone
+	case "migrating", "snapshotting":
+		// In-flight guard (ADR-137 follow-up / fix #6): a peer
+		// primitive (live_migrator, snapshot_reaper) owns this
+		// row. Issuing a fresh verdict from this arbiter on the
+		// next tick would race the in-flight transition — a
+		// "migrating" row would get a second LiveMigrate enqueue
+		// and double-fire the destination's lease CAS. The
+		// owning primitive clears the state when it lands; the
+		// next tick sees the row in its post-transition state
+		// (parked / failed / cold_booting again on a different
+		// node) and resumes normal decision-making.
+		return DecisionNone
+	}
+	if strings.HasPrefix(instance.State, "evicting") {
+		// Eviction sweep (rebalancer is mid-flight removing it)
+		// owns this row — recreating here would re-allocate the
+		// row the eviction is trying to free.
 		return DecisionNone
 	}
 	switch node.Lifecycle {

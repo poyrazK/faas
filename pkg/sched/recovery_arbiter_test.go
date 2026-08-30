@@ -36,9 +36,13 @@ func (n *noopDispatcher) RecreateInstance(_ context.Context, id string) error {
 	return nil
 }
 
-// TestArbiter_Decide_Table pins the 8-case decision matrix from
-// ADR-137. Each row is a (node.lifecycle, instance.state) pair
-// → expected verdict.
+// TestArbiter_Decide_Table pins the 11-case decision matrix from
+// ADR-137 (8 original + 3 in-flight guards added by fix #6).
+// Each row is a (node.lifecycle, instance.state) pair → expected
+// verdict. The in-flight rows (`migrating`, `snapshotting`,
+// `evicting_*`) pin the deny-list introduced so the arbiter
+// doesn't race a peer primitive (live_migrator, snapshot_reaper,
+// eviction sweep) that already owns the row.
 func TestArbiter_Decide_Table(t *testing.T) {
 	t.Parallel()
 	a := NewArbiter(nil, nil) // dispatch not exercised in pure-Decide tests
@@ -106,6 +110,29 @@ func TestArbiter_Decide_Table(t *testing.T) {
 			name:     "unavailable_terminated → None",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
 			instance: state.RecoveryInstance{State: "terminated"},
+			want:     DecisionNone,
+		},
+		// Fix #6: in-flight deny-list. The arbiter must NOT
+		// re-issue a verdict for a row whose state says a peer
+		// primitive already owns it — that would race the
+		// in-flight transition (a second LiveMigrate enqueue,
+		// a second recreate on the same row, etc).
+		{
+			name:     "unavailable_migrating → None (in-flight)",
+			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
+			instance: state.RecoveryInstance{State: "migrating"},
+			want:     DecisionNone,
+		},
+		{
+			name:     "draining_snapshotting → None (in-flight)",
+			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
+			instance: state.RecoveryInstance{State: "snapshotting"},
+			want:     DecisionNone,
+		},
+		{
+			name:     "unavailable_evicting_grace → None (in-flight)",
+			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
+			instance: state.RecoveryInstance{State: "evicting_grace"},
 			want:     DecisionNone,
 		},
 	}
