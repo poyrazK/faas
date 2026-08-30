@@ -3,8 +3,9 @@
 //
 // Why in-process in apid (not in meterd or schedd): the reaper
 // touches two surfaces apid owns:
-//   1. upload_sessions.status (open → expired)
-//   2. /var/spool/faas/builds/<id>.part files
+//  1. upload_sessions.status (open → expired)
+//  2. /var/spool/faas/builds/<id>.part files
+//
 // schedd owns the state machine (§6) but doesn't read or write
 // the spool; meterd owns different retention (pkg/meter/retention.go).
 //

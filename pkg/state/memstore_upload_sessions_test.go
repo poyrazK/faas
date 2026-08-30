@@ -51,14 +51,14 @@ func accountUUIDFromString(t *testing.T, s string) pgtype.UUID {
 // public CreateUploadSession signature (which doesn't let us set
 // expires_at to "already past" for the reaper test).
 func seedUploadSession(t *testing.T, m *MemStore, opts struct {
-	id           string
-	account      string
-	slug         string
-	totalSize    int64
-	received     int64
-	status       string
-	expiresIn    time.Duration
-	lastPatched  time.Duration
+	id          string
+	account     string
+	slug        string
+	totalSize   int64
+	received    int64
+	status      string
+	expiresIn   time.Duration
+	lastPatched time.Duration
 }) sqlc.UploadSession {
 	t.Helper()
 	now := time.Now().UTC()

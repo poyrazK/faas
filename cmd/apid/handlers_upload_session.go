@@ -660,7 +660,9 @@ type uploadCounterVec interface {
 type uploadSessionCounterNoop struct{}
 
 func (uploadSessionCounterNoop) Inc() {}
-func (uploadSessionCounterNoop) WithLabelValues(_ ...string) uploadCounter { return uploadSessionCounterNoop{} }
+func (uploadSessionCounterNoop) WithLabelValues(_ ...string) uploadCounter {
+	return uploadSessionCounterNoop{}
+}
 
 var uploadSessionCounterState = uploadSessionCounters{
 	CreatedTotal:           uploadSessionCounterNoop{},
@@ -675,11 +677,15 @@ var uploadSessionCounterState = uploadSessionCounters{
 // Prometheus counters registered on the apid's registry.
 func SetUploadSessionCounters(c uploadSessionCounters) { uploadSessionCounterState = c }
 
-func uploadSessionCreatedTotal() uploadCounterVec { return uploadSessionCounterState.CreatedTotal }
+func uploadSessionCreatedTotal() uploadCounterVec   { return uploadSessionCounterState.CreatedTotal }
 func uploadSessionCommittedTotal() uploadCounterVec { return uploadSessionCounterState.CommittedTotal }
-func uploadSessionExpiredTotal() uploadCounter     { return uploadSessionCounterState.ExpiredTotal }
-func uploadSessionReaperRowsDeletedTotal() uploadCounter { return uploadSessionCounterState.ReaperRowsDeletedTotal }
-func uploadSessionReaperFailedTotal() uploadCounter { return uploadSessionCounterState.ReaperFailedTotal }
+func uploadSessionExpiredTotal() uploadCounter      { return uploadSessionCounterState.ExpiredTotal }
+func uploadSessionReaperRowsDeletedTotal() uploadCounter {
+	return uploadSessionCounterState.ReaperRowsDeletedTotal
+}
+func uploadSessionReaperFailedTotal() uploadCounter {
+	return uploadSessionCounterState.ReaperFailedTotal
+}
 
 // pgtypeFromUUIDString is defined at handlers_app_errors_projection.go:171.
 // It converts state.Account.ID (a stringified uuid.UUID) into
