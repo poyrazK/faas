@@ -3486,7 +3486,6 @@ func (h *Handler) buildFullRootfsLayer(
 		Plan:           acct.Plan,
 		Storage:        be,
 		StorageKey:     appsKey,
-		OutImage:       h.appsRootPath(app.Slug, dep.ID),
 		SBOMRun:        h.syftRun,
 		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
 		// Resolver wired by commit 7 from the image's merged

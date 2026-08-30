@@ -263,14 +263,43 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	// top-most view); add new entries to the map. Layers N+1 see
 	// the merged resolver.
 	//
+	// Layer 0 is special: we apply it once to discover /etc/passwd,
+	// build the resolver, then RE-APPLY it with the resolver so
+	// named-user entries in layer 0's tar header get resolved. This
+	// is the only correct way to honor named users in single-layer
+	// images (distroless, scratch, hand-rolled) — the common case
+	// for full-rootfs. The re-apply is idempotent for files
+	// (same content + mode); only ownership of `hdr.Uid==0 &&
+	// hdr.Uname!=""` entries changes (which is the goal).
+	//
 	// The resolver is what preserves named-user chown correctness
 	// at apply-time — without it, an image declaring
 	// `Uname="node", Uid=0` lands on uid 0 in the guest, which
 	// spec §11 forbids.
 	passwdEntries := make(map[string]PasswdEntry)
 	var resolver Resolver
-	for i, layer := range in.Layers {
-		if err := ApplyLayerGzWithResolver(staging, layer, resolver); err != nil {
+	if len(in.Layers) > 0 {
+		// First pass: layer 0 with resolver=nil to surface its
+		// /etc/passwd (if any).
+		if err := ApplyLayerGzWithResolver(staging, in.Layers[0], nil); err != nil {
+			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (pre-parse): %w", err)
+		}
+		if entries, perr := parseStagingPasswd(staging); perr != nil {
+			return BuildResult{}, fmt.Errorf("rootfs: parse layer 0 /etc/passwd: %w", perr)
+		} else if len(entries) > 0 {
+			for k, v := range entries {
+				passwdEntries[k] = v
+			}
+		}
+		resolver = NewPasswdResolver(passwdEntries)
+		// Second pass: layer 0 with the resolver so named users
+		// in layer 0's tar header resolve.
+		if err := ApplyLayerGzWithResolver(staging, in.Layers[0], resolver); err != nil {
+			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (resolved): %w", err)
+		}
+	}
+	for i := 1; i < len(in.Layers); i++ {
+		if err := ApplyLayerGzWithResolver(staging, in.Layers[i], resolver); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
 		// Re-parse the top-most /etc/passwd after each apply.
@@ -564,14 +593,69 @@ func (b *Builder) emitFullRootfsSBOM(ctx context.Context, in BuildFullRootfsInpu
 }
 
 // publishExt4FullRootfs is the full-rootfs sibling of publishExt4.
-// Same mkfs.ext4 + Storage.Put pipeline; no drive1 wrapper, no
-// overlayfs staging.
+// Same mkfs.ext4 + Storage.Put + (optional) cosign-sign pipeline;
+// no drive1 wrapper, no overlayfs staging (the full rootfs IS the
+// produced drive — drive0+vda, not drive1).
+//
+// OutImage path is supported for parity with publishExt4 (used by
+// integration tests that need a local on-disk ext4); production
+// callers route through Storage + StorageKey so the artifact lands
+// in the bucket / file store. Exactly one must be set — the gate
+// is validateFullRootfsOutputTarget at the top of BuildFullRootfs.
 func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsInput, staging string, sizeMB int) error {
-	// Stub for commit 5: real mkfs.ext4 invocation lands when
-	// commit 6 wires buildFullRootfsLayer end-to-end. Reusing
-	// publishExt4 would mount drive1 wrapper logic we don't want
-	// for the full-rootfs path; commit 6 will supply a sibling
-	// helper that omits the /upper staging step.
+	if in.OutImage != "" {
+		// Legacy / integration test path. Mkfs writes directly to
+		// OutImage; the caller's filesystem provides atomicity (or
+		// doesn't, and we honour that — same as publishExt4).
+		if err := os.MkdirAll(filepath.Dir(in.OutImage), 0o755); err != nil {
+			return fmt.Errorf("rootfs: mkdir out dir: %w", err)
+		}
+		if err := b.run.Run(ctx, MkfsCommand(staging, in.OutImage, sizeMB)); err != nil {
+			return fmt.Errorf("rootfs: mkfs: %w", err)
+		}
+		return nil
+	}
+	// Storage path (production). Mkfs into a sibling temp file, then
+	// Put the bytes under StorageKey and remove the temp.
+	tmp, err := os.CreateTemp(filepath.Dir(staging), "faas-mkfs-*.ext4")
+	if err != nil {
+		return fmt.Errorf("rootfs: create tmp ext4: %w", err)
+	}
+	tmpPath := tmp.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmp.Close()
+		}
+		_ = os.Remove(tmpPath)
+	}()
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("rootfs: close tmp ext4: %w", err)
+	}
+	if err := b.run.Run(ctx, MkfsCommand(staging, tmpPath, sizeMB)); err != nil {
+		return fmt.Errorf("rootfs: mkfs: %w", err)
+	}
+	// nolint:forbidigo // tmpPath is from os.CreateTemp at the top of
+	// this function — a daemon-internal scratch file the builder just
+	// wrote via MkfsCommand. Not a customer path.
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("rootfs: open mkfs output: %w", err)
+	}
+	closed = true // release the open file before Put; storage Put closes the file via defer elsewhere
+	defer func() { _ = f.Close() }()
+	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
+		return fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
+	}
+	// ADR-038: sign the published ext4 so schedd's cold-boot verify
+	// (pkg/cosign.LocalVerifier) can detect tampering. Same shape
+	// as publishExt4 — signing failure is build-fatal.
+	if b.signer != nil {
+		sigKey := "sigs/" + in.StorageKey + ".sig"
+		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
+			return fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
+		}
+	}
 	return nil
 }
 

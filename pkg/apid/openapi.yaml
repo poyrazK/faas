@@ -13654,6 +13654,25 @@ components:
             - $ref: '#/components/schemas/CanaryPresetSpec'
             - type: 'null'
           description: "Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder."
+        # Issue #1186 / ADR-141 §Decision 2 — tri-state full-rootfs
+        # dispatch (M-3). nil/omitted on BOTH fields = handler
+        # consults api.FullRootfsAllowAutoDefault[acct.Plan]
+        # (Free:false / Hobby+:true) — Hobby+ plans auto-fall back
+        # to the full-rootfs build path on ErrLayersNotAboveBase;
+        # Free plans reject auto-fallback and surface the
+        # today-equivalent failure. `full_rootfs_override` is the
+        # explicit tri-state: *true forces full-rootfs even on Free
+        # plan (only path to enable multi-arch / distroless on
+        # Free); *false forces today-equivalent failure even on
+        # Hobby+. Migration 00583 persists both fields.
+        full_rootfs_allow_auto:
+          type: [boolean, "null"]
+          description: "Per-deployment opt-in for the auto-fallback path (issue #1186 / ADR-141). nil = handler reads api.FullRootfsAllowAutoDefault[acct.Plan] (Free:false, Hobby+:true) and writes that onto the row."
+          example: true
+        full_rootfs_override:
+          type: [boolean, "null"]
+          description: "Tri-state per-deployment override (issue #1186 / ADR-141). NULL = honor allow_auto + plan gate. true = force full-rootfs (Free-plan override). false = force today-equivalent failure (Hobby+ opt-out). nil/omitted = inherit auto + plan."
+          example: true
 
     CreateDeploymentOverrides:
       description: |

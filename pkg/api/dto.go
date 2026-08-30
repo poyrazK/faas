@@ -957,6 +957,25 @@ type CreateDeploymentRequest struct {
 	// (mirrors the TrafficPercent gate at line 922-923). nil on
 	// the wire → 'none' with zero ladder.
 	Canary *CanaryPresetSpec `json:"canary,omitempty"`
+	// FullRootfsAllowAuto (issue #1186 / ADR-141 / M-3) is the
+	// per-deployment opt-in for the auto-fallback path. Pointer
+	// so nil = "handler reads api.FullRootRootfsAllowAutoDefault
+	// [acct.Plan] (Free:false / Hobby+:true) and writes that onto
+	// the row" — i.e. nil preserves the plan default. explicit
+	// *true / *false override the plan default. Free-plan customers
+	// who want multi-arch / distroless / scratch deploys must set
+	// this to *true (or set FullRootfsOverride to *true). Migration
+	// 00583 persists.
+	FullRootfsAllowAuto *bool `json:"full_rootfs_allow_auto,omitempty"`
+	// FullRootfsOverride (issue #1186 / ADR-141 / M-3) is the
+	// tri-state per-deployment override. Pointer so:
+	//   nil   → honor FullRootfsAllowAuto + plan gate.
+	//   *true → force full-rootfs even on Free plan.
+	//   *false → force today-equivalent failure even on Hobby+.
+	// pgx marshals a nil pointer to NULL on the wire, so the
+	// tri-state round-trips through the SQL NULLABLE boolean
+	// column added in migration 00583.
+	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
 }
 
 // CanaryPresetSpec is the canary ladder a customer asks for on a
