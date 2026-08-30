@@ -72,6 +72,12 @@ type LayerBuilder interface {
 	// layers via ApplyLayerGz, and hands the dir here — mkfs +
 	// publish, no layer apply inside Build.
 	BuildBaseFromStaging(ctx context.Context, staging string, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error)
+	// BuildFullRootfs (ADR-141 §Decision 1, M-3 commit 5+6)
+	// assembles a self-contained ext4 rootfs from ALL of the app
+	// image's layers — bypasses the two-drive shared-base path
+	// entirely. Used by imaged.buildFullRootfsLayer when the app
+	// image is NOT built FROM one of our runner-* bases.
+	BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error)
 }
 
 // Handler is the imaged orchestrator. It owns the transition walk that
@@ -3362,27 +3368,153 @@ func (h *Handler) emitWarmSnapshotStale(ctx context.Context, fcVersion string, b
 // or surfaces today-equivalent failure (ADR-141 §Decision 2 +
 // §Decision 3).
 //
-// Commit 4 lands the dispatch skeleton: it returns a stub error
-// until commit 5 (BuildFullRootfs) and commit 6 (state.Deployment
-// widening + override resolution + buildFullRootfsLayer wiring)
-// replace the stub with the real BuildFullRootfs call. The stub
-// intentionally surfaces oci.ErrLayersNotAboveBase so callers
-// continue to see the canonical sentinel and pkg/api.SentinelToCode
-// maps it to CodeImageManifestInvalid (422).
-//
 // Tri-state resolution (commit 6):
 //   - dep.FullRootfsOverride=&false → today-equivalent failure (force-off).
 //   - dep.FullRootfsOverride=&true  → full-rootfs (force-on, even on Free).
 //   - dep.FullRootfsOverride=nil:
 //     - dep.FullRootfsAllowAuto && paid plan → full-rootfs (auto).
 //     - else                              → today-equivalent failure.
+//
+// "Paid plan" means PlanHobby / PlanPro / PlanScale per
+// api.PlanMeetsMinimumPlan(_, PlanHobby). Free plan auto-fallback
+// is rejected; the customer MUST opt in via FullRootfsOverride=&true.
+// The two-drive path's behavior is unchanged for any image whose
+// layers prefix one of our runner-* bases.
 func (h *Handler) dispatchFullRootfs(
-	_ context.Context,
-	_ state.App,
-	_ state.Deployment,
-	_ state.Account,
-	_ api.AppManifest,
-	_ *oci.BasicAuth,
+	ctx context.Context,
+	app state.App,
+	dep state.Deployment,
+	acct state.Account,
+	manifest api.AppManifest,
+	appAuth *oci.BasicAuth,
 ) error {
-	return fmt.Errorf("%w: full-rootfs build path is not yet wired (M-3 commit 6 will replace this stub)", oci.ErrLayersNotAboveBase)
+	if dep.FullRootfsOverride != nil && !*dep.FullRootfsOverride {
+		// Force-off: surface today-equivalent failure so pkg/api
+		// SentinelToCode maps to CodeImageManifestInvalid (422).
+		return fmt.Errorf("%w: customer forced two-drive path via FullRootfsOverride=&false", oci.ErrLayersNotAboveBase)
+	}
+	if dep.FullRootfsOverride != nil && *dep.FullRootfsOverride {
+		// Force-on: honor regardless of plan / AllowAuto.
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+	}
+	if dep.FullRootfsAllowAuto && api.PlanMeetsMinimumPlan(acct.Plan, api.PlanHobby) {
+		// Auto-dispatch: paid plans opt-in by default. Free plans
+		// must explicitly opt in via FullRootfsOverride=&true.
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+	}
+	// Default: today-equivalent failure on Free without override
+	// (and on any future plan whose AllowAuto=false without
+	// override).
+	return fmt.Errorf("%w: plan %s does not auto-dispatch to full-rootfs; pass FullRootfsOverride=&true to opt in",
+		oci.ErrLayersNotAboveBase, acct.Plan)
+}
+
+// buildFullRootfsLayer pulls ALL of the app image's layers
+// (bottom-to-top), calls rootfs.Builder.BuildFullRootfs, and stamps
+// the resulting ext4 to the same appsKey the two-drive path uses
+// (ADR-141 §Decision 4: shared StorageKey shape). No drive0 base
+// pull — full-rootfs images are self-contained.
+//
+// The auth wire mirrors aboveBaseLayers (M6 two-drive path): the
+// app manifest + app blobs carry appAuth; no base is consulted.
+func (h *Handler) buildFullRootfsLayer(
+	ctx context.Context,
+	app state.App,
+	dep state.Deployment,
+	acct state.Account,
+	manifest api.AppManifest,
+	appAuth *oci.BasicAuth,
+) error {
+	mp, ok := h.oci.(oci.ManifestPuller)
+	if !ok {
+		return fmt.Errorf("imaged: full-rootfs requires oci.ManifestPuller; got %T", h.oci)
+	}
+	appRepo := repoWithHost(dep.ImageDigest)
+	if appRepo == "" {
+		return fmt.Errorf("imaged: cannot derive repo from %q", dep.ImageDigest)
+	}
+	start := time.Now()
+	appManifest, err := pullManifestWithAuth(ctx, mp, dep.ImageDigest, appAuth)
+	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
+	if err != nil {
+		return fmt.Errorf("imaged: full-rootfs manifest: %w", err)
+	}
+	// Issue #461 / ADR-062: stamp credential used after a
+	// successful app manifest pull on the full-rootfs path too —
+	// every authenticated pull above this line was either app
+	// manifest, app config, or app blob.
+	refHost := ""
+	if parsedRef, parseErr := oci.ParseReference(dep.ImageDigest); parseErr == nil {
+		refHost = parsedRef.APIHost()
+	}
+	h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
+
+	if len(appManifest.Layers) == 0 {
+		return fmt.Errorf("imaged: full-rootfs image has zero layers")
+	}
+	readers := make([]io.Reader, 0, len(appManifest.Layers))
+	closers := make([]io.Closer, 0, len(appManifest.Layers))
+	for _, l := range appManifest.Layers {
+		start := time.Now()
+		rc, err := pullBlobWithAuth(ctx, mp, appRepo, l.Digest, appAuth)
+		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(start))
+		if err != nil {
+			for _, c := range closers {
+				_ = c.Close()
+			}
+			return fmt.Errorf("imaged: full-rootfs pull blob %s: %w", l.Digest, err)
+		}
+		closers = append(closers, rc)
+		readers = append(readers, rc)
+	}
+	defer func() {
+		for _, c := range closers {
+			_ = c.Close()
+		}
+	}()
+
+	be, err := h.storageFor()
+	if err != nil {
+		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
+	}
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+
+	res, err := h.builder.BuildFullRootfs(ctx, rootfs.BuildFullRootfsInput{
+		Layers:         readers,
+		Manifest:       manifest,
+		GuestInitPath:  h.guestInitPath,
+		Plan:           acct.Plan,
+		Storage:        be,
+		StorageKey:     appsKey,
+		OutImage:       h.appsRootPath(app.Slug, dep.ID),
+		SBOMRun:        h.syftRun,
+		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
+		// Resolver wired by commit 7 from the image's merged
+		// /etc/passwd table. Today (commit 6) we pass nil so the
+		// per-entry chown path falls through to the daemon uid +
+		// unparseable_uid counter — same as the two-drive path.
+		Resolver: nil,
+	})
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build full-rootfs: "+err.Error())
+		return fmt.Errorf("imaged: build full-rootfs: %w", err)
+	}
+	h.updateBuildProvenanceSBOM(ctx, dep.ID, res.SBOMKey)
+	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, res.ContentBytes); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp full-rootfs: "+err.Error())
+		return fmt.Errorf("imaged: stamp full-rootfs: %w", err)
+	}
+	if err := h.replicateLayer(ctx, appsKey); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, err.Error())
+		return err
+	}
+	h.log.Info("imaged: build app layer (full-rootfs)",
+		"app", app.Slug,
+		"digest", dep.ImageDigest,
+		"key", res.ImageKey,
+		"bytes", res.ContentBytes,
+		"layers", len(appManifest.Layers),
+		"plan", string(acct.Plan),
+	)
+	return nil
 }
