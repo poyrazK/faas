@@ -41,11 +41,17 @@ var ErrImageNotFound = errors.New("oci: image not found")
 var ErrImageEgressDenied = errors.New("oci: egress denied by policy")
 
 // ErrImageManifestInvalid is wrapped into the error returned from
-// PullManifest when the body is a manifest-list (multi-arch), fails
-// schema validation, or otherwise cannot be reduced to a single-
-// platform Manifest. The two-drive build path requires a flat
-// per-platform manifest to compute the above-base layer list
-// (see pkg/imaged/handler.go::aboveBaseLayers).
+// PullManifest when the manifest body cannot be reduced to a single-
+// platform Manifest. ADR-140 closed the top-level index rejection:
+// today this sentinel is reserved for (a) the manifest body being
+// malformed JSON, (b) the matched descriptor's digest failing to
+// fetch from the registry (404), (c) the platform walk exceeding
+// depth 2 (a manifest list whose selected entry is itself a list —
+// defensive; real indexes are one level deep), (d) the host arch
+// being unknown on a multi-box host without FAAS_BUILDER_ARCH set,
+// (e) the manifest body being a non-OCI / non-Docker mediaType
+// (genuine malformed manifest). Lifted to RFC 7807
+// CodeImageManifestInvalid (422) by SentinelToCode.
 var ErrImageManifestInvalid = errors.New("oci: manifest invalid")
 
 // ErrStatelessOnlyViolation is wrapped into the error returned from

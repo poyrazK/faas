@@ -7,6 +7,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -108,6 +109,52 @@ func TestBuilderBaseRef_SingleBoxKeepsDevelopmentDefault(t *testing.T) {
 	}
 	if got != "ghcr.io/poyrazk/builder-base:latest" {
 		t.Fatalf("builderBaseRefFromEnv() = %q, want development builder default", got)
+	}
+}
+
+// ADR-140 §Decision 2: FAAS_BUILDER_ARCH env. Same fail-loud gate
+// shape as FAAS_BUILDER_BASE_REF above.
+func TestBuilderArch_MultiBoxRequiresEnv(t *testing.T) {
+	t.Setenv("FAAS_NODE_NAME", "fsn-2")
+	t.Setenv("FAAS_BUILDER_ARCH", "")
+	if _, err := builderArchFromEnv(); err == nil {
+		t.Fatal("builderArchFromEnv() accepted unset FAAS_BUILDER_ARCH on a named host")
+	}
+}
+
+func TestBuilderArch_SingleBoxDefaultsToGOARCH(t *testing.T) {
+	t.Setenv("FAAS_NODE_NAME", "")
+	t.Setenv("FAAS_BUILDER_ARCH", "")
+	got, err := builderArchFromEnv()
+	if err != nil {
+		t.Fatalf("builderArchFromEnv() = error %v", err)
+	}
+	// amd64 on amd64 CI / developer hosts; arm64 on M-series Mac CI.
+	want := runtime.GOARCH
+	if got != want {
+		t.Errorf("builderArchFromEnv() = %q, want %q (runtime.GOARCH)", got, want)
+	}
+}
+
+func TestBuilderArch_InvalidValueRejects(t *testing.T) {
+	t.Setenv("FAAS_NODE_NAME", "")
+	t.Setenv("FAAS_BUILDER_ARCH", "riscv64")
+	if _, err := builderArchFromEnv(); err == nil {
+		t.Fatal("builderArchFromEnv() accepted riscv64 (not amd64 / arm64)")
+	}
+}
+
+func TestBuilderArch_ValidValuesPass(t *testing.T) {
+	for _, v := range []string{"amd64", "arm64"} {
+		t.Setenv("FAAS_NODE_NAME", "")
+		t.Setenv("FAAS_BUILDER_ARCH", v)
+		got, err := builderArchFromEnv()
+		if err != nil {
+			t.Fatalf("builderArchFromEnv(=%q): %v", v, err)
+		}
+		if got != v {
+			t.Errorf("builderArchFromEnv() = %q, want %q", got, v)
+		}
 	}
 }
 
