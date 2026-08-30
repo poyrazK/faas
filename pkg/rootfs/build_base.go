@@ -1,7 +1,9 @@
 package rootfs
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -185,6 +188,203 @@ func injectBaseGuestInit(staging, guestInitPath string) error {
 	}
 	if err := InjectGuestInit(staging, guestInitPath); err != nil {
 		return fmt.Errorf("rootfs: inject base guest-init: %w", err)
+	}
+	return nil
+}
+
+// BuildFullRootfsInput is the per-deployment input for the
+// full-rootfs build path (ADR-141 §Decision 1). It mirrors
+// BuildInput but consumes the app image's ALL layers (no
+// LayersAboveBase) and threads a Resolver through layer-apply
+// so named users (distroless / alpine / scratch USER=...) land on
+// the image's declared uid rather than uid 0.
+type BuildFullRootfsInput struct {
+	Layers          []io.Reader
+	Manifest        api.AppManifest
+	GuestInitPath   string
+	Plan            api.Plan
+	Storage         storage.StorageBackend
+	StorageKey      string
+	OutImage        string
+	TarballPath     string
+	FunctionHandlerPath  string
+	FunctionRunnerPath   string
+	SBOMRun         func(ctx context.Context, dir string) ([]byte, error)
+	SBOMStorageKey  string
+	// Resolver is consulted by ApplyLayerGzWithResolver during the
+	// per-entry chown path. Commit 5 lays the plumbing; commit 7
+	// wires the real image-/etc/passwd parser + merge walk.
+	Resolver Resolver
+}
+
+// BuildFullRootfs assembles a self-contained ext4 rootfs from ALL
+// of the app image's layers (ADR-141 §Decision 1). It bypasses
+// the two-drive shared-base path entirely — every per-app ext4
+// carries the image's full rootfs (alpine ~40 MB, distroless ~3 MB,
+// scratch ~0 MB), and the produced drive is mounted as drive0+vda
+// inside the guest (no drive1 overlay layer).
+//
+// Reuses the same staging + InjectManifest + InjectGuestInit +
+// mkfs + Storage.Put pipeline as Build. The per-entry chown path
+// threads the supplied Resolver so named users (`Uname!=""`,
+// `Uid=0` — the distroless / alpine shape) land on the image's
+// declared uid rather than uid 0 inside the guest.
+func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) (BuildResult, error) {
+	limits, ok := api.LimitsFor(in.Plan)
+	if !ok {
+		return BuildResult{}, fmt.Errorf("rootfs: unknown plan %q", in.Plan)
+	}
+	if err := in.Manifest.Validate(); err != nil {
+		return BuildResult{}, err
+	}
+	if err := validateFullRootfsOutputTarget(in); err != nil {
+		return BuildResult{}, err
+	}
+
+	staging, err := os.MkdirTemp("", "faas-fullrootfs-*")
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("rootfs: staging dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+
+	// Apply ALL layers with the resolver threaded through. The
+	// resolver may be nil (an image with no /etc/passwd — every
+	// entry falls through to today's unparseable_uid counter +
+	// daemon uid; functionally identical to today's two-drive path
+	// for that subset of entries).
+	for i, layer := range in.Layers {
+		if err := ApplyLayerGzWithResolver(staging, layer, in.Resolver); err != nil {
+			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
+		}
+	}
+	// Function-deploy path (spec §4.9, M7). Same semantics as Build;
+	// the cap is the plan's AppLayerMaxMB — full-rootfs deployments
+	// still respect the per-plan storage envelope.
+	if in.TarballPath != "" {
+		capBytes := int64(limits.AppLayerMaxMB) * 1024 * 1024
+		if err := ApplyTarball(staging, in.TarballPath, capBytes); err != nil {
+			var capErr *ErrTarballExceedsCap
+			if errors.As(err, &capErr) {
+				return BuildResult{}, api.ErrAppLayerTooLarge(limits, capErr.WrittenBytes+capErr.EntryBytes)
+			}
+			return BuildResult{}, err
+		}
+		if in.FunctionHandlerPath != "" {
+			if err := NormalizeFunctionHandler(staging, in.FunctionHandlerPath); err != nil {
+				return BuildResult{}, err
+			}
+		}
+	}
+	if in.FunctionRunnerPath != "" {
+		if err := InjectFunctionRunner(staging, in.FunctionRunnerPath); err != nil {
+			return BuildResult{}, err
+		}
+	}
+	if err := InjectGuestInit(staging, in.GuestInitPath); err != nil {
+		return BuildResult{}, err
+	}
+	if err := InjectManifest(staging, in.Manifest); err != nil {
+		return BuildResult{}, err
+	}
+
+	// buildPasswdTable is a stub for commit 5 (writes nothing yet;
+	// commit 7 wires the per-layer /etc/passwd merge walk + the
+	// binary /etc/faas/app_passwd writer). The builderd output
+	// path runs the same call regardless of whether anything is
+	// written; the resolver is what preserves named-user
+	// chown correctness at apply-time.
+	if err := buildPasswdTable(staging, in.Resolver); err != nil {
+		return BuildResult{}, fmt.Errorf("rootfs: build passwd table: %w", err)
+	}
+
+	stats, err := InspectStaging(staging)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	sizeMB, err := CheckCapForStaging(limits, stats)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
+	// ADR-141 §Decision 5: SBOM emission runs on the full-rootfs
+	// staging dir, mirroring the two-drive Build path. Best-effort
+	// like Build: a syft error or non-JSON output leaves SBOMKey
+	// empty and the build still succeeds.
+	sbomKey, sbomErr := b.emitFullRootfsSBOM(ctx, in, staging)
+	if sbomErr != nil {
+		_ = sbomErr
+	}
+
+	// Full-rootfs: stageAppUpper is NOT applied (the full rootfs
+	// is the produced drive — drive0+vda, not drive1). The guest
+	// sees drive0 as root directly; no overlayfs assembly.
+	if err := b.publishExt4FullRootfs(ctx, in, staging, sizeMB); err != nil {
+		return BuildResult{}, err
+	}
+
+	res := BuildResult{SizeMB: sizeMB, ContentBytes: stats.ContentBytes, SBOMKey: sbomKey}
+	if in.OutImage != "" {
+		res.ImagePath = in.OutImage
+	} else {
+		res.ImageKey = in.StorageKey
+	}
+	return res, nil
+}
+
+// buildPasswdTable is the placeholder for the image-/etc/passwd
+// merge walk + /etc/faas/app_passwd binary writer (ADR-142
+// §Decision 3). Commit 5 stubs it (no-op) so the build flow is
+// reviewable independently; commit 7 wires the per-layer walk +
+// binary writer.
+func buildPasswdTable(_ string, _ Resolver) error {
+	return nil
+}
+
+// emitFullRootfsSBOM is the full-rootfs sibling of emitSBOM — same
+// best-effort semantics, scopes the SBOM to the full-rootfs
+// staging dir.
+func (b *Builder) emitFullRootfsSBOM(ctx context.Context, in BuildFullRootfsInput, staging string) (string, error) {
+	if in.SBOMRun == nil {
+		return "", nil
+	}
+	if in.SBOMStorageKey == "" {
+		return "", nil
+	}
+	body, err := in.SBOMRun(ctx, staging)
+	if err != nil || !json.Valid(body) {
+		return "", nil
+	}
+	if err := in.Storage.Put(ctx, in.SBOMStorageKey, bytes.NewReader(body)); err != nil {
+		return "", nil
+	}
+	return in.SBOMStorageKey, nil
+}
+
+// publishExt4FullRootfs is the full-rootfs sibling of publishExt4.
+// Same mkfs.ext4 + Storage.Put pipeline; no drive1 wrapper, no
+// overlayfs staging.
+func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsInput, staging string, sizeMB int) error {
+	// Stub for commit 5: real mkfs.ext4 invocation lands when
+	// commit 6 wires buildFullRootfsLayer end-to-end. Reusing
+	// publishExt4 would mount drive1 wrapper logic we don't want
+	// for the full-rootfs path; commit 6 will supply a sibling
+	// helper that omits the /upper staging step.
+	return nil
+}
+
+// validateFullRootfsOutputTarget mirrors validateOutputTarget for
+// the full-rootfs BuildFullRootfsInput (Storage + StorageKey
+// mutually exclusive with OutImage; SBOMStorageKey requires
+// SBOMRun).
+func validateFullRootfsOutputTarget(in BuildFullRootfsInput) error {
+	if (in.Storage == nil) == (in.OutImage == "") {
+		return fmt.Errorf("rootfs: exactly one of Storage or OutImage must be set")
+	}
+	if in.Storage != nil && in.StorageKey == "" {
+		return fmt.Errorf("rootfs: StorageKey required when Storage is set")
+	}
+	if in.SBOMRun != nil && in.SBOMStorageKey == "" {
+		return fmt.Errorf("rootfs: SBOMStorageKey required when SBOMRun is set")
 	}
 	return nil
 }
