@@ -297,6 +297,15 @@ type Engine struct {
 	// always fresh — an operator tweak to the env var doesn't
 	// require a schedd restart (the next tick picks it up).
 	deadNodeReconcilerStalenessSeconds int
+	// recoveryArbiter (Workstream B / issue #1184 / ADR-137) is the
+	// single per-tick decision policy the migrator + deadnode
+	// reconciler consult before any per-instance work. Task #61
+	// folds both paths through it so the migrate-vs-recreate
+	// verdict lives in one place (recovery_arbiter.go). nil is
+	// tolerated — MigrateLiveInstances and ReconcileDeadNodeInstances
+	// fall back to their legacy in-method decisions when the
+	// arbiter isn't wired (unit-test fixtures; bootstrap window).
+	recoveryArbiter *Arbiter
 	// pressureAggregator (Tier A9 / ADR-087) is the in-process
 	// sliding-window per-app counter of WakeResult{AtCapacity: true}
 	// returns. The engine increments it at every AtCapacity return
@@ -856,6 +865,24 @@ func (e *Engine) WithOwnerNodeID(nodeID string) *Engine {
 		return e
 	}
 	e.ownerNodeID = nodeID
+	return e
+}
+
+// WithRecoveryArbiter wires the single per-tick decision policy
+// (Workstream B / issue #1184 / ADR-137). Task #61 folds the
+// live_migrator + deadnode_reconciler paths through the arbiter;
+// before this setter lands they carried duplicate per-instance
+// decision logic that raced. cmd/schedd constructs one Arbiter
+// (sharing the dispatchers it wires — Engine itself satisfies
+// the RecreateDispatcher interface) and passes it here. nil
+// is tolerated for the unit tests that don't exercise the
+// recovery flow (recovery_arbiter_test.go pins the
+// nil-arbiter behaviour).
+func (e *Engine) WithRecoveryArbiter(a *Arbiter) *Engine {
+	if e == nil {
+		return e
+	}
+	e.recoveryArbiter = a
 	return e
 }
 
@@ -3738,6 +3765,47 @@ func (e *Engine) MigrateLiveInstances(ctx context.Context, deadNodeID string) (i
 	harness.SetLeaseSeconds(leaseSeconds)
 
 	migrated, attempted := 0, 0
+	// Task #61: when the recovery arbiter is wired, ask it for the
+	// per-instance verdict before driving the 4-phase handoff. The
+	// arbiter's Recreate verdict routes to Engine.RecreateInstance
+	// (the dead-VM-shaped PARKED landing) and skips the migration
+	// entirely — there is no usable snapshot to migrate, so the
+	// 4-phase handoff would orphan the row. With no arbiter, the
+	// legacy behaviour stands (every instance attempts the handoff).
+	if e.recoveryArbiter != nil {
+		if cn, lookupErr := e.store.ComputeNodeByID(ctx, deadNodeID); lookupErr == nil {
+			for _, ins := range liveInstances {
+				attempted++
+				handled, dispatchErr := e.dispatchRecovery(ctx, cn, ins.ID)
+				if dispatchErr != nil {
+					e.log.Warn("sched: live migrate: dispatch failed",
+						"instance_id", ins.ID, "from", deadNodeID,
+						"to", e.ownerNodeID, "err", dispatchErr)
+					continue
+				}
+				if handled {
+					migrated++
+					continue
+				}
+				if err := harness.MigrateOne(ctx, ins.ID, deadNodeID); err == nil {
+					migrated++
+				} else if errors.Is(err, state.ErrConflict) {
+					e.log.Debug("sched: live migrate: peer conflict",
+						"instance_id", ins.ID, "from", deadNodeID,
+						"to", e.ownerNodeID)
+				} else {
+					e.log.Warn("sched: live migrate: instance failed",
+						"instance_id", ins.ID, "from", deadNodeID,
+						"to", e.ownerNodeID, "err", err)
+				}
+			}
+			e.log.Info("sched: live migrate batch done",
+				"dead_node_id", deadNodeID,
+				"attempted", attempted, "migrated", migrated,
+				"to_node", e.ownerNodeID)
+			return attempted, nil
+		}
+	}
 	for _, ins := range liveInstances {
 		attempted++
 		err := harness.MigrateOne(ctx, ins.ID, deadNodeID)
@@ -3883,6 +3951,53 @@ func (e *Engine) ReconcileExpiredMigrations(ctx context.Context) (int, error) {
 	e.log.Info("sched: reconcile expired migrations batch done",
 		"reconciled", reconciled, "attempted", len(rows))
 	return reconciled, nil
+}
+
+// dispatchRecovery asks the recovery arbiter for the per-
+// (node, instance) verdict and dispatches accordingly. Returns
+// (handled bool, err error) — handled=true means the arbiter
+// already disposed of the row (RecreateInstance transitioned it
+// to PARKED), so the caller should skip its own per-instance
+// work. handled=false means DecisionLiveMigrate (caller proceeds
+// with migrate) or DecisionNone (caller should skip silently).
+//
+// nil arbiter ⇒ returns (false, nil) so legacy callers without
+// the arbiter wired keep their pre-#1184 semantics (no behavior
+// change). This is the nil-arbiter bootstrap path
+// recovery_arbiter_test.go pins.
+func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, instanceID string) (handled bool, err error) {
+	if e.recoveryArbiter == nil {
+		return false, nil
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			// Peer already removed the row — caller should skip.
+			return true, nil
+		}
+		return false, fmt.Errorf("sched: dispatchRecovery: load %s: %w", instanceID, err)
+	}
+	switch e.recoveryArbiter.Decide(node, state.RecoveryInstance{
+		ID:           ins.ID,
+		State:        ins.State,
+		AppID:        ins.AppID,
+		DeploymentID: ins.DeploymentID,
+	}) {
+	case DecisionRecreate:
+		// The arbiter's recreate verdict wins; the row transitions
+		// to PARKED with kind='recovery_recreate' (Task #60). The
+		// legacy migration-handoff path is skipped — there is
+		// nothing to migrate.
+		if recErr := e.RecreateInstance(ctx, ins.ID); recErr != nil {
+			return false, recErr
+		}
+		return true, nil
+	case DecisionNone:
+		return true, nil
+	case DecisionLiveMigrate:
+		return false, nil
+	}
+	return false, nil
 }
 
 // ReconcileDeadNodeInstances closes the dead-node billing leak.
