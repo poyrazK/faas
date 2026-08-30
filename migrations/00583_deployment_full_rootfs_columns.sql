@@ -17,8 +17,8 @@
 -- / text column so the wire field maps 1:1 to the Go *bool in
 -- state.Deployment.FullRootfsOverride (ADR-141 §Decision 2).
 ALTER TABLE deployments
-  ADD COLUMN full_rootfs_allow_auto boolean NOT NULL DEFAULT false,
-  ADD COLUMN full_rootfs_override   boolean;
+  ADD COLUMN IF NOT EXISTS full_rootfs_allow_auto boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS full_rootfs_override   boolean;
 -- +goose StatementEnd
 
 -- +goose Down
