@@ -238,8 +238,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var internalDialer gateway.InternalDialer
 	switch {
 	case computeDiscovery == "database" && internalTarget == "":
-		internalDialer = newComputeGatewayPool(pgStore, log)
+		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool)
+		internalDialer = cgp
 		log.Info("gatewayd-public: database-backed compute gateway pool enabled")
+		// Workstream B / issue #1184 / Task #65: subscribe to
+		// compute_node_changed pg_notify so a node drain /
+		// activation / overlay-IP change refreshes the cached
+		// endpoints within <500ms instead of waiting for the
+		// 5s TTL to elapse. Mirrors gatewayd-internal's
+		// nodecache.WatchEvictions pattern.
+		if pool != nil {
+			go cgp.WatchInvalidations(ctx, pool)
+		}
 	case internalTarget == "":
 		internalSocket := envOr("FAAS_INTERNAL_SOCKET", defaultInternalSocket)
 		internalDialer = gateway.NewUnixSocketDialer(internalSocket)

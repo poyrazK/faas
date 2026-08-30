@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -136,4 +139,65 @@ func parseComputeGatewayTarget(raw string) (string, bool) {
 		return "", false
 	}
 	return u.Host, true
+}
+
+// WatchInvalidations subscribes to the compute_node_changed
+// pg_notify channel and drops the cached endpoint snapshot on
+// every mutation. Without this, a node drain / activation /
+// overlay-IP change only refreshes on the next Dial after
+// computeGatewayPoolTTL elapses (5s stale + 2s dial = up to
+// 7s of stale routes). pg_notify collapses that to <500ms.
+//
+// Workstream B / issue #1184 / Task #65 / ADR-137. Mirrors the
+// gatewayd-internal nodecache.WatchEvictions pattern
+// (cmd/gatewayd-internal/nodecache.go:243). The 5th pg_notify
+// consumer on this channel (after router_watcher, nodekeys,
+// rebalancer, live_migrator) is bounded by the existing
+// compute_node_changed payload format; no schema impact.
+//
+// The subscriber exits cleanly on ctx cancel; pgxpool's
+// SubscribeWithReconnect handles Postgres restarts (the inner
+// loop reconnects). A nil pool makes WatchInvalidations a
+// no-op so test fixtures can opt out without rewriting the
+// wiring path.
+//
+// Payload format: db.Notification{Channel, Payload}. Payload is
+// JSON {"node_id":"<uuid>", "active":true|false}; the active
+// flag is informational — any mutation evicts because the
+// resolver re-reads the row on the next Dial. Bad payloads log
+// Warn and are dropped (consistent with the internal gateway).
+func (p *computeGatewayPool) WatchInvalidations(ctx context.Context, pool *pgxpool.Pool) {
+	if pool == nil {
+		p.log.Warn("compute_gateway_pool: WatchInvalidations called with nil pool; no-op")
+		return
+	}
+	notif, err := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyComputeNodeChanged}, p.log)
+	if err != nil {
+		p.log.Error("compute_gateway_pool: subscribe compute_node_changed", "err", err)
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case got, ok := <-notif:
+			if !ok {
+				return
+			}
+			var payload struct {
+				NodeID string `json:"node_id"`
+				Active bool   `json:"active"`
+			}
+			if err := json.Unmarshal([]byte(got.Payload), &payload); err != nil || payload.NodeID == "" {
+				p.log.Warn("compute_gateway_pool: bad compute_node_changed payload", "payload", got.Payload)
+				continue
+			}
+			// Drop the cached snapshot; the next Dial re-reads.
+			p.mu.Lock()
+			p.refreshed = time.Time{}
+			p.mu.Unlock()
+			p.log.Debug("compute_gateway_pool: evicted snapshot",
+				"node_id", payload.NodeID, "active", payload.Active)
+		}
+	}
 }
