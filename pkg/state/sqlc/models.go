@@ -1541,6 +1541,29 @@ type TriggerRecord struct {
 	ResultRetentionUntil pgtype.Timestamptz
 }
 
+type UploadCommitOutcome struct {
+	UploadID     string
+	DeploymentID string
+	BuildID      string
+	FinalizedAt  pgtype.Timestamptz
+}
+
+type UploadSession struct {
+	ID            string
+	AccountID     pgtype.UUID
+	AppSlug       string
+	TotalSize     int64
+	ReceivedBytes int64
+	ChunkSize     int32
+	Sha256Hex     pgtype.Text
+	PartPath      string
+	Status        string
+	CreatedAt     pgtype.Timestamptz
+	LastPatchedAt pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	DeploymentID  pgtype.Text
+}
+
 // Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-048. Informational — not billed.
 type UsageDaily struct {
 	AccountID  pgtype.UUID

@@ -7929,5 +7929,80 @@ ALTER TABLE ONLY public.usage_minutes
 
 
 --
+-- Name: upload_commit_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upload_commit_outcomes (
+    upload_id text NOT NULL,
+    deployment_id text NOT NULL,
+    build_id text NOT NULL,
+    finalized_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: upload_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upload_sessions (
+    id text NOT NULL,
+    account_id uuid NOT NULL,
+    app_slug text NOT NULL,
+    total_size bigint NOT NULL,
+    received_bytes bigint DEFAULT 0 NOT NULL,
+    chunk_size integer DEFAULT 8388608 NOT NULL,
+    sha256_hex text,
+    part_path text NOT NULL,
+    status text DEFAULT 'open' NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_patched_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone DEFAULT (now() + '00:24:00'::interval) NOT NULL,
+    deployment_id text,
+    CONSTRAINT upload_sessions_chunk_size_check CHECK ((chunk_size > 0) AND (chunk_size <= 67108864)),
+    CONSTRAINT upload_sessions_received_bytes_check CHECK ((received_bytes >= 0) AND (received_bytes <= total_size)),
+    CONSTRAINT upload_sessions_status_check CHECK ((status = ANY (ARRAY['open'::text, 'committed'::text, 'cancelled'::text, 'expired'::text]))),
+    CONSTRAINT upload_sessions_total_size_check CHECK ((total_size > 0) AND (total_size <= 1073741824))
+);
+
+
+--
+-- Name: upload_commit_outcomes upload_commit_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_commit_outcomes
+    ADD CONSTRAINT upload_commit_outcomes_pkey PRIMARY KEY (upload_id);
+
+
+--
+-- Name: upload_sessions upload_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_sessions
+    ADD CONSTRAINT upload_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: upload_sessions_account_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upload_sessions_account_open_idx ON public.upload_sessions USING btree (account_id, app_slug) WHERE (status = 'open'::text);
+
+
+--
+-- Name: upload_sessions_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upload_sessions_expires_idx ON public.upload_sessions USING btree (expires_at) WHERE (status = 'open'::text);
+
+
+--
+-- Name: upload_commit_outcomes upload_commit_outcomes_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_commit_outcomes
+    ADD CONSTRAINT upload_commit_outcomes_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.upload_sessions(id) ON DELETE CASCADE;
+
+
+--
 --
 
