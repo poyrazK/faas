@@ -1557,6 +1557,19 @@ type OpsMetrics struct {
 	// the §12 dashboard treats a sustained non-zero rate as an
 	// incident signal, not routine background repair.
 	deadNodeReconcileDecisions *prometheus.CounterVec
+	// recreateDecisions: Workstream B / issue #1184 / ADR-137.
+	// Counts every per-instance verdict the recovery arbiter's
+	// recreate primitive lands. outcome ∈ {succeeded, skipped,
+	// not_found} — the closed set Engine.RecreateInstance emits.
+	// `succeeded` is the §12 recovery panel's recreate-rate
+	// numerator; `skipped` is the benign "row already terminal"
+	// case (peer-wins); `not_found` is the benign "row vanished"
+	// case (peer already parked/migrated/evicted). The
+	// `instance.recreated` events row is the human-queryable
+	// record; this counter is the dashboard's per-instance
+	// rate. Single-registry: registered on every daemon, only
+	// schedd increments via RecreateDecisions.
+	recreateDecisions *prometheus.CounterVec
 	// githubdPathFilterTotal: issue #432 phase 5 / ADR-050
 	// §109. Counter labelled by `mode` ∈ {paths, full_fallback,
 	// truncated, error, breaker_open} — the closed set
@@ -3365,6 +3378,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Dead-node billing reconciler decisions, labelled by outcome ∈ {failed, conflict, error}. `failed` counts RUNNING instances terminated because their compute_node stopped heartbeating past the staleness window — each one was billing the customer for a VM that no longer existed and holding §6.2-2 RAM ceiling. A sustained non-zero `failed` rate is an incident signal (a vmmd is dying without transitioning its rows), not routine repair. `conflict` is the benign peer-wins/node-recovered path.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, deadNodeReconcileDecisions)
+	// Recovery-arbiter recreate primitive counter (Workstream B /
+	// issue #1184 / ADR-137). Single-registry pattern (mirrors
+	// deadNodeReconcileDecisions): registered on every daemon,
+	// only schedd increments it in production.
+	recreateDecisions := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_recreate_decisions_total",
+		Help: "Recovery-arbiter recreate primitive decisions, labelled by outcome ∈ {succeeded, skipped, not_found}. `succeeded` counts stranded RUNNING/COLD_BOOTING/WAKING rows the arbiter transitioned to PARKED with kind=recovery_recreate (the §12 recovery panel's recreate-rate numerator). `skipped` is the benign \"row already terminal\" case (peer-wins — another schedd or the deadnode reconciler already parked/failed the row). `not_found` is the benign \"row vanished\" case. A sustained non-zero `succeeded` rate is the recovery arbiter doing its job; a non-zero `skipped` rate at the same magnitude signals the dedup with the deadnode_reconciler is racing more than expected (Task #62 source-ledger backstop is the long-term fix).",
+	}, []string{"outcome"})
+	commonCollectors = append(commonCollectors, recreateDecisions)
 	// ADR-087 / Tier A9: pressure-rebalancer decision counter.
 	// Single-registry: registered on every daemon (mirrors
 	// deadNodeReconcileDecisions); only schedd increments via
@@ -3725,6 +3747,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// a graph but only one proves the reconciler is wired.
 	for _, outcome := range []string{"failed", "conflict", "error"} {
 		deadNodeReconcileDecisions.WithLabelValues(outcome)
+	}
+	// Pre-instantiate the recovery-arbiter recreate decision set
+	// so the §12 recovery panel reads zero on a healthy fleet
+	// rather than absent — an absent series and a zero series look
+	// identical in a graph but only one proves the primitive is
+	// wired. Extending the outcome vocabulary requires extending
+	// this loop in lock-step with Engine.RecreateInstance.
+	for _, outcome := range []string{"succeeded", "skipped", "not_found"} {
+		recreateDecisions.WithLabelValues(outcome)
 	}
 	// Issue #517 / PR-C / ADR-064: pre-instantiate the closed
 	// 15-phase × 2-result label set for wakePhaseEmitted and
@@ -4106,6 +4137,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		standbyState:                         standbyState,
 		standbyStateValue:                    StandbyStateWarming, // mirrors the gauge.Set(StandbyStateWarming) above
 		deadNodeReconcileDecisions:           deadNodeReconcileDecisions,
+		recreateDecisions:                   recreateDecisions,
 		registryCredentialMarkUsedFailures:   registryCredentialMarkUsedFailures,
 		storageCacheStaleFallback:            storageCacheStaleFallback,
 		apidLogsEmittedTotal:                 apidLogsEmittedTotal,
@@ -4965,6 +4997,17 @@ func (m *OpsMetrics) StandbyState() int {
 // MigratingReconcileDecisions.
 func (m *OpsMetrics) DeadNodeReconcileDecisions(outcome string) prometheus.Counter {
 	return m.deadNodeReconcileDecisions.WithLabelValues(outcome)
+}
+
+// RecreateDecisions returns the labelled counter for the
+// recovery arbiter's recreate primitive (Workstream B /
+// ADR-137). Called from Engine.RecreateInstance once per
+// per-instance verdict the arbiter dispatches.
+// outcome ∈ {succeeded, skipped, not_found}. Same caching
+// rules as DeadNodeReconcileDecisions (WithLabelValues memoises
+// the underlying CounterVec entry).
+func (m *OpsMetrics) RecreateDecisions(outcome string) prometheus.Counter {
+	return m.recreateDecisions.WithLabelValues(outcome)
 }
 
 // EventsWriteFailures returns the unlabelled counter for audit-log

@@ -54,14 +54,26 @@ var States = []State{
 }
 
 // transitions is the legal edge set of the state machine (spec §6.1).
+//
+// Workstream B (issue #1184 / ADR-137) adds the RUNNING → PARKED,
+// COLD_BOOTING → PARKED, WAKING → PARKED edges for the
+// recovery_recreate path. The recovery arbiter decides an instance
+// has no usable snapshot to migrate (the source VM died with its
+// host) and needs a way to land the row in PARKED without the
+// SNAPSHOTTING detour — there is nothing to snapshot. The audit
+// row's kind='recovery_recreate' tag is the discriminator that
+// distinguishes a recovery_recreate landing from a normal
+// idle-timeout Park. Normal Parks still go RUNNING → SNAPSHOTTING
+// → PARKED (the snapshot-then-stop flow); the new direct edges
+// are reserved for the recreate primitive only.
 var transitions = map[State][]State{
 	// PARKED can wake (snapshot restore) or cold-boot (no snapshot, e.g. FC
 	// upgrade → stale snap, or first deploy). The cold-boot branch is
 	// spec §4.4's lazy re-snapshot path.
 	StateParked:       {StateWaking, StateColdBooting},
-	StateWaking:       {StateRunning, StateColdBooting, StateFailed, StateStopped, StateEvictingAccountDeleting},
-	StateColdBooting:  {StateRunning, StateFailed, StateStopped, StateEvictingAccountDeleting},
-	StateRunning:      {StateSnapshotting, StateStopped, StateFailed, StateEvictingAccountDeleting, StateMigrating},
+	StateWaking:       {StateRunning, StateColdBooting, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
+	StateColdBooting:  {StateRunning, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
+	StateRunning:      {StateSnapshotting, StateStopped, StateFailed, StateEvictingAccountDeleting, StateMigrating, StateParked},
 	StateSnapshotting: {StateParked, StateStopped, StateEvictingAccountDeleting},
 	StateStopped:      {StateColdBooting},
 	StateFailed:       {StateParked, StateColdBooting, StateStopped}, // manual recovery / lazy cold-boot

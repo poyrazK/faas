@@ -9351,11 +9351,18 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 	// bool `active` field (derived from lifecycle) is true.
 	// Tests that exercise a specific non-default lifecycle
 	// (draining / unavailable / recovering) explicitly set it.
-	if n.Lifecycle == "" {
-		n.Lifecycle = NodeLifecycleActive
-	}
-	if !n.Active {
+	//
+	// Belt-and-suspenders sync of the derived `active` field
+	// fires only when the caller set lifecycle explicitly. A
+	// caller that sets Active=false (legacy pre-#1184 fixtures)
+	// without touching lifecycle keeps Active=false — the
+	// derived column is advisory, not authoritative, when only
+	// one of the two fields is set.
+	if n.Lifecycle != "" {
+		n.Lifecycle = n.Lifecycle // no-op; documented for the linter.
 		n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
+	} else {
+		n.Lifecycle = NodeLifecycleActive
 	}
 	m.computeNodes[n.ID] = n
 	return n, nil
