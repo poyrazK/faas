@@ -1760,6 +1760,20 @@ type OpsMetrics struct {
 	// successful schedd completeness query, independent of scrape time.
 	operatorActionTraceCompletenessLastSuccessTimestamp prometheus.Gauge
 	operatorActionTraceCompletenessFirstTickOnce        sync.Once
+	// Upload session counters (issue #1182 §P1 PR-1). Five fields
+	// backing the POST /v1/uploads, PATCH /v1/uploads/{id},
+	// POST /v1/uploads/{id}/commit, DELETE /v1/uploads/{id}
+	// surface plus the in-process reaper. Consumed by
+	// cmd/apid/handlers_upload_session.go via the
+	// SetUploadSessionCounters pattern (same precedent as
+	// pkg/rootfs/layer.go:33 SetOpsMetrics). The {plan} counter
+	// vecs are pre-instantiated to the 4-value closed set in the
+	// ctor below so /metrics surfaces zero series from boot.
+	uploadSessionCreatedTotal           *prometheus.CounterVec
+	uploadSessionCommittedTotal         *prometheus.CounterVec
+	uploadSessionExpiredTotal           prometheus.Counter
+	uploadSessionReaperRowsDeletedTotal prometheus.Counter
+	uploadSessionReaperFailedTotal      prometheus.Counter
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -4463,6 +4477,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
 		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
+		uploadSessionCreatedTotal:           uploadSessionCreatedTotal,
+		uploadSessionCommittedTotal:         uploadSessionCommittedTotal,
+		uploadSessionExpiredTotal:           uploadSessionExpiredTotal,
+		uploadSessionReaperRowsDeletedTotal: uploadSessionReaperRowsDeletedTotal,
+		uploadSessionReaperFailedTotal:      uploadSessionReaperFailedTotal,
 	}
 }
 
@@ -8460,6 +8479,54 @@ const (
 // are silently ignored — the closed-set guard pre-instantiates the
 // label combinations at boot so an out-of-vocab label would inflate
 // cardinality silently otherwise.
+// UploadSessionCreatedTotal returns the {plan}-labelled
+// upload-sessions-created counter vec. cmd/apid wires this into
+// the package-level SetUploadSessionCounters at boot
+// (cmd/apid/main.go); nil-safe — handlers reach it via the
+// uploadSessionCounters package-level state.
+func (m *OpsMetrics) UploadSessionCreatedTotal() *prometheus.CounterVec {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionCreatedTotal
+}
+
+// UploadSessionCommittedTotal returns the {plan}-labelled
+// upload-sessions-committed counter vec.
+func (m *OpsMetrics) UploadSessionCommittedTotal() *prometheus.CounterVec {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionCommittedTotal
+}
+
+// UploadSessionExpiredTotal returns the unlabelled
+// upload-sessions-expired counter.
+func (m *OpsMetrics) UploadSessionExpiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionExpiredTotal
+}
+
+// UploadSessionReaperRowsDeletedTotal returns the unlabelled
+// reaper-rows-deleted counter.
+func (m *OpsMetrics) UploadSessionReaperRowsDeletedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionReaperRowsDeletedTotal
+}
+
+// UploadSessionReaperFailedTotal returns the unlabelled
+// reaper-failed counter.
+func (m *OpsMetrics) UploadSessionReaperFailedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionReaperFailedTotal
+}
+
 func (m *OpsMetrics) ObserveESMPoll(source, outcome string) {
 	if m == nil || m.esmPollsTotal == nil {
 		return

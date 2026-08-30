@@ -50,8 +50,10 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
@@ -59,6 +61,29 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+// commitLocks serializes the Enqueue + dedupe-row-insert +
+// status-flip critical section per upload_id. Without this
+// guard, two concurrent commit requests on the same upload_id
+// both pass the GetUploadSession status='open' check, both
+// call apidsource.Enqueue, and the loser-of-the-dedupe-row
+// leaves an orphan deployment that builderd picks up.
+//
+// In-process only — apid is a single replica per CLAUDE.md,
+// so a package-level sync.Map is sufficient. Cross-replica
+// concurrency would need pg_advisory_xact_lock (deferred).
+var commitLocks sync.Map // map[string]*sync.Mutex
+
+// acquireCommitLock returns a per-upload_id mutex that the
+// caller MUST Release after the critical section exits.
+func acquireCommitLock(uploadID string) *sync.Mutex {
+	if v, ok := commitLocks.Load(uploadID); ok {
+		return v.(*sync.Mutex)
+	}
+	mu := &sync.Mutex{}
+	actual, _ := commitLocks.LoadOrStore(uploadID, mu)
+	return actual.(*sync.Mutex)
+}
 
 // startUploadRequest is the JSON body POST /v1/uploads accepts.
 // total_size is required; sha256_hex is optional (build
@@ -135,7 +160,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		AppSlug: req.AppSlug,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Count failed", err.Error()))
 		return
 	}
@@ -148,7 +173,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 
 	openBytes, err := s.store.SumOpenUploadSessionBytesByAccount(r.Context(), acctUUID)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Sum failed", err.Error()))
 		return
 	}
@@ -168,26 +193,26 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	uploadID := randomToken(12)
 	partPath := spoolRoot() + "/" + uploadID + ".part"
 	if err := os.MkdirAll(spoolRoot(), 0o770); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Spool mkdir failed", err.Error()))
 		return
 	}
 	f, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY, 0o660)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Spool create failed", err.Error()))
 		return
 	}
 	if err := f.Truncate(req.TotalSize); err != nil {
 		_ = f.Close()
 		_ = os.Remove(partPath)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Spool truncate failed", err.Error()))
 		return
 	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(partPath)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Spool close failed", err.Error()))
 		return
 	}
@@ -203,7 +228,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	})
 	if err != nil {
 		_ = os.Remove(partPath)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Create session failed", err.Error()))
 		return
 	}
@@ -247,14 +272,27 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Get session failed", err.Error()))
 		return
 	}
 	if row.Status != "open" {
-		if row.Status == "expired" {
+		switch row.Status {
+		case "committed":
+			// Distinguish committed from cancelled on PATCH so
+			// the CLI's PR-2 resume path doesn't mis-interpret
+			// a post-commit PATCH as a post-cancel PATCH and
+			// re-roll the session. Surface the dedupe row's
+			// deployment_id to the customer so the original
+			// commit's result is the answer.
+			if outcome, getErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); getErr == nil {
+				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
+			} else {
+				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, row.DeploymentID.String))
+			}
+		case "expired":
 			api.WriteProblem(w, api.ErrUploadSessionExpired(uploadID))
-		} else {
+		default: // cancelled (or any future terminal status)
 			api.WriteProblem(w, api.ErrUploadSessionAlreadyCancelled(uploadID))
 		}
 		return
@@ -311,7 +349,7 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionOffsetConflict(uploadID, clientOffset, current.ReceivedBytes))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Append failed", err.Error()))
 		return
 	}
@@ -324,24 +362,24 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 		// "row ahead of file" state. Reaper sweep
 		// (status='open' + expires_at < now()) cleans within
 		// 24h. Customer retries from a fresh session.
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Spool open failed", err.Error()))
 		return
 	}
 	if _, err := f.WriteAt(chunk, clientOffset); err != nil {
 		_ = f.Close()
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Spool write failed", err.Error()))
 		return
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Spool fsync failed", err.Error()))
 		return
 	}
 	if err := f.Close(); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Spool close failed", err.Error()))
 		return
 	}
@@ -355,6 +393,14 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 // the dedupe row, and marks the session committed.
 func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
+	// Serialize per-upload_id commit critical sections to
+	// prevent two concurrent commit retries both calling
+	// apidsource.Enqueue and leaving an orphan deployment.
+	// In-process only (single-replica per CLAUDE.md); see
+	// acquireCommitLock above for the deferral note.
+	mu := acquireCommitLock(uploadID)
+	mu.Lock()
+	defer mu.Unlock()
 	row, err := s.store.GetUploadSession(r.Context(), uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -367,7 +413,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionExpired(uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Get session failed", err.Error()))
 		return
 	}
@@ -388,7 +434,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 
 	app, err := s.store.AppBySlug(r.Context(), row.AppSlug)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"App lookup failed", err.Error()))
 		return
 	}
@@ -444,7 +490,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		DeploymentID: res.DeploymentID,
 		BuildID:      res.BuildID,
 	}); err != nil && !errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Record outcome failed", err.Error()))
 		return
 	}
@@ -460,7 +506,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 				return
 			}
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Mark committed failed", err.Error()))
 		return
 	}
@@ -496,7 +542,7 @@ func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionAlreadyCancelled(uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Cancel failed", err.Error()))
 		return
 	}
@@ -564,7 +610,41 @@ type uploadSessionCounters struct {
 	ReaperFailedTotal      uploadCounter
 }
 
+// uploadCounter is the Prometheus Counter / CounterVec surface
+// the handlers use (.Inc()). The {plan} series need
+// WithLabelValues(...) returning an uploadCounter; the unlabelled
+// reaper counters just need Inc().
 type uploadCounter interface{ Inc() }
+
+// promCounterVecAdapter wraps prometheus.CounterVec so its
+// WithLabelValues() returns an uploadCounter (matching the
+// handler-side interface). Without the adapter, the handler
+// needs to know about the *prometheus.CounterVec return type
+// and call .Inc() via 2 layers.
+type promCounterVecAdapter struct{ v *prometheus.CounterVec }
+
+// WithLabelValues returns the prometheus.Counter for the
+// (plan) label series. If v is nil (OpsMetrics not wired),
+// returns the noop default — fail-safe closed.
+func (a promCounterVecAdapter) WithLabelValues(plan ...string) uploadCounter {
+	if a.v == nil {
+		return uploadSessionCounterNoop{}
+	}
+	return a.v.WithLabelValues(plan...)
+}
+
+// promCounterAdapter wraps a plain prometheus.Counter so the
+// uploadSessionCounters struct's 3 unlabelled slots accept the
+// real counter type without forcing the handler to import
+// prometheus directly.
+type promCounterAdapter struct{ c prometheus.Counter }
+
+func (a promCounterAdapter) Inc() {
+	if a.c == nil {
+		return
+	}
+	a.c.Inc()
+}
 
 // uploadCounterVec mirrors the prometheus.CounterVec.WithLabelValues
 // + .Inc() pattern that the {plan} counters need. The default
