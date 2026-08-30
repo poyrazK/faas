@@ -186,10 +186,10 @@ var routeExclude = map[string]bool{
 	// /v1/auth/* routes above — same "B Bearer-key caller cannot
 	// model the surface" rationale, applied to the PR-boundary
 	// case instead.
-	"POST /v1/uploads":                  true, // issue #1182 §P1 PR-1
-	"PATCH /v1/uploads/{id}":            true, // issue #1182 §P1 PR-1
-	"POST /v1/uploads/{id}/commit":      true, // issue #1182 §P1 PR-1
-	"DELETE /v1/uploads/{id}":           true, // issue #1182 §P1 PR-1
+	"POST /v1/uploads":             true, // issue #1182 §P1 PR-1
+	"PATCH /v1/uploads/{id}":       true, // issue #1182 §P1 PR-1
+	"POST /v1/uploads/{id}/commit": true, // issue #1182 §P1 PR-1
+	"DELETE /v1/uploads/{id}":      true, // issue #1182 §P1 PR-1
 }
 
 // sdkMethodExclude lists methods on *Client that aren't a 1:1 wire
