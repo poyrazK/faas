@@ -4185,9 +4185,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		standbyState:                         standbyState,
 		standbyStateValue:                    StandbyStateWarming, // mirrors the gauge.Set(StandbyStateWarming) above
 		deadNodeReconcileDecisions:           deadNodeReconcileDecisions,
-		recreateDecisions:                   recreateDecisions,
-		snapshotBackoffStamp:                snapshotBackoffStamp,
-		snapshotBackoffGate:                 snapshotBackoffGate,
+		recreateDecisions:                    recreateDecisions,
+		snapshotBackoffStamp:                 snapshotBackoffStamp,
+		snapshotBackoffGate:                  snapshotBackoffGate,
 		registryCredentialMarkUsedFailures:   registryCredentialMarkUsedFailures,
 		storageCacheStaleFallback:            storageCacheStaleFallback,
 		apidLogsEmittedTotal:                 apidLogsEmittedTotal,

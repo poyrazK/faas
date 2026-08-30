@@ -34,10 +34,10 @@ import (
 // (after RestoreAll) is a no-op rather than an error.
 type FaultInjector interface {
 	// Daemon-level faults (require a live process — metal-only).
-	KillVmmd(node string) error        // SIGKILL
-	FreezeSchedd(node string) error    // SIGSTOP (pause)
-	ThawSchedd(node string) error      // SIGCONT (resume)
-	Partition(a, b string) error       // iptables OUTPUT -d <other> -j DROP
+	KillVmmd(node string) error     // SIGKILL
+	FreezeSchedd(node string) error // SIGSTOP (pause)
+	ThawSchedd(node string) error   // SIGCONT (resume)
+	Partition(a, b string) error    // iptables OUTPUT -d <other> -j DROP
 
 	// Row-level faults (always available; no process needed).
 	StaleHeartbeat(node string, age time.Duration) error
@@ -56,7 +56,7 @@ type CmdFaultInjector struct {
 	t        *testing.T
 	pool     *pgxpool.Pool
 	procs    map[string]*exec.Cmd // keyed by node name (or "schedd-a" etc.)
-	iptables []string              // accumulated rules; cleared on RestoreAll
+	iptables []string             // accumulated rules; cleared on RestoreAll
 }
 
 // NewCmdFaultInjector returns an injector wired to t.Cleanup so

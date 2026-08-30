@@ -6,6 +6,7 @@ package vmmdgrpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ func TestMigrationLeaser_AcquireLookupRelease(t *testing.T) {
 	}
 	// Second Release must surface sched.ErrLeaseNotFound (the
 	// Leaser contract's idempotency guarantee — not a panic).
-	if err := l.Release(context.Background(), token, "vmmd-local"); err != sched.ErrLeaseNotFound {
+	if err := l.Release(context.Background(), token, "vmmd-local"); !errors.Is(err, sched.ErrLeaseNotFound) {
 		t.Errorf("second Release err=%v, want sched.ErrLeaseNotFound", err)
 	}
 }

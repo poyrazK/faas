@@ -3,15 +3,15 @@
 //
 // Three things under test:
 //
-//   1. The 7 typed RecoveryEvent payload structs implement the
-//      RecoveryEvent interface contract (Kind/At/Subject/Payload
-//      return the documented values). Mirrors wake_test.go's
-//      table-driven approach for the wake vocabulary.
-//   2. recoveryKindFromKind strips the `node.` / `instance.`
-//      prefixes so the metric label is short.
-//   3. Platform.EmitRecovery runs the end-to-end fan-out
-//      (AppendEvent + counter + broadcaster + slog) on a stub
-//      stack — same shape as TestPlatform_Emit_StoresRow.
+//  1. The 7 typed RecoveryEvent payload structs implement the
+//     RecoveryEvent interface contract (Kind/At/Subject/Payload
+//     return the documented values). Mirrors wake_test.go's
+//     table-driven approach for the wake vocabulary.
+//  2. recoveryKindFromKind strips the `node.` / `instance.`
+//     prefixes so the metric label is short.
+//  3. Platform.EmitRecovery runs the end-to-end fan-out
+//     (AppendEvent + counter + broadcaster + slog) on a stub
+//     stack — same shape as TestPlatform_Emit_StoresRow.
 package events
 
 import (

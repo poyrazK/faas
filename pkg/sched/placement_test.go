@@ -438,7 +438,6 @@ func TestChoosePlacement_BillableIncludesOverhead(t *testing.T) {
 // the heartbeat already flipped). Lifecycle='recovering' stays
 // admitting (matches the Postgres STORED GENERATED predicate).
 func TestChoosePlacement_LifecycleFilter(t *testing.T) {
-	const ramMB = 100
 	const req = 64
 	usedMB := map[string]int64{"a-id": 0, "b-id": 0, "c-id": 0, "d-id": 0}
 	admitting := node("a-id", "active", 0, 100)

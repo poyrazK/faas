@@ -341,11 +341,11 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	// hot path of any customer request.
 	markUnavailableIfEligible := func() {
 		for _, expected := range []state.NodeLifecycle{
-			n.Lifecycle,                     // first: whatever we observed at scan time (the cheap happy-path)
-			state.NodeLifecycleActive,       // then: union over the remaining admit-states
+			n.Lifecycle,               // first: whatever we observed at scan time (the cheap happy-path)
+			state.NodeLifecycleActive, // then: union over the remaining admit-states
 			state.NodeLifecycleRecovering,
 			state.NodeLifecycleDraining,
-			"",                              // legacy: pre-fix-#1 pgstore deploys or MemStore seeds with no enum yet
+			"", // legacy: pre-fix-#1 pgstore deploys or MemStore seeds with no enum yet
 		} {
 			if err := h.store.NodeSetLifecycle(ctx, n.ID, expected, state.NodeLifecycleUnavailable); err != nil {
 				if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
@@ -375,16 +375,10 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		// unavailable → recovering / active.
 		return
 	}
-	if n.Lifecycle == "" {
-		// Legacy row whose lifecycle enum hasn't been read yet
-		// (fix #1 pgstore still pending deploy on a stale
-		// schedd, or a row seeded directly via MemStore in a
-		// unit test). Treat as `active` for CAS purposes: the
-		// STORED GENERATED `active` column carries the legacy
-		// admission state and the CAS-or loop's first attempt
-		// will land. The `unavailable` early-return above
-		// catches the explicit-unavailable case.
-	}
+	// Legacy row whose lifecycle enum hasn't been read yet
+	// (pre-fix-#1 pgstore deploys, MemStore seeds with no enum
+	// yet) falls through to the staleness gate + CAS-or loop
+	// below; the union includes "" as a valid expected state.
 	if !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness {
 		h.log.Info("heartbeat: node stale, marking unavailable",
 			"node_id", n.ID, "node_name", n.Name,
