@@ -12741,6 +12741,18 @@ components:
           description: "Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes by the CLI tripwire."
           items: { $ref: '#/components/schemas/LogExcerpt' }
         created_at: { type: string, format: date-time }
+        # M-3 / ADR-141 §Decision 2: tri-state full-rootfs
+        # dispatch surface. FullRootfsAllowAuto gates the
+        # auto-dispatch (paid plans only); FullRootfsOverride is
+        # the customer opt-in / opt-out (nil = honor auto, true =
+        # force-on, false = force-off). Persisted as nullable
+        # bool so today's rows stay backward-compatible.
+        full_rootfs_allow_auto:
+          type: boolean
+          description: "M-3 / ADR-141 §Decision 2. When true (default on paid plans), the auto-dispatch path runs the full-rootfs build on the typed oci.ErrLayersNotAboveBase signal. When false (default on Free), the auto-dispatch is skipped; the customer MUST pass full_rootfs_override=true to opt in."
+        full_rootfs_override:
+          type: [boolean, "null"]
+          description: "M-3 / ADR-141 §Decision 2. Tri-state customer override: nil = honor full_rootfs_allow_auto + plan gate; true = force full-rootfs build regardless of plan; false = force today-equivalent failure on the typed sentinel."
         has_overrides: { type: boolean, description: "True when this deployment carries a non-null override_* column set." }
         override_entrypoint:
           type: array

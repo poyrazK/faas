@@ -1529,6 +1529,20 @@ type DeploymentResponse struct {
 	// tripwire; see pkg/whycopy.Render for the catalogue row).
 	ErrorRelevantLogs []LogExcerpt `json:"error_relevant_logs,omitempty"`
 	CreatedAt         string       `json:"created_at"`
+	// FullRootfsAllowAuto (M-3 / ADR-141 §Decision 2) is the
+	// per-deployment flag that lets the full-rootfs build path
+	// auto-dispatch on the typed oci.ErrLayersNotAboveBase
+	// signal. Defaults to true on Hobby/Pro/Scale, false on
+	// Free; the customer can override per-deployment via
+	// FullRootfsOverride.
+	FullRootfsAllowAuto bool `json:"full_rootfs_allow_auto,omitempty"`
+	// FullRootfsOverride (M-3 / ADR-141 §Decision 2) is the
+	// tri-state customer opt-in / opt-out: nil = honor
+	// FullRootfsAllowAuto + plan gate; *true = force full-rootfs
+	// regardless of plan; *false = force today-equivalent
+	// failure. Persisted as nullable bool so today's rows stay
+	// backward-compatible.
+	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
 	// HasOverrides is true when the deployment carries an
 	// override_* column set (issue #460 / ADR-053). Lets dashboards
 	// render "this deploy pinned overrides" without re-parsing the
