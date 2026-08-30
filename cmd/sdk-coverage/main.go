@@ -183,6 +183,22 @@ var routeExclude = map[string]bool{
 	// typed wrapper. Mirror in cmd/apid/spec_compliance_test.go::
 	// routeExclude; the two lists must move together.
 	"POST /v1/otel/v1/traces": true,
+
+	// Issue #1182 §P1 PR-1 — resumable upload protocol (server-only
+	// foundation). The 4 routes below ship in PR-1 but the SDK
+	// methods (PostUploads, PatchUploadsId, PostUploadsIdCommit,
+	// DeleteUploadsId) are NOT added until PR-2 wires the CLI's
+	// uploadWithResume orchestrator. Excluding here keeps the gate
+	// green for PR-1's "no CLI change" boundary; PR-2 must (a) add
+	// the 4 SDK methods and (b) delete this block. Mirrors the
+	// "no SDK method by design" pattern used for the cookie-only
+	// /v1/auth/* routes above — same "B Bearer-key caller cannot
+	// model the surface" rationale, applied to the PR-boundary
+	// case instead.
+	"POST /v1/uploads":             true, // issue #1182 §P1 PR-1
+	"PATCH /v1/uploads/{id}":       true, // issue #1182 §P1 PR-1
+	"POST /v1/uploads/{id}/commit": true, // issue #1182 §P1 PR-1
+	"DELETE /v1/uploads/{id}":      true, // issue #1182 §P1 PR-1
 }
 
 // sdkMethodExclude lists methods on *Client that aren't a 1:1 wire

@@ -183,6 +183,14 @@ type MemStore struct {
 	// project, slug) UNIQUE invariant is enforced at insert time
 	// in CreateDeploymentScopeExclusion below.
 	deploymentScopeExclusions map[string]DeploymentScopeExclusion
+	// Issue #1182 §P1 packaging follow-up (PR-1 of 3): in-memory
+	// backing for the upload-session Store methods. Keyed by upload_id
+	// (text). Backs the resumable upload protocol's handler unit
+	// tests; production uses *PgStore against the upload_sessions
+	// table (migrations/00563_upload_sessions.sql). Mutex is the
+	// existing m.mu — no new lock.
+	uploadSessions       map[string]sqlc.UploadSession
+	uploadCommitOutcomes map[string]sqlc.UploadCommitOutcome
 	// alertClaimKeys tracks the (ruleID, idempotency_key) → claimTime
 	// pair so MemStore mirrors the Postgres UNIQUE(idempotency_key)
 	// + last_fired_at dedupe behaviour. Two claims with the SAME
@@ -685,6 +693,8 @@ func NewMemStore() *MemStore {
 		appWebhooks:               map[string]AppWebhook{},
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
 		deploymentScopeExclusions: map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
+		uploadSessions:            map[string]sqlc.UploadSession{},
+		uploadCommitOutcomes:      map[string]sqlc.UploadCommitOutcome{},
 		alertClaimKeys:            map[string]time.Time{},
 		edgeRules:                 map[string]EdgeRule{},
 		corsPresets:               map[string]CorsPreset{},
@@ -16236,6 +16246,254 @@ func (m *MemStore) ListAppsWithRecentTelemetry(_ context.Context, _ pgtype.Inter
 // pass accountID through unconditionally.
 func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte) error {
 	return nil
+}
+
+// Issue #1182 §P1 packaging follow-up (PR-1 of 3): in-memory
+// implementations of the upload-session Store methods. Production
+// uses *PgStore against the upload_sessions table; these memstore
+// impls back handler unit tests so the test author doesn't need a
+// live DB to exercise the CAS / dedupe / cap logic. Minimal — just
+// enough to satisfy the Store interface and pass the round-trip
+// tests in cmd/apid/handlers_upload_session_test.go.
+
+// CreateUploadSession inserts a fresh upload_sessions row. Mirrors
+// pgstore + sqlc.CreateUploadSession but defaults created_at,
+// last_patched_at, expires_at, and status to the same server-stamped
+// values the live DB provides.
+func (m *MemStore) CreateUploadSession(_ context.Context, in sqlc.CreateUploadSessionParams) (sqlc.UploadSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	row := sqlc.UploadSession{
+		ID:            in.ID,
+		AccountID:     in.AccountID,
+		AppSlug:       in.AppSlug,
+		TotalSize:     in.TotalSize,
+		ReceivedBytes: 0,
+		ChunkSize:     in.ChunkSize,
+		Sha256Hex:     in.Sha256Hex,
+		PartPath:      in.PartPath,
+		Status:        "open",
+		CreatedAt:     pgtype.Timestamptz{Time: now, Valid: true},
+		LastPatchedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		ExpiresAt:     pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		DeploymentID:  pgtype.Text{String: "", Valid: false},
+	}
+	m.uploadSessions[row.ID] = row
+	return row, nil
+}
+
+// GetUploadSession reads a single upload_sessions row by id.
+// Returns ErrNotFound (the wire-stable sentinel; the handler maps
+// it to api.ErrUploadSessionNotFound) when the id doesn't resolve.
+func (m *MemStore) GetUploadSession(_ context.Context, id string) (sqlc.UploadSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[id]
+	if !ok {
+		return sqlc.UploadSession{}, ErrNotFound
+	}
+	return row, nil
+}
+
+// AppendUploadBytes is the atomic CAS that backs PATCH /v1/uploads/{id}.
+// The expectedOffset must equal the row's current received_bytes or
+// the call returns ErrConflict (mapped by the handler to
+// api.ErrUploadSessionOffsetConflict with the actual current
+// received_bytes in the body).
+func (m *MemStore) AppendUploadBytes(_ context.Context, in sqlc.AppendUploadBytesParams) (sqlc.AppendUploadBytesRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[in.ID]
+	if !ok {
+		return sqlc.AppendUploadBytesRow{}, ErrNotFound
+	}
+	if row.Status != "open" || row.ReceivedBytes != in.ReceivedBytes_2 {
+		return sqlc.AppendUploadBytesRow{
+			ReceivedBytes: row.ReceivedBytes,
+			TotalSize:     row.TotalSize,
+		}, ErrConflict
+	}
+	row.ReceivedBytes = in.ReceivedBytes
+	row.LastPatchedAt = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+	m.uploadSessions[in.ID] = row
+	return sqlc.AppendUploadBytesRow{
+		ReceivedBytes: row.ReceivedBytes,
+		TotalSize:     row.TotalSize,
+	}, nil
+}
+
+// MarkUploadSessionCommitted transitions open → committed and stamps
+// the deployment_id. Returns ErrConflict when the row is not open
+// (terminal-state guard; the upload_commit_outcomes companion is the
+// canonical dedupe).
+func (m *MemStore) MarkUploadSessionCommitted(_ context.Context, in sqlc.MarkUploadSessionCommittedParams) (sqlc.MarkUploadSessionCommittedRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[in.ID]
+	if !ok {
+		return sqlc.MarkUploadSessionCommittedRow{}, ErrNotFound
+	}
+	if row.Status != "open" {
+		return sqlc.MarkUploadSessionCommittedRow{}, ErrConflict
+	}
+	row.Status = "committed"
+	row.DeploymentID = in.DeploymentID
+	m.uploadSessions[in.ID] = row
+	return sqlc.MarkUploadSessionCommittedRow{
+		ID:           row.ID,
+		Status:       row.Status,
+		DeploymentID: row.DeploymentID,
+	}, nil
+}
+
+// CancelUploadSession transitions open → cancelled. The accountID
+// predicate is a defense-in-depth check (the auth chain at
+// cmd/apid/server.go already enforces account scoping; this makes
+// accidental misuse crash-loud).
+func (m *MemStore) CancelUploadSession(_ context.Context, in sqlc.CancelUploadSessionParams) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[in.ID]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.Status != "open" {
+		return ErrConflict
+	}
+	if row.AccountID != in.Column2 {
+		return ErrConflict
+	}
+	row.Status = "cancelled"
+	m.uploadSessions[in.ID] = row
+	return nil
+}
+
+// ReapExpiredUploadSessions scans up to 100 expired open sessions
+// for the in-process reaper. Walks m.uploadSessions (the memstore
+// is a test fixture, not the production hot path; no index
+// discipline).
+func (m *MemStore) ReapExpiredUploadSessions(_ context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []sqlc.ReapExpiredUploadSessionsRow
+	now := time.Now().UTC()
+	for _, row := range m.uploadSessions {
+		if row.Status == "open" && row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(now) {
+			out = append(out, sqlc.ReapExpiredUploadSessionsRow{
+				ID:       row.ID,
+				PartPath: row.PartPath,
+			})
+			if len(out) >= 100 {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// ReapStaleUploadPartFiles returns terminal-row sessions whose
+// last_patched_at < now() - 1h. Bounded by 100 rows. The
+// 1h grace matches the production query — kept identical so
+// the whitebox reaper tests exercise the same predicate.
+func (m *MemStore) ReapStaleUploadPartFiles(_ context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []sqlc.ReapStaleUploadPartFilesRow
+	cutoff := time.Now().UTC().Add(-1 * time.Hour)
+	for _, row := range m.uploadSessions {
+		if row.Status != "committed" && row.Status != "cancelled" && row.Status != "expired" {
+			continue
+		}
+		if row.LastPatchedAt.Valid && row.LastPatchedAt.Time.Before(cutoff) {
+			out = append(out, sqlc.ReapStaleUploadPartFilesRow{
+				ID:       row.ID,
+				PartPath: row.PartPath,
+			})
+			if len(out) >= 100 {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// ExpireUploadSession marks a single session expired. Idempotent —
+// if the row is no longer open (committed / cancelled / already
+// expired), returns nil and leaves the row untouched.
+func (m *MemStore) ExpireUploadSession(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.Status != "open" {
+		return nil
+	}
+	row.Status = "expired"
+	m.uploadSessions[id] = row
+	return nil
+}
+
+// RecordUploadCommitOutcome inserts a row into the
+// upload_commit_outcomes companion table. Returns ErrConflict when
+// the row already exists (ON CONFLICT DO NOTHING).
+func (m *MemStore) RecordUploadCommitOutcome(_ context.Context, in sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.uploadCommitOutcomes[in.UploadID]; exists {
+		return sqlc.UploadCommitOutcome{}, ErrConflict
+	}
+	row := sqlc.UploadCommitOutcome{
+		UploadID:     in.UploadID,
+		DeploymentID: in.DeploymentID,
+		BuildID:      in.BuildID,
+		FinalizedAt:  pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+	}
+	m.uploadCommitOutcomes[in.UploadID] = row
+	return row, nil
+}
+
+// GetUploadCommitOutcome reads the dedupe row for a retry of POST
+// /v1/uploads/{id}/commit.
+func (m *MemStore) GetUploadCommitOutcome(_ context.Context, uploadID string) (sqlc.UploadCommitOutcome, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadCommitOutcomes[uploadID]
+	if !ok {
+		return sqlc.UploadCommitOutcome{}, ErrNotFound
+	}
+	return row, nil
+}
+
+// CountOpenUploadSessionsByAccountApp backs the per-(account_id,
+// app_slug) open-session cap check (5) at the top of POST /v1/uploads.
+func (m *MemStore) CountOpenUploadSessionsByAccountApp(_ context.Context, in sqlc.CountOpenUploadSessionsByAccountAppParams) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var count int64
+	for _, row := range m.uploadSessions {
+		if row.Status == "open" && row.AccountID == in.Column1 && row.AppSlug == in.AppSlug {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// SumOpenUploadSessionBytesByAccount backs the per-account open-
+// spool budget check (4 × SourceTarballMaxMB) at the top of POST
+// /v1/uploads.
+func (m *MemStore) SumOpenUploadSessionBytesByAccount(_ context.Context, accountID pgtype.UUID) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var total int64
+	for _, row := range m.uploadSessions {
+		if row.Status == "open" && row.AccountID == accountID {
+			total += row.TotalSize
+		}
+	}
+	return total, nil
 }
 
 // ----------------------------------------------------------------------------

@@ -1139,6 +1139,20 @@ func (s *server) handler() http.Handler {
 	// Parallel to source-ref, not a replacement — that gate stays
 	// load-bearing for `--repo X --ref SHA` semantics.
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments/source-tarball", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.handleSourceTarballDeploy)))))
+	// PR-1 of issue #1182 §P1 packaging follow-up — resumable
+	// upload protocol. The legacy endpoint above stays active;
+	// PR-2 wires the CLI to these 4 endpoints; PR-3 deprecates
+	// the legacy one with RFC 8594 Sunset headers.
+	//
+	// upload_sessions.id IS the dedupe key for commit retries
+	// (see upload_commit_outcomes companion table), so the
+	// Idempotency-Key middleware is intentionally NOT wired
+	// here — it would short-circuit a *new* session creation
+	// that should otherwise succeed.
+	mux.HandleFunc("POST /v1/uploads", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleStartUpload))))
+	mux.HandleFunc("PATCH /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleAppendUpload))))
+	mux.HandleFunc("POST /v1/uploads/{id}/commit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleCommitUpload))))
+	mux.HandleFunc("DELETE /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleCancelUpload))))
 	// PR-1 of the deploy-diff cluster — server-side pre-deploy
 	// preview. Read-only (no DB writes, no audit row, no deployment
 	// row), so the auth chain matches GET /v1/apps/{slug}/metrics

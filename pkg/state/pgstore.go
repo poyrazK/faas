@@ -12,6 +12,7 @@ package state
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21649,6 +21650,123 @@ func (s *PgStore) ReplaceProvisionedStaticEgressIPs(ctx context.Context, account
 		return fmt.Errorf("state: ReplaceProvisionedStaticEgressIPs: commit: %w", err)
 	}
 	return nil
+}
+
+// Issue #1182 §P1 packaging follow-up (PR-1 of 3): PgStore
+// implementations of the upload-session Store methods. Each method
+// is a one-liner that delegates to the per-call sqlc.Queries helper
+// (same precedent as appErrorsQueries() above). The conversion
+// from sqlc row types (pgtype.UUID, pgtype.Timestamptz) to the
+// domain types (uuid.UUID, time.Time) stays at the sqlc layer —
+// the Store interface exposes sqlc.* types directly so handlers
+// read the row without an extra copy.
+
+// uploadSessionQueries is the per-call sqlc.New() Queries instance
+// for upload-session reads/writes. Stateless — the pgx connection
+// handles satisfy sqlc.DBTX via s.pool.
+func (s *PgStore) uploadSessionQueries() *sqlc.Queries { return sqlc.New() }
+
+// CreateUploadSession inserts a fresh upload_sessions row.
+// Handler is responsible for the per-plan SourceTarballMaxMB cap
+// and the per-account open-session / open-spool budget checks
+// BEFORE calling this — the store does not enforce limits.
+func (s *PgStore) CreateUploadSession(ctx context.Context, in sqlc.CreateUploadSessionParams) (sqlc.UploadSession, error) {
+	return s.uploadSessionQueries().CreateUploadSession(ctx, s.pool, in)
+}
+
+// GetUploadSession reads a single upload_sessions row by id.
+func (s *PgStore) GetUploadSession(ctx context.Context, id string) (sqlc.UploadSession, error) {
+	return s.uploadSessionQueries().GetUploadSession(ctx, s.pool, id)
+}
+
+// AppendUploadBytes is the atomic CAS. sqlc maps the UPDATE's
+// "0 rows" return to sql.ErrNoRows; the handler maps that to
+// api.ErrUploadSessionOffsetConflict (409) by reading the row
+// via GetUploadSession for the actual current received_bytes.
+func (s *PgStore) AppendUploadBytes(ctx context.Context, in sqlc.AppendUploadBytesParams) (sqlc.AppendUploadBytesRow, error) {
+	row, err := s.uploadSessionQueries().AppendUploadBytes(ctx, s.pool, in)
+	if err != nil {
+		// sqlc raises sql.ErrNoRows when the CAS misses. Wrap as
+		// ErrConflict so the handler doesn't have to import
+		// database/sql.
+		if errors.Is(err, sql.ErrNoRows) {
+			return sqlc.AppendUploadBytesRow{}, ErrConflict
+		}
+		return sqlc.AppendUploadBytesRow{}, err
+	}
+	return row, nil
+}
+
+// MarkUploadSessionCommitted transitions open → committed and
+// stamps the deployment_id. sqlc maps the "row already terminal"
+// UPDATE to sql.ErrNoRows; we wrap as ErrConflict so the handler
+// can branch on the standard sentinel.
+func (s *PgStore) MarkUploadSessionCommitted(ctx context.Context, in sqlc.MarkUploadSessionCommittedParams) (sqlc.MarkUploadSessionCommittedRow, error) {
+	row, err := s.uploadSessionQueries().MarkUploadSessionCommitted(ctx, s.pool, in)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return sqlc.MarkUploadSessionCommittedRow{}, ErrConflict
+		}
+		return sqlc.MarkUploadSessionCommittedRow{}, err
+	}
+	return row, nil
+}
+
+// CancelUploadSession transitions open → cancelled. accountID
+// predicate is enforced server-side as defense in depth.
+func (s *PgStore) CancelUploadSession(ctx context.Context, in sqlc.CancelUploadSessionParams) error {
+	return s.uploadSessionQueries().CancelUploadSession(ctx, s.pool, in)
+}
+
+// ReapExpiredUploadSessions scans up to 100 expired open sessions.
+func (s *PgStore) ReapExpiredUploadSessions(ctx context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error) {
+	return s.uploadSessionQueries().ReapExpiredUploadSessions(ctx, s.pool)
+}
+
+// ReapStaleUploadPartFiles returns terminal-row sessions whose
+// last_patched_at < now() - 1h. The reaper os.Removes each
+// part_path; the in-DB row stays terminal (no UPDATE needed —
+// status IN ('committed','cancelled','expired') is already the
+// irreversible end state).
+func (s *PgStore) ReapStaleUploadPartFiles(ctx context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
+	return s.uploadSessionQueries().ReapStaleUploadPartFiles(ctx, s.pool)
+}
+
+// ExpireUploadSession marks a single session expired.
+func (s *PgStore) ExpireUploadSession(ctx context.Context, id string) error {
+	return s.uploadSessionQueries().ExpireUploadSession(ctx, s.pool, id)
+}
+
+// RecordUploadCommitOutcome inserts into the
+// upload_commit_outcomes companion table ON CONFLICT DO NOTHING.
+// sqlc maps the conflict path to sql.ErrNoRows; we wrap as
+// ErrConflict so the handler reads via GetUploadCommitOutcome.
+func (s *PgStore) RecordUploadCommitOutcome(ctx context.Context, in sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error) {
+	row, err := s.uploadSessionQueries().RecordUploadCommitOutcome(ctx, s.pool, in)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return sqlc.UploadCommitOutcome{}, ErrConflict
+		}
+		return sqlc.UploadCommitOutcome{}, err
+	}
+	return row, nil
+}
+
+// GetUploadCommitOutcome reads the dedupe row for a retry.
+func (s *PgStore) GetUploadCommitOutcome(ctx context.Context, uploadID string) (sqlc.UploadCommitOutcome, error) {
+	return s.uploadSessionQueries().GetUploadCommitOutcome(ctx, s.pool, uploadID)
+}
+
+// CountOpenUploadSessionsByAccountApp backs the per-(account, app)
+// open-session cap check.
+func (s *PgStore) CountOpenUploadSessionsByAccountApp(ctx context.Context, in sqlc.CountOpenUploadSessionsByAccountAppParams) (int64, error) {
+	return s.uploadSessionQueries().CountOpenUploadSessionsByAccountApp(ctx, s.pool, in)
+}
+
+// SumOpenUploadSessionBytesByAccount backs the per-account open-
+// spool budget check.
+func (s *PgStore) SumOpenUploadSessionBytesByAccount(ctx context.Context, accountID pgtype.UUID) (int64, error) {
+	return s.uploadSessionQueries().SumOpenUploadSessionBytesByAccount(ctx, s.pool, accountID)
 }
 
 // ----------------------------------------------------------------------------
