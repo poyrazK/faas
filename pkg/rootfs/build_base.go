@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -529,8 +530,8 @@ func writePasswdTable(staging string, entries map[string]PasswdEntry, maxEntries
 		}
 		var uidBytes [4]byte
 		var gidBytes [4]byte
-		binaryBigEndianPutUint32(uidBytes[:], uint32(e.Uid))
-		binaryBigEndianPutUint32(gidBytes[:], uint32(e.Gid))
+		binaryBigEndianPutUint32(uidBytes[:], clampUint32(e.Uid))
+		binaryBigEndianPutUint32(gidBytes[:], clampUint32(e.Gid))
 		bin.Write(uidBytes[:])
 		bin.Write(gidBytes[:])
 		bin.WriteByte(byte(len(n)))
@@ -568,6 +569,24 @@ func binaryBigEndianPutUint32(buf []byte, v uint32) {
 	buf[1] = byte(v >> 16)
 	buf[2] = byte(v >> 8)
 	buf[3] = byte(v)
+}
+
+// clampUint32 converts an architecture-dependent int (parsed from
+// /etc/passwd via strconv.Atoi) to uint32 with an explicit range
+// clamp. Negative ints or values > math.MaxUint32 would otherwise
+// be silently truncated by the uint32() conversion on 64-bit
+// platforms; CodeQL flags that as a high-severity "incorrect
+// conversion between integer types" finding. Valid Unix uids/gids
+// fit in [0, math.MaxUint32] so the clamp is identity for any
+// well-formed input.
+func clampUint32(v int) uint32 {
+	if v < 0 {
+		return 0
+	}
+	if v > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(v)
 }
 
 // emitFullRootfsSBOM is the full-rootfs sibling of emitSBOM — same
