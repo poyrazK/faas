@@ -31,7 +31,8 @@ func node(id, name string, usedMB int64, ceilingMB int) state.ComputeNode {
 	return state.ComputeNode{
 		ID: id, Name: name, TargetURL: "unix:///run/faas/" + name + ".sock",
 		VPCPUs: 160, MemMB: ceilingMB + 8400, MaxConcurrency: 200,
-		AdmissionCeilingMB: ceilingMB, VCPUBudget: 160, Active: true,
+		AdmissionCeilingMB: ceilingMB, VCPUBudget: 160,
+		Lifecycle: state.NodeLifecycleActive, Active: true,
 	}
 }
 
@@ -78,8 +79,12 @@ func TestChoosePlacement_Table(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "inactive nodes are skipped",
-			nodes:   []state.ComputeNode{{ID: "a-id", Name: "a", TargetURL: "unix:///x", AdmissionCeilingMB: 100, Active: false}},
+			name: "inactive nodes are skipped",
+			nodes: []state.ComputeNode{{
+				ID: "a-id", Name: "a", TargetURL: "unix:///x",
+				AdmissionCeilingMB: 100,
+				Lifecycle:          state.NodeLifecycleUnavailable, Active: false,
+			}},
 			usedMB:  map[string]int64{"a-id": 0},
 			r:       Request{RAMMB: req},
 			wantErr: true,
@@ -411,7 +416,8 @@ func TestChoosePlacement_BillableIncludesOverhead(t *testing.T) {
 	ceilingNode := state.ComputeNode{
 		ID: "tight", Name: "tight", TargetURL: "unix:///tight.sock",
 		VPCPUs: 160, MemMB: 999, MaxConcurrency: 200,
-		AdmissionCeilingMB: 100, VCPUBudget: 160, Active: true,
+		AdmissionCeilingMB: 100, VCPUBudget: 160,
+		Lifecycle: state.NodeLifecycleActive, Active: true,
 	}
 	r := Request{RAMMB: 92} // billable = 100
 	usedMB := map[string]int64{"tight": 0}
@@ -422,5 +428,46 @@ func TestChoosePlacement_BillableIncludesOverhead(t *testing.T) {
 	ceilingNode.AdmissionCeilingMB = 99 // 100 > 99 → no fit
 	if _, err := ChoosePlacement([]state.ComputeNode{ceilingNode}, usedMB, nil, r); err == nil {
 		t.Error("99 MB ceiling must refuse 100 MB billable (overhead included)")
+	}
+}
+
+// TestChoosePlacement_LifecycleFilter (Workstream B / issue
+// #1184 / ADR-137) pins the lifecycle-aware filter. Nodes with
+// lifecycle='draining' or 'unavailable' must be skipped even if
+// Active=true (a stale bool could allow placement into a node
+// the heartbeat already flipped). Lifecycle='recovering' stays
+// admitting (matches the Postgres STORED GENERATED predicate).
+func TestChoosePlacement_LifecycleFilter(t *testing.T) {
+	const ramMB = 100
+	const req = 64
+	usedMB := map[string]int64{"a-id": 0, "b-id": 0, "c-id": 0, "d-id": 0}
+	admitting := node("a-id", "active", 0, 100)
+	admitting.Lifecycle = state.NodeLifecycleActive
+	recovering := node("b-id", "recovering", 0, 100)
+	recovering.Lifecycle = state.NodeLifecycleRecovering
+	draining := node("c-id", "draining", 0, 100)
+	draining.Lifecycle = state.NodeLifecycleDraining
+	draining.Active = true // stale bool — must still be skipped
+	unavailable := node("d-id", "unavailable", 0, 100)
+	unavailable.Lifecycle = state.NodeLifecycleUnavailable
+	unavailable.Active = true // stale bool — must still be skipped
+
+	got, err := ChoosePlacement(
+		[]state.ComputeNode{draining, unavailable, recovering, admitting},
+		usedMB, nil, Request{RAMMB: req},
+	)
+	if err != nil {
+		t.Fatalf("ChoosePlacement: %v", err)
+	}
+	// Tie-break is name ASC; both active and recovering admit.
+	// active < recovering lexically → "active" wins.
+	if got.Name != "active" {
+		t.Errorf("chose node=%q, want %q (lifecycle filter must skip draining + unavailable)", got.Name, "active")
+	}
+	// Single-draining-node fleet: no admission.
+	if _, err := ChoosePlacement(
+		[]state.ComputeNode{draining}, usedMB, nil, Request{RAMMB: req},
+	); err == nil {
+		t.Error("draining-only fleet must refuse admission")
 	}
 }

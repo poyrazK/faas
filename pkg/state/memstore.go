@@ -9346,6 +9346,17 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 	if n.LastHeartbeatAt.IsZero() {
 		n.LastHeartbeatAt = n.CreatedAt
 	}
+	// Mirror migration 00579 DEFAULT 'active': a row created
+	// without an explicit lifecycle lands as 'active' so the
+	// bool `active` field (derived from lifecycle) is true.
+	// Tests that exercise a specific non-default lifecycle
+	// (draining / unavailable / recovering) explicitly set it.
+	if n.Lifecycle == "" {
+		n.Lifecycle = NodeLifecycleActive
+	}
+	if !n.Active {
+		n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
+	}
 	m.computeNodes[n.ID] = n
 	return n, nil
 }
@@ -9390,6 +9401,16 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 		n.LastHeartbeatAt = n.CreatedAt
 	}
 	n.Active = true
+	// Mirror migration 00579 DEFAULT 'active' (the SQL
+	// DEFAULT clause on lifecycle is server-side; this is the
+	// in-memory equivalent). UpsertComputeNode is the
+	// vmmd-self-registration path on a fresh node — the node
+	// is healthy by definition. Tests / callers that need a
+	// specific lifecycle set it explicitly.
+	if n.Lifecycle == "" {
+		n.Lifecycle = NodeLifecycleActive
+	}
+	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
 	m.computeNodes[n.ID] = n
 	return n, nil
 }
