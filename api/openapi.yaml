@@ -2655,6 +2655,94 @@ paths:
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # Issue #1182 §P1 PR-1 — resumable upload protocol (server-only
+  # foundation; CLI wiring lands in PR-2). Legacy `source-tarball`
+  # endpoint above stays active in PR-1; PR-3 deprecates it with
+  # RFC 8594 Sunset headers.
+  /v1/uploads:
+    post:
+      tags: [uploads]
+      operationId: startUpload
+      summary: Open a resumable upload session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadStartRequest' }
+      responses:
+        '201':
+          description: Session opened.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadStartResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/uploads/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Upload session id (returned by POST /v1/uploads).
+    patch:
+      tags: [uploads]
+      operationId: appendUpload
+      summary: Append a chunk to an open session.
+      parameters:
+        - name: Upload-Offset
+          in: header
+          required: true
+          schema: { type: integer, minimum: 0 }
+          description: Absolute byte offset the client claims the server is at.
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Bytes accepted.
+          headers:
+            Upload-Offset:
+              schema: { type: integer, minimum: 0 }
+              description: New absolute offset after the append.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+    delete:
+      tags: [uploads]
+      operationId: cancelUpload
+      summary: Cancel an open session (removes the .part file).
+      responses:
+        '204':
+          description: Session cancelled.
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/uploads/{id}/commit:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [uploads]
+      operationId: commitUpload
+      summary: Finalize the session, validate the tarball, enqueue the build.
+      responses:
+        '201':
+          description: Deployment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+
   # ADR-122 — endpoint discovery. Captured OpenAPI doc per deployment.
   /v1/apps/{slug}/deployments/{deployment}/openapi:
     parameters:

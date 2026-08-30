@@ -571,6 +571,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if srv.rekeyRunner != nil {
 			go func() { _ = srv.rekeyRunner.Run(ctx) }()
 		}
+		// PR-1 of issue #1182 §P1 packaging follow-up —
+		// in-process upload_sessions reaper. 5-minute ticker,
+		// bounds the 24h TTL to within 5 minutes of staleness.
+		// Mirrors rekeyRunner.Run pattern above.
+		go func() {
+			if err := runUploadSessionReaper(ctx, srv, log); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("upload session reaper exited", "err", err)
+			}
+		}()
 		// Move 3 (M7.5 prep): bridge pg_notify → in-process broadcaster.
 		// Runs as a background goroutine for the daemon's lifetime; the
 		// SubscribeWithReconnect wrapper reconnects across Postgres

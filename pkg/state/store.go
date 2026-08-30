@@ -5350,4 +5350,106 @@ type Store interface {
 	// `gregale deploy` without --exclude still honors the persisted
 	// set. Sorted by created_at DESC for stable apply ordering.
 	LookupDeploymentScopeExclusions(ctx context.Context, accountID, projectID string) ([]DeploymentScopeExclusion, error)
+
+	// ----------------------------------------------------------------------------
+	// Issue #1182 §P1 packaging follow-up: resumable upload session
+	// protocol (PR-1 of 3, server-only foundation). Eleven methods
+	// backing the four upload-session endpoints:
+	//
+	//   POST   /v1/uploads                   → CreateUploadSession
+	//   PATCH  /v1/uploads/{id}              → AppendUploadBytes (atomic CAS)
+	//   POST   /v1/uploads/{id}/commit       → MarkUploadSessionCommitted
+	//   DELETE /v1/uploads/{id}              → CancelUploadSession
+	//
+	// Returns sqlc.UploadSession / sqlc.UploadCommitOutcome structs
+	// (generated pkg/state/sqlc/models.go). The handler layer at
+	// cmd/apid/handlers_upload_session.go translates these into the
+	// wire-stable JSON envelope. ErrNotFound is returned when no
+	// row matches the supplied id — the handler maps that to
+	// api.ErrUploadSessionNotFound (404).
+	// ----------------------------------------------------------------------------
+
+	// CreateUploadSession inserts a fresh upload_sessions row.
+	// The handler is responsible for the per-plan SourceTarballMaxMB
+	// cap (pkg/api/limits.go) and the per-account open-session /
+	// open-spool budget checks BEFORE calling this — the store does
+	// not enforce limits. Returns the populated UploadSession
+	// including the server-stamped created_at, last_patched_at,
+	// expires_at, and the default chunk_size (8 MiB for free/hobby/
+	// pro, 16 MiB for scale — derived from limits in the handler).
+	CreateUploadSession(ctx context.Context, in sqlc.CreateUploadSessionParams) (sqlc.UploadSession, error)
+	// GetUploadSession reads a single upload_sessions row by id.
+	// Used by the handler's POST /commit pre-check (validate status
+	// ='open', received_bytes == total_size before validating tar
+	// shape) AND by the CLI's resume-after-network-drop path (PR-2
+	// cmd/gregale/upload_session.go) to learn the server's current
+	// received_bytes. Returns ErrNotFound when the id doesn't
+	// resolve.
+	GetUploadSession(ctx context.Context, id string) (sqlc.UploadSession, error)
+	// AppendUploadBytes is the atomic CAS that makes the resumable
+	// protocol safe under concurrent PATCHes on the same upload_id.
+	// The sqlc AppendUploadBytesParams struct carries (id,
+	// expectedOffset, newReceivedBytes); the store's UPDATE WHERE
+	// clause pins the row to received_bytes == expectedOffset,
+	// returning 0 rows on a CAS miss. The handler maps 0 rows to
+	// api.ErrUploadSessionOffsetConflict (409) with the actual
+	// current received_bytes in the body.
+	AppendUploadBytes(ctx context.Context, in sqlc.AppendUploadBytesParams) (sqlc.AppendUploadBytesRow, error)
+	// MarkUploadSessionCommitted transitions an open session to
+	// committed and stamps the deployment_id. The WHERE status=
+	// 'open' predicate is the second-line idempotency guard against
+	// commit-after-commit races; the upload_commit_outcomes
+	// companion table is the canonical dedupe (see
+	// RecordUploadCommitOutcome / GetUploadCommitOutcome). Returns
+	// ErrConflict when the row is already terminal.
+	MarkUploadSessionCommitted(ctx context.Context, in sqlc.MarkUploadSessionCommittedParams) (sqlc.MarkUploadSessionCommittedRow, error)
+	// CancelUploadSession transitions an open session to cancelled.
+	// The sqlc CancelUploadSessionParams struct carries (id,
+	// accountID pgtype.UUID). The accountID predicate is matched in
+	// the WHERE clause as a defense-in-depth check against cross-
+	// account delete (the auth chain at cmd/apid/server.go already
+	// enforces account scoping, but the store-side predicate makes
+	// accidental misuse crash-loud).
+	CancelUploadSession(ctx context.Context, in sqlc.CancelUploadSessionParams) error
+	// ReapExpiredUploadSessions scans up to 100 expired open
+	// sessions for the reaper goroutine
+	// (cmd/apid/upload_session_reaper.go). The partial index
+	// upload_sessions_expires_idx makes this an index-only scan.
+	// The handler then UPDATEs each row via ExpireUploadSession
+	// and removes the .part file via os.Remove AFTER the UPDATE
+	// commits — see ExpireUploadSession's doc for the race-safe
+	// sequencing rationale.
+	ReapExpiredUploadSessions(ctx context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error)
+	// ExpireUploadSession marks a single session expired after the
+	// reaper deletes its .part file. The status='open' predicate
+	// means a session that was committed / cancelled between the
+	// reaper's scan and this UPDATE is left untouched — its
+	// .part file was already gone, so os.Remove's ErrNotExist is
+	// logged + skipped upstream.
+	ExpireUploadSession(ctx context.Context, id string) error
+	// RecordUploadCommitOutcome inserts a row into the
+	// upload_commit_outcomes companion table ON CONFLICT DO NOTHING.
+	// The handler calls this AFTER a successful apidsource.Enqueue
+	// so a retry of POST /v1/uploads/{id}/commit returns the same
+	// deployment_id via GetUploadCommitOutcome. Returns
+	// (sqlc.UploadCommitOutcome{}, ErrConflict) when the row
+	// already exists; the handler interprets ErrConflict as
+	// "another commit already won" and reads via
+	// GetUploadCommitOutcome to surface the stored deployment_id.
+	RecordUploadCommitOutcome(ctx context.Context, in sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error)
+	// GetUploadCommitOutcome reads the dedupe row for a retry of
+	// POST /v1/uploads/{id}/commit. Returns ErrNotFound when the
+	// commit never wrote (operator error path: the prior
+	// MarkUploadSessionCommitted UPDATE also failed).
+	GetUploadCommitOutcome(ctx context.Context, uploadID string) (sqlc.UploadCommitOutcome, error)
+	// CountOpenUploadSessionsByAccountApp backs the per-(account_id,
+	// app_slug) open-session cap check (5) at the top of POST
+	// /v1/uploads. Hits the partial index
+	// upload_sessions_account_open_idx.
+	CountOpenUploadSessionsByAccountApp(ctx context.Context, in sqlc.CountOpenUploadSessionsByAccountAppParams) (int64, error)
+	// SumOpenUploadSessionBytesByAccount backs the per-account
+	// open-spool budget check (4 × SourceTarballMaxMB) at the top
+	// of POST /v1/uploads. Hits the partial index; returns 0 when
+	// no open sessions.
+	SumOpenUploadSessionBytesByAccount(ctx context.Context, accountID pgtype.UUID) (int64, error)
 }

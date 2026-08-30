@@ -3569,6 +3569,58 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, kind := range operatorIntentKindClosedSet {
 		operatorActionTraceCompletenessRatio.WithLabelValues(kind)
 	}
+	// Issue #1182 §P1 packaging follow-up: resumable upload session
+	// counters (PR-1 of 3). Five counters backing the new POST /v1/
+	// uploads, PATCH /v1/uploads/{id}, POST /v1/uploads/{id}/commit,
+	// DELETE /v1/uploads/{id} surface plus the in-process reaper.
+	//
+	// Card discipline: only {plan} on the *_total counters with a
+	// closed-set cardinality (4 plans × 2 events = 8 series). The
+	// reaper counters are unlabelled — reaper has one outcome
+	// shape. Operators wiring the §12 Grafana panel
+	// (deployment_audit_gc_rows_deleted_total sibling) can rate()()
+	// the same way.
+	//
+	// Pre-instantiated at boot for every plan so /metrics carries
+	// zero-valued series from the moment the daemon starts — same
+	// precedent as the alert_preset / deployment_audit families
+	// above.
+	uploadSessionCreatedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_created_total",
+		Help: "Count of upload sessions opened via POST /v1/uploads, labelled by account plan. Fires once per successful CreateUploadSession row insert (cmd/apid/handlers_upload_session.go). Saturation signal: a customer creating many sessions without committing usually means the CLI crashed mid-upload; combine with apid_upload_session_expired_total to size the reaper's 5-minute cadence.",
+	}, []string{"plan"})
+	uploadSessionCommittedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_committed_total",
+		Help: "Count of upload sessions committed via POST /v1/uploads/{id}/commit, labelled by account plan. Fires once per successful MarkUploadSessionCommitted transition (open→committed). The deployment_id column on upload_sessions is set in the same transaction; join with apid_upload_session_committed_total{plan} × builds.kind='tarball' for the full source-tarball deploy rate.",
+	}, []string{"plan"})
+	uploadSessionExpiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_expired_total",
+		Help: "Count of upload sessions marked expired by the in-process reaper (cmd/apid/upload_session_reaper.go). Unlabelled — reaper has one outcome. A sustained rate implies customers are crashing mid-upload OR a flaky link is forcing repeated re-rolls; pair with apid_upload_session_committed_total to compute the commit ratio per plan.",
+	})
+	uploadSessionReaperRowsDeletedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_reaper_rows_deleted_total",
+		Help: "Count of upload_sessions rows deleted (status→expired) by the in-process reaper. Sibling of deployment_audit_gc_rows_deleted_total; same metric family for retention-loop observability. /v1/admin/obs/health reports the rate of this counter vs the reaper's last run timestamp.",
+	})
+	uploadSessionReaperFailedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_reaper_failed_total",
+		Help: "Count of reaper iterations that errored (DB query, os.Remove, ctx cancellation). Unlabelled — reaper has one failure shape. Alertable: a sustained non-zero rate means the reaper goroutine is wedged and the spool at /var/spool/faas/builds will leak.",
+	})
+	commonCollectors = append(commonCollectors,
+		uploadSessionCreatedTotal,
+		uploadSessionCommittedTotal,
+		uploadSessionExpiredTotal,
+		uploadSessionReaperRowsDeletedTotal,
+		uploadSessionReaperFailedTotal,
+	)
+	// Pre-instantiate {plan} closed-set series so /metrics surfaces
+	// zero values from boot. Plan enum mirrors the four-value
+	// PlanLimits table at pkg/api/limits.go (free/hobby/pro/scale);
+	// hard-coded here rather than imported to avoid a pkg/wire →
+	// pkg/api import cycle (pkg/api already imports pkg/wire).
+	for _, plan := range []string{"free", "hobby", "pro", "scale"} {
+		uploadSessionCreatedTotal.WithLabelValues(plan)
+		uploadSessionCommittedTotal.WithLabelValues(plan)
+	}
 	commonCollectors = append(commonCollectors,
 		auditLogWriteTotal,
 		auditLogWriteFailuresTotal,
