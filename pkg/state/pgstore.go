@@ -11714,10 +11714,11 @@ type SnapshotSize struct {
 // is safe: pkg/api has no outbound dependency on pkg/state, so no cycle.
 
 // scanComputeNode reads a single compute_nodes row, projecting the
-// canonical 23-column layout (matches the SELECT / RETURNING lists
+// canonical 24-column layout (matches the SELECT / RETURNING lists
 // in ActiveComputeNodes, ListAllComputeNodes, ComputeNodeByID,
-// ComputeNodeByName, CreateComputeNode, UpsertComputeNode,
-// UpsertComputeNodeFromOperator, UpsertComputeNodeFromVmmd).
+// ComputeNodeByName, ListComputeNodes, CreateComputeNode,
+// UpsertComputeNode, UpsertComputeNodeFromOperator,
+// UpsertComputeNodeFromVmmd).
 //
 // Column order (must stay locked against the SQL projections):
 //
@@ -11725,21 +11726,29 @@ type SnapshotSize struct {
 //	admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 //	region, zone, schedd_target_url, gateway_target_url,
 //	public_ip, public_ip_set_at,
-//	release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+//	release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+//	lifecycle
+//
+// `active` is STORED GENERATED from `lifecycle` (migration 00579,
+// ADR-137), so every SELECT still projects both — legacy callers
+// read `active`, Workstream B callers read `lifecycle`. The
+// generated `active` predates the enum; the additional column is
+// appended last so the wire-order contract is preserved.
 //
 // A mismatch between this Scan arg list and any of the SQL projections
 // fails at runtime with pgx's column count error — the wire-level
 // contract every helper above enforces.
 //
 // PR-3a (issue #911 / ADR-110) widened the projection from 14 to 22;
-// migration 00468 adds gateway_target_url for a 23-column projection.
-// The earlier 22-column additions were public_ip / public_ip_set_at
+// migration 00468 adds gateway_target_url for a 23-column projection;
+// migration 00579 adds lifecycle for a 24-column projection. The
+// earlier 22-column additions were public_ip / public_ip_set_at
 // (migration 00174 closure) + release_id / manifest_hash /
 // host_certificate / cert_fingerprint /
 // role / generation (migration 00266). Pre-PR-3a callers that hand-rolled
 // SQL against the 14-column layout must be updated together; the only
-// readers of the wider shape are the 8 helpers listed in the comment
-// above (4 SELECTs + 4 INSERT/UPSERTs).
+// readers of the wider shape are the 9 helpers listed in the comment
+// above (5 SELECTs + 4 INSERT/UPSERTs).
 func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 	var n ComputeNode
 	if err := row.Scan(&n.ID, &n.Name, &n.TargetURL, &n.VPCPUs, &n.MemMB,
@@ -11747,7 +11756,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.LastHeartbeatAt, &n.CreatedAt, &n.Region, &n.Zone,
 		&n.ScheddTargetURL, &n.GatewayTargetURL, &n.PublicIp, &n.PublicIpSetAt,
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
-		&n.Role, &n.Generation); err != nil {
+		&n.Role, &n.Generation, &n.Lifecycle); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -11759,7 +11768,8 @@ func (s *PgStore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error)
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -11790,7 +11800,8 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 		 order by name
 	`)
@@ -11815,7 +11826,8 @@ func (s *PgStore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, 
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -11832,7 +11844,8 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -12242,16 +12255,20 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 	return out, nil
 }
 
-// MarkComputeNodeInactive flips active=false on the row (PR #114,
-// schedd heartbeat path). Idempotent: the UPDATE matches regardless
-// of current value, so re-flipping an inactive row is a no-op. We
-// preserve the row rather than DELETE so an operator can re-enable
-// it without re-provisioning the target_url / cert.
+// MarkComputeNodeInactive flips the row's lifecycle to `unavailable`
+// (Workstream B, ADR-137). The legacy pre-00579 implementation wrote
+// the (now STORED GENERATED) `active` column directly; PG rejects
+// `UPDATE compute_nodes SET active = $X` with SQLSTATE 428C9 because
+// generated columns are derived from `lifecycle`. Idempotent at the
+// PG level: the UPDATE matches regardless of current lifecycle, so
+// re-flipping an unavailable row is a no-op. We preserve the row
+// rather than DELETE so an operator can re-enable it without
+// re-provisioning the target_url / cert.
 func (s *PgStore) MarkComputeNodeInactive(ctx context.Context, nodeID string) error {
 	tag, err := s.pool.Exec(ctx,
-		`update compute_nodes set active = false where id = $1`, nodeID)
+		`update compute_nodes set lifecycle = 'unavailable'::compute_node_lifecycle where id = $1`, nodeID)
 	if err != nil {
-		return fmt.Errorf("state: mark compute_node %s inactive: %w", nodeID, err)
+		return fmt.Errorf("state: mark compute_node %s unavailable: %w", nodeID, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -12287,7 +12304,8 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
-		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, node.Active,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -12360,7 +12378,8 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
-		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -12423,7 +12442,8 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
-		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -12530,7 +12550,8 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
-		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -12599,19 +12620,34 @@ func (s *PgStore) UpsertNodeKey(ctx context.Context, nodeID string, keyID string
 	return nil
 }
 
-// SetComputeNodeActive flips active on a row by id (issue #98 /
-// ADR-028). The watchdog uses this to mark a row drained when
-// last_heartbeat_at ages past 90s, and the heartbeat goroutine uses it
-// again to reactivate a drained row on the next successful dial. The
+// SetComputeNodeActive flips the row's lifecycle (Workstream B,
+// ADR-137). Legacy pre-00599 implementation wrote the (now STORED
+// GENERATED) `active` column directly; PG rejects that with SQLSTATE
+// 428C9, so the rewrite maps the boolean onto lifecycle semantics:
+//
+//	true  → lifecycle='active'     (heartbeat reactivation; row admits wakes)
+//	false → lifecycle='unavailable' (watchdog drain-on-stale; row rejects wakes)
+//
+// The watchdog uses `false` to mark a row drained when
+// last_heartbeat_at ages past 90s, and the heartbeat goroutine uses
+// `true` to reactivate a drained row on the next successful dial. The
 // pg_notify trigger on compute_nodes (operator-visible via
 // pkg/db/notify.NotifyComputeNodeChanged) fires on the UPDATE so
-// gatewayd-internal's per-node client cache can drop/add entries without
-// restart.
+// gatewayd-internal's per-node client cache can drop/add entries
+// without restart. Note: this method does NOT distinguish between
+// operator-initiated drains (which the drain API records as
+// `draining` lifecycle for audit) and watchdog-initiated drains —
+// it always lands on `unavailable`. Use NodeSetLifecycle directly
+// for the operator-initiated `draining` path.
 func (s *PgStore) SetComputeNodeActive(ctx context.Context, id string, active bool) error {
+	target := NodeLifecycleUnavailable
+	if active {
+		target = NodeLifecycleActive
+	}
 	tag, err := s.pool.Exec(ctx,
-		`update compute_nodes set active = $2 where id = $1`, id, active)
+		`update compute_nodes set lifecycle = $2::compute_node_lifecycle where id = $1`, id, string(target))
 	if err != nil {
-		return fmt.Errorf("state: set active compute_node %s = %v: %w", id, active, err)
+		return fmt.Errorf("state: set lifecycle compute_node %s = %v: %w", id, target, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -12724,7 +12760,8 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 	`
 	if !includeInactive {
