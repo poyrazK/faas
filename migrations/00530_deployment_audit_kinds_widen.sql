@@ -73,11 +73,14 @@ ALTER TABLE deployment_audit
             'deploy.alert_rule_fired'
         ));
 
-CREATE INDEX IF NOT EXISTS deployment_audit_account_at_idx
+CREATE INDEX CONCURRENTLY IF NOT EXISTS deployment_audit_account_at_idx
     ON deployment_audit (account_id, at DESC)
     WHERE account_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS deployments_canary_step_started_at_idx
+-- Cannot wrap CONCURRENTLY inside a transaction block; goose
+-- StatementBegin/End default to autocommit, so each DDL runs in
+-- its own implicit transaction and CONCURRENTLY is permitted.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS deployments_canary_step_started_at_idx
     ON deployments (canary_step_started_at)
     WHERE rollout_state = 'rolling_out';
 
