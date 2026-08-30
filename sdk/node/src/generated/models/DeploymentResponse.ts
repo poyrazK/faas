@@ -38,6 +38,14 @@ export type DeploymentResponse = {
   error_relevant_logs?: Array<LogExcerpt>;
   created_at: string;
   /**
+   * M-3 / ADR-141 §Decision 2. When true (default on paid plans), the auto-dispatch path runs the full-rootfs build on the typed oci.ErrLayersNotAboveBase signal. When false (default on Free), the auto-dispatch is skipped; the customer MUST pass full_rootfs_override=true to opt in.
+   */
+  full_rootfs_allow_auto?: boolean;
+  /**
+   * M-3 / ADR-141 §Decision 2. Tri-state customer override: nil = honor full_rootfs_allow_auto + plan gate; true = force full-rootfs build regardless of plan; false = force today-equivalent failure on the typed sentinel.
+   */
+  full_rootfs_override?: boolean | null;
+  /**
    * True when this deployment carries a non-null override_* column set.
    */
   has_overrides?: boolean;

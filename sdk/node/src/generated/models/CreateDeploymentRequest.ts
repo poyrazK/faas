@@ -57,5 +57,13 @@ export type CreateDeploymentRequest = {
    * Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder.
    */
   canary?: (CanaryPresetSpec | null);
+  /**
+   * Per-deployment opt-in for the auto-fallback path (issue #1186 / ADR-141). nil = handler reads api.FullRootfsAllowAutoDefault[acct.Plan] (Free:false, Hobby+:true) and writes that onto the row.
+   */
+  full_rootfs_allow_auto?: boolean | null;
+  /**
+   * Tri-state per-deployment override (issue #1186 / ADR-141). NULL = honor allow_auto + plan gate. true = force full-rootfs (Free-plan override). false = force today-equivalent failure (Hobby+ opt-out). nil/omitted = inherit auto + plan.
+   */
+  full_rootfs_override?: boolean | null;
 };
 
