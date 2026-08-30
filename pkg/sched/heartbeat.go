@@ -315,21 +315,83 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		}
 	}
 
+	// markUnavailableIfEligible is the CAS-or path (fix #7):
+	// demote a node to `unavailable` ONLY if its current
+	// lifecycle is one we own (active, recovering, draining).
+	// NodeSetLifecycle is single-expected, so we try each in
+	// turn and stop at the first non-Conflict result. The prior
+	// implementation used `n.Lifecycle` as the expected state
+	// directly, which had two failure modes:
+	//
+	//   - A `recovering` row demoted to `unavailable` lost the
+	//     recovery arbiter's tracking context (the arbiter
+	//     would resume normally on the next tick but the
+	//     last_recovery_outcome + drain cascade were reset).
+	//   - A `draining` row demoted to `unavailable` erased an
+	//     operator-initiated drain's audit trail (draining →
+	//     unavailable looks like "operator abandoned drain" to
+	//     the dashboard).
+	//
+	// The union of {active, recovering, draining} → unavailable
+	// preserves the failure intent ("the node is sick right
+	// now") without lying about the operator/arbiter context
+	// that landed the row there. The CAS-or loop is bounded
+	// (3 attempts) and the per-call latency stays well below
+	// the heartbeat tick budget; the heartbeat is not on the
+	// hot path of any customer request.
+	markUnavailableIfEligible := func() {
+		for _, expected := range []state.NodeLifecycle{
+			n.Lifecycle,                     // first: whatever we observed at scan time (the cheap happy-path)
+			state.NodeLifecycleActive,       // then: union over the remaining admit-states
+			state.NodeLifecycleRecovering,
+			state.NodeLifecycleDraining,
+			"",                              // legacy: pre-fix-#1 pgstore deploys or MemStore seeds with no enum yet
+		} {
+			if err := h.store.NodeSetLifecycle(ctx, n.ID, expected, state.NodeLifecycleUnavailable); err != nil {
+				if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
+					continue // row already moved on; try the next expected
+				}
+				h.log.Warn("heartbeat: lifecycle CAS failed",
+					"node_id", n.ID, "expected", expected,
+					"next", state.NodeLifecycleUnavailable, "err", err)
+				continue
+			}
+			return // CAS landed; we're done
+		}
+	}
+
 	// Staleness gate (issue #98): even if Ping below succeeds,
 	// a node whose last_heartbeat_at is older than the
 	// threshold is stale and gets flipped unavailable. The ping
-	// then continues on the next tick, post-deactivation. We
-	// try both `active` and `recovering` as the expected state
-	// because a node that just came back from a previous outage
-	// is in `recovering` (still admitting) and shouldn't be
-	// demoted by the staleness gate on the way out.
+	// then continues on the next tick, post-deactivation. The
+	// CAS-or union {active, recovering, draining} → unavailable
+	// covers all three lifecycle sources (clean node, post-
+	// recovery node, operator-drained node); the
+	// unavailable → unavailable case is filtered by the
+	// n.Lifecycle pre-check.
+	if n.Lifecycle == state.NodeLifecycleUnavailable {
+		// Already unavailable; nothing to do here. The recovery
+		// arbiter (Task #66) is the only component that flips
+		// unavailable → recovering / active.
+		return
+	}
+	if n.Lifecycle == "" {
+		// Legacy row whose lifecycle enum hasn't been read yet
+		// (fix #1 pgstore still pending deploy on a stale
+		// schedd, or a row seeded directly via MemStore in a
+		// unit test). Treat as `active` for CAS purposes: the
+		// STORED GENERATED `active` column carries the legacy
+		// admission state and the CAS-or loop's first attempt
+		// will land. The `unavailable` early-return above
+		// catches the explicit-unavailable case.
+	}
 	if !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness {
 		h.log.Info("heartbeat: node stale, marking unavailable",
 			"node_id", n.ID, "node_name", n.Name,
 			"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
 			"prior_lifecycle", string(n.Lifecycle),
 			"staleness", staleness.String())
-		markLifecycle(n.Lifecycle, state.NodeLifecycleUnavailable)
+		markUnavailableIfEligible()
 		h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
@@ -344,7 +406,7 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		h.log.Warn("heartbeat: ping failed; marking unavailable",
 			"node_id", n.ID, "node_name", n.Name,
 			"prior_lifecycle", string(n.Lifecycle), "err", err)
-		markLifecycle(n.Lifecycle, state.NodeLifecycleUnavailable)
+		markUnavailableIfEligible()
 		h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
