@@ -12747,6 +12747,342 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 	return out, rows.Err()
 }
 
+// nodeRowToComputeNode converts a sqlc.NodeGetByNameRow / NodeGetRow
+// (the field set is identical for the lifecycle-projection queries in
+// queries.sql) back to the legacy ComputeNode model. The legacy
+// fields are the first 22; the lifecycle fields follow.
+func nodeRowToComputeNode(r sqlc.NodeGetRow) ComputeNode {
+	n := ComputeNode{
+		ID:                 uuidString(r.ID),
+		Name:               r.Name,
+		TargetURL:          r.TargetUrl,
+		VPCPUs:             int(r.Vpcpus),
+		MemMB:              int(r.MemMb),
+		MaxConcurrency:     int(r.MaxConcurrency),
+		AdmissionCeilingMB: int(r.AdmissionCeilingMb),
+		Active:             r.Active.Bool,
+		LastHeartbeatAt:    timestamptzToTime(r.LastHeartbeatAt),
+		CreatedAt:          timestamptzToTime(r.CreatedAt),
+	}
+	if r.Region.Valid {
+		v := r.Region.String
+		n.Region = &v
+	}
+	if r.Zone.Valid {
+		v := r.Zone.String
+		n.Zone = &v
+	}
+	if r.ScheddTargetUrl.Valid {
+		v := r.ScheddTargetUrl.String
+		n.ScheddTargetURL = &v
+	}
+	if r.VcpuBudget != 0 {
+		n.VCPUBudget = int(r.VcpuBudget)
+	}
+	if r.PublicIp != nil {
+		ip := *r.PublicIp
+		n.PublicIp = &ip
+	}
+	n.PublicIpSetAt = timestamptzToTimePtr(r.PublicIpSetAt)
+	if r.ReleaseID.Valid {
+		v := r.ReleaseID.String
+		n.ReleaseID = &v
+	}
+	if r.ManifestHash.Valid {
+		v := r.ManifestHash.String
+		n.ManifestHash = &v
+	}
+	if r.HostCertificate.Valid {
+		v := r.HostCertificate.String
+		n.HostCertificate = &v
+	}
+	if r.CertFingerprint.Valid {
+		v := r.CertFingerprint.String
+		n.CertFingerprint = &v
+	}
+	if r.Role.Valid {
+		v := r.Role.String
+		n.Role = &v
+	}
+	if r.Generation.Valid {
+		v := int(r.Generation.Int32)
+		n.Generation = &v
+	}
+	if r.GatewayTargetUrl.Valid {
+		v := r.GatewayTargetUrl.String
+		n.GatewayTargetURL = &v
+	}
+	// Lifecycle fields (Workstream B, 00579 + 00582).
+	n.Lifecycle = NodeLifecycle(r.Lifecycle)
+	n.DrainInitiatedAt = timestamptzToTimePtr(r.DrainInitiatedAt)
+	n.DrainCompletedAt = timestamptzToTimePtr(r.DrainCompletedAt)
+	n.RecoveryInitiatedAt = timestamptzToTimePtr(r.RecoveryInitiatedAt)
+	if r.LastRecoveryOutcome.Valid {
+		v := r.LastRecoveryOutcome.String
+		n.LastRecoveryOutcome = &v
+	}
+	return n
+}
+
+// uuidString returns the canonical hyphenated form for a pgtype.UUID.
+func uuidString(u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		u.Bytes[0:4], u.Bytes[4:6], u.Bytes[6:8], u.Bytes[8:10], u.Bytes[10:16])
+}
+
+// timestamptzToTime converts a pgtype.Timestamptz to time.Time, treating
+// the zero/invalid value as the zero time.
+func timestamptzToTime(t pgtype.Timestamptz) time.Time {
+	if !t.Valid {
+		return time.Time{}
+	}
+	return t.Time
+}
+
+// timestamptzToTimePtr is the *time.Time variant of timestamptzToTime.
+func timestamptzToTimePtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := t.Time
+	return &v
+}
+
+// NodeGet returns one ComputeNode by id with all lifecycle fields
+// populated. Wraps the sqlc NodeGet query.
+func (s *PgStore) NodeGet(ctx context.Context, id string) (ComputeNode, error) {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return ComputeNode{}, fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	row, err := s.triggerQueries().NodeGet(ctx, s.pool, p)
+	if err != nil {
+		return ComputeNode{}, mapErr(err)
+	}
+	return nodeRowToComputeNode(row), nil
+}
+
+// NodeGetByName mirrors NodeGet keyed by name.
+func (s *PgStore) NodeGetByName(ctx context.Context, name string) (ComputeNode, error) {
+	row, err := s.triggerQueries().NodeGetByName(ctx, s.pool, name)
+	if err != nil {
+		return ComputeNode{}, mapErr(err)
+	}
+	return nodeRowToComputeNodeFromNamed(row), nil
+}
+
+// nodeRowToComputeNodeFromNamed mirrors nodeRowToComputeNode for the
+// NodeGetByName query (sqlc emits a separate Row struct per :one query).
+func nodeRowToComputeNodeFromNamed(r sqlc.NodeGetByNameRow) ComputeNode {
+	// Both Row types share the same field set; the helper above
+	// expects a NodeGetRow, so copy through.
+	return nodeRowToComputeNode(sqlc.NodeGetRow(r))
+}
+
+// NodeList returns every compute_node in name order, optionally
+// filtered by lifecycle. Empty string = any lifecycle.
+func (s *PgStore) NodeList(ctx context.Context, lifecycle NodeLifecycle) ([]ComputeNode, error) {
+	rows, err := s.triggerQueries().NodeList(ctx, s.pool, string(lifecycle))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ComputeNode, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, nodeRowToComputeNode(sqlc.NodeGetRow(r)))
+	}
+	return out, nil
+}
+
+// NodeSetLifecycle is the CAS transition added by 00579. The expected
+// predicate (lifecycle::text = $expected) blocks two-writer races
+// from 'active' to 'draining' vs 'unavailable' concurrently. Returns
+// ErrNotFound when the id has no row, ErrConflict when the CAS didn't
+// land (the caller re-reads via NodeGet and decides whether to retry).
+func (s *PgStore) NodeSetLifecycle(ctx context.Context, id string, expected, next NodeLifecycle) error {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	rows, err := s.triggerQueries().NodeSetLifecycle(ctx, s.pool, sqlc.NodeSetLifecycleParams{
+		ID:               p,
+		Lifecycle:        sqlc.ComputeNodeLifecycle(string(expected)),
+		Column3:          sqlc.ComputeNodeLifecycle(string(next)),
+		DrainInitiatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if rows == 0 {
+		// CAS missed — caller decides whether to retry.
+		return ErrConflict
+	}
+	return nil
+}
+
+// NodeListRecoverable returns every node in ('unavailable','recovering') —
+// the recovery arbiter's input set.
+func (s *PgStore) NodeListRecoverable(ctx context.Context) ([]ComputeNode, error) {
+	rows, err := s.triggerQueries().NodeListRecoverable(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ComputeNode, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, nodeRowToComputeNode(sqlc.NodeGetRow(r)))
+	}
+	return out, nil
+}
+
+// NodeListDrainable returns every 'active' node with zero live
+// instances — the set the drain handler is allowed to flip to
+// 'draining' without operator override.
+func (s *PgStore) NodeListDrainable(ctx context.Context) ([]ComputeNode, error) {
+	rows, err := s.triggerQueries().NodeListDrainable(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ComputeNode, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, nodeRowToComputeNode(sqlc.NodeGetRow(r)))
+	}
+	return out, nil
+}
+
+// NodeMarkDrainCompleted stamps drain_completed_at + flips lifecycle
+// to 'active' (CAS on 'draining').
+func (s *PgStore) NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	rows, err := s.triggerQueries().NodeMarkDrainCompleted(ctx, s.pool, sqlc.NodeMarkDrainCompletedParams{
+		ID:               p,
+		DrainCompletedAt: pgtype.Timestamptz{Time: completedAt, Valid: true},
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if rows == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// NodeMarkRecovered stamps last_recovery_outcome='succeeded' + flips
+// lifecycle to 'active' (CAS on 'recovering').
+func (s *PgStore) NodeMarkRecovered(ctx context.Context, id string) error {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	rows, err := s.triggerQueries().NodeMarkRecovered(ctx, s.pool, p)
+	if err != nil {
+		return mapErr(err)
+	}
+	if rows == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// InstanceListByNodeForRecovery returns the live instances on a node
+// the recovery arbiter can act on.
+func (s *PgStore) InstanceListByNodeForRecovery(ctx context.Context, nodeID string) ([]RecoveryInstance, error) {
+	uid, err := uuid.Parse(nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("state: invalid uuid %q: %w", nodeID, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	rows, err := s.triggerQueries().InstanceListByNodeForRecovery(ctx, s.pool, p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RecoveryInstance, len(rows))
+	for i, r := range rows {
+		out[i] = RecoveryInstance{
+			ID:           uuidString(r.ID),
+			State:        r.State,
+			AppID:        uuidString(r.AppID),
+			DeploymentID: uuidString(r.DeploymentID),
+		}
+	}
+	return out, nil
+}
+
+// DeploymentRecordSnapshotMiss stamps per-deployment backoff state.
+// The retry-after math lives in pkg/sched/snapshot_backoff.go; this
+// is the state write only.
+func (s *PgStore) DeploymentRecordSnapshotMiss(ctx context.Context, deploymentID string, backoffUntil time.Time) error {
+	uid, err := uuid.Parse(deploymentID)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", deploymentID, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	return s.triggerQueries().DeploymentRecordSnapshotMiss(ctx, s.pool, sqlc.DeploymentRecordSnapshotMissParams{
+		ID:                       p,
+		SnapshotMissBackoffUntil: pgtype.Timestamptz{Time: backoffUntil, Valid: true},
+	})
+}
+
+// DeploymentClearSnapshotBackoff resets the counter + clears the
+// backoff. Called by the recovery arbiter after a successful sweep.
+func (s *PgStore) DeploymentClearSnapshotBackoff(ctx context.Context, deploymentID string) error {
+	uid, err := uuid.Parse(deploymentID)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", deploymentID, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	return s.triggerQueries().DeploymentClearSnapshotBackoff(ctx, s.pool, p)
+}
+
+// DeploymentSnapshotBackoffActive returns (Deployment{}, false, nil) when
+// no backoff is in effect; the wake flow proceeds normally. On a hit,
+// returns the populated Deployment + true so the caller can read the
+// backoff fields + emit HTTP 429 + Retry-After.
+func (s *PgStore) DeploymentSnapshotBackoffActive(ctx context.Context, deploymentID string) (Deployment, bool, error) {
+	uid, err := uuid.Parse(deploymentID)
+	if err != nil {
+		return Deployment{}, false, fmt.Errorf("state: invalid uuid %q: %w", deploymentID, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	row, err := s.triggerQueries().DeploymentSnapshotBackoffActive(ctx, s.pool, p)
+	if err != nil {
+		return Deployment{}, false, mapErr(err)
+	}
+	if !row.SnapshotMissBackoffUntil.Valid {
+		return Deployment{}, false, nil
+	}
+	d := Deployment{
+		ID:                       uuidString(p),
+		SnapshotMissCount:        int(row.SnapshotMissCount),
+		SnapshotMissBackoffUntil: timestamptzToTimePtr(row.SnapshotMissBackoffUntil),
+	}
+	return d, true, nil
+}
+
 // DeleteComputeNode hard-deletes a compute_nodes row by id (issue #98 /
 // ADR-028). apid's DELETE /v1/compute-nodes/{name}?hard=1 is the only
 // caller; soft-delete via SetComputeNodeActive(false) is the routine
@@ -20218,7 +20554,11 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 // TriggerByID returns the trigger with the given ID. Returns
 // ErrNotFound when the row is gone.
 func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, error) {
-	return s.triggerQueries().TriggerByID(ctx, s.pool, mustPgUUID(id))
+	row, err := s.triggerQueries().TriggerByID(ctx, s.pool, mustPgUUID(id))
+	if err != nil {
+		return sqlc.Trigger{}, err
+	}
+	return triggerRowToTrigger(row), nil
 }
 
 // UpdateTrigger patches the mutable fields (enabled, config,
@@ -20316,14 +20656,30 @@ func (s *PgStore) DeleteTrigger(ctx context.Context, id, appID string) error {
 
 // ListTriggersForApp is the dashboard read-back (GET /v1/triggers).
 func (s *PgStore) ListTriggersForApp(ctx context.Context, appID string) ([]sqlc.Trigger, error) {
-	return s.triggerQueries().ListTriggersForApp(ctx, s.pool, mustPgUUID(appID))
+	rows, err := s.triggerQueries().ListTriggersForApp(ctx, s.pool, mustPgUUID(appID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlc.Trigger, len(rows))
+	for i, r := range rows {
+		out[i] = triggerListRowToTrigger(r)
+	}
+	return out, nil
 }
 
 // ListEnabledTriggers is the schedd-side read on each 1-second
 // cadence. Returns the full enabled-triggers set; the dispatch
 // tick filters by kind to pick the per-kind poller.
 func (s *PgStore) ListEnabledTriggers(ctx context.Context) ([]sqlc.Trigger, error) {
-	return s.triggerQueries().ListEnabledTriggers(ctx, s.pool)
+	rows, err := s.triggerQueries().ListEnabledTriggers(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlc.Trigger, len(rows))
+	for i, r := range rows {
+		out[i] = triggerEnabledRowToTrigger(r)
+	}
+	return out, nil
 }
 
 // ClaimTriggerRecords is the schedd-side pull from the per-trigger
@@ -20331,7 +20687,15 @@ func (s *PgStore) ListEnabledTriggers(ctx context.Context) ([]sqlc.Trigger, erro
 // lets concurrent schedd replicas each claim disjoint row sets —
 // ADR-099 PR-C precedent for claim_job_tasks.
 func (s *PgStore) ClaimTriggerRecords(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error) {
-	return s.triggerQueries().ClaimTriggerRecords(ctx, s.pool, sqlc.ClaimTriggerRecordsParams{TriggerID: mustPgUUID(triggerID), Limit: limit})
+	rows, err := s.triggerQueries().ClaimTriggerRecords(ctx, s.pool, sqlc.ClaimTriggerRecordsParams{TriggerID: mustPgUUID(triggerID), Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlc.TriggerRecord, len(rows))
+	for i, r := range rows {
+		out[i] = claimTriggerRecordRowToTriggerRecord(r)
+	}
+	return out, nil
 }
 
 // InsertTriggerRecord persists a single broker-delivered record
@@ -20501,7 +20865,15 @@ func (s *PgStore) TriggerRecordIDByItemIdentifier(ctx context.Context, triggerID
 // ListTriggerRecordsForTrigger reads the records for a trigger in
 // dispatch-time order. Used by GET /v1/triggers/{id}/records.
 func (s *PgStore) ListTriggerRecordsForTrigger(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error) {
-	return s.triggerQueries().ListTriggerRecordsForTrigger(ctx, s.pool, sqlc.ListTriggerRecordsForTriggerParams{TriggerID: mustPgUUID(triggerID), Limit: limit})
+	rows, err := s.triggerQueries().ListTriggerRecordsForTrigger(ctx, s.pool, sqlc.ListTriggerRecordsForTriggerParams{TriggerID: mustPgUUID(triggerID), Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlc.TriggerRecord, len(rows))
+	for i, r := range rows {
+		out[i] = listTriggerRecordRowToTriggerRecord(r)
+	}
+	return out, nil
 }
 
 // triggerQueries returns a fresh sqlc.Queries for the trigger table.
@@ -20511,6 +20883,122 @@ func (s *PgStore) ListTriggerRecordsForTrigger(ctx context.Context, triggerID st
 // hazard if PgStore ever pools across multiple DB connections in a
 // future scale-out.
 func (s *PgStore) triggerQueries() *sqlc.Queries { return sqlc.New() }
+
+// triggerRowToTrigger converts a sqlc-generated TriggerByIDRow back to
+// the model type. sqlc v1.31 emits a dedicated Row struct per query
+// even when the column set matches the underlying model; the
+// conversion is mechanical and cheap (struct copy). Pre-v1.31 deduped
+// Row → Model automatically.
+func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
+	return sqlc.Trigger{
+		ID:                   r.ID,
+		AccountID:            r.AccountID,
+		AppID:                r.AppID,
+		Kind:                 r.Kind,
+		Slug:                 r.Slug,
+		Enabled:              r.Enabled,
+		Config:               r.Config,
+		BatchSizeMax:         r.BatchSizeMax,
+		BatchWindowMs:        r.BatchWindowMs,
+		MaxAttempts:          r.MaxAttempts,
+		CronID:               r.CronID,
+		Source:               r.Source,
+		CreatedAt:            r.CreatedAt,
+		UpdatedAt:            r.UpdatedAt,
+		PayloadMaxBytes:      r.PayloadMaxBytes,
+		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
+		FilterCriteria:       r.FilterCriteria,
+	}
+}
+
+// triggerListRowToTrigger mirrors triggerRowToTrigger for the
+// ListTriggersForApp query. Field set is identical (the queries.sql
+// comments explicitly call this out); the helper exists because sqlc
+// emits one Row struct per :many query.
+func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
+	return sqlc.Trigger{
+		ID:                   r.ID,
+		AccountID:            r.AccountID,
+		AppID:                r.AppID,
+		Kind:                 r.Kind,
+		Slug:                 r.Slug,
+		Enabled:              r.Enabled,
+		Config:               r.Config,
+		BatchSizeMax:         r.BatchSizeMax,
+		BatchWindowMs:        r.BatchWindowMs,
+		MaxAttempts:          r.MaxAttempts,
+		CronID:               r.CronID,
+		Source:               r.Source,
+		CreatedAt:            r.CreatedAt,
+		UpdatedAt:            r.UpdatedAt,
+		PayloadMaxBytes:      r.PayloadMaxBytes,
+		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
+		FilterCriteria:       r.FilterCriteria,
+	}
+}
+
+// triggerEnabledRowToTrigger mirrors triggerRowToTrigger for the
+// ListEnabledTriggers query.
+func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
+	return sqlc.Trigger{
+		ID:                   r.ID,
+		AccountID:            r.AccountID,
+		AppID:                r.AppID,
+		Kind:                 r.Kind,
+		Slug:                 r.Slug,
+		Enabled:              r.Enabled,
+		Config:               r.Config,
+		BatchSizeMax:         r.BatchSizeMax,
+		BatchWindowMs:        r.BatchWindowMs,
+		MaxAttempts:          r.MaxAttempts,
+		CronID:               r.CronID,
+		Source:               r.Source,
+		CreatedAt:            r.CreatedAt,
+		UpdatedAt:            r.UpdatedAt,
+		PayloadMaxBytes:      r.PayloadMaxBytes,
+		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
+		FilterCriteria:       r.FilterCriteria,
+	}
+}
+
+// claimTriggerRecordRowToTriggerRecord converts a ClaimTriggerRecordsRow
+// back to the model type. Same sqlc v1.31 dedicated-Row pattern as the
+// trigger row helpers above.
+func claimTriggerRecordRowToTriggerRecord(r sqlc.ClaimTriggerRecordsRow) sqlc.TriggerRecord {
+	return sqlc.TriggerRecord{
+		ID:               r.ID,
+		TriggerID:        r.TriggerID,
+		ItemIdentifier:   r.ItemIdentifier,
+		Payload:          r.Payload,
+		Headers:          r.Headers,
+		Metadata:         r.Metadata,
+		State:            r.State,
+		Attempts:         r.Attempts,
+		NextFireAt:       r.NextFireAt,
+		ReceivedAt:       r.ReceivedAt,
+		LastError:        r.LastError,
+		LastDispatchedAt: r.LastDispatchedAt,
+	}
+}
+
+// listTriggerRecordRowToTriggerRecord converts a ListTriggerRecordsForTriggerRow
+// back to the model type.
+func listTriggerRecordRowToTriggerRecord(r sqlc.ListTriggerRecordsForTriggerRow) sqlc.TriggerRecord {
+	return sqlc.TriggerRecord{
+		ID:               r.ID,
+		TriggerID:        r.TriggerID,
+		ItemIdentifier:   r.ItemIdentifier,
+		Payload:          r.Payload,
+		Headers:          r.Headers,
+		Metadata:         r.Metadata,
+		State:            r.State,
+		Attempts:         r.Attempts,
+		NextFireAt:       r.NextFireAt,
+		ReceivedAt:       r.ReceivedAt,
+		LastError:        r.LastError,
+		LastDispatchedAt: r.LastDispatchedAt,
+	}
+}
 
 // parsePgUUID decodes a hyphenated hex string UUID into pgtype.UUID.
 // Used at the seam between the Store interface (string-typed) and

@@ -30,6 +30,46 @@ COMMENT ON EXTENSION citext IS 'data type for case-insensitive character strings
 
 
 --
+-- Name: compute_node_lifecycle; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.compute_node_lifecycle AS ENUM (
+    'active',
+    'draining',
+    'unavailable',
+    'recovering'
+);
+
+
+--
+-- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.alert_presets_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: app_openapi_docs_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_openapi_docs_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: apps_egress_allowlist_cidr_check(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -92,6 +132,65 @@ $$;
 
 
 --
+-- Name: apps_public_auth_ip_allowlist_cidr_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_public_auth_ip_allowlist_cidr_check() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  bad cidr;
+begin
+  if new.public_auth_ip_allowlist is null or cardinality(new.public_auth_ip_allowlist) = 0 then
+    return new;
+  end if;
+  -- Per-entry guards: family must be v4 or v6, mask must be non-zero.
+  -- The /0 reject closes the same hole as the egress allowlist's
+  -- chain-policy accept: an operator cannot pin "the entire
+  -- address space" — that is the default-pass posture's job, not
+  -- the allowlist's. Two narrow selects (one per guard) keep the
+  -- error messages specific; a combined select with bool_or would
+  -- conflate family and masklen failures.
+  for bad in
+    select c
+      from unnest(new.public_auth_ip_allowlist) c
+     where family(c) not in (4, 6)
+     limit 1
+  loop
+    raise exception 'apps_public_auth_ip_allowlist: only v4 or v6 CIDRs (got family % for %)', family(bad), bad
+      using errcode = '23514',
+            constraint = 'apps_public_auth_ip_allowlist_cidr';
+  end loop;
+  for bad in
+    select c
+      from unnest(new.public_auth_ip_allowlist) c
+     where masklen(c) = 0
+     limit 1
+  loop
+    raise exception 'apps_public_auth_ip_allowlist: rejected % (masklen /0; ADR-118 non-/0 contract)', bad
+      using errcode = '23514',
+            constraint = 'apps_public_auth_ip_allowlist_cidr';
+  end loop;
+  return new;
+end;
+$$;
+
+
+--
+-- Name: cluster_signing_keys_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cluster_signing_keys_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('cluster_signing_keys_changed', TG_TABLE_NAME);
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: compute_node_keys_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -112,16 +211,63 @@ $$;
 CREATE FUNCTION public.compute_node_notify() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-declare
+DECLARE
     payload jsonb;
-begin
+BEGIN
     payload := jsonb_build_object(
-        'node_id', new.id::text,
-        'active', new.active
+        'node_id',   new.id::text,
+        'active',    (new.lifecycle IN ('active','recovering')),
+        'lifecycle', new.lifecycle::text
     );
-    perform pg_notify('compute_node_changed', payload::text);
-    return new;
-end;
+    PERFORM pg_notify('compute_node_changed', payload::text);
+    RETURN new;
+END;
+$$;
+
+
+--
+-- Name: consumer_keys_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.consumer_keys_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: cors_presets_changed_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cors_presets_changed_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (TG_OP = 'DELETE') THEN
+        PERFORM pg_notify('cors_preset_changed', OLD.account_id::text);
+    ELSE
+        PERFORM pg_notify('cors_preset_changed', NEW.account_id::text);
+    END IF;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+--
+-- Name: cors_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cors_presets_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
 $$;
 
 
@@ -147,6 +293,34 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
         RETURN OLD;
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: deployment_openapi_docs_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_openapi_docs_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: deployment_scope_exclusions_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_scope_exclusions_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
     RETURN NEW;
 END;
 $$;
@@ -186,20 +360,6 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    RETURN NEW;
-END;
-$$;
-
-
---
--- Name: cors_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.cors_presets_set_updated_at() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    NEW.updated_at = now();
     RETURN NEW;
 END;
 $$;
@@ -323,29 +483,162 @@ $$;
 
 
 --
--- Name: job_tasks_notify(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: job_tasks_notify_v2(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.job_tasks_notify() RETURNS trigger
+CREATE FUNCTION public.job_tasks_notify_v2() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    channel text;
+    payload jsonb;
+BEGIN
+    IF TG_OP = 'INSERT' AND NEW.status = 'queued' THEN
+        channel := 'job_tasks_queued';
+        payload := jsonb_build_object(
+            'v', 1,
+            'op', TG_OP,
+            'run_id', NEW.run_id,
+            'task_index', NEW.task_index,
+            'attempt', NEW.attempt
+        );
+    ELSIF TG_OP = 'UPDATE'
+        AND OLD.status = 'queued' AND NEW.status = 'claimed' THEN
+        channel := 'job_tasks_dispatched';
+        payload := jsonb_build_object(
+            'v', 1,
+            'op', TG_OP,
+            'run_id', NEW.run_id,
+            'task_index', NEW.task_index,
+            'attempt', NEW.attempt,
+            'instance_id', NEW.instance_id,
+            'lease_token', NEW.lease_token
+        );
+    ELSIF TG_OP = 'UPDATE'
+        AND OLD.status IN ('queued', 'claimed')
+        AND NEW.status IN ('succeeded', 'failed', 'timeout', 'cancelled', 'oom') THEN
+        channel := 'job_tasks_terminal';
+        payload := jsonb_build_object(
+            'v', 1,
+            'op', TG_OP,
+            'run_id', NEW.run_id,
+            'task_index', NEW.task_index,
+            'attempt', NEW.attempt,
+            'status', NEW.status,
+            'exit_code', NEW.exit_code,
+            'error_class', NEW.error_class,
+            'finished_at', NEW.finished_at
+        );
+    ELSE
+        RETURN NEW;
+    END IF;
+
+    PERFORM pg_notify(channel, payload::text);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: migration_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.migration_notify() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    -- Only notify on transitions INTO queued (initial
-    -- INSERT) or from queued (claim by the dispatch
-    -- tick). Other transitions don't need to wake the
-    -- LISTEN worker because they're responses to the
-    -- worker's own batch.
-    IF (TG_OP = 'INSERT' AND NEW.status = 'queued')
-       OR (TG_OP = 'UPDATE' AND OLD.status = 'queued'
-           AND NEW.status <> 'queued') THEN
-        PERFORM pg_notify(
-            'job_tasks_queued',
-            format('%s|%s|%s', NEW.run_id, NEW.task_index, TG_OP)
-        );
+    -- Only fire when the new row is at the leading edge of the
+    -- applied ledger. Earlier rows (e.g. a downgrade script run
+    -- out-of-band, or a partial-replay rollback) do not signal
+    -- "we're caught up". The waiter is gated on MAX(version_id)
+    -- after every notification, so a spurious early fire is
+    -- harmless; a missed late fire is impossible because goose
+    -- inserts in strict ascending order inside the advisory lock.
+    IF NEW.is_applied IS DISTINCT FROM true THEN
+        RETURN NEW;
     END IF;
-    IF TG_OP = 'DELETE' THEN
-        RETURN OLD;
+    IF NEW.version_id = (SELECT MAX(version_id) FROM goose_db_version) THEN
+        PERFORM pg_notify('migrations_applied', NEW.version_id::text);
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: mirror_rules_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mirror_rules_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_pg_ratelimit_counters(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_pg_ratelimit_counters() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  PERFORM pg_notify(
+    'rate_limit_changed',
+    json_build_object(
+      'scope', NEW.scope,
+      'subject_id', NEW.subject_id,
+      'plan', NEW.plan
+    )::text
+  );
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_runtime_config_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_runtime_config_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'runtime_config_changed',
+        json_build_object(
+            'key', NEW.config_key,
+            'scope', NEW.scope,
+            'scope_id', NEW.scope_id,
+            'version', NEW.version
+        )::text
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_runtime_config_operation_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_runtime_config_operation_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'runtime_config_operation_changed',
+        json_build_object(
+            'id', NEW.id,
+            'config_key', NEW.config_key,
+            'config_version', NEW.config_version,
+            'status', NEW.status
+        )::text
+    );
     RETURN NEW;
 END;
 $$;
@@ -400,6 +693,121 @@ $$;
 
 
 --
+-- Name: snapshot_fanout_event_on_snapshot(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshot_fanout_event_on_snapshot() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.storage_key <> '' AND NOT NEW.stale THEN
+        INSERT INTO snapshot_fanout_events (snapshot_id)
+        VALUES (NEW.id)
+        ON CONFLICT (snapshot_id) DO NOTHING;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: snapshot_replica_refresh_after_compute_node(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshot_replica_refresh_after_compute_node() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.active THEN
+        DELETE FROM snapshot_replicas r
+        USING snapshots sn
+        LEFT JOIN snapshot_origins so ON so.snapshot_id = sn.id
+        WHERE r.snapshot_id = sn.id
+          AND r.node_id = NEW.id
+          AND (
+              (so.node_id IS NOT NULL AND so.node_id = NEW.id)
+              OR (so.region <> '' AND coalesce(NEW.region, '') <> so.region)
+          );
+
+        INSERT INTO snapshot_replicas (snapshot_id, node_id, region)
+        SELECT e.snapshot_id, NEW.id, coalesce(NEW.region, '')
+          FROM snapshot_fanout_events e
+          JOIN snapshots sn ON sn.id = e.snapshot_id
+          LEFT JOIN snapshot_origins so ON so.snapshot_id = sn.id
+         WHERE sn.stale = false
+           AND sn.storage_key <> ''
+           AND (so.node_id IS NULL OR so.node_id <> NEW.id)
+           AND (so.region = '' OR coalesce(NEW.region, '') = so.region)
+        ON CONFLICT (snapshot_id, node_id) DO NOTHING;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: snapshot_replica_refresh_after_origin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshot_replica_refresh_after_origin() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DELETE FROM snapshot_replicas r
+    USING compute_nodes cn
+    WHERE r.snapshot_id = NEW.snapshot_id
+      AND r.node_id = cn.id
+      AND (
+          (NEW.node_id IS NOT NULL AND r.node_id = NEW.node_id)
+          OR (NEW.region <> '' AND coalesce(cn.region, '') <> NEW.region)
+      );
+
+    INSERT INTO snapshot_replicas (snapshot_id, node_id, region)
+    SELECT NEW.snapshot_id, cn.id, coalesce(cn.region, '')
+      FROM compute_nodes cn
+      JOIN snapshots sn ON sn.id = NEW.snapshot_id
+     WHERE cn.active
+       AND sn.stale = false
+       AND sn.storage_key <> ''
+       AND (NEW.node_id IS NULL OR cn.id <> NEW.node_id)
+       AND (NEW.region = '' OR coalesce(cn.region, '') = NEW.region)
+    ON CONFLICT (snapshot_id, node_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: soft_delete_job_if_no_live_instances(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.soft_delete_job_if_no_live_instances(p_job_id uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    flipped boolean;
+BEGIN
+    UPDATE jobs
+       SET status     = 'deleted',
+           updated_at = now()
+     WHERE id = p_job_id
+       AND status <> 'deleted'
+       AND NOT EXISTS (
+           SELECT 1
+             FROM instances
+            WHERE job_id = p_job_id
+              AND kind   = 'job_task'
+              AND state NOT IN ('parked', 'destroyed')
+       )
+    RETURNING TRUE INTO flipped;
+
+    RETURN COALESCE(flipped, FALSE);
+END;
+$$;
+
+
+--
 -- Name: trg_notify_trigger_ready(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -416,6 +824,20 @@ END $$;
 
 
 SET default_table_access_method = heap;
+
+--
+-- Name: account_async_quota; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_async_quota (
+    account_id uuid NOT NULL,
+    max_inflight integer NOT NULL,
+    current_inflight integer DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_async_quota_current_inflight_check CHECK ((current_inflight >= 0)),
+    CONSTRAINT account_async_quota_max_inflight_check CHECK ((max_inflight >= 0))
+);
+
 
 --
 -- Name: account_credits; Type: TABLE; Schema: public; Owner: -
@@ -441,6 +863,26 @@ CREATE TABLE public.account_passwords (
     account_id uuid NOT NULL,
     hash text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: account_spend_snapshot; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_spend_snapshot (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone DEFAULT now() NOT NULL,
+    gb_seconds double precision NOT NULL,
+    eur_cents bigint NOT NULL,
+    source text DEFAULT 'running_seconds'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_spend_snapshot_eur_cents_chk CHECK ((eur_cents >= 0)),
+    CONSTRAINT account_spend_snapshot_gb_seconds_chk CHECK ((gb_seconds >= (0)::double precision)),
+    CONSTRAINT account_spend_snapshot_period_chk CHECK ((period_end > period_start)),
+    CONSTRAINT account_spend_snapshot_source_chk CHECK ((source = ANY (ARRAY['running_seconds'::text, 'overage'::text, 'build_seconds'::text, 'snapshot_storage'::text])))
 );
 
 
@@ -493,7 +935,39 @@ CREATE TABLE public.alert_deliveries (
     observed_value double precision NOT NULL,
     fired_at timestamp with time zone DEFAULT now() NOT NULL,
     delivered_at timestamp with time zone,
+    is_test boolean DEFAULT false NOT NULL,
     CONSTRAINT alert_deliveries_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: alert_presets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_presets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    display_name text NOT NULL,
+    description text NOT NULL,
+    category text NOT NULL,
+    metric text NOT NULL,
+    comparison text NOT NULL,
+    threshold double precision NOT NULL,
+    window_spec text NOT NULL,
+    default_cooldown_minutes integer DEFAULT 15 NOT NULL,
+    enabled_in_catalog boolean DEFAULT true NOT NULL,
+    minimum_plan text DEFAULT 'hobby'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT alert_presets_category_chk CHECK ((category = ANY (ARRAY['availability'::text, 'reliability'::text, 'cost'::text, 'deployment'::text, 'infrastructure'::text]))),
+    CONSTRAINT alert_presets_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
+    CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
+    CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
+    CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'queue_depth'::text]))),
+    CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
+    CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
 );
 
 
@@ -521,11 +995,13 @@ CREATE TABLE public.alert_rules (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
+    action text DEFAULT 'webhook'::text NOT NULL,
+    CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'queue_depth'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text]))),
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -628,6 +1104,30 @@ CREATE TABLE public.app_errors (
 
 
 --
+-- Name: app_openapi_docs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_openapi_docs (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    doc jsonb NOT NULL,
+    doc_sha256 bytea NOT NULL,
+    byte_size integer NOT NULL,
+    endpoint_count integer NOT NULL,
+    source text NOT NULL,
+    openapi_version text NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_openapi_docs_byte_size_chk CHECK (((byte_size > 0) AND (byte_size <= 262144))),
+    CONSTRAINT app_openapi_docs_captured_before_updated_chk CHECK ((updated_at >= captured_at)),
+    CONSTRAINT app_openapi_docs_endpoint_count_chk CHECK (((endpoint_count >= 0) AND (endpoint_count <= 50))),
+    CONSTRAINT app_openapi_docs_openapi_version_vocab_chk CHECK ((openapi_version = ANY (ARRAY['3.0.0'::text, '3.0.1'::text, '3.0.2'::text, '3.0.3'::text, '3.0.4'::text, '3.1.0'::text, '3.1.1'::text]))),
+    CONSTRAINT app_openapi_docs_sha256_len_chk CHECK ((octet_length(doc_sha256) = 32)),
+    CONSTRAINT app_openapi_docs_source_vocab_chk CHECK ((source = 'manual_import'::text))
+);
+
+
+--
 -- Name: app_registry_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -660,7 +1160,11 @@ CREATE TABLE public.app_secrets (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     kid text,
-    CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128)))
+    scope text DEFAULT 'default'::text NOT NULL,
+    value_hash text,
+    CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT app_secrets_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT app_secrets_value_hash_shape CHECK (((value_hash IS NULL) OR (length(value_hash) <= 16)))
 );
 
 
@@ -746,7 +1250,6 @@ CREATE TABLE public.apps (
     github_production_branch text,
     min_instances integer DEFAULT 0 NOT NULL,
     egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
     autoscale_target_rps integer,
     autoscale_target_cpu_pct integer,
     github_install_binding_id text,
@@ -777,7 +1280,6 @@ CREATE TABLE public.apps (
     auth_default_flipped_at timestamp with time zone,
     overflow_node uuid,
     route_metrics_enabled boolean DEFAULT false NOT NULL,
-    app_protocol text DEFAULT 'http1'::text NOT NULL,
     preview_of_slug text,
     preview_pr_number integer,
     preview_pr_state text,
@@ -785,6 +1287,11 @@ CREATE TABLE public.apps (
     cors_default_enabled boolean DEFAULT false NOT NULL,
     cors_default_origins text[],
     maintenance_mode boolean DEFAULT false NOT NULL,
+    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    static_egress_ip inet,
+    static_egress_ip_set_at timestamp with time zone,
+    preview_destroy_commented_at timestamp with time zone,
+    app_protocol text DEFAULT 'http1'::text NOT NULL,
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
     CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
@@ -802,6 +1309,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
+    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
     CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
     CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
     CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
@@ -906,9 +1414,11 @@ CREATE TABLE public.builds (
     started_at timestamp with time zone,
     finished_at timestamp with time zone,
     enqueued_at timestamp with time zone DEFAULT now() NOT NULL,
+    cancelled_at timestamp with time zone,
+    cancelled_by_deployment_cascade boolean DEFAULT false NOT NULL,
     CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
     CONSTRAINT builds_kind_check CHECK ((kind = ANY (ARRAY['railpack'::text, 'dockerfile'::text, 'tarball'::text, 'github'::text, 'preview'::text]))),
-    CONSTRAINT builds_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))
+    CONSTRAINT builds_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 
@@ -928,6 +1438,24 @@ CREATE TABLE public.cli_auth_codes (
 
 
 --
+-- Name: cluster_signing_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cluster_signing_keys (
+    id integer DEFAULT 1 NOT NULL,
+    key_id text NOT NULL,
+    public_key_pem text NOT NULL,
+    sealed_blob bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    rotated_at timestamp with time zone,
+    retired_at timestamp with time zone,
+    CONSTRAINT cluster_signing_keys_id_check CHECK ((id = 1)),
+    CONSTRAINT cluster_signing_keys_key_id_check CHECK ((key_id ~ '^[A-Za-z0-9_-]{22}$'::text)),
+    CONSTRAINT cluster_signing_keys_public_key_pem_check CHECK ((public_key_pem ~~ '-----BEGIN PUBLIC KEY-----%'::text))
+);
+
+
+--
 -- Name: compute_node_heartbeats; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -939,7 +1467,7 @@ CREATE TABLE public.compute_node_heartbeats (
     source text NOT NULL,
     cpu_pct_60s numeric(5,2),
     disk_used_bytes bigint,
-    CONSTRAINT compute_node_heartbeats_source_check CHECK ((source = ANY (ARRAY['heartbeat_tick'::text, 'deactivation'::text, 'reactivation'::text])))
+    CONSTRAINT compute_node_heartbeats_source_check CHECK ((source = ANY (ARRAY['heartbeat_tick'::text, 'deactivation'::text, 'reactivation'::text, 'builder_tick'::text])))
 );
 
 
@@ -977,32 +1505,6 @@ CREATE TABLE public.compute_node_keys (
 
 
 --
--- Name: consumer_keys; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.consumer_keys (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    name text NOT NULL,
-    prefix text NOT NULL,
-    hashed_secret bytea NOT NULL,
-    scopes text[] DEFAULT '{}'::text[] NOT NULL,
-    expires_at timestamp with time zone,
-    last_used_at timestamp with time zone,
-    revoked_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT consumer_keys_expires_after_created_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
-    CONSTRAINT consumer_keys_hashed_secret_len_chk CHECK ((octet_length(hashed_secret) = 32)),
-    CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
-    CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
-    CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
-    CONSTRAINT consumer_keys_scopes_vocab_chk CHECK ((scopes <@ ARRAY['read'::text, 'write'::text, 'admin'::text]::text[]) AND (cardinality(scopes) > 0))
-);
-
-
---
 -- Name: compute_nodes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1014,7 +1516,6 @@ CREATE TABLE public.compute_nodes (
     mem_mb integer NOT NULL,
     max_concurrency integer NOT NULL,
     admission_ceiling_mb integer NOT NULL,
-    active boolean DEFAULT true NOT NULL,
     last_heartbeat_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     region text,
@@ -1030,8 +1531,15 @@ CREATE TABLE public.compute_nodes (
     role text,
     generation integer,
     gateway_target_url text,
+    lifecycle public.compute_node_lifecycle DEFAULT 'active'::public.compute_node_lifecycle NOT NULL,
+    active boolean GENERATED ALWAYS AS ((lifecycle = ANY (ARRAY['active'::public.compute_node_lifecycle, 'recovering'::public.compute_node_lifecycle]))) STORED,
+    drain_initiated_at timestamp with time zone,
+    drain_completed_at timestamp with time zone,
+    recovery_initiated_at timestamp with time zone,
+    last_recovery_outcome text,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
+    CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
     CONSTRAINT compute_nodes_max_concurrency_check CHECK ((max_concurrency > 0)),
     CONSTRAINT compute_nodes_mem_mb_check CHECK ((mem_mb > 0)),
     CONSTRAINT compute_nodes_public_ip_format_chk CHECK (((public_ip IS NULL) OR (family(public_ip) = ANY (ARRAY[4, 6])))),
@@ -1099,6 +1607,32 @@ COMMENT ON COLUMN public.compute_nodes.generation IS 'monotonic counter bumped b
 
 
 --
+-- Name: consumer_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.consumer_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    prefix text NOT NULL,
+    hashed_secret bytea NOT NULL,
+    scopes text[] DEFAULT '{}'::text[] NOT NULL,
+    expires_at timestamp with time zone,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT consumer_keys_expires_after_created_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
+    CONSTRAINT consumer_keys_hashed_secret_len_chk CHECK ((octet_length(hashed_secret) = 32)),
+    CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
+    CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
+    CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
+    CONSTRAINT consumer_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['read'::text, 'write'::text, 'admin'::text]) AND (cardinality(scopes) > 0)))
+);
+
+
+--
 -- Name: cors_presets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1116,8 +1650,8 @@ CREATE TABLE public.cors_presets (
     max_age_seconds integer DEFAULT 600 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT cors_presets_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64))),
-    CONSTRAINT cors_presets_max_age_check CHECK (((max_age_seconds >= 0) AND (max_age_seconds <= 86400)))
+    CONSTRAINT cors_presets_max_age_check CHECK (((max_age_seconds >= 0) AND (max_age_seconds <= 86400))),
+    CONSTRAINT cors_presets_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64)))
 );
 
 
@@ -1264,6 +1798,58 @@ CREATE TABLE public.data_upstreams (
 
 
 --
+-- Name: debug_regression_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.debug_regression_observations (
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    p95_ms integer NOT NULL,
+    p95_base_ms integer NOT NULL,
+    affected_count integer NOT NULL,
+    regression_factor numeric(5,2) NOT NULL,
+    first_detected_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_detected_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
+    CONSTRAINT debug_regression_observations_p95_base_ms_check CHECK ((p95_base_ms >= 0)),
+    CONSTRAINT debug_regression_observations_p95_ms_check CHECK ((p95_ms >= 0)),
+    CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0)),
+    CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256)))
+);
+
+
+--
+-- Name: deployment_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_audit (
+    id bigint NOT NULL,
+    deployment_id uuid NOT NULL,
+    account_id uuid,
+    kind text NOT NULL,
+    actor text NOT NULL,
+    at timestamp with time zone DEFAULT now() NOT NULL,
+    data jsonb,
+    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text])))
+);
+
+
+--
+-- Name: deployment_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.deployment_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.deployment_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: deployment_logs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1293,6 +1879,65 @@ CREATE SEQUENCE public.deployment_logs_seq_seq
 --
 
 ALTER SEQUENCE public.deployment_logs_seq_seq OWNED BY public.deployment_logs.seq;
+
+
+--
+-- Name: deployment_openapi_docs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_openapi_docs (
+    deployment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    doc jsonb NOT NULL,
+    doc_sha256 bytea NOT NULL,
+    byte_size integer NOT NULL,
+    source text NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_openapi_docs_byte_size_chk CHECK (((byte_size > 0) AND (byte_size <= 131072))),
+    CONSTRAINT deployment_openapi_docs_captured_before_updated_chk CHECK ((updated_at >= captured_at)),
+    CONSTRAINT deployment_openapi_docs_sha256_len_chk CHECK ((octet_length(doc_sha256) = 32)),
+    CONSTRAINT deployment_openapi_docs_source_vocab_chk CHECK ((source = ANY (ARRAY['cold_boot'::text, 'manual_upload'::text])))
+);
+
+
+--
+-- Name: deployment_openapi_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_openapi_snapshots (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    snapshot jsonb NOT NULL,
+    sha256 text NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
+    CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: deployment_scope_exclusions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_scope_exclusions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    slug text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_scope_exclusions_slug_check CHECK ((slug = lower(slug))),
+    CONSTRAINT deployment_scope_exclusions_slug_check1 CHECK ((length(slug) > 0))
+);
 
 
 --
@@ -1352,15 +1997,94 @@ CREATE TABLE public.deployments (
     scope text DEFAULT 'default'::text NOT NULL,
     secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
     secret_scanned_at timestamp with time zone,
+    error_hint text,
+    error_why text,
+    error_fix text,
+    error_relevant_logs jsonb,
+    stage_state jsonb DEFAULT '{"current": "source_download", "history": [], "current_started_at": null}'::jsonb NOT NULL,
+    deployed_by_user_id uuid,
+    deployed_via text DEFAULT 'api'::text NOT NULL,
+    deployed_from_ip inet,
+    pusher_login text,
+    reason text,
+    tag text,
+    deployed_by text,
+    pr_number integer,
+    rollback_on_5xx boolean DEFAULT false NOT NULL,
+    first_wake_at timestamp with time zone,
+    first_5xx_window_ends_at timestamp with time zone,
+    first_5xx_count integer DEFAULT 0 NOT NULL,
+    last_auto_rollback_at timestamp with time zone,
+    last_auto_rollback_reason text,
+    liveness_restart_count integer DEFAULT 0 NOT NULL,
+    canary_preset text DEFAULT 'none'::text NOT NULL,
+    canary_step integer DEFAULT 0 NOT NULL,
+    canary_total_steps integer DEFAULT 0 NOT NULL,
+    canary_step_started_at timestamp with time zone DEFAULT now() NOT NULL,
+    rollout_state text DEFAULT 'pending'::text NOT NULL,
+    rollout_started_at timestamp with time zone,
+    rollout_completed_at timestamp with time zone,
+    rollout_aborted_at timestamp with time zone,
+    rollout_aborted_reason text,
+    cancelled_at timestamp with time zone,
+    cancelled_by_principal text,
+    cancel_reason text,
+    deleted_at timestamp with time zone,
+    deleted_by_principal text,
+    priority integer DEFAULT 100 NOT NULL,
+    reordered_at timestamp with time zone,
+    reordered_by_principal text,
+    canary_stages jsonb,
+    snapshot_miss_count integer DEFAULT 0 NOT NULL,
+    snapshot_miss_last_at timestamp with time zone,
+    snapshot_miss_backoff_until timestamp with time zone,
+    CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
+    CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
+    CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
+    CONSTRAINT deployments_canary_total_steps_nonneg_chk CHECK ((canary_total_steps >= 0)),
+    CONSTRAINT deployments_cancel_reason_check CHECK (((cancel_reason IS NULL) OR (cancel_reason = ANY (ARRAY['user'::text, 'auto_quota'::text, 'auto_health'::text, 'system'::text])))),
     CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
+    CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
     CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
+    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
+    CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
     CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
     CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text])))),
+    CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
+    CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
+    CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
+    CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 2)),
-    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text]))),
+    CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
+    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
+    CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
     CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
+);
+
+
+--
+-- Name: domain_doctor_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.domain_doctor_observations (
+    domain public.citext NOT NULL,
+    surface_id uuid,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    dns_record_found boolean NOT NULL,
+    points_to_gregale boolean NOT NULL,
+    caa_permits boolean,
+    ipv6_conflict boolean NOT NULL,
+    observed_target text,
+    observed_aaaa text,
+    caa_observed text,
+    cert_state text DEFAULT 'none'::text NOT NULL,
+    cert_not_after timestamp with time zone,
+    last_error text,
+    dns_checked_at timestamp with time zone,
+    cert_checked_at timestamp with time zone,
+    CONSTRAINT domain_doctor_observations_cert_state_check CHECK ((cert_state = ANY (ARRAY['none'::text, 'pending'::text, 'issued'::text, 'failed'::text, 'dial_failed'::text])))
 );
 
 
@@ -1381,8 +2105,11 @@ CREATE TABLE public.edge_rules (
     action jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text]))),
-    CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000)))
+    validate_mode text DEFAULT 'block'::text NOT NULL,
+    cors_preset_id uuid,
+    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text]))),
+    CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000))),
+    CONSTRAINT edge_rules_validate_mode_check CHECK ((validate_mode = ANY (ARRAY['observe'::text, 'warn'::text, 'block'::text])))
 );
 
 
@@ -1413,7 +2140,9 @@ CREATE TABLE public.events (
     kind text NOT NULL,
     subject uuid,
     data jsonb,
-    actor_account_id uuid
+    actor_account_id uuid,
+    trace_id text,
+    CONSTRAINT events_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
 );
 
 
@@ -1543,9 +2272,11 @@ CREATE TABLE public.instances (
     request_count bigint DEFAULT 0 NOT NULL,
     kind text DEFAULT 'wake'::text NOT NULL,
     job_id uuid,
+    mode text DEFAULT 'normal'::text NOT NULL,
     CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
     CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
     CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text]))),
     CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
 );
 
@@ -1578,6 +2309,11 @@ CREATE TABLE public.invocations (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     outcome text,
+    deadline_at timestamp with time zone,
+    retry_policy jsonb,
+    result_retention_until timestamp with time zone,
+    replayed_from_invocation_id uuid,
+    last_replayed_at timestamp with time zone,
     CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text])))),
     CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
     CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text])))
@@ -1653,8 +2389,9 @@ CREATE TABLE public.job_runs (
     started_at timestamp with time zone,
     finished_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    dead_letter_count integer DEFAULT 0 NOT NULL,
     CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
-    CONSTRAINT job_runs_counters_check CHECK (((tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
+    CONSTRAINT job_runs_counters_check CHECK (((tasks >= 0) AND (tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND (dead_letter_count >= 0) AND (dead_letter_count <= tasks) AND (dead_letter_count <= tasks_failed) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
     CONSTRAINT job_runs_parallelism_check CHECK (((parallelism >= 1) AND (parallelism <= 1000))),
     CONSTRAINT job_runs_retry_max_check CHECK (((retry_max IS NULL) OR ((retry_max >= 0) AND (retry_max <= 10)))),
     CONSTRAINT job_runs_task_timeout_s_check CHECK (((task_timeout_s IS NULL) OR ((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))),
@@ -1679,9 +2416,14 @@ CREATE TABLE public.job_tasks (
     started_at timestamp with time zone,
     finished_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    exit_code integer,
+    next_attempt_at timestamp with time zone,
+    lease_token uuid,
+    lease_expires_at timestamp with time zone,
+    last_lease_node text,
     CONSTRAINT job_tasks_attempt_check CHECK (((attempt >= 1) AND (attempt <= 11))),
-    CONSTRAINT job_tasks_error_class_check CHECK (((error_class IS NULL) OR (error_class = ANY (ARRAY['timeout'::text, 'refused'::text, 'tls_handshake'::text, 'dns'::text, 'unreachable'::text, 'oom'::text, 'user_error'::text, 'infra'::text])))),
-    CONSTRAINT job_tasks_instance_pair_chk CHECK ((((instance_id IS NULL) AND (status = 'queued'::text)) OR (instance_id IS NOT NULL))),
+    CONSTRAINT job_tasks_error_class_check CHECK (((error_class IS NULL) OR (error_class = ANY (ARRAY['timeout'::text, 'refused'::text, 'tls_handshake'::text, 'dns'::text, 'unreachable'::text, 'oom'::text, 'user_error'::text, 'infra'::text, 'success'::text, 'cancelled'::text, 'job_paused'::text, 'oom_or_killed'::text])))),
+    CONSTRAINT job_tasks_instance_pair_chk CHECK ((((status = 'queued'::text) AND (instance_id IS NULL)) OR ((status = 'claimed'::text) AND (instance_id IS NOT NULL)) OR (status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text])))),
     CONSTRAINT job_tasks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'claimed'::text, 'succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text]))),
     CONSTRAINT job_tasks_task_index_check CHECK ((task_index >= 0)),
     CONSTRAINT job_tasks_terminal_pair_chk CHECK ((((finished_at IS NULL) AND (status = ANY (ARRAY['queued'::text, 'claimed'::text]))) OR ((finished_at IS NOT NULL) AND (status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text])))))
@@ -1706,6 +2448,8 @@ CREATE TABLE public.jobs (
     status text DEFAULT 'active'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    command text[] NOT NULL,
+    CONSTRAINT jobs_command_min_chk CHECK (((array_length(command, 1) IS NULL) OR ((array_length(command, 1) >= 0) AND (array_length(command, 1) <= 64)))),
     CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['app'::text, 'function'::text]))),
     CONSTRAINT jobs_max_parallelism_check CHECK (((max_parallelism >= 1) AND (max_parallelism <= 1000))),
     CONSTRAINT jobs_name_check CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
@@ -1733,7 +2477,7 @@ CREATE TABLE public.login_tokens (
 --
 
 CREATE TABLE public.mail_suppressions (
-    id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
     account_id uuid,
     email text NOT NULL,
     reason text NOT NULL,
@@ -1741,8 +2485,119 @@ CREATE TABLE public.mail_suppressions (
     provider_event_id text NOT NULL,
     expires_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT mail_suppressions_reason_chk CHECK (reason = ANY (ARRAY['hard_bounce'::text, 'complaint'::text, 'manual'::text])),
-    CONSTRAINT mail_suppressions_source_chk CHECK (source = ANY (ARRAY['resend'::text, 'postmark'::text, 'operator'::text]))
+    CONSTRAINT mail_suppressions_reason_chk CHECK ((reason = ANY (ARRAY['hard_bounce'::text, 'complaint'::text, 'manual'::text]))),
+    CONSTRAINT mail_suppressions_source_chk CHECK ((source = ANY (ARRAY['resend'::text, 'postmark'::text, 'operator'::text])))
+);
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.meterd_tenant_surface_cert_expiry_state (
+    tenant_surface_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    hostname text NOT NULL,
+    last_observed_cert_not_after timestamp with time zone,
+    last_walk_status text DEFAULT 'ok'::text NOT NULL,
+    last_refreshed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT meterd_tenant_surface_cert_expiry_status_chk CHECK ((last_walk_status = ANY (ARRAY['ok'::text, 'stale_parent'::text, 'cert_unissued'::text, 'error'::text])))
+);
+
+
+--
+-- Name: mirror_invocation_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mirror_invocation_results (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    mirror_rule_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    mirror_deployment_id uuid NOT NULL,
+    instance_id text,
+    source_instance_id text,
+    status_code integer,
+    source_status_code integer,
+    latency_ms integer,
+    source_latency_ms integer,
+    body_hash bytea,
+    source_body_hash bytea,
+    schema_hash bytea,
+    source_schema_hash bytea,
+    status_diff boolean DEFAULT false NOT NULL,
+    schema_diff boolean DEFAULT false NOT NULL,
+    body_diff boolean DEFAULT false NOT NULL,
+    crashed boolean DEFAULT false NOT NULL,
+    request_id text NOT NULL,
+    completed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: mirror_invocation_summary; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mirror_invocation_summary (
+    rule_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    hour_bucket timestamp with time zone NOT NULL,
+    total_invocations bigint DEFAULT 0 NOT NULL,
+    status_diff_count bigint DEFAULT 0 NOT NULL,
+    schema_diff_count bigint DEFAULT 0 NOT NULL,
+    body_diff_count bigint DEFAULT 0 NOT NULL,
+    crash_count bigint DEFAULT 0 NOT NULL,
+    cap_at_max_count bigint DEFAULT 0 NOT NULL,
+    sum_latency_ms bigint DEFAULT 0 NOT NULL,
+    rolled_up_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: mirror_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mirror_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    mirror_deployment_id uuid NOT NULL,
+    percent integer DEFAULT 100 NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    include_body boolean DEFAULT false NOT NULL,
+    redact_headers text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT mirror_rules_check CHECK ((source_deployment_id <> mirror_deployment_id)),
+    CONSTRAINT mirror_rules_percent_check CHECK (((percent >= 0) AND (percent <= 100))),
+    CONSTRAINT mirror_rules_redact_headers_check CHECK (((array_length(redact_headers, 1) IS NULL) OR (array_length(redact_headers, 1) <= 32)))
+);
+
+
+--
+-- Name: node_join_jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.node_join_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    node_name text NOT NULL,
+    database_node text NOT NULL,
+    ssh_host text NOT NULL,
+    manifest_hash text NOT NULL,
+    release_git_sha text NOT NULL,
+    phase text DEFAULT 'planned'::text NOT NULL,
+    attempt integer DEFAULT 0 NOT NULL,
+    last_error text,
+    lease_owner text,
+    lease_expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT node_join_jobs_attempt_check CHECK ((attempt >= 0)),
+    CONSTRAINT node_join_jobs_phase_check CHECK ((phase = ANY (ARRAY['planned'::text, 'preflight'::text, 'converging'::text, 'verifying'::text, 'active'::text, 'failed'::text, 'rolled_back'::text])))
 );
 
 
@@ -1792,6 +2647,31 @@ CREATE TABLE public.oidc_trust_policies (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     audit_login text NOT NULL
+);
+
+
+--
+-- Name: operator_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_intents (
+    id uuid NOT NULL,
+    kind text NOT NULL,
+    target_id text NOT NULL,
+    account_id uuid,
+    actor_id uuid NOT NULL,
+    reason text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    error text,
+    snap_ids_marked_stale text[],
+    trace_id text,
+    CONSTRAINT operator_intents_kind_check CHECK ((kind = ANY (ARRAY['force_park'::text, 'force_cold_boot'::text, 'force_restart'::text]))),
+    CONSTRAINT operator_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text]))),
+    CONSTRAINT operator_intents_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
 );
 
 
@@ -1885,7 +2765,7 @@ CREATE TABLE public.pg_ratelimit_counters (
     tokens bigint NOT NULL,
     last_refill timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT pg_ratelimit_counters_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT pg_ratelimit_counters_scope_check CHECK ((scope = ANY (ARRAY['app'::text, 'account'::text]))),
+    CONSTRAINT pg_ratelimit_counters_scope_check CHECK ((scope = ANY (ARRAY['app'::text, 'account'::text, 'rule'::text]))),
     CONSTRAINT pg_ratelimit_counters_tokens_check CHECK ((tokens >= 0))
 );
 
@@ -1907,6 +2787,18 @@ CREATE TABLE public.projects (
     org_id uuid,
     CONSTRAINT projects_scan_source_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text]))),
     CONSTRAINT projects_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: provisioned_static_egress_ips; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.provisioned_static_egress_ips (
+    account_id uuid NOT NULL,
+    customer_ip inet NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT provisioned_static_egress_ips_family_check CHECK ((family(customer_ip) = 4))
 );
 
 
@@ -1939,6 +2831,240 @@ CREATE TABLE public.release_bundles (
 
 
 --
+-- Name: request_telemetry; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+)
+PARTITION BY RANGE (received_at);
+
+
+--
+-- Name: request_telemetry_202608; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry_202608 (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: request_telemetry_202609; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry_202609 (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: request_telemetry_202610; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry_202610 (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: request_telemetry_default; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry_default (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: runtime_config_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_config_entries (
+    id uuid NOT NULL,
+    config_key text NOT NULL,
+    scope text DEFAULT 'global'::text NOT NULL,
+    scope_id text DEFAULT ''::text NOT NULL,
+    desired_value jsonb NOT NULL,
+    effective_value jsonb,
+    version bigint DEFAULT 1 NOT NULL,
+    apply_mode text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    last_error text,
+    actor_id uuid,
+    reason text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    applied_at timestamp with time zone,
+    CONSTRAINT runtime_config_entries_apply_mode_check CHECK ((apply_mode = ANY (ARRAY['hot'::text, 'graceful'::text, 'rolling'::text, 'break_glass'::text]))),
+    CONSTRAINT runtime_config_entries_scope_check CHECK ((scope = ANY (ARRAY['global'::text, 'control_plane'::text, 'daemon'::text, 'node'::text]))),
+    CONSTRAINT runtime_config_entries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'applied'::text, 'failed'::text, 'blocked'::text]))),
+    CONSTRAINT runtime_config_entries_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: runtime_config_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_config_operations (
+    id uuid NOT NULL,
+    config_key text NOT NULL,
+    scope text DEFAULT 'global'::text NOT NULL,
+    scope_id text DEFAULT ''::text NOT NULL,
+    config_version bigint NOT NULL,
+    desired_value jsonb NOT NULL,
+    effective_value jsonb,
+    apply_mode text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    phase text DEFAULT 'queued'::text NOT NULL,
+    error text,
+    actor_id uuid,
+    reason text DEFAULT ''::text NOT NULL,
+    target_count integer DEFAULT 0 NOT NULL,
+    applied_count integer DEFAULT 0 NOT NULL,
+    failed_count integer DEFAULT 0 NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    CONSTRAINT runtime_config_operations_applied_count_check CHECK ((applied_count >= 0)),
+    CONSTRAINT runtime_config_operations_apply_mode_check CHECK ((apply_mode = ANY (ARRAY['graceful'::text, 'rolling'::text, 'break_glass'::text]))),
+    CONSTRAINT runtime_config_operations_config_version_check CHECK ((config_version > 0)),
+    CONSTRAINT runtime_config_operations_failed_count_check CHECK ((failed_count >= 0)),
+    CONSTRAINT runtime_config_operations_scope_check CHECK ((scope = ANY (ARRAY['global'::text, 'control_plane'::text, 'daemon'::text, 'node'::text]))),
+    CONSTRAINT runtime_config_operations_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'blocked'::text, 'cancelled'::text]))),
+    CONSTRAINT runtime_config_operations_target_count_check CHECK ((target_count >= 0))
+);
+
+
+--
+-- Name: runtime_config_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_config_revisions (
+    id bigint NOT NULL,
+    entry_id uuid NOT NULL,
+    config_key text NOT NULL,
+    scope text NOT NULL,
+    scope_id text NOT NULL,
+    version bigint NOT NULL,
+    old_value jsonb,
+    new_value jsonb NOT NULL,
+    actor_id uuid,
+    reason text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: runtime_config_revisions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.runtime_config_revisions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: runtime_config_revisions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.runtime_config_revisions_id_seq OWNED BY public.runtime_config_revisions.id;
+
+
+--
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1951,6 +3077,81 @@ CREATE TABLE public.sessions (
     last_seen_at timestamp with time zone,
     revoked_at timestamp with time zone,
     binding_hash text
+);
+
+
+--
+-- Name: snapshot_fanout_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshot_fanout_events (
+    id bigint NOT NULL,
+    snapshot_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: snapshot_fanout_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.snapshot_fanout_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: snapshot_fanout_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.snapshot_fanout_events_id_seq OWNED BY public.snapshot_fanout_events.id;
+
+
+--
+-- Name: snapshot_origins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshot_origins (
+    snapshot_id uuid NOT NULL,
+    node_id uuid,
+    region text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: snapshot_replica_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshot_replica_cursors (
+    node_id uuid NOT NULL,
+    last_event_id bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT snapshot_replica_cursors_last_event_id_check CHECK ((last_event_id >= 0))
+);
+
+
+--
+-- Name: snapshot_replicas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshot_replicas (
+    snapshot_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    region text DEFAULT ''::text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    next_attempt_at timestamp with time zone,
+    ready_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT snapshot_replicas_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT snapshot_replicas_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'syncing'::text, 'ready'::text, 'failed'::text])))
 );
 
 
@@ -2008,6 +3209,42 @@ CREATE TABLE public.snapshots (
 
 
 --
+-- Name: status_incidents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.status_incidents (
+    id bigint NOT NULL,
+    component text NOT NULL,
+    severity text NOT NULL,
+    message text NOT NULL,
+    posted_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT status_incidents_component_chk CHECK ((component = ANY (ARRAY['apid'::text, 'schedd'::text, 'vmmd'::text, 'gatewayd'::text, 'meterd'::text, 'imaged'::text, 'builderd'::text, 'faas-control-plane'::text]))),
+    CONSTRAINT status_incidents_message_len_chk CHECK ((length(message) <= 1024)),
+    CONSTRAINT status_incidents_severity_chk CHECK ((severity = ANY (ARRAY['degraded'::text, 'partial_outage'::text, 'full_outage'::text, 'maintenance'::text])))
+);
+
+
+--
+-- Name: status_incidents_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.status_incidents_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: status_incidents_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.status_incidents_id_seq OWNED BY public.status_incidents.id;
+
+
+--
 -- Name: stripe_push_dedupe; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2053,7 +3290,7 @@ CREATE TABLE public.tenant_surfaces (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT tenant_surfaces_app_or_not_chk CHECK ((app_id IS NOT NULL)),
-CONSTRAINT tenant_surfaces_cert_kind_check CHECK ((cert_kind = ANY (ARRAY['per_host_san'::text, 'shared_wildcard'::text, 'per_host'::text]))),
+    CONSTRAINT tenant_surfaces_cert_kind_check CHECK ((cert_kind = ANY (ARRAY['per_host_san'::text, 'shared_wildcard'::text, 'per_host'::text]))),
     CONSTRAINT tenant_surfaces_cert_state_check CHECK ((cert_state = ANY (ARRAY['none'::text, 'pending'::text, 'issued'::text, 'failed'::text]))),
     CONSTRAINT tenant_surfaces_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'suspended'::text, 'deleted'::text])))
 );
@@ -2092,6 +3329,9 @@ CREATE TABLE public.trigger_records (
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     last_error text,
     last_dispatched_at timestamp with time zone,
+    deadline_at timestamp with time zone,
+    retry_policy jsonb,
+    result_retention_until timestamp with time zone,
     CONSTRAINT trigger_records_attempts_check CHECK (((attempts >= 0) AND (attempts <= 25))),
     CONSTRAINT trigger_records_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'succeeded'::text, 'retry'::text, 'dead_letter'::text])))
 );
@@ -2114,11 +3354,11 @@ CREATE TABLE public.triggers (
     max_attempts integer DEFAULT 5 NOT NULL,
     cron_id uuid,
     source text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     payload_max_bytes integer DEFAULT 6291456 NOT NULL,
     broker_poison_strategy text DEFAULT 'commit'::text NOT NULL,
     filter_criteria jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT triggers_batch_size_max_check CHECK (((batch_size_max >= 1) AND (batch_size_max <= 5000))),
     CONSTRAINT triggers_batch_window_ms_check CHECK (((batch_window_ms >= 10) AND (batch_window_ms <= 600000))),
     CONSTRAINT triggers_broker_poison_strategy_check CHECK ((broker_poison_strategy = ANY (ARRAY['commit'::text, 'seek-to-offset'::text]))),
@@ -2299,66 +3539,38 @@ CREATE TABLE public.webhook_deliveries (
 
 
 --
--- Name: request_telemetry; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.request_telemetry (
-    id uuid DEFAULT gen_random_uuid(),
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    route text NOT NULL,
-    method text NOT NULL,
-    status integer NOT NULL,
-    latency_ms integer NOT NULL,
-    cold_boot boolean DEFAULT false NOT NULL,
-    trace_id text,
-    spans_summary jsonb,
-    received_at timestamp with time zone DEFAULT now() NOT NULL,
-    count integer DEFAULT 1 NOT NULL,
-    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
-    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
-    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
-    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1))
-)
-PARTITION BY RANGE (received_at);
-
-
---
--- Name: request_telemetry_default; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.request_telemetry_default
-    PARTITION OF public.request_telemetry DEFAULT;
-
-
---
--- Name: debug_regression_observations; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.debug_regression_observations (
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    route text NOT NULL,
-    p95_ms integer NOT NULL,
-    p95_base_ms integer NOT NULL,
-    affected_count integer NOT NULL,
-    regression_factor numeric(5,2) NOT NULL,
-    first_detected_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_detected_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
-    CONSTRAINT debug_regression_observations_p95_ms_check CHECK ((p95_ms >= 0)),
-    CONSTRAINT debug_regression_observations_p95_base_ms_check CHECK ((p95_base_ms >= 0)),
-    CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
-    CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0))
-);
-
-
---
 -- Name: data_upstream_probes_default; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstream_probes_default DEFAULT;
+
+
+--
+-- Name: request_telemetry_202608; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202608 FOR VALUES FROM ('2026-08-01 00:00:00+03') TO ('2026-09-01 00:00:00+03');
+
+
+--
+-- Name: request_telemetry_202609; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202609 FOR VALUES FROM ('2026-09-01 00:00:00+03') TO ('2026-10-01 00:00:00+03');
+
+
+--
+-- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+03') TO ('2026-11-01 00:00:00+03');
+
+
+--
+-- Name: request_telemetry_default; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_default DEFAULT;
 
 
 --
@@ -2376,6 +3588,35 @@ ALTER TABLE ONLY public.deployment_logs ALTER COLUMN seq SET DEFAULT nextval('pu
 
 
 --
+-- Name: runtime_config_revisions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_revisions ALTER COLUMN id SET DEFAULT nextval('public.runtime_config_revisions_id_seq'::regclass);
+
+
+--
+-- Name: snapshot_fanout_events id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_fanout_events ALTER COLUMN id SET DEFAULT nextval('public.snapshot_fanout_events_id_seq'::regclass);
+
+
+--
+-- Name: status_incidents id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.status_incidents ALTER COLUMN id SET DEFAULT nextval('public.status_incidents_id_seq'::regclass);
+
+
+--
+-- Name: account_async_quota account_async_quota_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_async_quota
+    ADD CONSTRAINT account_async_quota_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: account_credits account_credits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2389,6 +3630,14 @@ ALTER TABLE ONLY public.account_credits
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: account_spend_snapshot account_spend_snapshot_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_snapshot
+    ADD CONSTRAINT account_spend_snapshot_pkey PRIMARY KEY (id);
 
 
 --
@@ -2421,6 +3670,22 @@ ALTER TABLE ONLY public.accounts
 
 ALTER TABLE ONLY public.alert_deliveries
     ADD CONSTRAINT alert_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: alert_presets alert_presets_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_presets
+    ADD CONSTRAINT alert_presets_name_uniq UNIQUE (name);
+
+
+--
+-- Name: alert_presets alert_presets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_presets
+    ADD CONSTRAINT alert_presets_pkey PRIMARY KEY (id);
 
 
 --
@@ -2472,6 +3737,14 @@ ALTER TABLE ONLY public.app_errors
 
 
 --
+-- Name: app_openapi_docs app_openapi_docs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_openapi_docs
+    ADD CONSTRAINT app_openapi_docs_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_registry_credentials app_registry_credentials_app_registry_uq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2492,7 +3765,7 @@ ALTER TABLE ONLY public.app_registry_credentials
 --
 
 ALTER TABLE ONLY public.app_secrets
-    ADD CONSTRAINT app_secrets_pkey PRIMARY KEY (app_id, key);
+    ADD CONSTRAINT app_secrets_pkey PRIMARY KEY (app_id, scope, key);
 
 
 --
@@ -2584,6 +3857,14 @@ ALTER TABLE ONLY public.cli_auth_codes
 
 
 --
+-- Name: cluster_signing_keys cluster_signing_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cluster_signing_keys
+    ADD CONSTRAINT cluster_signing_keys_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: compute_node_heartbeats compute_node_heartbeats_node_at_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2624,18 +3905,19 @@ ALTER TABLE ONLY public.compute_nodes
 
 
 --
+-- Name: consumer_keys consumer_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.consumer_keys
+    ADD CONSTRAINT consumer_keys_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: cors_presets cors_presets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.cors_presets
     ADD CONSTRAINT cors_presets_pkey PRIMARY KEY (id);
-
-
---
--- Name: cors_presets_unique_name; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX cors_presets_unique_name ON public.cors_presets USING btree (account_id, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), name);
 
 
 --
@@ -2703,11 +3985,59 @@ ALTER TABLE ONLY public.data_upstreams
 
 
 --
+-- Name: debug_regression_observations debug_regression_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.debug_regression_observations
+    ADD CONSTRAINT debug_regression_observations_pkey PRIMARY KEY (app_id, deployment_id, route);
+
+
+--
+-- Name: deployment_audit deployment_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_audit
+    ADD CONSTRAINT deployment_audit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: deployment_logs deployment_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_pkey PRIMARY KEY (deployment_id, seq);
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_openapi_docs
+    ADD CONSTRAINT deployment_openapi_docs_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_openapi_snapshots deployment_openapi_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_openapi_snapshots
+    ADD CONSTRAINT deployment_openapi_snapshots_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_scope_exclusions deployment_scope_exclusions_account_id_project_id_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_scope_exclusions
+    ADD CONSTRAINT deployment_scope_exclusions_account_id_project_id_slug_key UNIQUE (account_id, project_id, slug);
+
+
+--
+-- Name: deployment_scope_exclusions deployment_scope_exclusions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_scope_exclusions
+    ADD CONSTRAINT deployment_scope_exclusions_pkey PRIMARY KEY (id);
 
 
 --
@@ -2724,6 +4054,14 @@ ALTER TABLE ONLY public.deployment_sidecar_layers
 
 ALTER TABLE ONLY public.deployments
     ADD CONSTRAINT deployments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: domain_doctor_observations domain_doctor_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.domain_doctor_observations
+    ADD CONSTRAINT domain_doctor_observations_pkey PRIMARY KEY (domain);
 
 
 --
@@ -2863,6 +4201,54 @@ ALTER TABLE ONLY public.mail_suppressions
 
 
 --
+-- Name: meterd_tenant_surface_cert_expiry_state meterd_tenant_surface_cert_expiry_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
+    ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_pkey PRIMARY KEY (tenant_surface_id, hostname);
+
+
+--
+-- Name: mirror_invocation_results mirror_invocation_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_invocation_results
+    ADD CONSTRAINT mirror_invocation_results_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mirror_invocation_summary mirror_invocation_summary_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_invocation_summary
+    ADD CONSTRAINT mirror_invocation_summary_pkey PRIMARY KEY (rule_id, hour_bucket);
+
+
+--
+-- Name: mirror_rules mirror_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_rules
+    ADD CONSTRAINT mirror_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: node_join_jobs node_join_jobs_node_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.node_join_jobs
+    ADD CONSTRAINT node_join_jobs_node_name_key UNIQUE (node_name);
+
+
+--
+-- Name: node_join_jobs node_join_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.node_join_jobs
+    ADD CONSTRAINT node_join_jobs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: oauth_links oauth_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2892,6 +4278,14 @@ ALTER TABLE ONLY public.oidc_exchanged_tokens
 
 ALTER TABLE ONLY public.oidc_trust_policies
     ADD CONSTRAINT oidc_trust_policies_pkey PRIMARY KEY (account_id, issuer_url);
+
+
+--
+-- Name: operator_intents operator_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_intents
+    ADD CONSTRAINT operator_intents_pkey PRIMARY KEY (id);
 
 
 --
@@ -2959,6 +4353,14 @@ ALTER TABLE ONLY public.projects
 
 
 --
+-- Name: provisioned_static_egress_ips provisioned_static_egress_ips_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.provisioned_static_egress_ips
+    ADD CONSTRAINT provisioned_static_egress_ips_pkey PRIMARY KEY (account_id, customer_ip);
+
+
+--
 -- Name: release_bundles release_bundles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2967,11 +4369,131 @@ ALTER TABLE ONLY public.release_bundles
 
 
 --
+-- Name: request_telemetry request_telemetry_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry
+    ADD CONSTRAINT request_telemetry_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_202608 request_telemetry_202608_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_202608
+    ADD CONSTRAINT request_telemetry_202608_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_202609 request_telemetry_202609_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_202609
+    ADD CONSTRAINT request_telemetry_202609_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_202610 request_telemetry_202610_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_202610
+    ADD CONSTRAINT request_telemetry_202610_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_default request_telemetry_default_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_default
+    ADD CONSTRAINT request_telemetry_default_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: runtime_config_entries runtime_config_entries_config_key_scope_scope_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_entries
+    ADD CONSTRAINT runtime_config_entries_config_key_scope_scope_id_key UNIQUE (config_key, scope, scope_id);
+
+
+--
+-- Name: runtime_config_entries runtime_config_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_entries
+    ADD CONSTRAINT runtime_config_entries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_config_operations runtime_config_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_operations
+    ADD CONSTRAINT runtime_config_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_config_revisions runtime_config_revisions_entry_id_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_revisions
+    ADD CONSTRAINT runtime_config_revisions_entry_id_version_key UNIQUE (entry_id, version);
+
+
+--
+-- Name: runtime_config_revisions runtime_config_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_revisions
+    ADD CONSTRAINT runtime_config_revisions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: snapshot_fanout_events snapshot_fanout_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_fanout_events
+    ADD CONSTRAINT snapshot_fanout_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: snapshot_fanout_events snapshot_fanout_events_snapshot_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_fanout_events
+    ADD CONSTRAINT snapshot_fanout_events_snapshot_id_key UNIQUE (snapshot_id);
+
+
+--
+-- Name: snapshot_origins snapshot_origins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_origins
+    ADD CONSTRAINT snapshot_origins_pkey PRIMARY KEY (snapshot_id);
+
+
+--
+-- Name: snapshot_replica_cursors snapshot_replica_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_replica_cursors
+    ADD CONSTRAINT snapshot_replica_cursors_pkey PRIMARY KEY (node_id);
+
+
+--
+-- Name: snapshot_replicas snapshot_replicas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_replicas
+    ADD CONSTRAINT snapshot_replicas_pkey PRIMARY KEY (snapshot_id, node_id);
 
 
 --
@@ -2988,6 +4510,14 @@ ALTER TABLE ONLY public.snapshot_storage_daily
 
 ALTER TABLE ONLY public.snapshots
     ADD CONSTRAINT snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: status_incidents status_incidents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.status_incidents
+    ADD CONSTRAINT status_incidents_pkey PRIMARY KEY (id);
 
 
 --
@@ -3102,6 +4632,20 @@ CREATE INDEX account_credits_account_active_idx ON public.account_credits USING 
 
 
 --
+-- Name: account_spend_snapshot_account_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_spend_snapshot_account_period_idx ON public.account_spend_snapshot USING btree (account_id, period_start DESC);
+
+
+--
+-- Name: account_spend_snapshot_account_source_period_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX account_spend_snapshot_account_source_period_uniq ON public.account_spend_snapshot USING btree (account_id, source, period_end);
+
+
+--
 -- Name: accounts_deletion_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3134,6 +4678,20 @@ CREATE UNIQUE INDEX alert_deliveries_idempotency_uniq ON public.alert_deliveries
 --
 
 CREATE INDEX alert_deliveries_rule_fired_idx ON public.alert_deliveries USING btree (rule_id, fired_at DESC);
+
+
+--
+-- Name: alert_deliveries_rule_fired_production_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_deliveries_rule_fired_production_idx ON public.alert_deliveries USING btree (rule_id, fired_at DESC) WHERE (is_test = false);
+
+
+--
+-- Name: alert_presets_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_presets_enabled_idx ON public.alert_presets USING btree (enabled_in_catalog, category, name) WHERE (enabled_in_catalog = true);
 
 
 --
@@ -3256,10 +4814,24 @@ CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (acc
 
 
 --
+-- Name: app_openapi_docs_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_openapi_docs_account_id_idx ON public.app_openapi_docs USING btree (account_id);
+
+
+--
 -- Name: app_registry_credentials_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credentials USING btree (account_id);
+
+
+--
+-- Name: app_secrets_account_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_secrets_account_app_scope_idx ON public.app_secrets USING btree (account_id, app_id, scope);
 
 
 --
@@ -3431,6 +5003,13 @@ CREATE INDEX apps_route_metrics_enabled_idx ON public.apps USING btree (route_me
 
 
 --
+-- Name: apps_static_egress_ip_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX apps_static_egress_ip_key ON public.apps USING btree (static_egress_ip) WHERE (static_egress_ip IS NOT NULL);
+
+
+--
 -- Name: apps_streaming_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3494,6 +5073,13 @@ CREATE INDEX builds_deployment_started_idx ON public.builds USING btree (deploym
 
 
 --
+-- Name: builds_deployment_status_cancelled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builds_deployment_status_cancelled_idx ON public.builds USING btree (deployment_id, status, cancelled_at DESC);
+
+
+--
 -- Name: builds_running_started_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3522,17 +5108,45 @@ CREATE INDEX compute_node_keys_node_idx ON public.compute_node_keys USING btree 
 
 
 --
--- Name: compute_nodes_active_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: compute_nodes_active_unique_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX compute_nodes_active_idx ON public.compute_nodes USING btree (name) WHERE (active = true);
+CREATE UNIQUE INDEX compute_nodes_active_unique_idx ON public.compute_nodes USING btree (name) WHERE active;
+
+
+--
+-- Name: compute_nodes_lifecycle_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX compute_nodes_lifecycle_idx ON public.compute_nodes USING btree (name) WHERE (lifecycle = ANY (ARRAY['active'::public.compute_node_lifecycle, 'recovering'::public.compute_node_lifecycle]));
 
 
 --
 -- Name: compute_nodes_region_zone_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX compute_nodes_region_zone_idx ON public.compute_nodes USING btree (region, zone) WHERE (active = true);
+CREATE INDEX compute_nodes_region_zone_idx ON public.compute_nodes USING btree (region, zone) WHERE active;
+
+
+--
+-- Name: consumer_keys_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX consumer_keys_app_idx ON public.consumer_keys USING btree (app_id);
+
+
+--
+-- Name: consumer_keys_app_prefix_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX consumer_keys_app_prefix_idx ON public.consumer_keys USING btree (app_id, prefix);
+
+
+--
+-- Name: consumer_keys_unique_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX consumer_keys_unique_name ON public.consumer_keys USING btree (account_id, app_id, name);
 
 
 --
@@ -3540,6 +5154,13 @@ CREATE INDEX compute_nodes_region_zone_idx ON public.compute_nodes USING btree (
 --
 
 CREATE INDEX cors_presets_account_idx ON public.cors_presets USING btree (account_id);
+
+
+--
+-- Name: cors_presets_unique_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX cors_presets_unique_name ON public.cors_presets USING btree (account_id, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), name);
 
 
 --
@@ -3627,10 +5248,66 @@ CREATE INDEX data_upstreams_host_redacted_idx ON public.data_upstreams USING btr
 
 
 --
+-- Name: debug_regression_observations_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX debug_regression_observations_app_idx ON public.debug_regression_observations USING btree (app_id, last_detected_at DESC);
+
+
+--
+-- Name: deployment_audit_at_gc_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_audit_at_gc_idx ON public.deployment_audit USING btree (at);
+
+
+--
+-- Name: deployment_audit_deployment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_audit_deployment_idx ON public.deployment_audit USING btree (deployment_id, at DESC);
+
+
+--
 -- Name: deployment_logs_seq_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX deployment_logs_seq_idx ON public.deployment_logs USING btree (deployment_id, seq DESC);
+
+
+--
+-- Name: deployment_openapi_docs_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_openapi_docs_account_id_idx ON public.deployment_openapi_docs USING btree (account_id);
+
+
+--
+-- Name: deployment_openapi_docs_app_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_openapi_docs_app_id_idx ON public.deployment_openapi_docs USING btree (app_id);
+
+
+--
+-- Name: deployment_openapi_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_openapi_snapshots USING btree (app_id, scope, captured_at DESC);
+
+
+--
+-- Name: deployment_scope_exclusions_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_scope_exclusions_account_idx ON public.deployment_scope_exclusions USING btree (account_id);
+
+
+--
+-- Name: deployment_scope_exclusions_project_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_scope_exclusions_project_idx ON public.deployment_scope_exclusions USING btree (project_id);
 
 
 --
@@ -3669,6 +5346,20 @@ CREATE UNIQUE INDEX deployments_app_scope_live_uniq ON public.deployments USING 
 
 
 --
+-- Name: deployments_app_status_cancelled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_app_status_cancelled_idx ON public.deployments USING btree (app_id, status, cancelled_at DESC) WHERE ((cancelled_at IS NOT NULL) OR (deleted_at IS NOT NULL));
+
+
+--
+-- Name: deployments_canary_inflight_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_canary_inflight_idx ON public.deployments USING btree (status, canary_total_steps, canary_step) WHERE ((status = 'live'::text) AND (canary_total_steps > 0));
+
+
+--
 -- Name: deployments_failed_error_code_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3683,10 +5374,52 @@ CREATE INDEX deployments_live_traffic_idx ON public.deployments USING btree (app
 
 
 --
+-- Name: deployments_pending_priority_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_pending_priority_idx ON public.deployments USING btree (app_id, priority, created_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: deployments_rollback_on_5xx_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_rollback_on_5xx_pending_idx ON public.deployments USING btree (app_id, first_5xx_count) WHERE ((rollback_on_5xx = true) AND (first_5xx_window_ends_at IS NOT NULL));
+
+
+--
+-- Name: deployments_rollout_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_rollout_pending_idx ON public.deployments USING btree (rollout_state, rollout_started_at, created_at) WHERE ((status = 'live'::text) AND (rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text])));
+
+
+--
+-- Name: deployments_snapshot_backoff_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_snapshot_backoff_idx ON public.deployments USING btree (id) WHERE (snapshot_miss_backoff_until IS NOT NULL);
+
+
+--
+-- Name: domain_doctor_observations_stale_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX domain_doctor_observations_stale_idx ON public.domain_doctor_observations USING btree (observed_at);
+
+
+--
 -- Name: edge_rules_app_id_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX edge_rules_app_id_enabled_idx ON public.edge_rules USING btree (app_id) WHERE enabled;
+
+
+--
+-- Name: edge_rules_cors_preset_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rules_cors_preset_id_idx ON public.edge_rules USING btree (cors_preset_id) WHERE (cors_preset_id IS NOT NULL);
 
 
 --
@@ -3729,6 +5462,13 @@ CREATE INDEX events_sidecar_name_idx ON public.events USING btree (((data ->> 's
 --
 
 CREATE INDEX events_subject_idx ON public.events USING btree (subject, at DESC);
+
+
+--
+-- Name: events_trace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_trace_idx ON public.events USING btree (trace_id) WHERE (trace_id IS NOT NULL);
 
 
 --
@@ -3788,6 +5528,13 @@ CREATE INDEX instances_app_idx ON public.instances USING btree (app_id, state);
 
 
 --
+-- Name: instances_job_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instances_job_active_idx ON public.instances USING btree (job_id) WHERE ((kind = 'job_task'::text) AND (state <> ALL (ARRAY['parked'::text, 'destroyed'::text])));
+
+
+--
 -- Name: instances_job_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3802,10 +5549,24 @@ CREATE INDEX instances_kind_job_task_idx ON public.instances USING btree (job_id
 
 
 --
+-- Name: instances_live_node_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instances_live_node_id_idx ON public.instances USING btree (node_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text]));
+
+
+--
 -- Name: instances_migrated_from_node_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX instances_migrated_from_node_id_idx ON public.instances USING btree (migrated_from_node_id) WHERE (migrated_from_node_id IS NOT NULL);
+
+
+--
+-- Name: instances_mode_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instances_mode_idx ON public.instances USING btree (app_id, mode) WHERE (mode = 'mirror'::text);
 
 
 --
@@ -3830,6 +5591,13 @@ CREATE INDEX instances_terminal_at_idx ON public.instances USING btree (terminal
 
 
 --
+-- Name: instances_wake_attempt_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX instances_wake_attempt_active_idx ON public.instances USING btree (wake_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text]));
+
+
+--
 -- Name: instances_wake_id_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3844,10 +5612,24 @@ CREATE INDEX instances_watchdog_state_idx ON public.instances USING btree (state
 
 
 --
+-- Name: invocations_acct_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_acct_retention_idx ON public.invocations USING btree (account_id, result_retention_until) WHERE (result_retention_until IS NOT NULL);
+
+
+--
 -- Name: invocations_app_dead_letter_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX invocations_app_dead_letter_idx ON public.invocations USING btree (app_id, created_at DESC) WHERE (state = 'dead_letter'::text);
+
+
+--
+-- Name: invocations_app_deadline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_app_deadline_idx ON public.invocations USING btree (app_id, deadline_at) WHERE ((state = ANY (ARRAY['pending'::text, 'dispatching'::text])) AND (deadline_at IS NOT NULL));
 
 
 --
@@ -3893,6 +5675,13 @@ CREATE INDEX invocations_org_id_idx ON public.invocations USING btree (org_id) W
 
 
 --
+-- Name: invocations_replayed_from_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_replayed_from_idx ON public.invocations USING btree (account_id, last_replayed_at) WHERE (last_replayed_at IS NOT NULL);
+
+
+--
 -- Name: invoices_account_period_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3925,6 +5714,27 @@ CREATE INDEX job_runs_active_idx ON public.job_runs USING btree (account_id, id)
 --
 
 CREATE INDEX job_runs_job_idx ON public.job_runs USING btree (job_id, created_at DESC);
+
+
+--
+-- Name: job_tasks_lease_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_tasks_lease_expires_idx ON public.job_tasks USING btree (lease_expires_at) WHERE ((lease_token IS NOT NULL) AND (status = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: job_tasks_lease_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX job_tasks_lease_uniq ON public.job_tasks USING btree (lease_token) WHERE (lease_token IS NOT NULL);
+
+
+--
+-- Name: job_tasks_next_attempt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_tasks_next_attempt_idx ON public.job_tasks USING btree (next_attempt_at) WHERE ((next_attempt_at IS NOT NULL) AND (status = ANY (ARRAY['queued'::text, 'claimed'::text])));
 
 
 --
@@ -3963,10 +5773,10 @@ CREATE INDEX login_tokens_account_idx ON public.login_tokens USING btree (accoun
 
 
 --
--- Name: mail_suppressions_active_email_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: mail_suppressions_email_lower_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX mail_suppressions_active_email_idx ON public.mail_suppressions USING btree (lower(email)) WHERE ((expires_at IS NULL) OR (expires_at > now()));
+CREATE INDEX mail_suppressions_email_lower_idx ON public.mail_suppressions USING btree (lower(email));
 
 
 --
@@ -3974,6 +5784,69 @@ CREATE INDEX mail_suppressions_active_email_idx ON public.mail_suppressions USIN
 --
 
 CREATE UNIQUE INDEX mail_suppressions_event_id_key ON public.mail_suppressions USING btree (source, provider_event_id);
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX meterd_tenant_surface_cert_expiry_app_idx ON public.meterd_tenant_surface_cert_expiry_state USING btree (app_id, hostname) WHERE (last_walk_status = 'ok'::text);
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_stale_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX meterd_tenant_surface_cert_expiry_stale_idx ON public.meterd_tenant_surface_cert_expiry_state USING btree (last_refreshed_at) WHERE (last_walk_status <> 'ok'::text);
+
+
+--
+-- Name: mirror_invocation_results_completed_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mirror_invocation_results_completed_at_idx ON public.mirror_invocation_results USING btree (completed_at) WHERE (mirror_rule_id IS NOT NULL);
+
+
+--
+-- Name: mirror_invocation_results_rule_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mirror_invocation_results_rule_time_idx ON public.mirror_invocation_results USING btree (mirror_rule_id, completed_at DESC);
+
+
+--
+-- Name: mirror_invocation_summary_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mirror_invocation_summary_app_idx ON public.mirror_invocation_summary USING btree (app_id, hour_bucket DESC);
+
+
+--
+-- Name: mirror_rules_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mirror_rules_app_idx ON public.mirror_rules USING btree (app_id) WHERE enabled;
+
+
+--
+-- Name: mirror_rules_source_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mirror_rules_source_idx ON public.mirror_rules USING btree (source_deployment_id) WHERE enabled;
+
+
+--
+-- Name: node_join_jobs_lease_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX node_join_jobs_lease_idx ON public.node_join_jobs USING btree (lease_expires_at) WHERE (lease_owner IS NOT NULL);
+
+
+--
+-- Name: node_join_jobs_phase_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX node_join_jobs_phase_idx ON public.node_join_jobs USING btree (phase, updated_at DESC);
 
 
 --
@@ -3988,6 +5861,27 @@ CREATE INDEX oauth_links_account_idx ON public.oauth_links USING btree (account_
 --
 
 CREATE INDEX oidc_exchanged_tokens_expires_at_idx ON public.oidc_exchanged_tokens USING btree (expires_at);
+
+
+--
+-- Name: operator_intents_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_intents_pending_idx ON public.operator_intents USING btree (status, requested_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: operator_intents_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_intents_target_idx ON public.operator_intents USING btree (target_id, requested_at DESC);
+
+
+--
+-- Name: operator_intents_trace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_intents_trace_idx ON public.operator_intents USING btree (trace_id) WHERE (trace_id IS NOT NULL);
 
 
 --
@@ -4089,6 +5983,13 @@ CREATE INDEX projects_org_id_idx ON public.projects USING btree (org_id) WHERE (
 
 
 --
+-- Name: provisioned_static_egress_ips_customer_ip_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX provisioned_static_egress_ips_customer_ip_idx ON public.provisioned_static_egress_ips USING btree (customer_ip);
+
+
+--
 -- Name: recent_build_claims_account_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4124,10 +6025,171 @@ CREATE INDEX release_bundles_git_sha_idx ON public.release_bundles USING btree (
 
 
 --
+-- Name: request_telemetry_app_dep_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_app_dep_received_idx ON ONLY public.request_telemetry USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202608_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202608_app_id_deployment_id_received_at_idx ON public.request_telemetry_202608 USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_app_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_app_received_idx ON ONLY public.request_telemetry USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202608_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202608_app_id_received_at_idx ON public.request_telemetry_202608 USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_trace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_trace_idx ON ONLY public.request_telemetry USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202608_trace_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202608_trace_id_idx ON public.request_telemetry_202608 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202609_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202609_app_id_deployment_id_received_at_idx ON public.request_telemetry_202609 USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202609_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202609_app_id_received_at_idx ON public.request_telemetry_202609 USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202609_trace_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202609_trace_id_idx ON public.request_telemetry_202609 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202610_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202610_app_id_deployment_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202610_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202610_app_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202610_trace_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202610_trace_id_idx ON public.request_telemetry_202610 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_default_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_default_app_id_deployment_id_received_at_idx ON public.request_telemetry_default USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_default_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_default_app_id_received_at_idx ON public.request_telemetry_default USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_default_trace_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_default_trace_id_idx ON public.request_telemetry_default USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: runtime_config_entries_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_config_entries_scope_idx ON public.runtime_config_entries USING btree (scope, scope_id, config_key);
+
+
+--
+-- Name: runtime_config_operations_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_config_operations_key_idx ON public.runtime_config_operations USING btree (config_key, scope, scope_id, config_version DESC);
+
+
+--
+-- Name: runtime_config_operations_requested_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_config_operations_requested_idx ON public.runtime_config_operations USING btree (status, requested_at);
+
+
+--
+-- Name: runtime_config_revisions_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_config_revisions_lookup_idx ON public.runtime_config_revisions USING btree (config_key, scope, scope_id, created_at DESC);
+
+
+--
 -- Name: sessions_active_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX sessions_active_account_idx ON public.sessions USING btree (account_id, issued_at DESC) WHERE (revoked_at IS NULL);
+
+
+--
+-- Name: snapshot_fanout_events_snapshot_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX snapshot_fanout_events_snapshot_idx ON public.snapshot_fanout_events USING btree (snapshot_id);
+
+
+--
+-- Name: snapshot_origins_region_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX snapshot_origins_region_idx ON public.snapshot_origins USING btree (region, snapshot_id);
+
+
+--
+-- Name: snapshot_replicas_node_state_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX snapshot_replicas_node_state_idx ON public.snapshot_replicas USING btree (node_id, state, next_attempt_at, created_at);
+
+
+--
+-- Name: snapshot_replicas_snapshot_state_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX snapshot_replicas_snapshot_state_idx ON public.snapshot_replicas USING btree (snapshot_id, state, node_id);
 
 
 --
@@ -4163,6 +6225,13 @@ CREATE INDEX snapshots_live_idx ON public.snapshots USING btree (deployment_id) 
 --
 
 COMMENT ON INDEX public.snapshots_live_idx IS 'Supports pkg/state/pgstore.go::LatestSnapshotBytes inner scan — bounds to non-stale rows under live deployments. ADR-049 §B.3 + PR #428 review blocker #3.';
+
+
+--
+-- Name: status_incidents_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX status_incidents_open ON public.status_incidents USING btree (component) WHERE (resolved_at IS NULL);
 
 
 --
@@ -4264,6 +6333,20 @@ CREATE INDEX trigger_records_due_idx ON public.trigger_records USING btree (trig
 
 
 --
+-- Name: trigger_records_trigger_deadline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trigger_records_trigger_deadline_idx ON public.trigger_records USING btree (trigger_id, deadline_at) WHERE ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'retry'::text])) AND (deadline_at IS NOT NULL));
+
+
+--
+-- Name: trigger_records_trigger_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trigger_records_trigger_retention_idx ON public.trigger_records USING btree (trigger_id, result_retention_until) WHERE (result_retention_until IS NOT NULL);
+
+
+--
 -- Name: triggers_account_kind_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4348,6 +6431,132 @@ ALTER INDEX public.data_upstream_probes_pkey ATTACH PARTITION public.data_upstre
 
 
 --
+-- Name: request_telemetry_202608_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_dep_received_idx ATTACH PARTITION public.request_telemetry_202608_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202608_app_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_received_idx ATTACH PARTITION public.request_telemetry_202608_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202608_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_telemetry_202608_pkey;
+
+
+--
+-- Name: request_telemetry_202608_trace_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202608_trace_id_idx;
+
+
+--
+-- Name: request_telemetry_202609_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_dep_received_idx ATTACH PARTITION public.request_telemetry_202609_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202609_app_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_received_idx ATTACH PARTITION public.request_telemetry_202609_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202609_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_telemetry_202609_pkey;
+
+
+--
+-- Name: request_telemetry_202609_trace_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202609_trace_id_idx;
+
+
+--
+-- Name: request_telemetry_202610_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_dep_received_idx ATTACH PARTITION public.request_telemetry_202610_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202610_app_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_received_idx ATTACH PARTITION public.request_telemetry_202610_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202610_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_telemetry_202610_pkey;
+
+
+--
+-- Name: request_telemetry_202610_trace_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202610_trace_id_idx;
+
+
+--
+-- Name: request_telemetry_default_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_dep_received_idx ATTACH PARTITION public.request_telemetry_default_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_default_app_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_received_idx ATTACH PARTITION public.request_telemetry_default_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_default_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_telemetry_default_pkey;
+
+
+--
+-- Name: request_telemetry_default_trace_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_default_trace_id_idx;
+
+
+--
+-- Name: alert_presets alert_presets_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_presets_set_updated_at_trg BEFORE UPDATE ON public.alert_presets FOR EACH ROW EXECUTE FUNCTION public.alert_presets_set_updated_at();
+
+
+--
+-- Name: app_openapi_docs app_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.app_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.app_openapi_docs_set_updated_at();
+
+
+--
 -- Name: apps apps_egress_allowlist_cidr; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4355,41 +6564,10 @@ CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allo
 
 
 --
--- Name: apps_public_auth_ip_allowlist_cidr_check(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: apps apps_maintenance_mode_notify; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.apps_public_auth_ip_allowlist_cidr_check() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-  bad cidr;
-begin
-  if new.public_auth_ip_allowlist is null or cardinality(new.public_auth_ip_allowlist) = 0 then
-    return new;
-  end if;
-  for bad in
-    select c
-      from unnest(new.public_auth_ip_allowlist) c
-     where family(c) not in (4, 6)
-     limit 1
-  loop
-    raise exception 'apps_public_auth_ip_allowlist: only v4 or v6 CIDRs (got family % for %)', family(bad), bad
-      using errcode = '23514',
-            constraint = 'apps_public_auth_ip_allowlist_cidr';
-  end loop;
-  for bad in
-    select c
-      from unnest(new.public_auth_ip_allowlist) c
-     where masklen(c) = 0
-     limit 1
-  loop
-    raise exception 'apps_public_auth_ip_allowlist: rejected % (masklen /0; ADR-118 non-/0 contract)', bad
-      using errcode = '23514',
-            constraint = 'apps_public_auth_ip_allowlist_cidr';
-  end loop;
-  return new;
-end;
-$$;
+CREATE TRIGGER apps_maintenance_mode_notify AFTER UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_maintenance_mode_notify();
 
 
 --
@@ -4400,10 +6578,10 @@ CREATE TRIGGER apps_public_auth_ip_allowlist_cidr BEFORE INSERT OR UPDATE OF pub
 
 
 --
--- Name: apps apps_maintenance_mode_notify; Type: TRIGGER; Schema: public; Owner: -
+-- Name: cluster_signing_keys cluster_signing_keys_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER apps_maintenance_mode_notify AFTER UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_maintenance_mode_notify();
+CREATE TRIGGER cluster_signing_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON public.cluster_signing_keys FOR EACH STATEMENT EXECUTE FUNCTION public.cluster_signing_keys_notify();
 
 
 --
@@ -4421,6 +6599,20 @@ CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON
 
 
 --
+-- Name: consumer_keys consumer_keys_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER consumer_keys_set_updated_at_trg BEFORE UPDATE ON public.consumer_keys FOR EACH ROW EXECUTE FUNCTION public.consumer_keys_set_updated_at();
+
+
+--
+-- Name: cors_presets cors_presets_changed_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER cors_presets_changed_notify_trg AFTER INSERT OR DELETE OR UPDATE ON public.cors_presets FOR EACH ROW EXECUTE FUNCTION public.cors_presets_changed_notify();
+
+
+--
 -- Name: cors_presets cors_presets_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4432,6 +6624,20 @@ CREATE TRIGGER cors_presets_set_updated_at_trg BEFORE UPDATE ON public.cors_pres
 --
 
 CREATE TRIGGER data_upstreams_notify_trg AFTER INSERT OR DELETE OR UPDATE ON public.data_upstreams FOR EACH ROW EXECUTE FUNCTION public.data_upstreams_notify();
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.deployment_openapi_docs_set_updated_at();
+
+
+--
+-- Name: deployment_scope_exclusions deployment_scope_exclusions_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_scope_exclusions_set_updated_at_trg BEFORE UPDATE ON public.deployment_scope_exclusions FOR EACH ROW EXECUTE FUNCTION public.deployment_scope_exclusions_set_updated_at();
 
 
 --
@@ -4487,7 +6693,56 @@ CREATE TRIGGER invocation_due_trg AFTER INSERT OR UPDATE OF state ON public.invo
 -- Name: job_tasks job_tasks_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER job_tasks_notify_trg AFTER INSERT OR DELETE OR UPDATE ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.job_tasks_notify();
+CREATE TRIGGER job_tasks_notify_trg AFTER INSERT OR UPDATE ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.job_tasks_notify_v2();
+
+
+--
+-- Name: goose_db_version migration_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER migration_notify_trg AFTER INSERT ON public.goose_db_version FOR EACH ROW EXECUTE FUNCTION public.migration_notify();
+
+
+--
+-- Name: mirror_rules mirror_rules_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER mirror_rules_set_updated_at_trg BEFORE UPDATE ON public.mirror_rules FOR EACH ROW EXECUTE FUNCTION public.mirror_rules_set_updated_at();
+
+
+--
+-- Name: pg_ratelimit_counters pg_ratelimit_counters_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER pg_ratelimit_counters_notify AFTER INSERT OR UPDATE OF tokens, last_refill ON public.pg_ratelimit_counters FOR EACH ROW EXECUTE FUNCTION public.notify_pg_ratelimit_counters();
+
+
+--
+-- Name: runtime_config_entries runtime_config_entries_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_config_entries_notify AFTER INSERT OR UPDATE ON public.runtime_config_entries FOR EACH ROW EXECUTE FUNCTION public.notify_runtime_config_changed();
+
+
+--
+-- Name: runtime_config_operations runtime_config_operations_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_config_operations_notify AFTER INSERT OR UPDATE ON public.runtime_config_operations FOR EACH ROW EXECUTE FUNCTION public.notify_runtime_config_operation_changed();
+
+
+--
+-- Name: snapshots snapshot_fanout_event_after_snapshot; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER snapshot_fanout_event_after_snapshot AFTER INSERT OR UPDATE OF storage_key, stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshot_fanout_event_on_snapshot();
+
+
+--
+-- Name: snapshot_origins snapshot_replica_refresh_after_origin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER snapshot_replica_refresh_after_origin AFTER INSERT OR UPDATE OF node_id, region ON public.snapshot_origins FOR EACH ROW EXECUTE FUNCTION public.snapshot_replica_refresh_after_origin();
 
 
 --
@@ -4512,6 +6767,14 @@ CREATE TRIGGER trigger_ready_notify AFTER INSERT ON public.trigger_records FOR E
 
 
 --
+-- Name: account_async_quota account_async_quota_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_async_quota
+    ADD CONSTRAINT account_async_quota_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: account_credits account_credits_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4525,6 +6788,14 @@ ALTER TABLE ONLY public.account_credits
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_spend_snapshot account_spend_snapshot_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_snapshot
+    ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -4661,6 +6932,22 @@ ALTER TABLE ONLY public.app_errors
 
 ALTER TABLE ONLY public.app_errors
     ADD CONSTRAINT app_errors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_openapi_docs app_openapi_docs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_openapi_docs
+    ADD CONSTRAINT app_openapi_docs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_openapi_docs app_openapi_docs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_openapi_docs
+    ADD CONSTRAINT app_openapi_docs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -4840,6 +7127,22 @@ ALTER TABLE ONLY public.compute_node_keys
 
 
 --
+-- Name: consumer_keys consumer_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.consumer_keys
+    ADD CONSTRAINT consumer_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: consumer_keys consumer_keys_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.consumer_keys
+    ADD CONSTRAINT consumer_keys_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: cors_presets cors_presets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4944,6 +7247,62 @@ ALTER TABLE ONLY public.deployment_logs
 
 
 --
+-- Name: deployment_openapi_docs deployment_openapi_docs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_openapi_docs
+    ADD CONSTRAINT deployment_openapi_docs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_openapi_docs
+    ADD CONSTRAINT deployment_openapi_docs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_openapi_docs
+    ADD CONSTRAINT deployment_openapi_docs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_snapshots deployment_openapi_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_openapi_snapshots
+    ADD CONSTRAINT deployment_openapi_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_snapshots deployment_openapi_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_openapi_snapshots
+    ADD CONSTRAINT deployment_openapi_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_scope_exclusions deployment_scope_exclusions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_scope_exclusions
+    ADD CONSTRAINT deployment_scope_exclusions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_scope_exclusions deployment_scope_exclusions_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_scope_exclusions
+    ADD CONSTRAINT deployment_scope_exclusions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_sidecar_layers deployment_sidecar_layers_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4960,6 +7319,30 @@ ALTER TABLE ONLY public.deployments
 
 
 --
+-- Name: deployments deployments_deployed_by_user_id_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployments
+    ADD CONSTRAINT deployments_deployed_by_user_id_fk FOREIGN KEY (deployed_by_user_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: domain_doctor_observations domain_doctor_observations_domain_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.domain_doctor_observations
+    ADD CONSTRAINT domain_doctor_observations_domain_fkey FOREIGN KEY (domain) REFERENCES public.custom_domains(domain) ON DELETE CASCADE;
+
+
+--
+-- Name: domain_doctor_observations domain_doctor_observations_surface_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.domain_doctor_observations
+    ADD CONSTRAINT domain_doctor_observations_surface_id_fkey FOREIGN KEY (surface_id) REFERENCES public.tenant_surfaces(id) ON DELETE SET NULL;
+
+
+--
 -- Name: edge_rules edge_rules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4973,6 +7356,22 @@ ALTER TABLE ONLY public.edge_rules
 
 ALTER TABLE ONLY public.edge_rules
     ADD CONSTRAINT edge_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: edge_rules edge_rules_cors_preset_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rules
+    ADD CONSTRAINT edge_rules_cors_preset_fk FOREIGN KEY (cors_preset_id) REFERENCES public.cors_presets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: edge_rules edge_rules_cors_preset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rules
+    ADD CONSTRAINT edge_rules_cors_preset_id_fkey FOREIGN KEY (cors_preset_id) REFERENCES public.cors_presets(id) ON DELETE SET NULL;
 
 
 --
@@ -5036,7 +7435,7 @@ ALTER TABLE ONLY public.instances
 --
 
 ALTER TABLE ONLY public.instances
-    ADD CONSTRAINT instances_job_id_fk FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE SET NULL;
+    ADD CONSTRAINT instances_job_id_fk FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE RESTRICT;
 
 
 --
@@ -5168,6 +7567,70 @@ ALTER TABLE ONLY public.mail_suppressions
 
 
 --
+-- Name: meterd_tenant_surface_cert_expiry_state meterd_tenant_surface_cert_expiry_state_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
+    ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_state meterd_tenant_surface_cert_expiry_state_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
+    ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_state meterd_tenant_surface_cert_expiry_state_tenant_surface_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
+    ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_tenant_surface_id_fkey FOREIGN KEY (tenant_surface_id) REFERENCES public.tenant_surfaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_invocation_results mirror_invocation_results_mirror_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_invocation_results
+    ADD CONSTRAINT mirror_invocation_results_mirror_rule_id_fkey FOREIGN KEY (mirror_rule_id) REFERENCES public.mirror_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_rules mirror_rules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_rules
+    ADD CONSTRAINT mirror_rules_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_rules mirror_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_rules
+    ADD CONSTRAINT mirror_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_rules mirror_rules_mirror_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_rules
+    ADD CONSTRAINT mirror_rules_mirror_deployment_id_fkey FOREIGN KEY (mirror_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_rules mirror_rules_source_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_rules
+    ADD CONSTRAINT mirror_rules_source_deployment_id_fkey FOREIGN KEY (source_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: oauth_links oauth_links_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5296,11 +7759,67 @@ ALTER TABLE ONLY public.recent_build_claims
 
 
 --
+-- Name: runtime_config_revisions runtime_config_revisions_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_revisions
+    ADD CONSTRAINT runtime_config_revisions_entry_id_fkey FOREIGN KEY (entry_id) REFERENCES public.runtime_config_entries(id) ON DELETE CASCADE;
+
+
+--
 -- Name: sessions sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: snapshot_fanout_events snapshot_fanout_events_snapshot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_fanout_events
+    ADD CONSTRAINT snapshot_fanout_events_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.snapshots(id) ON DELETE CASCADE;
+
+
+--
+-- Name: snapshot_origins snapshot_origins_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_origins
+    ADD CONSTRAINT snapshot_origins_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: snapshot_origins snapshot_origins_snapshot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_origins
+    ADD CONSTRAINT snapshot_origins_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.snapshots(id) ON DELETE CASCADE;
+
+
+--
+-- Name: snapshot_replica_cursors snapshot_replica_cursors_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_replica_cursors
+    ADD CONSTRAINT snapshot_replica_cursors_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: snapshot_replicas snapshot_replicas_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_replicas
+    ADD CONSTRAINT snapshot_replicas_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: snapshot_replicas snapshot_replicas_snapshot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_replicas
+    ADD CONSTRAINT snapshot_replicas_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.snapshots(id) ON DELETE CASCADE;
 
 
 --
@@ -5409,3 +7928,5 @@ ALTER TABLE ONLY public.usage_minutes
 
 --
 --
+
+

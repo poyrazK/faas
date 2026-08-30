@@ -9543,6 +9543,174 @@ func (m *MemStore) SetComputeNodeActive(_ context.Context, id string, active boo
 	return nil
 }
 
+// NodeGet returns one ComputeNode by id with lifecycle fields populated.
+// Mirrors pgstore.NodeGet's shape; the in-memory map stores the full
+// ComputeNode struct, so no projection is needed.
+func (m *MemStore) NodeGet(_ context.Context, id string) (ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[id]
+	if !ok {
+		return ComputeNode{}, ErrNotFound
+	}
+	return n, nil
+}
+
+// NodeGetByName mirrors NodeGet keyed by name.
+func (m *MemStore) NodeGetByName(_ context.Context, name string) (ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, n := range m.computeNodes {
+		if n.Name == name {
+			return n, nil
+		}
+	}
+	return ComputeNode{}, ErrNotFound
+}
+
+// NodeList returns every compute_node in name order, optionally
+// filtered by lifecycle.
+func (m *MemStore) NodeList(_ context.Context, lifecycle NodeLifecycle) ([]ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ComputeNode, 0, len(m.computeNodes))
+	for _, n := range m.computeNodes {
+		if lifecycle != "" && n.Lifecycle != lifecycle {
+			continue
+		}
+		out = append(out, n)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// NodeSetLifecycle is the CAS transition. Returns ErrNotFound when
+// the id is unknown, ErrConflict when the CAS predicate doesn't
+// match (the in-memory equivalent of pgstore's CAS).
+func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next NodeLifecycle) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if n.Lifecycle != expected {
+		return ErrConflict
+	}
+	n.Lifecycle = next
+	now := time.Now()
+	switch next {
+	case NodeLifecycleDraining:
+		n.DrainInitiatedAt = &now
+	case NodeLifecycleRecovering:
+		n.RecoveryInitiatedAt = &now
+	case NodeLifecycleActive:
+		if expected == NodeLifecycleDraining {
+			n.DrainCompletedAt = &now
+		}
+	}
+	m.computeNodes[id] = n
+	return nil
+}
+
+// NodeListRecoverable returns every node in
+// ('unavailable','recovering') — the recovery arbiter's input set.
+func (m *MemStore) NodeListRecoverable(_ context.Context) ([]ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ComputeNode, 0, len(m.computeNodes))
+	for _, n := range m.computeNodes {
+		if n.Lifecycle == NodeLifecycleUnavailable || n.Lifecycle == NodeLifecycleRecovering {
+			out = append(out, n)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// NodeListDrainable returns every 'active' node with zero live
+// instances. The memstore has no instances map yet, so the
+// "zero live instances" check is always true — every active node is
+// considered drainable. The schedd unit tests don't need the
+// admission gate; the pgtest / metal tests verify it against the
+// real schema.
+func (m *MemStore) NodeListDrainable(_ context.Context) ([]ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ComputeNode, 0, len(m.computeNodes))
+	for _, n := range m.computeNodes {
+		if n.Lifecycle == NodeLifecycleActive {
+			out = append(out, n)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// NodeMarkDrainCompleted flips lifecycle 'draining' → 'active' and
+// stamps drain_completed_at (CAS on 'draining').
+func (m *MemStore) NodeMarkDrainCompleted(_ context.Context, id string, completedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if n.Lifecycle != NodeLifecycleDraining {
+		return ErrConflict
+	}
+	n.Lifecycle = NodeLifecycleActive
+	n.DrainCompletedAt = &completedAt
+	m.computeNodes[id] = n
+	return nil
+}
+
+// NodeMarkRecovered flips lifecycle 'recovering' → 'active' and
+// stamps last_recovery_outcome='succeeded' (CAS on 'recovering').
+func (m *MemStore) NodeMarkRecovered(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if n.Lifecycle != NodeLifecycleRecovering {
+		return ErrConflict
+	}
+	n.Lifecycle = NodeLifecycleActive
+	outcome := "succeeded"
+	n.LastRecoveryOutcome = &outcome
+	m.computeNodes[id] = n
+	return nil
+}
+
+// InstanceListByNodeForRecovery returns the live instances on a node.
+// The memstore does not track instances; return an empty slice so the
+// arbiter's per-tick decision sees no work to do.
+func (m *MemStore) InstanceListByNodeForRecovery(_ context.Context, _ string) ([]RecoveryInstance, error) {
+	return nil, nil
+}
+
+// DeploymentRecordSnapshotMiss is the wake-side backoff stamp. The
+// memstore has no deployments map; the unit tests using this path
+// (snapshot_backoff_test.go) bypass the Store interface and call the
+// helper directly.
+func (m *MemStore) DeploymentRecordSnapshotMiss(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}
+
+// DeploymentClearSnapshotBackoff is the recovery-side reset. Same
+// memstore no-op rationale as DeploymentRecordSnapshotMiss.
+func (m *MemStore) DeploymentClearSnapshotBackoff(_ context.Context, _ string) error {
+	return nil
+}
+
+// DeploymentSnapshotBackoffActive is the wake-side gate. Returns
+// (Deployment{}, false, nil) — no backoff in the memstore.
+func (m *MemStore) DeploymentSnapshotBackoffActive(_ context.Context, _ string) (Deployment, bool, error) {
+	return Deployment{}, false, nil
+}
+
 // ListComputeNodes returns every row in name order (issue #98 /
 // ADR-028). When includeInactive is false, drained rows are filtered
 // out — placement-equivalent semantics, backed by the partial

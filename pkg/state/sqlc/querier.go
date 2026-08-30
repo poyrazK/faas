@@ -47,8 +47,8 @@ type Querier interface {
 	//                      draining waitUntil tasks; INFORMATIONAL ONLY — pinned
 	//                      by pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds)
 	AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParams) error
-	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (Build, error)
-	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (Build, error)
+	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
+	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
 	// `tail_count` column and return the post-update value. The
 	// GREATEST(…, 0) floor mirrors DecrementInstanceTailCount's safety
@@ -64,7 +64,7 @@ type Querier interface {
 	// sets. Returns at most $1 records in (pending, retry) state whose
 	// next_fire_at <= now(). The trigger_id constraint scopes the
 	// claim so the poller drains one trigger at a time.
-	ClaimTriggerRecords(ctx context.Context, db DBTX, arg ClaimTriggerRecordsParams) ([]TriggerRecord, error)
+	ClaimTriggerRecords(ctx context.Context, db DBTX, arg ClaimTriggerRecordsParams) ([]ClaimTriggerRecordsRow, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountTriggersByAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
@@ -73,7 +73,7 @@ type Querier interface {
 	CreateAPIKey(ctx context.Context, db DBTX, arg CreateAPIKeyParams) (CreateAPIKeyRow, error)
 	CreateAccount(ctx context.Context, db DBTX, arg CreateAccountParams) (CreateAccountRow, error)
 	CreateApp(ctx context.Context, db DBTX, arg CreateAppParams) (CreateAppRow, error)
-	CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParams) (Build, error)
+	CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParams) (CreateBuildRow, error)
 	CreateCron(ctx context.Context, db DBTX, arg CreateCronParams) (CreateCronRow, error)
 	CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCustomDomainParams) (CreateCustomDomainRow, error)
 	CreateDeployment(ctx context.Context, db DBTX, arg CreateDeploymentParams) (CreateDeploymentRow, error)
@@ -152,6 +152,26 @@ type Querier interface {
 	DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error
 	DeploymentByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentByIDRow, error)
+	// Called by the recovery arbiter after a successful migrate-or-
+	// recreate sweep has restored the destination's snapshot set, OR by
+	// the wake flow on a successful cold boot. Resets the counter and
+	// clears the backoff_until so future wakes don't short-circuit.
+	DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// Bump snapshot_miss_count + stamp Retry-After until. Called by the
+	// wake flow when the snapshot-fetch path fails (stale cache, missing
+	// replica on the destination, etc.). Capped-exponential backoff math
+	// lives in pkg/sched/snapshot_backoff.go; this query is the state
+	// write only.
+	//
+	// $1 = deployment id
+	// $2 = backoff_until timestamp
+	DeploymentRecordSnapshotMiss(ctx context.Context, db DBTX, arg DeploymentRecordSnapshotMissParams) error
+	// The wake-side gate. Returns the row iff a backoff is currently in
+	// effect (snapshot_miss_backoff_until > now()). The wake flow
+	// short-circuits with HTTP 429 + Retry-After on a hit. The partial
+	// index `deployments_snapshot_backoff_idx` makes this an index-only
+	// scan.
+	DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error)
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
 	// Single oldest request row for one fingerprint, used by the
@@ -339,6 +359,15 @@ type Querier interface {
 	// ReportBatchItemFailures handler needs.
 	InsertTriggerRecord(ctx context.Context, db DBTX, arg InsertTriggerRecordParams) (pgtype.UUID, error)
 	InstanceByID(ctx context.Context, db DBTX, id pgtype.UUID) (InstanceByIDRow, error)
+	// Live instances on a specific node — input to the arbiter's
+	// per-instance decision. Limited to states the arbiter can act on:
+	// 'RUNNING' (live-migrate or recreate), 'COLD_BOOTING' (recreate,
+	// the snapshot may not have made it to the destination yet),
+	// 'WAKING' (recreate — same reason). The arbiter only needs the
+	// (app_id, deployment_id, state, id) tuple — account_id is reachable
+	// via the existing app/deployment joins if needed by downstream
+	// code, but the per-tick hot loop doesn't pay for it here.
+	InstanceListByNodeForRecovery(ctx context.Context, db DBTX, nodeID pgtype.UUID) ([]InstanceListByNodeForRecoveryRow, error)
 	// Returns true if any active suppression matches the address.
 	// "Active" means expires_at IS NULL OR expires_at > now(); the
 	// partial index mail_suppressions_active_email_idx keeps expired
@@ -490,7 +519,7 @@ type Querier interface {
 	// ADR-118 / issue #757: filter_criteria is included so the dispatch
 	// tick can evaluate per-record predicates without a second round-trip
 	// (the column is JSONB; empty/null means "no filter").
-	ListEnabledTriggers(ctx context.Context, db DBTX) ([]Trigger, error)
+	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEvents(ctx context.Context, db DBTX, arg ListEventsParams) ([]ListEventsRow, error)
 	// issue #517 / PR-C / ADR-064 — wake-timeline read-side query.
 	// Filters on the jsonb expression index events_wake_id_idx
@@ -538,17 +567,88 @@ type Querier interface {
 	ListTriggerDeadLetter(ctx context.Context, db DBTX, arg ListTriggerDeadLetterParams) ([]TriggerDeadLetter, error)
 	// Used by GET /v1/triggers/{id}/records (dashboard + apid handler).
 	// Returns records in dispatch-time order with the standard projection.
-	ListTriggerRecordsForTrigger(ctx context.Context, db DBTX, arg ListTriggerRecordsForTriggerParams) ([]TriggerRecord, error)
+	ListTriggerRecordsForTrigger(ctx context.Context, db DBTX, arg ListTriggerRecordsForTriggerParams) ([]ListTriggerRecordsForTriggerRow, error)
 	// Same rationale as TriggerByID — full Trigger projection so
 	// sqlc's generated Row type matches the existing pgstore return
 	// type. (commit 6 of the issue #757 mega-PR.)
-	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]Trigger, error)
+	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error)
 	MarkDeploymentLive(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error
 	MarkTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkTriggerRecordDeadLetterParams) error
 	MarkTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkTriggerRecordRetryParams) error
 	MarkTriggerRecordSucceeded(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// ----------------------------------------------------------------------
+	// NodeLifecycleStore (Workstream B, issue #1184)
+	//
+	// 12 queries wrap the recovery arbiter's DB I/O. The arbiter reads via
+	// NodeGet/NodeList/NodeListRecoverable/NodeListDrainable and writes via
+	// NodeSetLifecycle (CAS on the prior lifecycle, so two competing writers
+	// can't race from 'active'→'draining' vs 'active'→'unavailable'). Drain
+	// initiation stamps `drain_initiated_at`; the drain-complete sweep marks
+	// `drain_completed_at` once the last live instance migrates or recreates.
+	//
+	// DeploymentRecordSnapshotMiss / DeploymentClearSnapshotBackoff are the
+	// per-deployment backoff state added by 00585 — wake flow records a
+	// miss and stamps a `Retry-After` until, the recovery arbiter clears
+	// it after a successful migrate-or-recreate sweep. Partial index
+	// `deployments_snapshot_backoff_idx` makes the wake-side check an
+	// index-only scan.
+	// ----------------------------------------------------------------------
+	// Resolve a single compute_nodes row by its UUID. Used by the recovery
+	// arbiter's per-tick decision and by the apid drain handler.
+	NodeGet(ctx context.Context, db DBTX, id pgtype.UUID) (NodeGetRow, error)
+	// Same as NodeGet but by the human-stable name. The apid handler
+	// (POST /v1/compute-nodes/{name}/drain) and the recovery arbiter's
+	// cold-start reconciliation path both key by name because operator
+	// input is name-based.
+	NodeGetByName(ctx context.Context, db DBTX, name string) (NodeGetByNameRow, error)
+	// All nodes, optionally filtered by lifecycle. The recovery arbiter
+	// passes NULL to enumerate every row on cold-start reconciliation;
+	// the placement filter passes lifecycle='active' (via the existing
+	// `WHERE active = true` partial-index path — unchanged). $1 is the
+	// lifecycle filter; pass the empty string for "any".
+	NodeList(ctx context.Context, db DBTX, dollar_1 interface{}) ([]NodeListRow, error)
+	// Drainable candidates: lifecycle='active' AND zero live instances.
+	// The drain handler refuses to flip lifecycle='draining' for nodes
+	// with active traffic (it surfaces RFC 7807 `node_draining_refused`
+	// instead) and waits for the operator to clear the load first; this
+	// query is the "safe to drain right now" enumeration.
+	NodeListDrainable(ctx context.Context, db DBTX) ([]NodeListDrainableRow, error)
+	// Nodes that need the recovery arbiter's attention. Two lifecycle
+	// states qualify:
+	//   'unavailable'  → heartbeat gap detected; instances stranded.
+	//   'recovering'   → first post-failure ping succeeded; sweep to
+	//                    confirm zero stranded instances.
+	// Caller is the recovery arbiter; one tick enumerates both classes
+	// and applies the same decision matrix.
+	NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListRecoverableRow, error)
+	// Stamps drain_completed_at + flips lifecycle='active'. Called once
+	// the drain arbiter confirms zero live instances remain on the node.
+	// CAS on lifecycle='draining' so a concurrent reactivate can't race.
+	NodeMarkDrainCompleted(ctx context.Context, db DBTX, arg NodeMarkDrainCompletedParams) (int64, error)
+	// Stamps last_recovery_outcome='succeeded' and flips lifecycle='active'.
+	// Called by the recovery arbiter after the migrate-or-recreate sweep
+	// has cleared all stranded instances on a 'recovering' node. CAS on
+	// 'recovering' so a fresh heartbeat-driven reactivate wins cleanly.
+	NodeMarkRecovered(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	// CAS lifecycle transition. Returns 0 if the prior state didn't match
+	// $2 (i.e. another writer raced us) — the caller treats that as a
+	// soft no-op and re-reads via NodeGet. Returns 1 on success.
+	//
+	// Args:
+	//   $1 = node id (UUID)
+	//   $2 = expected prior lifecycle text
+	//   $3 = new lifecycle text
+	//   $4 = wall-clock timestamp to stamp on the relevant audit column:
+	//        'draining'        → drain_initiated_at
+	//        'unavailable'     → NULL (heartbeat gap is the writer; this
+	//                             path is for the rare explicit flip)
+	//        'recovering'      → recovery_initiated_at
+	//        'active'          → drain_completed_at (last step of a
+	//                             successful drain) OR NULL when called
+	//                             from the heartbeat reactivator
+	NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLifecycleParams) (int64, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)
@@ -700,7 +800,7 @@ type Querier interface {
 	// the same Go struct; projections that omit a column produce a
 	// distinct Row type that breaks the existing pgstore return
 	// type).
-	TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Trigger, error)
+	TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (TriggerByIDRow, error)
 	// Audit round 2 finding #1 (PR #910): deadLetterAll() is invoked
 	// with broker-side handles (kafka offset, NATS seq, SQS receipt
 	// handle, Redis entry-id, queue invocation_id) but the
@@ -762,7 +862,7 @@ type Querier interface {
 	// shape is preserved by mirroring the same column list that
 	// ListEnabledTriggers uses (filter_criteria is part of the
 	// Trigger struct since commit 6 of issue #757 mega-PR).
-	UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerParams) (Trigger, error)
+	UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerParams) (UpdateTriggerRow, error)
 	// ---------------------------------------------------------------------------
 	// PR-D / ADR-012 §7 amendment — per-tenant GitHub App webhook secret.
 	//
