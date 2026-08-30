@@ -3758,6 +3758,12 @@ func (e *Engine) MigrateLiveInstances(ctx context.Context, deadNodeID string) (i
 		e.ownerNodeID, e.BuildAppSpecForMigration, e.ledger,
 		e.resolveNodeCeiling)
 	harness.SetMaxPerTick(maxPerTick)
+	// Workstream B / Task #66: share the recovery-timeline
+	// Platform so a successful Phase 4 ack emits
+	// instance.migrated alongside the wake timeline.
+	if e.events != nil {
+		harness.WithEvents(e.events)
+	}
 	leaseSeconds := api.MigrateLiveLeaseSeconds
 	if e.migrateLiveLeaseSeconds > 0 {
 		leaseSeconds = e.migrateLiveLeaseSeconds
@@ -4077,6 +4083,15 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 			e.log.Warn("sched: reconcile dead-node instances: failed orphaned instance",
 				"instance_id", ins.ID, "app_id", ins.AppID, "node_id", ins.NodeID,
 				"ram_mb", ins.RAMMB)
+			if e.events != nil {
+				e.events.EmitRecovery(ctx, events.InstanceFailedEvent{
+					EmitAt:     time.Now().UTC(),
+					InstanceID: ins.ID,
+					AppID:      ins.AppID,
+					NodeID:     ins.NodeID,
+					Reason:     "liveness_lost",
+				})
+			}
 			reconciled++
 		case errors.Is(recErr, state.ErrConflict):
 			// Node recovered, or a peer moved the row first. Benign

@@ -330,6 +330,7 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 			"prior_lifecycle", string(n.Lifecycle),
 			"staleness", staleness.String())
 		markLifecycle(n.Lifecycle, state.NodeLifecycleUnavailable)
+		h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
 		}
@@ -344,6 +345,7 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 			"node_id", n.ID, "node_name", n.Name,
 			"prior_lifecycle", string(n.Lifecycle), "err", err)
 		markLifecycle(n.Lifecycle, state.NodeLifecycleUnavailable)
+		h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
 		}
@@ -361,6 +363,7 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		h.log.Info("heartbeat: node recovered to recovering",
 			"node_id", n.ID, "node_name", n.Name)
 		markLifecycle(state.NodeLifecycleUnavailable, state.NodeLifecycleRecovering)
+		h.emitNodeRecovered(ctx, n)
 	}
 	if err := h.store.HeartbeatComputeNode(ctx, n.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -452,4 +455,41 @@ func (h *Heartbeat) Run(ctx context.Context) error {
 			_ = h.Tick(ctx)
 		}
 	}
+}
+
+// emitNodeFailed stamps the recovery timeline when the heartbeat
+// flips a node's lifecycle to unavailable. Both the staleness
+// gate and the ping-failure path route through here so the
+// dashboard sees a single NodeFailed event regardless of which
+// trigger caused the demotion. h.events nil is tolerated (tests
+// + legacy wiring that pre-dates the events Platform).
+func (h *Heartbeat) emitNodeFailed(ctx context.Context, n state.ComputeNode, lastSeen time.Time) {
+	if h.events == nil {
+		return
+	}
+	h.events.EmitRecovery(ctx, events.NodeFailedEvent{
+		EmitAt:          time.Now().UTC(),
+		NodeID:          n.ID,
+		NodeName:        n.Name,
+		LastHeartbeatAt: lastSeen,
+	})
+}
+
+// emitNodeRecovered stamps the recovery timeline when the
+// heartbeat flips a previously-unavailable node back to
+// recovering. The actual transition to `active` is the
+// recovery arbiter's job (it has the migration/recreate
+// outcome); this event fires on the first successful
+// post-failure ping so the dashboard can correlate with the
+// NodeFailed that preceded it.
+func (h *Heartbeat) emitNodeRecovered(ctx context.Context, n state.ComputeNode) {
+	if h.events == nil {
+		return
+	}
+	h.events.EmitRecovery(ctx, events.NodeRecoveredEvent{
+		EmitAt:               time.Now().UTC(),
+		NodeID:               n.ID,
+		NodeName:             n.Name,
+		RecoveryInitiatedAt:  time.Now().UTC(),
+	})
 }

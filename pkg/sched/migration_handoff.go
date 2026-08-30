@@ -74,6 +74,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -89,6 +90,9 @@ type MigrationHarness struct {
 	vmm     RoutedVMM
 	metrics apiMigrationMetrics
 	log     *slog.Logger
+	// events is the recovery-timeline fan-out (Workstream B /
+	// issue #1184 / Task #66). nil opts out (legacy fixtures).
+	events *events.Platform
 	// ledger is schedd's per-node NodeLedger. Tier A5 (ADR-066)
 	// reserves destination RAM + vCPU at Phase 3 BEFORE the wire
 	// call so a flood of inbound migrations cannot over-admit a
@@ -210,6 +214,7 @@ func NewMigrationHarness(
 		nodeCeilingResolver: nodeCeilingResolver,
 		maxPerTick:          api.MigrateLiveMaxPerTick,
 		leaseSeconds:        api.MigrateLiveLeaseSeconds,
+		events:              nil, // set via WithEvents at wiring time (cmd/schedd)
 	}
 	// Resolve the destination's row ceiling/budget eagerly so a
 	// missing compute_nodes row surfaces at handoff time rather
@@ -238,6 +243,14 @@ func (h *MigrationHarness) SetMaxPerTick(n int) { h.maxPerTick = n }
 
 // SetLeaseSeconds overrides the lease window (tests only).
 func (h *MigrationHarness) SetLeaseSeconds(n int) { h.leaseSeconds = n }
+
+// WithEvents installs the recovery-timeline fan-out
+// (Workstream B / Task #66). Nil clears the platform (returns
+// the receiver for fluent chaining).
+func (h *MigrationHarness) WithEvents(p *events.Platform) *MigrationHarness {
+	h.events = p
+	return h
+}
 
 // MigrateOne runs the four-phase handoff for a single
 // candidate instance. The parent Engine.MigrateLiveInstances
@@ -530,6 +543,20 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 		"to_node_id", h.newOwnerNodeID,
 		"lease_token", prepared.LeaseToken,
 	)
+	if h.events != nil {
+		// InstanceMigrated event: payload uses fields that the
+		// AppSpec doesn't carry (AppID/DeploymentID). The
+		// dashboard's recovery filter joins via instance_id so
+		// the missing app context is fine for audit; a follow-up
+		// can plumb it through the store read here.
+		h.events.EmitRecovery(ctx, events.InstanceMigratedEvent{
+			EmitAt:       time.Now().UTC(),
+			InstanceID:   instanceID,
+			SourceNodeID: fromNodeID,
+			DestNodeID:   h.newOwnerNodeID,
+			LeaseID:      string(prepared.LeaseToken),
+		})
+	}
 	return nil
 }
 
