@@ -183,18 +183,18 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	// become drive0+vda in the guest, not drive1).
 	if in.FullRootfs {
 		return b.BuildFullRootfs(ctx, BuildFullRootfsInput{
-			Layers:             in.Layers,
-			Manifest:           in.Manifest,
-			GuestInitPath:      in.GuestInitPath,
-			Plan:               in.Plan,
-			Storage:            in.Storage,
-			StorageKey:         in.StorageKey,
-			OutImage:           in.OutImage,
-			TarballPath:        in.TarballPath,
+			Layers:              in.Layers,
+			Manifest:            in.Manifest,
+			GuestInitPath:       in.GuestInitPath,
+			Plan:                in.Plan,
+			Storage:             in.Storage,
+			StorageKey:          in.StorageKey,
+			OutImage:            in.OutImage,
+			TarballPath:         in.TarballPath,
 			FunctionHandlerPath: in.FunctionHandlerPath,
 			FunctionRunnerPath:  in.FunctionRunnerPath,
-			SBOMRun:            in.SBOMRun,
-			SBOMStorageKey:     in.SBOMStorageKey,
+			SBOMRun:             in.SBOMRun,
+			SBOMStorageKey:      in.SBOMStorageKey,
 		})
 	}
 	limits, ok := api.LimitsFor(in.Plan)

@@ -5,26 +5,26 @@
 // These tests drive the full FC VM boot path against three
 // real-world images that the two-drive path rejects today:
 //
-//   1. distroless/static-debian12 — single-layer image with no
-//      /bin/sh. Spec §11 forbids landing on uid 0 in the guest.
-//      Acceptance: full-rootfs auto-dispatch on Hobby, cold-boot
-//      succeeds, `whoami` reports `nonroot` (uid 65532).
+//  1. distroless/static-debian12 — single-layer image with no
+//     /bin/sh. Spec §11 forbids landing on uid 0 in the guest.
+//     Acceptance: full-rootfs auto-dispatch on Hobby, cold-boot
+//     succeeds, `whoami` reports `nonroot` (uid 65532).
 //
-//   2. alpine:latest — multi-arch image-index, top-most-wins
-//      /etc/passwd merge walk. Acceptance: full-rootfs
-//      auto-dispatch, cold-boot, `cat /etc/os-release` reports
-//      alpine, `id` reports uid=0(root) (alpine's /etc/passwd
-//      declares root as default USER).
+//  2. alpine:latest — multi-arch image-index, top-most-wins
+//     /etc/passwd merge walk. Acceptance: full-rootfs
+//     auto-dispatch, cold-boot, `cat /etc/os-release` reports
+//     alpine, `id` reports uid=0(root) (alpine's /etc/passwd
+//     declares root as default USER).
 //
-//   3. Synthetic image declaring `USER node` (Uname="node",
-//      Uid=0). Acceptance: `id` inside the guest reports uid 999
-//      (the alpine /etc/passwd value for the `node` user), NOT
-//      1000 (DefaultAppUID) and NOT 0 (root).
+//  3. Synthetic image declaring `USER node` (Uname="node",
+//     Uid=0). Acceptance: `id` inside the guest reports uid 999
+//     (the alpine /etc/passwd value for the `node` user), NOT
+//     1000 (DefaultAppUID) and NOT 0 (root).
 //
-//   4. Two-drive customer unaffected — a `FROM runner-*` image
-//      continues to take the two-drive path with drive0 attached
-//      (no drive0+vda replacement). Pins the load-bearing
-//      constraint that M-3 does NOT regress today's customer base.
+//  4. Two-drive customer unaffected — a `FROM runner-*` image
+//     continues to take the two-drive path with drive0 attached
+//     (no drive0+vda replacement). Pins the load-bearing
+//     constraint that M-3 does NOT regress today's customer base.
 //
 // All four tests require:
 //   - KVM access (/dev/kvm)
@@ -342,11 +342,11 @@ func buildSyntheticUserNodeLayersForMetal(t *testing.T) []layerReaderForMetal {
 // pkg/api.AppManifest.Validate() contract.
 func manifestForSyntheticUserNode() manifestForMetal {
 	return manifestForMetal{
-		User:           "node",
-		WorkingDir:     "/home/node",
-		Entrypoint:     []string{"/bin/echo"},
-		Architecture:   "amd64",
-		OS:             "linux",
+		User:         "node",
+		WorkingDir:   "/home/node",
+		Entrypoint:   []string{"/bin/echo"},
+		Architecture: "amd64",
+		OS:           "linux",
 	}
 }
 

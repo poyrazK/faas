@@ -262,18 +262,6 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 }
 
 // preserveOwnership best-effort applies hdr.Uid/hdr.Gid to target.
-// Numeric-only today (ADR-136 §Decision 2); named-user resolution
-// (hdr.Uname → /etc/passwd lookup) is M-3 work. Out-of-range values
-// and named users increment the clamp counter and fall through —
-// the entry is left under the imaged daemon uid/gid.
-//
-// Why os.Lchown (not os.Chown): for symlinks we must target the link
-// itself, not its resolution. For directories and regular files
-// os.Lchown behaves identically to os.Chown.
-func preserveOwnership(target string, hdr *tar.Header) error {
-	return preserveOwnershipWithResolver(target, hdr, nil)
-}
-
 // preserveOwnershipWithResolver is the Resolver-aware sibling of
 // preserveOwnership (ADR-142 §Decision 1). A non-nil Resolver lets
 // preserveOwnership honor named users (hdr.Uname!="" with hdr.Uid==0)

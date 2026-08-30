@@ -378,7 +378,10 @@ func (c *RegistryClient) fetchManifestWithAuth(ctx context.Context, r Reference,
 		// After the walk, body is a per-platform single-arch manifest;
 		// its Content-Type is now application/vnd.oci.image.manifest.v1+json
 		// (or the docker equivalent), which we treat as a flat imageManifest.
-		ct = ""
+		// The Content-Type from the index response is dropped here — only the
+		// per-platform manifest's CT (returned by the recursive fetch) is
+		// honored downstream, and it's already encoded in `body` via the
+		// walker.
 	}
 	var m imageManifest
 	if err := json.Unmarshal(body, &m); err != nil {

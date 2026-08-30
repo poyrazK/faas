@@ -131,7 +131,9 @@ func TestParseStagingPasswd_MalformedLineErrors(t *testing.T) {
 
 // TestWritePasswdTable_BinaryFormat — the on-disk binary file at
 // /etc/faas/app_passwd must match the documented record layout:
-//   4 bytes uid, 4 bytes gid, 1 byte name length, N bytes name,
+//
+//	4 bytes uid, 4 bytes gid, 1 byte name length, N bytes name,
+//
 // sorted ascending by name, no padding. The guest-init reader
 // (commit 8) depends on this exact layout.
 func TestWritePasswdTable_BinaryFormat(t *testing.T) {

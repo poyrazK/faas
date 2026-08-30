@@ -199,18 +199,18 @@ func injectBaseGuestInit(staging, guestInitPath string) error {
 // so named users (distroless / alpine / scratch USER=...) land on
 // the image's declared uid rather than uid 0.
 type BuildFullRootfsInput struct {
-	Layers          []io.Reader
-	Manifest        api.AppManifest
-	GuestInitPath   string
-	Plan            api.Plan
-	Storage         storage.StorageBackend
-	StorageKey      string
-	OutImage        string
-	TarballPath     string
-	FunctionHandlerPath  string
-	FunctionRunnerPath   string
-	SBOMRun         func(ctx context.Context, dir string) ([]byte, error)
-	SBOMStorageKey  string
+	Layers              []io.Reader
+	Manifest            api.AppManifest
+	GuestInitPath       string
+	Plan                api.Plan
+	Storage             storage.StorageBackend
+	StorageKey          string
+	OutImage            string
+	TarballPath         string
+	FunctionHandlerPath string
+	FunctionRunnerPath  string
+	SBOMRun             func(ctx context.Context, dir string) ([]byte, error)
+	SBOMStorageKey      string
 	// Resolver is consulted by ApplyLayerGzWithResolver during the
 	// per-entry chown path. Commit 5 lays the plumbing; commit 7
 	// wires the real image-/etc/passwd parser + merge walk.
@@ -382,10 +382,11 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 // table guest-init reads at boot. ADR-142 §Decision 3.
 //
 // Format (per record, big-endian, contiguous, no padding):
-//   bytes 0..3   uint32  uid
-//   bytes 4..7   uint32  gid
-//   byte  8      uint8   name length (0..255)
-//   bytes 9..9+N name (UTF-8, no NUL terminator)
+//
+//	bytes 0..3   uint32  uid
+//	bytes 4..7   uint32  gid
+//	byte  8      uint8   name length (0..255)
+//	bytes 9..9+N name (UTF-8, no NUL terminator)
 //
 // Records are sorted ascending by name so guest-init can
 // binary-search in O(log N) on every lookup. The file is owned
@@ -401,6 +402,7 @@ const passwdTablePath = "/etc/faas/app_passwd"
 // source of truth).
 func parseStagingPasswd(staging string) (map[string]PasswdEntry, error) {
 	p := filepath.Join(staging, "etc", "passwd")
+	//nolint:forbidigo // staging is the builder-owned temp dir created by MkdirBaseExtraction / Builder.Build; no customer-symlink surface.
 	f, err := os.Open(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -408,7 +410,7 @@ func parseStagingPasswd(staging string) (map[string]PasswdEntry, error) {
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return ParsePasswd(f)
 }
 
@@ -549,11 +551,13 @@ func (b *Builder) emitFullRootfsSBOM(ctx context.Context, in BuildFullRootfsInpu
 	if in.SBOMStorageKey == "" {
 		return "", nil
 	}
-	body, err := in.SBOMRun(ctx, staging)
-	if err != nil || !json.Valid(body) {
+	body, runErr := in.SBOMRun(ctx, staging)
+	if runErr != nil || !json.Valid(body) {
+		//nolint:nilerr // Best-effort: SBOM emission never blocks the build (ADR-141 §Decision 4). Failures are surfaced via the imaged_passwd_entries_total counter sibling path; here we deliberately swallow.
 		return "", nil
 	}
-	if err := in.Storage.Put(ctx, in.SBOMStorageKey, bytes.NewReader(body)); err != nil {
+	if putErr := in.Storage.Put(ctx, in.SBOMStorageKey, bytes.NewReader(body)); putErr != nil {
+		//nolint:nilerr // Best-effort: same rationale as the SBOMRun branch above.
 		return "", nil
 	}
 	return in.SBOMStorageKey, nil

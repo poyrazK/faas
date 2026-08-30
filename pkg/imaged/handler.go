@@ -3372,8 +3372,8 @@ func (h *Handler) emitWarmSnapshotStale(ctx context.Context, fcVersion string, b
 //   - dep.FullRootfsOverride=&false → today-equivalent failure (force-off).
 //   - dep.FullRootfsOverride=&true  → full-rootfs (force-on, even on Free).
 //   - dep.FullRootfsOverride=nil:
-//     - dep.FullRootfsAllowAuto && paid plan → full-rootfs (auto).
-//     - else                              → today-equivalent failure.
+//   - dep.FullRootfsAllowAuto && paid plan → full-rootfs (auto).
+//   - else                              → today-equivalent failure.
 //
 // "Paid plan" means PlanHobby / PlanPro / PlanScale per
 // api.PlanMeetsMinimumPlan(_, PlanHobby). Free plan auto-fallback

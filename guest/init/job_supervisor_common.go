@@ -104,6 +104,8 @@ type JobExitPayload struct {
 // itself for logging + observability. Matches the precedence
 // rules in runAppWithEnv (systemEnv ⊕ job.Env ⊕ run.env_overrides,
 // with systemEnv winning on conflict).
+//
+//nolint:unused // consumed by job_supervisor_linux.go on linux builds; macOS dev boxes don't see the consumer.
 var jobEnvBaseline = map[string]string{
 	"FAAS_JOB":          "1",
 	"FAAS_RUNTIME_KIND": "job",
@@ -121,6 +123,8 @@ var jobEnvBaseline = map[string]string{
 // Returns the merged map converted to the []string form
 // syscall.Exec wants (KEY=VAL pairs, no shell quoting needed
 // because exec.Command takes the argv directly).
+//
+//nolint:unused // consumed by job_supervisor_linux.go on linux builds; macOS dev boxes don't see the consumer.
 func buildEnvForJob(m JobManifest) []string {
 	merged := make(map[string]string, len(os.Environ())+len(m.Env)+len(jobEnvBaseline))
 	for _, kv := range os.Environ() {
@@ -172,6 +176,8 @@ func buildEnvForJob(m JobManifest) []string {
 // POSIX exit code 128+N convention is what shells return for
 // signal death; if the supervisor captured a signal, that's the
 // authoritative story.
+//
+//nolint:unused // consumed by job_supervisor_linux.go on linux builds; macOS dev boxes don't see the consumer.
 func mapExitToErrorClass(exitCode int32, signal int32) string {
 	if exitCode == 0 {
 		return "succeeded"
@@ -197,4 +203,6 @@ func mapExitToErrorClass(exitCode int32, signal int32) string {
 // per-task manifest to on drive1. Mirror of the literal in
 // pkg/fcvm/job_vmm.go::stageJobManifest. Drift here is a parse
 // error on first cold boot.
+//
+//nolint:unused // consumed by job_supervisor_linux.go on linux builds; macOS dev boxes don't see the consumer.
 const jobManifestPath = "etc/faas/job.json"
