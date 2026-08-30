@@ -31,7 +31,16 @@ type schedFlushSink struct {
 	nowFunc func() time.Time
 
 	mu   sync.Mutex
-	seen map[string]time.Time // instance_id -> most-recent request time
+	seen map[string]bufferedInstanceTouch // instance_id -> coalesced activity
+}
+
+// bufferedInstanceTouch preserves both halves of the activity contract while
+// collapsing a burst into one schedd row. last_request_at is a max, whereas
+// request_count is a sum; storing only the timestamp silently discarded the
+// count and prevented warm-snapshot eligibility from ever being reached.
+type bufferedInstanceTouch struct {
+	lastRequest  time.Time
+	requestDelta int64
 }
 
 // scheddInstanceResolver is the slice of scheddRouter the flush
@@ -60,17 +69,21 @@ func newSchedFlushSink(router scheddInstanceResolver, store *state.PgStore, log 
 		store:   store,
 		log:     log,
 		nowFunc: time.Now,
-		seen:    map[string]time.Time{},
+		seen:    map[string]bufferedInstanceTouch{},
 	}
 }
 
-// Touch records the latest request time for instanceID. Keeps only the newest
-// per instance id so a burst collapses to one row per instance per flush.
+// Touch records one successful request for instanceID. The newest timestamp
+// and the total request delta are coalesced independently so a burst still
+// becomes one row without losing requests.
 func (s *schedFlushSink) Touch(instanceID string, t time.Time) {
 	s.mu.Lock()
-	if prev, ok := s.seen[instanceID]; !ok || t.After(prev) {
-		s.seen[instanceID] = t
+	touch := s.seen[instanceID]
+	if touch.lastRequest.IsZero() || t.After(touch.lastRequest) {
+		touch.lastRequest = t
 	}
+	touch.requestDelta++
+	s.seen[instanceID] = touch
 	s.mu.Unlock()
 }
 
@@ -78,8 +91,8 @@ func (s *schedFlushSink) Touch(instanceID string, t time.Time) {
 func (s *schedFlushSink) Get(instanceID string) (time.Time, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.seen[instanceID]
-	return t, ok
+	touch, ok := s.seen[instanceID]
+	return touch.lastRequest, ok
 }
 
 // Forget drops instanceID from the buffer (e.g. when the cached target is
@@ -119,7 +132,7 @@ func (s *schedFlushSink) Flush(ctx context.Context) error {
 		return nil
 	}
 	batch := s.seen
-	s.seen = map[string]time.Time{}
+	s.seen = map[string]bufferedInstanceTouch{}
 	s.mu.Unlock()
 
 	// Group touches by ScheddClient. We carry the resolved client
@@ -135,7 +148,7 @@ func (s *schedFlushSink) Flush(ctx context.Context) error {
 		touches []state.InstanceTouch
 	}
 	groups := map[scheddgrpc.ScheddClient]*group{}
-	for id, t := range batch {
+	for id, touch := range batch {
 		cli, err := s.router.ScheddForInstance(ctx, id)
 		if err != nil {
 			s.log.Warn("gatewayd: report activity resolve instance", "instance", id, "err", err)
@@ -146,7 +159,7 @@ func (s *schedFlushSink) Flush(ctx context.Context) error {
 			continue
 		}
 		if g, ok := groups[cli]; ok {
-			g.touches = append(g.touches, state.InstanceTouch{InstanceID: id, LastRequest: t})
+			g.touches = append(g.touches, state.InstanceTouch{InstanceID: id, LastRequest: touch.lastRequest, RequestDelta: touch.requestDelta})
 			continue
 		}
 		// Resolve the owning node id for the log line. Cache hit
@@ -164,7 +177,7 @@ func (s *schedFlushSink) Flush(ctx context.Context) error {
 				nodeID = ins.NodeID
 			}
 		}
-		groups[cli] = &group{cli: cli, nodeID: nodeID, touches: []state.InstanceTouch{{InstanceID: id, LastRequest: t}}}
+		groups[cli] = &group{cli: cli, nodeID: nodeID, touches: []state.InstanceTouch{{InstanceID: id, LastRequest: touch.lastRequest, RequestDelta: touch.requestDelta}}}
 	}
 
 	var firstErr error

@@ -59,9 +59,10 @@ const (
 // the device-code flow so the auth surface doesn't grow into one
 // 600-line file. Holds the same server reference; no new state.
 type cliAuthHandlers struct {
-	srv    *server
-	log    *slog.Logger
-	domain string // apps base URL — same as authHandlers.domain
+	srv     *server
+	log     *slog.Logger
+	domain  string // apps base URL — same as authHandlers.domain
+	urlBase string // absolute API origin serving the /cli-auth route
 }
 
 // mintCliAuthCode handles POST /v1/cli-auth/code. Returns 200 with
@@ -84,7 +85,7 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("could not persist code"))
 		return
 	}
-	url := h.domain + cliAuthPath + "?code=" + code
+	url := strings.TrimRight(h.urlBase, "/") + cliAuthPath + "?code=" + code
 	writeJSON(w, http.StatusOK, api.CliAuthCodeResponse{
 		Code:      code,
 		URL:       url,

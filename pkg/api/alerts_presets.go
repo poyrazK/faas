@@ -118,3 +118,27 @@ type EnableAlertPresetRequest struct {
 	CooldownMinutes *int   `json:"cooldown_minutes,omitempty"`
 	Enabled         *bool  `json:"enabled,omitempty"`
 }
+
+// TestAlertPresetResponse is the body returned by POST
+// /v1/apps/{slug}/alert-presets/{name}/test (issue #1233 /
+// ADR-123 PR-C commit 2). Status is always "sent" on a 200;
+// "sent" is a literal string rather than a typed enum because
+// the SDK + dashboard both treat any 2xx as success and ignore
+// the value (the failure path is the 502 Problem, not a
+// non-2xx-with-sent-false).
+//
+// DeliveryID is the synthetic UUID the dispatcher stamped on
+// the test Event — preserved here so the customer's audit-log
+// join can correlate their receiver's log entry with our audit
+// row (alert_preset.test_sent).
+//
+// Attempts is the dispatcher's retry-loop attempt count; 1 means
+// the first attempt succeeded, 5 means every retry was exhausted
+// (in which case the handler returns 502 — this field stays at 5
+// as a debugging breadcrumb in the audit row regardless).
+type TestAlertPresetResponse struct {
+	Status     string `json:"status"`      // always "sent" on 200
+	Test       bool   `json:"test"`        // always true on 200
+	DeliveryID string `json:"delivery_id"` // 32-char hex UUID
+	Attempts   int    `json:"attempts"`    // 1..MaxAttempts
+}

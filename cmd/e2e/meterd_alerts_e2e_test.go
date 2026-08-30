@@ -351,7 +351,7 @@ func TestMeterdAlertEvaluator_FiresAndDedupes(t *testing.T) {
 	if got := receiver.snapshotCount(); got != 1 {
 		t.Fatalf("after first tick: receiver count = %d; want 1 (HMAC verify would have failed closed)", got)
 	}
-	deliveries, err := store.ListAlertDeliveriesForRule(ctx, rule.ID, 5)
+	deliveries, err := store.ListAlertDeliveriesForRule(ctx, rule.ID, 5, false)
 	if err != nil || len(deliveries) != 1 {
 		t.Fatalf("after first tick: ListAlertDeliveriesForRule err=%v count=%d; want 1", err, len(deliveries))
 	}
@@ -529,7 +529,7 @@ func TestMeterdAlertEvaluator_SSRFBlocked(t *testing.T) {
 	// (oci.ErrImageEgressDenied is terminal, no retries).
 	deadline := time.Now().Add(alertEvalInterval*3 + 5*time.Second)
 	for {
-		deliveries, err := store.ListAlertDeliveriesForRule(ctx, rule.ID, 5)
+		deliveries, err := store.ListAlertDeliveriesForRule(ctx, rule.ID, 5, false)
 		if err != nil {
 			t.Fatalf("ListAlertDeliveriesForRule: %v", err)
 		}

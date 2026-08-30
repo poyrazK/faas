@@ -401,6 +401,10 @@ type Engine struct {
 	// on the persistent ReportCapacity stream. The instance-stats poller
 	// projects it locally instead of dialing every compute node.
 	telemetryCache *NodeTelemetryCache
+	// nodePresence tracks complete vmmd instance sets so a healthy node
+	// restart cannot leave RUNNING database rows for VMs that no longer
+	// exist locally.
+	nodePresence *nodePresenceTracker
 
 	// usageCache is the short TTL cache for the bulk store fallback used when
 	// a node has no fresh vmmd capacity report.
@@ -509,6 +513,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		warmBroadcaster: newWarmHintBroadcaster(),
 		capacityTable:   newNodeCapacityTable(),
 		telemetryCache:  NewNodeTelemetryCache(),
+		nodePresence:    newNodePresenceTracker(),
 		usageCache:      NewNodeUsageCache(),
 		now:             time.Now, // tests override post-construction
 	}

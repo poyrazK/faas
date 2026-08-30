@@ -61,7 +61,7 @@ func FuzzWakeGate(f *testing.F) {
 		done := make(chan struct{})
 		for i := 0; i < fans; i++ {
 			go func(i int) {
-				errs[i] = g.Wait(context.Background(), "app", shouldWake, ensure, nil, nil)
+				errs[i] = g.Wait(context.Background(), "app", "test-acct", shouldWake, ensure, nil, nil)
 				done <- struct{}{}
 			}(i)
 		}
@@ -144,6 +144,7 @@ func TestWakeGateDetachedLeaderBootstrapCapAbort(t *testing.T) {
 			errs[i] = g.Wait(
 				context.Background(),
 				"app",
+				"fuzz-acct",
 				shouldWake,
 				ensure,
 				shouldAbort,
@@ -218,6 +219,7 @@ func TestInflightFollowersMinusLeader(t *testing.T) {
 		leaderDone <- g.Wait(
 			context.Background(),
 			"app",
+			"fuzz-acct",
 			func() bool { return true },
 			func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
 			func() bool { return g.InflightFollowers("app") == 0 },
@@ -241,6 +243,7 @@ func TestInflightFollowersMinusLeader(t *testing.T) {
 		followerDone <- g.Wait(
 			context.Background(),
 			"app",
+			"fuzz-acct",
 			func() bool { return true },
 			func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
 			nil, nil,

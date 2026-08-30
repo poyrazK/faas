@@ -4520,9 +4520,9 @@ func (h *Handler) serveHTTPWithDrain() func() {
 // gate so Wait can observe per-caller wait duration. Called by main once the
 // metrics bundle exists.
 func (h *Handler) SetWakeGateHook() {
-	h.gate.onChange = func(appID string, depth int) {
+	h.gate.onChange = func(appID, accountID string, depth int) {
 		if h.metrics != nil {
-			h.metrics.SetQueueDepth(appID, depth)
+			h.metrics.SetQueueDepth(appID, accountID, depth)
 		}
 	}
 	h.gate.SetMetrics(h.metrics)
@@ -5122,7 +5122,7 @@ haveApp:
 	// N instances before short-circuiting.
 	limits, _ := api.LimitsFor(app.Plan)
 	//nolint:contextcheck // request ctx at handler boundary.
-	cold, wakeID, wakeMethod, err := h.ensureCapacity(r.Context(), app.ID, app.Scope, limits.MaxConcurrency)
+	cold, wakeID, wakeMethod, err := h.ensureCapacity(r.Context(), app.ID, app.AccountID, app.Scope, limits.MaxConcurrency)
 	if err != nil {
 		// ADR-122 §Decision: kind=cache stale-on-error path.
 		// On wake failure (queue full, bootstrap abort, etc.)
@@ -6443,7 +6443,7 @@ func (s *statusRecorder) finalFlush() {
 // prod app's. Empty = prod (legacy). When the cold-start path calls
 // coldStart and coldStart in turn calls Admit, scope is plumbed
 // through both paths.
-func (h *Handler) ensureCapacity(ctx context.Context, appID, scope string, maxConcurrency int) (cold bool, wakeID string, method WakeMethod, err error) {
+func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int) (cold bool, wakeID string, method WakeMethod, err error) {
 	// Loop bound: a single request can drive at most max_concurrency
 	// iterations (cold-start with follow-up fan-out). The cap is
 	// enforced atomically by Backend.Admit (HealthyCount + add as one
@@ -6452,7 +6452,7 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, scope string, maxCo
 	for attempt := 0; attempt < maxConcurrency; attempt++ {
 		healthy := h.backend.HealthyCount(appID)
 		if healthy == 0 {
-			c, w, m, e := h.coldStart(ctx, appID, scope, maxConcurrency)
+			c, w, m, e := h.coldStart(ctx, appID, accountID, scope, maxConcurrency)
 			if e != nil {
 				return false, "", WakeMethodUnspecified, e
 			}
@@ -6488,13 +6488,13 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, scope string, maxCo
 // through the WakeGate's single-flight coalescing. shouldWake is held
 // under the gate lock and re-runs HealthyCount; if a peer's admit has
 // just landed, we skip the redundant cold boot.
-func (h *Handler) coldStart(ctx context.Context, appID, scope string, maxConcurrency int) (bool, string, WakeMethod, error) {
+func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int) (bool, string, WakeMethod, error) {
 	var (
 		admittedWakeID string
 		cold           bool
 		method         WakeMethod
 	)
-	werr := h.gate.Wait(ctx, appID,
+	werr := h.gate.Wait(ctx, appID, accountID,
 		func() bool {
 			return h.backend.HealthyCount(appID) < maxConcurrency
 		},

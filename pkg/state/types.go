@@ -2261,6 +2261,13 @@ type AlertRule struct {
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
 // '<ruleID>:<cooldown_bucket>' and is UNIQUE in Postgres — this is the
 // dispatcher dedupe primitive (issue #396 criterion 4).
+//
+// IsTest (ADR-123 PR-D) is true when the row was written by
+// Dispatcher.DispatchTest — the customer-facing "send a test
+// alert" path. Production fire rows always have IsTest=false.
+// The handler's `?include_test=true` toggle on the deliveries
+// list endpoint is the only opt-in path to surface test rows in
+// the operator pane; the default customer-facing read hides them.
 type AlertDelivery struct {
 	ID             string
 	RuleID         string
@@ -2275,6 +2282,7 @@ type AlertDelivery struct {
 	ObservedValue  float64
 	FiredAt        time.Time
 	DeliveredAt    time.Time // zero until status=delivered
+	IsTest         bool      // true iff row written by Dispatcher.DispatchTest
 }
 
 // AlertDeliveryRow embeds AlertDelivery with a pinned list return —

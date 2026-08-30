@@ -31,6 +31,20 @@ type fakeRunner struct {
 	teardownCount int
 }
 
+type fakeInputRunner struct {
+	fakeRunner
+	inputArgv []string
+	input     []byte
+	inputRuns int
+}
+
+func (f *fakeInputRunner) RunInput(_ context.Context, argv []string, input []byte) error {
+	f.inputRuns++
+	f.inputArgv = append([]string(nil), argv...)
+	f.input = append([]byte(nil), input...)
+	return nil
+}
+
 // fakeHostRenderer (ADR-119 redesign) is the test stub for the
 // Manager's HostRenderer seam. It records every Render call and
 // the latest StaticEgressRules slice the Manager pushed. The
@@ -927,6 +941,81 @@ func TestDestroyReleasesResources(t *testing.T) {
 	}
 }
 
+func TestDestroyCancelsLivenessLoop(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	registry := NewLivenessRegistry()
+	cancelled := make(chan struct{})
+	m.WithLivenessProbes(registry, LivenessProbeConfig{
+		PeriodSeconds:       5,
+		ConsecutiveFailures: 3,
+	}).WithLivenessProbeStarter(func(context.Context, string, int, string, LivenessProbeConfig) context.CancelFunc {
+		return func() {
+			select {
+			case <-cancelled:
+			default:
+				close(cancelled)
+			}
+		}
+	})
+	m.mu.Lock()
+	m.live["i-live"] = &Instance{Lease: Lease{Instance: "i-live", Slot: 1}}
+	m.mu.Unlock()
+	m.startLivenessLoop(context.Background(), "i-live", 1, nil)
+
+	if err := m.Destroy(context.Background(), "i-live"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("destroy did not cancel the liveness loop")
+	}
+	registry.mu.Lock()
+	remaining := len(registry.loops)
+	registry.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("liveness registry retains %d loop(s) after destroy", remaining)
+	}
+}
+
+func TestParkCancelsLivenessLoop(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+	registry := NewLivenessRegistry()
+	cancelled := make(chan struct{})
+	m.WithLivenessProbes(registry, LivenessProbeConfig{
+		PeriodSeconds:       5,
+		ConsecutiveFailures: 3,
+	}).WithLivenessProbeStarter(func(context.Context, string, int, string, LivenessProbeConfig) context.CancelFunc {
+		return func() {
+			select {
+			case <-cancelled:
+			default:
+				close(cancelled)
+			}
+		}
+	})
+	if _, err := m.ColdBoot(context.Background(), req("i-park")); err != nil {
+		t.Fatal(err)
+	}
+	m.startLivenessLoop(context.Background(), "i-park", 1, nil)
+
+	if _, err := m.Park(context.Background(), "i-park", SnapshotSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("park did not cancel the liveness loop")
+	}
+	registry.mu.Lock()
+	remaining := len(registry.loops)
+	registry.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("liveness registry retains %d loop(s) after park", remaining)
+	}
+}
+
 func TestDestroyUnknownIsNoop(t *testing.T) {
 	m := newTestManager(&fakeRunner{}, &fakeVMM{})
 	if err := m.Destroy(context.Background(), "ghost"); err != nil {
@@ -1495,6 +1584,35 @@ func TestSetupNetworkRunsNftBeforeVMBoot(t *testing.T) {
 	// between tap-create < DNAT < Boot is the load-bearing #30 invariant.
 }
 
+func TestRunNftCommandsUsesSingleAtomicBatch(t *testing.T) {
+	run := &fakeInputRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	nc := netns.NewConfig("i-1", "fc-i-1", "vh1", "vp1", netip.MustParseAddr("10.100.0.2"))
+	cmds := nc.NftCommands()
+
+	if err := m.runNftCommands(context.Background(), nc.Netns, cmds); err != nil {
+		t.Fatalf("runNftCommands: %v", err)
+	}
+	if run.inputRuns != 1 {
+		t.Fatalf("batch runs = %d, want 1", run.inputRuns)
+	}
+	if got := strings.Join(run.inputArgv, " "); got != "ip netns exec fc-i-1 nft -f -" {
+		t.Fatalf("batch argv = %q", got)
+	}
+	for _, want := range []string{
+		"add table ip faas\n",
+		"dnat to 10.0.0.2:8080\n",
+		"add table ip6 faas\n",
+	} {
+		if !bytes.Contains(run.input, []byte(want)) {
+			t.Errorf("batch missing %q in:\n%s", want, run.input)
+		}
+	}
+	if len(run.commands) != 0 {
+		t.Fatalf("batched rules also ran individually: %v", run.commands)
+	}
+}
+
 // TestSetupNetworkNftFailureLeaksNothing covers the leak invariant when the
 // strict part of the nft ruleset fails: the defer-cleanup in Wake must
 // fully unwind (netns deleted, lease released) even if Boot never runs.
@@ -2015,6 +2133,76 @@ func TestCaptureAllowlistHandles_NilRunnerLeavesHandlesZero(t *testing.T) {
 	}
 	if hV4 != 0 || hV6 != 0 {
 		t.Errorf("nil runner should return 0,0; got %d,%d", hV4, hV6)
+	}
+}
+
+// TestCaptureAllowlistHandlesForWake_SkipsEmptyAllowlist ensures a default
+// wake does not pay for nft chain listings when the renderer emitted no
+// allowlist rule.
+func TestCaptureAllowlistHandlesForWake_SkipsEmptyAllowlist(t *testing.T) {
+	cap := &fakeCaptureRunner{listChainOutput: []byte(`chain forward {}`)}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithCaptureRunner(cap)
+	hV4, hV6, err := m.captureAllowlistHandlesForWake(context.Background(), "fc-i-1", nil)
+	if err != nil {
+		t.Fatalf("captureAllowlistHandlesForWake: %v", err)
+	}
+	if hV4 != 0 || hV6 != 0 {
+		t.Fatalf("empty allowlist handles = (%d, %d), want (0, 0)", hV4, hV6)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.commands) != 0 {
+		t.Fatalf("empty allowlist made %d nft capture calls, want 0", len(cap.commands))
+	}
+}
+
+func TestCaptureAllowlistHandlesForWake_CapturesConfiguredAllowlist(t *testing.T) {
+	out := []byte(`
+ iifname "tap0" ip daddr { 1.2.3.0/24 } accept # handle 42
+ iifname "tap0" ip6 daddr { 2001:db8::/32 } accept # handle 99
+`)
+	cap := &fakeCaptureRunner{listChainOutput: out}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithCaptureRunner(cap)
+	allowlist := []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+		netip.MustParsePrefix("2001:db8::/32"),
+	}
+	hV4, hV6, err := m.captureAllowlistHandlesForWake(context.Background(), "fc-i-1", allowlist)
+	if err != nil {
+		t.Fatalf("captureAllowlistHandlesForWake: %v", err)
+	}
+	if hV4 != 42 || hV6 != 99 {
+		t.Fatalf("configured allowlist handles = (%d, %d), want (42, 99)", hV4, hV6)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.commands) != 2 {
+		t.Fatalf("configured allowlist made %d nft capture calls, want 2", len(cap.commands))
+	}
+}
+
+func TestCaptureAllowlistHandlesForWake_SkipsUnrepresentedFamily(t *testing.T) {
+	out := []byte(`
+ iifname "tap0" ip daddr { 1.2.3.0/24 } accept # handle 42
+`)
+	cap := &fakeCaptureRunner{listChainOutput: out}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithCaptureRunner(cap)
+	hV4, hV6, err := m.captureAllowlistHandlesForWake(context.Background(), "fc-i-1", []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+	})
+	if err != nil {
+		t.Fatalf("captureAllowlistHandlesForWake: %v", err)
+	}
+	if hV4 != 42 || hV6 != 0 {
+		t.Fatalf("v4-only allowlist handles = (%d, %d), want (42, 0)", hV4, hV6)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.commands) != 1 {
+		t.Fatalf("v4-only allowlist made %d nft capture calls, want 1", len(cap.commands))
+	}
+	if !strings.Contains(strings.Join(cap.commands[0], " "), " nft -a list chain ip faas forward") {
+		t.Fatalf("v4-only capture used unexpected command: %v", cap.commands[0])
 	}
 }
 

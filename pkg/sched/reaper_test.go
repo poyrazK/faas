@@ -48,6 +48,33 @@ func TestReapIdle(t *testing.T) {
 	}
 }
 
+func TestReapIdleUsesStartedAtWhenLastRequestIsMissing(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		{
+			Instance: "newly-started",
+			Plan:     api.PlanPro,
+			State:    state.StateRunning,
+			Started:  now.Add(-5 * time.Second),
+		},
+		{
+			Instance: "old-never-requested",
+			Plan:     api.PlanPro,
+			State:    state.StateRunning,
+			Started:  now.Add(-time.Hour),
+		},
+		{
+			Instance: "unknown-age",
+			Plan:     api.PlanPro,
+			State:    state.StateRunning,
+		},
+	}
+	got := ReapIdle(now, instances, nil, nil)
+	if !equalSet(got, []string{"old-never-requested"}) {
+		t.Fatalf("ReapIdle = %v, want only old-never-requested", got)
+	}
+}
+
 // TestReapIdleSkipsInstanceWithOpenConns pins spec §17 G7: an instance
 // with OpenConns > 0 is considered active regardless of LastRequest
 // staleness. Without this, a parked app mid-WebSocket would be reaped

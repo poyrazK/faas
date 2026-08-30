@@ -145,6 +145,9 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 			return
 		}
 		if err := syncJob(ctx, r.backend, job); err != nil {
+			if storage.IsNotFound(err) {
+				err = state.PermanentSnapshotReplicaError(err)
+			}
 			r.metricsObserve("failed", job.Region)
 			if markErr := r.store.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, job.NodeID, err); markErr != nil {
 				r.log.Warn("snapshothipd: mark failed", "snapshot_id", job.SnapshotID, "node_id", job.NodeID, "err", markErr)
@@ -172,7 +175,13 @@ func syncJob(ctx context.Context, backend storage.StorageBackend, job state.Snap
 	if job.StorageKey == "" || job.VMStateStorageKey == "" {
 		return errors.New("snapshothipd: snapshot replica has incomplete storage keys")
 	}
-	for _, key := range []string{job.StorageKey, job.VMStateStorageKey} {
+	keys := make([]string, 0, 2+len(job.LayerStorageKeys))
+	keys = append(keys, job.StorageKey, job.VMStateStorageKey)
+	keys = append(keys, job.LayerStorageKeys...)
+	for _, key := range keys {
+		if key == "" {
+			return errors.New("snapshothipd: snapshot replica has an empty dependency key")
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}

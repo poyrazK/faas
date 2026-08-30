@@ -157,6 +157,62 @@ func TestLivenessRecv_ThreeConsecFires(t *testing.T) {
 	// exit path. We assert the test-side count remains 1.
 }
 
+func TestLivenessRecv_LoopStopsAfterThreshold(t *testing.T) {
+	loop, sink, _ := newTestLoop(t, "inst-loop-stop", 2)
+	loop.cfg.PeriodSeconds = 1
+	loop.probeFn = func(_ context.Context, _ int) string {
+		return livenessOutcomeConnRefused
+	}
+
+	done := make(chan struct{})
+	go func() {
+		loop.run(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("liveness loop did not stop after reaching the failure threshold")
+	}
+	// A loop that merely keeps ticking after the threshold would emit
+	// another report on the next tick. Give that tick a chance to fire
+	// and pin the one-report contract.
+	time.Sleep(1100 * time.Millisecond)
+	if sink.count() != 1 {
+		t.Fatalf("sink.count = %d, want 1 after terminal liveness failure", sink.count())
+	}
+}
+
+func TestLivenessRecv_CancellationDuringProbeDoesNotReport(t *testing.T) {
+	loop, sink, _ := newTestLoop(t, "inst-cancel-race", 1)
+	started := make(chan struct{})
+	loop.probeFn = func(ctx context.Context, _ int) string {
+		close(started)
+		<-ctx.Done()
+		return livenessOutcomeConnRefused
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		loop.run(ctx)
+		close(done)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("liveness probe did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("liveness loop did not stop after cancellation")
+	}
+	if sink.count() != 0 {
+		t.Fatalf("sink.count = %d, want 0 after destroy cancellation won the race", sink.count())
+	}
+}
+
 // TestLivenessRecv_TimeoutCountedClassifies is the classification
 // pin: timeout outcome increments the counter (same code path
 // as non_200) and lands a "liveness_timeout" reason string on

@@ -354,6 +354,46 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 // to the dispatcher's wall-clock budget; PR 3 sets it to the per-rule
 // deadline).
 func (d *Dispatcher) Dispatch(ctx context.Context, t Target, evt Event) Result {
+	return d.dispatch(ctx, t, evt)
+}
+
+// DispatchTest is the customer-facing "send a test alert" path used
+// by the apid handler at
+// cmd/apid/handlers_alert_presets.go::sendTestAlertPreset. It is a
+// parallel code path to Dispatch that:
+//   - Sets evt.Payload["test"] = true so the customer's verifier can
+//     branch on the discriminator (skips the production ledger write,
+//     enables test-mode short-circuits like a quieter alert).
+//   - Does NOT call into the meterd evaluator's ClaimAlertFire /
+//     alert_deliveries write path (that's owned by meterd, not
+//     apid) — the test attempt shows up only in the audit log
+//     (`alert_preset.test_sent`) and in the customer's webhook
+//     receiver.
+//   - Reuses the same retry/backoff loop as Dispatch so a transient
+//     webhook-receiver blip behaves the same.
+//
+// The dispatcher's only contract is that Payload["test"] == true in
+// the body that reaches the customer's URL — anything else is the
+// handler's responsibility (synthetic observed value, dispatch id
+// collision avoidance, etc.).
+//
+// Refs: ADR-123 PR-C, issue #1233, plan §Commit 2.
+func (d *Dispatcher) DispatchTest(ctx context.Context, t Target, evt Event) Result {
+	if evt.Payload == nil {
+		evt.Payload = make(map[string]any, 1)
+	}
+	// Setting, not merging — a caller-supplied "test: false" would
+	// be overwritten, which is the right posture (the dispatcher
+	// is the only writer of the discriminator key on this code
+	// path).
+	evt.Payload["test"] = true
+	return d.dispatch(ctx, t, evt)
+}
+
+// dispatch is the shared retry/backoff implementation behind Dispatch
+// and DispatchTest. Refactored so the test path is a single line on
+// top of the production path (no logic duplication).
+func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 	body, err := json.Marshal(evt)
 	if err != nil {
 		// Marshalling a map[string]any with a known shape should not

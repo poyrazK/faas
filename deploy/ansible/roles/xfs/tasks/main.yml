@@ -203,16 +203,12 @@
     group: root
     mode: "1700"
 
-- name: xfs — ensure /srv/fc/jail tmpfs entry in /etc/fstab
-  ansible.builtin.lineinfile:
-    path: /etc/fstab
-    line: "tmpfs /srv/fc/jail tmpfs nodev,nosuid,size=12G,x-mount.mkdir=1700 0 0"
-    regexp: '^tmpfs\s+/srv/fc/jail\s+'
-    state: present
-    create: false
-  register: fstab_jail
-
-- name: xfs — mount /srv/fc/jail
-  ansible.builtin.command: mount /srv/fc/jail
-  changed_when: '"already mounted" not in fstab_jail '
-  failed_when: false
+- name: xfs — persist and mount /srv/fc/jail tmpfs exactly once
+  ansible.posix.mount:
+    path: /srv/fc/jail
+    src: tmpfs
+    fstype: tmpfs
+    opts: nodev,nosuid,size=12G,mode=1700
+    dump: "0"
+    passno: "0"
+    state: mounted

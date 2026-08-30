@@ -729,93 +729,85 @@ func isPythonFunctionSource(source string) bool {
 // nodeFunctionAdapter translates the public handler(event, ctx) contract to
 // the runner's protocol envelope. It lives in the app layer so the runner can
 // remain a deliberately tiny, protocol-only binary shared by all Node apps.
-const nodeFunctionAdapter = `(async () => {
-const fsModule = await import("node:fs");
+const nodeFunctionAdapter = `// FAAS_PERSISTENT_PROTOCOL_V1
+(async () => {
 const pathModule = await import("node:path");
 const urlModule = await import("node:url");
-const fs = fsModule.default || fsModule;
+const readlineModule = await import("node:readline");
 const path = pathModule.default || pathModule;
 
-const env = JSON.parse(fs.readFileSync(0, "utf8"));
-const raw = Buffer.from(env.body_b64 || "", "base64").toString("utf8");
-let body = raw;
-if (raw === "") {
-  body = null;
-} else {
-  try { body = JSON.parse(raw); } catch (_) {}
-}
-const headers = env.headers || {};
-const invocationID = headers["x-faas-invocation-id"] || headers["X-Faas-Invocation-Id"] || "";
-const log = {};
-for (const level of ["debug", "info", "warn", "error"]) {
-  log[level] = (...args) => console.error(...args);
-}
-const ctx = { invocation_id: invocationID, log };
-const event = {
-  method: env.method || "POST",
-  path: env.path || "/",
-  headers,
-  query: env.query || "",
-  body,
-};
-
-// Customer logs belong on stderr; stdout is reserved for the response
-// envelope consumed by faas-runner.
+// Customer logs belong on stderr; stdout is reserved for newline-framed
+// response envelopes consumed by faas-runner.
 console.log = console.error;
 console.info = console.error;
-// The adapter itself must run with both package.json type values. Resolve
-// the customer module from argv[1] instead of using import.meta (ESM-only) or
-// require (CommonJS-only), then let Node load handler.js according to the
-// customer's package format.
 const handlerFile = path.join(path.dirname(process.argv[1]), "handler.js");
 const mod = await import(urlModule.pathToFileURL(handlerFile).href);
 const fn = mod.handler || mod.default;
 if (typeof fn !== "function") throw new Error("handler.js must export handler or default");
-const value = await fn(event, ctx);
-let status = 200;
-let responseHeaders = {};
-let responseBody = value;
-if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
-  status = Number(value.statusCode ?? value.status ?? 200);
-  responseHeaders = value.headers || {};
-  if (Object.prototype.hasOwnProperty.call(value, "body")) responseBody = value.body;
+if (process.env.FAAS_PERSISTENT_WORKER === "1") {
+  process.stdout.write(JSON.stringify({ __faas_ready: true }) + "\n");
 }
-if (responseBody === undefined || responseBody === null) responseBody = "";
-if (typeof responseBody !== "string" && !Buffer.isBuffer(responseBody)) {
-  responseBody = JSON.stringify(responseBody);
+
+const lines = readlineModule.createInterface({ input: process.stdin, crlfDelay: Infinity });
+for await (const line of lines) {
+  if (!line.trim()) continue;
+  const env = JSON.parse(line);
+  const raw = Buffer.from(env.body_b64 || "", "base64").toString("utf8");
+  let body = raw;
+  if (raw === "") {
+    body = null;
+  } else {
+    try { body = JSON.parse(raw); } catch (_) {}
+  }
+  const headers = env.headers || {};
+  const invocationID = headers["x-faas-invocation-id"] || headers["X-Faas-Invocation-Id"] || "";
+  const log = {};
+  for (const level of ["debug", "info", "warn", "error"]) {
+    log[level] = (...args) => console.error(...args);
+  }
+  const ctx = { invocation_id: invocationID, log };
+  const event = {
+    method: env.method || "POST",
+    path: env.path || "/",
+    headers,
+    query: env.query || "",
+    body,
+  };
+  const value = await fn(event, ctx);
+  let status = 200;
+  let responseHeaders = {};
+  let responseBody = value;
+  if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
+    status = Number(value.statusCode ?? value.status ?? 200);
+    responseHeaders = value.headers || {};
+    if (Object.prototype.hasOwnProperty.call(value, "body")) responseBody = value.body;
+  }
+  if (responseBody === undefined || responseBody === null) responseBody = "";
+  if (typeof responseBody !== "string" && !Buffer.isBuffer(responseBody)) {
+    responseBody = JSON.stringify(responseBody);
+  }
+  const normalizedHeaders = {};
+  for (const [key, value] of Object.entries(responseHeaders)) normalizedHeaders[key] = String(value);
+  process.stdout.write(JSON.stringify({
+    status,
+    headers: normalizedHeaders,
+    body_b64: Buffer.from(responseBody).toString("base64"),
+  }) + "\n");
 }
-const normalizedHeaders = {};
-for (const [key, value] of Object.entries(responseHeaders)) normalizedHeaders[key] = String(value);
-process.stdout.write(JSON.stringify({
-  status,
-  headers: normalizedHeaders,
-  body_b64: Buffer.from(responseBody).toString("base64"),
-}));
 })().catch((err) => {
   console.error(err && err.stack ? err.stack : err);
   process.exitCode = 1;
 });
 `
 
-const pythonFunctionAdapter = `import asyncio
+const pythonFunctionAdapter = `# FAAS_PERSISTENT_PROTOCOL_V1
+import asyncio
 import base64
 import importlib.util
 import inspect
 import json
 import os
 import sys
-
-env = json.load(sys.stdin)
-raw = base64.b64decode(env.get("body_b64", "")).decode("utf-8")
-if raw == "":
-    body = None
-else:
-    try:
-        body = json.loads(raw)
-    except json.JSONDecodeError:
-        body = raw
-headers = env.get("headers") or {}
-invocation_id = headers.get("x-faas-invocation-id", headers.get("X-Faas-Invocation-Id", ""))
 
 class _Log:
     def info(self, *args, **kwargs): print(*args, file=sys.stderr)
@@ -824,49 +816,66 @@ class _Log:
     warn = info
     error = info
 
-class _Context:
-    invocation_id = invocation_id
-    log = _Log()
-
-event = {
-    "method": env.get("method") or "POST",
-    "path": env.get("path") or "/",
-    "headers": headers,
-    "query": env.get("query") or "",
-    "body": body,
-}
 # stdout is protocol-bearing. Route ordinary customer prints — including
 # module-level prints during import — to stderr before loading customer code.
 real_stdout = sys.stdout
 sys.stdout = sys.stderr
-try:
-    handler_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faas-handler.py")
-    spec = importlib.util.spec_from_file_location("faas_handler_impl", handler_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    handler = getattr(module, "handler", None)
-    if not callable(handler): raise RuntimeError("handler.py must define handler(event, ctx)")
-    result = handler(event, _Context())
-    if inspect.isawaitable(result): result = asyncio.run(result)
-finally:
-    sys.stdout = real_stdout
+handler_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faas-handler.py")
+spec = importlib.util.spec_from_file_location("faas_handler_impl", handler_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+handler = getattr(module, "handler", None)
+if not callable(handler): raise RuntimeError("handler.py must define handler(event, ctx)")
+if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
+    real_stdout.write(json.dumps({"__faas_ready": True}) + "\n")
+    real_stdout.flush()
 
-status = 200
-response_headers = {}
-response_body = result
-if isinstance(result, dict):
-    status = int(result.get("statusCode", result.get("status", 200)))
-    response_headers = result.get("headers") or {}
-    if "body" in result: response_body = result["body"]
-if response_body is None: response_body = ""
-if not isinstance(response_body, (str, bytes, bytearray)):
-    response_body = json.dumps(response_body)
-if isinstance(response_body, str): response_body = response_body.encode("utf-8")
-print(json.dumps({
-    "status": status,
-    "headers": {str(k): str(v) for k, v in response_headers.items()},
-    "body_b64": base64.b64encode(response_body).decode("ascii"),
-}))
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    env = json.loads(line)
+    raw = base64.b64decode(env.get("body_b64", "")).decode("utf-8")
+    if raw == "":
+        body = None
+    else:
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError:
+            body = raw
+    headers = env.get("headers") or {}
+    invocation_id = headers.get("x-faas-invocation-id", headers.get("X-Faas-Invocation-Id", ""))
+
+    class _Context:
+        log = _Log()
+        def __init__(self, invocation): self.invocation_id = invocation
+
+    event = {
+        "method": env.get("method") or "POST",
+        "path": env.get("path") or "/",
+        "headers": headers,
+        "query": env.get("query") or "",
+        "body": body,
+    }
+    result = handler(event, _Context(invocation_id))
+    if inspect.isawaitable(result): result = asyncio.run(result)
+
+    status = 200
+    response_headers = {}
+    response_body = result
+    if isinstance(result, dict):
+        status = int(result.get("statusCode", result.get("status", 200)))
+        response_headers = result.get("headers") or {}
+        if "body" in result: response_body = result["body"]
+    if response_body is None: response_body = ""
+    if not isinstance(response_body, (str, bytes, bytearray)):
+        response_body = json.dumps(response_body)
+    if isinstance(response_body, str): response_body = response_body.encode("utf-8")
+    real_stdout.write(json.dumps({
+        "status": status,
+        "headers": {str(k): str(v) for k, v in response_headers.items()},
+        "body_b64": base64.b64encode(response_body).decode("ascii"),
+    }) + "\n")
+    real_stdout.flush()
 `
 
 func wrapPythonFunctionHandler(target string, source []byte) error {

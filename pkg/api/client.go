@@ -1569,6 +1569,34 @@ func (c *Client) RotateAlertRuleSecret(ctx context.Context, slug, id string) (Ro
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alerts/"+id+"/rotate-secret", nil, &out)
 }
 
+// ListAlertRuleDeliveries returns the most-recent alert_deliveries
+// rows for one alert rule (ADR-123 PR-D), newest-first. The default
+// (includeTest=false) hides rows written by Dispatcher.DispatchTest
+// ("send test alert" clicks); flipping includeTest=true surfaces the
+// test rows so an operator can verify the customer's webhook is
+// wired correctly without polluting the production pane. limit
+// clamps to 100 server-side; the SDK passes through unchanged. The
+// 404 posture matches GetAlertRule (IDOR-safe — a foreign account's
+// rule id is indistinguishable from a missing one).
+//
+// Closed-set vocabulary: each row's Status is one of
+// {pending, delivered, failed}; IsTest is the PR-D discriminator.
+func (c *Client) ListAlertRuleDeliveries(ctx context.Context, slug, id string, includeTest bool, limit int) ([]AlertDeliveryResponse, error) {
+	var out []AlertDeliveryResponse
+	q := url.Values{}
+	if includeTest {
+		q.Set("include_test", "true")
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/alerts/" + id + "/deliveries"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // --- Alert presets (ADR-123 / issue #1233) -------------------------------
 
 // ListAlertPresets returns the 8-row alert-preset catalog (issue
@@ -1599,6 +1627,26 @@ func (c *Client) ListAlertPresets(ctx context.Context) ([]AlertPresetResponse, e
 func (c *Client) EnableAlertPreset(ctx context.Context, slug, presetName string, req EnableAlertPresetRequest) (AlertRuleResponse, error) {
 	var out AlertRuleResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alert-presets/"+presetName+"/enable", req, &out)
+}
+
+// TestAlertPreset test-fires the customer's instantiated alert
+// preset against the webhook URL they configured at enable time
+// (issue #1233 / ADR-123 PR-C commit 2). The synthetic event body
+// carries payload.test=true so the customer's receiver can branch
+// on the discriminator and skip production alert paths (e.g.
+// PagerDuty incidents). Returns 200 with the TestAlertPresetResponse
+// on success — Status, Test, DeliveryID, Attempts — or 502 when
+// the dispatcher's retry budget is exhausted.
+//
+// Idempotency-Key is intentionally NOT required here: every POST
+// mints a fresh 32-char-hex delivery_id, so replay-safety is
+// guaranteed per-call rather than via the SDK dedup table. A
+// retried POST by the customer is a fresh dispatch attempt, which
+// is the right semantic for "is my webhook working?" — the
+// customer wants to see the receiver handle the test again.
+func (c *Client) TestAlertPreset(ctx context.Context, slug, presetName string) (TestAlertPresetResponse, error) {
+	var out TestAlertPresetResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alert-presets/"+presetName+"/test", nil, &out)
 }
 
 // --- Edge rules (ADR-089, planned) ----------------------------------------

@@ -1,6 +1,7 @@
 # `python313` runtime
 
-Python 3.13 on the function surface (per-request subprocess, §4.9
+Python 3.13 on the function surface (prewarmed persistent adapter with a
+legacy per-request subprocess fallback, §4.9
 envelope contract). Built by Railpack v0.31.1 with `--plan python`;
 the underlying Python version is bound by the OCI base image
 (`python:3.13-slim-bookworm` from `images/runner-python313.Dockerfile`).
@@ -15,10 +16,12 @@ identically.
 
 ## Function contract
 
-The customer's source is a `handler.py` exporting a callable. Each
-request is a single subprocess invocation — the runner reads the §4.9
-envelope from stdin, the handler writes the §4.9 response envelope to
-stdout. This is identical to the `python312` contract; the only
+The customer's source is a `handler.py` exporting a callable. Generated
+adapters are prewarmed during runner startup and process newline-framed §4.9
+envelopes in one long-lived subprocess; legacy protocol handlers retain one
+subprocess per request. The runner reads the envelope from stdin and the
+handler writes the response envelope to stdout. This is identical to the
+`python312` contract; the only
 differences are the runtime id (`python313` vs `python312`).
 
 The handler filename **stays version-neutral**: `/app/handler.py` for
@@ -48,7 +51,7 @@ def handler(request):
 ### Local smoke test
 
 The §4.9 envelope round-trips with bash and `base64` — the runner
-spawns `python3 /app/handler.py` and pipes the envelope JSON over
+starts `python3 /app/handler.py` and pipes newline-framed envelope JSON over
 stdin:
 
 ```

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/internal"
+	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 )
 
 type envelope struct {
@@ -62,6 +63,14 @@ func main() {
 	if _, err := os.Stat(*handlerPath); err != nil {
 		log.Fatalf("python312 runner: handler not found at %s: %v", *handlerPath, err)
 	}
+	prewarmCtx, cancelPrewarm := context.WithTimeout(context.Background(), 30*time.Second)
+	if _, err := workerpool.PrewarmIfSupported(prewarmCtx, workerpool.Spec{
+		Executable: pythonBinary(), Args: []string{*handlerPath},
+		Env: append(os.Environ(), "FAAS_RUNTIME=python312"), HandlerPath: *handlerPath,
+	}); err != nil {
+		log.Printf("python312 runner: handler prewarm unavailable: %v", err)
+	}
+	cancelPrewarm()
 
 	// Issue #667 / ADR-078 (PR 3): per-request tail primitive
 	// knobs (FAAS_TAIL_WAIT_SEC = per-task ceiling, FAAS_TAIL_PIPE_PATH
@@ -150,12 +159,20 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 func invokeHandler(ctx context.Context, handlerPath string, env envelope) (response, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	binary := pythonBinary()
+	handlerEnv := append(os.Environ(), "FAAS_RUNTIME=python312")
+	var pooled response
+	if handled, err := workerpool.InvokeIfSupported(timeoutCtx, workerpool.Spec{
+		Executable: binary, Args: []string{handlerPath}, Env: handlerEnv, HandlerPath: handlerPath,
+	}, env, &pooled); handled {
+		return pooled, err
+	}
 
 	// guest-init deliberately starts workloads with a minimal environment.
 	// Keep the PATH seam testable, but fall back to the stable runtime-image
 	// path when the guest PATH does not contain the interpreter.
-	cmd := exec.CommandContext(timeoutCtx, pythonBinary(), handlerPath)
-	cmd.Env = append(os.Environ(), "FAAS_RUNTIME=python312")
+	cmd := exec.CommandContext(timeoutCtx, binary, handlerPath)
+	cmd.Env = handlerEnv
 
 	var stdin bytes.Buffer
 	if err := json.NewEncoder(&stdin).Encode(env); err != nil {

@@ -1,0 +1,287 @@
+# Synthetic time-series fixture for the ADR-123 PR-C alert_preset
+# signal rules (issue #1233 follow-up to PR-B migration 00516).
+#
+# What this exercises:
+#   1. FaasApiDownAccount — `meterd_api_reachable < 1` for 5m.
+#   2. FaasSpendEur20Account — `meterd_account_spend_eur > 20`
+#      for 1h.
+#   3. FaasDeployFailedAccount —
+#      `increase(meterd_deployment_failed_total[1h]) > 0` for 1h.
+#      Counter rule, NOT a gauge.
+#   4. FaasCertExpiring14dAccount —
+#      `min(meterd_tenant_surface_cert_expiry_seconds) by
+#      (account_id, app_id) < 1209600` for 24h. Per-host min
+#      aggregation.
+#   5. FaasQueueBacklogGrowingApp — `max(gateway_queue_depth{app,
+#      account_id}) > 50` for 15m. As of PR-D the metric carries
+#      an account_id label (admitted via accountLabelSet, overflow
+#      `__other__`).
+#   6. FaasAlertPresetAnyFiringAccount — count by account_id of
+#      any of (1, 2, 3, 4, 5) firing. All 5 alert-preset signals
+#      contribute as of PR-D.
+#
+# Why this fixture exists: TestFaasRulesSyntax validates the rule
+# file parse-only; TestFaasRulesAcceptance (rules_test.go:67-99)
+# globs every testdata/*.test.yml and runs `promtool test rules`
+# against each. This file is the only path to validate the new
+# ADR-123 PR-C group at the threshold boundary without running a
+# live meterd + apid + builderd chain.
+#
+# Build tag: integration. Skipped on plain `go test` runs because
+# promtool may not be installed on the dev box; CI installs it
+# explicitly via the workflow step at .github/workflows/ci.yml.
+# Matches the existing TestFaasRulesSyntax / TestFaasErrorRateEval
+# precedent.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ──────────────────────────────────────────────────────────────
+  # Test 1 — api_down signal fires when reachability drops to 0.
+  # The 5m `for:` window must elapse before the alert is active.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "api_reachable=0 → FaasApiDownAccount fires"
+    input_series:
+      # Healthy for 1h, then drops to 0 for 30m. The 5m `for:`
+      # window elapsed from the first expression-true eval at
+      # t=1h+5m; alert active at t=1h+15m.
+      - series: 'meterd_api_reachable{account_id="acct-down",app_id="app-1"}'
+        values: '1+0x120 0+0x60'
+    alert_rule_test:
+      - eval_time: 1h15m
+        alertname: FaasApiDownAccount
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: alert_preset_signals
+              preset: api_down
+              account_id: "acct-down"
+              app_id: "app-1"
+            exp_annotations:
+              summary: "API reachability below 1.0 for app app-1 (account acct-down)"
+              description: "meterd_api_reachable{account_id=\"acct-down\",app_id=\"app-1\"} has been < 1.0 (i.e. no successful invocation in the last 5 min) for 5m. This is the alert_preset catalog `api_down` signal. Cross-check `meterd_account_spend_eur` and `meterd_api_reachable` panels; common causes: customer app crashed and is restarting, gatewayd queue saturated, or the customer's app slug was typo'd at deploy time."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiDown.md"
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 2 — spend_eur_20 fires when 24h spend crosses 20 EUR.
+  # 1h `for:` matches the catalog's default_cooldown_minutes.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "account_spend_eur>20 → FaasSpendEur20Account fires"
+    input_series:
+      # Steady 25 EUR for 2h. The 1h `for:` window elapsed at
+      # t=1h+5m; alert active at t=2h.
+      - series: 'meterd_account_spend_eur{account_id="acct-spend"}'
+        values: '25+0x240'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: FaasSpendEur20Account
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: alert_preset_signals
+              preset: spend_eur_20
+              account_id: "acct-spend"
+            exp_annotations:
+              summary: "Account acct-spend spend > 20 EUR over 24h"
+              description: "meterd_account_spend_eur{account_id=\"acct-spend\"} has been > 20 EUR over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSpendEur20.md"
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 3 — deploy_failed fires when counter increases over 1h.
+  # Counter rule: re-fires only on a new failed deploy in the
+  # window, NOT on every sweep. `for: 5m` (NOT 1h) — see the
+  # alert's rule-file comment for why.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "deployment_failed_total+1 → FaasDeployFailedAccount fires"
+    input_series:
+      # Counter ticks up by 1 at t=30s (eval step 1), then stays
+      # flat. `increase(...[1h]) > 0` is true for any 1h window
+      # that contains the bump. The 5m `for:` window elapsed at
+      # t=30s+5m = 5m30s; alert active from t=5m30s onward (until
+      # ~t=1h30s when the bump slides out of the window).
+      - series: 'meterd_deployment_failed_total{account_id="acct-fail",app_id="app-fail"}'
+        values: '0 1+0x360'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasDeployFailedAccount
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: alert_preset_signals
+              preset: deploy_failed
+              account_id: "acct-fail"
+              app_id: "app-fail"
+            exp_annotations:
+              summary: "Deploy failure observed for app app-fail (account acct-fail)"
+              description: "meterd_deployment_failed_total{account_id=\"acct-fail\",app_id=\"app-fail\"} increased by >= 1 over the rolling 1h window, sustained for 5m. This is the alert_preset catalog `deploy_failed` signal. The `increase()` over a counter means re-fires only when a new deployment transitions to `failed` status — not on every sweep. The 5m `for:` is deliberately short (FaasNewCve precedent at line ~1339) because a single counter bump slides out of the 1h increase window within ~2h; a longer `for:` would never fire. Cross-check the deployment pipeline; common causes: builder VM OOM, snapshot restore failure, or app archive rejected by the classifier."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDeployFailed.md"
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 4 — cert_expiring_14d fires when the per-app soonest-expiring
+  # cert drops below 14d. The `min by (account_id, app_id)` rolls
+  # up multiple hostnames to the soonest-expiring per (account, app).
+  # The `for: 24h` matches the catalog's `window_spec`. Fixture
+  # extends to 24h+30s of data to cover the for: window.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "cert<14d → FaasCertExpiring14dAccount fires"
+    input_series:
+      # Two hostnames per (account, app). Host 1 at 10d (864000s),
+      # host 2 at 30d (2592000s). `min by (account_id, app_id)`
+      # yields 864000s — well below the 1209600s (14d) threshold.
+      # Steady-state gauge, so condition is true from t=0. The 24h
+      # `for:` elapses at t=24h; alert fires at t=24h+30s.
+      # 2881-sample series = 24h+30s of fixture data.
+      - series: 'meterd_tenant_surface_cert_expiry_seconds{account_id="acct-cert",app_id="app-cert",hostname="host-1"}'
+        values: '864000+0x2881'
+      - series: 'meterd_tenant_surface_cert_expiry_seconds{account_id="acct-cert",app_id="app-cert",hostname="host-2"}'
+        values: '2592000+0x2881'
+    alert_rule_test:
+      - eval_time: 24h1m
+        alertname: FaasCertExpiring14dAccount
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: alert_preset_signals
+              preset: cert_expiring_14d
+              account_id: "acct-cert"
+              app_id: "app-cert"
+            exp_annotations:
+              summary: "Soonest-expiring cert < 14 days for app app-cert (account acct-cert)"
+              description: "min(meterd_tenant_surface_cert_expiry_seconds) by (account_id, app_id) has been < 1209600s (=14d) for 24h. This is the alert_preset catalog `cert_expiring_14d` signal. The 24h `for:` matches the catalog's `window_spec` and `default_cooldown_minutes` (1440 = 24h). The platform-tier FaasTLSCertExpiryPage/Warn alerts (line ~870-920) are page-tier and lead this one; this alert surfaces the customer-facing catalog row. Cross-check per-host cert expiry panels and renew via the dashboard or `gregalectl certs renew`."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 5 — queue_backlog_growing fires when gateway_queue_depth
+  # exceeds 50 for 15m. Carries account_id as of PR-D; contributes
+  # to the account-correlation rule.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "queue_depth>50 → FaasQueueBacklogGrowingApp fires"
+    input_series:
+      # Steady 75 (above threshold) for 30m. 15m `for:` elapsed at
+      # t=15m+5m; alert active at t=20m.
+      - series: 'gateway_queue_depth{app="app-queue",account_id="acct-queue"}'
+        values: '75+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasQueueBacklogGrowingApp
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: alert_preset_signals
+              preset: queue_backlog_growing
+              app: "app-queue"
+              account_id: "acct-queue"
+            exp_annotations:
+              summary: "Gateway queue depth > 50 for app app-queue (account acct-queue) for 15m"
+              description: "max(gateway_queue_depth{app=\"app-queue\", account_id=\"acct-queue\"}) by (app, account_id) has been > 50 for 15m. This is the alert_preset catalog `queue_backlog_growing` signal. The `account_id` label is admitted via accountLabelSet (cap=10k, overflow=`__other__`); rows past the cap roll up under `__other__` and contribute to the FaasAlertPresetAnyFiringAccount correlation under that bucket. Common causes: customer app wake latency exceeded the gateway queue cap, cold-boot snapshot restore failing repeatedly, or downstream Postgres contention."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGatewayQueueBacklogGrowing.md"
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 6 — correlation rule fires when at least one of the
+  # 5 account-labeled signals is firing for the same account.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "any preset firing → FaasAlertPresetAnyFiringAccount fires"
+    input_series:
+      # Account acct-corr has api_reachable=0 AND spend=25. Both
+      # conditions trigger their per-preset alerts AND feed the
+      # correlation rule's `count by (account_id) (...) >= 1`.
+      - series: 'meterd_api_reachable{account_id="acct-corr",app_id="app-corr"}'
+        values: '0+0x60'
+      - series: 'meterd_account_spend_eur{account_id="acct-corr"}'
+        values: '25+0x60'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasAlertPresetAnyFiringAccount
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: alert_preset_correlation
+              account_id: "acct-corr"
+            exp_annotations:
+              summary: "Account acct-corr has >=1 alert_preset firing"
+              description: "One or more alert_preset signal(s) for account acct-corr are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. All 5 alert-preset catalog signals contribute to this correlation; the queue signal carries an `account_id` label (admitted via accountLabelSet, overflow=`__other__`) as of PR-D. The number after `count` is the breadth of the firing preset set; cross-reference per-preset alerts above for the actual signal."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 7 — correlation rule fires when ONLY the queue signal is
+  # firing (the other 4 account-labeled signals are healthy). Pre-
+  # PR-D this case would NOT fire — the queue signal was excluded
+  # from the correlation. Post-PR-D it fires because queue now
+  # carries account_id.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "queue alone → FaasAlertPresetAnyFiringAccount fires"
+    input_series:
+      # acct-queue has only queue_backlog_growing firing. The other
+      # 4 account-labeled signals are healthy (api=1, spend=5,
+      # deploy_failed=0, cert=30d). Pre-PR-D the correlation
+      # wouldn't fire; PR-D adds the queue predicate so it does.
+      - series: 'meterd_api_reachable{account_id="acct-queue-only",app_id="app-q-only"}'
+        values: '1+0x120'
+      - series: 'meterd_account_spend_eur{account_id="acct-queue-only"}'
+        values: '5+0x120'
+      - series: 'meterd_deployment_failed_total{account_id="acct-queue-only",app_id="app-q-only"}'
+        values: '0+0x120'
+      - series: 'meterd_tenant_surface_cert_expiry_seconds{account_id="acct-queue-only",app_id="app-q-only",hostname="host-1"}'
+        values: '2592000+0x120'
+      - series: 'gateway_queue_depth{app="app-q-only",account_id="acct-queue-only"}'
+        values: '75+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasAlertPresetAnyFiringAccount
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: alert_preset_correlation
+              account_id: "acct-queue-only"
+            exp_annotations:
+              summary: "Account acct-queue-only has >=1 alert_preset firing"
+              description: "One or more alert_preset signal(s) for account acct-queue-only are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. All 5 alert-preset catalog signals contribute to this correlation; the queue signal carries an `account_id` label (admitted via accountLabelSet, overflow=`__other__`) as of PR-D. The number after `count` is the breadth of the firing preset set; cross-reference per-preset alerts above for the actual signal."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 8 — negative case. All signals within bounds → no alerts.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "all signals OK → no alert_preset alert fires"
+    input_series:
+      - series: 'meterd_api_reachable{account_id="acct-ok",app_id="app-ok"}'
+        values: '1+0x120'
+      - series: 'meterd_account_spend_eur{account_id="acct-ok"}'
+        values: '5+0x120'
+      - series: 'meterd_deployment_failed_total{account_id="acct-ok",app_id="app-ok"}'
+        values: '0+0x120'
+      - series: 'meterd_tenant_surface_cert_expiry_seconds{account_id="acct-ok",app_id="app-ok",hostname="host-1"}'
+        values: '2592000+0x120'
+      - series: 'gateway_queue_depth{app="app-ok",account_id="acct-ok"}'
+        values: '10+0x120'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: FaasApiDownAccount
+      - eval_time: 1h
+        alertname: FaasSpendEur20Account
+      - eval_time: 1h
+        alertname: FaasDeployFailedAccount
+      - eval_time: 24h
+        alertname: FaasCertExpiring14dAccount
+      - eval_time: 20m
+        alertname: FaasQueueBacklogGrowingApp
+      - eval_time: 10m
+        alertname: FaasAlertPresetAnyFiringAccount
+      # No exp_alerts on any → assert none of the alerts are active.

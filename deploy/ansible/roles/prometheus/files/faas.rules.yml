@@ -1544,3 +1544,161 @@ groups:
           summary: "audit write failure rate above 5/min across all daemons for 5m"
           description: "The combined audit-write failure rate across every daemon emitting audit rows (apid, schedd, meterd, gatewayd-internal — see pkg/wire/metrics.go::auditEndpointClosedSet) has exceeded 5 failures/min over the rolling 5m window for 5m. The existing FaasApidAuditWriteFailures covers apid alone; this rule catches schedd/meterd/gatewayd-internal failure spikes that the apid-only alert misses. The threshold matches FaasApidAuditWriteFailures for consistency. Drill down per the runbook by error_class and endpoint."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAuditWriteFailuresSpike.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # ADR-123 PR-C — alert_preset signal recording rules + customer-facing
+  # alert rules (issue #1233 follow-up to PR-B migration 00516).
+  #
+  # The 5 "Coming soon" alert_preset catalog rows (`api_down`,
+  # `spend_eur_20`, `deploy_failed`, `cert_expiring_14d`,
+  # `queue_backlog_growing`) flipped to enabled_in_catalog=true via
+  # migrations/00516. Each catalog row now has a backing signal fed
+  # by meterd (api_reachable, account_spend, deployment_failed_total,
+  # cert_expiry_seconds) or gatewayd-internal (queue_depth). This group
+  # publishes those signals as recording rules so customer-facing
+  # dashboards and the operator's account-correlation alert can read
+  # them without hitting raw high-cardinality PromQL.
+  #
+  # Important: the EMITTED metric name on the meterd side uses the
+  # `meterd_` prefix (cmd/meterd/main.go:811 calls
+  # wire.NewOpsMetrics("meterd")), NOT the legacy `apid_` prefix that
+  # some accessor names + comments still reference. Recording rules
+  # below MUST use the emitted names — promtool check rules validates
+  # the literal metric names against the rule file.
+  #
+  # Severity rationale: every alert in this group is severity=warn
+  # (ticket-only email via the faas-warn route). These are
+  # customer-facing signals that operators should know about but
+  # that don't page. The corresponding FaasAlertPresetAnyFiringAccount
+  # correlation rule is also warn, because per-customer alerts being
+  # firing is not a platform outage.
+  #
+  # Counter note: faas_deploy_failed_over_1h uses `increase()` over a
+  # counter (FaasRestartLoop at line 1295 is the precedent). Gauges
+  # (api_reachable, account_spend_eur, cert_expiry_seconds, queue_depth)
+  # are read directly. The cert_expiry recording rule uses
+  # `min(... by (account_id, app_id))` because the underlying metric
+  # fans out by `hostname` — we want the soonest-expiring cert per
+  # (account, app) pair so the alert represents the customer-visible
+  # surface.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_alert_preset_signals
+    interval: 30s
+    rules:
+      # ── Recording rules ──────────────────────────────────────────
+      - record: faas_api_down_over_5m:by_account_app
+        expr: meterd_api_reachable
+
+      - record: faas_spend_eur_20_over_24h:by_account
+        expr: meterd_account_spend_eur
+
+      - record: faas_deploy_failed_over_1h:by_account_app
+        expr: increase(meterd_deployment_failed_total[1h])
+
+      - record: faas_cert_expiring_14d_over_24h:by_account_app
+        expr: |
+          min(meterd_tenant_surface_cert_expiry_seconds) by (account_id, app_id)
+
+      - record: faas_queue_backlog_growing_over_15m:by_app_account
+        expr: |
+          max(gateway_queue_depth) by (app, account_id)
+
+      # ── Alert rules (one per recording rule, severity=warn) ──────
+      - alert: FaasApiDownAccount
+        expr: faas_api_down_over_5m:by_account_app < 1
+        for: 5m
+        labels:
+          severity: warn
+          component: meterd
+          family: alert_preset_signals
+          preset: api_down
+        annotations:
+          summary: "API reachability below 1.0 for app {{ $labels.app_id }} (account {{ $labels.account_id }})"
+          description: "meterd_api_reachable{account_id=\"{{ $labels.account_id }}\",app_id=\"{{ $labels.app_id }}\"} has been < 1.0 (i.e. no successful invocation in the last 5 min) for 5m. This is the alert_preset catalog `api_down` signal. Cross-check `meterd_account_spend_eur` and `meterd_api_reachable` panels; common causes: customer app crashed and is restarting, gatewayd queue saturated, or the customer's app slug was typo'd at deploy time."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiDown.md"
+
+      - alert: FaasSpendEur20Account
+        expr: faas_spend_eur_20_over_24h:by_account > 20
+        for: 1h
+        labels:
+          severity: warn
+          component: meterd
+          family: alert_preset_signals
+          preset: spend_eur_20
+        annotations:
+          summary: "Account {{ $labels.account_id }} spend > 20 EUR over 24h"
+          description: "meterd_account_spend_eur{account_id=\"{{ $labels.account_id }}\"} has been > 20 EUR over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSpendEur20.md"
+
+      - alert: FaasDeployFailedAccount
+        # `for: 5m` (NOT 1h) — the underlying recording rule is
+        # `increase(meterd_deployment_failed_total[1h]) > 0`. A
+        # single counter bump is true for at most ~2h (the bump
+        # must stay inside the [eval-1h, eval] window for increase
+        # to register). A `for: 1h` would never fire: the bump
+        # slides out before the for-window elapses. This matches
+        # the FaasNewCve precedent at line ~1339 (increase[1h]
+        # paired with for: 1m). The catalog's `window_spec=1h` is
+        # the DETECTION window — already in the recording rule's
+        # expression. The `for:` is just hysteresis.
+        expr: faas_deploy_failed_over_1h:by_account_app > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: meterd
+          family: alert_preset_signals
+          preset: deploy_failed
+        annotations:
+          summary: "Deploy failure observed for app {{ $labels.app_id }} (account {{ $labels.account_id }})"
+          description: "meterd_deployment_failed_total{account_id=\"{{ $labels.account_id }}\",app_id=\"{{ $labels.app_id }}\"} increased by >= 1 over the rolling 1h window, sustained for 5m. This is the alert_preset catalog `deploy_failed` signal. The `increase()` over a counter means re-fires only when a new deployment transitions to `failed` status — not on every sweep. The 5m `for:` is deliberately short (FaasNewCve precedent at line ~1339) because a single counter bump slides out of the 1h increase window within ~2h; a longer `for:` would never fire. Cross-check the deployment pipeline; common causes: builder VM OOM, snapshot restore failure, or app archive rejected by the classifier."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDeployFailed.md"
+
+      - alert: FaasCertExpiring14dAccount
+        expr: faas_cert_expiring_14d_over_24h:by_account_app < 1209600
+        for: 24h
+        labels:
+          severity: warn
+          component: meterd
+          family: alert_preset_signals
+          preset: cert_expiring_14d
+        annotations:
+          summary: "Soonest-expiring cert < 14 days for app {{ $labels.app_id }} (account {{ $labels.account_id }})"
+          description: "min(meterd_tenant_surface_cert_expiry_seconds) by (account_id, app_id) has been < 1209600s (=14d) for 24h. This is the alert_preset catalog `cert_expiring_14d` signal. The 24h `for:` matches the catalog's `window_spec` and `default_cooldown_minutes` (1440 = 24h). The platform-tier FaasTLSCertExpiryPage/Warn alerts (line ~870-920) are page-tier and lead this one; this alert surfaces the customer-facing catalog row. Cross-check per-host cert expiry panels and renew via the dashboard or `gregalectl certs renew`."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+      - alert: FaasQueueBacklogGrowingApp
+        expr: faas_queue_backlog_growing_over_15m:by_app_account > 50
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: alert_preset_signals
+          preset: queue_backlog_growing
+        annotations:
+          summary: "Gateway queue depth > 50 for app {{ $labels.app }} (account {{ $labels.account_id }}) for 15m"
+          description: "max(gateway_queue_depth{app=\"{{ $labels.app }}\", account_id=\"{{ $labels.account_id }}\"}) by (app, account_id) has been > 50 for 15m. This is the alert_preset catalog `queue_backlog_growing` signal. The `account_id` label is admitted via accountLabelSet (cap=10k, overflow=`__other__`); rows past the cap roll up under `__other__` and contribute to the FaasAlertPresetAnyFiringAccount correlation under that bucket. Common causes: customer app wake latency exceeded the gateway queue cap, cold-boot snapshot restore failing repeatedly, or downstream Postgres contention."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGatewayQueueBacklogGrowing.md"
+
+      # ── Account-level correlation (all 5 signals) ─────────────────
+      # gateway_queue_depth now carries an account_id label (admitted
+      # via accountLabelSet; rows past the 10k cap collapse to
+      # `__other__`), so all 5 alert-preset signals contribute to this
+      # account-level rollup. Pre-PR-D this rule covered only 4 of 5.
+      - alert: FaasAlertPresetAnyFiringAccount
+        expr: |
+          count by (account_id) (
+              faas_api_down_over_5m:by_account_app < 1
+            or faas_spend_eur_20_over_24h:by_account > 20
+            or faas_deploy_failed_over_1h:by_account_app > 0
+            or faas_cert_expiring_14d_over_24h:by_account_app < 1209600
+            or faas_queue_backlog_growing_over_15m:by_app_account > 50
+          ) >= 1
+        for: 5m
+        labels:
+          severity: warn
+          component: meterd
+          family: alert_preset_correlation
+        annotations:
+          summary: "Account {{ $labels.account_id }} has >=1 alert_preset firing"
+          description: "One or more alert_preset signal(s) for account {{ $labels.account_id }} are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. All 5 alert-preset catalog signals contribute to this correlation; the queue signal carries an `account_id` label (admitted via accountLabelSet, overflow=`__other__`) as of PR-D. The number after `count` is the breadth of the firing preset set; cross-reference per-preset alerts above for the actual signal."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"

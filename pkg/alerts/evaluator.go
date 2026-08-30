@@ -73,7 +73,7 @@ type Store interface {
 	SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, at time.Time) error
 	RecordAlertDelivery(ctx context.Context, d state.AlertDelivery) (state.AlertDelivery, error)
 	UpdateAlertDeliveryStatus(ctx context.Context, id string, status state.AlertDeliveryStatus, attempt int, statusCode int, lastErr string, deliveredAt *time.Time) error
-	ListAlertDeliveriesForRule(ctx context.Context, ruleID string, limit int) ([]state.AlertDelivery, error)
+	ListAlertDeliveriesForRule(ctx context.Context, ruleID string, limit int, includeTest bool) ([]state.AlertDelivery, error)
 }
 
 // Dispatcher is the narrow surface the evaluator calls. The

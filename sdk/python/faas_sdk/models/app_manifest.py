@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.app_manifest_env import AppManifestEnv
     from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
+    from ..models.app_manifest_healthcheck import AppManifestHealthcheck
 
 
 T = TypeVar("T", bound="AppManifest")
@@ -21,7 +22,9 @@ class AppManifest:
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source
     flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by the
     host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are NEVER sealed
-    ciphertext — only refs.
+    ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`, `stop_signal`,
+    `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the
+    widen is wire-compatible.
 
     """
 
@@ -34,6 +37,15 @@ class AppManifest:
     port: int | None | Unset = UNSET
     healthz: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
+    healthcheck: AppManifestHealthcheck | Unset = UNSET
+    """AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer
+    seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1
+    surfaces the field for the registry-pull path."""
+    stop_signal: None | str | Unset = UNSET
+    """OCI STOPSIGNAL (default SIGTERM). Runtime wiring lands in M-2."""
+    stop_grace_period: None | str | Unset = UNSET
+    """OCI StopGracePeriod as a Go duration string (e.g. "5m"). Capped at MaxAppManifestStopGracePeriod (5m).
+    Currently always zero — populated by M-2."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +83,22 @@ class AppManifest:
         else:
             user = self.user
 
+        healthcheck: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.healthcheck, Unset):
+            healthcheck = self.healthcheck.to_dict()
+
+        stop_signal: None | str | Unset
+        if isinstance(self.stop_signal, Unset):
+            stop_signal = UNSET
+        else:
+            stop_signal = self.stop_signal
+
+        stop_grace_period: None | str | Unset
+        if isinstance(self.stop_grace_period, Unset):
+            stop_grace_period = UNSET
+        else:
+            stop_grace_period = self.stop_grace_period
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -90,6 +118,12 @@ class AppManifest:
             field_dict["healthz"] = healthz
         if user is not UNSET:
             field_dict["user"] = user
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
+        if stop_signal is not UNSET:
+            field_dict["stop_signal"] = stop_signal
+        if stop_grace_period is not UNSET:
+            field_dict["stop_grace_period"] = stop_grace_period
 
         return field_dict
 
@@ -97,6 +131,7 @@ class AppManifest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_manifest_env import AppManifestEnv
         from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
+        from ..models.app_manifest_healthcheck import AppManifestHealthcheck
 
         d = dict(src_dict)
         entrypoint = cast(list[str], d.pop("entrypoint"))
@@ -151,6 +186,31 @@ class AppManifest:
 
         user = _parse_user(d.pop("user", UNSET))
 
+        _healthcheck = d.pop("healthcheck", UNSET)
+        healthcheck: AppManifestHealthcheck | Unset
+        if isinstance(_healthcheck, Unset):
+            healthcheck = UNSET
+        else:
+            healthcheck = AppManifestHealthcheck.from_dict(_healthcheck)
+
+        def _parse_stop_signal(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        stop_signal = _parse_stop_signal(d.pop("stop_signal", UNSET))
+
+        def _parse_stop_grace_period(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        stop_grace_period = _parse_stop_grace_period(d.pop("stop_grace_period", UNSET))
+
         app_manifest = cls(
             entrypoint=entrypoint,
             env=env,
@@ -159,6 +219,9 @@ class AppManifest:
             port=port,
             healthz=healthz,
             user=user,
+            healthcheck=healthcheck,
+            stop_signal=stop_signal,
+            stop_grace_period=stop_grace_period,
         )
 
         app_manifest.additional_properties = d

@@ -278,7 +278,7 @@ func TestEvaluator_HappyPath(t *testing.T) {
 		t.Errorf("LastFiredAt is zero; expected non-zero after fire")
 	}
 
-	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5)
+	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5, false)
 	if err != nil || len(deliveries) != 1 {
 		t.Fatalf("ListAlertDeliveriesForRule: err=%v count=%d; want 1", err, len(deliveries))
 	}
@@ -484,7 +484,7 @@ func TestEvaluator_FailedDelivery(t *testing.T) {
 		t.Errorf("ops.deliveredAttempts = %d; want 0", ops.deliveredAttempts)
 	}
 
-	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5)
+	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5, false)
 	if err != nil || len(deliveries) != 1 {
 		t.Fatalf("ListAlertDeliveriesForRule: err=%v count=%d", err, len(deliveries))
 	}
@@ -627,7 +627,7 @@ func TestEvaluator_NamespaceMismatch(t *testing.T) {
 		t.Errorf("ops.deliveredAttempts = %d; want 0 (no successful dispatch)", ops.deliveredAttempts)
 	}
 
-	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5)
+	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5, false)
 	if err != nil || len(deliveries) != 1 {
 		t.Fatalf("ListAlertDeliveriesForRule: err=%v count=%d", err, len(deliveries))
 	}
@@ -669,7 +669,7 @@ func TestEvaluator_SignerFailure(t *testing.T) {
 	if ops.failedAttempts != 1 || ops.deliveredAttempts != 0 {
 		t.Errorf("ops = %+v; want failed=1, delivered=0", ops)
 	}
-	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5)
+	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5, false)
 	if err != nil || len(deliveries) != 1 {
 		t.Fatalf("ListAlertDeliveriesForRule: err=%v count=%d", err, len(deliveries))
 	}
@@ -719,7 +719,7 @@ func TestEvaluator_PayloadOversized(t *testing.T) {
 	if ops.failedAttempts != 1 {
 		t.Errorf("ops.failedAttempts = %d; want 1", ops.failedAttempts)
 	}
-	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5)
+	deliveries, err := store.ListAlertDeliveriesForRule(context.Background(), rule.ID, 5, false)
 	if err != nil || len(deliveries) != 1 {
 		t.Fatalf("ListAlertDeliveriesForRule: err=%v count=%d", err, len(deliveries))
 	}

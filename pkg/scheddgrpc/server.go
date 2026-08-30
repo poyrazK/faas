@@ -1204,13 +1204,23 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 		// The same persistent frame also carries the complete vmmd Stats
 		// batch. Apply it only after capacity/signature validation so the
 		// observer cache cannot be populated by an untrusted node report.
+		telemetryRows := nodeTelemetryFromProto(msg.GetInstances())
 		if provider, ok := s.engine.(interface{ TelemetrySink() sched.TelemetrySink }); ok {
 			if sink := provider.TelemetrySink(); sink != nil {
-				if err := sink(report.NodeID, report.SampledAt, time.Now(), nodeTelemetryFromProto(msg.GetInstances())); err != nil {
+				if err := sink(report.NodeID, report.SampledAt, time.Now(), telemetryRows); err != nil {
 					sendErr = err
 					return status.Error(codes.Unavailable, err.Error())
 				}
 			}
+		}
+		// Complete vmmd presence reports also drive the stale-instance
+		// reconciler. This is an optional additive seam so older/fake
+		// engines keep the existing capacity-stream contract.
+		if observer, ok := s.engine.(interface {
+			ObserveNodeInstances(context.Context, string, int32, []sched.NodeTelemetry)
+		}); ok {
+			observer.ObserveNodeInstances(
+				stream.Context(), report.NodeID, report.LiveCount, telemetryRows)
 		}
 	}
 }

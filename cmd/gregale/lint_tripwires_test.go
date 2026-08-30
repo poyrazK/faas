@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/presetwhy"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -821,6 +822,87 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 	}
 	if len(deadRows) > 0 {
 		t.Fatalf("found %d pkg/whycopy catalog rows without a matching cluster-owned Code… constant:\n  %s\n\nDelete the row in pkg/whycopy/whycopy.go::catalog (the load-bearing source of truth for customer-facing prose) — the constant was renamed or removed from the cluster's purview.",
+			len(deadRows), strings.Join(deadRows, "\n  "))
+	}
+}
+
+// TestEveryPresetHasPresetwhyEntry pins 1:1 membership between the
+// alert_preset catalog rows in migrations/00418_alert_presets_seed.sql
+// and the customer-facing prose rows in pkg/presetwhy/presetwhy.go
+// (issue #1233 / ADR-123 PR-C commit 3). The dashboard's "What
+// does this alert mean?" panel reads via presetwhy.Decorate; the
+// catalog is the single source of truth for the customer-facing
+// prose. A new preset name in the migration seed without a
+// matching presetwhy row would render a card with NO
+// <details> panel — a silent UX regression that no other tripwire
+// catches.
+//
+// Mirrors TestEveryCodeHasWhycopyEntry above (the
+// error-explanations sibling). Why a separate package: alert
+// preset names are domain catalog entries, not RFC 7807 error
+// codes — the tripwire domains are intentionally separate so a
+// future code addition doesn't accidentally satisfy a preset
+// tripwire (or vice versa).
+//
+// The walker:
+//  1. Asserts every entry in seedPresetNames has a matching row
+//     in pkg/presetwhy (forward direction — catch missing rows).
+//  2. Asserts every presetwhy row has a matching entry in
+//     seedPresetNames (inverse direction — catch dead rows).
+//
+// Both directions fail loud. The seedPresetNames slice is the
+// canonical membership list — it's the 8 names in the
+// migrations/00418_alert_presets_seed.sql seed (3 originally
+// enabled + 5 newly-enabled signals from ADR-123 PR-B).
+func TestEveryPresetHasPresetwhyEntry(t *testing.T) {
+	seedPresetNames := []string{
+		// Originally enabled (3) — surface their prose for parity
+		// even though they pre-date the ADR-123 follow-ups.
+		"error_rate_2pct",
+		"p95_latency_1s",
+		"cold_start_10pct",
+		// Newly enabled signals (5) — these are the 5 the
+		// follow-ups focus on; the migration 00516 row flip
+		// turned these from "coming soon" to enabled_in_catalog.
+		"api_down",
+		"spend_eur_20",
+		"deploy_failed",
+		"cert_expiring_14d",
+		"queue_backlog_growing",
+	}
+
+	// Forward direction: every seed preset name must have a
+	// presetwhy row.
+	presetwhySet := map[string]bool{}
+	for _, c := range presetwhy.Codes() {
+		presetwhySet[c] = true
+	}
+	var missingInPresetwhy []string
+	for _, c := range seedPresetNames {
+		if !presetwhySet[c] {
+			missingInPresetwhy = append(missingInPresetwhy, c)
+		}
+	}
+	if len(missingInPresetwhy) > 0 {
+		t.Fatalf("found %d alert_preset catalog rows without a pkg/presetwhy row — every preset in migrations/00418_alert_presets_seed.sql MUST have a row so the dashboard's \"What does this alert mean?\" panel can render:\n  %s\n\nAdd a row in pkg/presetwhy/presetwhy.go::catalog.",
+			len(missingInPresetwhy), strings.Join(missingInPresetwhy, "\n  "))
+	}
+
+	// Inverse direction: every presetwhy row must correspond to
+	// a seed preset name. Catches dead rows whose preset was
+	// renamed or removed from the catalog.
+	seedSet := map[string]bool{}
+	for _, c := range seedPresetNames {
+		seedSet[c] = true
+	}
+	var deadRows []string
+	for _, c := range presetwhy.Codes() {
+		if !seedSet[c] {
+			deadRows = append(deadRows, c)
+		}
+	}
+	if len(deadRows) > 0 {
+		t.Fatalf("found %d pkg/presetwhy catalog rows without a matching alert_preset seed row:\n  %s\n\nDelete the row in pkg/presetwhy/presetwhy.go::catalog — the preset was renamed or removed from migrations/00418_alert_presets_seed.sql.",
 			len(deadRows), strings.Join(deadRows, "\n  "))
 	}
 }

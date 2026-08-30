@@ -44,7 +44,11 @@ type server struct {
 	store  state.Store
 	log    *slog.Logger
 	domain string // apps base domain for URLs
-	notif  Notifier
+	// cliAuthURLBase is the absolute API origin used by the CLI device-code
+	// response. It must not be derived from domain: AppsDomain is the app
+	// wildcard/frontend host, while /cli-auth is served by the API host.
+	cliAuthURLBase string
+	notif          Notifier
 	// stripeWebhookSecret is the endpoint signing secret Stripe uses
 	// for the v1 HMAC. Empty disables signature verification (dev mode).
 	stripeWebhookSecret string
@@ -460,6 +464,15 @@ func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 	return s
 }
 
+// WithCLIAuthURLBase attaches the API origin used in browser URLs returned by
+// the CLI device-code endpoint. The setter keeps existing positional server
+// constructors source-compatible while allowing production config to supply
+// a provider-specific API hostname.
+func (s *server) WithCLIAuthURLBase(base string) *server {
+	s.cliAuthURLBase = normalizeCLIAuthURLBase(base)
+	return s
+}
+
 // WithEventsPlatform attaches the pkg/events.Platform
 // (issue #517 / PR-C / ADR-064). When non-nil, the deploy
 // handler emits wake.deploy_failed on the events table for
@@ -713,6 +726,7 @@ func newServerWithDeps(
 		store:                  store,
 		log:                    log,
 		domain:                 domain,
+		cliAuthURLBase:         defaultCLIAuthURLBase,
 		notif:                  notif,
 		stripeWebhookSecret:    stripeSecret,
 		mailer:                 mailer,
@@ -1412,6 +1426,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRules))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAlertRule)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alerts/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAlertRule))))
+	// ADR-123 PR-D: listAlertRuleDeliveries — operator pane for
+	// recent alert_deliveries rows. ?include_test=true toggles the
+	// IsTest discriminator (default false; production-only rows).
+	// Same auth scope as getAlertRule so a customer cannot probe
+	// another account's ledger by guessing rule IDs.
+	mux.HandleFunc("GET /v1/apps/{slug}/alerts/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRuleDeliveries))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/alerts/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAlertRule))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/alerts/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAlertRule))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAlertRuleSecret))))
@@ -1428,6 +1448,15 @@ func (s *server) handler() http.Handler {
 	// createAlertRule gates on the per-plan cap (PR review F4).
 	mux.HandleFunc("GET /v1/alert-presets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertPresets))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alert-presets/{name}/enable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.enableAlertPreset)))))
+	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" button.
+	// Same auth chain as /enable (authLimited → requireMFA → requireScope)
+	// but NOT wrapped in `idempotent` because every POST is a fresh
+	// dispatch attempt with a fresh delivery_id (replay safety: a
+	// client retry that hits idempotent's de-dup table would mask
+	// the legitimate second test fire). The 404-on-no-rule gate runs
+	// first inside the handler so a stale POST to a card the customer
+	// removed still returns a clean 404, not a 5xx.
+	mux.HandleFunc("POST /v1/apps/{slug}/alert-presets/{name}/test", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendTestAlertPreset))))
 
 	// Edge rules (ADR-089, planned). Customer-facing resource that
 	// runs in pkg/gateway BEFORE host→app resolution. Mirrors the
@@ -2158,6 +2187,16 @@ func (s *server) handler() http.Handler {
 	// path (POST /v1/apps/{slug}/alert-presets/{name}/enable)
 	// and the dashboard path share a single guard order.
 	mux.Handle("POST /dashboard/apps/{slug}/alert-presets/{name}/enable", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardEnablePreset))))
+	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
+	// twin of the JSON route at line 1418. dashboardChain wraps
+	// the cookie-auth middleware + CSRF envelope verifier, then
+	// sessionAuth confirms the cookie. The handler delegates to
+	// sendTestAlertPresetCore after CSRF so the JSON path and the
+	// dashboard path share a single guard order (slug + name regex
+	// gating, then catalog row gate, then rule lookup, then
+	// dispatch). Mirrors the enable-path dashboardChain structure
+	// at line 2148.
+	mux.Handle("POST /dashboard/apps/{slug}/alert-presets/{name}/test", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSendTestAlertPreset))))
 	// GET /dashboard/account/export is the session-authenticated twin
 	// of the REST /v1/account/export. The dashboard template's "Download
 	// JSON export" link points here because the REST endpoint requires
@@ -2212,7 +2251,7 @@ func (s *server) handler() http.Handler {
 	// the CLI hasn't logged in yet. Anti-enumeration limiter is its
 	// own bucket (s.cliAuthLimiter) so brute-force on /v1/cli-auth/*
 	// doesn't burn the API-key auth budget at the top of this file.
-	cli := &cliAuthHandlers{srv: s, log: s.log, domain: s.domain}
+	cli := &cliAuthHandlers{srv: s, log: s.log, domain: s.domain, urlBase: s.cliAuthURLBase}
 	mux.Handle("POST /v1/cli-auth/code", s.cliAuthChain(http.HandlerFunc(cli.mintCliAuthCode)))
 	mux.Handle("POST /v1/cli-auth/exchange", s.cliAuthChain(http.HandlerFunc(cli.exchangeCliAuthCode)))
 	// Dashboard-side GET shares the dashboard auth bucket (it renders

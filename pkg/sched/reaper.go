@@ -170,6 +170,19 @@ func EffectiveIdleTimeoutS(plan api.Plan, configured int) int {
 	}
 }
 
+// idleReference returns the safest timestamp for idle decisions. The database
+// leaves last_request_at NULL until the first request reaches the activity
+// batcher, while started_at is present as soon as the instance row is created.
+// Treating a missing last request as time.Time{} makes a brand-new VM look
+// infinitely idle and was the source of premature parks. A missing both-time
+// record is unknown and is handled fail-closed by ReapIdle.
+func idleReference(in InstanceInfo) time.Time {
+	if !in.LastRequest.IsZero() {
+		return in.LastRequest
+	}
+	return in.Started
+}
+
 // ReapIdle returns the instances to park for idleness: RUNNING instances whose
 // time since last request exceeds their effective idle timeout (spec §4.3).
 //
@@ -317,21 +330,30 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		if in.TailCount > 0 {
 			continue
 		}
+		lastActivity := idleReference(in)
+		if lastActivity.IsZero() {
+			// We cannot prove that an instance is idle when both
+			// timestamps are absent. Keep it until the next report;
+			// this is safer than interpreting unknown age as stale.
+			continue
+		}
 		timeout := time.Duration(EffectiveIdleTimeoutS(in.Plan, in.IdleTimeoutS)) * time.Second
-		if now.Sub(in.LastRequest) > timeout {
+		if now.Sub(lastActivity) > timeout {
 			g.cands = append(g.cands, in)
 		}
 	}
 	var park []string
 	for _, g := range byApp {
-		// Sort candidates oldest-LastRequest-first so trimming the
+		// Sort candidates oldest-activity-first so trimming the
 		// front keeps the freshest (most-recently-served) alive. If
-		// LastRequest ties (rare; sub-second precision), the instance
+		// activity timestamps tie (rare; sub-second precision), the instance
 		// id breaks the tie deterministically so a re-run yields the
 		// same answer.
 		sort.Slice(g.cands, func(a, b int) bool {
-			if !g.cands[a].LastRequest.Equal(g.cands[b].LastRequest) {
-				return g.cands[a].LastRequest.Before(g.cands[b].LastRequest)
+			aLast := idleReference(g.cands[a])
+			bLast := idleReference(g.cands[b])
+			if !aLast.Equal(bLast) {
+				return aLast.Before(bLast)
 			}
 			return g.cands[a].Instance < g.cands[b].Instance
 		})

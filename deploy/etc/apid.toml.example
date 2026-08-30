@@ -9,6 +9,12 @@
 # Default: example.com
 # base_domain = "example.com"
 
+# cli_auth_url_base: absolute API origin for the browser half of CLI login.
+# Keep this separate from the app domain: /cli-auth is served by the API host.
+# A bare hostname is normalized to https://<hostname>.
+# Default: https://api.gregale.dev
+# cli_auth_url_base = "https://api.gregale.dev"
+
 # db_url: Postgres DSN. Empty => use $DATABASE_URL from the environment
 # (sealed.env on the production box; gap G2 — sealed at rest).
 # db_url = ""

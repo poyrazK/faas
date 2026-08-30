@@ -167,6 +167,15 @@ var routeExclude = map[string]bool{
 	// POST /v1/apps/{slug}/alert-presets/{name}/enable which the
 	// SDK exposes as EnableAlertPreset.
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable": true,
+	// ADR-123 PR-C commit 2: "Send test alert" dashboard form
+	// (issue #1233). Sibling of the /enable exclusion above —
+	// the dashboard's per-card test button posts to
+	// /dashboard/apps/{slug}/alert-presets/{name}/test, but the
+	// SDK does not model session-cookie-only dashboard auth.
+	// Programmatic test-fire goes through the JSON sibling at
+	// POST /v1/apps/{slug}/alert-presets/{name}/test, exposed as
+	// TestAlertPreset in the SDK method map below.
+	"POST /dashboard/apps/{slug}/alert-presets/{name}/test": true,
 
 	// ADR-127 PR-D: OTLP sidecar protocol — not a REST endpoint
 	// consumed by the generated SDK. OTel SDKs speak OTLP/HTTP
@@ -315,6 +324,11 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/apps/{slug}/alerts/{id}":              "UpdateAlertRule",
 	"DELETE /v1/apps/{slug}/alerts/{id}":             "DeleteAlertRule",
 	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": "RotateAlertRuleSecret",
+	// ADR-123 PR-D — operator pane for one rule's recent
+	// alert_deliveries rows. ?include_test=true toggles the IsTest
+	// discriminator; the SDK method reflects the boolean
+	// explicitly so callers don't have to hand-craft URL params.
+	"GET /v1/apps/{slug}/alerts/{id}/deliveries": "ListAlertRuleDeliveries",
 
 	// Issue #1233 / ADR-123 — alert-preset catalog. Auto-derivation
 	// would produce Swagger-style names ("GetAlert-presets",
@@ -324,6 +338,13 @@ var methodRouteMap = map[string]string{
 	// throttle-suggestions above.
 	"GET /v1/alert-presets":                            "ListAlertPresets",
 	"POST /v1/apps/{slug}/alert-presets/{name}/enable": "EnableAlertPreset",
+	// Issue #1233 / ADR-123 PR-C commit 2 — test-fire an
+	// instantiated alert_preset rule against the customer's
+	// webhook URL. Same hyphenated-path rationale as the /enable
+	// sibling: auto-derivation would produce Swagger-style
+	// "PostAppsSlugAlert-presetsNameTest" instead of a noun-based
+	// method name.
+	"POST /v1/apps/{slug}/alert-presets/{name}/test": "TestAlertPreset",
 
 	// Issue #975 item #4 / ADR-129 — CORS presets. Same hyphen
 	// pattern as alert-presets and edge-rules: auto-derivation

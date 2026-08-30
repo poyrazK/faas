@@ -1,6 +1,7 @@
 # `node24` runtime
 
-Node.js 24 LTS on the function surface (per-request subprocess, §4.9
+Node.js 24 LTS on the function surface (prewarmed persistent adapter with a
+legacy per-request subprocess fallback, §4.9
 envelope contract). Built by Railpack v0.31.1 with `--plan node`; the
 underlying Node version is bound by the OCI base image
 (`node:24-bookworm-slim` from `images/runner-node24.Dockerfile`). No
@@ -17,9 +18,11 @@ default for new function apps. A future PR may flip once fleet-wide
 ## Function contract
 
 The customer's source is a Node module exporting `default async
-function handler(req)`, served at `/app/node24.js`. Each request is
-a single subprocess invocation — the runner reads the §4.9 envelope
-from stdin, the handler writes the §4.9 response envelope to stdout.
+function handler(req)`, served at `/app/node24.js`. Generated adapters are
+prewarmed during runner startup and process newline-framed §4.9 envelopes in
+one long-lived subprocess; legacy protocol handlers retain one subprocess
+per request. The runner reads the envelope from stdin and the handler writes
+the response envelope to stdout.
 This is identical to the `node22` contract; the only differences are
 the **handler filename** (`/app/node24.js` vs `/app/node22.js`) and
 the runtime id (`node24` vs `node22`).
@@ -43,7 +46,7 @@ export default async function handler(req) {
 ### Local smoke test
 
 The §4.9 envelope round-trips with bash and `base64` — the runner
-spawns `node /app/node24.js` and pipes the envelope JSON over stdin:
+starts `node /app/node24.js` and pipes newline-framed envelope JSON over stdin:
 
 ```
 echo '{"method":"GET","path":"/hello","headers":{},"query":"","body_b64":""}' \

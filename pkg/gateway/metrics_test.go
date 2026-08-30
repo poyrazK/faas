@@ -145,7 +145,7 @@ func TestWakeGateObservesWaitDuration(t *testing.T) {
 	// (queued behind the leader) should observe some non-zero wait.
 	go func() {
 		defer done.Done()
-		_ = g.Wait(context.Background(), "appA",
+		_ = g.Wait(context.Background(), "appA", "acct-A",
 			func() bool { return true },
 			func(ctx context.Context) error {
 				<-release
@@ -156,7 +156,7 @@ func TestWakeGateObservesWaitDuration(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	go func() {
 		defer done.Done()
-		_ = g.Wait(context.Background(), "appA",
+		_ = g.Wait(context.Background(), "appA", "acct-A",
 			func() bool { return false }, // would-wake check is leader-only; follower ignores it
 			func(ctx context.Context) error { return nil }, nil, nil)
 	}()
@@ -201,14 +201,14 @@ func TestWakeGateSkipsObservationOnErrQueueFull(t *testing.T) {
 	// Leader parks; counts as waiter 1 of cap=1.
 	go func() {
 		defer done.Done()
-		_ = g.Wait(context.Background(), "appB",
+		_ = g.Wait(context.Background(), "appB", "acct-B",
 			func() bool { return true },
 			func(ctx context.Context) error { <-release; return nil }, nil, nil)
 	}()
 	time.Sleep(20 * time.Millisecond) // leader commits first
 
 	// Synchronous next caller — gate rejects with ErrQueueFull.
-	err := g.Wait(context.Background(), "appB",
+	err := g.Wait(context.Background(), "appB", "acct-B",
 		func() bool { return false },
 		func(ctx context.Context) error { return nil }, nil, nil)
 	if !errors.Is(err, ErrQueueFull) {
@@ -252,7 +252,7 @@ func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
 	// Leader parks; ensure returns nil after we release.
 	go func() {
 		defer done.Done()
-		_ = g.Wait(context.Background(), "appC",
+		_ = g.Wait(context.Background(), "appC", "acct-C",
 			func() bool { return true },
 			func(ctx context.Context) error { <-release; return nil }, nil, nil)
 	}()
@@ -265,7 +265,7 @@ func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
 	cancel()
 	go func() {
 		defer done.Done()
-		_ = g.Wait(cancelledCtx, "appC",
+		_ = g.Wait(cancelledCtx, "appC", "acct-C",
 			func() bool { return false },
 			func(ctx context.Context) error { return nil }, nil, nil)
 		// Tell the test driver we've entered Wait (even if it returned
@@ -559,6 +559,40 @@ func TestMetricsAccountRateLimitedOverflowCollapsesToOther(t *testing.T) {
 	}
 	if got := s.admit(otherAccountLabel); got != otherAccountLabel {
 		t.Fatalf("admit(__other__) = %q, want %q (pass-through)", got, otherAccountLabel)
+	}
+}
+
+// TestMetricsSetQueueDepthAccountIDLabel — ADR-123 PR-D: the
+// `gateway_queue_depth` gauge gains an `account_id` label so the
+// queue_backlog_growing signal contributes to the
+// FaasAlertPresetAnyFiringAccount correlation rule. Pre-PR-D the
+// gauge carried only `app`; PR-D adds the per-account row admitted
+// via accountLabelSet (overflow=`__other__`). Asserts:
+//
+//   - the closed-set `__other__` row is pre-instantiated at 0 from
+//     the moment the daemon binds, so the §12 panel never shows
+//     "no data" before the first real wait;
+//   - a real account_id surfaces under its own label on first set;
+//   - the empty-string accountID (defensive fallback) collapses to
+//     `__other__` rather than minting an empty-label series.
+func TestMetricsSetQueueDepthAccountIDLabel(t *testing.T) {
+	m := NewMetrics()
+	m.PreInstantiateQueueDepth("app-pre")
+	m.SetQueueDepth("app-pre", "acct-real", 7)
+	m.SetQueueDepth("app-empty", "", 3) // empty → __other__ per spec
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_queue_depth{account_id="__other__",app="app-pre"} 0`,
+		`gateway_queue_depth{account_id="acct-real",app="app-pre"} 7`,
+		`gateway_queue_depth{account_id="__other__",app="app-empty"} 3`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing exposition line %q in body:\n%s", want, body)
+		}
 	}
 }
 

@@ -544,12 +544,16 @@ func TestNormalizeFunctionHandler_NodeCommonJSAdapterRoundTrip(t *testing.T) {
 			}
 			cmd := exec.Command("node", filepath.Join(appDir, filepath.Base(handlerPath)))
 			cmd.Dir = appDir
-			cmd.Stdin = strings.NewReader(`{"method":"POST","path":"/e2e","headers":{},"query":"","body_b64":"eyJ4Ijo3fQ=="}`)
+			cmd.Stdin = strings.NewReader(`{"method":"POST","path":"/e2e","headers":{},"query":"","body_b64":"eyJ4Ijo3fQ=="}
+{"method":"POST","path":"/e2e","headers":{},"query":"","body_b64":"eyJ4Ijo3fQ=="}`)
 			out, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("node CommonJS adapter: %v", err)
 			}
-			if !strings.Contains(string(out), `"status":202`) || !strings.Contains(string(out), `"body_b64":"eyJ4Ijo3fQ=="`) {
+			if got := strings.Count(string(out), `"status":202`); got != 2 {
+				t.Fatalf("persistent adapter responses = %d, want 2: %s", got, out)
+			}
+			if !strings.Contains(string(out), `"body_b64":"eyJ4Ijo3fQ=="`) {
 				t.Fatalf("unexpected CommonJS adapter response: %s", out)
 			}
 		})
@@ -606,14 +610,18 @@ async def handler(event, ctx):
 	}
 	cmd := exec.Command(python, filepath.Join(appDir, "handler.py"))
 	cmd.Dir = appDir
-	cmd.Stdin = strings.NewReader(`{"method":"POST","path":"/e2e","headers":{},"query":"","body_b64":"eyJ4Ijo3fQ=="}`)
+	cmd.Stdin = strings.NewReader(`{"method":"POST","path":"/e2e","headers":{},"query":"","body_b64":"eyJ4Ijo3fQ=="}
+{"method":"POST","path":"/e2e","headers":{},"query":"","body_b64":"eyJ4Ijo3fQ=="}`)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("python adapter: %v; stderr=%s", err, stderr.String())
 	}
-	if !strings.Contains(string(out), `"status": 203`) || !strings.Contains(string(out), `"body_b64": "eyJ4IjogN30="`) {
+	if got := strings.Count(string(out), `"status": 203`); got != 2 {
+		t.Fatalf("persistent Python adapter responses = %d, want 2: %s", got, out)
+	}
+	if !strings.Contains(string(out), `"body_b64": "eyJ4IjogN30="`) {
 		t.Fatalf("unexpected Python adapter response: %s", out)
 	}
 	if !strings.Contains(stderr.String(), "module log") || !strings.Contains(stderr.String(), "handler log") {

@@ -22,7 +22,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -91,6 +93,13 @@ type Config struct {
 	// the wildcard UI (custom-domain-only deployments). Mirrors
 	// FAAS_APPS_DOMAIN. The public Gregale default is gregale.dev.
 	AppsDomain string `toml:"apps_domain"`
+
+	// CLIAuthURLBase is the absolute API origin that serves the browser
+	// half of the CLI device-code flow. It is intentionally separate from
+	// AppsDomain: app URLs may use the public wildcard domain while the
+	// /cli-auth route is served by the control-plane API host. Mirrors
+	// FAAS_CLI_AUTH_URL_BASE. Bare hostnames are normalized to HTTPS.
+	CLIAuthURLBase string `toml:"cli_auth_url_base"`
 
 	// DBURL is apid's Postgres DSN. An empty value preserves the
 	// containerised-deploys path and lets db.Open resolve DATABASE_URL or
@@ -178,9 +187,10 @@ func LoadConfig(path string) (*Config, error) {
 		// the listeners on every e2e test, and the unix-socket
 		// bind fails in CI (the per-daemon unix user `faas-apid`
 		// / `faas-githubd` doesn't exist in the test container).
-		ListenAddr:    "127.0.0.1:8081",
-		GithubdSocket: "/run/faas/githubd.sock",
-		AppsDomain:    "gregale.dev",
+		ListenAddr:     "127.0.0.1:8081",
+		GithubdSocket:  "/run/faas/githubd.sock",
+		AppsDomain:     "gregale.dev",
+		CLIAuthURLBase: defaultCLIAuthURLBase,
 		// Issue #995 Phase 1: seed the timeout / header defaults
 		// so a partial toml still produces the hardened listener.
 		// The GetRequest*Timeout helpers fall back to
@@ -322,6 +332,43 @@ func (c *Config) GetAppsDomain(env func(string) string) string {
 		return v
 	}
 	return c.AppsDomain
+}
+
+const defaultCLIAuthURLBase = "https://api.gregale.dev"
+
+// GetCLIAuthURLBase returns the absolute API origin used in the URL returned
+// by POST /v1/cli-auth/code. It is separate from GetAppsDomain because the
+// dashboard wildcard host does not serve the API's /cli-auth route.
+// FAAS_CLI_AUTH_URL_BASE wins over TOML; empty or malformed values fall back
+// to the public API origin so the daemon never emits a relative or unusable
+// browser URL.
+func (c *Config) GetCLIAuthURLBase(env func(string) string) string {
+	raw := ""
+	if c != nil {
+		raw = c.CLIAuthURLBase
+	}
+	if v := env("FAAS_CLI_AUTH_URL_BASE"); v != "" {
+		raw = v
+	}
+	return normalizeCLIAuthURLBase(raw)
+}
+
+func normalizeCLIAuthURLBase(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultCLIAuthURLBase
+	}
+	// Keep the operator-facing config ergonomic while ensuring the API
+	// response always contains an absolute URL.
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+		return defaultCLIAuthURLBase
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	return strings.TrimRight(u.String(), "/")
 }
 
 // GetRequestReadTimeout returns the http.Server.ReadTimeout with

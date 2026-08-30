@@ -2361,6 +2361,26 @@ func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]I
 	return scanInstances(rows)
 }
 
+// FailRunningInstanceIfOwnedByNode is the healthy-node stale-instance
+// reconciliation primitive. vmmd capacity reports are authoritative only
+// after two identical complete reports; this conditional update then makes
+// the state transition race-safe against a concurrent park, wake, or
+// migration. ErrConflict means another lifecycle writer won the race.
+func (s *PgStore) FailRunningInstanceIfOwnedByNode(ctx context.Context, id, nodeID string, terminalAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances
+		    set state = 'failed', terminal_at = $3
+		  where id = $1 and node_id = $2 and state = 'running'`,
+		id, nodeID, terminalAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
 // ListOwnedCronsByNodeID returns every cron whose owning app's owner
 // node is the given compute_nodes.id. Phase 2 / Gate A — the cron
 // dispatcher runs once per node and only fires for crons on apps it
@@ -8093,6 +8113,57 @@ func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, erro
 	return scanAlertRule(row)
 }
 
+// AlertRuleByAccountAppAndPresetName resolves the alert_rules row
+// that was instantiated from a catalog preset. ADR-123 deliberately
+// rejected a preset_id FK on alert_rules — the binding is the parsed
+// display-name prefix "<DisplayName> (<app_slug>)". The query joins
+// alert_presets on name to translate the catalog key into the prefix,
+// then matches rules via LIKE '<prefix>%'. The existing
+// alert_rules_account_name_uniq index covers the LIKE as a prefix
+// range scan on (account_id, name).
+//
+// Returns:
+//   - ErrNotFound when no rule matches the (account, app, preset)
+//     tuple — the handler maps this to 404.
+//   - ErrConflict when the LIKE matches >1 row (cannot happen today;
+//     the name column is UNIQUE per (account_id, app_id), but the
+//     surface stays defensive).
+//
+// Refs: ADR-123 PR-C, issue #1233, plan §Commit 2.
+func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accountID, appID, presetName string) (AlertRule, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+alertRuleSelectCols+`
+		FROM alert_rules r
+		WHERE r.account_id = $1
+		  AND r.app_id = $2
+		  AND r.name LIKE (
+		    SELECT (display_name || ' (%') FROM alert_presets WHERE name = $3
+		  )
+		ORDER BY r.created_at DESC
+		LIMIT 2`, accountID, appID, presetName)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	defer rows.Close()
+	matched, err := scanAlertRules(rows)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	switch len(matched) {
+	case 0:
+		return AlertRule{}, ErrNotFound
+	case 1:
+		return matched[0], nil
+	default:
+		// Defensive: catalog display_name uniqueness + the
+		// (account_id, app_id, name) UNIQUE constraint should make
+		// this unreachable. Returning ErrConflict keeps the handler
+		// clean — 409 with a sane message beats a panic or a silent
+		// "send test alert to a stale rule" outcome.
+		return AlertRule{}, ErrConflict
+	}
+}
+
 // UpdateAlertRule coalesces the optional fields onto alert_rules.
 // All fields share the nil-skip pattern; WebhookSecretSealed is *[]byte
 // because a nil means "leave the seal alone" (a non-rotation update
@@ -9433,7 +9504,7 @@ func (s *PgStore) SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, 
 
 const alertDeliverySelectCols = `id, rule_id, account_id, app_id, idempotency_key, payload,
        status, attempt_count, last_status_code, last_error,
-       observed_value, fired_at, delivered_at`
+       observed_value, fired_at, delivered_at, is_test`
 
 func scanAlertDelivery(row pgx.Row) (AlertDelivery, error) {
 	d := AlertDelivery{}
@@ -9447,7 +9518,7 @@ func scanAlertDelivery(row pgx.Row) (AlertDelivery, error) {
 	if err := row.Scan(
 		&d.ID, &d.RuleID, &d.AccountID, &appID, &d.IdempotencyKey, &payload,
 		&status, &attemptCount, &lastStatusCode, &lastError, &d.ObservedValue,
-		&d.FiredAt, &deliveredAt,
+		&d.FiredAt, &deliveredAt, &d.IsTest,
 	); err != nil {
 		return AlertDelivery{}, err
 	}
@@ -9486,7 +9557,7 @@ func scanAlertDeliveries(rows pgx.Rows) ([]AlertDelivery, error) {
 		if err := rows.Scan(
 			&d.ID, &d.RuleID, &d.AccountID, &appID, &d.IdempotencyKey, &payload,
 			&status, &attemptCount, &lastStatusCode, &lastError, &d.ObservedValue,
-			&d.FiredAt, &deliveredAt,
+			&d.FiredAt, &deliveredAt, &d.IsTest,
 		); err != nil {
 			return nil, err
 		}
@@ -9541,16 +9612,16 @@ func (s *PgStore) RecordAlertDelivery(ctx context.Context, in AlertDelivery) (Al
 		insert into alert_deliveries (
 			rule_id, account_id, app_id, idempotency_key, payload,
 			status, attempt_count, last_status_code, last_error,
-			observed_value, fired_at, delivered_at
+			observed_value, fired_at, delivered_at, is_test
 		) values (
 			$1, $2, $3, $4, $5,
 			coalesce($6, 'pending'), $7, $8, $9,
-			$10, coalesce($11, now()), $12
+			$10, coalesce($11, now()), $12, $13
 		)
 		returning `+alertDeliverySelectCols,
 		in.RuleID, in.AccountID, appIDArg, in.IdempotencyKey, []byte(in.Payload),
 		statusArg, in.AttemptCount, in.LastStatusCode, lastErrorArg,
-		in.ObservedValue, in.FiredAt, deliveredAtArg,
+		in.ObservedValue, in.FiredAt, deliveredAtArg, in.IsTest,
 	)
 	d, err := scanAlertDelivery(row)
 	if err != nil {
@@ -9593,13 +9664,26 @@ func (s *PgStore) UpdateAlertDeliveryStatus(ctx context.Context, id string, stat
 	return nil
 }
 
-func (s *PgStore) ListAlertDeliveriesForRule(ctx context.Context, ruleID string, limit int) ([]AlertDelivery, error) {
+func (s *PgStore) ListAlertDeliveriesForRule(ctx context.Context, ruleID string, limit int, includeTest bool) ([]AlertDelivery, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx,
-		`select `+alertDeliverySelectCols+` from alert_deliveries
-		 where rule_id = $1 order by fired_at desc limit $2`, ruleID, limit)
+	// includeTest=false → the production hot path; covered by the
+	// partial index alert_deliveries_rule_fired_production_idx
+	// (migrations/00528) so this stays index-only even as test
+	// rows accumulate. includeTest=true → unconditional read; the
+	// full alert_deliveries_rule_fired_idx covers the predicate.
+	var rows pgx.Rows
+	var err error
+	if includeTest {
+		rows, err = s.pool.Query(ctx,
+			`select `+alertDeliverySelectCols+` from alert_deliveries
+			 where rule_id = $1 order by fired_at desc limit $2`, ruleID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select `+alertDeliverySelectCols+` from alert_deliveries
+			 where rule_id = $1 and is_test = false order by fired_at desc limit $2`, ruleID, limit)
+	}
 	if err != nil {
 		return nil, err
 	}

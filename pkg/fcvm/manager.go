@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +42,13 @@ import (
 // Runner executes one host command (ip/nft/sysctl) to completion.
 type Runner interface {
 	Run(ctx context.Context, argv []string) error
+}
+
+// InputRunner is the optional production fast path for tools that accept an
+// atomic stdin batch. Test runners and legacy embedders need only implement
+// Runner; setupNetwork falls back to one command per rule for them.
+type InputRunner interface {
+	RunInput(ctx context.Context, argv []string, input []byte) error
 }
 
 // VMM starts, snapshots, restores, and stops the jailed firecracker process for
@@ -452,8 +460,20 @@ type Manager struct {
 	fcVersion     string // the running Firecracker version; snapshots load only on a match
 	log           *slog.Logger
 
-	mu         sync.Mutex
-	live       map[string]*Instance
+	mu   sync.Mutex
+	live map[string]*Instance
+	// pendingProcessExits closes the small hand-off race between
+	// JailerVMM reporting a child exit and Wake publishing the
+	// instance into live. A process can pass readiness and exit
+	// before the final live-map insert; retaining the exit under the
+	// same mutex lets Wake fail closed instead of registering a dead
+	// instance. Entries are consumed by Wake or cleared by cleanup.
+	pendingProcessExits map[string]int
+	// waking marks leases between acquisition and live-map publication.
+	// ProcessExited records a pending marker only for this narrow phase;
+	// an exit observed after explicit Destroy has removed live must not
+	// be mistaken for a future Wake of the same id.
+	waking     map[string]struct{}
 	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
 	// cidToID (issue #470 / PR #470-FU-B) is the reverse
 	// Firecracker-vsock-CID → instance id index the framework_ready
@@ -589,6 +609,10 @@ type Manager struct {
 	// local vmmd run, or a unit test); startLivenessLoop logs
 	// Warn and returns.
 	livenessStarter LivenessProbeStarter
+	// lifecycleCtx is vmmd's daemon context. Per-instance liveness loops
+	// must be children of this context, not of the short-lived Wake RPC
+	// context; the latter is normally canceled as soon as Wake returns.
+	lifecycleCtx context.Context
 	// hostIdentities is the slice of X25519 secret keys used to
 	// unseal per-app sealed env blobs at wake time (spec §11/G2).
 	// Holds the current identity alone in the normal pre-rotation
@@ -779,19 +803,22 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc:      NewAllocator(),
-		run:        run,
-		vmm:        vmm,
-		paths:      paths,
-		fcVersion:  fcVersion,
-		log:        log,
-		live:       make(map[string]*Instance),
-		exportDirs: make(map[string]string),
+		alloc:               NewAllocator(),
+		run:                 run,
+		vmm:                 vmm,
+		paths:               paths,
+		fcVersion:           fcVersion,
+		log:                 log,
+		live:                make(map[string]*Instance),
+		pendingProcessExits: make(map[string]int),
+		waking:              make(map[string]struct{}),
+		exportDirs:          make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
 		// cidToID field comment for the lifecycle.
 		cidToID:              make(map[uint32]string),
 		cooldownByDeployment: make(map[string]time.Time),
+		lifecycleCtx:         context.Background(),
 		// ADR-119 redesign: per-app static-egress caches. The
 		// perAppStaticIP map (per-app pin) stays; perVMHostIP
 		// (per-VM host IP) is the new map that drives the host
@@ -1149,9 +1176,9 @@ func (m *Manager) WithTailTerminalStamper(s TailTerminalStamper) *Manager {
 // constructs the closure at daemon startup and passes it via
 // Manager.WithLivenessSink; the vmmd poll goroutine calls it directly.
 //
-// Reason is a stable short string from the closed set {timeout,
-// conn_refused, conn_err, non_200} — the same closed set the
-// vmmd_guest_liveness_probe_seconds histogram emits. The schedd
+// Reason is a stable short string from the probe set {timeout,
+// conn_refused, conn_err, non_200}; process-exit reconciliation
+// additionally uses "process_exited". The schedd
 // Engine.DestroyForLivenessFailure uses the reason to populate the
 // audit event's data JSON.
 type LivenessFailedSink func(ctx context.Context, instanceID, reason string)
@@ -1201,6 +1228,82 @@ type LivenessProbeStarter func(ctx context.Context, instance string, slot int, d
 func (m *Manager) WithLivenessProbeStarter(starter LivenessProbeStarter) *Manager {
 	m.livenessStarter = starter
 	return m
+}
+
+// WithLifecycleContext attaches the vmmd daemon context used for background
+// per-instance work. Wake callers have short RPC lifetimes; using those
+// contexts for liveness monitoring stops the monitor immediately after a
+// successful wake. The daemon context keeps the monitor alive until the
+// instance is explicitly torn down or vmmd shuts down.
+func (m *Manager) WithLifecycleContext(ctx context.Context) *Manager { //nolint:contextcheck // lifecycle context is intentionally retained by vmmd for background work beyond the RPC lifetime.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.lifecycleCtx = ctx
+	return m
+}
+
+// ProcessExited reports an unexpected Firecracker process exit to schedd.
+// The Manager keeps the live entry intact while the relay runs so schedd's
+// normal Destroy path can perform the authoritative state transition and
+// resource cleanup. If no relay is wired (development/test mode), it falls
+// back to local cleanup so the allocator and network cannot leak.
+func (m *Manager) ProcessExited(instance string, exitCode int) {
+	if m == nil || instance == "" {
+		return
+	}
+	m.mu.Lock()
+	inst, live := m.live[instance]
+	relay := m.livenessRelay
+	lifecycle := m.lifecycleCtx
+	_, waking := m.waking[instance]
+	if !live && waking {
+		if m.pendingProcessExits == nil {
+			m.pendingProcessExits = make(map[string]int)
+		}
+		m.pendingProcessExits[instance] = exitCode
+	}
+	m.mu.Unlock()
+	if !live {
+		// An exit during the Wake hand-off is consumed by Wake. An
+		// exit after explicit Park/Destroy removed live is expected
+		// teardown and is deliberately ignored.
+		return
+	}
+	if inst.Lease.IsBuilder {
+		// Builderd owns the expected process-exit → artifact-export
+		// sequence. The VMM filters normal builder exits too, but keep
+		// this guard for alternate VMM implementations and tests.
+		return
+	}
+
+	// Stop the health loop before notifying schedd. Otherwise the
+	// dead process can produce a second, slower liveness failure while
+	// the first destroy is still in flight.
+	m.DeleteLivenessConsecutiveFailures(instance)
+	m.cancelLivenessLoop(instance)
+
+	if lifecycle == nil {
+		lifecycle = context.Background()
+	}
+	m.ReportLivenessFailed(context.WithoutCancel(lifecycle), instance, "process_exited")
+	if relay != nil {
+		return
+	}
+
+	m.mu.Lock()
+	inst, ok := m.live[instance]
+	if ok {
+		delete(m.live, instance)
+		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
+	}
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	m.cleanup(context.WithoutCancel(lifecycle), inst.Lease, inst.Net, inst.WorkloadNames)
+	m.log.Warn("firecracker process exited without schedd relay",
+		"instance", instance, "exit_code", exitCode)
 }
 
 // WithLivenessMetrics attaches the Prometheus collector pair
@@ -1282,9 +1385,9 @@ func (m *Manager) DeleteLivenessConsecutiveFailures(instance string) {
 // invocation of the LivenessFailedSink. Called by the per-instance
 // poll goroutine once the consecutive-failure counter reaches the
 // per-plan N. Schedd is the consumer (Engine.DestroyForLivenessFailure);
-// vmmd never touches the DB. Safe on a nil relay — the missing-wire
-// path is a no-op so a unit test that doesn't construct a relay
-// doesn't have to stub one.
+// vmmd never touches the DB. A nil relay skips the schedd notification,
+// but the local cooldown stamp still records the failure for tests and
+// default-local callers.
 //
 // Side effect (issue #554 closure / ADR-078 cooldown gate, code
 // review #725 finding F1): stamps the Manager's
@@ -1302,13 +1405,14 @@ func (m *Manager) DeleteLivenessConsecutiveFailures(instance string) {
 // were removed; the field itself is gone (the dying instance is
 // about to be Parked anyway).
 func (m *Manager) ReportLivenessFailed(ctx context.Context, instanceID, reason string) {
-	if m.livenessRelay == nil {
+	if m == nil || instanceID == "" {
 		return
 	}
-	m.livenessRelay(ctx, instanceID, reason)
-	// Stamp cooldownByDeployment. We do this even when
-	// livenessRelay is nil-skipped above so tests can exercise
-	// the gate without the schedd sink.
+	if m.livenessRelay != nil {
+		m.livenessRelay(ctx, instanceID, reason)
+	}
+	// Stamp cooldownByDeployment even when no relay is wired so a
+	// local/test manager preserves the same restart-cooldown semantics.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inst, ok := m.live[instanceID]
@@ -1378,14 +1482,57 @@ type LivenessProbeConfig struct {
 // — repeated calls on the same instance id are a no-op so a Park
 // racing a Destroy can't panic.
 type LivenessRegistry struct {
-	mu    sync.Mutex
-	loops map[string]context.CancelFunc
+	mu     sync.Mutex
+	loops  map[string]livenessLoopRegistration
+	nextID uint64
+}
+
+type livenessLoopToken struct{ id uint64 }
+
+// livenessLoopTokenContextKey keeps the registry generation private to the
+// manager/cmd boundary. LivenessProbeConfig is part of the public Manager
+// API, so lifecycle bookkeeping must not grow an unexported field that would
+// break external unkeyed composite literals.
+type livenessLoopTokenContextKey struct{}
+
+type livenessLoopRegistration struct {
+	token  *livenessLoopToken
+	cancel context.CancelFunc
 }
 
 // NewLivenessRegistry constructs an empty registry. cmd/vmmd main
 // calls this once at startup; tests can construct one ad-hoc.
 func NewLivenessRegistry() *LivenessRegistry {
-	return &LivenessRegistry{loops: make(map[string]context.CancelFunc)}
+	return &LivenessRegistry{loops: make(map[string]livenessLoopRegistration)}
+}
+
+// prepareProbeLoop reserves the registry slot for a new loop and cancels
+// any previous loop for the same instance. The token lets a loop that exits
+// by itself remove only its own registration, not a replacement registered
+// during a lifecycle race.
+func (r *LivenessRegistry) prepareProbeLoop(instance string) *livenessLoopToken {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	if r.loops == nil {
+		r.loops = make(map[string]livenessLoopRegistration)
+	}
+	r.nextID++
+	token := &livenessLoopToken{id: r.nextID}
+	var previousCancel context.CancelFunc
+	if prev, ok := r.loops[instance]; ok && prev.cancel != nil {
+		previousCancel = prev.cancel
+	}
+	r.loops[instance] = livenessLoopRegistration{token: token}
+	r.mu.Unlock()
+	// Cancel outside the registry lock. A CancelFunc normally only closes a
+	// context, but keeping user-provided cancellation callbacks out of the
+	// critical section prevents a callback from deadlocking on this registry.
+	if previousCancel != nil {
+		previousCancel()
+	}
+	return token
 }
 
 // StartProbeLoop registers cancelFn for instance and returns. The
@@ -1404,12 +1551,48 @@ func (r *LivenessRegistry) StartProbeLoop(instance string, cancelFn context.Canc
 	if r == nil {
 		return
 	}
+	token := r.prepareProbeLoop(instance)
+	r.startProbeLoopWithToken(instance, token, cancelFn)
+}
+
+// startProbeLoopWithToken installs the cancel function for a slot reserved by
+// prepareProbeLoop. If the loop already finished and removed its token, the
+// late registration is rejected and the returned loop is cancelled.
+func (r *LivenessRegistry) startProbeLoopWithToken(instance string, token *livenessLoopToken, cancelFn context.CancelFunc) {
+	if r == nil || token == nil {
+		if cancelFn != nil {
+			cancelFn()
+		}
+		return
+	}
+	if cancelFn == nil {
+		r.finishProbeLoop(instance, token)
+		return
+	}
+	r.mu.Lock()
+	current, ok := r.loops[instance]
+	if !ok || current.token != token {
+		r.mu.Unlock()
+		cancelFn()
+		return
+	}
+	current.cancel = cancelFn
+	r.loops[instance] = current
+	r.mu.Unlock()
+}
+
+// finishProbeLoop removes a completed loop only when its token is still the
+// active registration. This prevents an old loop's deferred cleanup from
+// deleting a newer loop for the same instance.
+func (r *LivenessRegistry) finishProbeLoop(instance string, token *livenessLoopToken) {
+	if r == nil || token == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if prev, ok := r.loops[instance]; ok {
-		prev()
+	if current, ok := r.loops[instance]; ok && current.token == token {
+		delete(r.loops, instance)
 	}
-	r.loops[instance] = cancelFn
 }
 
 // CancelProbeLoop stops the loop for the instance. Idempotent.
@@ -1421,10 +1604,16 @@ func (r *LivenessRegistry) CancelProbeLoop(instance string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if cancel, ok := r.loops[instance]; ok {
-		cancel()
+	registration, ok := r.loops[instance]
+	if ok {
 		delete(r.loops, instance)
+	}
+	r.mu.Unlock()
+	if ok && registration.cancel != nil {
+		// Invoke cancellation after removing the entry. A concurrent loop
+		// completion cannot leave a stale registration behind, and a custom
+		// cancel callback cannot re-enter the registry while it is locked.
+		registration.cancel()
 	}
 }
 
@@ -1463,7 +1652,7 @@ func (m *Manager) WithLivenessProbes(reg *LivenessRegistry, defaultCfg LivenessP
 //     override=off)
 //
 // The cmd/vmmd liveness_recv.start helper builds the loop body and
-// invokes r.StartProbeLoop to register the cancel func. We don't
+// returns its cancel func for the registry. We don't
 // construct the loop here because the loop body binds cmd-level
 // types (slog, vsock, wire envelope).
 func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
@@ -1538,9 +1727,24 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 			"instance", instance)
 		return
 	}
-	cancelFn := m.livenessStarter(ctx, instance, slot, deploymentID, cfg)
+	token := m.livenessRegistry.prepareProbeLoop(instance)
+	parent := m.lifecycleCtx //nolint:contextcheck // this is the daemon-owned lifecycle context, intentionally outliving the wake RPC.
+	if parent == nil {
+		// Managers constructed outside cmd/vmmd still get the safe
+		// behavior: a request cancellation must not kill a monitor
+		// for a successfully running VM.
+		parent = context.WithoutCancel(ctx)
+	}
+	// Keep the generation token on the private lifecycle context rather than
+	// exposing it through LivenessProbeConfig. The cmd-level starter derives
+	// its loop context from parent, so the terminal defer can clean up only
+	// the registration belonging to that exact loop generation.
+	parent = context.WithValue(parent, livenessLoopTokenContextKey{}, token)
+	cancelFn := m.livenessStarter(parent, instance, slot, deploymentID, cfg)
 	if cancelFn != nil {
-		m.livenessRegistry.StartProbeLoop(instance, cancelFn)
+		m.livenessRegistry.startProbeLoopWithToken(instance, token, cancelFn)
+	} else {
+		m.livenessRegistry.finishProbeLoop(instance, token)
 	}
 }
 
@@ -1554,6 +1758,21 @@ func (m *Manager) cancelLivenessLoop(instance string) {
 		return
 	}
 	m.livenessRegistry.CancelProbeLoop(instance)
+}
+
+// FinishLivenessLoop removes a loop that reached a terminal condition or
+// stopped because vmmd is shutting down. The private token is carried on the
+// loop context, so an old loop cannot remove a replacement loop that reused
+// the same instance key during a lifecycle race.
+func (m *Manager) FinishLivenessLoop(instance string, ctx context.Context) {
+	if m == nil || m.livenessRegistry == nil {
+		return
+	}
+	var token *livenessLoopToken
+	if ctx != nil {
+		token, _ = ctx.Value(livenessLoopTokenContextKey{}).(*livenessLoopToken)
+	}
+	m.livenessRegistry.finishProbeLoop(instance, token)
 }
 
 // MarkInstanceFrameworkReady stamps the per-instance
@@ -2402,6 +2621,12 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
 	}
 	lease.MemoryMaxMiB = req.MemSizeMiB
+	m.mu.Lock()
+	if m.waking == nil {
+		m.waking = make(map[string]struct{})
+	}
+	m.waking[req.Instance] = struct{}{}
+	m.mu.Unlock()
 	// Any failure from this point — Plan validation, wire-side
 	// allowlist checks, bringUp, cgroup write — must fully clean up.
 	// Registering the cleanup BEFORE the validation loop is
@@ -2880,7 +3105,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// rule alongside the prior one. The next patch will then
 	// have the prior handle cached and can `delete` + `add` as
 	// intended.
-	hV4, hV6, herr := m.captureAllowlistHandles(ctx, nc.Netns)
+	hV4, hV6, herr := m.captureAllowlistHandlesForWake(ctx, nc.Netns, nc.EgressAllowlist)
 	if herr != nil {
 		m.log.Debug("fcvm: Wake handle capture best-effort failed",
 			"instance", req.Instance, "netns", nc.Netns, "err", herr)
@@ -2888,6 +3113,14 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	inst.AllowlistHandleV4 = hV4
 	inst.AllowlistHandleV6 = hV6
 	m.mu.Lock()
+	if exitCode, exited := m.pendingProcessExits[req.Instance]; exited {
+		delete(m.pendingProcessExits, req.Instance)
+		delete(m.waking, req.Instance)
+		m.mu.Unlock()
+		err = fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode)
+		return nil, err
+	}
+	delete(m.waking, req.Instance)
 	m.live[req.Instance] = inst
 	// Issue #470 / PR #470-FU-B: maintain the CID→instance
 	// reverse index so the framework_ready DGRAM receipt path
@@ -2906,8 +3139,9 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// liveness probe loop after the live map insert so the cmd/vmmd
 	// helper can read Lease.Slot via the same instance id. No-op
 	// when the registry isn't wired (unit tests, default-local vmmd).
-	// Uses the parent ctx so the loop exits cleanly when schedd
-	// cancels the wake request.
+	// The Manager selects its daemon lifecycle context so the loop
+	// survives the short-lived Wake RPC and exits with vmmd shutdown
+	// or explicit instance teardown.
 	m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
 	return inst, nil
 }
@@ -3152,6 +3386,11 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if !ok {
 		return SnapshotInfo{}, fmt.Errorf("park %s: not live", instance)
 	}
+	// Stop liveness before pausing/snapshotting. A parked VM is expected to
+	// stop answering probes; leaving the loop active through Snapshot lets it
+	// race this teardown and report a second failure for the same instance.
+	m.DeleteLivenessConsecutiveFailures(instance)
+	m.cancelLivenessLoop(instance)
 
 	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
 	if err != nil {
@@ -3171,18 +3410,6 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	// whose Lease.Slot was just freed.
 	delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	m.mu.Unlock()
-	// Drop the per-instance liveness gauge entry (issue #554 /
-	// ADR-078). The gauge's {instance} label is high cardinality —
-	// a parked instance's row should not stay in the registry
-	// forever. The poll goroutine reading the gauge sees a
-	// DeleteLabelValues call as a clean "not tracked" state.
-	m.DeleteLivenessConsecutiveFailures(instance)
-	// Cancel the per-instance probe loop (issue #554 / ADR-078 /
-	// PR review fix). Idempotent; no-op when the registry is nil.
-	// Runs after the gauge delete so a Park racing a Wake's
-	// startLivenessLoop sees a coherent state (cancel after the
-	// loop has registered).
-	m.cancelLivenessLoop(instance)
 	m.cleanup(ctx, inst.Lease, inst.Net, inst.WorkloadNames)
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
@@ -3256,6 +3483,14 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // Destroy, it tears down network + lease on the success path; on failure it
 // still runs cleanup (invariant §6.2-4/5).
 func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
+	// Stop background liveness work before removing the live entry or
+	// waiting on the VMM. A liveness report can race this destroy path;
+	// cancelling first prevents the loop from probing an instance whose
+	// resources are already being torn down. Keep this outside the live-map
+	// branch so an idempotent destroy also cleans up a stale registration.
+	m.DeleteLivenessConsecutiveFailures(instance)
+	m.cancelLivenessLoop(instance)
+
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	if ok {
@@ -4209,7 +4444,32 @@ func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
 				"instance", nc.Instance, "argv", argv, "err", err)
 		}
 	}
-	return m.runCommands(ctx, nc.NftCommands())
+	return m.runNftCommands(ctx, nc.Netns, nc.NftCommands())
+}
+
+// runNftCommands loads the per-instance ruleset through one nft process when
+// the runner supports stdin. A default ruleset contains dozens of individual
+// rules; spawning ip+nsenter+nft once per rule accounted for a measurable
+// fraction of every restore despite the kernel work itself being tiny.
+func (m *Manager) runNftCommands(ctx context.Context, netnsName string, cmds [][]string) error {
+	inputRunner, ok := m.run.(InputRunner)
+	if !ok || len(cmds) == 0 {
+		return m.runCommands(ctx, cmds)
+	}
+	prefix := []string{"ip", "netns", "exec", netnsName, "nft"}
+	var script strings.Builder
+	for _, argv := range cmds {
+		if len(argv) <= len(prefix) || !slices.Equal(argv[:len(prefix)], prefix) {
+			return fmt.Errorf("unexpected nft command prefix: %v", argv)
+		}
+		script.WriteString(strings.Join(argv[len(prefix):], " "))
+		script.WriteByte('\n')
+	}
+	batchArgv := append(append([]string{}, prefix...), "-f", "-")
+	if err := inputRunner.RunInput(ctx, batchArgv, []byte(script.String())); err != nil {
+		return fmt.Errorf("nft ruleset batch: %w", err)
+	}
+	return nil
 }
 
 // removeStaleNetnsMarker removes only a regular file in the iproute2 netns
@@ -4282,6 +4542,47 @@ func (m *Manager) captureAllowlistHandles(ctx context.Context, netnsName string)
 	return hV4, hV6, nil
 }
 
+// captureAllowlistHandlesForWake avoids nft list operations for families that
+// cannot contain an allowlist rule. Config.NftCommands emits no rule when the
+// effective allowlist is empty, and emits one rule only for each address family
+// represented in the list. Keep the general captureAllowlistHandles method
+// unchanged for live-patch paths, where a caller may need to inspect an
+// already-rendered chain.
+func (m *Manager) captureAllowlistHandlesForWake(ctx context.Context, netnsName string, allowlist []netip.Prefix) (uint64, uint64, error) {
+	if m.captureRunner == nil {
+		return 0, 0, nil
+	}
+	var hasV4, hasV6 bool
+	for _, prefix := range allowlist {
+		switch {
+		case prefix.Addr().Is4():
+			hasV4 = true
+		case prefix.Addr().Is6():
+			hasV6 = true
+		}
+	}
+	if !hasV4 && !hasV6 {
+		return 0, 0, nil
+	}
+
+	var hV4, hV6 uint64
+	if hasV4 {
+		var err error
+		hV4, err = listChainHandles(ctx, m.captureRunner, netnsName, "ip", "faas", "forward")
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if hasV6 {
+		var err error
+		hV6, err = listChainHandles(ctx, m.captureRunner, netnsName, "ip6", "faas", "forward")
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	return hV4, hV6, nil
+}
+
 // listChainHandles runs `ip netns exec <ns> nft -a list chain
 // <family> faas forward` and returns the handle of the rule that
 // matches the allowlist-renderer invariant
@@ -4338,6 +4639,13 @@ func listChainHandles(ctx context.Context, cap CaptureRunner, netnsName, family,
 // network, and always release the lease. Errors are logged, never returned — a
 // cleanup that gives up would leak.
 func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, workloadNames []string) {
+	// A child can report its exit after an explicit Destroy/failed Wake
+	// removed the live entry but before Kill has finished. Do not let that
+	// expected exit poison a later Wake using the same instance id.
+	m.mu.Lock()
+	delete(m.pendingProcessExits, lease.Instance)
+	delete(m.waking, lease.Instance)
+	m.mu.Unlock()
 	// Issue #463 / ADR-069 / PR-B: tear down per-workload cgroup child
 	// scopes BEFORE vmm.Kill removes the parent scope. The kernel
 	// cascade-removes children when the parent goes, but the parent

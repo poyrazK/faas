@@ -42,10 +42,12 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -286,6 +288,69 @@ func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state
 		}
 	}
 	writeJSON(w, http.StatusOK, alertRuleResponse(row))
+}
+
+// --- list deliveries -------------------------------------------------------
+
+// listAlertRuleDeliveries (ADR-123 PR-D) returns the recent
+// alert_deliveries rows for one rule, newest-first, capped at
+// limit (default 50, max 100 — matches the dashboard's
+// fetchDashboardAlerts limit clamp).
+//
+// ?include_test=true (default false): when true, surfaces the rows
+// written by Dispatcher.DispatchTest. The default hides them so
+// the customer's recent-deliveries pane is not polluted by every
+// "send test alert" click. Operators can flip the toggle on for
+// post-mortems; the production hot path stays index-only via the
+// partial index alert_deliveries_rule_fired_production_idx
+// (migrations/00528).
+//
+// Auth: same scope as getAlertRule (read surface). The IDOR check
+// uses AlertRuleByID + an AccountID match — mirroring getAlertRule
+// line-by-line so a customer cannot probe another account's
+// delivery ledger by guessing rule IDs.
+func (s *server) listAlertRuleDeliveries(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	id := r.PathValue("id")
+	row, err := s.store.AlertRuleByID(r.Context(), id)
+	if err != nil {
+		s.notFound(w, "no such alert rule")
+		return
+	}
+	if row.AccountID != acct.ID {
+		s.notFound(w, "no such alert rule")
+		return
+	}
+	if row.AppID != "" {
+		app, err := s.store.AppByID(r.Context(), row.AppID)
+		if err != nil || app.AccountID != acct.ID {
+			s.notFound(w, "no such alert rule")
+			return
+		}
+	}
+	includeTest, _ := strconv.ParseBool(r.URL.Query().Get("include_test"))
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid limit", "limit must be a positive integer"))
+			return
+		}
+		if n > 100 {
+			n = 100
+		}
+		limit = n
+	}
+	rows, err := s.store.ListAlertDeliveriesForRule(r.Context(), id, limit, includeTest)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list alert deliveries"))
+		return
+	}
+	out := make([]api.AlertDeliveryResponse, 0, len(rows))
+	for _, d := range rows {
+		out = append(out, alertDeliveryResponse(d))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // --- update -----------------------------------------------------------------
@@ -626,6 +691,32 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		CreatedAt:       r.CreatedAt,
 		UpdatedAt:       r.UpdatedAt,
 	})
+}
+
+// alertDeliveryResponse maps a state.AlertDelivery row onto the
+// public api.AlertDeliveryResponse. Truncates LastError via the
+// dashboard's formatter so the response is log-injection-safe —
+// same precedent as handlers_dashboard.go:756-763.
+func alertDeliveryResponse(d state.AlertDelivery) api.AlertDeliveryResponse {
+	lastErr := d.LastError
+	if lastErr != "" {
+		lastErr = dashboard.FormatAlertError(lastErr)
+	}
+	return api.AlertDeliveryResponse{
+		ID:             d.ID,
+		RuleID:         d.RuleID,
+		AccountID:      d.AccountID,
+		AppID:          d.AppID,
+		IdempotencyKey: d.IdempotencyKey,
+		Status:         string(d.Status),
+		AttemptCount:   d.AttemptCount,
+		LastStatusCode: d.LastStatusCode,
+		LastError:      lastErr,
+		ObservedValue:  d.ObservedValue,
+		FiredAt:        d.FiredAt,
+		DeliveredAt:    d.DeliveredAt,
+		IsTest:         d.IsTest,
+	}
 }
 
 // alertRuleEnabledFrom returns the create-request's enabled flag

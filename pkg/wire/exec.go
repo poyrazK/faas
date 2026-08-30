@@ -32,6 +32,25 @@ func (ExecRunner) Run(ctx context.Context, argv []string) error {
 	return nil
 }
 
+// RunInput executes argv once with input connected to stdin. It is used for
+// atomic batch-capable tools such as nft, avoiding one process tree per rule.
+func (ExecRunner) RunInput(ctx context.Context, argv []string, input []byte) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("wire: empty command")
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Stdin = bytes.NewReader(input)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%s: %w: %s", argv[0], err, bytes.TrimSpace(stderr.Bytes()))
+		}
+		return fmt.Errorf("%s: %w", argv[0], err)
+	}
+	return nil
+}
+
 // Output executes argv and returns its stdout. stderr is folded into the
 // returned error on failure (mirrors Run). Use this when the caller needs the
 // command's output rather than its exit status — e.g. parsing `conntrack -L`

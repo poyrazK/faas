@@ -161,12 +161,11 @@ func (f FuncCacheObserver) OnStaleFallback() {
 }
 
 // DefaultCacheMaxBytes is the byte-budget fallback when
-// FAAS_STORAGE_CACHE_MAX_BYTES is unset. 1 GiB keeps the cache
-// small enough to live on the OS disk partition without
-// competing with the rootfs base + snapshots; large enough to
-// absorb a registry outage of a few minutes at the typical
-// fleet layer size (~250 MB × 4 = 1 GiB).
-const DefaultCacheMaxBytes int64 = 1 << 30
+// FAAS_STORAGE_CACHE_MAX_BYTES is unset. 8 GiB keeps the active deployment
+// set resident on normal compute nodes; the previous 1 GiB default could hold
+// only a few app layers and repeatedly evicted the layer needed by a snapshot
+// that had otherwise been prepositioned successfully.
+const DefaultCacheMaxBytes int64 = 8 << 30
 
 // LocalCacheBackend is the read-through cache ADR-054 §2
 // describes. Construct one with NewLocalCacheBackend; pass the
@@ -233,6 +232,7 @@ func (c *LocalCacheBackend) LocalPath(key string) (string, bool, error) {
 	}
 	cacheFile, _ := c.cacheFileFor(key)
 	if fi, err := os.Stat(cacheFile); err == nil && !fi.IsDir() && fi.Size() > 0 {
+		c.touchCacheFile(cacheFile)
 		return cacheFile, true, nil
 	}
 	return "", false, nil
@@ -505,17 +505,20 @@ func (c *LocalCacheBackend) openCache(key string) (io.ReadCloser, bool) {
 	if err != nil {
 		return nil, false
 	}
-	// Note: we deliberately do NOT Chtimes the file on read.
-	// The cache's LRU eviction is mtime-driven; touching the
-	// mtime on every read would make the entire cache look
-	// freshly-written and silently defeat eviction. The
-	// "hot" entries are the ones that protect against registry
-	// outages (ADR-054 §2); their Put mtime is the right
-	// signal. A hot entry that gets evicted is still served
-	// on the next Get via the parent-round-trip fallback, so
-	// freshness is governed by upstream behaviour, not by the
-	// cache's read traffic.
+	// Eviction is mtime-driven, so a successful read must advance the access
+	// signal. Without this touch the policy was FIFO-by-insertion in practice:
+	// a frequently restored app layer was evicted merely because it had been
+	// downloaded before an inactive layer.
+	c.touchCacheFile(path)
 	return f, true
+}
+
+// touchCacheFile updates the mtime used by the byte-budget eviction pass. It
+// is best-effort because cache freshness never affects canonical storage
+// correctness; a read must not fail just because timestamp persistence did.
+func (c *LocalCacheBackend) touchCacheFile(path string) {
+	now := time.Now()
+	_ = os.Chtimes(path, now, now)
 }
 
 // materializeCache streams a parent response into the cache and returns a

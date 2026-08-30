@@ -1,6 +1,8 @@
 package state_test
 
 import (
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -120,5 +122,34 @@ func TestPgSnapshotReplicaEventCursorAndOriginFiltering(t *testing.T) {
 	}
 	if cursorID != secondEventID {
 		t.Fatalf("final cursor = %d, want %d", cursorID, secondEventID)
+	}
+
+	if err := s.SetDeploymentRootfs(ctx, deploymentID,
+		"/srv/fc/apps/pg-app/"+deploymentID+".ext4",
+		"apps/pg-app/"+deploymentID+".ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	if _, err := s.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
+		DeploymentID: deploymentID, SidecarName: "metrics",
+		StorageKey: "apps/pg-app/" + deploymentID + "-metrics.ext4", Bytes: 1024,
+	}); err != nil {
+		t.Fatalf("SetDeploymentSidecarLayer: %v", err)
+	}
+	job, err := s.ClaimSnapshotReplica(ctx, nodeB.ID)
+	if err != nil {
+		t.Fatalf("ClaimSnapshotReplica: %v", err)
+	}
+	if got, want := job.LayerStorageKeys, []string{
+		"apps/pg-app/" + deploymentID + ".ext4",
+		"apps/pg-app/" + deploymentID + "-metrics.ext4",
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("claimed layer keys = %v, want %v", got, want)
+	}
+	if err := s.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, nodeB.ID, errors.New("temporary registry outage")); err != nil {
+		t.Fatalf("MarkSnapshotReplicaFailed transient: %v", err)
+	}
+	if err := s.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, nodeB.ID,
+		state.PermanentSnapshotReplicaError(errors.New("immutable object missing"))); err != nil {
+		t.Fatalf("MarkSnapshotReplicaFailed permanent: %v", err)
 	}
 }

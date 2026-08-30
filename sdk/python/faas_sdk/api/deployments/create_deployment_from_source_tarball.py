@@ -55,6 +55,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 404:
+        response_404 = Problem.from_dict(response.json())
+
+        return response_404
+
     if response.status_code == 413:
         response_413 = Problem.from_dict(response.json())
 
@@ -89,7 +94,7 @@ def sync_detailed(
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
-    """Create a deployment from a CLI-uploaded local tarball (zero-config).
+    r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
      Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
     The CLI uploads a gzipped tar via the `tarball` form field and
@@ -110,8 +115,20 @@ def sync_detailed(
         - `tarball` (required): the gzipped tar, capped at the
           per-plan `SourceTarballMaxMB`.
         - `sidecar` (optional): JSON `{repo, ref}` recorded on
-          the build row for provenance; the build pipeline does
-          NOT use it to fetch upstream.
+          the build row for provenance only. The build pipeline
+          does NOT use the sidecar to fetch upstream — the tarball
+          bytes are the build source, and the sidecar is purely
+          informational. Operators relying on source-pinning MUST
+          use the source-ref path instead.
+
+    Lifecycle (issue #1182 fix): the refactored zero-config
+    CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
+    so a brand-new slug gets a 201 from CreateApp and a 202 from
+    this endpoint. A direct hit on this endpoint with a slug that
+    has never been created returns 404 — pre-#1182 zero-config
+    customers hit this with \"no such app\"; the fix folds the
+    path through CreateApp so the slug always exists by the time
+    this endpoint is reached.
 
     Audit kind: `deploy.local_tarball` (distinct from
     `deploy.source_ref`).
@@ -149,7 +166,7 @@ def sync(
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
-    """Create a deployment from a CLI-uploaded local tarball (zero-config).
+    r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
      Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
     The CLI uploads a gzipped tar via the `tarball` form field and
@@ -170,8 +187,20 @@ def sync(
         - `tarball` (required): the gzipped tar, capped at the
           per-plan `SourceTarballMaxMB`.
         - `sidecar` (optional): JSON `{repo, ref}` recorded on
-          the build row for provenance; the build pipeline does
-          NOT use it to fetch upstream.
+          the build row for provenance only. The build pipeline
+          does NOT use the sidecar to fetch upstream — the tarball
+          bytes are the build source, and the sidecar is purely
+          informational. Operators relying on source-pinning MUST
+          use the source-ref path instead.
+
+    Lifecycle (issue #1182 fix): the refactored zero-config
+    CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
+    so a brand-new slug gets a 201 from CreateApp and a 202 from
+    this endpoint. A direct hit on this endpoint with a slug that
+    has never been created returns 404 — pre-#1182 zero-config
+    customers hit this with \"no such app\"; the fix folds the
+    path through CreateApp so the slug always exists by the time
+    this endpoint is reached.
 
     Audit kind: `deploy.local_tarball` (distinct from
     `deploy.source_ref`).
@@ -204,7 +233,7 @@ async def asyncio_detailed(
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
-    """Create a deployment from a CLI-uploaded local tarball (zero-config).
+    r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
      Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
     The CLI uploads a gzipped tar via the `tarball` form field and
@@ -225,8 +254,20 @@ async def asyncio_detailed(
         - `tarball` (required): the gzipped tar, capped at the
           per-plan `SourceTarballMaxMB`.
         - `sidecar` (optional): JSON `{repo, ref}` recorded on
-          the build row for provenance; the build pipeline does
-          NOT use it to fetch upstream.
+          the build row for provenance only. The build pipeline
+          does NOT use the sidecar to fetch upstream — the tarball
+          bytes are the build source, and the sidecar is purely
+          informational. Operators relying on source-pinning MUST
+          use the source-ref path instead.
+
+    Lifecycle (issue #1182 fix): the refactored zero-config
+    CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
+    so a brand-new slug gets a 201 from CreateApp and a 202 from
+    this endpoint. A direct hit on this endpoint with a slug that
+    has never been created returns 404 — pre-#1182 zero-config
+    customers hit this with \"no such app\"; the fix folds the
+    path through CreateApp so the slug always exists by the time
+    this endpoint is reached.
 
     Audit kind: `deploy.local_tarball` (distinct from
     `deploy.source_ref`).
@@ -262,7 +303,7 @@ async def asyncio(
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
-    """Create a deployment from a CLI-uploaded local tarball (zero-config).
+    r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
      Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
     The CLI uploads a gzipped tar via the `tarball` form field and
@@ -283,8 +324,20 @@ async def asyncio(
         - `tarball` (required): the gzipped tar, capped at the
           per-plan `SourceTarballMaxMB`.
         - `sidecar` (optional): JSON `{repo, ref}` recorded on
-          the build row for provenance; the build pipeline does
-          NOT use it to fetch upstream.
+          the build row for provenance only. The build pipeline
+          does NOT use the sidecar to fetch upstream — the tarball
+          bytes are the build source, and the sidecar is purely
+          informational. Operators relying on source-pinning MUST
+          use the source-ref path instead.
+
+    Lifecycle (issue #1182 fix): the refactored zero-config
+    CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
+    so a brand-new slug gets a 201 from CreateApp and a 202 from
+    this endpoint. A direct hit on this endpoint with a slug that
+    has never been created returns 404 — pre-#1182 zero-config
+    customers hit this with \"no such app\"; the fix folds the
+    path through CreateApp so the slug always exists by the time
+    this endpoint is reached.
 
     Audit kind: `deploy.local_tarball` (distinct from
     `deploy.source_ref`).

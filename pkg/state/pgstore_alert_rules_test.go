@@ -368,7 +368,7 @@ func TestPgStore_AlertDelivery_RecordAndUpdate(t *testing.T) {
 		t.Errorf("duplicate idempotency_key = %v; want ErrConflict", err)
 	}
 
-	list, err := s.ListAlertDeliveriesForRule(ctx, rule.ID, 50)
+	list, err := s.ListAlertDeliveriesForRule(ctx, rule.ID, 50, false)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestPgStore_AlertDelivery_RecordAndUpdate(t *testing.T) {
 	if err := s.UpdateAlertDeliveryStatus(ctx, list[0].ID, state.AlertDeliveryDelivered, 1, 200, "", &deliveredAt); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	list, _ = s.ListAlertDeliveriesForRule(ctx, rule.ID, 50)
+	list, _ = s.ListAlertDeliveriesForRule(ctx, rule.ID, 50, false)
 	if list[0].Status != state.AlertDeliveryDelivered || list[0].LastStatusCode != 200 {
 		t.Errorf("status update didn't land: %+v", list[0])
 	}

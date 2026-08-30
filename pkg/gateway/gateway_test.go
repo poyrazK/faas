@@ -293,7 +293,7 @@ func TestWakeGateSingleFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := g.Wait(context.Background(), "app", shouldWake, ensure, nil, nil); err != nil {
+			if err := g.Wait(context.Background(), "app", "test-acct", shouldWake, ensure, nil, nil); err != nil {
 				t.Errorf("wait: %v", err)
 			}
 		}()
@@ -307,7 +307,7 @@ func TestWakeGateSingleFlight(t *testing.T) {
 func TestWakeGatePropagatesEnsureError(t *testing.T) {
 	g := NewWakeGate(512, 5*time.Second)
 	shouldWake := func() bool { return true }
-	err := g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
+	err := g.Wait(context.Background(), "app", "test-acct", shouldWake, func(context.Context) error {
 		return fmt.Errorf("no capacity")
 	}, nil, nil)
 	if err == nil {
@@ -321,7 +321,7 @@ func TestWakeGateCapReturnsQueueFull(t *testing.T) {
 	release := make(chan struct{})
 	// Leader blocks so followers accumulate.
 	go func() {
-		_ = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
+		_ = g.Wait(context.Background(), "app", "test-acct", shouldWake, func(context.Context) error {
 			<-release
 			return nil
 		}, nil, nil)
@@ -338,7 +338,7 @@ func TestWakeGateCapReturnsQueueFull(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error { return nil }, nil, nil)
+			errs[i] = g.Wait(context.Background(), "app", "test-acct", shouldWake, func(context.Context) error { return nil }, nil, nil)
 		}(i)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -361,7 +361,7 @@ func TestWakeGateRespectsCallerCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	shouldWake := func() bool { return true }
-	err := g.Wait(ctx, "app", shouldWake, func(context.Context) error {
+	err := g.Wait(ctx, "app", "test-acct", shouldWake, func(context.Context) error {
 		time.Sleep(time.Second)
 		return nil
 	}, nil, nil)
@@ -375,7 +375,7 @@ func TestWakeGateLeaderSkipsEnsureWhenShouldWakeIsFalse(t *testing.T) {
 	calls := 0
 	shouldWake := func() bool { return false }
 	ensure := func(ctx context.Context) error { calls++; return nil }
-	if err := g.Wait(context.Background(), "app", shouldWake, ensure, nil, nil); err != nil {
+	if err := g.Wait(context.Background(), "app", "test-acct", shouldWake, ensure, nil, nil); err != nil {
 		t.Fatalf("Wait err = %v", err)
 	}
 	if calls != 0 {
@@ -398,7 +398,7 @@ func TestInvariant1_CapPlusOneReturnsQueueFull(t *testing.T) {
 	// Leader blocks until block closes; we close it AFTER spawning all
 	// followers so the ErrQueueFull counts reflect a steady-state race.
 	go func() {
-		_ = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
+		_ = g.Wait(context.Background(), "app", "test-acct", shouldWake, func(context.Context) error {
 			<-block
 			return nil
 		}, nil, nil)
@@ -412,7 +412,7 @@ func TestInvariant1_CapPlusOneReturnsQueueFull(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = g.Wait(context.Background(), "app", shouldWake,
+			errs[i] = g.Wait(context.Background(), "app", "test-acct", shouldWake,
 				func(context.Context) error { return nil }, nil, nil)
 		}(i)
 	}
@@ -444,7 +444,7 @@ func TestInvariant4_InflightZeroAfterDrain(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := g.Wait(context.Background(), "app", shouldWake,
+			if err := g.Wait(context.Background(), "app", "test-acct", shouldWake,
 				func(context.Context) error { return nil }, nil, nil); err != nil {
 				t.Errorf("wait: %v", err)
 			}
@@ -473,7 +473,7 @@ func TestInvariant5_NoSecondWakeAfterShouldWakeFalse(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := g.Wait(context.Background(), "app", shouldWake, ensure, nil, nil); err != nil {
+			if err := g.Wait(context.Background(), "app", "test-acct", shouldWake, ensure, nil, nil); err != nil {
 				t.Errorf("wait: %v", err)
 			}
 		}()

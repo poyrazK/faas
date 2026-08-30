@@ -27,7 +27,7 @@ type WakeGate struct {
 	// onChange is called whenever an entry's waiter count or completion state
 	// changes, so the metrics layer can keep gateway_queue_depth current.
 	// Optional; nil-safe at every call site.
-	onChange func(appID string, depth int)
+	onChange func(appID, accountID string, depth int)
 	// metrics observes how long each caller waited in the queue. Optional;
 	// nil keeps the gate usable in unit tests that don't wire metrics.
 	metrics *Metrics
@@ -43,6 +43,12 @@ type wakeCall struct {
 	err       error
 	waiters   int
 	completed bool // ensure() has returned; entry stays parked until drain
+	// accountID is the resolved account that owns the app, captured
+	// at Wait() entry. Used by onChange so the queue-depth gauge can
+	// emit per-account series for FaasAlertPresetAnyFiringAccount
+	// correlation. Empty string falls through to "__other__" at the
+	// SetQueueDepth call site (bounded cardinality).
+	accountID string
 }
 
 // ErrQueueFull is returned when the per-app waiter cap is exceeded (→ 503).
@@ -102,6 +108,7 @@ func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
 func (g *WakeGate) Wait(
 	ctx context.Context,
 	appID string,
+	accountID string,
 	shouldWake func() bool,
 	ensure func(context.Context) error,
 	shouldAbort func() bool,
@@ -123,7 +130,7 @@ func (g *WakeGate) Wait(
 			depth := call.waiters
 			g.mu.Unlock()
 			if g.onChange != nil {
-				g.onChange(appID, depth)
+				g.onChange(appID, call.accountID, depth)
 			}
 			return ErrQueueFull
 		}
@@ -131,7 +138,7 @@ func (g *WakeGate) Wait(
 		depth := call.waiters
 		g.mu.Unlock()
 		if g.onChange != nil {
-			g.onChange(appID, depth)
+			g.onChange(appID, call.accountID, depth)
 		}
 		observed = true
 		// Hold the followers' reference until await returns; release on exit.
@@ -146,11 +153,11 @@ func (g *WakeGate) Wait(
 		return err
 	}
 
-	call := &wakeCall{done: make(chan struct{}), waiters: 1}
+	call := &wakeCall{done: make(chan struct{}), waiters: 1, accountID: accountID}
 	g.inflight[appID] = call
 	g.mu.Unlock()
 	if g.onChange != nil {
-		g.onChange(appID, 1)
+		g.onChange(appID, accountID, 1)
 	}
 
 	// Leader-only: skip the wake if the Backend already has a ready instance
@@ -342,10 +349,12 @@ func (g *WakeGate) release(appID string, call *wakeCall) {
 	}
 	if g.onChange != nil {
 		depth := 0
+		acct := call.accountID
 		if c, ok := g.inflight[appID]; ok {
 			depth = c.waiters
+			acct = c.accountID
 		}
-		g.onChange(appID, depth)
+		g.onChange(appID, acct, depth)
 	}
 }
 

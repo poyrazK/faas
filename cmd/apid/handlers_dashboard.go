@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/presetwhy"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/whycopy"
@@ -744,7 +745,7 @@ func (s *server) fetchDashboardAlerts(ctx context.Context, log *slog.Logger, acc
 		} else {
 			item.LastFiredAtLabel = dashboardEmDash
 		}
-		deliveries, derr := s.store.ListAlertDeliveriesForRule(ctx, rule.ID, 5)
+		deliveries, derr := s.store.ListAlertDeliveriesForRule(ctx, rule.ID, 5, false)
 		if derr != nil {
 			// Per-rule read failure is non-fatal — log once and
 			// render an empty recent-deliveries row for that rule.
@@ -809,6 +810,45 @@ func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, ac
 			log.Warn("dashboard fetchDashboardPresets: mint enable CSRF", "account_id", acct.ID, "err", err)
 		}
 	}
+	// Issue #1233 / ADR-123 PR-C commit 2: mint a SEPARATE CSRF
+	// envelope for the "Send test alert" form so the verifier at
+	// dashboard_preset_enable.go:165 (action=
+	// dashboardSendTestAlertPresetAction) accepts the POST. Sharing
+	// the enable envelope across both forms would let a replayed
+	// enable click fire a test — separate envelopes enforce the
+	// "every POST carries a fresh, action-bound token" rule.
+	var testAlertCSRF string
+	if s.sessions != nil {
+		if t, err := middleware.IssueForAuthenticated(s.sessions, dashboardSendTestAlertPresetAction, acct.ID); err == nil {
+			testAlertCSRF = t
+		} else {
+			log.Warn("dashboard fetchDashboardPresets: mint test-alert CSRF", "account_id", acct.ID, "err", err)
+		}
+	}
+	// Issue #1233 / ADR-123 PR-C commit 2: determine which presets
+	// the customer has already instantiated for this app so the
+	// card can render a "Send test alert" button instead of (or
+	// alongside) the enable form. We pull the full per-account
+	// rule set in one shot and match each catalog row against the
+	// display-name prefix "<DisplayName> (<app_slug>)" — bounded by
+	// AlertRuleLimitPerAccount = 100 on Scale, so the loop is O(rows
+	// × rules) ≈ 8 × 100 = 800 string-prefix checks per render.
+	// That's well under a millisecond; no need for an indexed lookup
+	// per card.
+	allRules, ruleErr := s.store.ListAlertRulesForAccount(ctx, acct.ID)
+	if ruleErr != nil {
+		log.Warn("dashboard fetchDashboardPresets: list alert rules", "account_id", acct.ID, "err", ruleErr)
+		// Non-fatal — fall through with an empty rule set, which
+		// makes every card render the enable form as before.
+		allRules = nil
+	}
+	// Pre-index rules by app_id so the inner loop is O(rules_for_app)
+	// rather than O(all_rules). Most accounts have ≤3 apps; this is
+	// marginal but keeps the hot path tight.
+	rulesByApp := make(map[string][]state.AlertRule, 3)
+	for _, r := range allRules {
+		rulesByApp[r.AppID] = append(rulesByApp[r.AppID], r)
+	}
 	out := make([]dashboard.AlertPresetItem, 0, len(rows))
 	for _, p := range rows {
 		meetsPlan := api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(p.MinimumPlan))
@@ -836,6 +876,36 @@ func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, ac
 		if enabled {
 			item.EnableConfirmToken = enableCSRF
 		}
+		// Stamp the test-alert envelope ONLY on instantiated cards
+		// — the test button only renders inside the
+		// {{if and .Enabled .Instantiated}} branch, so an empty
+		// token on a non-instantiated card is correct (the template
+		// never reads it there).
+		if enabled && item.Instantiated {
+			item.TestAlertConfirmToken = testAlertCSRF
+		}
+		// Match against the customer's rules for THIS app by the
+		// canonical display-name prefix. We tolerate multiple
+		// matches but only emit the first (the catalog doesn't
+		// allow duplicates per (account, app, preset) anyway —
+		// the create path surfaces ErrConflict on the second
+		// instantiation).
+		prefix := p.DisplayName + " (" + app.Slug + ")"
+		for _, r := range rulesByApp[app.ID] {
+			if r.Name == prefix || (len(r.Name) >= len(prefix) && r.Name[:len(prefix)] == prefix) {
+				item.Instantiated = true
+				item.RuleID = r.ID
+				break
+			}
+		}
+		// Stamp the "What does this alert mean?" panel for every card
+		// (issue #1233 / ADR-123 PR-C commit 3). observed=0 keeps the
+		// static prose — the Observed renderer takes over in the
+		// alert-detail panel when an actual alert fires. Decorate
+		// returns nil for an undocumented preset, and the template
+		// uses `with` to skip the panel cleanly (no broken <details>
+		// block for a future catalog row).
+		item.Explanation = presetwhy.Decorate(p.Name, 0)
 		out = append(out, item)
 	}
 	return out

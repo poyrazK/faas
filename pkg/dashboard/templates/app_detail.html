@@ -132,6 +132,23 @@
     .alert-preset-card button:hover { background: #1e3a8a; }
     .badge.badge-coming-soon { background: #f3f4f6; color: #6b7280; }
     .badge.badge-upgrade    { background: #fef3c7; color: #92400e; }
+    /* Issue #1233 / ADR-123 PR-C commit 3 — sibling-class
+       .alert-preset-explanation matches the error-explanations
+       CSS cluster-A precedent (NOT nested under .alert-preset-card).
+       Collapsed by default; expands to reveal Title/Hint/Why/Fix
+       + docs link. */
+    .alert-preset-explanation {
+      margin-top: 0.5rem; font-size: 0.85rem;
+      border-top: 1px solid #e5e7eb; padding-top: 0.4rem;
+    }
+    .alert-preset-explanation summary {
+      cursor: pointer; color: #1e40af; font-weight: 500;
+    }
+    .alert-preset-explanation .title { margin: 0.3rem 0 0.1rem; font-weight: 600; }
+    .alert-preset-explanation .hint  { margin: 0.1rem 0; color: #1f2937; }
+    .alert-preset-explanation .why   { margin: 0.2rem 0; color: #374151; white-space: pre-line; }
+    .alert-preset-explanation .fix   { margin: 0.2rem 0; color: #374151; white-space: pre-line; }
+    .alert-preset-explanation .docs  { margin: 0.3rem 0 0; font-size: 0.8rem; }
   </style>
 </head>
 <body hx-ext="sse" sse-connect="/v1/events">
@@ -609,16 +626,51 @@
               <code class="rule">{{.Metric}} {{.Comparison}} {{printf "%g" .Threshold}} over {{.WindowSpec}}</code>
               <p class="cooldown">Cooldown: {{.DefaultCooldownMinutes}} min · Min plan: <strong>{{.MinimumPlan}}</strong></p>
               {{if .Enabled}}
-                <form method="POST" action="/apps/{{.AppSlug}}/alert-presets/{{.Name}}/enable">
-                  <input type="hidden" name="csrf_token" value="{{.EnableConfirmToken}}">
-                  <input name="webhook_url" placeholder="https://hooks.example.com/…" required>
-                  <input name="webhook_secret" type="password" placeholder="webhook secret" required>
-                  <button type="submit">Enable</button>
-                </form>
+                {{if .Instantiated}}
+                  {{/* Issue #1233 / ADR-123 PR-C commit 2 — "Send
+                       test alert" button. Renders on instantiated
+                       cards ONLY — a card without an instantiated
+                       rule has no webhook_url/secret to dispatch
+                       to, so the click would 404. The button posts
+                       to /apps/{slug}/alert-presets/{name}/test
+                       with its own CSRF envelope (separate from the
+                       enable envelope so cross-action replays fail
+                       the verifier). */}}
+                  <p class="rule">Webhook: <code>{{.RuleID}}</code></p>
+                  <form method="POST" action="/apps/{{.AppSlug}}/alert-presets/{{.Name}}/test">
+                    <input type="hidden" name="csrf_token" value="{{.TestAlertConfirmToken}}">
+                    <button type="submit">Send test alert</button>
+                  </form>
+                {{else}}
+                  <form method="POST" action="/apps/{{.AppSlug}}/alert-presets/{{.Name}}/enable">
+                    <input type="hidden" name="csrf_token" value="{{.EnableConfirmToken}}">
+                    <input name="webhook_url" placeholder="https://hooks.example.com/…" required>
+                    <input name="webhook_secret" type="password" placeholder="webhook secret" required>
+                    <button type="submit">Enable</button>
+                  </form>
+                {{end}}
               {{else if not .EnabledInCatalog}}
                 <span class="badge badge-coming-soon">Coming soon</span>
               {{else}}
                 <span class="badge badge-upgrade">Upgrade to {{.MinimumPlan}}</span>
+              {{end}}
+              {{/* Issue #1233 / ADR-123 PR-C commit 3 — "What does
+                   this alert mean?" panel. Sibling-class
+                   .alert-preset-explanation (NOT nested under
+                   .alert-preset-card — matches the
+                   error-explanations CSS cluster-A precedent at
+                   pkg/dashboard/views/render.go:274/311). The
+                   template uses {{with}} so cards with no presetwhy
+                   row render no <details> block. */}}
+              {{with .Explanation}}
+                <details class="alert-preset-explanation">
+                  <summary>What does this alert mean?</summary>
+                  {{if .Title}}<p class="title">{{.Title}}</p>{{end}}
+                  {{if .Hint}}<p class="hint">{{.Hint}}</p>{{end}}
+                  {{if .Why}}<p class="why">{{.Why}}</p>{{end}}
+                  {{if .Fix}}<p class="fix">{{.Fix}}</p>{{end}}
+                  {{if .DocsURL}}<p class="docs"><a href="{{.DocsURL}}">Read the runbook</a></p>{{end}}
+                </details>
               {{end}}
             </article>
           {{end}}

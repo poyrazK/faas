@@ -748,19 +748,10 @@ func TestLocalCacheBackend_Put_StreamsToParent(t *testing.T) {
 	}
 }
 
-// TestLocalCacheBackend_GetsDoNotTouchMtime pins the LRU
-// contract: a cache hit MUST NOT bump the file's mtime. The
-// cache eviction is mtime-driven; touching mtime on every
-// read would make all entries look freshly-written and
-// silently defeat eviction (the cache would grow to maxBytes
-// and never evict, no matter how old the original Put was).
-//
-// The test seeds two blobs with distinct, OLD mtimes, then
-// reads both repeatedly. A bug that re-introduces the Chtimes
-// call would move both mtimes to "now", making the next
-// Put-driving-eviction step observe a flat mtime ordering
-// instead of the intended old-first ordering.
-func TestLocalCacheBackend_GetsDoNotTouchMtime(t *testing.T) {
+// TestLocalCacheBackend_GetsTouchMtime pins true LRU behaviour: an entry used
+// by restore must become newer than an idle entry so byte-budget eviction
+// retains active app layers.
+func TestLocalCacheBackend_GetsTouchMtime(t *testing.T) {
 	tmp := t.TempDir()
 	parent := newFakeBackend()
 	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(tmp, "cache"), 0)
@@ -779,31 +770,21 @@ func TestLocalCacheBackend_GetsDoNotTouchMtime(t *testing.T) {
 			t.Fatalf("Chtimes %q: %v", k, err)
 		}
 	}
-	// Read both repeatedly. Each Get must not bump the mtime.
-	// The pre-Gets mtime is the baseline; the post-Gets mtime
-	// must be at-or-before that baseline (we compare UnixNano
-	// to defeat clock-resolution coarseness).
+	// Read only a. It must become newer while b remains at the seeded time.
 	beforeA := mtimeOf(t, hashCachePath(t, filepath.Join(tmp, "cache"), "snap/a"))
 	beforeB := mtimeOf(t, hashCachePath(t, filepath.Join(tmp, "cache"), "snap/b"))
 	for i := 0; i < 5; i++ {
 		if _, err := readAll(ctx, cache, "snap/a"); err != nil {
 			t.Fatalf("Get a: %v", err)
 		}
-		if _, err := readAll(ctx, cache, "snap/b"); err != nil {
-			t.Fatalf("Get b: %v", err)
-		}
 	}
 	afterA := mtimeOf(t, hashCachePath(t, filepath.Join(tmp, "cache"), "snap/a"))
 	afterB := mtimeOf(t, hashCachePath(t, filepath.Join(tmp, "cache"), "snap/b"))
-	// Allow equal mtime (no change) but reject any forward bump.
-	// The bug being prevented is mtime advancing toward "now" on
-	// every read; a regression that re-introduces Chtimes would
-	// push afterA → afterNow, the literal exact-current time.
-	if afterA.After(beforeA) {
-		t.Errorf("snap/a mtime advanced on read: before=%s, after=%s", beforeA, afterA)
+	if !afterA.After(beforeA) {
+		t.Errorf("snap/a mtime did not advance on read: before=%s, after=%s", beforeA, afterA)
 	}
-	if afterB.After(beforeB) {
-		t.Errorf("snap/b mtime advanced on read: before=%s, after=%s", beforeB, afterB)
+	if !afterB.Equal(beforeB) {
+		t.Errorf("unread snap/b mtime changed: before=%s, after=%s", beforeB, afterB)
 	}
 }
 

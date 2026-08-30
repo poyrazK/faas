@@ -3040,6 +3040,28 @@ type Store interface {
 	//   - (AlertRule{}, ErrConflict) on a duplicate (account_id, name)
 	CreateAlertRuleIfUnderQuota(ctx context.Context, r AlertRule, limits api.Limits) (AlertRule, error)
 	AlertRuleByID(ctx context.Context, id string) (AlertRule, error)
+	// AlertRuleByAccountAppAndPresetName resolves the alert_rules
+	// row that was instantiated from a catalog preset (issue #1233
+	// / ADR-123 PR-C "Send test alert" button). ADR-123 deliberately
+	// rejected a preset_id FK on alert_rules — the catalog binding is
+	// the parsed display-name prefix "<DisplayName> (<app_slug>)"
+	// pinned by the createAlertRuleIfUnderQuota path at
+	// handlers_alert_presets.go:255. We match by joining
+	// alert_presets on (name) and selecting the rule whose name LIKE
+	// (display_name || ' (%'); the existing
+	// alert_rules_account_name_uniq index covers the LIKE prefix
+	// scan as a range scan on (account_id, name) — no new index.
+	//
+	// Returns:
+	//   - (AlertRule{}, ErrNotFound) when no rule exists for this
+	//     (account, app, preset). The handler surfaces a 404 — a
+	//     "send test" click on a card the customer never enabled is
+	//     a UX bug, not a 500.
+	//   - (AlertRule{}, ErrConflict) when the LIKE prefix matches
+	//     >1 row (should not happen — the name is unique per
+	//     (account_id, app_id) — but the pgstore row-lock turn
+	//     exposes it as a defensive guard).
+	AlertRuleByAccountAppAndPresetName(ctx context.Context, accountID, appID, presetName string) (AlertRule, error)
 	// UpdateAlertRule mutates the optional fields of an alert row. nil
 	// pointers leave the field untouched; the WebhookSecretSealed
 	// argument is *[]byte so a nil means "don't reseal" (typical for
@@ -3105,7 +3127,18 @@ type Store interface {
 	// UpdateAlertDeliveryStatus mutates the retry record in place.
 	// Called after each attempt by the dispatcher (PR 2 / PR 4).
 	UpdateAlertDeliveryStatus(ctx context.Context, id string, status AlertDeliveryStatus, attempt int, statusCode int, lastErr string, deliveredAt *time.Time) error
-	ListAlertDeliveriesForRule(ctx context.Context, ruleID string, limit int) ([]AlertDelivery, error)
+	// ListAlertDeliveriesForRule returns the most-recent delivery
+	// rows for ruleID, newest-first, capped at limit. includeTest
+	// (ADR-123 PR-D) toggles the `WHERE is_test = false` filter:
+	//   - false → production rows only (the customer-facing default
+	//     and the dashboard's "recent deliveries" pane)
+	//   - true  → all rows, including Dispatcher.DispatchTest writes
+	//     (the operator pane reachable via `?include_test=true`)
+	// The partial index alert_deliveries_rule_fired_production_idx
+	// (migrations/00528_alert_deliveries_is_test.sql) covers the
+	// include_test=false path so the production read stays
+	// index-only even as test row count grows unbounded.
+	ListAlertDeliveriesForRule(ctx context.Context, ruleID string, limit int, includeTest bool) ([]AlertDelivery, error)
 
 	// Edge rules (ADR-089, planned). apid is the only writer;
 	// gatewayd-internal reads via MatchEdgeRulesForHost. Per-app

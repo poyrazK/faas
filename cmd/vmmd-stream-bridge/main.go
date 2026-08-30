@@ -168,6 +168,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "listen %s: %v\n", bind, err)
 		os.Exit(3)
 	}
+	// Remove the socket when the bridge exits so a vmmd crash or
+	// parent-death cleanup does not leave a path behind until the next
+	// request. vmmd also performs host-side cleanup; this local defer
+	// covers exits that bypass the vmmd handler.
+	defer func() { _ = os.Remove(bind) }()
 	defer func() { _ = ln.Close() }()
 
 	// chmod 0600 — only vmmd (and the jailer user) can dial this

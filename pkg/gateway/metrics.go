@@ -11,8 +11,10 @@
 //     PreInstantiateApp so the §12 panel surfaces from first request)
 //   - gateway_wake_latency_seconds                    histogram
 //   - gateway_wake_queue_wait_seconds                 histogram (M8 §12 dashboard)
-//   - gateway_queue_depth{app}                       gauge (set/cleared by
-//     WakeGate.SetGaugeSink)
+//   - gateway_queue_depth{app, account_id}           gauge (set/cleared by
+//     WakeGate.SetGaugeSink). The account_id label is admitted
+//     through the bounded accountLabelSet primitive (cap=10k,
+//     overflow="__other__") — see SetQueueDepth below.
 //   - gateway_rate_limited_total{app, plan}          counter
 //   - gateway_cold_boot_total{app}                   counter (renamed from
 //     gateway_cold_wake_total in #273 / ADR-042; zero external consumers so
@@ -863,8 +865,8 @@ func NewMetrics() *Metrics {
 		}, []string{"phase"}),
 		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_queue_depth",
-			Help: "Current number of waiters per app's wake queue (sampled).",
-		}, []string{"app"}),
+			Help: "Current number of waiters per app's wake queue (sampled). account_id label is admitted via accountLabelSet (cap=10k, overflow=__other__) — see SetQueueDepth.",
+		}, []string{"app", "account_id"}),
 		// ADR-098 C7: closed-set reasons pre-instantiated so the
 		// §12 dashboard chip "leader bootstrap aborts" surfaces
 		// zero rows from boot. Adding a new reason is a code +
@@ -2046,9 +2048,32 @@ type TopNEntry struct {
 	RPS float64
 }
 
-// SetQueueDepth records the current wake-queue depth for an app.
-func (m *Metrics) SetQueueDepth(appID string, depth int) {
-	m.queueDepth.WithLabelValues(appID).Set(float64(depth))
+// SetQueueDepth records the current wake-queue depth for an
+// (app, account_id) pair. account_id is admitted via the
+// accountLabelSet primitive (pkg/gateway/account_label_set.go)
+// so the gauge's cardinality stays bounded at accountLabelSetCap
+// (=10_000) + the "__other__" overflow bucket. account_id="" or
+// unknown IDs collapse to "__other__" so test code paths and
+// pre-resolution emit windows don't mint a fresh series.
+//
+// The pre-instantiation loop at PreInstantiateAccountLabels
+// surfaces the `account_id="__other__"` row for every known app
+// at boot so the §12 panel renders zero rows from process start;
+// real account_id rows appear on the first Wait for that app.
+func (m *Metrics) SetQueueDepth(appID, accountID string, depth int) {
+	if accountID == "" {
+		accountID = "__other__"
+	}
+	m.queueDepth.WithLabelValues(appID, accountID).Set(float64(depth))
+}
+
+// PreInstantiateQueueDepth surfaces the `__other__` overflow row
+// for the given app at boot, so the §12 wake-queue panel renders
+// a zero-depth series from process start. Real account_id rows
+// appear on the first Wait. Called from main once the metrics
+// bundle + App registry are wired.
+func (m *Metrics) PreInstantiateQueueDepth(appID string) {
+	m.queueDepth.WithLabelValues(appID, "__other__").Set(0)
 }
 
 // ObserveTLSOnDemandDenied increments the per-reason counter that backs

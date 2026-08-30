@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/presetwhy"
 )
 
 // TestRender_Layout confirms the layout template parses, executes
@@ -983,6 +984,77 @@ func TestRender_DeploymentDetail_PreviewURLCopyChip(t *testing.T) {
 			t.Errorf("alive=false body should not render copyable input\n--- body ---\n%s", body)
 		}
 	})
+}
+
+// TestRender_AppDetail_AlertPresetExplanations_AllPresent pins the
+// "What does this alert mean?" panel (issue #1233 / ADR-123 PR-C
+// commit 3) for every preset card on the dashboard. Mirrors
+// TestRender_DeploymentDetail_StatelessViolation's approach: seed
+// every catalog preset with its presetwhy.Decorate Explanation,
+// render, assert each card carries its <details class="alert-preset-explanation">
+// block with Title/Hint/Why/Fix + the docs link.
+//
+// Forward direction (8 cards → 8 panels). The tripwire
+// TestEveryPresetHasPresetwhyEntry pins the inverse direction (every
+// preset name → catalog row). Together they form the bidirectional
+// membership contract for the alert_preset grid.
+func TestRender_AppDetail_AlertPresetExplanations_AllPresent(t *testing.T) {
+	rec := httptest.NewRecorder()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	page := dashboard.Page{
+		Title: "demo",
+		Body:  "app_detail",
+		Data: dashboard.AppDetailData{
+			App: dashboard.AppListItem{
+				Slug:   "demo",
+				AppID:  "demo-uuid",
+				Status: "active",
+				URL:    "https://demo.apps.gregale.dev",
+			},
+			Presets: []dashboard.AlertPresetItem{
+				{Name: "api_down", DisplayName: "API is down", Category: "availability", Metric: "api_reachable", Comparison: "lt", Threshold: 1, WindowSpec: "5m", MinimumPlan: "pro", Enabled: true, MeetsPlan: true, EnabledInCatalog: true, AppSlug: "demo", Explanation: presetwhy.Decorate("api_down", 0)},
+				{Name: "spend_eur_20", DisplayName: "Daily spend exceeds €20", Category: "cost", Metric: "meterd_account_spend_eur", Comparison: "gt", Threshold: 20, WindowSpec: "24h", MinimumPlan: "hobby", Enabled: true, MeetsPlan: true, EnabledInCatalog: true, AppSlug: "demo", Explanation: presetwhy.Decorate("spend_eur_20", 0)},
+				{Name: "deploy_failed", DisplayName: "Deployment failed", Category: "deployment", Metric: "apid_deployment_failed_total", Comparison: "gt", Threshold: 0, WindowSpec: "1h", MinimumPlan: "hobby", Enabled: true, MeetsPlan: true, EnabledInCatalog: true, AppSlug: "demo", Explanation: presetwhy.Decorate("deploy_failed", 0)},
+				{Name: "cert_expiring_14d", DisplayName: "TLS certificate expires within 14 days", Category: "infrastructure", Metric: "meterd_tenant_surface_cert_expiry_seconds", Comparison: "lt", Threshold: 1209600, WindowSpec: "24h", MinimumPlan: "pro", Enabled: true, MeetsPlan: true, EnabledInCatalog: true, AppSlug: "demo", Explanation: presetwhy.Decorate("cert_expiring_14d", 0)},
+				{Name: "queue_backlog_growing", DisplayName: "Gateway wake queue is backlogged", Category: "reliability", Metric: "gateway_queue_depth", Comparison: "gt", Threshold: 50, WindowSpec: "15m", MinimumPlan: "hobby", Enabled: true, MeetsPlan: true, EnabledInCatalog: true, AppSlug: "demo", Explanation: presetwhy.Decorate("queue_backlog_growing", 0)},
+				{Name: "error_rate_2pct", DisplayName: "Error rate exceeds 2%", Category: "reliability", Metric: "error_rate_pct", Comparison: "gt", Threshold: 2, WindowSpec: "15m", MinimumPlan: "hobby", Enabled: true, MeetsPlan: true, EnabledInCatalog: true, AppSlug: "demo", Explanation: presetwhy.Decorate("error_rate_2pct", 0)},
+				{Name: "p95_latency_1s", DisplayName: "P95 latency exceeds 1 second", Category: "reliability", Metric: "p95_latency_ms", Comparison: "gt", Threshold: 1000, WindowSpec: "15m", MinimumPlan: "hobby", Enabled: true, MeetsPlan: true, EnabledInCatalog: true, AppSlug: "demo", Explanation: presetwhy.Decorate("p95_latency_1s", 0)},
+				{Name: "cold_start_10pct", DisplayName: "Cold starts exceed 10% of traffic", Category: "reliability", Metric: "cold_start_rate_pct", Comparison: "gt", Threshold: 10, WindowSpec: "1h", MinimumPlan: "hobby", Enabled: true, MeetsPlan: true, EnabledInCatalog: true, AppSlug: "demo", Explanation: presetwhy.Decorate("cold_start_10pct", 0)},
+			},
+		},
+	}
+	if err := dashboard.Render(rec, log, "", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	// Every card must carry its sibling-class CSS rule
+	// (.alert-preset-explanation, NOT nested under .alert-preset-card
+	// — matches the error-explanations cluster-A precedent) and its
+	// <details> panel + summary. A missing prefix trips a customer
+	// "I don't know what this alert does" silent UX regression.
+	for _, want := range []string{
+		`class="alert-preset-explanation"`,
+		"What does this alert mean?",
+		// Title substrings from the catalog
+		"API is down",
+		"Daily spend exceeds",
+		"Deployment failed",
+		"TLS certificate expires",
+		"Gateway wake queue",
+		"Error rate exceeds",
+		"P95 latency exceeds",
+		"Cold starts exceed",
+		// Docs links render with the runbook hrefs.
+		`href="/docs/runbooks/FaasApiDown"`,
+		`href="/docs/runbooks/FaasSpendEur20"`,
+		`href="/docs/runbooks/FaasDeployFailed"`,
+		`href="/docs/runbooks/FaasTLSCertExpiryPage"`,
+		`href="/docs/runbooks/FaasGatewayQueueBacklogGrowing"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
 }
 
 // TestPrettyAuditData_RoundTrip pins the pretty-print behaviour

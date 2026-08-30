@@ -13,9 +13,11 @@ package vmmdgrpc
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -274,6 +276,33 @@ func TestResolveStreamBridgePath_FallsBackWhenEnvEmpty(t *testing.T) {
 func TestStreamBridgeSockPath(t *testing.T) {
 	if got := streamBridgeSockPath("inst-1"); got != "/var/run/faas/stream/inst-1.sock" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestStreamBridgeSockPathForRequestIsUnique(t *testing.T) {
+	first := streamBridgeSockPathForRequest("inst-1")
+	second := streamBridgeSockPathForRequest("inst-1")
+	if first == second {
+		t.Fatalf("request socket paths collided: %q", first)
+	}
+	wantPrefix := "/var/run/faas/stream/inst-1-"
+	if !strings.HasPrefix(first, wantPrefix) || !strings.HasSuffix(first, ".sock") {
+		t.Errorf("request socket path = %q, want %q*.sock", first, wantPrefix)
+	}
+}
+
+func TestStopStreamBridgeReapsChild(t *testing.T) {
+	cmd := exec.Command("sleep", "60")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	if err := stopStreamBridge(context.Background(), cmd, &stderr); err != nil {
+		t.Fatalf("stopStreamBridge: %v", err)
+	}
+	if cmd.ProcessState == nil {
+		t.Fatal("stopStreamBridge returned before reaping child")
 	}
 }
 

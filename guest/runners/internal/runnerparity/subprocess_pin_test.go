@@ -1,12 +1,9 @@
 package runnerparity
 
-// TestRunners_InvokeHandlerUsesCmdRun pins the §4.9.1 doc claim:
-// every current runner's `invokeHandler` spawns the customer handler
-// via `cmd.Run()` (one subprocess per request). If a future
-// contributor switches a runner to a long-lived interpreter pool
-// (closing the listener-vs-handler concurrency gap), they must
-// update §4.9.1 — and ideally keep this test passing only for the
-// runners that *do* still use cmd.Run, not silently mask the change.
+// TestRunners_InvokeHandlerUsesCmdRun pins the legacy fallback in §4.9.1:
+// every current runner retains a `cmd.Run()` path for customer handlers that
+// do not advertise the generated persistent protocol. Generated adapters use
+// the worker pool, but the compatibility path must remain available.
 //
 // The grep walks every guest/runners/<runtime>/main.go (each
 // runtime lives in its own sub-package, so a single file-system
@@ -77,5 +74,5 @@ func TestRunners_InvokeHandlerUsesCmdRun(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no runner dirs found under " + root + " — walk path is wrong")
 	}
-	t.Logf("walked %d runner dirs %v — all invokeHandler use cmd.Run", checked, runnerDirs)
+	t.Logf("walked %d runner dirs %v — all invokeHandler retain cmd.Run fallback", checked, runnerDirs)
 }

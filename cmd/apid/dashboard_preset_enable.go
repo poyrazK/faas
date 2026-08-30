@@ -24,6 +24,7 @@ import (
 	"regexp"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
 
@@ -132,3 +133,77 @@ func (s *server) dashboardEnablePreset(w http.ResponseWriter, r *http.Request) {
 // internal ptrBool helper — kept local so the seam stays
 // dashboard-scoped.
 func ptrTrue() *bool { v := true; return &v }
+
+// dashboardSendTestAlertPresetAction is the CSRF action binding
+// for the per-card "Send test alert" forms on /dashboard/apps/{slug}.
+// Separate from dashboardEnablePresetAction so a customer who has
+// the page open with both forms visible cannot replay the enable
+// action's CSRF envelope on the test endpoint (and vice versa).
+// Reusing dashboardEnablePresetAction across both forms would
+// shrink the attack surface for a stolen cookie; the verifier
+// (middleware.VerifyAuthenticated) seals (action, account_id) and
+// refuses cross-action replays.
+const dashboardSendTestAlertPresetAction = "send_test_alert_preset"
+
+// renderDashboardSendTestAlertPreset handles POST
+// /dashboard/apps/{slug}/alert-presets/{name}/test from the
+// dashboard's per-card "Send test alert" button. Mirrors
+// renderDashboardEnablePreset's seam shape (form-encoded → JSON
+// work via internal helper → redirect + flash flag).
+//
+// Unlike the enable path, this endpoint requires no body — the
+// instantiated rule already carries the webhook_url + secret,
+// so the click is action-only.
+//
+// Returns 302 to /dashboard/apps/{slug}?test_alert={ok|error}
+// so the app-detail page surfaces the success / failure via a
+// flash banner (same pattern as ?preset_enabled=… for the
+// enable path). The flash flag is per-action so the two banners
+// don't collide.
+func (s *server) renderDashboardSendTestAlertPreset(w http.ResponseWriter, r *http.Request, slug, presetName string) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !validSlug(slug) || !presetNameRe.MatchString(presetName) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := middleware.VerifyAuthenticated(s.sessions, r, dashboardSendTestAlertPresetAction, acct.ID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	res, prob := s.sendTestAlertPresetCore(r.Context(), acct, slug, presetName)
+	if prob != nil {
+		s.log.Warn("dashboard: alert preset test failed",
+			"preset", presetName,
+			"app", slug,
+			"account", acct.ID,
+			"err_code", logsanitize.Field(prob.Code),
+		)
+		//nolint:gosec // G710: slug + presetName are regex-gated above, so the redirect target cannot escape the /dashboard/apps/{slug} prefix.
+		http.Redirect(w, r, "/dashboard/apps/"+slug+"?test_alert=error", http.StatusFound)
+		return
+	}
+	s.log.Info("dashboard: alert preset test sent",
+		"preset", presetName,
+		"app", slug,
+		"account", acct.ID,
+		"delivery_id", logsanitize.Field(res.DeliveryID),
+		"attempts", res.Attempts,
+	)
+	//nolint:gosec // G710: same gating as the error branch above.
+	http.Redirect(w, r, "/dashboard/apps/"+slug+"?test_alert=ok", http.StatusFound)
+}
+
+// dashboardSendTestAlertPreset is the mux.HandleFunc entrypoint.
+// Decodes the path params and delegates to
+// renderDashboardSendTestAlertPreset. Mirrors dashboardEnablePreset
+// at dashboard_preset_enable.go:122.
+func (s *server) dashboardSendTestAlertPreset(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	name := r.PathValue("name")
+	s.renderDashboardSendTestAlertPreset(w, r, slug, name)
+}

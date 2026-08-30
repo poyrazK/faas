@@ -212,11 +212,11 @@ func TestMemStoreCoverageAlertDeliveries(t *testing.T) {
 		t.Fatalf("claim fire stale = %v, %v", won, err)
 	}
 	// ListAlertDeliveriesForRule — one row from the winning claim.
-	deliveries, err := m.ListAlertDeliveriesForRule(ctx, rule.ID, 0)
+	deliveries, err := m.ListAlertDeliveriesForRule(ctx, rule.ID, 0, false)
 	if err != nil || len(deliveries) != 1 || deliveries[0].Payload == nil {
 		t.Fatalf("deliveries = %+v, %v", deliveries, err)
 	}
-	if got, err := m.ListAlertDeliveriesForRule(ctx, "missing", 10); err != nil || len(got) != 0 {
+	if got, err := m.ListAlertDeliveriesForRule(ctx, "missing", 10, false); err != nil || len(got) != 0 {
 		t.Fatalf("deliveries missing = %+v, %v", got, err)
 	}
 }

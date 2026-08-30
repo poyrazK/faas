@@ -218,6 +218,16 @@ enforced in code (the catalog has 8 rows and is system-owned).
   but wants 5% instead of 2% should be able to slide the threshold
   before clicking Enable. Out of scope for this PR; tracked under
   #1235.
+- **`account_id` label on `gateway_queue_depth` (PR-D, 2026-08-30)**:
+  closes the documented correlation gap — pre-PR-D the
+  `FaasAlertPresetAnyFiringAccount` correlation rolled up only 4 of 5
+  signals because `gateway_queue_depth` carried `app` only. PR-D adds
+  `account_id` admitted via `accountLabelSet` (cap=10k,
+  overflow=`__other__`); the queue predicate joins the correlation's
+  `count by (account_id) (…or…) >= 1` expression. Recording rule
+  renamed `faas_queue_backlog_growing_over_15m:by_app` →
+  `:by_app_account`. Synthetic promtool coverage in
+  `pkg/promqlrules/testdata/alert_preset_signals.test.yml` cases 5/7.
 
 ## Critical files (reviewer path)
 

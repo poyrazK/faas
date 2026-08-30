@@ -1,6 +1,9 @@
 package state
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // SnapshotReplicaState is the durable state of one snapshot's local
 // prepositioning job on one compute node. The snapshot itself remains
@@ -15,6 +18,29 @@ const (
 	SnapshotReplicaFailed  SnapshotReplicaState = "failed"
 )
 
+const snapshotReplicaMaxAttempts = 8
+
+// permanentSnapshotReplicaError marks a failure that cannot heal by retrying
+// the same immutable key (for example a canonical storage object that does not
+// exist). The durable queue records the diagnostic once and stops claiming it.
+type permanentSnapshotReplicaError struct{ err error }
+
+func (e permanentSnapshotReplicaError) Error() string { return e.err.Error() }
+func (e permanentSnapshotReplicaError) Unwrap() error { return e.err }
+
+// PermanentSnapshotReplicaError classifies a fan-out failure as terminal.
+func PermanentSnapshotReplicaError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return permanentSnapshotReplicaError{err: err}
+}
+
+func isPermanentSnapshotReplicaError(err error) bool {
+	var target permanentSnapshotReplicaError
+	return errors.As(err, &target)
+}
+
 // SnapshotReplicaJob is the complete input needed by a node-local fan-out
 // worker. VMStateStorageKey is derived from the immutable snapshot tier so
 // both restore blobs are prepositioned together.
@@ -23,10 +49,15 @@ type SnapshotReplicaJob struct {
 	DeploymentID      string
 	StorageKey        string
 	VMStateStorageKey string
-	Tier              string
-	NodeID            string
-	Region            string
-	Attempts          int
+	// LayerStorageKeys is the complete writable-drive dependency set for the
+	// snapshot: the main app layer followed by any sidecar layers. A replica
+	// is not ready until these keys are local too; otherwise the first wake
+	// still blocks on the registry after both snapshot blobs were warmed.
+	LayerStorageKeys []string
+	Tier             string
+	NodeID           string
+	Region           string
+	Attempts         int
 }
 
 // SnapshotOriginStore records the node/locality that produced a snapshot.

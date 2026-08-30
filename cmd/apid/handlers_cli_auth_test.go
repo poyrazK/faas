@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -201,8 +202,15 @@ func TestMintCliAuthCode_ReturnsCodeAndURL(t *testing.T) {
 			}
 		}
 	}
-	if !strings.HasSuffix(resp.URL, "/cli-auth?code="+resp.Code) {
-		t.Errorf("URL = %q, want suffix /cli-auth?code=%s", resp.URL, resp.Code)
+	parsed, err := url.Parse(resp.URL)
+	if err != nil {
+		t.Fatalf("URL = %q is invalid: %v", resp.URL, err)
+	}
+	if !parsed.IsAbs() || parsed.Scheme != "https" || parsed.Host != "api.gregale.dev" {
+		t.Errorf("URL = %q, want absolute https://api.gregale.dev URL", resp.URL)
+	}
+	if parsed.Path != "/cli-auth" || parsed.Query().Get("code") != resp.Code {
+		t.Errorf("URL = %q, want /cli-auth with code query %q", resp.URL, resp.Code)
 	}
 	if _, err := time.Parse(time.RFC3339, resp.ExpiresAt); err != nil {
 		t.Errorf("ExpiresAt %q is not RFC3339: %v", resp.ExpiresAt, err)

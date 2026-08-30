@@ -10,7 +10,24 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const snapshotReplicaRetryDelay = 5 * time.Second
+const (
+	snapshotReplicaInitialRetryDelay = 5 * time.Second
+	snapshotReplicaMaxRetryDelay     = 5 * time.Minute
+)
+
+func snapshotReplicaRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := snapshotReplicaInitialRetryDelay
+	for i := 1; i < attempt && delay < snapshotReplicaMaxRetryDelay; i++ {
+		delay *= 2
+		if delay > snapshotReplicaMaxRetryDelay {
+			delay = snapshotReplicaMaxRetryDelay
+		}
+	}
+	return delay
+}
 
 // EnqueueSnapshotReplicasForNode consumes the global snapshot fan-out event
 // stream for one node. The cursor makes the normal path proportional to new
@@ -145,15 +162,27 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		            then 'snap/' || sn.deployment_id::text || '/warm/vmstate'
 		            else 'snap/' || sn.deployment_id::text || '/vmstate'
 		       end,
+		       array[
+		         case when d.rootfs_key <> '' then d.rootfs_key
+		              else 'layers/' || sn.deployment_id::text || '.ext4'
+		         end
+		       ] || coalesce((
+		         select array_agg(dsl.storage_key order by dsl.sidecar_name)
+		           from deployment_sidecar_layers dsl
+		          where dsl.deployment_id = sn.deployment_id
+		            and dsl.storage_key <> ''
+		       ), array[]::text[]),
 		       coalesce(sn.tier, 'init'),
 		       r.node_id::text,
 		       coalesce(cn.region, ''),
 		       r.attempts
 		from snapshot_replicas r
 		join snapshots sn on sn.id = r.snapshot_id
+		join deployments d on d.id = sn.deployment_id
 		join compute_nodes cn on cn.id = r.node_id
 		where r.node_id = $1
 		  and sn.stale = false
+		  and r.attempts < $2
 		  and (
 				r.state in ('pending', 'failed')
 				or (r.state = 'syncing' and r.updated_at < now() - interval '5 minutes')
@@ -161,9 +190,9 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		  and (r.next_attempt_at is null or r.next_attempt_at <= now())
 		order by r.created_at, r.snapshot_id
 		for update of r skip locked
-		limit 1`, nodeID)
+		limit 1`, nodeID, snapshotReplicaMaxAttempts)
 	if err := row.Scan(&job.SnapshotID, &job.DeploymentID, &job.StorageKey,
-		&job.VMStateStorageKey, &job.Tier, &job.NodeID, &job.Region, &job.Attempts); err != nil {
+		&job.VMStateStorageKey, &job.LayerStorageKeys, &job.Tier, &job.NodeID, &job.Region, &job.Attempts); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SnapshotReplicaJob{}, ErrNotFound
 		}
@@ -196,7 +225,39 @@ func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nod
 	if len(message) > 2048 {
 		message = message[:2048]
 	}
-	return s.markSnapshotReplica(ctx, snapshotID, nodeID, string(SnapshotReplicaFailed), message, time.Now().Add(snapshotReplicaRetryDelay))
+	if isPermanentSnapshotReplicaError(cause) {
+		tag, err := s.pool.Exec(ctx, `
+			update snapshot_replicas
+			set state = $3, attempts = greatest(attempts, $5), last_error = $4,
+			    ready_at = null, updated_at = now(), next_attempt_at = null
+			where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message, snapshotReplicaMaxAttempts)
+		if err != nil {
+			return fmt.Errorf("state: mark snapshot replica permanent failure: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	}
+
+	// attempts was incremented by ClaimSnapshotReplica. Compute the capped
+	// exponential delay in SQL so the state transition remains atomic.
+	tag, err := s.pool.Exec(ctx, `
+		update snapshot_replicas
+		set state = $3, last_error = $4, ready_at = null, updated_at = now(),
+		    next_attempt_at = case
+		      when attempts >= $5 then null
+		      else now() + make_interval(secs => least($6, $7 * power(2, greatest(attempts - 1, 0)))::int)
+		    end
+		where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message,
+		snapshotReplicaMaxAttempts, int(snapshotReplicaMaxRetryDelay/time.Second), int(snapshotReplicaInitialRetryDelay/time.Second))
+	if err != nil {
+		return fmt.Errorf("state: mark snapshot replica failed: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PgStore) markSnapshotReplica(ctx context.Context, snapshotID, nodeID, status, message string, retryAt time.Time) error {

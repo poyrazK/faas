@@ -47,7 +47,9 @@ class DiffRequest:
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
     as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings)
     resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are
-    NEVER sealed ciphertext — only refs."""
+    NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`,
+    `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per
+    JSON semantics, so the widen is wire-compatible."""
     env_by_scope: DiffRequestEnvByScope | Unset = UNSET
     """Per-scope env write. Full-replacement semantics per
     scope (ADR-090 D3). Keys are scope names ("default",

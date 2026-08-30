@@ -19,6 +19,7 @@ export type { AddTenantHostnameRequest } from './models/AddTenantHostnameRequest
 export type { AddTrustedSignerRequest } from './models/AddTrustedSignerRequest.js';
 export type { AdminSetGithubWebhookSecretRequest } from './models/AdminSetGithubWebhookSecretRequest.js';
 export type { AdminSetGithubWebhookSecretResponse } from './models/AdminSetGithubWebhookSecretResponse.js';
+export type { AlertDeliveryResponse } from './models/AlertDeliveryResponse.js';
 export type { AlertPresetResponse } from './models/AlertPresetResponse.js';
 export type { AlertRuleResponse } from './models/AlertRuleResponse.js';
 export type { APIKeyExportResponse } from './models/APIKeyExportResponse.js';
@@ -308,6 +309,7 @@ export type { SweepStuckBuildsResponse } from './models/SweepStuckBuildsResponse
 export type { TemplateView } from './models/TemplateView.js';
 export type { TenantHostnameResponse } from './models/TenantHostnameResponse.js';
 export type { TenantSurfaceResponse } from './models/TenantSurfaceResponse.js';
+export type { TestAlertPresetResponse } from './models/TestAlertPresetResponse.js';
 export type { ThrottlePreviewRow } from './models/ThrottlePreviewRow.js';
 export type { ThrottleSuggestionRow } from './models/ThrottleSuggestionRow.js';
 export type { ThrottleSuggestionsResponse } from './models/ThrottleSuggestionsResponse.js';

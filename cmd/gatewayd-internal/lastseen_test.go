@@ -114,8 +114,10 @@ func TestSchedFlushSink_KeysByInstanceID(t *testing.T) {
 		t.Fatalf("ReportActivity calls = %d, want 1", rep.calls)
 	}
 	byID := map[string]time.Time{}
+	byDelta := map[string]int64{}
 	for _, tc := range rep.last {
 		byID[tc.InstanceID] = tc.LastRequest
+		byDelta[tc.InstanceID] = tc.RequestDelta
 	}
 	if len(byID) != 3 {
 		t.Fatalf("touches = %+v, want 3 (i-1, i-2, i-3)", rep.last)
@@ -125,6 +127,12 @@ func TestSchedFlushSink_KeysByInstanceID(t *testing.T) {
 	}
 	if _, ok := byID["i-2"]; !ok {
 		t.Error("i-2 missing from batch")
+	}
+	if got := byDelta["i-1"]; got != 2 {
+		t.Errorf("i-1 request delta = %d, want 2", got)
+	}
+	if got := byDelta["i-2"]; got != 1 {
+		t.Errorf("i-2 request delta = %d, want 1", got)
 	}
 }
 

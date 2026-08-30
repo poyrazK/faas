@@ -6437,6 +6437,73 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── Alert-rule deliveries (ADR-123 PR-D) ─────────────────────────────
+  # Operator pane for one alert_rule's recent alert_deliveries rows.
+  # ?include_test=true toggles the IsTest discriminator (default
+  # false; production-only rows). Same auth scope as
+  # GET /v1/apps/{slug}/alerts/{id}.
+  /v1/apps/{slug}/alerts/{id}/deliveries:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - in: query
+        name: include_test
+        schema:
+          type: boolean
+          default: false
+        required: false
+        description: |
+          When true, also surface rows written by Dispatcher.DispatchTest
+          (the customer-facing "send test alert" path). Default false
+          hides test rows so the customer's recent-deliveries pane is
+          not polluted by every "send test alert" click. Operators can
+          flip the toggle for post-mortems; the production read stays
+          index-only via the partial index
+          alert_deliveries_rule_fired_production_idx.
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+        required: false
+        description: Max rows to return. Clamped to 100.
+    get:
+      tags: [alert_rules]
+      operationId: listAlertRuleDeliveries
+      summary: List recent alert_deliveries rows for one rule.
+      description: |
+        Returns the most-recent alert_deliveries rows for the rule,
+        newest-first. The default (include_test=false) hides test
+        rows; the operator pane is reachable via ?include_test=true.
+        IDOR-safe: a 404 is returned when the rule is on another
+        account (same posture as GET /v1/apps/{slug}/alerts/{id}).
+      responses:
+        '200':
+          description: Recent deliveries, newest-first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AlertDeliveryResponse' }
+              example:
+                - id: "9b1c4f8e2d3a4b5c6d7e8f9012345678"
+                  rule_id: "rule-1"
+                  account_id: "acct-1"
+                  app_id: "app-1"
+                  idempotency_key: "rule-1:12345678"
+                  status: "delivered"
+                  attempt_count: 1
+                  last_status_code: 200
+                  observed_value: 5.1
+                  fired_at: "2026-08-30T12:00:00Z"
+                  delivered_at: "2026-08-30T12:00:01Z"
+                  is_test: false
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── CORS presets (ADR-129 / issue #975 #4 PR-B) ────────────────────────
   # Customer-owned, named, reusable CORS configurations. The
   # write surface (POST/PATCH/DELETE) lands in PR-B; the read
@@ -6757,6 +6824,131 @@ paths:
       responses:
         '302':
           description: Redirect to /apps/{slug}?just_enabled={rule_id}.
+        '400': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert"
+  # (test-fire the customer's instantiated preset against their
+  # configured webhook URL). The body is empty (the rule already
+  # carries the webhook URL + secret); the response carries the
+  # synthetic delivery_id so the customer can correlate their
+  # receiver's log entry with the platform audit row
+  # (alert_preset.test_sent).
+  #
+  # The endpoint does NOT require an Idempotency-Key (the enable
+  # sibling does) because every POST is a fresh dispatch attempt
+  # with a fresh delivery_id — replay-safety is guaranteed by
+  # the per-call UUID, not by the SDK dedup table.
+  /v1/apps/{slug}/alert-presets/{name}/test:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Preset name (catalog key — same value the
+          `listAlertPresets` and `enableAlertPreset` endpoints
+          accept).
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+    post:
+      tags: [alert_rules]
+      operationId: testAlertPreset
+      summary: Send a synthetic test alert to the instantiated rule's webhook.
+      description: |
+        Test-fires the customer's instantiated alert_preset rule
+        against the webhook URL they configured at enable-time.
+        The synthetic Event body carries `payload.test = true`
+        so the customer's verifier can branch on the discriminator
+        (skip the production alert-write path, log to a quieter
+        channel, etc.) and a synthetic `observed` value JUST PAST
+        the preset's threshold — `threshold × 1.01` for `gt`
+        comparisons, `threshold × 0.99` for `lt` (a naive
+        threshold × 1.01 for `lt` would land on the wrong side of
+        the threshold; the handler's branch-swap is load-bearing).
+
+        Pre-loadApp gates fire in this order: 404 on missing
+        preset → 400 alert_preset_disabled on disabled-in-catalog
+        → 402 plan_alert_presets_not_allowed on below-minimum-plan
+        → 404 preset_not_enabled when the customer has not yet
+        instantiated this preset for this app → 502 webhook
+        delivery failed after retry exhaustion.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '200':
+          description: |
+            The test alert was delivered (any 2xx from the
+            customer's receiver). Note: 2xx-from-the-receiver is
+            the contract — the dispatcher's retry budget may span
+            multiple attempts before reporting success.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestAlertPresetResponse' }
+        '400': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502':
+          description: |
+            Webhook delivery failed after the dispatcher's retry
+            budget (5 attempts, 2s/8s/32s/128s backoff). The audit
+            log entry (`alert_preset.test_sent`) carries the
+            `delivery_status_code` + `delivery_attempts` for the
+            investigator; the customer's receiver likely rejected
+            the request, was unreachable, or returned 5xx.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # Dashboard form-POST sibling of
+  # /v1/apps/{slug}/alert-presets/{name}/test. Accepts no body
+  # (the rule already carries webhook URL + secret) and 302-
+  # redirects to /apps/{slug}?test_alert={ok|error} so the
+  # app_detail page can render a flash banner. Mirrors the
+  # dashboardEnableAlertPreset shape above.
+  /dashboard/apps/{slug}/alert-presets/{name}/test:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Preset name (catalog key — same value the
+          JSON sibling accepts at
+          /v1/apps/{slug}/alert-presets/{name}/test).
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+    post:
+      tags: [alert_rules]
+      operationId: dashboardTestAlertPreset
+      summary: Form-POST sibling of testAlertPreset for the dashboard.
+      description: |
+        Receives the per-card "Send test alert" form submission
+        from the preset grid on /dashboard/apps/{slug}. No body
+        fields — the instantiated rule already carries the
+        webhook URL + secret. On success 302-redirects to
+        /apps/{slug}?test_alert=ok; on 4xx/5xx 302-redirects to
+        /apps/{slug}?test_alert=error so the template's flash
+        banner can render. Web-cookie auth is sufficient — no
+        MFA challenge.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '302':
+          description: Redirect to /apps/{slug}?test_alert={ok|error}.
         '400': { $ref: '#/components/responses/AlertRuleInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/AlertRuleInvalid' }
@@ -14977,6 +15169,31 @@ components:
         rotated_at: { type: string, format: date-time, example: "2026-07-28T12:00:00Z" }
         webhook_secret_sealed_masked: { type: string, example: "***" }
 
+    AlertDeliveryResponse:
+      description: |
+        One alert_deliveries row as surfaced by
+        GET /v1/apps/{slug}/alerts/{id}/deliveries (ADR-123 PR-D).
+        Test rows (IsTest=true) are written by Dispatcher.DispatchTest
+        (the customer-facing "send test alert" path); the production
+        read (include_test=false) hides them, the operator read
+        (?include_test=true) surfaces them.
+      type: object
+      required: [id, rule_id, account_id, idempotency_key, status, attempt_count, observed_value, fired_at, is_test]
+      properties:
+        id: { type: string, format: uuid }
+        rule_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid, description: "omitted on account-wide rules" }
+        idempotency_key: { type: string, description: "rule_id + ':' + cooldown bucket (production) or delivery_id + ':test' (test path)" }
+        status: { type: string, enum: [pending, delivered, failed] }
+        attempt_count: { type: integer, minimum: 0 }
+        last_status_code: { type: integer, description: "0 when the attempt never reached the wire" }
+        last_error: { type: string, description: "truncated server-side via dashboard.FormatAlertError (log-injection-safe)" }
+        observed_value: { type: number, format: double }
+        fired_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time, description: "omitted until status=delivered" }
+        is_test: { type: boolean, description: "true iff the row was written by Dispatcher.DispatchTest" }
+
     # ─── Alert presets (ADR-123 / issue #1233) ───────────────────────────────
 
     AlertPresetResponse:
@@ -15048,6 +15265,51 @@ components:
           description: |
             Whether the instantiated rule is enabled. Defaults to
             true; pass false to stage the rule in disabled state.
+
+    TestAlertPresetResponse:
+      description: |
+        Response body for POST /v1/apps/{slug}/alert-presets/{name}/test
+        (and the sibling dashboard form-POST handler). The handler
+        dispatches a synthetic event to the customer's configured
+        webhook URL with `payload.test == true`; this shape confirms
+        the dispatch completed and surfaces the delivery_id the
+        customer's webhook receiver should echo back.
+        (issue #1233 / ADR-123 PR-C commit 2)
+      type: object
+      required: [status, test, delivery_id, attempts]
+      properties:
+        status:
+          type: string
+          enum: [sent]
+          description: |
+            Always "sent" on 200. A dispatch failure returns 502
+            with an RFC 7807 problem document (NOT this shape).
+        test:
+          type: boolean
+          enum: [true]
+          description: |
+            Always true on 200. Discriminator customers can key off
+            in their webhook receiver to skip production alerting
+            paths (e.g. PagerDuty incidents) for test dispatches.
+        delivery_id:
+          type: string
+          pattern: '^[a-f0-9]{32}$'
+          description: |
+            32-char lowercase hex identifier for this dispatch
+            (16 random bytes from crypto/rand encoded as hex). The
+            audit log row (`alert_preset.test_sent`) carries the
+            same delivery_id so the customer can correlate by
+            timestamp + delivery_id without leaking via UUID dashes.
+        attempts:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: |
+            Number of dispatch attempts the webhookout.Dispatcher
+            made before reaching the final state (1..MaxAttempts).
+            Customers can use this to tune their receiver's SLA
+            (e.g. a successful first attempt vs. a successful
+            retry after a transient 502 from the receiver).
 
     # ─── Edge rules (ADR-089, planned) ────────────────────────────────────────
 
@@ -16994,12 +17256,15 @@ components:
           type: integer
           format: int64
           description: |
-            Current wake-queue depth (`gateway_queue_depth{app}`).
-            Backs the `queue_backlog_growing` alert preset (ADR-123):
-            comparison `gt 50` over the chosen window. Best-effort:
-            absent on Prometheus failure (the field is `null`); the
-            evaluator's degraded-source contract skips firing
-            rather than guessing.
+            Current wake-queue depth
+            (`gateway_queue_depth{app, account_id}` — `account_id`
+            admitted via accountLabelSet, overflow=`__other__`,
+            added in PR-D). Backs the `queue_backlog_growing`
+            alert preset (ADR-123): comparison `gt 50` over the
+            chosen window. Best-effort: absent on Prometheus
+            failure (the field is `null`); the evaluator's
+            degraded-source contract skips firing rather than
+            guessing.
           x-since: "2026-08"
           x-issue: "1233"
         egress_bytes:

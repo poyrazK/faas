@@ -95,7 +95,7 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 		}
 		key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: nodeID}
 		row, ok := m.snapshotReplicas[key]
-		if !ok || row.nextAttemptAt.After(now) {
+		if !ok || row.attempts >= snapshotReplicaMaxAttempts || row.nextAttemptAt.After(now) {
 			continue
 		}
 		reclaim := row.state == SnapshotReplicaSyncing && now.Sub(row.updatedAt) >= 5*time.Minute
@@ -115,11 +115,24 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 	chosenRow.lastError = ""
 	m.snapshotReplicas[chosenKey] = chosenRow
 	node := m.computeNodes[nodeID]
+	deployment := m.deployments[chosen.DeploymentID]
+	mainLayerKey := deployment.RootfsKey
+	if mainLayerKey == "" {
+		mainLayerKey = "layers/" + chosen.DeploymentID + ".ext4"
+	}
+	layerKeys := []string{mainLayerKey}
+	for _, layer := range m.deploymentSidecarLayers {
+		if layer.DeploymentID == chosen.DeploymentID && layer.StorageKey != "" {
+			layerKeys = append(layerKeys, layer.StorageKey)
+		}
+	}
+	sort.Strings(layerKeys[1:])
 	return SnapshotReplicaJob{
 		SnapshotID:        chosen.ID,
 		DeploymentID:      chosen.DeploymentID,
 		StorageKey:        chosen.StorageKey,
 		VMStateStorageKey: snapshotVMStateKey(*chosen),
+		LayerStorageKeys:  layerKeys,
 		Tier:              snapshotTier(*chosen),
 		NodeID:            nodeID,
 		Region:            nodeRegion(node),
@@ -163,7 +176,14 @@ func (m *MemStore) MarkSnapshotReplicaFailed(_ context.Context, snapshotID, node
 	row.lastError = message
 	row.readyAt = time.Time{}
 	row.updatedAt = time.Now()
-	row.nextAttemptAt = row.updatedAt.Add(snapshotReplicaRetryDelay)
+	if isPermanentSnapshotReplicaError(cause) {
+		row.attempts = snapshotReplicaMaxAttempts
+		row.nextAttemptAt = time.Time{}
+	} else if row.attempts >= snapshotReplicaMaxAttempts {
+		row.nextAttemptAt = time.Time{}
+	} else {
+		row.nextAttemptAt = row.updatedAt.Add(snapshotReplicaRetryDelay(row.attempts))
+	}
 	m.snapshotReplicas[key] = row
 	return nil
 }

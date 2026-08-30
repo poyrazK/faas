@@ -7,6 +7,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -285,7 +286,7 @@ func TestMemStoreAlertDelivery_RecordAndUpdate(t *testing.T) {
 		t.Errorf("duplicate idempotency_key = %v; want ErrConflict", err)
 	}
 
-	list, err := m.ListAlertDeliveriesForRule(ctx, rule.ID, 50)
+	list, err := m.ListAlertDeliveriesForRule(ctx, rule.ID, 50, false)
 	if err != nil || len(list) != 1 {
 		t.Errorf("list: %d entries (%v)", len(list), list)
 	}
@@ -297,7 +298,7 @@ func TestMemStoreAlertDelivery_RecordAndUpdate(t *testing.T) {
 	if err := m.UpdateAlertDeliveryStatus(ctx, list[0].ID, AlertDeliveryDelivered, 1, 200, "", &deliveredAt); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	list, _ = m.ListAlertDeliveriesForRule(ctx, rule.ID, 50)
+	list, _ = m.ListAlertDeliveriesForRule(ctx, rule.ID, 50, false)
 	if list[0].Status != AlertDeliveryDelivered || list[0].LastStatusCode != 200 {
 		t.Errorf("status update didn't land: %+v", list[0])
 	}
@@ -356,5 +357,81 @@ func TestMemStoreAlertRule_CountFailedInvocationsSince(t *testing.T) {
 	n, err = m.CountFailedInvocationsSince(ctx, acct.ID, app.ID, InvocationCron, t0.Add(time.Hour))
 	if err != nil || n != 0 {
 		t.Errorf("count after `since` in the future = %d (%v); want 0", n, err)
+	}
+}
+
+// TestMemStore_ListAlertDeliveriesForRule_IncludeTestToggle —
+// ADR-123 PR-D: include_test=false hides rows where IsTest=true
+// (the production-default customer view); include_test=true surfaces
+// them (the operator pane reachable via `?include_test=true`).
+// Pins the toggle contract that the new pgstore partial index
+// preserves at the SQL layer.
+func TestMemStore_ListAlertDeliveriesForRule_IncludeTestToggle(t *testing.T) {
+	m, ctx, acct, app := alertFixture(t)
+	rule, err := m.CreateAlertRule(ctx, memSampleRule(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	prod := AlertDelivery{
+		ID:             newID(),
+		RuleID:         rule.ID,
+		AccountID:      acct.ID,
+		AppID:          app.ID,
+		IdempotencyKey: rule.ID + ":prod-bucket",
+		Payload:        json.RawMessage(`{"test":false}`),
+		Status:         AlertDeliveryDelivered,
+		AttemptCount:   1,
+		LastStatusCode: 200,
+		ObservedValue:  5.1,
+		FiredAt:        now,
+		DeliveredAt:    now,
+		IsTest:         false,
+	}
+	testRow := AlertDelivery{
+		ID:             newID(),
+		RuleID:         rule.ID,
+		AccountID:      acct.ID,
+		AppID:          app.ID,
+		IdempotencyKey: rule.ID + ":test-bucket",
+		Payload:        json.RawMessage(`{"test":true}`),
+		Status:         AlertDeliveryDelivered,
+		AttemptCount:   1,
+		LastStatusCode: 200,
+		ObservedValue:  5.1,
+		FiredAt:        now.Add(time.Second),
+		DeliveredAt:    now.Add(time.Second),
+		IsTest:         true,
+	}
+	for _, d := range []AlertDelivery{prod, testRow} {
+		if _, err := m.RecordAlertDelivery(ctx, d); err != nil {
+			t.Fatalf("record %s: %v", d.IdempotencyKey, err)
+		}
+	}
+
+	// includeTest=false → 1 row (production only).
+	prodList, err := m.ListAlertDeliveriesForRule(ctx, rule.ID, 50, false)
+	if err != nil {
+		t.Fatalf("ListAlertDeliveriesForRule(includeTest=false): %v", err)
+	}
+	if len(prodList) != 1 {
+		t.Fatalf("production read returned %d rows; want 1", len(prodList))
+	}
+	if prodList[0].IsTest {
+		t.Errorf("production read returned IsTest=true row; production-default MUST hide test rows")
+	}
+	// includeTest=true → 2 rows (newest-first by fired_at).
+	allList, err := m.ListAlertDeliveriesForRule(ctx, rule.ID, 50, true)
+	if err != nil {
+		t.Fatalf("ListAlertDeliveriesForRule(includeTest=true): %v", err)
+	}
+	if len(allList) != 2 {
+		t.Fatalf("operator read returned %d rows; want 2", len(allList))
+	}
+	if !allList[0].IsTest {
+		t.Errorf("operator read newest row IsTest = false; want true (test row was inserted with FiredAt=now+1s)")
+	}
+	if allList[1].IsTest {
+		t.Errorf("operator read oldest row IsTest = true; want false (production row was inserted first)")
 	}
 }

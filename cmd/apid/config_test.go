@@ -34,6 +34,9 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.AppsDomain != "gregale.dev" {
 		t.Errorf("AppsDomain = %q, want public default", cfg.AppsDomain)
 	}
+	if cfg.CLIAuthURLBase != defaultCLIAuthURLBase {
+		t.Errorf("CLIAuthURLBase = %q, want public API default", cfg.CLIAuthURLBase)
+	}
 	if cfg.NodeName != "" {
 		t.Errorf("NodeName = %q, want empty (single-box default)", cfg.NodeName)
 	}
@@ -61,6 +64,7 @@ advisory_sock = "/run/faas/apid-other.sock"
 githubd_bridge_sock = "/run/faas/apid-githubd-other.sock"
 githubd_socket = "/run/faas/githubd-other.sock"
 apps_domain = "apps.example.com"
+cli_auth_url_base = "https://api.example.com/"
 db_url = "postgres:///faas?host=/run/postgresql&user=faas"
 advisory_tls_cert_path = "/etc/faas/tls/apid/advisory.crt"
 advisory_tls_key_path = "/etc/faas/tls/apid/advisory.key"
@@ -102,6 +106,9 @@ role = "control-plane"
 	}
 	if cfg.AppsDomain != "apps.example.com" {
 		t.Errorf("AppsDomain = %q", cfg.AppsDomain)
+	}
+	if cfg.CLIAuthURLBase != "https://api.example.com/" {
+		t.Errorf("CLIAuthURLBase = %q", cfg.CLIAuthURLBase)
 	}
 	if cfg.DBURL != "postgres:///faas?host=/run/postgresql&user=faas" {
 		t.Errorf("DBURL = %q", cfg.DBURL)
@@ -249,6 +256,7 @@ func TestConfig_GetHelpersEnvOverlay(t *testing.T) {
 		GithubdBridgeSock: "/run/faas/apid-githubd.sock",
 		GithubdSocket:     "/run/faas/githubd.sock",
 		AppsDomain:        "apps.toml.com",
+		CLIAuthURLBase:    "https://api.toml.com/",
 	}
 	env := func(k string) string {
 		switch k {
@@ -264,6 +272,8 @@ func TestConfig_GetHelpersEnvOverlay(t *testing.T) {
 			return "/run/faas/gh-other.sock"
 		case "FAAS_APPS_DOMAIN":
 			return "apps.env.com"
+		case "FAAS_CLI_AUTH_URL_BASE":
+			return "api.env.com/"
 		case "FAAS_APID_APP_ERRORS_TARGET":
 			return "tcp://apid.env:9093"
 		}
@@ -287,6 +297,9 @@ func TestConfig_GetHelpersEnvOverlay(t *testing.T) {
 	if got := c.GetAppsDomain(env); got != "apps.env.com" {
 		t.Errorf("GetAppsDomain (env) = %q, want env value", got)
 	}
+	if got := c.GetCLIAuthURLBase(env); got != "https://api.env.com" {
+		t.Errorf("GetCLIAuthURLBase (env) = %q, want normalized env value", got)
+	}
 	c.AppErrorsTarget = "tcp://apid.toml:9093"
 	if got := c.GetAppErrorsTarget(env); got != "tcp://apid.env:9093" {
 		t.Errorf("GetAppErrorsTarget (env) = %q, want env value", got)
@@ -303,8 +316,34 @@ func TestConfig_GetHelpersEnvOverlay(t *testing.T) {
 	if got := c.GetAppErrorsTarget(empty); got != "tcp://apid.toml:9093" {
 		t.Errorf("GetAppErrorsTarget (empty env) = %q, want TOML value", got)
 	}
+	if got := c.GetCLIAuthURLBase(empty); got != "https://api.toml.com" {
+		t.Errorf("GetCLIAuthURLBase (empty env) = %q, want normalized TOML value", got)
+	}
 	if got := (&Config{}).GetAppErrorsTarget(empty); got != "/run/faas/app_errors.sock" {
 		t.Errorf("GetAppErrorsTarget (empty config) = %q, want legacy socket", got)
+	}
+}
+
+func TestNormalizeCLIAuthURLBase(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "absolute", in: "https://api.example.com/", want: "https://api.example.com"},
+		{name: "bare hostname", in: "api.example.com", want: "https://api.example.com"},
+		{name: "http local", in: "http://127.0.0.1:8081///", want: "http://127.0.0.1:8081"},
+		{name: "path prefix", in: "https://api.example.com/control/", want: "https://api.example.com/control"},
+		{name: "query rejected", in: "https://api.example.com/?redirect=bad", want: defaultCLIAuthURLBase},
+		{name: "scheme rejected", in: "ftp://api.example.com", want: defaultCLIAuthURLBase},
+		{name: "empty", in: "", want: defaultCLIAuthURLBase},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeCLIAuthURLBase(tt.in); got != tt.want {
+				t.Errorf("normalizeCLIAuthURLBase(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 

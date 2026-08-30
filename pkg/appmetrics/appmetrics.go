@@ -187,7 +187,7 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	// rate) since the gauge reflects current waiters, not a
 	// delta — the alert path's windowed comparison uses the same
 	// query so the gauge is the live value, not an average.
-	qDepthQ := fmt.Sprintf(`gateway_queue_depth{app=%q}`, appID)
+	qDepthQ := fmt.Sprintf(`gateway_queue_depth{app=%q, account_id=~".+"}`, appID)
 	if v, err := fetcher.QueryScalar(ctx, qDepthQ); err == nil {
 		resp.QueueDepth = int64(SafeRoundNonNeg(v))
 	} else {

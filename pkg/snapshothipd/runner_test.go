@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/common/expfmt"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 type fakeReplicaStore struct {
@@ -65,7 +66,7 @@ func (f *fakeBackend) Get(_ context.Context, key string) (io.ReadCloser, error) 
 	}
 	data, ok := f.objects[key]
 	if !ok {
-		return nil, state.ErrNotFound
+		return nil, storage.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
@@ -78,14 +79,17 @@ func (f *fakeMetrics) ObserveFanout(outcome, region string) {
 	f.outcomes = append(f.outcomes, outcome+":"+region)
 }
 
-func TestRunnerTickPrepositionsBothRestoreBlobs(t *testing.T) {
+func TestRunnerTickPrepositionsCompleteRestoreClosure(t *testing.T) {
 	store := &fakeReplicaStore{job: state.SnapshotReplicaJob{
 		SnapshotID: "snap-1", DeploymentID: "dep-1", NodeID: "node-2", Region: "europe-west3",
-		StorageKey: "snap/dep-1/mem", VMStateStorageKey: "snap/dep-1/vmstate", Attempts: 1,
+		StorageKey: "snap/dep-1/mem", VMStateStorageKey: "snap/dep-1/vmstate",
+		LayerStorageKeys: []string{"apps/acme/dep-1.ext4", "apps/acme/dep-1-metrics.ext4"}, Attempts: 1,
 	}}
 	backend := &fakeBackend{objects: map[string][]byte{
-		"snap/dep-1/mem":     []byte("memory"),
-		"snap/dep-1/vmstate": []byte("vmstate"),
+		"snap/dep-1/mem":               []byte("memory"),
+		"snap/dep-1/vmstate":           []byte("vmstate"),
+		"apps/acme/dep-1.ext4":         []byte("app"),
+		"apps/acme/dep-1-metrics.ext4": []byte("sidecar"),
 	}}
 	metrics := &fakeMetrics{}
 	r := New(store, backend, "node-2", slog.Default()).WithMetrics(metrics)
@@ -94,7 +98,7 @@ func TestRunnerTickPrepositionsBothRestoreBlobs(t *testing.T) {
 	if !store.ready {
 		t.Fatal("snapshot replica was not marked ready")
 	}
-	if got, want := len(backend.gets), 2; got != want {
+	if got, want := len(backend.gets), 4; got != want {
 		t.Fatalf("Get calls = %d, want %d (%v)", got, want, backend.gets)
 	}
 	if got, want := metrics.outcomes, []string{"ready:europe-west3"}; len(got) != len(want) || got[0] != want[0] {
@@ -120,6 +124,26 @@ func TestRunnerTickFailureIsRetryable(t *testing.T) {
 	}
 	if got, want := metrics.outcomes, []string{"failed:local"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("metrics = %v, want %v", got, want)
+	}
+}
+
+func TestRunnerTickMissingDependencyIsPermanent(t *testing.T) {
+	store := &fakeReplicaStore{job: state.SnapshotReplicaJob{
+		SnapshotID: "snap-1", DeploymentID: "dep-1", NodeID: "node-2",
+		StorageKey: "snap/dep-1/mem", VMStateStorageKey: "snap/dep-1/vmstate",
+		LayerStorageKeys: []string{"apps/acme/dep-1.ext4"},
+	}}
+	backend := &fakeBackend{objects: map[string][]byte{
+		"snap/dep-1/mem":     []byte("memory"),
+		"snap/dep-1/vmstate": []byte("vmstate"),
+	}}
+	New(store, backend, "node-2", slog.Default()).runTick(context.Background())
+
+	if store.failed == nil {
+		t.Fatal("missing dependency was not recorded")
+	}
+	if !storage.IsNotFound(store.failed) {
+		t.Fatalf("failure = %v, want wrapped storage.ErrNotFound", store.failed)
 	}
 }
 

@@ -54,12 +54,15 @@ class AppMetricsResponse:
     wake_p95_ms: float
     """FLEET p95 wake latency (the unlabeled histogram). Labelled as such in the UI."""
     queue_depth: int | Unset = UNSET
-    """Current wake-queue depth (`gateway_queue_depth{app}`).
-    Backs the `queue_backlog_growing` alert preset (ADR-123):
-    comparison `gt 50` over the chosen window. Best-effort:
-    absent on Prometheus failure (the field is `null`); the
-    evaluator's degraded-source contract skips firing
-    rather than guessing.
+    """Current wake-queue depth
+    (`gateway_queue_depth{app, account_id}` — `account_id`
+    admitted via accountLabelSet, overflow=`__other__`,
+    added in PR-D). Backs the `queue_backlog_growing`
+    alert preset (ADR-123): comparison `gt 50` over the
+    chosen window. Best-effort: absent on Prometheus
+    failure (the field is `null`); the evaluator's
+    degraded-source contract skips firing rather than
+    guessing.
     """
     egress_bytes: int | Unset = UNSET
     """Per-app egress byte delta over the window (informational; not billed). ADR-046. Source:

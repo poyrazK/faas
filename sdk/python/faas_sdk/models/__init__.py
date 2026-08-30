@@ -17,6 +17,8 @@ from .add_tenant_hostname_request import AddTenantHostnameRequest
 from .add_trusted_signer_request import AddTrustedSignerRequest
 from .admin_set_github_webhook_secret_request import AdminSetGithubWebhookSecretRequest
 from .admin_set_github_webhook_secret_response import AdminSetGithubWebhookSecretResponse
+from .alert_delivery_response import AlertDeliveryResponse
+from .alert_delivery_response_status import AlertDeliveryResponseStatus
 from .alert_preset_response import AlertPresetResponse
 from .alert_preset_response_category import AlertPresetResponseCategory
 from .alert_preset_response_comparison import AlertPresetResponseComparison
@@ -47,6 +49,7 @@ from .app_errors_summary_response import AppErrorsSummaryResponse
 from .app_manifest import AppManifest
 from .app_manifest_env import AppManifestEnv
 from .app_manifest_env_secrets import AppManifestEnvSecrets
+from .app_manifest_healthcheck import AppManifestHealthcheck
 from .app_metrics_response import AppMetricsResponse
 from .app_metrics_response_range import AppMetricsResponseRange
 from .app_open_api_import_dry_run_response import AppOpenAPIImportDryRunResponse
@@ -215,6 +218,7 @@ from .delayed_task_request_payload import DelayedTaskRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
+from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
 from .deployment_healthcheck import DeploymentHealthcheck
@@ -558,6 +562,8 @@ from .tenant_surface_response import TenantSurfaceResponse
 from .tenant_surface_response_cert_kind import TenantSurfaceResponseCertKind
 from .tenant_surface_response_cert_state import TenantSurfaceResponseCertState
 from .tenant_surface_response_status import TenantSurfaceResponseStatus
+from .test_alert_preset_response import TestAlertPresetResponse
+from .test_alert_preset_response_status import TestAlertPresetResponseStatus
 from .throttle_preview_row import ThrottlePreviewRow
 from .throttle_suggestion_row import ThrottleSuggestionRow
 from .throttle_suggestions_response import ThrottleSuggestionsResponse
@@ -646,6 +652,8 @@ __all__ = (
     "AddTrustedSignerRequest",
     "AdminSetGithubWebhookSecretRequest",
     "AdminSetGithubWebhookSecretResponse",
+    "AlertDeliveryResponse",
+    "AlertDeliveryResponseStatus",
     "AlertPresetResponse",
     "AlertPresetResponseCategory",
     "AlertPresetResponseComparison",
@@ -679,6 +687,7 @@ __all__ = (
     "AppManifest",
     "AppManifestEnv",
     "AppManifestEnvSecrets",
+    "AppManifestHealthcheck",
     "AppMetricsResponse",
     "AppMetricsResponseRange",
     "AppOpenAPIImportDryRunResponse",
@@ -840,6 +849,7 @@ __all__ = (
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
+    "DeleteDeploymentScopeExclusionResponse200",
     "DeploymentAuditResponse",
     "DeploymentAuditResponseKind",
     "DeploymentHealthcheck",
@@ -1175,6 +1185,8 @@ __all__ = (
     "TenantSurfaceResponseCertKind",
     "TenantSurfaceResponseCertState",
     "TenantSurfaceResponseStatus",
+    "TestAlertPresetResponse",
+    "TestAlertPresetResponseStatus",
     "ThrottlePreviewRow",
     "ThrottleSuggestionRow",
     "ThrottleSuggestionsResponse",

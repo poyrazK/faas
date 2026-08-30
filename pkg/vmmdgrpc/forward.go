@@ -57,6 +57,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -97,6 +98,11 @@ const streamBridgeSessionDeadline = 24 * time.Hour
 // bridge on a loaded compute node before it could bind, turning every first
 // request into a misleading 503.
 const streamBridgeSocketReadyTimeout = 2 * time.Second
+
+// streamBridgeShutdownTimeout bounds the cleanup wait for a child that does
+// not honor SIGTERM. Every spawned bridge must be reaped before the handler
+// returns, but a wedged child must not pin the vmmd RPC forever.
+const streamBridgeShutdownTimeout = 5 * time.Second
 
 // ForwardHTTPStream (issue #471 PR-B + PR-C / ADR-047) is the
 // bidi bridge the gatewayd-internal hot path uses for every request. Wire
@@ -1425,7 +1431,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	if dialPort == 0 {
 		dialPort = netns.AppPort
 	}
-	sockPath := streamBridgeSockPath(reqInit.GetInstance())
+	sockPath := streamBridgeSockPathForRequest(reqInit.GetInstance())
 	// Bridge session deadline: cap at the long ceiling
 	// (defaultSessionDeadline = 24 h, matches rawStreamSessionDeadline
 	// in pkg/gateway/forwardproxy.go). The respTimeout parameter is
@@ -1439,6 +1445,12 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	// or gRPC stream deadline, whichever fires first.
 	sessionDeadline := time.Now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
 	bridgeEnv := streamBridgeEnv(reqInit)
+	// The bridge owns this per-instance socket for the duration of the
+	// request. Remove it on every exit path, including spawn failure,
+	// readiness timeout, H2C dial failure, and stream cancellation. The
+	// bridge binary removes a stale path before binding, but vmmd must
+	// also unlink the path when the child exits unexpectedly.
+	defer func() { _ = os.Remove(sockPath) }()
 
 	// 3. Spawn the bridge. Mirrors rawBridgeSpawn (forward.go:668).
 	cmd, stderr, err := streamBridgeSpawn(ctx, bridgePath, netnsName, sockPath, netns.GuestIP, dialPort, sessionDeadline, bridgeEnv)
@@ -1448,14 +1460,18 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 			"guest_ip", netns.GuestIP, "guest_port", dialPort, "err", err.Error())
 		return status.Errorf(codes.Unavailable, "stream bridge start: %v", err)
 	}
-	defer func() { _ = cmd.Process.Signal(syscall.SIGTERM) }()
+	bridgeWaited := false
+	defer func() {
+		if !bridgeWaited {
+			_ = stopStreamBridge(ctx, cmd, stderr)
+		}
+	}()
 
 	// 4. Wait for the bridge to bind the unix socket. The bridge
 	// opens the socket synchronously before serving (cmd/vmmd-stream-bridge
 	// main.go:108-122), so a brief poll for the socket file is
 	// sufficient. 50 ms cap so a wedged bridge fails loud.
 	if err := waitForUnixSock(sockPath, streamBridgeSocketReadyTimeout); err != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
 		s.log.Warn("vmmd: stream bridge socket not ready",
 			"instance", reqInit.GetInstance(), "netns", netnsName,
 			"socket", sockPath, "stderr", stderr.String(), "err", err.Error())
@@ -1537,7 +1553,9 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
 		_ = bodyPr.Close()
-		bridgeErr := bridgeWait(cmd, stderr)
+		_ = bodyPw.Close()
+		bridgeErr := stopStreamBridge(ctx, cmd, stderr)
+		bridgeWaited = true
 		s.log.Warn("vmmd: stream bridge H2C request failed",
 			"instance", reqInit.GetInstance(), "netns", netnsName,
 			"guest_ip", netns.GuestIP, "guest_port", dialPort,
@@ -1673,18 +1691,8 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	// of this function only fires on function return, which is
 	// blocked on bridgeWait. Race the signal against a context-
 	// cancellation-based force-kill in case the bridge is wedged.
-	_ = cmd.Process.Signal(syscall.SIGTERM)
-	var bridgeErr error
-	bridgeDoneCh := make(chan struct{})
-	go func() { bridgeErr = bridgeWait(cmd, stderr); close(bridgeDoneCh) }()
-	select {
-	case <-bridgeDoneCh:
-	case <-ctx.Done():
-		_ = cmd.Process.Kill()
-		<-bridgeDoneCh
-	}
-
-	_ = os.Remove(sockPath)
+	bridgeErr := stopStreamBridge(ctx, cmd, stderr)
+	bridgeWaited = true
 
 	// Error mapping mirrors v1 priority.
 	if bridgeErr != nil {
@@ -1777,6 +1785,17 @@ func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName, sockPath,
 // binary chmods the socket 0600 after bind.
 func streamBridgeSockPath(instance string) string {
 	return "/var/run/faas/stream/" + instance + ".sock"
+}
+
+// streamBridgeRequestSeq makes each ForwardHTTPStreamV2 RPC own a distinct
+// socket even when several requests target the same live instance. The
+// bridge is process-per-RPC, so sharing the old instance-only path let a
+// second request unlink and replace the first request's listener.
+var streamBridgeRequestSeq atomic.Uint64
+
+func streamBridgeSockPathForRequest(instance string) string {
+	seq := streamBridgeRequestSeq.Add(1)
+	return fmt.Sprintf("/var/run/faas/stream/%s-%d-%d.sock", instance, os.Getpid(), seq)
 }
 
 // streamBridgeEnv builds the env-var list set on the spawned
@@ -1954,6 +1973,50 @@ func bridgeWait(cmd *exec.Cmd, stderr *bytes.Buffer) error {
 		return err
 	}
 	return nil
+}
+
+// stopStreamBridge terminates and reaps a spawned bridge. It is safe to call
+// from both the normal completion path and deferred early-return cleanup.
+// Context cancellation kills immediately; otherwise SIGTERM gets a bounded
+// grace period before the child is force-killed. Reaping here prevents a
+// readiness or request-construction error from leaving a zombie process.
+func stopStreamBridge(ctx context.Context, cmd *exec.Cmd, stderr *bytes.Buffer) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() { done <- bridgeWait(cmd, stderr) }()
+	timer := time.NewTimer(streamBridgeShutdownTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return bridgeStopError(cmd, err)
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		return bridgeStopError(cmd, <-done)
+	case <-timer.C:
+		_ = cmd.Process.Kill()
+		return bridgeStopError(cmd, <-done)
+	}
+}
+
+// bridgeStopError treats the signal used by stopStreamBridge as an expected
+// shutdown. A bridge normally catches SIGTERM and exits 0, but a child can be
+// replaced by a tiny wrapper or be killed during the grace-period fallback;
+// the completed HTTP response must not be turned into an RPC error merely
+// because the process was terminated during cleanup. Other exit failures are
+// preserved for the caller's existing Unavailable mapping.
+func bridgeStopError(cmd *exec.Cmd, err error) error {
+	if err == nil || cmd == nil || cmd.ProcessState == nil {
+		return err
+	}
+	status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if ok && status.Signaled() &&
+		(status.Signal() == syscall.SIGTERM || status.Signal() == syscall.SIGKILL) {
+		return nil
+	}
+	return err
 }
 
 // waitForUnixSock polls for the socket file to exist. The bridge

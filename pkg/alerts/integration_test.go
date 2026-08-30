@@ -76,7 +76,7 @@ func TestPgStore_ClaimAlertFire_StampsPayload(t *testing.T) {
 		t.Fatalf("ClaimAlertFire: (%q, %v, %v); want (nonempty, true, nil)", deliveryID, won, err)
 	}
 
-	deliveries, err := s.ListAlertDeliveriesForRule(ctx, rule.ID, 5)
+	deliveries, err := s.ListAlertDeliveriesForRule(ctx, rule.ID, 5, false)
 	if err != nil || len(deliveries) != 1 {
 		t.Fatalf("ListAlertDeliveriesForRule: err=%v count=%d; want 1", err, len(deliveries))
 	}
@@ -201,7 +201,7 @@ func TestPgStore_DeleteAccount_CascadesAlertRules(t *testing.T) {
 	if _, err := s.AlertRuleByID(ctx, rule.ID); err == nil {
 		t.Errorf("AlertRuleByID after DeleteAccount: expected ErrNotFound, got nil")
 	}
-	deliveries, err := s.ListAlertDeliveriesForRule(ctx, rule.ID, 5)
+	deliveries, err := s.ListAlertDeliveriesForRule(ctx, rule.ID, 5, false)
 	if err != nil {
 		t.Fatalf("ListAlertDeliveriesForRule: %v", err)
 	}

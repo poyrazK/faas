@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AlertDeliveryResponse } from '../models/AlertDeliveryResponse.js';
 import type { AlertPresetResponse } from '../models/AlertPresetResponse.js';
 import type { AlertRuleResponse } from '../models/AlertRuleResponse.js';
 import type { CreateAlertRuleRequest } from '../models/CreateAlertRuleRequest.js';
 import type { EnableAlertPresetRequest } from '../models/EnableAlertPresetRequest.js';
 import type { RotateAlertRuleSecretResponse } from '../models/RotateAlertRuleSecretResponse.js';
+import type { TestAlertPresetResponse } from '../models/TestAlertPresetResponse.js';
 import type { UpdateAlertRuleRequest } from '../models/UpdateAlertRuleRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -259,6 +261,68 @@ export class AlertRulesService {
     });
   }
   /**
+   * List recent alert_deliveries rows for one rule.
+   * Returns the most-recent alert_deliveries rows for the rule,
+   * newest-first. The default (include_test=false) hides test
+   * rows; the operator pane is reachable via ?include_test=true.
+   * IDOR-safe: a 404 is returned when the rule is on another
+   * account (same posture as GET /v1/apps/{slug}/alerts/{id}).
+   *
+   * @returns AlertDeliveryResponse Recent deliveries, newest-first.
+   * @throws ApiError
+   */
+  public static listAlertRuleDeliveries({
+    slug,
+    id,
+    includeTest = false,
+    limit = 50,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * When true, also surface rows written by Dispatcher.DispatchTest
+     * (the customer-facing "send test alert" path). Default false
+     * hides test rows so the customer's recent-deliveries pane is
+     * not polluted by every "send test alert" click. Operators can
+     * flip the toggle for post-mortems; the production read stays
+     * index-only via the partial index
+     * alert_deliveries_rule_fired_production_idx.
+     *
+     */
+    includeTest?: boolean,
+    /**
+     * Max rows to return. Clamped to 100.
+     */
+    limit?: number,
+  }): CancelablePromise<Array<AlertDeliveryResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/alerts/{id}/deliveries',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'include_test': includeTest,
+        'limit': limit,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * List the 8-row alert-preset catalog.
    * The catalog is small (8 rows in PR-A) so no pagination.
    * Rows whose enabled_in_catalog=false are returned with the
@@ -390,6 +454,127 @@ export class AlertRulesService {
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
         302: `Redirect to /apps/{slug}?just_enabled={rule_id}.`,
+        400: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
+        401: `code: unauthorized`,
+        402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Send a synthetic test alert to the instantiated rule's webhook.
+   * Test-fires the customer's instantiated alert_preset rule
+   * against the webhook URL they configured at enable-time.
+   * The synthetic Event body carries `payload.test = true`
+   * so the customer's verifier can branch on the discriminator
+   * (skip the production alert-write path, log to a quieter
+   * channel, etc.) and a synthetic `observed` value JUST PAST
+   * the preset's threshold — `threshold × 1.01` for `gt`
+   * comparisons, `threshold × 0.99` for `lt` (a naive
+   * threshold × 1.01 for `lt` would land on the wrong side of
+   * the threshold; the handler's branch-swap is load-bearing).
+   *
+   * Pre-loadApp gates fire in this order: 404 on missing
+   * preset → 400 alert_preset_disabled on disabled-in-catalog
+   * → 402 plan_alert_presets_not_allowed on below-minimum-plan
+   * → 404 preset_not_enabled when the customer has not yet
+   * instantiated this preset for this app → 502 webhook
+   * delivery failed after retry exhaustion.
+   *
+   * @returns TestAlertPresetResponse The test alert was delivered (any 2xx from the
+   * customer's receiver). Note: 2xx-from-the-receiver is
+   * the contract — the dispatcher's retry budget may span
+   * multiple attempts before reporting success.
+   *
+   * @throws ApiError
+   */
+  public static testAlertPreset({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Preset name (catalog key — same value the `listAlertPresets` and `enableAlertPreset` endpoints accept).
+     */
+    name: string,
+    requestBody?: any,
+  }): CancelablePromise<TestAlertPresetResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/alert-presets/{name}/test',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
+        401: `code: unauthorized`,
+        402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        502: `Webhook delivery failed after the dispatcher's retry
+        budget (5 attempts, 2s/8s/32s/128s backoff). The audit
+        log entry (\`alert_preset.test_sent\`) carries the
+        \`delivery_status_code\` + \`delivery_attempts\` for the
+        investigator; the customer's receiver likely rejected
+        the request, was unreachable, or returned 5xx.
+        `,
+      },
+    });
+  }
+  /**
+   * Form-POST sibling of testAlertPreset for the dashboard.
+   * Receives the per-card "Send test alert" form submission
+   * from the preset grid on /dashboard/apps/{slug}. No body
+   * fields — the instantiated rule already carries the
+   * webhook URL + secret. On success 302-redirects to
+   * /apps/{slug}?test_alert=ok; on 4xx/5xx 302-redirects to
+   * /apps/{slug}?test_alert=error so the template's flash
+   * banner can render. Web-cookie auth is sufficient — no
+   * MFA challenge.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static dashboardTestAlertPreset({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Preset name (catalog key — same value the JSON sibling accepts at /v1/apps/{slug}/alert-presets/{name}/test).
+     */
+    name: string,
+    requestBody?: any,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/dashboard/apps/{slug}/alert-presets/{name}/test',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        302: `Redirect to /apps/{slug}?test_alert={ok|error}.`,
         400: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
