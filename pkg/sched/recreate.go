@@ -82,6 +82,16 @@ const (
 // (arbiter) keeps counting the dispatch as a no-op rather than
 // an error.
 //
+// Race-safety (ADR-137 follow-up / fix #5): the recovery
+// arbiter + deadnode_reconciler can both target the same
+// stranded row. The CAS sibling `transitionWithKindCAS` returns
+// (ok=true) only for the writer whose UpdateInstanceState UPDATE
+// landed; race-losers get (ok=false) and MUST NOT bump
+// `RecreateDecisions("succeeded")` or emit the recovery envelope.
+// The losing side returns nil so the arbiter tick isn't noisy
+// with errors, but the metric stays accurate (the dashboard's
+// "recovery recreate rate" pairs 1:1 with the audit rows).
+//
 // Nil-safety: the primitive tolerates a nil ledger / events /
 // ops so unit tests can wire the bare fields the primitive
 // touches. Production wiring (cmd/schedd/main.go) always
@@ -132,7 +142,31 @@ func (e *Engine) RecreateInstance(ctx context.Context, instanceID string) error 
 	// Transition with kind="recovery_recreate" so the audit row
 	// distinguishes the arbiter's recreate landing from a normal
 	// idle-timeout Park (which uses kind="state_transition").
-	e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateParked, "recovery_recreate", recreateReasonArbiter)
+	// CAS-aware: the bool gates the metric + recovery envelope
+	// so race-losers don't inflate the recreate rate or emit
+	// duplicate Timeline rows.
+	ok, terr := e.transitionWithKindCAS(ctx, ins.ID, ins.AppID, state.StateParked, "recovery_recreate", recreateReasonArbiter)
+	if terr != nil {
+		// Store-level failure (PG round-trip error). Treat like
+		// the race-loser path — count as a non-win so the
+		// metric stays accurate, but bubble the error so the
+		// arbiter can decide whether to retry on the next tick.
+		if e.ops != nil {
+			e.ops.RecreateDecisions("not_found").Inc()
+		}
+		return fmt.Errorf("sched: recreate: transition %s: %w", ins.ID, terr)
+	}
+	if !ok {
+		// Peer-wins: the deadnode reconciler (or a sibling
+		// arbiter tick) already parked/failed this row. The
+		// ledger release above is idempotent and harmless; the
+		// metric + envelope stay suppressed so the dashboard's
+		// recreate rate matches the audit-row count.
+		e.log.Debug("sched: recreate: peer-wins (CAS lost)",
+			"instance_id", ins.ID, "app_id", ins.AppID, "node_id", ins.NodeID,
+			"previous_state", ins.State)
+		return nil
+	}
 	if e.ops != nil {
 		e.ops.RecreateDecisions("succeeded").Inc()
 	}
