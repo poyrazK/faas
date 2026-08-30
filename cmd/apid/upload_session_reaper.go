@@ -42,11 +42,6 @@ import (
 // Matches the dns_poller / debug_regression_cron cadences.
 const reaperTick = 5 * time.Minute
 
-// reaperBatchLimit caps rows per sweep so a 100k-stale-rows
-// backlog can't OOM the apid process on boot. Partial index
-// upload_sessions_expires_idx keeps the scan cheap regardless.
-const reaperBatchLimit = 100
-
 // runUploadSessionReaper blocks until ctx is cancelled. The
 // ticker fires the first sweep at t=0 (so an apid boot catches
 // up on any backlog from a previous instance crash) and then
@@ -124,6 +119,7 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 			continue
 		}
 		deleted++
+		uploadSessionExpiredTotal().Inc()
 	}
 	if deleted > 0 {
 		// Increment by the batch count, not 1 — matches the
