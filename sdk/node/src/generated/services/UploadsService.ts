@@ -109,6 +109,9 @@ export class UploadsService {
   public static commitUpload({
     id,
   }: {
+    /**
+     * Upload session id to finalize (returned by POST /v1/uploads).
+     */
     id: string,
   }): CancelablePromise<DeploymentResponse> {
     return __request(OpenAPI, {
