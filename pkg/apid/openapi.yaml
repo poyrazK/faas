@@ -40,6 +40,15 @@ tags:
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
     description: App lifecycle (create, update, delete, wake, park).
+  - name: uploads
+    description: |
+      Resumable upload sessions (issue #1182 §P1 / ADR-115). A session
+      opens at POST /v1/uploads, accepts byte-range PATCHes, and
+      finalizes via POST /v1/uploads/{id}/commit. Per-account open-
+      session cap is 5; per-plan SourceTarballMaxMB caps total_size
+      (Free/Hobby 100 MB, Pro/Scale 250 MB). The legacy single-shot
+      `source-tarball` endpoint stays active in PR-1; PR-3 deprecates
+      it with RFC 8594 Sunset headers.
   - name: previews
     description: |
       Preview environments (issue #961 / ADR-095). A preview is a
@@ -2802,6 +2811,7 @@ paths:
         in: path
         required: true
         schema: { type: string }
+        description: Upload session id to finalize (returned by POST /v1/uploads).
     post:
       tags: [uploads]
       operationId: commitUpload
