@@ -1,4 +1,4 @@
--- filename: 00562_upload_sessions.sql
+-- filename: 00563_upload_sessions.sql
 -- +goose Up
 -- +goose StatementBegin
 

@@ -187,7 +187,7 @@ type MemStore struct {
 	// backing for the upload-session Store methods. Keyed by upload_id
 	// (text). Backs the resumable upload protocol's handler unit
 	// tests; production uses *PgStore against the upload_sessions
-	// table (migrations/00562_upload_sessions.sql). Mutex is the
+	// table (migrations/00563_upload_sessions.sql). Mutex is the
 	// existing m.mu — no new lock.
 	uploadSessions       map[string]sqlc.UploadSession
 	uploadCommitOutcomes map[string]sqlc.UploadCommitOutcome
