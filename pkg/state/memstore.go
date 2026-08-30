@@ -748,8 +748,8 @@ func NewMemStore() *MemStore {
 		appWebhooks:               map[string]AppWebhook{},
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
 		deploymentScopeExclusions: map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
-		uploadSessions:       map[string]sqlc.UploadSession{},
-		uploadCommitOutcomes: map[string]sqlc.UploadCommitOutcome{},
+		uploadSessions:            map[string]sqlc.UploadSession{},
+		uploadCommitOutcomes:      map[string]sqlc.UploadCommitOutcome{},
 		alertClaimKeys:            map[string]time.Time{},
 		edgeRules:                 map[string]EdgeRule{},
 		corsPresets:               map[string]CorsPreset{},
@@ -17575,19 +17575,19 @@ func (m *MemStore) CreateUploadSession(_ context.Context, in sqlc.CreateUploadSe
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
 	row := sqlc.UploadSession{
-		ID:             in.ID,
-		AccountID:      in.AccountID,
-		AppSlug:        in.AppSlug,
-		TotalSize:      in.TotalSize,
-		ReceivedBytes:  0,
-		ChunkSize:      in.ChunkSize,
-		Sha256Hex:      in.Sha256Hex,
-		PartPath:       in.PartPath,
-		Status:         "open",
-		CreatedAt:      pgtype.Timestamptz{Time: now, Valid: true},
-		LastPatchedAt:  pgtype.Timestamptz{Time: now, Valid: true},
-		ExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
-		DeploymentID:   pgtype.Text{String: "", Valid: false},
+		ID:            in.ID,
+		AccountID:     in.AccountID,
+		AppSlug:       in.AppSlug,
+		TotalSize:     in.TotalSize,
+		ReceivedBytes: 0,
+		ChunkSize:     in.ChunkSize,
+		Sha256Hex:     in.Sha256Hex,
+		PartPath:      in.PartPath,
+		Status:        "open",
+		CreatedAt:     pgtype.Timestamptz{Time: now, Valid: true},
+		LastPatchedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		ExpiresAt:     pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		DeploymentID:  pgtype.Text{String: "", Valid: false},
 	}
 	m.uploadSessions[row.ID] = row
 	return row, nil
