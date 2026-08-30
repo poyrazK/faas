@@ -16280,6 +16280,32 @@ func (m *MemStore) ReapExpiredUploadSessions(_ context.Context) ([]sqlc.ReapExpi
 	return out, nil
 }
 
+// ReapStaleUploadPartFiles returns terminal-row sessions whose
+// last_patched_at < now() - 1h. Bounded by 100 rows. The
+// 1h grace matches the production query — kept identical so
+// the whitebox reaper tests exercise the same predicate.
+func (m *MemStore) ReapStaleUploadPartFiles(_ context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []sqlc.ReapStaleUploadPartFilesRow
+	cutoff := time.Now().UTC().Add(-1 * time.Hour)
+	for _, row := range m.uploadSessions {
+		if row.Status != "committed" && row.Status != "cancelled" && row.Status != "expired" {
+			continue
+		}
+		if row.LastPatchedAt.Valid && row.LastPatchedAt.Time.Before(cutoff) {
+			out = append(out, sqlc.ReapStaleUploadPartFilesRow{
+				ID:       row.ID,
+				PartPath: row.PartPath,
+			})
+			if len(out) >= 100 {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 // ExpireUploadSession marks a single session expired. Idempotent —
 // if the row is no longer open (committed / cancelled / already
 // expired), returns nil and leaves the row untouched.

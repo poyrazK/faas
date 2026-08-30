@@ -79,6 +79,20 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 		}
 		return
 	}
+	// PR-1 fixup #5: sweep .part files for terminal-row sessions
+	// (status IN committed/cancelled/expired, last_patched_at
+	// < now() - 1h). The commit handler leaves .part in place
+	// for builderd to consume; the cancel handler removes its
+	// .part at the same time it flips status='cancelled'; but
+	// neither has a 1h cleanup guarantee for committed rows.
+	// Stale part sweep runs separately from the open-expired
+	// sweep so a partial failure in one does not block the
+	// other.
+	stale, staleErr := s.store.ReapStaleUploadPartFiles(ctx)
+	if staleErr != nil && !errors.Is(staleErr, context.Canceled) {
+		log.Warn("upload session reaper: stale scan failed", "err", staleErr)
+		uploadSessionReaperFailedTotal().Inc()
+	}
 	deleted := 0
 	for _, row := range rows {
 		// Race order matters: do .part removal FIRST, then flip
@@ -119,7 +133,30 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 		for i := 0; i < deleted; i++ {
 			uploadSessionReaperRowsDeletedTotal().Inc()
 		}
-		log.Info("upload session reaper: sweep complete", "deleted", deleted)
+		log.Info("upload session reaper: open-expired sweep complete", "deleted", deleted)
+	}
+	// Stale part sweep (#5): remove .part files for terminal
+	// rows that builderd never consumed (e.g. apid crash between
+	// commit + builderd pickup, or a builderd crash mid-read).
+	// No DB UPDATE — status is already terminal.
+	staleDeleted := 0
+	for _, row := range stale {
+		if row.PartPath == "" {
+			continue
+		}
+		if rmErr := removeUploadPart(row.PartPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Warn("upload session reaper: stale .part remove failed",
+				"upload_id", row.ID, "path", row.PartPath, "err", rmErr)
+			uploadSessionReaperFailedTotal().Inc()
+			continue
+		}
+		staleDeleted++
+	}
+	if staleDeleted > 0 {
+		for i := 0; i < staleDeleted; i++ {
+			uploadSessionReaperRowsDeletedTotal().Inc()
+		}
+		log.Info("upload session reaper: stale-part sweep complete", "deleted", staleDeleted)
 	}
 }
 
