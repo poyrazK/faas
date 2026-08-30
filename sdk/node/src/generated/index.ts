@@ -333,6 +333,8 @@ export type { UpdateDeploymentTrafficRequest } from './models/UpdateDeploymentTr
 export type { UpdateEdgeRuleRequest } from './models/UpdateEdgeRuleRequest.js';
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';
 export type { UpdateTriggerRequest } from './models/UpdateTriggerRequest.js';
+export type { UploadStartRequest } from './models/UploadStartRequest.js';
+export type { UploadStartResponse } from './models/UploadStartResponse.js';
 export type { UsageExportResponse } from './models/UsageExportResponse.js';
 export type { UsageResponse } from './models/UsageResponse.js';
 export type { UsageSummaryResponse } from './models/UsageSummaryResponse.js';
@@ -381,6 +383,7 @@ export { TelemetryService } from './services/TelemetryService.js';
 export { TemplatesService } from './services/TemplatesService.js';
 export { TenantSurfacesService } from './services/TenantSurfacesService.js';
 export { TriggersService } from './services/TriggersService.js';
+export { UploadsService } from './services/UploadsService.js';
 export { UpstreamsService } from './services/UpstreamsService.js';
 export { UsageService } from './services/UsageService.js';
 export { WebhooksService } from './services/WebhooksService.js';

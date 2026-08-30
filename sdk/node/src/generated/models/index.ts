@@ -327,6 +327,8 @@ export type { UpdateDeploymentTrafficRequest } from './UpdateDeploymentTrafficRe
 export type { UpdateEdgeRuleRequest } from './UpdateEdgeRuleRequest.js';
 export type { UpdateMirrorRuleRequest } from './UpdateMirrorRuleRequest.js';
 export type { UpdateTriggerRequest } from './UpdateTriggerRequest.js';
+export type { UploadStartRequest } from './UploadStartRequest.js';
+export type { UploadStartResponse } from './UploadStartResponse.js';
 export type { UsageExportResponse } from './UsageExportResponse.js';
 export type { UsageResponse } from './UsageResponse.js';
 export type { UsageSummaryResponse } from './UsageSummaryResponse.js';

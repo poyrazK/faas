@@ -2655,6 +2655,94 @@ paths:
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # Issue #1182 §P1 PR-1 — resumable upload protocol (server-only
+  # foundation; CLI wiring lands in PR-2). Legacy `source-tarball`
+  # endpoint above stays active in PR-1; PR-3 deprecates it with
+  # RFC 8594 Sunset headers.
+  /v1/uploads:
+    post:
+      tags: [uploads]
+      operationId: startUpload
+      summary: Open a resumable upload session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadStartRequest' }
+      responses:
+        '201':
+          description: Session opened.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadStartResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/uploads/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Upload session id (returned by POST /v1/uploads).
+    patch:
+      tags: [uploads]
+      operationId: appendUpload
+      summary: Append a chunk to an open session.
+      parameters:
+        - name: Upload-Offset
+          in: header
+          required: true
+          schema: { type: integer, minimum: 0 }
+          description: Absolute byte offset the client claims the server is at.
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Bytes accepted.
+          headers:
+            Upload-Offset:
+              schema: { type: integer, minimum: 0 }
+              description: New absolute offset after the append.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+    delete:
+      tags: [uploads]
+      operationId: cancelUpload
+      summary: Cancel an open session (removes the .part file).
+      responses:
+        '204':
+          description: Session cancelled.
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/uploads/{id}/commit:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [uploads]
+      operationId: commitUpload
+      summary: Finalize the session, validate the tarball, enqueue the build.
+      responses:
+        '201':
+          description: Deployment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+
   # ADR-122 — endpoint discovery. Captured OpenAPI doc per deployment.
   /v1/apps/{slug}/deployments/{deployment}/openapi:
     parameters:
@@ -12073,6 +12161,35 @@ components:
           enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
           description: "Closed-6 stage vocabulary. `source_download` re-runs the whole pipeline (intentional retry-from-top); any other value resumes from that stage with all prior inputs copied from the source row."
 
+    # Issue #1182 §P1 PR-1 — resumable upload protocol (server-only).
+    # PR-2 wires the CLI; PR-3 deprecates the legacy single-shot
+    # source-tarball endpoint with RFC 8594 Sunset headers.
+    UploadStartRequest:
+      description: "Body of POST /v1/uploads. `total_size` must be ≤ the per-plan SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 + `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row only — the server does NOT re-verify it at commit time (ADR-115 trust boundary)."
+      type: object
+      required: [app_slug, total_size]
+      properties:
+        app_slug:
+          { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$', example: "my-app" }
+        total_size:
+          { type: integer, minimum: 1, maximum: 1073741824, description: "Total tarball bytes after gzip. Hard ceiling is 1 GiB; per-plan cap is enforced by the handler." }
+        sha256_hex:
+          { type: [string, "null"], pattern: '^[a-f0-9]{64}$', description: "Optional sha256 of the tarball for build_provenance. Server does not verify." }
+
+    UploadStartResponse:
+      description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
+      type: object
+      required: [upload_id, chunk_size, total_size, expires_at]
+      properties:
+        upload_id:
+          { type: string, example: "a1b2c3d4e5f6" }
+        chunk_size:
+          { type: integer, minimum: 1, maximum: 67108864, description: "Server-decided chunk size in bytes. Default 8 MiB; 16 MiB for Scale." }
+        total_size:
+          { type: integer, description: "Echo of the requested total_size for client confirmation." }
+        expires_at:
+          { type: string, format: date-time, description: "ISO 8601 UTC timestamp; PATCH after this returns 410 Gone." }
+
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
@@ -19598,6 +19715,24 @@ components:
 
     Conflict:
       description: 'code: conflict'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    BadRequest:
+      description: 'code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as `source_too_large`) ship as the `code` field.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    Gone:
+      description: 'code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PayloadTooLarge:
+      description: 'code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from `source_too_large` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer''s chunk size or accumulated spool crosses the limit.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
