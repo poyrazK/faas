@@ -112,7 +112,7 @@ func TestPg_NodeListRecoverable_ReturnsUnavailableAndRecovering(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	unavailID := pgTestLifecycleNode(t, s, state.NodeLifecycleUnavailable)
 	recoveringID := pgTestLifecycleNode(t, s, state.NodeLifecycleRecovering)
-	_ = pgTestLifecycleNode(t, s, state.NodeLifecycleActive) // must NOT appear
+	_ = pgTestLifecycleNode(t, s, state.NodeLifecycleActive)   // must NOT appear
 	_ = pgTestLifecycleNode(t, s, state.NodeLifecycleDraining) // must NOT appear
 
 	got, err := s.NodeListRecoverable(t.Context())

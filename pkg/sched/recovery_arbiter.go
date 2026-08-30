@@ -109,26 +109,26 @@ func NewArbiter(lm MigrationDispatcher, rp RecreateDispatcher) *Arbiter {
 //
 // Decision matrix (ADR-137 §"Decision policy"):
 //
-//   node.Lifecycle    instance.State   → Decision
-//   ───────────────────────────────────────────────
-//   draining          *                → LiveMigrate
-//                                     (drain is operator-initiated;
-//                                     never recreate)
-//   recovering        parked           → None
-//   recovering        running|waking   → LiveMigrate
-//                                     (peer is back; rebuild via
-//                                     migration is faster than
-//                                     cold boot)
-//   recovering        cold_booting     → LiveMigrate
-//   unavailable       parked           → None
-//   unavailable       running|waking   → LiveMigrate
-//   unavailable       cold_booting     → Recreate
-//                                     (cold-boot rows have no
-//                                     usable snapshot to migrate;
-//                                     cleanest path is recreate)
-//   *                 failed|terminal  → None
-//                                     (already terminal; nothing
-//                                     to recover)
+//	node.Lifecycle    instance.State   → Decision
+//	───────────────────────────────────────────────
+//	draining          *                → LiveMigrate
+//	                                  (drain is operator-initiated;
+//	                                  never recreate)
+//	recovering        parked           → None
+//	recovering        running|waking   → LiveMigrate
+//	                                  (peer is back; rebuild via
+//	                                  migration is faster than
+//	                                  cold boot)
+//	recovering        cold_booting     → LiveMigrate
+//	unavailable       parked           → None
+//	unavailable       running|waking   → LiveMigrate
+//	unavailable       cold_booting     → Recreate
+//	                                  (cold-boot rows have no
+//	                                  usable snapshot to migrate;
+//	                                  cleanest path is recreate)
+//	*                 failed|terminal  → None
+//	                                  (already terminal; nothing
+//	                                  to recover)
 //
 // A future extension would consult HasSnapshotHistory per
 // instance to swap a "running on unavailable with no usable

@@ -9359,7 +9359,6 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 	// derived column is advisory, not authoritative, when only
 	// one of the two fields is set.
 	if n.Lifecycle != "" {
-		n.Lifecycle = n.Lifecycle // no-op; documented for the linter.
 		n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
 	} else {
 		n.Lifecycle = NodeLifecycleActive

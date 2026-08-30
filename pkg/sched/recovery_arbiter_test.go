@@ -23,8 +23,8 @@ import (
 // below don't exercise dispatch — the dispatcher counters land
 // in TestArbiter_Tick_DispatchCounts instead.
 type noopDispatcher struct {
-	enqueueCalls   []string
-	recreateCalls  []string
+	enqueueCalls  []string
+	recreateCalls []string
 }
 
 func (n *noopDispatcher) Enqueue(_ context.Context, id string) error {
@@ -141,7 +141,7 @@ func TestArbiter_Tick_DispatchCounts(t *testing.T) {
 			{ID: "i2", State: "parked"}, // → None
 		},
 		"n-unavail": {
-			{ID: "i3", State: "running"},     // → LiveMigrate
+			{ID: "i3", State: "running"},      // → LiveMigrate
 			{ID: "i4", State: "cold_booting"}, // → Recreate
 		},
 		// n-active: skipped by Tick (out of recovery scope)

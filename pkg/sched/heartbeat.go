@@ -487,9 +487,9 @@ func (h *Heartbeat) emitNodeRecovered(ctx context.Context, n state.ComputeNode) 
 		return
 	}
 	h.events.EmitRecovery(ctx, events.NodeRecoveredEvent{
-		EmitAt:               time.Now().UTC(),
-		NodeID:               n.ID,
-		NodeName:             n.Name,
-		RecoveryInitiatedAt:  time.Now().UTC(),
+		EmitAt:              time.Now().UTC(),
+		NodeID:              n.ID,
+		NodeName:            n.Name,
+		RecoveryInitiatedAt: time.Now().UTC(),
 	})
 }
