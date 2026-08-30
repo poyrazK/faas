@@ -87,14 +87,32 @@ func (c *RegistryClient) PullManifestWithAuth(ctx context.Context, ref string, a
 		return Manifest{}, msg
 	}
 
-	// A manifest-index / manifest-list points at per-platform manifests — we
-	// refuse those here because the two-drive scheme needs a single platform
-	// (spec §4.6). Callers re-pull with a digest to pin.
+	// ADR-140: when the response Content-Type is an OCI image-index /
+	// Docker manifest-list, walk Manifests[] to the per-arch descriptor
+	// that matches the host's PlatformMatcher (default
+	// DefaultPlatformMatcherFromGOARCH). The walk is bounded to two
+	// hops — a manifest list whose selected entry is itself a list
+	// returns ErrImageManifestInvalid. digest-pinned references
+	// resolve directly to a single-arch manifest and skip the walk.
 	mt := resp.Header.Get("Content-Type")
-	if mt == "application/vnd.oci.image.index.v1+json" ||
-		mt == "application/vnd.docker.distribution.manifest.list.v2+json" {
-		return Manifest{}, fmt.Errorf("%w: %s is a manifest list; pin a digest",
-			ErrImageManifestInvalid, r.String())
+	var bodyBytes []byte
+	if isIndexContentType(mt) {
+		var err error
+		bodyBytes, err = io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		if err != nil {
+			return Manifest{}, fmt.Errorf("%w: read index body %s: %s",
+				ErrImageManifestInvalid, r.String(), err.Error())
+		}
+		bodyBytes, err = c.walkIndexToAuth(ctx, r, bodyBytes, auth, 1)
+		if err != nil {
+			return Manifest{}, err
+		}
+		var doc Manifest
+		if err := json.Unmarshal(bodyBytes, &doc); err != nil {
+			return Manifest{}, fmt.Errorf("%w: decode manifest %s: %s",
+				ErrImageManifestInvalid, r.String(), err.Error())
+		}
+		return validateManifestShape(r.String(), doc)
 	}
 
 	var doc Manifest
@@ -102,22 +120,31 @@ func (c *RegistryClient) PullManifestWithAuth(ctx context.Context, ref string, a
 		return Manifest{}, fmt.Errorf("%w: decode manifest %s: %s",
 			ErrImageManifestInvalid, r.String(), err.Error())
 	}
+	return validateManifestShape(r.String(), doc)
+}
+
+// validateManifestShape enforces the post-decode structural checks
+// (config descriptor present, layers non-empty, every digest parses)
+// used by PullManifestWithAuth. Lifts failures to ErrImageManifestInvalid
+// (ADR-021) so pkg/api.SentinelToCode maps them to RFC 7807
+// CodeImageManifestInvalid (422).
+func validateManifestShape(ref string, doc Manifest) (Manifest, error) {
 	if doc.Config.Digest == "" {
 		return Manifest{}, fmt.Errorf("%w: %s missing config descriptor",
-			ErrImageManifestInvalid, r.String())
+			ErrImageManifestInvalid, ref)
 	}
 	if len(doc.Layers) == 0 {
 		return Manifest{}, fmt.Errorf("%w: %s has no layers",
-			ErrImageManifestInvalid, r.String())
+			ErrImageManifestInvalid, ref)
 	}
 	if err := validateDigest(doc.Config.Digest); err != nil {
 		return Manifest{}, fmt.Errorf("%w: %s config: %s",
-			ErrImageManifestInvalid, r.String(), err.Error())
+			ErrImageManifestInvalid, ref, err.Error())
 	}
 	for i, l := range doc.Layers {
 		if err := validateDigest(l.Digest); err != nil {
 			return Manifest{}, fmt.Errorf("%w: %s layer %d: %s",
-				ErrImageManifestInvalid, r.String(), i, err.Error())
+				ErrImageManifestInvalid, ref, i, err.Error())
 		}
 	}
 	return doc, nil

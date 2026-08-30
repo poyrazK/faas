@@ -1479,6 +1479,23 @@ type Deployment struct {
 	// transiently at the pull path (mirrors app_env_secret
 	// unseal at the same seam).
 	Sidecars json.RawMessage `json:"sidecars,omitempty"`
+	// FullRootfsAllowAuto is the per-deployment flag that lets the
+	// full-rootfs path auto-dispatch when the app image is NOT a
+	// strict prefix of one of our runner-* bases (ADR-141
+	// §Decision 2). Default true on Hobby/Pro/Scale, false on Free.
+	// Persisted via migrations/00583 (M-3 commit 6 follow-up —
+	// the column is read-only on this commit and the default is
+	// supplied in-memory by imaged via the dispatch table).
+	FullRootfsAllowAuto bool `json:"full_rootfs_allow_auto,omitempty"`
+	// FullRootfsOverride is the tri-state customer opt-in / opt-out
+	// (ADR-141 §Decision 2):
+	//   - nil   → honor FullRootfsAllowAuto + plan gate.
+	//   - &true → force full-rootfs even on Free plan (and on any
+	//             plan where AllowAuto=false).
+	//   - &false → force today-equivalent failure on
+	//              ErrLayersNotAboveBase regardless of plan / auto.
+	// Persisted as nullable bool (migration 00584 follows this commit).
+	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
 	// MinInstances is the per-deployment cold-wake floor override
 	// (issue #557 closure / ADR-072). Default 0 = "inherit from
 	// parent app"; an explicit positive value is the deployment's

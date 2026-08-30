@@ -42,6 +42,12 @@ type fakeRegistry struct {
 	// requests AFTER layerBlobs misses. Lets the M6 PullBlob tests inspect
 	// the requested digest/repo without pre-seeding the map.
 	blobHandler func(repo, digest string) ([]byte, error)
+
+	// manifestHandler, if non-nil, is consulted for /v2/<repo>/manifests/<ref>
+	// requests AFTER manifestBody/manifestMT. ADR-140 §Decision 1 tests
+	// use this to dispatch top-level pulls (returning an index body) vs
+	// per-arch pulls (returning the per-arch single-platform body).
+	manifestHandler func(repo, ref string) ([]byte, string, error)
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
@@ -119,6 +125,25 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
+			// ADR-140: manifestHandler overrides manifestBody/manifestMT
+			// when set, so multi-arch tests can dispatch top-level vs
+			// per-arch pulls. ADR-140 §Decision 1 fixtures.
+			if f.manifestHandler != nil {
+				trimmed := strings.TrimPrefix(path, "/v2/")
+				parts := strings.Split(trimmed, "/manifests/")
+				if len(parts) != 2 {
+					http.NotFound(w, r)
+					return
+				}
+				body, ct, err := f.manifestHandler(parts[0], parts[1])
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Content-Type", ct)
+				_, _ = w.Write(body)
+				return
+			}
 			mt := f.manifestMT
 			if mt == "" {
 				mt = "application/vnd.oci.image.manifest.v1+json"
@@ -142,6 +167,14 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 func (f *fakeRegistry) client() *RegistryClient {
 	u, _ := url.Parse(f.srv.URL)
 	return NewRegistryClient(WithEndpoint("http", u.Host))
+}
+
+// clientWith is the variadic Options form of client() — used by
+// ADR-140 tests that need to inject a custom PlatformMatcher.
+func (f *fakeRegistry) clientWith(opts ...Option) *RegistryClient {
+	u, _ := url.Parse(f.srv.URL)
+	args := append([]Option{WithEndpoint("http", u.Host)}, opts...)
+	return NewRegistryClient(args...)
 }
 
 func TestRegistryPullDigest_TokenFlowAndHeader(t *testing.T) {
@@ -306,8 +339,10 @@ func TestRegistryPullLayers_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRegistryPullLayers_ManifestListRejected asserts a manifest list / index
-// response is rejected (M5 contract: digest-pinned single arch).
+// TestRegistryPullLayers_ManifestListRejected asserts an empty image
+// index is rejected with ErrImageManifestInvalid (ADR-140: the
+// walker selects no descriptor, surfacing the empty-index failure
+// mode; the walk-fail path lifts to the canonical sentinel).
 func TestRegistryPullLayers_ManifestListRejected(t *testing.T) {
 	f := newFakeRegistry(t)
 	f.manifestBody = []byte(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.list.v2+json","manifests":[]}`)
@@ -316,16 +351,13 @@ func TestRegistryPullLayers_ManifestListRejected(t *testing.T) {
 	_, err := f.client().PullLayers(context.Background(),
 		"ghcr.io/org/app@sha256:"+strings.Repeat("a", 64))
 	if err == nil {
-		t.Fatal("expected error for manifest list")
+		t.Fatal("expected error for empty manifest index")
 	}
-	if !strings.Contains(err.Error(), "manifest list") {
-		t.Errorf("error should mention manifest list: %v", err)
-	}
-	// ADR-021: the manifest-list rejection must lift to
+	// ADR-021: every puller-side failure mode lifts to
 	// ErrImageManifestInvalid so pkg/imaged can persist
 	// deployments.error_code = image_manifest_invalid.
 	if !errors.Is(err, ErrImageManifestInvalid) {
-		t.Errorf("PullLayers manifest-list err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
+		t.Errorf("PullLayers empty-index err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
 	}
 }
 

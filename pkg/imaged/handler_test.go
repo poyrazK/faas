@@ -180,6 +180,22 @@ func (b *fakeBuilder) BuildBaseFromStaging(ctx context.Context, _ string, in roo
 	return rootfs.BaseBuildResult{}, nil
 }
 
+// BuildFullRootfs (M-3 commit 5+6) is part of the LayerBuilder
+// interface. The full-rootfs build path (ADR-141 §Decision 1)
+// bypasses the two-drive shared-base path; the fake streams a
+// small placeholder via Storage.Put so dispatchFullRootfs /
+// buildFullRootfsLayer tests stay KVM-free.
+func (b *fakeBuilder) BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error) {
+	b.calls = append(b.calls, rootfs.BuildInput{Plan: in.Plan})
+	if in.Storage != nil && in.StorageKey != "" {
+		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4 full-rootfs")); err != nil {
+			return rootfs.BuildResult{}, err
+		}
+		return rootfs.BuildResult{ImageKey: in.StorageKey, ContentBytes: b.bytesOut}, nil
+	}
+	return rootfs.BuildResult{ContentBytes: b.bytesOut}, nil
+}
+
 // fakeNotifier records every Notify so tests can assert fan-out.
 type fakeNotifier struct {
 	calls []notifyCall
@@ -1067,6 +1083,10 @@ func (panicBuilder) BuildBase(_ context.Context, _ rootfs.BaseBuildInput) (rootf
 }
 
 func (panicBuilder) BuildBaseFromStaging(_ context.Context, _ string, _ rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
+	panic("boom")
+}
+
+func (panicBuilder) BuildFullRootfs(_ context.Context, _ rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error) {
 	panic("boom")
 }
 

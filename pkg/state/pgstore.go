@@ -4519,10 +4519,12 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          traffic_percent,
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
-		                          reason, tag, deployed_by, pr_number)
+		                          reason, tag, deployed_by, pr_number,
+		                          full_rootfs_allow_auto, full_rootfs_override)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'pending', $18, $19, coalesce(nullif($20, ''), 'default'),
 		         nullif($21, '')::uuid, coalesce(nullif($22, ''), 'api'), nullif($23, '')::inet, nullif($24, ''),
-		         $25, $26, $27, nullif($28, 0))
+		         $25, $26, $27, nullif($28, 0),
+		         $29, $30)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), d.SourceBytes,
 		nullString(d.Handler), nullString(d.LogPath),
@@ -4558,7 +4560,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// or a future handler that forgets to set the field)
 		// collapses to NULL rather than tripping the
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
-		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber)
+		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
+		// ADR-141 / M-3 / migration 00583: tri-state full-rootfs
+		// dispatch. allow_auto is a plain bool (NOT NULL DEFAULT
+		// false at the schema layer). override is *bool — pgx
+		// marshals nil to NULL so the tri-state
+		// (NULL=auto, true=force-on, false=force-off) round-trips
+		// through the wire shape.
+		d.FullRootfsAllowAuto, d.FullRootfsOverride)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -15935,7 +15944,11 @@ const deploymentSelectColumnsWithRootfs = `
 	-- + deleted_by_principal are the soft-delete audit columns.
 	coalesce(priority, 100), coalesce(reordered_by_principal, ''), reordered_at,
 	cancelled_at, coalesce(cancelled_by_principal, ''), coalesce(cancel_reason, ''),
-	deleted_at, coalesce(deleted_by_principal, '')`
+	deleted_at, coalesce(deleted_by_principal, ''),
+	-- ADR-141 / M-3: tri-state full-rootfs dispatch (migration 00583).
+	-- coalesce on allow_auto for symmetry with the rest of the projection;
+	-- override is nullable so the NULL = "honor auto" tri-state reads cleanly.
+	coalesce(full_rootfs_allow_auto, false), full_rootfs_override`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -15985,7 +15998,10 @@ const deploymentSelectColumnsQualified = `
 	-- coalesce choices.
 	coalesce(d.priority, 100), coalesce(d.reordered_by_principal, ''), d.reordered_at,
 	d.cancelled_at, coalesce(d.cancelled_by_principal, ''), coalesce(d.cancel_reason, ''),
-	d.deleted_at, coalesce(d.deleted_by_principal, '')`
+	d.deleted_at, coalesce(d.deleted_by_principal, ''),
+	-- ADR-141 / M-3: tri-state full-rootfs dispatch (migration 00583).
+	-- See deploymentSelectColumnsWithRootfs for rationale.
+	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -16094,6 +16110,10 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.Priority, &d.ReorderedByPrincipal, &d.ReorderedAt,
 		&d.CancelledAt, &d.CancelledByPrincipal, &d.CancelReason,
 		&d.DeletedAt, &d.DeletedByPrincipal,
+		// ADR-141 / M-3: full-rootfs tri-state. allow_auto is a plain
+		// bool (NOT NULL DEFAULT false); override is *bool (nullable
+		// for the "honor auto" tri-state NULL).
+		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 	); err != nil {
 		return mapErr(err)
 	}

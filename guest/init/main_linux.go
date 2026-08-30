@@ -1617,9 +1617,21 @@ func pivotInto(root string) error {
 
 // lookupUID resolves the app user name to a uid. The runner images create the
 // app user at DefaultAppUID; unknown users fall back to that.
+//
+// M-3 commit 8: when the full-rootfs path is active, the
+// builder writes the merged /etc/passwd entries into
+// /etc/faas/app_passwd (binary table, see pkg/rootfs/writePasswdTable).
+// This function reads that table when present. Missing file /
+// missing entry → fall back to DefaultAppUID (1000) so the
+// two-drive legacy path is unaffected.
+//
+// ADR-142 §Decision 3 (binary-search reader).
 func lookupUID(user string) int {
 	if user == api.DefaultAppUser {
 		return api.DefaultAppUID
+	}
+	if uid, ok := readPasswdTable(user); ok {
+		return uid
 	}
 	return api.DefaultAppUID
 }

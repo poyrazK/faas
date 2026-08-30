@@ -29,11 +29,19 @@ import (
 // (deny RFC1918 / metadata ranges, spec §11) is applied by injecting a
 // policy-aware *http.Client via WithHTTPClient — this type does not itself
 // enforce it.
+//
+// ADR-140: when the manifest body is an OCI image-index / Docker
+// manifest-list, fetchManifestWithAuth walks Manifests[] and selects
+// the descriptor whose Platform matches `matcher` (defaults to
+// runtime.GOARCH via WithPlatformMatcher). The matcher field is the
+// only M-3 surface on RegistryClient — the Puller / AuthPuller /
+// ManifestPuller / AuthManifestPuller interface seams are unchanged.
 type RegistryClient struct {
-	hc     *http.Client
-	scheme string // "https" in production; the test seam sets "http"
-	host   string // "" = derive from the reference; tests pin an httptest host
-	ua     string
+	hc      *http.Client
+	scheme  string // "https" in production; the test seam sets "http"
+	host    string // "" = derive from the reference; tests pin an httptest host
+	ua      string
+	matcher PlatformMatcher // ADR-140: nil → DefaultPlatformMatcherFromGOARCH()
 }
 
 // compile-time assertion the client satisfies the puller seam imaged consumes.
@@ -87,6 +95,29 @@ func WithEndpoint(scheme, host string) Option {
 	}
 }
 
+// WithPlatformMatcher injects the host-arch selector used when
+// fetchManifestWithAuth walks an OCI image-index / Docker
+// manifest-list body (ADR-140 §Decision 1). A nil matcher falls
+// back to DefaultPlatformMatcherFromGOARCH() at walk time. The
+// Puller / AuthPuller / ManifestPuller / AuthManifestPuller
+// interfaces gain NO new methods (ADR-140 §Decision 1: interface
+// seams stable); construction-time injection is the single surface.
+func WithPlatformMatcher(m PlatformMatcher) Option {
+	return func(c *RegistryClient) {
+		c.matcher = m
+	}
+}
+
+// platformMatcher returns the matcher configured via
+// WithPlatformMatcher, or DefaultPlatformMatcherFromGOARCH() when
+// none was injected. Used by fetchManifestWithAuth at walk time.
+func (c *RegistryClient) platformMatcher() PlatformMatcher {
+	if c.matcher != nil {
+		return c.matcher
+	}
+	return DefaultPlatformMatcherFromGOARCH()
+}
+
 // NewRegistryClient builds a client with sensible defaults (HTTPS,
 // api.OCIPullTimeoutSeconds timeout — currently 60s). Tests that need a
 // shorter deadline can pass WithTimeout; production passes
@@ -111,14 +142,10 @@ var manifestAccept = strings.Join([]string{
 	"application/vnd.docker.distribution.manifest.list.v2+json",
 }, ", ")
 
-// layerMediaTypes are the manifest media types we will walk for layer blobs.
-// Indexes / manifest lists are NOT supported here — they require choosing a
-// platform; a digest-pinned reference to a single-arch image is the M5
-// contract (spec §17 G1: public registries, digest-pinned).
-var imageManifestMediaTypes = []string{
-	"application/vnd.oci.image.manifest.v1+json",
-	"application/vnd.docker.distribution.manifest.v2+json",
-}
+// (ADR-140: imageManifestMediaTypes removed; the per-arch walker in
+// fetchManifestWithAuth / walkIndexToAuth uses indexMediaTypes
+// (in platform.go) plus the platform matcher to resolve multi-arch
+// indexes to a single-arch per-platform manifest.)
 
 // PullDigest resolves ref to its canonical digest. A digest-pinned reference is
 // confirmed to exist; a tag reference is resolved to the digest the registry
@@ -328,6 +355,14 @@ func (c *RegistryClient) fetchManifest(ctx context.Context, r Reference) (imageM
 // fetchManifestWithAuth is the AuthPuller variant of fetchManifest
 // (issue #461 / ADR-062). The `auth` value is forwarded to the
 // realm endpoint on a 401 challenge.
+//
+// ADR-140: when the manifest body is an OCI image-index / Docker
+// manifest-list (Content-Type matches one of indexMediaTypes), the
+// walker selects the first IndexEntry whose Platform matches the
+// configured PlatformMatcher (default DefaultPlatformMatcherFromGOARCH).
+// The selected descriptor's Digest is fetched as the per-platform
+// manifest. The walk is bounded to 2 hops — a manifest list whose
+// selected entry is itself a list returns ErrImageManifestInvalid.
 func (c *RegistryClient) fetchManifestWithAuth(ctx context.Context, r Reference, auth *BasicAuth) (imageManifest, []byte, error) {
 	var empty imageManifest
 	manifestURL := c.baseURL(r) + "/v2/" + r.Repository + "/manifests/" + r.ManifestRef()
@@ -335,41 +370,95 @@ func (c *RegistryClient) fetchManifestWithAuth(ctx context.Context, r Reference,
 	if err != nil {
 		return empty, nil, err
 	}
+	if isIndexContentType(ct) {
+		body, err = c.walkIndexToAuth(ctx, r, body, auth, 1)
+		if err != nil {
+			return empty, nil, err
+		}
+		// After the walk, body is a per-platform single-arch manifest;
+		// its Content-Type is now application/vnd.oci.image.manifest.v1+json
+		// (or the docker equivalent), which we treat as a flat imageManifest.
+		// The Content-Type from the index response is dropped here — only the
+		// per-platform manifest's CT (returned by the recursive fetch) is
+		// honored downstream, and it's already encoded in `body` via the
+		// walker.
+	}
 	var m imageManifest
 	if err := json.Unmarshal(body, &m); err != nil {
 		return empty, nil, fmt.Errorf("oci: decode manifest %s: %w", r.String(), err)
 	}
-	// Reject index/manifest-list for v1 — we accept only single-arch image
-	// manifests. Surfacing a clear error here is friendlier than silently
-	// ignoring the layers array.
-	//
-	// ADR-021: this is one of the puller-side failure modes that maps to
-	// the RFC 7807 CodeImageManifestInvalid (422). imaged's buildImageLayer
-	// failure path runs errors.As(err, ErrImageManifestInvalid) and
-	// persists the resulting code on deployments.error_code. Wrap with %w
-	// so errors.Is matches both the bare sentinel and any further
-	// %w-wrapped form by imaged.
-	if !isImageManifest(ct, m.MediaType) {
-		return empty, nil, fmt.Errorf("%w: %s is a manifest list/index, not an image manifest (mediaType=%q); digest-pinned to a single-arch image is required",
-			ErrImageManifestInvalid, r.String(), m.MediaType)
+	if m.Config.Digest == "" {
+		return empty, nil, fmt.Errorf("oci: %s manifest has no config descriptor", r.String())
+	}
+	if len(m.Layers) == 0 {
+		return empty, nil, fmt.Errorf("oci: %s manifest has no layers", r.String())
+	}
+	if err := validateDigest(m.Config.Digest); err != nil {
+		return empty, nil, fmt.Errorf("%w: %s config: %s", ErrImageManifestInvalid, r.String(), err.Error())
+	}
+	for i, l := range m.Layers {
+		if err := validateDigest(l.Digest); err != nil {
+			return empty, nil, fmt.Errorf("%w: %s layer %d: %s", ErrImageManifestInvalid, r.String(), i, err.Error())
+		}
 	}
 	return m, body, nil
 }
 
-// isImageManifest reports whether the manifest is a single-arch image
-// manifest (as opposed to an index / manifest-list).
-func isImageManifest(contentType, mediaType string) bool {
-	if mediaType != "" {
-		for _, mt := range imageManifestMediaTypes {
-			if mediaType == mt {
-				return true
-			}
-		}
-		return false
+// walkIndexToAuth resolves an OCI image-index body to its per-arch
+// child manifest body, then returns the child body bytes. depth is
+// the current hop count (1 for the top-level index, 2 for the
+// selected per-arch descriptor if it itself is an index — which is
+// rejected). Returns ErrImageManifestInvalid when no Manifests[]
+// entry matches the configured PlatformMatcher, or when the
+// selected entry is itself an index (depth>1).
+func (c *RegistryClient) walkIndexToAuth(ctx context.Context, r Reference, indexBody []byte, auth *BasicAuth, depth int) ([]byte, error) {
+	var idx Index
+	if err := json.Unmarshal(indexBody, &idx); err != nil {
+		return nil, fmt.Errorf("%w: decode index %s: %s", ErrImageManifestInvalid, r.String(), err.Error())
 	}
-	// Some registries omit mediaType in the body; fall back to the response's
-	// Content-Type header.
-	for _, mt := range imageManifestMediaTypes {
+	if len(idx.Manifests) == 0 {
+		return nil, fmt.Errorf("%w: %s is an empty image index", ErrImageManifestInvalid, r.String())
+	}
+	matcher := c.platformMatcher()
+	var selected *IndexEntry
+	for i := range idx.Manifests {
+		entry := &idx.Manifests[i]
+		if matcher(entry.Platform) {
+			selected = entry
+			break
+		}
+	}
+	if selected == nil {
+		return nil, fmt.Errorf("%w: %s index has no descriptor matching the host platform (set FAAS_BUILDER_ARCH=amd64 or FAAS_BUILDER_ARCH=arm64 and check the image publishes the requested arch)",
+			ErrImageManifestInvalid, r.String())
+	}
+	if depth >= 2 {
+		return nil, fmt.Errorf("%w: %s index descriptor %s resolves to another index (depth>1 not supported)",
+			ErrImageManifestInvalid, r.String(), selected.Digest)
+	}
+	// Fetch the per-arch descriptor as a fresh manifest. Re-use
+	// fetchManifestJSONWithAuth so the bearer-token dance on 401 is
+	// the same as for top-level fetches; the URL is the same
+	// /v2/<repo>/manifests/<digest> form because the descriptor's
+	// digest IS its own manifest blob.
+	childURL := c.baseURL(r) + "/v2/" + r.Repository + "/manifests/" + selected.Digest
+	childBody, childCT, err := c.fetchManifestJSONWithAuth(ctx, childURL, auth)
+	if err != nil {
+		return nil, fmt.Errorf("%w: fetch index child %s (%s): %s",
+			ErrImageManifestInvalid, r.String(), selected.Digest, err.Error())
+	}
+	if isIndexContentType(childCT) {
+		return c.walkIndexToAuth(ctx, r, childBody, auth, depth+1)
+	}
+	return childBody, nil
+}
+
+// isIndexContentType reports whether the manifest Content-Type is
+// one of the OCI image-index / Docker manifest-list media types.
+// Used by fetchManifestWithAuth and walkIndexToAuth to decide
+// whether to enter the walker.
+func isIndexContentType(contentType string) bool {
+	for _, mt := range indexMediaTypes {
 		if contentType == mt {
 			return true
 		}

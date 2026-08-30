@@ -1,0 +1,121 @@
+//go:build linux
+
+// Package init — guest-init PID 1 binary. Reads the binary
+// /etc/faas/app_passwd table the builder wrote at full-rootfs
+// build time (M-3 commit 7 + commit 8, ADR-142 §Decision 3).
+//
+// The table layout is fixed:
+//
+//	per record, big-endian, contiguous, no padding:
+//	  bytes 0..3   uint32  uid
+//	  bytes 4..7   uint32  gid (unused today; gid is supplied
+//	                        by the per-app manifest's
+//	                        OverrideUserGid, see ADR-053 fourth
+//	                        axis for M-4)
+//	  byte  8      uint8   name length (0..255)
+//	  bytes 9..9+N name (UTF-8, no NUL terminator)
+//
+// Records are sorted ascending by name so binary-search is
+// O(log N) per lookup. Lookup runs once per guest boot (via
+// lookupUID at supervisor bring-up time) — no per-request
+// overhead.
+//
+// The reader is intentionally simple: a single open + read +
+// binary-search. No mmap, no sysfs, no vsock. Falls back to
+// DefaultAppUID on any error so a misbuilt / corrupt table
+// degrades to today's behavior.
+package main
+
+import (
+	"bytes"
+	"encoding/binary"
+	"os"
+)
+
+// readPasswdTable opens /etc/faas/app_passwd, binary-searches
+// the entry for `name`, returns the resolved uid. Returns
+// (0, false) on any error: missing file (legacy two-drive image),
+// malformed file (build error), missing entry (named user not in
+// the image's /etc/passwd), or read failure.
+//
+// Thread-safety: each call opens + reads + closes the file.
+// lookupUID is called once per guest boot so the cost is
+// bounded; mmap would be premature.
+func readPasswdTable(name string) (int, bool) {
+	if name == "" {
+		return 0, false
+	}
+	body, err := os.ReadFile("/etc/faas/app_passwd")
+	if err != nil {
+		return 0, false
+	}
+	return searchPasswdTable(body, name)
+}
+
+// searchPasswdTable is the binary-search core, separated from
+// the file I/O so the table-lookup logic is testable without a
+// /etc/faas mount. `body` must be the file contents; `name` is
+// the lookup key. Returns (uid, true) on hit; (0, false) on
+// miss or any parse error.
+//
+// Malformed records (length out of range, body shorter than the
+// declared record size, name field that exceeds the body length)
+// cause the search to abort and return (0, false) — same shape
+// as a missing entry so the caller falls back to DefaultAppUID
+// without distinguishing "user truly not in the table" from
+// "table is corrupt". Both degrade to today's behavior.
+func searchPasswdTable(body []byte, name string) (int, bool) {
+	const recordHeader = 9 // 4 + 4 + 1
+	lo, hi := 0, len(body)
+	for lo < hi {
+		// Mid-record offsets are unsafe (mid-record slicing
+		// would split a record). Walk forward from the lower
+		// bound until we find a record boundary at or past
+		// `mid`; if we walked past mid (because mid landed
+		// mid-record), step back to the boundary BEFORE mid.
+		// The record count is bounded by the builder cap (256)
+		// so the per-iteration cost is constant in practice.
+		mid := (lo + hi) / 2
+		prev := lo
+		off := lo
+		for off < mid {
+			if off+recordHeader > len(body) {
+				return 0, false
+			}
+			nameLen := int(body[off+8])
+			prev = off
+			off += recordHeader + nameLen
+		}
+		target := off
+		if off > mid {
+			// mid was inside a record. The closest valid
+			// comparison target is the record whose start
+			// is just before mid — that record's name field
+			// is well-formed and the comparison is correct.
+			target = prev
+		}
+		if target+recordHeader > len(body) {
+			return 0, false
+		}
+		nameLen := int(body[target+8])
+		if target+recordHeader+nameLen > len(body) {
+			return 0, false
+		}
+		got := string(body[target+9 : target+9+nameLen])
+		cmp := bytes.Compare([]byte(got), []byte(name))
+		switch {
+		case cmp < 0:
+			// The search range is the byte-indexed slice;
+			// we want to skip THIS record. Compute the
+			// next record boundary.
+			lo = target + recordHeader + nameLen
+		case cmp > 0:
+			hi = target
+		default:
+			// Hit.
+			uid := binary.BigEndian.Uint32(body[target : target+4])
+			return int(uid), true
+		}
+	}
+	return 0, false
+}

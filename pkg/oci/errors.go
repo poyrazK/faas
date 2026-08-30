@@ -41,12 +41,30 @@ var ErrImageNotFound = errors.New("oci: image not found")
 var ErrImageEgressDenied = errors.New("oci: egress denied by policy")
 
 // ErrImageManifestInvalid is wrapped into the error returned from
-// PullManifest when the body is a manifest-list (multi-arch), fails
-// schema validation, or otherwise cannot be reduced to a single-
-// platform Manifest. The two-drive build path requires a flat
-// per-platform manifest to compute the above-base layer list
-// (see pkg/imaged/handler.go::aboveBaseLayers).
+// PullManifest when the manifest body cannot be reduced to a single-
+// platform Manifest. ADR-140 closed the top-level index rejection:
+// today this sentinel is reserved for (a) the manifest body being
+// malformed JSON, (b) the matched descriptor's digest failing to
+// fetch from the registry (404), (c) the platform walk exceeding
+// depth 2 (a manifest list whose selected entry is itself a list —
+// defensive; real indexes are one level deep), (d) the host arch
+// being unknown on a multi-box host without FAAS_BUILDER_ARCH set,
+// (e) the manifest body being a non-OCI / non-Docker mediaType
+// (genuine malformed manifest). Lifted to RFC 7807
+// CodeImageManifestInvalid (422) by SentinelToCode.
 var ErrImageManifestInvalid = errors.New("oci: manifest invalid")
+
+// ErrLayersNotAboveBase is wrapped into the error returned from
+// pkg/oci/image.go::LayersAboveBase when the app's diff_ids are
+// not a strict prefix of the base image's diff_ids (ADR-141
+// §Decision 3). The dispatch in pkg/imaged/handler.go::buildImageLayer
+// uses errors.Is(err, oci.ErrLayersNotAboveBase) — never a string
+// match — so future wrapping (telemetry, retries) cannot bypass the
+// fallback path. Auto-fallback to the full-rootfs build on paid
+// plans lands in commit 6; today-equivalent failure surfaces the
+// canonical sentinel so pkg/api.SentinelToCode maps it to
+// CodeImageManifestInvalid (422, same shape as a malformed manifest).
+var ErrLayersNotAboveBase = errors.New("oci: app diff_ids not a prefix of base diff_ids (full-rootfs required)")
 
 // ErrStatelessOnlyViolation is wrapped into the error returned from
 // imaged's buildImageLayer when the resolved OCI image name matches
@@ -69,7 +87,10 @@ var ErrStatelessOnlyViolation = errors.New("oci: stateless-only violation")
 // so older pkg/oci call sites that wrap only that one still report
 // as terminal — ADR-021 closes the gap by adding ErrImageEgressDenied
 // as the canonical sentinel, but existing wrapping sites continue
-// to behave correctly.
+// to behave correctly. ADR-141 widens the set to include the new
+// ErrLayersNotAboveBase so terminal-image shortcuts (e.g. billing
+// skip) don't fire on a prefix-check failure that is the dispatch
+// trigger for full-rootfs (commit 6).
 func IsImageTerminal(err error) bool {
 	if err == nil {
 		return false
@@ -78,6 +99,7 @@ func IsImageTerminal(err error) bool {
 		errors.Is(err, ErrImageEgressDenied) ||
 		errors.Is(err, ErrImageManifestInvalid) ||
 		errors.Is(err, ErrStatelessOnlyViolation) ||
+		errors.Is(err, ErrLayersNotAboveBase) ||
 		errors.Is(err, ErrEgressDenied)
 }
 
@@ -115,6 +137,13 @@ func SentinelToCode(err error) (code string, ok bool) {
 		return api.CodeImageManifestInvalid, true
 	case errors.Is(err, ErrStatelessOnlyViolation):
 		return api.CodeStatelessOnlyViolation, true
+	case errors.Is(err, ErrLayersNotAboveBase):
+		// ADR-141 §Decision 3: full-rootfs is the auto-recovery
+		// path; ErrLayersNotAboveBase surfaces the canonical 422
+		// (CodeImageManifestInvalid) when the customer opts out
+		// of full-rootfs (FullRootfsOverride=&false) or runs on
+		// the Free plan without an explicit override.
+		return api.CodeImageManifestInvalid, true
 	}
 	return "", false
 }

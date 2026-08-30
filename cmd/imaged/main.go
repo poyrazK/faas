@@ -27,6 +27,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -227,6 +228,11 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	pullerOpts := []oci.Option{
 		oci.WithHTTPClient(oci.NewEgressHTTPClient()),
 		oci.WithTimeout(ociPullTimeout()),
+		// ADR-140 §Decision 2: host-arch matcher for the multi-arch
+		// walk. Multi-box hosts MUST set FAAS_BUILDER_ARCH; single-box
+		// dev hosts default to runtime.GOARCH. Same fail-loud gate
+		// shape as FAAS_BUILDER_BASE_REF.
+		oci.WithPlatformMatcher(matcherFromEnv(log)),
 	}
 	if os.Getenv("FAAS_OCI_INSECURE") == "1" {
 		log.Warn("FAAS_OCI_INSECURE=1 — egress guard disabled, e2e test mode only")
@@ -234,6 +240,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			oci.WithHTTPClient(&http.Client{}),
 			oci.WithEndpoint("http", ""),
 			oci.WithTimeout(ociPullTimeout()),
+			oci.WithPlatformMatcher(matcherFromEnv(log)),
 		}
 	}
 	puller := oci.NewRegistryClient(pullerOpts...)
@@ -641,6 +648,51 @@ func builderBaseRefFromEnv() (string, error) {
 		return "", fmt.Errorf("imaged: FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference (e.g. registry.gregale.dev/img@sha256:...)", v)
 	}
 	return v, nil
+}
+
+// matcherFromEnv resolves the host-arch PlatformMatcher used by the
+// multi-arch manifest walk (ADR-140 §Decision 2). FAAS_BUILDER_ARCH
+// must be "amd64" or "arm64" when set; absent on a named multi-box
+// host is a fail-loud error (same gate shape as
+// FAAS_BUILDER_BASE_REF above). Single-box dev hosts default to
+// runtime.GOARCH so `make test` and `make metal-lima` work without
+// operator intervention.
+func matcherFromEnv(log *slog.Logger) oci.PlatformMatcher {
+	arch, err := builderArchFromEnv()
+	if err != nil {
+		// Fail loud at startup — the daemon's main returns on the
+		// bootstrap path that called NewRegistryClient below.
+		// Returning a no-op matcher that pins nothing would only
+		// surface the error later (every pull fails with
+		// ErrImageManifestInvalid "no descriptor matching the host
+		// platform"), which is exactly the wrong surface for an
+		// operator config error.
+		log.Error("imaged: FAAS_BUILDER_ARCH resolution failed; refusing to start", "err", err)
+		return oci.PlatformMatcher(func(oci.Platform) bool { return false })
+	}
+	log.Info("imaged: oci platform matcher", "arch", arch)
+	return oci.DefaultPlatformMatcher(arch)
+}
+
+// builderArchFromEnv is the env-resolver sibling to
+// builderBaseRefFromEnv (ADR-140 §Decision 2). Validates
+// FAAS_BUILDER_ARCH is "amd64" or "arm64" when set; falls back to
+// runtime.GOARCH on single-box dev hosts (FAAS_NODE_NAME unset);
+// rejects on multi-box hosts.
+func builderArchFromEnv() (string, error) {
+	raw := os.Getenv("FAAS_BUILDER_ARCH")
+	if raw == "" {
+		if os.Getenv("FAAS_NODE_NAME") != "" {
+			return "", errors.New("imaged: FAAS_BUILDER_ARCH is required (amd64 or arm64) on a named multi-box host")
+		}
+		return runtime.GOARCH, nil
+	}
+	switch raw {
+	case "amd64", "arm64":
+		return raw, nil
+	default:
+		return "", fmt.Errorf("imaged: FAAS_BUILDER_ARCH must be amd64 or arm64, got %q", raw)
+	}
 }
 
 // guestInitPathFromEnv resolves the boot-critical PID 1 binary. Older

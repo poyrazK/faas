@@ -76,6 +76,81 @@ func PlanMeetsMinimumPlan(customer, minimumPlan Plan) bool {
 	return cRank >= mRank
 }
 
+// FullRootfsAllowedPlans (M-3 / ADR-141 §Decision 2) is the closed
+// set of plans whose customers may auto-dispatch to the
+// full-rootfs build path on the typed `oci.ErrLayersNotAboveBase`
+// signal. PlanFree is intentionally absent — Free customers
+// must explicitly opt in via `deployment.FullRootfsOverride=&true`.
+// Order matters for PlanMeetsFullRootfs's rank comparison.
+var FullRootfsAllowedPlans = []Plan{PlanHobby, PlanPro, PlanScale}
+
+// PlanMeetsFullRootfs returns true iff the customer's plan is in
+// FullRootfsAllowedPlans. Mirrors PlanMeetsMinimumPlan's closed-set
+// posture: unknown plans return false so a future plan addition
+// surfaces as a clean failure rather than a silent false-positive
+// "you meet the full-rootfs gate".
+//
+// imaged.buildImageLayer consults this on the typed
+// `ErrLayersNotAboveBase` dispatch (commit 6) to decide whether
+// to auto-dispatch. Free-plan customers must pass
+// `FullRootfsOverride=&true` to opt in; the dispatch table
+// honours override-first so an explicit override wins over the
+// auto gate.
+func PlanMeetsFullRootfs(p Plan) bool {
+	for _, allowed := range FullRootfsAllowedPlans {
+		if p == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// UserUIDOverrideMax (M-3 / ADR-142 §Decision 4) is the per-plan
+// cap on the number of /etc/passwd entries BuildFullRootfs merges
+// into /etc/faas/app_passwd. Hobby 16 / Pro 64 / Scale 256 — the
+// scale cap matches the on-disk binary table ceiling
+// (defaultPasswdTableMaxEntries in pkg/rootfs). PlanFree is 0
+// because Free does not auto-dispatch to full-rootfs.
+//
+// Excess entries are silently dropped at table-write time; the
+// metric counter imaged_passwd_entries_total{outcome="over_cap"}
+// fires so the dashboard tripwires on misbuilt images without
+// polluting the success series. Lookup is O(1) per call.
+var UserUIDOverrideMax = map[Plan]int{
+	PlanFree:  0,
+	PlanHobby: 16,
+	PlanPro:   64,
+	PlanScale: 256,
+}
+
+// MaxFullRootfsLayerBytes (M-3 / ADR-141 §Decision 5) is the
+// per-plan ceiling on the unpacked full-rootfs staging tree size.
+// Hobby 256 MB / Pro 1 GB / Scale 4 GB. PlanFree absent because
+// Free cannot auto-dispatch; an explicit Free + override deploy
+// is gated at admission time on PlanMeetsFullRootfs.
+//
+// pkg/rootfs.CheckCapForStaging consults this in addition to the
+// two-drive AppLayerMaxMB ceiling so a Hobby customer cannot ship
+// a 4 GB full-rootfs image that would push them onto the
+// Scale-plan billing rate.
+var MaxFullRootfsLayerBytes = map[Plan]int64{
+	PlanHobby: 256 << 20, // 256 MB
+	PlanPro:   1 << 30,   // 1 GB
+	PlanScale: 4 << 30,   // 4 GB
+}
+
+// FullRootfsAllowAutoDefault (M-3 / ADR-141 §Decision 2) is the
+// per-plan default for state.Deployment.FullRootfsAllowAuto. Free
+// customers default to false (no auto-dispatch); paid plans default
+// to true. The customer can override per-deployment via
+// FullRootfsOverride (commit 6's tri-state).
+var FullRootfsAllowAutoDefault = map[Plan]bool{
+	PlanFree:  false,
+	PlanHobby: true,
+	PlanPro:   true,
+	PlanScale: true,
+}
+
 // GDPR self-service export rate limit (issue #755 / PR-5.1). Single
 // global value (not per-plan) because the cost is per-bundle (one
 // export scans every per-account table) and the abuse case is

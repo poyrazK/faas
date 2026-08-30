@@ -307,7 +307,7 @@ func applyOverridesToDeployment(dep *state.Deployment, o *api.CreateDeploymentOv
 //
 // Extracted from createDeployment (handlers.go) so the handler stays
 // under the CLAUDE.md 50-line cap.
-func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, overrides *api.CreateDeploymentOverrides, limits api.Limits) (state.Deployment, *api.Problem) {
+func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, overrides *api.CreateDeploymentOverrides, limits api.Limits, plan api.Plan) (state.Deployment, *api.Problem) {
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 	}
@@ -402,6 +402,25 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	}
 	if req.PRNumber != nil {
 		dep.PRNumber = *req.PRNumber
+	}
+	// Issue #1186 / ADR-141 / M-3: tri-state full-rootfs dispatch.
+	// nil FullRootfsAllowAuto on the wire → handler consults
+	// api.FullRootfsAllowAutoDefault[acct.Plan] (Free:false /
+	// Hobby+:true) and writes that onto the row. Explicit *true /
+	// *false on the wire override the plan default.
+	//
+	// FullRootfsOverride is *bool (pointer); nil → write NULL on
+	// the row (the "honor auto + plan gate" tri-state), *true →
+	// force full-rootfs even on Free plan, *false → force today-
+	// equivalent failure even on Hobby+. Migration 00583
+	// persists both fields.
+	if req.FullRootfsAllowAuto != nil {
+		dep.FullRootfsAllowAuto = *req.FullRootfsAllowAuto
+	} else if planDefault, ok := api.FullRootfsAllowAutoDefault[plan]; ok {
+		dep.FullRootfsAllowAuto = planDefault
+	}
+	if req.FullRootfsOverride != nil {
+		dep.FullRootfsOverride = req.FullRootfsOverride
 	}
 	if overrides != nil {
 		applyOverridesToDeployment(&dep, overrides)

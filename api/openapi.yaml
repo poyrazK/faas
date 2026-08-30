@@ -12741,6 +12741,18 @@ components:
           description: "Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes by the CLI tripwire."
           items: { $ref: '#/components/schemas/LogExcerpt' }
         created_at: { type: string, format: date-time }
+        # M-3 / ADR-141 §Decision 2: tri-state full-rootfs
+        # dispatch surface. FullRootfsAllowAuto gates the
+        # auto-dispatch (paid plans only); FullRootfsOverride is
+        # the customer opt-in / opt-out (nil = honor auto, true =
+        # force-on, false = force-off). Persisted as nullable
+        # bool so today's rows stay backward-compatible.
+        full_rootfs_allow_auto:
+          type: boolean
+          description: "M-3 / ADR-141 §Decision 2. When true (default on paid plans), the auto-dispatch path runs the full-rootfs build on the typed oci.ErrLayersNotAboveBase signal. When false (default on Free), the auto-dispatch is skipped; the customer MUST pass full_rootfs_override=true to opt in."
+        full_rootfs_override:
+          type: [boolean, "null"]
+          description: "M-3 / ADR-141 §Decision 2. Tri-state customer override: nil = honor full_rootfs_allow_auto + plan gate; true = force full-rootfs build regardless of plan; false = force today-equivalent failure on the typed sentinel."
         has_overrides: { type: boolean, description: "True when this deployment carries a non-null override_* column set." }
         override_entrypoint:
           type: array
@@ -13642,6 +13654,25 @@ components:
             - $ref: '#/components/schemas/CanaryPresetSpec'
             - type: 'null'
           description: "Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder."
+        # Issue #1186 / ADR-141 §Decision 2 — tri-state full-rootfs
+        # dispatch (M-3). nil/omitted on BOTH fields = handler
+        # consults api.FullRootfsAllowAutoDefault[acct.Plan]
+        # (Free:false / Hobby+:true) — Hobby+ plans auto-fall back
+        # to the full-rootfs build path on ErrLayersNotAboveBase;
+        # Free plans reject auto-fallback and surface the
+        # today-equivalent failure. `full_rootfs_override` is the
+        # explicit tri-state: *true forces full-rootfs even on Free
+        # plan (only path to enable multi-arch / distroless on
+        # Free); *false forces today-equivalent failure even on
+        # Hobby+. Migration 00583 persists both fields.
+        full_rootfs_allow_auto:
+          type: [boolean, "null"]
+          description: "Per-deployment opt-in for the auto-fallback path (issue #1186 / ADR-141). nil = handler reads api.FullRootfsAllowAutoDefault[acct.Plan] (Free:false, Hobby+:true) and writes that onto the row."
+          example: true
+        full_rootfs_override:
+          type: [boolean, "null"]
+          description: "Tri-state per-deployment override (issue #1186 / ADR-141). NULL = honor allow_auto + plan gate. true = force full-rootfs (Free-plan override). false = force today-equivalent failure (Hobby+ opt-out). nil/omitted = inherit auto + plan."
+          example: true
 
     CreateDeploymentOverrides:
       description: |
