@@ -39,7 +39,7 @@
 -- sha256_hex is recorded for the build_provenance audit row ONLY —
 -- the server never re-verifies the digest at commit time.
 
-CREATE TABLE upload_sessions (
+CREATE TABLE IF NOT EXISTS upload_sessions (
     id              text PRIMARY KEY,
     account_id      uuid NOT NULL,
     app_slug        text NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE upload_sessions (
 -- (handler: "no more than 5 concurrent open sessions per account per app").
 -- A partial index keeps the working set tight — closed/cancelled rows
 -- are not scanned on every POST.
-CREATE INDEX upload_sessions_account_open_idx
+CREATE INDEX IF NOT EXISTS upload_sessions_account_open_idx
     ON upload_sessions(account_id, app_slug)
     WHERE status = 'open';
 
@@ -67,7 +67,7 @@ CREATE INDEX upload_sessions_account_open_idx
 -- "WHERE status='open' AND expires_at < now()".
 -- The composite predicate is identical to the reaper's WHERE clause,
 -- so the reaper hits only the index without touching the heap.
-CREATE INDEX upload_sessions_expires_idx
+CREATE INDEX IF NOT EXISTS upload_sessions_expires_idx
     ON upload_sessions(expires_at)
     WHERE status = 'open';
 
@@ -77,7 +77,7 @@ CREATE INDEX upload_sessions_expires_idx
 -- build row but before the 201 reached the client) hits the conflict
 -- path and returns the stored outcome. CASCADE on delete so a reaped
 -- session cleans up its dedupe row.
-CREATE TABLE upload_commit_outcomes (
+CREATE TABLE IF NOT EXISTS upload_commit_outcomes (
     upload_id       text PRIMARY KEY REFERENCES upload_sessions(id) ON DELETE CASCADE,
     deployment_id   text NOT NULL,
     build_id        text NOT NULL,
