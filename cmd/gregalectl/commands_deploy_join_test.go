@@ -320,7 +320,12 @@ func TestOverrideJoinHostVars_PreservesStorageContract(t *testing.T) {
 
 func TestValidateSharedStorageEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "storage.env")
-	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
+	valid := "FAAS_STORAGE_BACKEND=oci\n" +
+		"FAAS_STORAGE_LOCAL_PREFIXES=none\n" +
+		"FAAS_REQUIRE_SHARED_ARTIFACTS=1\n" +
+		"FAAS_STORAGE_CACHE_SERVE_STALE=0\n" +
+		"FAAS_OCI_REGISTRY=https://registry.example\n"
+	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateSharedStorageEnv(path); err != nil {
@@ -332,23 +337,29 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "BACKEND=oci") {
 		t.Fatalf("local storage env error = %v", err)
 	}
-	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_OCI_REGISTRY=https://registry.example\nFAAS_STORAGE_LOCAL_PREFIXES=snap/,base/\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=snap/,base/\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "snap/") {
 		t.Fatalf("snap prefix error = %v", err)
 	}
-	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_OCI_REGISTRY=https://registry.example\nFAAS_STORAGE_CACHE_DIR=\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\nFAAS_STORAGE_CACHE_DIR=\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "CACHE_DIR") {
 		t.Fatalf("empty cache dir error = %v", err)
 	}
-	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_OCI_REGISTRY=https://registry.example\nFAAS_STORAGE_CACHE_DIR=/srv/custom-cache\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\nFAAS_STORAGE_CACHE_DIR=/srv/custom-cache\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "managed systemd units") {
 		t.Fatalf("non-canonical cache path error = %v, want managed-unit guard", err)
+	}
+	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "LOCAL_PREFIXES=none") {
+		t.Fatalf("incomplete strict contract error = %v", err)
 	}
 }
 
@@ -530,7 +541,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	storageEnv := filepath.Join(artifactDir, "storage.env")
-	if err := os.WriteFile(storageEnv, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
+	if err := os.WriteFile(storageEnv, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runtimeBasesEnv := filepath.Join(artifactDir, "runtime-bases.env")

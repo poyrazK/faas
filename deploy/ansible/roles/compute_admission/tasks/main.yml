@@ -15,7 +15,7 @@
       got faas_box_role={{ faas_box_role | default('unset') }}.
   when: not (faas_image_seed | default(false) | bool)
 
-- name: compute_admission — inspect compute environment file
+- name: compute_admission — inspect compute database environment
   ansible.builtin.stat:
     path: /etc/faas/compute-db.env
   register: faas_admission_env_stat
@@ -34,30 +34,50 @@
       before a production compute node is admitted.
   when: not (faas_image_seed | default(false) | bool)
 
-- name: compute_admission — load compute environment without logging secrets
+- name: compute_admission — inspect shared storage environment
+  ansible.builtin.stat:
+    path: /etc/faas/storage.env
+  register: faas_admission_storage_stat
+  when: not (faas_image_seed | default(false) | bool)
+
+- name: compute_admission — require protected shared storage environment
+  ansible.builtin.assert:
+    that:
+      - faas_admission_storage_stat.stat.exists
+      - faas_admission_storage_stat.stat.isreg
+      - faas_admission_storage_stat.stat.pw_name == 'root'
+      - faas_admission_storage_stat.stat.gr_name == 'faas'
+      - faas_admission_storage_stat.stat.mode == '0440'
+    fail_msg: >-
+      /etc/faas/storage.env must exist as a regular root:faas 0440 file
+      before a production compute node is admitted. It is the canonical
+      shared-artifact environment loaded by compute daemons.
+  when: not (faas_image_seed | default(false) | bool)
+
+- name: compute_admission — load shared storage environment without logging secrets
   ansible.builtin.slurp:
-    src: /etc/faas/compute-db.env
-  register: faas_admission_env_blob
+    src: /etc/faas/storage.env
+  register: faas_admission_storage_blob
   no_log: true
   when: not (faas_image_seed | default(false) | bool)
 
 - name: compute_admission — require one canonical shared-artifact assignment per key
   ansible.builtin.assert:
     that:
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=[^\\r\\n]*$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=oci$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=[^\\r\\n]*$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=[^\\r\\n]*$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=[^\\r\\n]*$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=[^\\r\\n]*$') | length) == 1"
-      - "((faas_admission_env_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=[^\\r\\n]*$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=oci$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=[^\\r\\n]*$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=[^\\r\\n]*$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=[^\\r\\n]*$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=[^\\r\\n]*$') | length) == 1"
+      - "((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1"
     fail_msg: >-
-      The compute environment does not declare exactly one canonical strict
-      shared-artifact contract. Require OCI remote-only storage, HTTPS, and
-      stale-cache fallback disabled before admitting this node.
+      The shared storage environment does not declare exactly one canonical
+      strict shared-artifact contract. Require OCI remote-only storage, HTTPS,
+      and stale-cache fallback disabled before admitting this node.
   when: not (faas_image_seed | default(false) | bool)
 
 - name: compute_admission — inspect KVM device

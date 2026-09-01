@@ -110,7 +110,7 @@ func TestStagePrepareSecretsRejectsCAKey(t *testing.T) {
 	for name, body := range map[string]string{
 		"compute-ssh-key": "private key",
 		"compute-db.env":  "DATABASE_URL=postgres://faas@example/faas\nFAAS_VMMD_DBURL=postgres://faas@example/faas\n",
-		"storage.env":     "FAAS_STORAGE_BACKEND=oci\nFAAS_OCI_REGISTRY=https://registry.example\n",
+		"storage.env":     "FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\n",
 		"sign.key":        "signing key",
 		"sign-pub.pem":    "public key",
 	} {

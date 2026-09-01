@@ -1147,7 +1147,7 @@ func isDigestPinnedRuntimeRef(value string) bool {
 // validateSharedStorageEnv enforces the multi-box storage contract at the
 // provider-neutral join boundary. The file is still copied verbatim to both
 // hosts; parsing here only prevents a join that would silently run with
-// host-local snapshots or without a shared registry.
+// host-local snapshots, stale-cache fallback, or without a shared registry.
 func validateSharedStorageEnv(path string) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -1172,8 +1172,8 @@ func validateSharedStorageEnv(path string) error {
 	if values["FAAS_STORAGE_BACKEND"] != "oci" {
 		return errors.New("must set FAAS_STORAGE_BACKEND=oci")
 	}
-	if strings.TrimSpace(values["FAAS_OCI_REGISTRY"]) == "" {
-		return errors.New("must set FAAS_OCI_REGISTRY")
+	if !strings.HasPrefix(values["FAAS_OCI_REGISTRY"], "https://") {
+		return errors.New("FAAS_OCI_REGISTRY must use https://")
 	}
 	if raw := values["FAAS_STORAGE_LOCAL_PREFIXES"]; raw != "" {
 		for _, prefix := range strings.Split(raw, ",") {
@@ -1185,6 +1185,15 @@ func validateSharedStorageEnv(path string) error {
 				return errors.New("FAAS_STORAGE_LOCAL_PREFIXES must not include snap/")
 			}
 		}
+	}
+	if values["FAAS_STORAGE_LOCAL_PREFIXES"] != "none" {
+		return errors.New("must set FAAS_STORAGE_LOCAL_PREFIXES=none")
+	}
+	if values["FAAS_REQUIRE_SHARED_ARTIFACTS"] != "1" {
+		return errors.New("must set FAAS_REQUIRE_SHARED_ARTIFACTS=1")
+	}
+	if values["FAAS_STORAGE_CACHE_SERVE_STALE"] != "0" {
+		return errors.New("must set FAAS_STORAGE_CACHE_SERVE_STALE=0")
 	}
 	if seen["FAAS_STORAGE_CACHE_DIR"] && strings.TrimSpace(values["FAAS_STORAGE_CACHE_DIR"]) == "" {
 		return errors.New("FAAS_STORAGE_CACHE_DIR must not be empty; the node-local cache is required for prepositioned wakes")

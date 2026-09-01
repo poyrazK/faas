@@ -195,7 +195,7 @@ blank device remains protected by the `--format-storage` /
 
 A production compute node is not allowed to use host-local copies of the
 artifacts that define a VM's execution environment. Its root-only
-`/etc/faas/compute-db.env` must contain:
+`/etc/faas/storage.env` must contain:
 
 ```text
 FAAS_STORAGE_BACKEND=oci
@@ -205,22 +205,24 @@ FAAS_STORAGE_CACHE_SERVE_STALE=0
 FAAS_OCI_REGISTRY=https://<registry>/<organization>
 ```
 
-The first three lines are enforced by the `compute_only_service` role and by
-the Go storage backend at daemon startup. `none` is deliberate: leaving the
-variable unset retains the legacy local `snap/`, `base/`, `kernel/`, and
-`layers/` routes and is unsafe when more than one compute node can restore a
-deployment. The role also requires a real deployment manifest before it
-accepts a compute host's Firecracker and kernel artifacts; their SHA-256
-values must match `release.firecracker_digest` and `release.kernel_digest`.
+These policy lines are enforced by the provider-neutral join boundary, the
+`compute_admission` and `compute_only_service` roles, and by the Go storage
+backend at daemon startup. `none` is deliberate: leaving the variable unset
+retains the legacy local `snap/`, `base/`, `kernel/`, and `layers/` routes and
+is unsafe when more than one compute node can restore a deployment. The role
+also requires a real deployment manifest before it accepts a compute host's
+Firecracker and kernel artifacts; their SHA-256 values must match
+`release.firecracker_digest` and `release.kernel_digest`.
 This makes a mismatched host fail during join, while the node is still
 drained, instead of failing its first customer restore.
 Strict mode also requires an HTTPS registry and rejects stale-cache fallback;
 the cache may still accelerate successful remote reads, but it cannot serve a
 last-known-good blob after the registry reports an error.
 
-The storage example lives at
-`roles/compute_only_service/files/compute-db.env.example`. The registry
-credentials remain operator-supplied; do not commit them to inventory.
+The database DSNs remain in the separate root-only
+`/etc/faas/compute-db.env`; the shared storage contract and registry
+credentials live in `roles/_shared/files/storage.env.example` and remain
+operator-supplied. Never commit populated secrets to inventory.
 
 For a split-box manifest, the generated control-plane variables also
 declare the database listener address and the compute `/32` allow-list.

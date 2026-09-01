@@ -60,10 +60,21 @@
             regex_search('(?m)^FAAS_OCI_REGISTRY=\S+$')) is not none
           - >-
             (lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none\s*$')) is not none
+          - >-
+            (lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1\s*$')) is not none
+          - >-
+            (lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0\s*$')) is not none
+          - >-
+            (lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=.*snap/')) is none
         fail_msg: >-
           storage.env must set FAAS_STORAGE_BACKEND=oci and
-          FAAS_OCI_REGISTRY, and must not route snap/ through
+          FAAS_OCI_REGISTRY, set FAAS_STORAGE_LOCAL_PREFIXES=none,
+          FAAS_REQUIRE_SHARED_ARTIFACTS=1, and set
+          FAAS_STORAGE_CACHE_SERVE_STALE=0. It must not route snap/ through
           FAAS_STORAGE_LOCAL_PREFIXES for a multi-box compute node.
       no_log: true
 

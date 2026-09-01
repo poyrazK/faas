@@ -152,31 +152,52 @@
 # setting FAAS_STORAGE_BACKEND=oci is not enough: the default still leaves
 # snap/, base/, kernel/, and layers/ on each host. That is exactly how two
 # nodes accepted the same logical snapshot key but booted different bytes.
-# Require the complete shared-artifact contract in the same root-only env file
-# all compute daemons already load; this keeps node_join and ordinary
-# bootstrap on one source of truth and makes a manual systemd start fail too.
-- name: compute_only_service — read compute storage contract
+# The shared-artifact contract belongs in storage.env, alongside the registry
+# credentials and separate from the root-only database environment. Every
+# compute daemon loads storage.env, so validating this file keeps node_join,
+# ordinary bootstrap, and a manual systemd start on one source of truth.
+- name: compute_only_service — inspect shared storage environment
+  ansible.builtin.stat:
+    path: /etc/faas/storage.env
+  register: faas_storage_env_stat
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — require protected shared storage environment
+  ansible.builtin.assert:
+    that:
+      - faas_storage_env_stat.stat.exists
+      - faas_storage_env_stat.stat.isreg
+      - faas_storage_env_stat.stat.pw_name == 'root'
+      - faas_storage_env_stat.stat.gr_name == 'faas'
+      - faas_storage_env_stat.stat.mode == '0440'
+    fail_msg: >-
+      /etc/faas/storage.env must be provisioned as root:faas 0440 before
+      enabling compute-only daemons. It is the canonical shared-artifact
+      environment loaded by vmmd, imaged, and builderd.
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — read shared storage contract
   ansible.builtin.slurp:
-    src: /etc/faas/compute-db.env
-  register: faas_compute_db_env_content
+    src: /etc/faas/storage.env
+  register: faas_storage_env_content
   no_log: true
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
 - name: compute_only_service — fail closed when shared artifact contract is incomplete
   ansible.builtin.assert:
     that:
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=[^\\r\\n]*$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=oci$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=[^\\r\\n]*$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=[^\\r\\n]*$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=[^\\r\\n]*$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=[^\\r\\n]*$') | length) == 1"
-      - "((faas_compute_db_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=oci$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1"
     fail_msg: >-
-      /etc/faas/compute-db.env must declare the strict shared-artifact
+      /etc/faas/storage.env must declare the strict shared-artifact
       contract: FAAS_STORAGE_BACKEND=oci,
       FAAS_STORAGE_LOCAL_PREFIXES=none, FAAS_REQUIRE_SHARED_ARTIFACTS=1,
       FAAS_STORAGE_CACHE_SERVE_STALE=0, and exactly one HTTPS
