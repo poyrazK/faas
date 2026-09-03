@@ -240,4 +240,3 @@ func TestWorkflowRetention_Sweep(t *testing.T) {
 		t.Fatalf("SweepOnce: %v", err)
 	}
 }
-

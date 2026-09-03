@@ -193,7 +193,6 @@ func (l *Loop) WithWorkflowRetention(r *WorkflowRetention) *Loop {
 	return l
 }
 
-
 // WithAudit attaches the IAM-4 audit seam so the cron-fire path can
 // emit a `cron.fired` events row once the dispatch loop has decided
 // to fire a cron (i.e. after the boundary guard AND the suspended-

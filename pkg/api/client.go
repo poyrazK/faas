@@ -4228,4 +4228,3 @@ func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowR
 	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/cancel", nil, &resp)
 	return resp, err
 }
-
