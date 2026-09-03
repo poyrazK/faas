@@ -270,22 +270,22 @@ func cmdWorkflowsEvents(args []string) int {
 
 func renderWorkflowRunsTable(w io.Writer, runs []api.WorkflowRunResponse) {
 	if len(runs) == 0 {
-		fmt.Fprintln(w, "No workflow runs found.")
+		_, _ = fmt.Fprintln(w, "No workflow runs found.")
 		return
 	}
-	fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-20s\n", "RUN ID", "WORKFLOW", "STATUS", "CREATED AT")
+	_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-20s\n", "RUN ID", "WORKFLOW", "STATUS", "CREATED AT")
 	for _, r := range runs {
-		fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-20s\n", r.ID, r.WorkflowName, r.Status, r.CreatedAt)
+		_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-20s\n", r.ID, r.WorkflowName, r.Status, r.CreatedAt)
 	}
 }
 
 func renderWorkflowStepsTable(w io.Writer, steps []api.WorkflowStepResponse) {
 	if len(steps) == 0 {
-		fmt.Fprintln(w, "No steps recorded.")
+		_, _ = fmt.Fprintln(w, "No steps recorded.")
 		return
 	}
-	fmt.Fprintf(w, "%-20s  %-15s  %-8s  %-20s\n", "STEP NAME", "STATUS", "ATTEMPT", "CREATED AT")
+	_, _ = fmt.Fprintf(w, "%-20s  %-15s  %-8s  %-20s\n", "STEP NAME", "STATUS", "ATTEMPT", "CREATED AT")
 	for _, s := range steps {
-		fmt.Fprintf(w, "%-20s  %-15s  %-8d  %-20s\n", s.StepName, s.Status, s.Attempt, s.CreatedAt)
+		_, _ = fmt.Fprintf(w, "%-20s  %-15s  %-8d  %-20s\n", s.StepName, s.Status, s.Attempt, s.CreatedAt)
 	}
 }
