@@ -66,6 +66,25 @@ const (
 	// worst a stale jail cgroup for 10s — acceptable vs. leaking
 	// forever if Firecracker is wedged.
 	DestroyTimeout = 10 * time.Second
+
+	// SnapshotTimeout is the budget for the two snapshot-capture RPCs
+	// in snapshotAndPark (WarmSnapshot, PauseAndSnapshot). 25s =
+	// SnapshotSweepBudget (the §6.1 SNAPSHOTTING budget the watchdog
+	// sweeps on, watchdog.go) + 5s vmmd round trip, mirroring how
+	// ColdBootTimeout (35s) sits above ColdBootSweepBudget (30s). The
+	// engine deadline stays ABOVE the sweep budget so the watchdog
+	// still trips first on a row that stalls without the RPC failing.
+	//
+	// These calls had no deadline at all. DialVMM's godoc states the
+	// contract — "per-call deadlines live at the engine call site" —
+	// and these two were the sites that never got one. On 2026-09-03 a
+	// PauseAndSnapshot blocked in grpc waitOnHeader for 10+ minutes and
+	// took the whole scheduler down with it: handleNotification calls
+	// Prime synchronously, and Prime → snapshotAndPark → PauseAndSnapshot
+	// runs on the same goroutine as the reaper, cron and watchdog ticks
+	// (one select in Loop.run). schedd stayed `active` and answered
+	// /metrics while doing no work at all.
+	SnapshotTimeout = 25 * time.Second
 )
 
 // LayerVerifier checks that a cold-boot layer's signature is
@@ -5210,7 +5229,9 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	}
 	_ = warmInfo
 
-	b, err := e.vmm.PauseAndSnapshot(ctx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey)
+	snapCtx, snapCancel := context.WithTimeout(ctx, SnapshotTimeout)
+	b, err := e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey)
+	snapCancel()
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).
@@ -5362,7 +5383,9 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	// per-tier GC (PR C) can keep 2+2 without conflating them.
 	warmMemKey, warmVMStateStorageKey := e.warmKeysFor(ins.NodeID, ins.DeploymentID)
 
-	b, err := e.vmm.WarmSnapshot(ctx, ins.NodeID, ins.ID, warmMemKey, warmVMStateStorageKey)
+	warmCtx, warmCancel := context.WithTimeout(ctx, SnapshotTimeout)
+	b, err := e.vmm.WarmSnapshot(warmCtx, ins.NodeID, ins.ID, warmMemKey, warmVMStateStorageKey)
+	warmCancel()
 	if err != nil {
 		// Warm capture failed. The VM may be in a wedged state
 		// (paused — vmmd did the pause but the snapshot RPC

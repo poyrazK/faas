@@ -68,6 +68,9 @@ func TestHandleSnapshotPrime(t *testing.T) {
 		Channel: db.NotifySnapshotPrime,
 		Payload: `{"app_id":"` + app.ID + `","deployment_id":"` + dep.ID + `"}`,
 	})
+	// Prime runs off the loop goroutine now (dispatchPrime) — wait for
+	// the worker before asserting on the rows it writes.
+	loop.waitPrimes()
 
 	rows, _ := store.ListInstancesForApp(context.Background(), app.ID)
 	if len(rows) != 1 || rows[0].State != string(state.StateParked) {
@@ -94,6 +97,7 @@ func TestHandleSnapshotPrimeFailureMarksDeploymentAndStageFailed(t *testing.T) {
 		Channel: db.NotifySnapshotPrime,
 		Payload: `{"app_id":"` + app.ID + `","deployment_id":"` + dep.ID + `"}`,
 	})
+	loop.waitPrimes()
 
 	got, err := store.DeploymentByID(context.Background(), dep.ID)
 	if err != nil {

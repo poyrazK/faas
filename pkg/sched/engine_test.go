@@ -43,6 +43,12 @@ type fakeVMM struct {
 	forceColdFallback   bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
 	wakeErr             error
 	snapErr             error
+	// snapDeadline / snapHasDeadline capture the ctx deadline seen by
+	// PauseAndSnapshot. The RPC shipped with NO deadline and wedged the
+	// scheduler for 10+ minutes in production (2026-09-03); these let a
+	// test assert the deadline exists without waiting SnapshotTimeout.
+	snapDeadline    time.Time
+	snapHasDeadline bool
 	// warmSnapErr (issue #470 / PR A / ADR-055): injectable WarmSnapshot
 	// failure. Distinct from snapErr so the warm-capture failure test
 	// can simulate "vmmd's PauseAndSnapshot succeeded but WarmSnapshot
@@ -177,6 +183,9 @@ func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, _, instance string, ap
 }
 
 func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _, _ string) (SnapshotBytes, error) {
+	f.mu.Lock()
+	f.snapDeadline, f.snapHasDeadline = ctx.Deadline()
+	f.mu.Unlock()
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):

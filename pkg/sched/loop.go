@@ -76,8 +76,16 @@ type Loop struct {
 	// NotifyTriggerChanged payload (commit #16). The Loop's run
 	// selects on it alongside the 1s ticker so an idle broker
 	// doesn't sit for a full 1s tick before the first batch.
-	triggerWakeup        chan struct{}
-	triggerWakeupOnce    sync.Once
+	triggerWakeup     chan struct{}
+	triggerWakeupOnce sync.Once
+	// primeSlots bounds how many snapshot_prime handlers run off the
+	// main select goroutine. Prime is the one notification handler that
+	// does VM work (cold boot + snapshot), so it is the only one that
+	// can stall the shared loop for tens of seconds; every other case
+	// in handleNotification is a cheap DB or cache operation and stays
+	// inline. See dispatchPrime.
+	primeSlots           chan struct{}
+	primeSlotsOnce       sync.Once
 	now                  func() time.Time
 	flowCounts           FlowCounter
 	ops                  *wire.OpsMetrics       // issue #171 shared registry; nil safe
@@ -1346,6 +1354,81 @@ func (l *Loop) runRecentLoad(ctx context.Context) {
 	l.recentLoad.Touch(ctx, time.Now())
 }
 
+// maxConcurrentPrimes bounds dispatchPrime's off-loop workers. Prime
+// takes a per-app lock (Engine.Prime → lockApp), so concurrent primes
+// for one app serialize anyway; this bounds the fan-out across apps and
+// keeps goroutine growth from a notify burst bounded.
+const maxConcurrentPrimes = 4
+
+// dispatchPrime runs Engine.Prime off the loop's select goroutine.
+//
+// Prime does real VM work — cold boot then snapshot — so it can occupy
+// the goroutine for tens of seconds. That goroutine is shared: Loop.run
+// selects over the pg_notify channel AND the reaper, cron and watchdog
+// tickers. A slow Prime therefore stops the reaper, cron and watchdog
+// too, and a Prime that never returns stops them forever.
+//
+// That is not hypothetical. On 2026-09-03 a PauseAndSnapshot with no
+// deadline blocked in grpc waitOnHeader for 10+ minutes; schedd stayed
+// `active`, answered /metrics in 30ms, and did no work at all. The
+// SIGQUIT dump showed one goroutine in
+// handleNotification → Prime → snapshotAndPark → PauseAndSnapshot and
+// ZERO goroutines blocked on a mutex — the stall was head-of-line
+// blocking on this select, not lock contention.
+//
+// SnapshotTimeout now bounds that RPC, so the block is finite; running
+// off-loop additionally keeps a merely-slow prime from delaying the
+// reaper and watchdog behind it.
+//
+// When every slot is busy the call runs INLINE rather than being
+// dropped. A dropped snapshot_prime strands the deployment in
+// `snapshotting` with nothing to retry it (the notification is
+// consumed and gone), which is exactly the state this bug left
+// deployments in. Blocking the loop is the lesser harm, and it is
+// bounded by SnapshotTimeout + the cold-boot budget.
+func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
+	l.primeSlotsOnce.Do(func() {
+		l.primeSlots = make(chan struct{}, maxConcurrentPrimes)
+	})
+	run := func() {
+		if err := l.engine.Prime(ctx, appID, deploymentID); err != nil {
+			l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "err", err)
+			l.engine.markPrimeFailed(ctx, deploymentID, err)
+		}
+	}
+	select {
+	case l.primeSlots <- struct{}{}:
+		go func() {
+			defer func() { <-l.primeSlots }()
+			run()
+		}()
+	default:
+		l.log.Warn("sched: prime slots saturated; running inline",
+			"app", appID, "deployment", deploymentID, "slots", maxConcurrentPrimes)
+		run()
+	}
+}
+
+// waitPrimes blocks until every prime dispatched by dispatchPrime has
+// returned. It acquires all slots (so no worker can hold one) and then
+// releases them.
+//
+// Tests need this because dispatchPrime moved Prime off the caller's
+// goroutine: a test that calls handleNotification and asserts on the
+// resulting rows would otherwise race the worker. Production has no
+// caller — the loop is never "done" with primes.
+func (l *Loop) waitPrimes() {
+	l.primeSlotsOnce.Do(func() {
+		l.primeSlots = make(chan struct{}, maxConcurrentPrimes)
+	})
+	for i := 0; i < maxConcurrentPrimes; i++ {
+		l.primeSlots <- struct{}{}
+	}
+	for i := 0; i < maxConcurrentPrimes; i++ {
+		<-l.primeSlots
+	}
+}
+
 // handleNotification decodes the JSON payload and applies the policy.
 //
 //   - app_changed: `kind=parked` is actionable and tears down the app's live
@@ -1393,10 +1476,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			l.log.Warn("sched: snapshot_prime missing ids", "payload", n.Payload)
 			return
 		}
-		if err := l.engine.Prime(ctx, p.AppID, p.DeploymentID); err != nil {
-			l.log.Warn("sched: prime failed", "app", p.AppID, "deployment", p.DeploymentID, "err", err)
-			l.engine.markPrimeFailed(ctx, p.DeploymentID, err)
-		}
+		l.dispatchPrime(ctx, p.AppID, p.DeploymentID)
 	case db.NotifyCronRunNow:
 		// PR-D / issue #791: fire-now wake. The notify payload is
 		// informational (the row in cron_fire_now_requests is the
