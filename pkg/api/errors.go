@@ -2935,6 +2935,24 @@ func ErrWorkflowDeploymentUnavailable() *Problem {
 		"workflow definitions are validated by this release but require the workflow runtime deployment endpoint to be enabled")
 }
 
+// ErrWorkflowRunNotFound returns a 404 when a workflow run is not found.
+func ErrWorkflowRunNotFound() *Problem {
+	return NewProblem(http.StatusNotFound, CodeWorkflowRunNotFound,
+		"Workflow run not found", "the requested workflow run was not found.")
+}
+
+// ErrWorkflowStepNotFound returns a 404 when a workflow step is not found.
+func ErrWorkflowStepNotFound() *Problem {
+	return NewProblem(http.StatusNotFound, CodeWorkflowStepNotFound,
+		"Workflow step not found", "the requested workflow step was not found.")
+}
+
+// ErrWorkflowNotRunning returns a 409 when attempting an action on a non-running workflow run.
+func ErrWorkflowNotRunning() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
+		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
+}
+
 // ErrJobTaskNotFound marks a 404 on (run_id, task_index) lookups
 // when the tuple doesn't exist OR belongs to a different account.
 // Distinct from CodeNotFound so the dashboard can render a

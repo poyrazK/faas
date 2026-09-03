@@ -410,3 +410,56 @@ func validWorkflowMethod(value string) bool {
 		return false
 	}
 }
+
+// WorkflowRunResponse is the API wire representation of a workflow run.
+type WorkflowRunResponse struct {
+	ID           string          `json:"id"`
+	AppID        string          `json:"app_id"`
+	WorkflowName string          `json:"workflow_name"`
+	Status       string          `json:"status"`
+	CurrentStep  *string         `json:"current_step,omitempty"`
+	Input        json.RawMessage `json:"input,omitempty"`
+	Output       json.RawMessage `json:"output,omitempty"`
+	ScheduledFor string          `json:"scheduled_for"`
+	StartedAt    *string         `json:"started_at,omitempty"`
+	FinishedAt   *string         `json:"finished_at,omitempty"`
+	LastError    *string         `json:"last_error,omitempty"`
+	CreatedAt    string          `json:"created_at"`
+	UpdatedAt    string          `json:"updated_at"`
+}
+
+// ListWorkflowRunsResponse is the payload returned by GET /v1/apps/{slug}/workflows/runs.
+type ListWorkflowRunsResponse struct {
+	Runs  []WorkflowRunResponse `json:"runs"`
+	Total int                   `json:"total"`
+}
+
+// WorkflowStepResponse is the API wire representation of an executed step.
+type WorkflowStepResponse struct {
+	StepName   string          `json:"step_name"`
+	Status     string          `json:"status"`
+	Attempt    int             `json:"attempt"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Output     json.RawMessage `json:"output,omitempty"`
+	StartedAt  *string         `json:"started_at,omitempty"`
+	FinishedAt *string         `json:"finished_at,omitempty"`
+	Error      *string         `json:"error,omitempty"`
+	CreatedAt  string          `json:"created_at"`
+}
+
+// ListWorkflowStepsResponse is returned by GET /v1/workflows/runs/{id}/steps.
+type ListWorkflowStepsResponse struct {
+	Steps []WorkflowStepResponse `json:"steps"`
+}
+
+// InjectWorkflowEventRequest is the body for POST /v1/workflows/runs/{id}/events.
+type InjectWorkflowEventRequest struct {
+	EventName string          `json:"event_name"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+}
+
+// InjectWorkflowEventResponse is returned on successful event receipt.
+type InjectWorkflowEventResponse struct {
+	Status    string `json:"status"`
+	EventName string `json:"event_name"`
+}

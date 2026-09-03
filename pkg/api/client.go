@@ -4180,3 +4180,52 @@ func (c *Client) UpdateCorsPreset(ctx context.Context, id string, req UpdateCors
 func (c *Client) DeleteCorsPreset(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/cors-presets/"+id, nil, nil)
 }
+
+// RunWorkflow (ADR-081) triggers a new workflow execution run for an app.
+func (c *Client) RunWorkflow(ctx context.Context, slug, workflowName string, input json.RawMessage) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
+	err := c.do(ctx, "POST", path, input, &resp)
+	return resp, err
+}
+
+// ListWorkflowRuns (ADR-081) lists workflow runs for an app.
+func (c *Client) ListWorkflowRuns(ctx context.Context, slug string, limit, offset int, status string) (ListWorkflowRunsResponse, error) {
+	var resp ListWorkflowRunsResponse
+	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?limit=%d&offset=%d", slug, limit, offset)
+	if status != "" {
+		path += "&status=" + status
+	}
+	err := c.do(ctx, "GET", path, nil, &resp)
+	return resp, err
+}
+
+// GetWorkflowRun (ADR-081) retrieves the state of a workflow run.
+func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID, nil, &resp)
+	return resp, err
+}
+
+// ListWorkflowSteps (ADR-081) lists step records for a workflow run.
+func (c *Client) ListWorkflowSteps(ctx context.Context, runID string) (ListWorkflowStepsResponse, error) {
+	var resp ListWorkflowStepsResponse
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID+"/steps", nil, &resp)
+	return resp, err
+}
+
+// SendWorkflowEvent (ADR-081) injects an external event into a workflow run.
+func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string, payload json.RawMessage) (InjectWorkflowEventResponse, error) {
+	var resp InjectWorkflowEventResponse
+	req := InjectWorkflowEventRequest{EventName: eventName, Payload: payload}
+	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/events", req, &resp)
+	return resp, err
+}
+
+// CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
+func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/cancel", nil, &resp)
+	return resp, err
+}
+
