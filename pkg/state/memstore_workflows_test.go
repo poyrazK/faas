@@ -3,6 +3,7 @@ package state_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -61,7 +62,7 @@ func TestMemStore_WorkflowRunLifecycle(t *testing.T) {
 
 	// 5. Claim again — should return ErrNotFound (no more pending runs)
 	_, err = ms.ClaimNextPendingRun(ctx)
-	if err != state.ErrNotFound {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound on second claim, got %v", err)
 	}
 
@@ -160,7 +161,7 @@ func TestMemStore_WorkflowStepsAndEvents(t *testing.T) {
 
 	// 5. Event not found
 	_, err = ms.FindMatchingEvent(ctx, run.ID, "non_existent")
-	if err != state.ErrWorkflowEventNotFound {
+	if !errors.Is(err, state.ErrWorkflowEventNotFound) {
 		t.Fatalf("expected ErrWorkflowEventNotFound, got %v", err)
 	}
 }

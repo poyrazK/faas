@@ -238,7 +238,7 @@ func (s *PgStore) CreateWorkflowSteps(ctx context.Context, runID string, steps [
 	if err != nil {
 		return fmt.Errorf("pgstore: begin create workflow steps: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
 	query := `
 		INSERT INTO workflow_steps (
@@ -286,7 +286,7 @@ func (s *PgStore) MarkWorkflowStepStatus(ctx context.Context, runID, stepName, s
 	if err != nil {
 		return fmt.Errorf("pgstore: begin mark workflow step: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
 	query := `
 		UPDATE workflow_steps
