@@ -369,6 +369,19 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "workflows",
+		DocSlug: "workflows",
+		Short:   "Manage durable execution workflows",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List workflow runs for an app"},
+			{Name: "run", Short: "Trigger a new workflow run"},
+			{Name: "status", Short: "Show details of a workflow run"},
+			{Name: "steps", Short: "List steps for a workflow run"},
+			{Name: "cancel", Short: "Cancel an active workflow run"},
+			{Name: "events", Short: "Send external event to a workflow run"},
+		},
+	},
+	{
 		Name:    "dashboard",
 		DocSlug: "dashboard",
 		Short:   "Open the account dashboard in your browser",
