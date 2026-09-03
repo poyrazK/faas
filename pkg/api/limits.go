@@ -1367,6 +1367,10 @@ type Limits struct {
 	// ...) live as top-level constants JobMax{PerAccount,RAMMB,...} and
 	// are read directly by the apid validators + schedd dispatch tick.
 	JobsAllowed bool
+
+	// WorkflowsAllowed (ADR-081) toggles whether the plan may declare
+	// and execute multi-step durable workflows. Free=false, Hobby+Pro+Scale=true.
+	WorkflowsAllowed bool
 }
 
 // UpstreamProbeMaxConcurrent (ADR-098 §D2) is the global worker-pool
@@ -1754,6 +1758,7 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: false,
 		AppErrorsAllowed:       false,
 		JobsAllowed:            false,
+		WorkflowsAllowed:       false,
 	},
 	PlanHobby: {
 		Plan:                  PlanHobby,
@@ -2117,6 +2122,7 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
+		WorkflowsAllowed:       true,
 	},
 	PlanPro: {
 		Plan:                  PlanPro,
@@ -2453,6 +2459,7 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
+		WorkflowsAllowed:       true,
 	},
 	PlanScale: {
 		Plan:                  PlanScale,
@@ -2823,6 +2830,7 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
+		WorkflowsAllowed:       true,
 	},
 }
 
@@ -4006,6 +4014,22 @@ var (
 	// (JobBackoffBaseSeconds × 2^(attempt-1), capped at
 	// JobBackoffMaxSeconds) defined in the const block above.
 	JobMaxRetries = [4]int{0, 3, 5, 10}
+
+	// WorkflowMaxPerApp is the maximum number of workflow definitions an
+	// app may declare (ADR-081 §6). Free=0, Hobby=3, Pro=10, Scale=50.
+	WorkflowMaxPerApp = [4]int{0, 3, 10, 50}
+
+	// WorkflowMaxConcurrentRuns is the maximum number of in-flight workflow
+	// runs an app may execute simultaneously (status IN ('pending','running','awaiting_event')).
+	// Free=0, Hobby=10, Pro=50, Scale=200.
+	WorkflowMaxConcurrentRuns = [4]int{0, 10, 50, 200}
+
+	// WorkflowStepMaxTimeoutSec is the ceiling on any individual step's timeout
+	// in seconds. Free=0, Hobby=600s (10m), Pro=1800s (30m), Scale=7200s (2h).
+	WorkflowStepMaxTimeoutSec = [4]int{0, 600, 1800, 7200}
+
+	// WorkflowMaxWaitDays is the hard ceiling on wait_for_event timeouts (7 days).
+	WorkflowMaxWaitDays = 7
 )
 
 // DefaultComputeNodeCeilingMB is the per-compute-node admission ceiling
@@ -4307,6 +4331,31 @@ func (p Plan) JobsAllowed() bool {
 		return false
 	}
 	return l.JobsAllowed
+}
+
+// WorkflowsAllowed (ADR-081) reports whether the plan may create and
+// execute multi-step durable workflows. Free=false, Hobby+Pro+Scale=true.
+func (p Plan) WorkflowsAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false
+	}
+	return l.WorkflowsAllowed
+}
+
+// WorkflowMaxPerApp returns the maximum workflow definitions an app may declare.
+func (p Plan) WorkflowMaxPerApp() int {
+	return WorkflowMaxPerApp[p.PlanIndex()]
+}
+
+// WorkflowMaxConcurrentRuns returns the maximum simultaneous active workflow runs.
+func (p Plan) WorkflowMaxConcurrentRuns() int {
+	return WorkflowMaxConcurrentRuns[p.PlanIndex()]
+}
+
+// WorkflowStepMaxTimeout returns the maximum allowed timeout for any single step.
+func (p Plan) WorkflowStepMaxTimeout() time.Duration {
+	return time.Duration(WorkflowStepMaxTimeoutSec[p.PlanIndex()]) * time.Second
 }
 
 // PlanIndex returns the canonical 0..3 integer index used to key

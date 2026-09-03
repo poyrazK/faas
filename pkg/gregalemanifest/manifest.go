@@ -37,6 +37,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 )
 
@@ -380,7 +381,8 @@ type QueueConfig struct {
 // surfaces as a load-time error rather than silently shipping a
 // no-op deploy.
 type Manifest struct {
-	Triggers []Trigger `yaml:"triggers"`
+	Triggers  []Trigger          `yaml:"triggers"`
+	Workflows []api.WorkflowSpec `yaml:"workflows,omitempty"`
 }
 
 // Load reads `gregale.yaml` or `gregale.yml` from dir. Returns
@@ -558,6 +560,21 @@ func (m *Manifest) Validate() error {
 		}
 		seen[k] = struct{}{}
 	}
+
+	seenWorkflows := make(map[string]struct{}, len(m.Workflows))
+	for i, wf := range m.Workflows {
+		if wf.Name == "" {
+			return fmt.Errorf("workflows[%d]: name is required", i)
+		}
+		if _, dup := seenWorkflows[wf.Name]; dup {
+			return fmt.Errorf("workflows[%d]: duplicate workflow name %q", i, wf.Name)
+		}
+		seenWorkflows[wf.Name] = struct{}{}
+		if _, err := api.ValidateWorkflowDAG(wf, api.PlanScale); err != nil {
+			return fmt.Errorf("workflows[%d] %q: %w", i, wf.Name, err)
+		}
+	}
+
 	return nil
 }
 

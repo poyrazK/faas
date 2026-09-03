@@ -1469,6 +1469,15 @@ const (
 	// because the wire contract for the field is "the executor
 	// can't run this argv" rather than "the schema is wrong".
 	CodeJobCommandInvalid = "job_command_invalid"
+
+	// Workflows (ADR-081).
+	CodePlanWorkflowsNotAllowed = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota      = "plan_workflows_quota"
+	CodeWorkflowDAGCycle        = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound    = "workflow_step_not_found"
+	CodeWorkflowRunNotFound     = "workflow_run_not_found"
+	CodeWorkflowEventNotFound   = "workflow_event_not_found"
+	CodeWorkflowNotRunning      = "workflow_not_running"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -2890,6 +2899,25 @@ func ErrJobQuota(plan Plan, quotaName string, limit, observed int) *Problem {
 			plan, limit, quotaName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#jobs")
+}
+
+// ErrPlanWorkflowsNotAllowed is returned by apid workflow endpoints
+// when the customer's plan has WorkflowsAllowed == false (Free today).
+func ErrPlanWorkflowsNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanWorkflowsNotAllowed,
+		"Workflows unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include durable workflows; upgrade to Hobby or above to orchestrate multi-step processes.", p)).
+		WithDocs(docsBase + "/plans#workflows")
+}
+
+// ErrPlanWorkflowsQuota is returned when an app exceeds its concurrent
+// workflow runs quota.
+func ErrPlanWorkflowsQuota(plan Plan, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanWorkflowsQuota,
+		"Workflow run quota exceeded",
+		fmt.Sprintf("concurrent workflow run quota reached (%d/%d) for the %s plan.", observed, limit, plan)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#workflows")
 }
 
 // ErrJobTaskNotFound marks a 404 on (run_id, task_index) lookups

@@ -177,6 +177,11 @@ type MemStore struct {
 	jobs     map[string]Job
 	jobRuns  map[string]JobRun
 	jobTasks map[string]map[int]JobTask // run_id → task_index → task
+
+	// workflows / workflowSteps / workflowEvents mirror ADR-081 (migrations 00591-00596).
+	workflowRuns   map[string]WorkflowRun
+	workflowSteps  map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowEvents map[string][]WorkflowEvent          // run_id → []WorkflowEvent
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -721,6 +726,9 @@ func NewMemStore() *MemStore {
 		jobs:                      map[string]Job{},
 		jobRuns:                   map[string]JobRun{},
 		jobTasks:                  map[string]map[int]JobTask{},
+		workflowRuns:              map[string]WorkflowRun{},
+		workflowSteps:             map[string]map[string]WorkflowStep{},
+		workflowEvents:            map[string][]WorkflowEvent{},
 		fireNowRequests:           map[string]FireNowRequest{},
 		operatorIntents:           map[string]OperatorIntent{},
 		runtimeConfigs:            map[string]RuntimeConfig{},

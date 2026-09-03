@@ -2893,6 +2893,11 @@ type Store interface {
 	// JobStore surface without dragging in the whole Store.
 	JobStore
 
+	// Workflows (ADR-081 / issue #669).
+	// Multi-step durable execution workflows land across migrations 00591-00596.
+	// The WorkflowStore sub-interface is defined in workflows.go.
+	WorkflowStore
+
 	// Trigger primitive (issue #757 / ADR-0NN; commit #5 + commit #6).
 	// Per-method notes:
 	//
