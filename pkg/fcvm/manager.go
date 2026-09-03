@@ -299,6 +299,72 @@ type bringUpTimings struct {
 	restoreError string
 }
 
+// SlowWakeLogThreshold is the elapsed time above which a SUCCESSFUL wake
+// still emits its phase breakdown. Failures always emit it regardless.
+//
+// 20s is deliberately below sched.ColdBootTimeout (35s): a wake that is
+// merely slow should show up in the journal before it starts failing, so
+// a creeping regression is visible while it is still succeeding.
+const SlowWakeLogThreshold = 20 * time.Second
+
+// wakePhases accumulates per-phase durations across Manager.Wake so a
+// slow or failed boot can say WHERE the time went.
+//
+// This existed only for the success path before: bringUpTimings carried
+// restore / netns+TAP / guest-ready onto the Instance for the vmmd
+// WakeResponse (ADR-098 C11), and an error return discarded all of it.
+// Everything BEFORE setupNetwork — lease acquire, runtime env prep,
+// sidecar env prep — was never measured at all.
+//
+// The gap was not academic. On 2026-09-03 a prime cold boot ran 51s
+// against a 35s budget and the journal held exactly two lines for the
+// whole window: an unrelated "events: emit" and the final failure. The
+// error surfaced at `ip addr add` inside setupNetwork with "context
+// canceled", which says only that the deadline had already passed by
+// then — not which phase consumed it. Raising the timeout on that
+// evidence would have been a guess.
+type wakePhases struct {
+	start  time.Time
+	last   time.Time
+	phases []wakePhase
+}
+
+type wakePhase struct {
+	name string
+	ms   int64
+}
+
+func newWakePhases() *wakePhases {
+	now := time.Now()
+	return &wakePhases{start: now, last: now}
+}
+
+// mark closes the phase that ended now and names it. Cheap enough for
+// the hot path: one time.Now plus an append per boundary.
+func (w *wakePhases) mark(name string) {
+	if w == nil {
+		return
+	}
+	now := time.Now()
+	w.phases = append(w.phases, wakePhase{name: name, ms: now.Sub(w.last).Milliseconds()})
+	w.last = now
+}
+
+// attrs flattens the phases into slog key/values: total_ms plus one
+// <phase>_ms per boundary, so the line is greppable per phase rather
+// than needing a JSON array reader.
+func (w *wakePhases) attrs() []any {
+	if w == nil {
+		return nil
+	}
+	out := make([]any, 0, 2+len(w.phases)*2)
+	out = append(out, "total_ms", time.Since(w.start).Milliseconds())
+	for _, p := range w.phases {
+		out = append(out, p.name+"_ms", p.ms)
+	}
+	return out
+}
+
 type Instance struct {
 	Lease  Lease
 	Net    netns.Config
@@ -2921,10 +2987,27 @@ type JobBootRequest struct {
 // cold boot. On any terminal error it unwinds every resource it acquired — the
 // caller sees no half-built instance and the box leaks nothing (§6.2-4/5).
 func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err error) {
+	// Phase timing (see wakePhases). Reported on EVERY failure and on
+	// successes slower than SlowWakeLogThreshold. The named `err`
+	// return is what lets this defer distinguish the two.
+	phases := newWakePhases()
+	defer func() {
+		switch {
+		case err != nil:
+			m.log.Warn("fcvm: wake failed; phase breakdown",
+				append([]any{"instance", req.Instance, "err", err}, phases.attrs()...)...)
+		case time.Since(phases.start) >= SlowWakeLogThreshold:
+			m.log.Warn("fcvm: slow wake; phase breakdown",
+				append([]any{"instance", req.Instance,
+					"threshold_ms", SlowWakeLogThreshold.Milliseconds()}, phases.attrs()...)...)
+		}
+	}()
+
 	lease, err := m.alloc.Acquire(req.Instance)
 	if err != nil {
 		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
 	}
+	phases.mark("lease_acquire")
 	// Stamp the Plan onto the Lease (issue #301, ADR-044) so the
 	// downstream vmm.Boot/Restore/Kill/Destroy path can compute the
 	// per-plan parent cgroup + cpu.weight without a separate map
@@ -2987,6 +3070,10 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
 	}
+	// prepareWakeFiles + prepareSidecarEnvFiles together. Both touch
+	// the layer/rootfs staging paths, so this is the phase that
+	// absorbs a cold layer fetch.
+	phases.mark("env_prepare")
 	// Spec §7 conntrack cap (ADR-018 deferral). Platform-wide constant;
 	// not propagated through vmmd gRPC because every instance sees the
 	// same value (the failure mode is host-table exhaustion, shared).
@@ -3130,6 +3217,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// (issue #574). setupNetwork wraps netns creation + TAP setup
 	// + veth pair wiring. Stays roughly constant per shape, so a
 	// sudden spike is a host-level signal not a workload signal.
+	phases.mark("pre_network")
 	netnsStart := time.Now()
 	if err = m.setupNetwork(ctx, nc); err != nil {
 		// Issue #1059 / ADR-127: closed-reason counter on the
@@ -3151,7 +3239,12 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	}
 	timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
 
+	phases.mark("setup_network")
 	method, err = m.bringUp(ctx, lease, nc, req, &timings)
+	// Marked before the error check so a FAILED bringUp still reports
+	// how long it burned — that is the phase most likely to hold a
+	// hung Firecracker, and the one the defer most needs to name.
+	phases.mark("bring_up")
 	if err != nil {
 		return nil, err
 	}
