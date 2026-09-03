@@ -87,8 +87,12 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	backdateInstance(t, store, waking.ID, 10*time.Second)
 	backdateInstance(t, store, coldBoot.ID, 40*time.Second)
 	// For SNAPSHOTTING, age is anchored on ParkedAt. Set it directly.
+	// Must exceed SnapshotBudgetFor(512MB) = 30s, not just the flat
+	// 20s sweep budget: the watchdog now gives a snapshot a
+	// memory-scaled reprieve so it cannot kill a Scale-sized capture
+	// that is legitimately still writing.
 	mems := toMemStore(t, store)
-	mems.SetParkedAtForTest(snap.ID, time.Now().Add(-25*time.Second))
+	mems.SetParkedAtForTest(snap.ID, time.Now().Add(-2*SnapshotBudgetFor(512)))
 
 	w := NewWatchdog(store, engine, slog.Default()).WithClock(func() time.Time { return time.Now() })
 	w.sweepRuns(context.Background())

@@ -85,7 +85,38 @@ const (
 	// (one select in Loop.run). schedd stayed `active` and answered
 	// /metrics while doing no work at all.
 	SnapshotTimeout = 25 * time.Second
+
+	// SnapshotBudgetBase and SnapshotBudgetPerGB scale the snapshot
+	// budget with the instance's memory, because that is what a
+	// snapshot writes. One fixed budget cannot serve the plan range:
+	// Free is 128 MB and Scale is 1024 MB, an 8x spread, so any single
+	// number is either too tight for Scale or uselessly loose for Free.
+	//
+	// SnapshotTimeout (25s, flat) shipped first and was measured too
+	// tight: on 2026-09-03 a 1024 MB prime cold-booted fine in 9s
+	// ("wake ok") and then failed at exactly 25s in PauseAndSnapshot,
+	// so no deployment could reach `live`. Base covers the fixed
+	// pause/serialise/fsync overhead; PerGB covers the memory write.
+	//
+	// These are provisional. The park path still has no phase
+	// instrumentation — the same gap the wake path had before
+	// wakePhases — so the split between overhead and write throughput
+	// is inferred from the failure boundary, not measured. Tighten
+	// once snapshot_ms lands.
+	SnapshotBudgetBase  = 15 * time.Second
+	SnapshotBudgetPerGB = 30 * time.Second
 )
+
+// SnapshotBudgetFor returns the wall-clock budget for one instance's
+// snapshot capture. ramMB <= 0 (unknown row) falls back to the flat
+// SnapshotTimeout so a missing value never yields a zero deadline,
+// which would cancel the RPC instantly.
+func SnapshotBudgetFor(ramMB int) time.Duration {
+	if ramMB <= 0 {
+		return SnapshotTimeout
+	}
+	return SnapshotBudgetBase + time.Duration(float64(SnapshotBudgetPerGB)*(float64(ramMB)/1024.0))
+}
 
 // LayerVerifier checks that a cold-boot layer's signature is
 // valid. The local interface keeps pkg/sched decoupled from
@@ -5229,9 +5260,21 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	}
 	_ = warmInfo
 
-	snapCtx, snapCancel := context.WithTimeout(ctx, SnapshotTimeout)
+	snapBudget := SnapshotBudgetFor(ins.RAMMB)
+	snapCtx, snapCancel := context.WithTimeout(ctx, snapBudget)
+	snapStart := time.Now()
 	b, err := e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey)
 	snapCancel()
+	// The park path has no phase instrumentation (unlike wakePhases on
+	// the boot path), so at minimum record how long the capture ran
+	// against the budget it was given — enough to tell "budget too
+	// tight" from "vmmd wedged" on the next occurrence.
+	if snapMS := time.Since(snapStart).Milliseconds(); err != nil || snapMS > snapBudget.Milliseconds()/2 {
+		e.log.Warn("sched: snapshot capture timing",
+			"instance", ins.ID, "ram_mb", ins.RAMMB,
+			"snapshot_ms", snapMS, "budget_ms", snapBudget.Milliseconds(),
+			"err", err)
+	}
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).
@@ -5383,7 +5426,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	// per-tier GC (PR C) can keep 2+2 without conflating them.
 	warmMemKey, warmVMStateStorageKey := e.warmKeysFor(ins.NodeID, ins.DeploymentID)
 
-	warmCtx, warmCancel := context.WithTimeout(ctx, SnapshotTimeout)
+	warmCtx, warmCancel := context.WithTimeout(ctx, SnapshotBudgetFor(ins.RAMMB))
 	b, err := e.vmm.WarmSnapshot(warmCtx, ins.NodeID, ins.ID, warmMemKey, warmVMStateStorageKey)
 	warmCancel()
 	if err != nil {
