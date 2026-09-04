@@ -393,10 +393,11 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 // entrypoint that exec's the manifest's entrypoint with
 // the merged env).
 func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, apiEnv map[string]string, log *slog.Logger) *Supervisor {
-	supRef := &Supervisor{Max: MaxRestarts}
+	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
+	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
 	supRef.Start = func() error { return runAppWithRAM(manifest, secrets, apiEnv, supRef, spec.RamMB) }
 	supRef.OnCrash = func(attempt int, err error) {
-		fmt.Fprintf(os.Stderr, "guest-init: main crashed (restart %d/%d): %v\n", attempt, MaxRestarts, err)
+		fmt.Fprintf(os.Stderr, "guest-init: main restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
 	return supRef
 }
@@ -418,7 +419,7 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 	if !spec.Essential {
 		maxRestarts = 0 // non-essential sidecar: log crash, do not restart
 	}
-	supRef := &Supervisor{Max: maxRestarts}
+	supRef := &Supervisor{Max: maxRestarts, Policy: api.RestartPolicyOnFailure}
 	supRef.Start = func() error { return runSidecar(spec, secrets, apiEnv, supRef) }
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: sidecar %s crashed (restart %d/%d): %v\n",

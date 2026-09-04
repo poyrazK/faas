@@ -175,6 +175,9 @@ type ColdBootSpec struct {
 	// accepts 2xx as ready. Forwarded from WakeRequest.HealthcheckPath
 	// by Manager.bringUp.
 	HealthcheckPath string
+	// StartupDeadlineS is the per-app readiness budget. 0 means use the
+	// vmmd default, preserving direct callers from before M-3.
+	StartupDeadlineS int
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	SkipReady bool
@@ -361,6 +364,8 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: mem_size_mib %d < 1", s.MemSizeMiB)
 	case s.Tap == "":
 		return fmt.Errorf("fcvm: cold boot: empty tap device")
+	case s.StartupDeadlineS < 0:
+		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
 	}
 	return nil
 }

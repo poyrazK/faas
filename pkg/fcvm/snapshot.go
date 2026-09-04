@@ -179,6 +179,9 @@ type RestoreSpec struct {
 	// accepts 2xx as ready. Forwarded from WakeRequest.HealthcheckPath
 	// by Manager.bringUp.
 	HealthcheckPath string
+	// StartupDeadlineS is the per-app readiness budget. 0 means use the
+	// vmmd default, preserving restores from pre-M3 callers.
+	StartupDeadlineS int
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).
