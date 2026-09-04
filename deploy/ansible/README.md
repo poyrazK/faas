@@ -19,6 +19,9 @@ In order (each role is independent and verifies its own preconditions):
 | `systemd_slices` | §13 | three `.slice` unit drops | `creates:` on each |
 | `nftables` | §7 | `/etc/nftables.conf` | managed-marker backup + `nft -c` syntax check |
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
+| `host_hardening` | §11, ADR-143 | sshd drop-in, fail2ban, unattended security upgrades, auditd rules, kernel sysctls | templates + validated `sshd -t`; lockout guard before disabling password auth |
+| `geoip` | ADR-091 D21, ADR-143 | `/var/lib/faas/geoip/dbip-country-lite.mmdb` (compute) | pinned monthly release + two SHA-256s |
+| `fleet_verify` | ADR-143 | verify-only: enabled → active → probe → `gregalectl doctor` | read-only |
 
 ## Run it
 
@@ -40,6 +43,36 @@ new provider or inventory:
 make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini ansible-preflight
 make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini ansible-syntax-check
 ```
+
+After the operator has run `gregalectl secrets init` and enabled the units,
+prove the fleet converged (every required daemon enabled, active and
+answering its readiness probe, then `gregalectl doctor`):
+
+```
+make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini verify-fleet
+```
+
+Both bootstrap plays end with the same `fleet_verify` role in lenient mode,
+so a re-run after a config change fails loudly when a daemon did not come
+back. Every unit, drop-in and config task notifies a `try-restart` handler
+(ADR-143): active daemons pick the change up, disabled ones are left alone.
+
+## Configuration contract (ADR-143)
+
+- Systemd units are generated from `pkg/daemonunitspec` into every role's
+  `files/` tree; never hand-edit a `faas-*.service` — run `make generate`
+  and commit. `make generate-check` gates it.
+- Every `FAAS_*` a daemon reads is declared in
+  `pkg/daemonunitspec/envcontract.go` with who delivers it; the rendered
+  table is [`docs/ops/env-contract.md`](../../docs/ops/env-contract.md) and
+  `make env-contract-check` (part of `make test`) fails on an undeclared,
+  undelivered or dead variable.
+- `vars/daemons.yml` is the daemon topology shared by `role_convergence`
+  and `fleet_verify`; a Go test pins it to the registry.
+- `make ansible-lint` runs ansible-lint at the `production` profile with
+  the config in `.ansible-lint`; `make ansible-scale-check` executes
+  `scale_check.yml` (not just `--syntax-check`) against the rendered
+  example manifest. Both run in CI.
 
 Before connecting to any provider, run the connection-free scale gate:
 

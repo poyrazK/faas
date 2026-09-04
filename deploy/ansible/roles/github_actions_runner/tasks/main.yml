@@ -190,6 +190,7 @@
   # to its temporary module via a Darwin ACL mode (`A+user:...`) that GNU
   # chmod on the Linux target rejects. runuser changes identity only for the
   # runner's config.sh process and keeps this path portable.
+  become: true
   become_user: root
   register: faas_runner_configure
   changed_when: true
@@ -213,7 +214,7 @@
     mode: "0644"
   register: faas_runner_unit
 
-- name: github_actions_runner — reload systemd after unit changes
+- name: github_actions_runner — reload systemd after unit changes  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: faas_runner_unit.changed
@@ -224,7 +225,7 @@
     enabled: true
     state: started
 
-- name: github_actions_runner — verify runner service is active
+- name: github_actions_runner — verify runner service is active  # noqa: command-instead-of-module (read-only query / no module equivalent)
   ansible.builtin.command: systemctl is-active {{ faas_runner_service }}
   register: faas_runner_service_state
   changed_when: false

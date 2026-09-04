@@ -186,7 +186,7 @@
   register: kernel_tar
   when: not (faas_kernel_release_staged | bool)
 
-- name: firecracker — extract kernel source
+- name: firecracker — extract kernel source  # noqa: command-instead-of-module (read-only query / no module equivalent)
   # `creates` is a command-module parameter, not a task keyword. At task
   # level ansible rejects it as a conflicting action statement — and the
   # idempotency guard it was meant to provide never applied, so this
@@ -278,6 +278,7 @@
   when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — build kernel (vmlinux) with 4 jobs
+  changed_when: true
   ansible.builtin.command: make -j4 ARCH=x86_64 CROSS_COMPILE= olddefconfig
   args:
     chdir: /usr/src/linux-{{ fc_kernel_version }}
@@ -290,6 +291,7 @@
   when: faas_kernel_rebuild_required | bool
 
 - name: firecracker — build vmlinux
+  changed_when: true
   # Firecracker 1.7 expects the uncompressed x86 ELF kernel.  `bzImage`
   # also produces a top-level vmlinux, but publishing arch/x86/boot/bzImage
   # under the vmlinux key makes every cold boot fail with InvalidElfMagicNumber.

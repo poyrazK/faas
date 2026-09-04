@@ -211,7 +211,7 @@
 
 - name: storage — discover blank non-root disks
   ansible.builtin.shell: |
-    set -eu
+    set -eu -o pipefail
     root_source="$(findmnt -n -o SOURCE /)"
     root_disks="$(lsblk -s -nrpo NAME,TYPE "$root_source" 2>/dev/null | awk '$2 == "disk" {print $1}')"
     lsblk -b -dnpo NAME,TYPE,SIZE | while read -r device kind size; do
@@ -319,6 +319,7 @@
   when: not (faas_storage_existing_valid | bool)
 
 - name: storage — create mirror array from two blank disks
+  changed_when: true
   ansible.builtin.command:
     argv:
       - mdadm
@@ -368,6 +369,7 @@
   when: not (faas_storage_existing_valid | bool)
 
 - name: storage — format the new filesystem
+  changed_when: true
   ansible.builtin.command:
     argv:
       - mkfs.xfs
