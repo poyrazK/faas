@@ -44,6 +44,13 @@ type SynthDispatcher interface {
 	Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
 }
 
+// StatusAwareSynthDispatcher is an optional extension used by durable
+// workflow steps. It preserves the downstream HTTP status so the scheduler
+// can distinguish success from retryable 5xx responses.
+type StatusAwareSynthDispatcher interface {
+	InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error)
+}
+
 // TargetAwareSynthDispatcher is the optimized dispatch seam used by schedd
 // when it already completed admission. The target is carried across the
 // synth socket so gatewayd-internal can forward the invocation without
@@ -460,6 +467,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		"method", logsanitize.Field(method),
 		"path", logsanitize.Field(path))
 	var out state.Invocation
+	var statusCode int
 	var err error
 	if targetDispatcher, ok := s.dispatcher.(TargetAwareSynthDispatcher); ok && req.InstanceID != "" && req.NodeID != "" {
 		out, err = targetDispatcher.InvokeWithTarget(r.Context(), req.AppID, inv, Target{
@@ -469,6 +477,8 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 			WakeID:       req.WakeID,
 			Port:         req.Port,
 		})
+	} else if statusDispatcher, ok := s.dispatcher.(StatusAwareSynthDispatcher); ok {
+		out, statusCode, err = statusDispatcher.InvokeWithStatus(r.Context(), req.AppID, inv)
 	} else {
 		out, err = s.dispatcher.Invoke(r.Context(), req.AppID, inv)
 	}
@@ -480,14 +490,18 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
 	s.calls.Add(1)
 	w.Header().Set("Content-Type", "application/json")
 	// Echo the post-dispatch state + result back so the drain can
 	// call CompleteInvocation(result) on the same transaction.
 	_ = json.NewEncoder(w).Encode(struct {
-		State  string          `json:"state"`
-		Result json.RawMessage `json:"result,omitempty"`
-	}{string(out.State), out.Result})
+		State      string          `json:"state"`
+		Result     json.RawMessage `json:"result,omitempty"`
+		StatusCode int             `json:"status_code,omitempty"`
+	}{string(out.State), out.Result, statusCode})
 }
 
 func jsonOrEmpty(m map[string]string) json.RawMessage {

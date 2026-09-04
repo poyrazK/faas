@@ -34,9 +34,8 @@ export class DeploymentsService {
    * - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
    * Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
    * The optional `workflows` array is plan-gated and schema-validated;
-   * until workflow runtime persistence is enabled, a request containing
-   * workflow definitions returns `501 workflow_deployment_unavailable`
-   * rather than accepting and dropping them.
+   * accepted definitions are persisted with the deployment and snapshotted
+   * when a workflow run starts.
    *
    * @returns DeploymentResponse The deployment whose build has been accepted and queued.
    * @throws ApiError
@@ -75,6 +74,7 @@ export class DeploymentsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
@@ -82,7 +82,6 @@ export class DeploymentsService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
-        501: `Workflow definitions are valid but workflow runtime deployment persistence is not enabled yet.`,
       },
     });
   }

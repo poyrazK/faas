@@ -4341,6 +4341,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if d.Kind == "" {
 		d.Kind = DeploymentKindImage
 	}
+	d.Workflows = cloneWorkflowJSON(d.Workflows)
 	// Issue #556 PR-A: default traffic_percent to 100 for a stable
 	// deployment when the caller supplies zero. A canary's zero is
 	// meaningful (a valid custom first stage), and the APID handler

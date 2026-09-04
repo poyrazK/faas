@@ -748,34 +748,31 @@ type manifestCronClient interface {
 	Whoami(ctx context.Context) (api.AccountResponse, error)
 }
 
-// validateWorkflowManifestForDeploy performs the workflow-only preflight
-// before the CLI creates or fetches the target app. The current PR exposes
-// the workflow schema and state foundation, but not the runtime deployment
-// persistence endpoint, so returning an explicit error here prevents a
-// workflow manifest from leaving behind an app with no corresponding deploy.
-func validateWorkflowManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) error {
+// loadWorkflowManifestForDeploy performs the workflow-only preflight before
+// the CLI creates or fetches the target app and returns the definitions to
+// include in the deployment request.
+func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) ([]api.WorkflowSpec, error) {
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !ok || m == nil || len(m.Workflows) == 0 {
-		return nil
+		return nil, nil
 	}
 	acct, err := client.Whoami(ctx)
 	if err != nil {
-		return fmt.Errorf("resolve account plan for workflow manifest: %w", err)
+		return nil, fmt.Errorf("resolve account plan for workflow manifest: %w", err)
 	}
 	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
-		return err
+		return nil, err
 	}
-	return errors.New("workflow declarations are not deployable by this client yet; use the workflow runtime deployment endpoint")
+	return append([]api.WorkflowSpec(nil), m.Workflows...), nil
 }
 
 // deployManifestTriggers fans the manifest's `triggers:` block out to
 // apid via the existing CreateCron wire. Workflow declarations are
-// validated here but fail closed until the workflow runtime deployment
-// persistence endpoint is available. Issue #791 PR-C / ADR-090 and
-// ADR-081.
+// handled by the deployment request separately. Issue #791 PR-C / ADR-090
+// and ADR-081.
 //
 // No manifest → no-op (returns nil). Bad manifest → wrapped error
 // from gregalemanifest.Validate, surfaced verbatim by printErr. The
@@ -800,21 +797,6 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 	if err := m.Validate(); err != nil {
 		return err
 	}
-	if len(m.Workflows) > 0 {
-		// PR-1279 adds the workflow schema and state foundation. The
-		// runtime/deployment persistence surface is delivered by the
-		// stacked workflow runtime change, so do not let this CLI report a
-		// successful deploy while dropping the declarations on the floor.
-		acct, whoErr := client.Whoami(ctx)
-		if whoErr != nil {
-			return fmt.Errorf("resolve account plan for workflow manifest: %w", whoErr)
-		}
-		if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
-			return err
-		}
-		return errors.New("workflow declarations are not deployable by this client yet; use the workflow runtime deployment endpoint")
-	}
-
 	// Filter to triggers for THIS app's slug. Triggers targeting
 	// other slugs in a multi-app project are silently ignored on
 	// this deploy — `gregale deploy` is one-app-at-a-time, and the
@@ -1685,10 +1667,11 @@ func cmdDeployTarball(args []string) int {
 		return 0
 	}
 
-	createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr)
-	if err := validateWorkflowManifestForDeploy(ctx, client, cwd); err != nil {
+	workflowDefs, err := loadWorkflowManifestForDeploy(ctx, client, cwd)
+	if err != nil {
 		return printErr("Workflow manifest validation failed", err)
 	}
+	createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr)
 	if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr); err != nil {
 		return printErr("Could not create or fetch app", err)
 	}
@@ -1712,13 +1695,14 @@ func cmdDeployTarball(args []string) int {
 			Tag:        *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy),
 			PRNumber:   *prNumber,
+			Workflows:  workflowDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
 			sourceSHA256  string
 			usedResumable bool
 		)
-		if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			var progress resumableUploadProgress
 			if !jsonOutput {
 				lastPercent := -1
@@ -1788,6 +1772,7 @@ func cmdDeployTarball(args []string) int {
 	}
 	dep, err := client.Deploy(ctx, slug, api.CreateDeploymentRequest{
 		Image:          *image,
+		Workflows:      workflowDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
 		Reason:         annPtr(*reason),
 		Tag:            annPtr(*tag),

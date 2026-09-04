@@ -28,6 +28,8 @@ class CreateDeploymentFilesBody:
     dockerfile: bool | Unset = UNSET
     kind: CreateDeploymentFilesBodyKind | Unset = UNSET
     runtime: CreateDeploymentFilesBodyRuntime | Unset = UNSET
+    workflows: str | Unset = UNSET
+    """JSON array of workflow definitions (plan-gated)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +47,8 @@ class CreateDeploymentFilesBody:
         if not isinstance(self.runtime, Unset):
             runtime = self.runtime
 
+        workflows = self.workflows
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -56,6 +60,8 @@ class CreateDeploymentFilesBody:
             field_dict["kind"] = kind
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
+        if workflows is not UNSET:
+            field_dict["workflows"] = workflows
 
         return field_dict
 
@@ -73,6 +79,9 @@ class CreateDeploymentFilesBody:
 
         if not isinstance(self.runtime, Unset):
             files.append(("runtime", (None, str(self.runtime).encode(), "text/plain")))
+
+        if not isinstance(self.workflows, Unset):
+            files.append(("workflows", (None, str(self.workflows).encode(), "text/plain")))
 
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
@@ -105,11 +114,14 @@ class CreateDeploymentFilesBody:
         else:
             runtime = check_create_deployment_files_body_runtime(_runtime)
 
+        workflows = d.pop("workflows", UNSET)
+
         create_deployment_files_body = cls(
             source=source,
             dockerfile=dockerfile,
             kind=kind,
             runtime=runtime,
+            workflows=workflows,
         )
 
         create_deployment_files_body.additional_properties = d

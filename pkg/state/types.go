@@ -1503,6 +1503,10 @@ type Deployment struct {
 	// transiently at the pull path (mirrors app_env_secret
 	// unseal at the same seam).
 	Sidecars json.RawMessage `json:"sidecars,omitempty"`
+	// Workflows is the validated ADR-081 workflow definition set attached
+	// to this deployment. Keeping it on the deployment row makes the live
+	// deployment the source of truth for new run snapshots.
+	Workflows json.RawMessage `json:"workflows,omitempty"`
 	// MinInstances is the per-deployment cold-wake floor override
 	// (issue #557 closure / ADR-072). Default 0 = "inherit from
 	// parent app"; an explicit positive value is the deployment's

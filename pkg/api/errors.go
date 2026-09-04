@@ -1482,6 +1482,7 @@ const (
 	CodeWorkflowDAGCycle              = "workflow_dag_cycle"
 	CodeWorkflowStepNotFound          = "workflow_step_not_found"
 	CodeWorkflowRunNotFound           = "workflow_run_not_found"
+	CodeWorkflowDefinitionNotFound    = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound         = "workflow_event_not_found"
 	CodeWorkflowNotRunning            = "workflow_not_running"
 	CodeWorkflowDeploymentUnavailable = "workflow_deployment_unavailable"
@@ -1533,6 +1534,9 @@ func StatusForCode(code string) int {
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist:
 		return http.StatusBadRequest
+	case CodeWorkflowDefinitionNotFound, CodeWorkflowRunNotFound, CodeWorkflowStepNotFound,
+		CodeWorkflowEventNotFound:
+		return http.StatusNotFound
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm,
@@ -2929,11 +2933,9 @@ func ErrPlanWorkflowsQuota(plan Plan, limit, observed int) *Problem {
 		WithDocs(docsBase + "/plans#workflows")
 }
 
-// ErrWorkflowDeploymentUnavailable prevents a client from mistaking the
-// schema-only workflow foundation for a deploy path that can persist and
-// serve definitions. It is temporary until the workflow runtime deployment
-// endpoint is present; returning 501 is safer than accepting and dropping
-// customer configuration.
+// ErrWorkflowDeploymentUnavailable is retained for clients that may still
+// recognize the pre-activation error code. New deployment requests persist
+// workflow definitions and no longer return this problem.
 func ErrWorkflowDeploymentUnavailable() *Problem {
 	return NewProblem(http.StatusNotImplemented, CodeWorkflowDeploymentUnavailable,
 		"Workflow deployment unavailable",
@@ -2944,6 +2946,13 @@ func ErrWorkflowDeploymentUnavailable() *Problem {
 func ErrWorkflowRunNotFound() *Problem {
 	return NewProblem(http.StatusNotFound, CodeWorkflowRunNotFound,
 		"Workflow run not found", "the requested workflow run was not found.")
+}
+
+// ErrWorkflowDefinitionNotFound returns a 404 when the requested workflow is
+// not present on the app's current live deployment.
+func ErrWorkflowDefinitionNotFound() *Problem {
+	return NewProblem(http.StatusNotFound, CodeWorkflowDefinitionNotFound,
+		"Workflow definition not found", "the requested workflow is not defined on the app's live deployment.")
 }
 
 // ErrWorkflowStepNotFound returns a 404 when a workflow step is not found.

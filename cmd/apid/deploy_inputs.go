@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -33,6 +34,17 @@ const maxSourceFiles = 10_000
 // builderd process them. The dir is host-configurable via env to keep tests
 // hermetic.
 const sourceSpoolRootEnv = "FAAS_SPOOL_ROOT"
+
+func marshalWorkflowDefinitions(definitions []api.WorkflowSpec) json.RawMessage {
+	if len(definitions) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(definitions)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
 
 func spoolRoot() string {
 	if v := os.Getenv(sourceSpoolRootEnv); v != "" {
@@ -79,6 +91,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		handler        string
 		kind           state.DeploymentKind
 		sourceAccepted bool
+		workflows   []api.WorkflowSpec
 	)
 	defer func() {
 		if sourcePath != "" && !sourceAccepted {
@@ -124,6 +137,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		case "handler":
 			b, _ := io.ReadAll(io.LimitReader(part, 256))
 			handler = strings.TrimSpace(string(b))
+		case "workflows":
+			b, readErr := io.ReadAll(io.LimitReader(part, 1<<20))
+			if readErr != nil || !json.Valid(b) {
+				api.WriteProblem(w, api.ErrValidation("workflows must be valid JSON"))
+				return
+			}
+			if err := json.Unmarshal(b, &workflows); err != nil {
+				api.WriteProblem(w, api.ErrValidation("workflows must be a JSON array of definitions"))
+				return
+			}
+			if prob := validateWorkflowDefinitionsAgainstPlan(workflows, acct.Plan); prob != nil {
+				api.WriteProblem(w, prob)
+				return
+			}
 		default:
 			// Ignore unknown fields so clients can ship extra metadata.
 			_, _ = io.Copy(io.Discard, part)
@@ -210,6 +237,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			ActorUserID: acct.ID,
 			ActorVia:    routeKindForRequest(r),
 			ActorFromIP: middleware.ClientIP(r),
+			Workflows:   marshalWorkflowDefinitions(workflows),
 		})
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))

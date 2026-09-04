@@ -139,6 +139,11 @@ type WorkflowStore interface {
 	ListWorkflowRuns(ctx context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error)
 	MarkWorkflowRunStatus(ctx context.Context, id, status string, output json.RawMessage, lastErr *string) error
 	ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error)
+	// ClaimNextDueWorkflowRun claims a pending run or an awaiting-event
+	// run whose scheduled_for deadline has arrived. The latter is how
+	// parked waits are resumed for timeout handling.
+	ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error)
+	ScheduleWorkflowRun(ctx context.Context, id, status string, scheduledFor time.Time) error
 	CountActiveRunsByApp(ctx context.Context, appID string) (int, error)
 
 	// Steps

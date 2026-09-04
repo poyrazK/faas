@@ -269,7 +269,7 @@ func TestDeployManifestTriggers_BadScheduleSurfacesValidateError(t *testing.T) {
 	}
 }
 
-func TestDeployManifestTriggers_WorkflowDoesNotSilentlyDrop(t *testing.T) {
+func TestDeployManifestTriggers_WorkflowDefinitionsDoNotAffectTriggers(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeGitkeep(t, dir)
@@ -284,8 +284,8 @@ func TestDeployManifestTriggers_WorkflowDoesNotSilentlyDrop(t *testing.T) {
 `)
 	fc := &fakeCronClient{whoami: api.AccountResponse{Plan: "hobby"}}
 	err := deployManifestTriggers(context.Background(), fc, "my-api", dir)
-	if err == nil || !strings.Contains(err.Error(), "not deployable by this client yet") {
-		t.Fatalf("error = %v, want explicit workflow deployment error", err)
+	if err != nil {
+		t.Fatalf("error = %v, want no trigger fan-out error", err)
 	}
 	if len(fc.createdCalls) != 0 {
 		t.Fatalf("CreateCron calls = %d, want 0 for workflow-only manifest", len(fc.createdCalls))

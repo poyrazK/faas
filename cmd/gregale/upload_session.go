@@ -47,7 +47,7 @@ func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, a
 		runtime == "" &&
 		handler == "" &&
 		!dockerfile &&
-		ann == (api.DeployAnnotations{}) &&
+		ann.Reason == "" && ann.Tag == "" && ann.DeployedBy == "" && ann.PRNumber == 0 && len(ann.Workflows) == 0 &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&
 		canaryStages == ""
