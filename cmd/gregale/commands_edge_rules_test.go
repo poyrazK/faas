@@ -224,6 +224,8 @@ func TestCmdEdgeRulesCreate_HappyPaths_AllKinds(t *testing.T) {
 		{"cors", []string{"--cors-allow-origin", "https://x.example.com", "--cors-allow-method", "GET"}},
 		{"jwt", []string{"--jwt-issuer", "https://issuer.example.com", "--jwt-jwks-url", "https://issuer.example.com/.well-known/jwks.json", "--jwt-algorithm", "RS256"}},
 		{"ip", []string{"--ip-allow", "10.0.0.0/8"}},
+		{"budget", []string{"--budget-ms", "10000"}},
+		{"maintenance", []string{"--maintenance-retry-after-seconds", "120"}},
 	}
 	for _, c := range cases {
 		t.Run(c.kind, func(t *testing.T) {
@@ -551,5 +553,101 @@ func TestBuildEdgeRuleAction_IP_BadCIDR(t *testing.T) {
 	})
 	if err == nil {
 		t.Errorf("expected error on bad CIDR")
+	}
+}
+
+// TestBuildEdgeRuleAction_Budget_Marshals pins the regression that
+// motivated this change: `budget` was in edgeRuleKindVocab but had no
+// case in buildEdgeRuleAction, so every `--kind budget` create fell
+// through to "unknown kind". Because the x-faas-budget-ms override
+// header only applies when a kind=budget rule exists, that left the
+// 3 s RequestBudgetDefault unescapable for every customer.
+func TestBuildEdgeRuleAction_Budget_Marshals(t *testing.T) {
+	raw, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{
+		BudgetMs:             10000,
+		BudgetOverrideHeader: "X-My-Budget",
+	})
+	if err != nil {
+		t.Fatalf("buildEdgeRuleAction(budget) = %v, want nil", err)
+	}
+	var got api.EdgeRuleBudgetAction
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal action: %v", err)
+	}
+	if got.BudgetMs != 10000 {
+		t.Errorf("budget_ms = %d, want 10000", got.BudgetMs)
+	}
+	if got.AllowOverrideHeader != "X-My-Budget" {
+		t.Errorf("allow_override_header = %q, want X-My-Budget", got.AllowOverrideHeader)
+	}
+}
+
+func TestBuildEdgeRuleAction_Budget_RejectsNonPositive(t *testing.T) {
+	for _, ms := range []int{0, -1} {
+		if _, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{BudgetMs: ms}); err == nil {
+			t.Errorf("budget_ms=%d: expected error (a no-budget rule is a silent no-op)", ms)
+		}
+	}
+}
+
+// A budget rule may not widen past the platform ceiling — otherwise a
+// customer could register their way out of api.RequestBudgetMax.
+func TestBuildEdgeRuleAction_Budget_RejectsOverCeiling(t *testing.T) {
+	over := int(api.RequestBudgetMax.Milliseconds()) + 1
+	if _, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{BudgetMs: over}); err == nil {
+		t.Errorf("budget_ms=%d: expected error above the %s ceiling", over, api.RequestBudgetMax)
+	}
+}
+
+func TestBuildEdgeRuleAction_Budget_RejectsBadOverrideHeader(t *testing.T) {
+	// Not an RFC 7230 token — a space would break header parsing.
+	_, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{
+		BudgetMs:             3000,
+		BudgetOverrideHeader: "not a token",
+	})
+	if err == nil {
+		t.Errorf("expected error on non-token override header")
+	}
+}
+
+// Maintenance carries two optional fields, so the bare rule (no
+// flags) is the valid "hard down, no hint" shape and must marshal.
+func TestBuildEdgeRuleAction_Maintenance_BareRuleIsValid(t *testing.T) {
+	if _, err := buildEdgeRuleAction("maintenance", edgeRuleActionInputs{}); err != nil {
+		t.Fatalf("buildEdgeRuleAction(maintenance) = %v, want nil", err)
+	}
+}
+
+func TestBuildEdgeRuleAction_Maintenance_RejectsNegativeRetryAfter(t *testing.T) {
+	_, err := buildEdgeRuleAction("maintenance", edgeRuleActionInputs{MaintenanceRetryAfter: -1})
+	if err == nil {
+		t.Errorf("expected error on negative retry_after_seconds")
+	}
+}
+
+// kind=validate is accepted by edgeRuleKindVocab but is not
+// constructible from the CLI (its action carries a JSON Schema
+// document). The error must say that rather than "unknown kind",
+// which contradicted the vocab check two steps earlier.
+func TestBuildEdgeRuleAction_Validate_ReportsNotConstructible(t *testing.T) {
+	_, err := buildEdgeRuleAction("validate", edgeRuleActionInputs{})
+	if err == nil {
+		t.Fatalf("expected an error for kind=validate")
+	}
+	if strings.Contains(err.Error(), "unknown kind") {
+		t.Errorf("error = %q, want a not-yet-constructible message, not \"unknown kind\"", err)
+	}
+}
+
+// Every kind the CLI advertises must either build an action or fail
+// with a reason that is not "unknown kind" — otherwise the vocab and
+// the builder have drifted apart again.
+func TestBuildEdgeRuleAction_EveryVocabKindIsHandled(t *testing.T) {
+	for _, kind := range edgeRuleKindVocab {
+		if _, err := buildEdgeRuleAction(kind, edgeRuleActionInputs{}); err != nil {
+			if strings.Contains(err.Error(), "unknown kind") {
+				t.Errorf("kind %q is in edgeRuleKindVocab but has no case in buildEdgeRuleAction", kind)
+			}
+		}
 	}
 }

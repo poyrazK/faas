@@ -19,8 +19,20 @@
 package main
 
 import (
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
+)
+
+// These headers are private to the vmmd↔bridge H2C hop. They carry request
+// metadata that used to live in the bridge process environment. Keeping them
+// on each request makes a single bridge safe for concurrent invocations.
+const (
+	bridgeRequestMarkerHeader   = "X-Faas-Bridge-Persistent"
+	bridgeRequestProtocolHeader = "X-Faas-Bridge-Protocol"
+	bridgeRequestPortHeader     = "X-Faas-Bridge-Port"
+	bridgeRequestHostHeader     = "X-Faas-Bridge-Host"
 )
 
 // bridgeFraming is the per-stream framing selector (ADR-126).
@@ -146,4 +158,65 @@ func sanitizeCRLF(s string) string {
 		b.WriteByte(c)
 	}
 	return b.String()
+}
+
+func bridgeRequestUsesWireMetadata(r *http.Request) bool {
+	return r != nil && r.Header.Get(bridgeRequestMarkerHeader) == "1"
+}
+
+func bridgeRequestPort(r *http.Request, fallback uint16) uint16 {
+	if r == nil || !bridgeRequestUsesWireMetadata(r) {
+		return fallback
+	}
+	parsed, err := strconv.ParseUint(r.Header.Get(bridgeRequestPortHeader), 10, 16)
+	if err != nil || parsed == 0 {
+		return fallback
+	}
+	return uint16(parsed)
+}
+
+func bridgeRequestHost(r *http.Request, fallback string) string {
+	if r == nil {
+		return fallback
+	}
+	if bridgeRequestUsesWireMetadata(r) {
+		if host := r.Header.Get(bridgeRequestHostHeader); host != "" {
+			return sanitizeCRLF(host)
+		}
+	}
+	if bridgeRequestUsesWireMetadata(r) && r.Host != "" && r.Host != "unix" {
+		return sanitizeCRLF(r.Host)
+	}
+	return fallback
+}
+
+func bridgeRequestHeaders(r *http.Request) []headerEntry {
+	if r == nil || !bridgeRequestUsesWireMetadata(r) {
+		return parseHeaders(os.Getenv("FAAS_BRIDGE_HEADERS"))
+	}
+	var headers []headerEntry
+	for name, values := range r.Header {
+		if isBridgeRequestHeader(name) || isHopByHopHeader(name) || strings.EqualFold(name, "Host") {
+			continue
+		}
+		for _, value := range values {
+			headers = append(headers, headerEntry{Name: sanitizeCRLF(name), Value: sanitizeCRLF(value)})
+		}
+	}
+	return headers
+}
+
+func isBridgeRequestHeader(name string) bool {
+	switch {
+	case strings.EqualFold(name, bridgeRequestMarkerHeader):
+		return true
+	case strings.EqualFold(name, bridgeRequestProtocolHeader):
+		return true
+	case strings.EqualFold(name, bridgeRequestPortHeader):
+		return true
+	case strings.EqualFold(name, bridgeRequestHostHeader):
+		return true
+	default:
+		return false
+	}
 }

@@ -603,6 +603,16 @@ type ComputeNodeUsageBatcher interface {
 	ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// WebhookDeliveryReleaser is an optional rollback seam for webhook ingress.
+// A delivery is claimed before its side effects run to serialize concurrent
+// redeliveries; if those side effects fail, the claim must be removed so the
+// provider can retry immediately instead of receiving a false duplicate ACK.
+// It is separate from Store so narrow test doubles and older integrations
+// remain source-compatible.
+type WebhookDeliveryReleaser interface {
+	ReleaseWebhookDelivery(ctx context.Context, provider, deliveryID string) error
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface
@@ -1574,6 +1584,12 @@ type Store interface {
 	// both want "instances I'm responsible for" rather than the
 	// fleet-wide ListAllInstances.
 	ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
+	// ListInstancesForLifecycleReconciliation returns live instances whose
+	// parent app or account is in a deletion state. It is the durable fallback
+	// for pg_notify: schedd uses it to destroy VMs after a missed notification
+	// or a restart. A non-empty nodeID scopes the result to apps owned by that
+	// node; limit <= 0 returns no rows.
+	ListInstancesForLifecycleReconciliation(ctx context.Context, nodeID string, limit int) ([]Instance, error)
 	// ListOwnedCronsByNodeID returns every cron whose owning app's
 	// owner_node matches nodeID. The cron dispatcher runs once per
 	// node and only fires crons on apps it owns; without this filter
@@ -3555,6 +3571,11 @@ type Store interface {
 	// (Engine.AdmitMirrorInstance) call this overload with
 	// an explicit mode value.
 	CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error)
+	// CreateJobInstance creates the job-task shape required by the jobs
+	// schema: app_id and deployment_id are NULL, while job_id and kind are
+	// populated. Job definitions point at OCI images directly, so there is
+	// no deployment row to reuse for this instance.
+	CreateJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	// ReadActiveInstanceForWakeID is the cluster-coord lookup
 	// primitive (multi-host safety cluster PR-5 / audit F4). When
@@ -4539,6 +4560,10 @@ type Store interface {
 	// list method alone cannot fetch an unknown invoice without
 	// knowing its account_id up-front.
 	GetInvoiceByID(ctx context.Context, id string) (Invoice, error)
+	// UpsertInvoice persists one provider invoice projection. The natural key
+	// (account_id, provider, provider_invoice_id) makes webhook redelivery and
+	// order status updates idempotent.
+	UpsertInvoice(ctx context.Context, inv Invoice) error
 
 	// Account credits (issue #279). The handler is the only writer to
 	// account_credits + credit_ledger; meterd reads overage_cap_cents
@@ -4602,8 +4627,9 @@ type Store interface {
 	// against every other.
 	ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCreditParams) (ConsumeAccountCreditResult, error)
 	// CurrentMonthOverageCents returns the account's derived overage
-	// in integer cents for the current UTC month. 1 GB-h = 100 cents
-	// at €0.01/GB-h (CLAUDE.md: integer cents only, never float).
+	// in integer cents for the current UTC month. The account plan's
+	// included calendar-month allowance is subtracted before the
+	// €0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
 	// meterd consults this on every quota tick to decide whether the
 	// overage row should be capped. The PgStore implementation sums
 	// usage_minutes.mb_seconds since the UTC month start and converts
@@ -4614,6 +4640,11 @@ type Store interface {
 	// GB-RAM-hours for the past hour (spec §4.7, ADR-010). MemStore scans
 	// in memory; PgStore runs a SELECT … WHERE minute >= $2 AND minute < $3.
 	UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error)
+	// UsageWindows returns positive account-level usage aggregates for the
+	// completed UTC-hour windows in [start, end). The query is the durable
+	// backfill source for meterd: a restart or provider outage can safely
+	// replay these rows because every provider records its own idempotency key.
+	UsageWindows(ctx context.Context, start, end time.Time) ([]UsageWindow, error)
 
 	// StripePushDedup is the dedupe table for hourly usage pushes. The
 	// PushDedupe interface in pkg/billing/stripe is satisfied by both stores.
@@ -4652,9 +4683,9 @@ type Store interface {
 	// (the pre-flight maps zeros to "table missing" the same way).
 	PaddleOverageDedupeSchema(ctx context.Context) (PaddleOverageDedupeSchemaResult, error)
 
-	// WebhookReplayDedup is the dedupe gate for the three webhook
-	// ingresses on the box (GitHub via gatewayd-internal, Stripe + Paddle via
-	// apid). One table covers all three providers; the (provider,
+	// WebhookReplayDedup is the dedupe gate for the external webhook
+	// ingresses on the box (GitHub via gatewayd-internal, billing providers via
+	// apid). One table covers all providers; the (provider,
 	// delivery_id) primary key makes a (re-POSTed) webhook within the
 	// TTL window a 200-on-replay no-op. cutoff is the lower bound on
 	// received_at: rows older than the TTL are ignored so a fresh
@@ -4676,6 +4707,10 @@ type Store interface {
 	// is satisfied by both stores via a thin adapter that picks TTL
 	// (=5min, the webhookdedupe.TTL constant) and computes cutoff +
 	// expiresAt on each call.
+	// ClaimWebhookDelivery is the atomic variant for ingress handlers:
+	// it returns true only for a new or expired delivery and false for
+	// a delivery already being processed inside the replay window.
+	ClaimWebhookDelivery(ctx context.Context, provider, deliveryID string, cutoff, expiresAt time.Time) (claimed bool, err error)
 	CheckWebhookReplay(ctx context.Context, provider, deliveryID string, cutoff time.Time) (bool, error)
 	RecordWebhookDelivery(ctx context.Context, provider, deliveryID string, expiresAt time.Time) error
 	SweepExpiredWebhookDeliveries(ctx context.Context, now time.Time) (int64, error)

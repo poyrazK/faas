@@ -65,6 +65,48 @@
     group: faas
     mode: "0640"
 
+- name: compute_only_service — install runtime base env example
+  ansible.builtin.copy:
+    src: ../../_shared/files/runtime-bases.env.example
+    dest: /etc/faas/runtime-bases.env.example
+    owner: root
+    group: faas
+    mode: "0640"
+
+- name: compute_only_service — require runtime base env on named compute nodes
+  ansible.builtin.stat:
+    path: /etc/faas/runtime-bases.env
+  register: faas_runtime_bases_env_stat
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — validate runtime base env on named compute nodes
+  ansible.builtin.shell: |
+    set -eu
+    for key in MINIMAL NODE22 PYTHON312 GO124 GO124_ALPINE NODE24 PYTHON313; do
+      grep -Eq "^FAAS_DEPLOY_BASE_REF_${key}=[^#[:space:]]+@sha256:[0-9a-fA-F]{64}$" /etc/faas/runtime-bases.env
+    done
+  args:
+    executable: /bin/sh
+  register: faas_runtime_bases_env_keys
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — fail closed on incomplete runtime base env
+  ansible.builtin.assert:
+    that:
+      - faas_runtime_bases_env_stat.stat.exists
+      - faas_runtime_bases_env_stat.stat.pw_name == 'root'
+      - faas_runtime_bases_env_stat.stat.gr_name == 'root'
+      - faas_runtime_bases_env_stat.stat.mode == '0600'
+      - faas_runtime_bases_env_keys.rc == 0
+    fail_msg: >-
+      /etc/faas/runtime-bases.env must be provisioned as root:root 0600 and
+      define digest-pinned MINIMAL, NODE22, PYTHON312, GO124, GO124_ALPINE,
+      NODE24, and PYTHON313 refs before enabling imaged on a named compute node.
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
 - name: compute_only_service — require compute DB env on split-box hosts
   ansible.builtin.stat:
     path: /etc/faas/compute-db.env
@@ -104,6 +146,64 @@
       /etc/faas/compute-db.env must define non-empty DATABASE_URL and
       FAAS_VMMD_DBURL entries. VMMD uses its explicit split-box override;
       the other compute daemons use DATABASE_URL.
+
+# Split-node restore safety gate. The storage package deliberately keeps the
+# historical local-prefix defaults for single-box development, so merely
+# setting FAAS_STORAGE_BACKEND=oci is not enough: the default still leaves
+# snap/, base/, kernel/, and layers/ on each host. That is exactly how two
+# nodes accepted the same logical snapshot key but booted different bytes.
+# The shared-artifact contract belongs in storage.env, alongside the registry
+# credentials and separate from the root-only database environment. Every
+# compute daemon loads storage.env, so validating this file keeps node_join,
+# ordinary bootstrap, and a manual systemd start on one source of truth.
+- name: compute_only_service — inspect shared storage environment
+  ansible.builtin.stat:
+    path: /etc/faas/storage.env
+  register: faas_storage_env_stat
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — require protected shared storage environment
+  ansible.builtin.assert:
+    that:
+      - faas_storage_env_stat.stat.exists
+      - faas_storage_env_stat.stat.isreg
+      - faas_storage_env_stat.stat.pw_name == 'root'
+      - faas_storage_env_stat.stat.gr_name == 'faas'
+      - faas_storage_env_stat.stat.mode == '0440'
+    fail_msg: >-
+      /etc/faas/storage.env must be provisioned as root:faas 0440 before
+      enabling compute-only daemons. It is the canonical shared-artifact
+      environment loaded by vmmd, imaged, and builderd.
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — read shared storage contract
+  ansible.builtin.slurp:
+    src: /etc/faas/storage.env
+  register: faas_storage_env_content
+  no_log: true
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — fail closed when shared artifact contract is incomplete
+  ansible.builtin.assert:
+    that:
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=oci$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=[^\\r\\n]*$') | length) == 1"
+      - "((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1"
+    fail_msg: >-
+      /etc/faas/storage.env must declare the strict shared-artifact
+      contract: FAAS_STORAGE_BACKEND=oci,
+      FAAS_STORAGE_LOCAL_PREFIXES=none, FAAS_REQUIRE_SHARED_ARTIFACTS=1,
+      FAAS_STORAGE_CACHE_SERVE_STALE=0, and exactly one HTTPS
+      FAAS_OCI_REGISTRY assignment. Without this gate a compute node may
+      restore a different local copy for the same snapshot key.
+  no_log: true
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
 - name: compute_only_service — ensure faas-imaged user exists (non-root, no shell)
@@ -262,6 +362,22 @@
     group: root
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'compute-only'
+
+# Runtime bases embed guest/init as PID 1. Keep the source release-managed;
+# an old /usr/local/bin/faas-guest-init can otherwise survive a daemon rollout
+# and make every newly staged base boot with stale guest code.
+- name: compute_only_service — install canonical guest-init drop-in
+  ansible.builtin.template:
+    src: zz-faas-guest-init.conf.j2
+    dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-guest-init.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — reload systemd after imaged drop-ins
+  ansible.builtin.systemd:
+    daemon_reload: true
 
 # The split gatewayd-internal egress listener runs as the unprivileged faas
 # user. PKI creates the server key root-only, so grant only the shared faas

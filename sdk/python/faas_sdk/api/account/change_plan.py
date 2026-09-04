@@ -38,6 +38,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 202:
+        response_202 = AccountResponse.from_dict(response.json())
+
+        return response_202
+
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
 
@@ -85,11 +90,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ChangePlanRequest,
 ) -> Response[AccountResponse | Problem]:
-    """Change billing plan.
+    """Change billing plan after provider confirmation.
 
      Switch the account between `free`, `hobby`, `pro`, and `scale`. The
-    Stripe subscription is updated server-side; the response carries the
-    new plan only.
+    local account moves to a paid tier only after the configured billing
+    provider confirms payment. If a new subscription is required, the
+    `payment_required` response includes `checkout_url`; if an existing
+    subscription must be changed, it includes `billing_portal_url`.
 
     Args:
         body (ChangePlanRequest): Target plan for the change.
@@ -118,11 +125,13 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ChangePlanRequest,
 ) -> AccountResponse | Problem | None:
-    """Change billing plan.
+    """Change billing plan after provider confirmation.
 
      Switch the account between `free`, `hobby`, `pro`, and `scale`. The
-    Stripe subscription is updated server-side; the response carries the
-    new plan only.
+    local account moves to a paid tier only after the configured billing
+    provider confirms payment. If a new subscription is required, the
+    `payment_required` response includes `checkout_url`; if an existing
+    subscription must be changed, it includes `billing_portal_url`.
 
     Args:
         body (ChangePlanRequest): Target plan for the change.
@@ -146,11 +155,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ChangePlanRequest,
 ) -> Response[AccountResponse | Problem]:
-    """Change billing plan.
+    """Change billing plan after provider confirmation.
 
      Switch the account between `free`, `hobby`, `pro`, and `scale`. The
-    Stripe subscription is updated server-side; the response carries the
-    new plan only.
+    local account moves to a paid tier only after the configured billing
+    provider confirms payment. If a new subscription is required, the
+    `payment_required` response includes `checkout_url`; if an existing
+    subscription must be changed, it includes `billing_portal_url`.
 
     Args:
         body (ChangePlanRequest): Target plan for the change.
@@ -177,11 +188,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ChangePlanRequest,
 ) -> AccountResponse | Problem | None:
-    """Change billing plan.
+    """Change billing plan after provider confirmation.
 
      Switch the account between `free`, `hobby`, `pro`, and `scale`. The
-    Stripe subscription is updated server-side; the response carries the
-    new plan only.
+    local account moves to a paid tier only after the configured billing
+    provider confirms payment. If a new subscription is required, the
+    `payment_required` response includes `checkout_url`; if an existing
+    subscription must be changed, it includes `billing_portal_url`.
 
     Args:
         body (ChangePlanRequest): Target plan for the change.

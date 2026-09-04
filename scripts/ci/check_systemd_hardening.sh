@@ -49,6 +49,20 @@ for rel in "${units[@]}"; do
       errors=$((errors + 1))
     fi
   done
+  # Every daemon must bound its own memory. The value is per-daemon (256M
+  # for the small control-plane services, 4G for imaged's layer work), so
+  # this is a presence check rather than an exact-line match.
+  #
+  # vmmd regressed here: it was the only unit without a cap, apparently
+  # dropped when Delegate=yes was added out of concern the cap would also
+  # bound the delegated children. It does not — firecracker VMs live under
+  # faas-tenant.slice, not vmmd's cgroup. On 2026-09-03 an uncapped vmmd
+  # reached 2.1 GB RSS and the shared 3 GB faas-cp.slice OOM-killed it,
+  # taking the compute node out of rotation. This check is the tripwire.
+  if ! grep -Eq '^MemoryMax=' "$file"; then
+    echo "systemd-hardening-check: ${rel}: missing MemoryMax= (an unbounded daemon can OOM its whole slice)" >&2
+    errors=$((errors + 1))
+  fi
   # vmmd and schedd deliberately share the host mount namespace so their
   # /run/faas sockets remain visible across daemon namespaces. All other
   # production daemons must have a private temporary directory.

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -41,6 +42,34 @@ func TestInjectManifest_WritesCanonicalJSON(t *testing.T) {
 	}
 	if !bytes.Contains(b, []byte("8080")) {
 		t.Errorf("manifest content missing Port: %s", b)
+	}
+}
+
+func TestInjectWorkloadManifest_WritesNameScopedContract(t *testing.T) {
+	staging := t.TempDir()
+	want := api.AppManifest{Entrypoint: []string{"/bin/metrics"}, Port: 9090}
+	if err := InjectWorkloadManifest(staging, "metrics", want); err != nil {
+		t.Fatalf("InjectWorkloadManifest: %v", err)
+	}
+
+	path := filepath.Join(staging, "etc", "faas", "workloads", "metrics", "workload.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("workload manifest not at expected path %q: %v", path, err)
+	}
+	got, err := api.ReadManifest(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifest = %#v, want %#v", got, want)
+	}
+}
+
+func TestInjectWorkloadManifest_RejectsPathTraversal(t *testing.T) {
+	err := InjectWorkloadManifest(t.TempDir(), "../escape", api.AppManifest{Entrypoint: []string{"/bin/metrics"}})
+	if err == nil || !strings.Contains(err.Error(), "invalid workload manifest name") {
+		t.Fatalf("error = %v, want invalid workload manifest name", err)
 	}
 }
 
@@ -626,6 +655,70 @@ async def handler(event, ctx):
 	}
 	if !strings.Contains(stderr.String(), "module log") || !strings.Contains(stderr.String(), "handler log") {
 		t.Fatalf("customer logs did not reach stderr: %s", stderr.String())
+	}
+}
+
+func TestNormalizeFunctionHandlerFrom_NodeKeepsSourceAndWritesAdapter(t *testing.T) {
+	staging := t.TempDir()
+	appDir := filepath.Join(staging, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const source = "export async function handler(event, ctx) { return event; }"
+	if err := os.WriteFile(filepath.Join(appDir, "handler.js"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NormalizeFunctionHandlerFrom(staging, "/app/handler.js", "/app/node24.js"); err != nil {
+		t.Fatalf("NormalizeFunctionHandlerFrom: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(appDir, "node24.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got, []byte("handler.js")) {
+		t.Fatalf("node adapter does not import handler.js: %q", got)
+	}
+	kept, err := os.ReadFile(filepath.Join(appDir, "handler.js"))
+	if err != nil || string(kept) != source {
+		t.Fatalf("source was not preserved: %q (%v)", kept, err)
+	}
+}
+
+func TestNormalizeFunctionHandlerFrom_PythonWrapsInPlace(t *testing.T) {
+	staging := t.TempDir()
+	appDir := filepath.Join(staging, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "handler.py"), []byte("def handler(event, ctx):\n    return 'ok'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NormalizeFunctionHandlerFrom(staging, "/app/handler.py", "/app/handler.py"); err != nil {
+		t.Fatalf("NormalizeFunctionHandlerFrom: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(appDir, ".faas-handler.py")); err != nil {
+		t.Fatalf("implementation was not preserved: %v", err)
+	}
+}
+
+func TestNormalizeFunctionHandlerFrom_GoPreservesExecutableMode(t *testing.T) {
+	staging := t.TempDir()
+	appDir := filepath.Join(staging, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "server"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := NormalizeFunctionHandlerFrom(staging, "/app/server", "/app/handler"); err != nil {
+		t.Fatalf("NormalizeFunctionHandlerFrom: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(appDir, "handler"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Errorf("handler mode = %o, want 755", info.Mode().Perm())
 	}
 }
 

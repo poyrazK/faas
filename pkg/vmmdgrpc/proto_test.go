@@ -491,6 +491,7 @@ func TestSidecarsFromProto(t *testing.T) {
 			RamMb: 64, Port: 9091, Essential: true,
 			StorageKey: "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4",
 			DriveSlot:  "layer-sidecar-0",
+			SealedEnv:  []*vmmdpb.SealedSecret{{Key: "TOKEN", Ciphertext: []byte("age-ciphertext")}},
 		},
 		{
 			Name: "scraper", Image: "ghcr.io/org/s@sha256:01", Type: "sidecar",
@@ -506,6 +507,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	if got[0].Name != "migrator" || got[0].Type != "init" {
 		t.Errorf("entry 0 name/type: got %+v", got[0])
 	}
+	if got[0].Image != "ghcr.io/org/m@sha256:00" {
+		t.Errorf("entry 0 Image = %q, want digest ref", got[0].Image)
+	}
 	if got[0].RamMB != 64 || got[0].Port != 9091 || !got[0].Essential {
 		t.Errorf("entry 0 ram/port/essential: got %+v", got[0])
 	}
@@ -514,6 +518,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	}
 	if got[0].StorageKey != "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4" {
 		t.Errorf("entry 0 StorageKey wrong: got %q", got[0].StorageKey)
+	}
+	if len(got[0].SealedEnv) != 1 || got[0].SealedEnv[0].Key != "TOKEN" || string(got[0].SealedEnv[0].Ciphertext) != "age-ciphertext" {
+		t.Errorf("entry 0 sealed env wrong: got %+v", got[0].SealedEnv)
 	}
 	if got[1].Name != "scraper" || got[1].Type != "sidecar" {
 		t.Errorf("entry 1 name/type: got %+v", got[1])

@@ -45,7 +45,7 @@ func PlanOverageMillicentsPerGBHour() int64 {
 // unit is a financial-model constant — the float-to-int truncation that
 // closed the M7 acceptance gate's < 0.1 % delta applies equally to both
 // providers, and the value is pinned by TestWireQuantityConstants below.
-const WireQuantityMillicentsPerGBHour int64 = 1000
+const WireQuantityMillicentsPerGBHour int64 = api.OverageMillicentsPerGBHour
 
 // SecondsPerGBHour is the integer conversion factor for mb_seconds →
 // GB-RAM-hours: 1 MB resident for 1 second = 1/(1024*3600) GB-h. The
@@ -54,7 +54,7 @@ const WireQuantityMillicentsPerGBHour int64 = 1000
 //
 // Exported so pkg/billing/stripe and any future provider can pin the
 // shared value in their own tests without re-declaring it.
-const SecondsPerGBHour int64 = 1024 * 3600
+const SecondsPerGBHour int64 = api.SecondsPerGBHour
 
 // WireQuantityForMBSeconds converts a summed mb_seconds window into the
 // integer wire quantity both providers' metered surfaces accept.

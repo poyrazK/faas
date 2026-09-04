@@ -1,10 +1,8 @@
 package sched
 
 // ADR-098: schedd consumes the app_delete pg_notify channel published
-// by apid (handlers_apps.go::deleteApp) and evicts any in-flight
-// wake for the deleted app. The wake coordinator's Forget(appID)
-// closes the leader's done channel with ErrAppDeleted so followers
-// unwind without waiting for the wake-coord TTL.
+// by apid (handlers_apps.go::deleteApp), evicts any in-flight wake,
+// and reconciles the app's live instances through vmmd.
 //
 // Mirrors pkg/sched/deletion_subscriber.go line-for-line: takes an
 // already-opened `<-chan db.Notification` and a *Engine, runs the
@@ -20,8 +18,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
-// AppDeleteSubscriber consumes NotifyAppDelete and evicts any
-// in-flight wake for the deleted app via the wake coordinator.
+// AppDeleteSubscriber consumes NotifyAppDelete, evicts any in-flight
+// wake for the deleted app via the wake coordinator, and immediately
+// destroys live VMs belonging to the soft-deleted app.
 //
 // Lock discipline (load-bearing — see ADR-098 §Decision):
 //
@@ -50,11 +49,8 @@ func NewAppDeleteSubscriber(engine *Engine, log *slog.Logger) *AppDeleteSubscrib
 //
 // Each "keep going" decision is deliberate: pg_notify is
 // best-effort; the apps table is the source of truth for
-// "the app was deleted", and the apid handler that emits this
-// notification has already deleted the row by the time the
-// schedd-side subscriber observes it. A redelivered / missed
-// message therefore costs at worst a stale wake on a deleted app,
-// which the next state scan reaps.
+// "the app was deleted". A missed message is recovered by the
+// durable lifecycle sweep in Loop.runReaper.
 func (d *AppDeleteSubscriber) Run(ctx context.Context, ch <-chan db.Notification) error {
 	for {
 		select {
@@ -95,24 +91,23 @@ func (d *AppDeleteSubscriber) handle(ctx context.Context, n db.Notification) {
 	d.evictApp(ctx, payload.AppID)
 }
 
-// evictApp evicts any in-flight wake for appID via the wake
-// coordinator. Idempotent: Forget on an absent entry is a no-op
-// (per wake_coord.go). The follower's await unwinds with
-// ErrAppDeleted; the leader's await unwinds with ErrAppDeleted if
-// the leader hadn't yet populated its outcome.
-//
-// The natural reaper collects the in-flight instance row (if any)
-// on the next loop tick — schedd doesn't dial vmmd from this path
-// because a WAKING instance never finished wake (vmmd has no live
-// handle) and a RUNNING instance whose row is reaped by the engine
-// is auto-collected by the engine's next state scan.
-func (d *AppDeleteSubscriber) evictApp(_ context.Context, appID string) {
+// evictApp evicts any in-flight wake and reconciles live instances for appID.
+// Both operations are idempotent, so notification redelivery is safe.
+func (d *AppDeleteSubscriber) evictApp(ctx context.Context, appID string) {
 	if d.engine.wakeCoord == nil {
 		// Defensive: a test wiring an Engine without wakeCoord
 		// shouldn't crash on this path.
+		// The lifecycle cleanup is still safe and should not depend on
+		// the optional wake coordinator test seam.
+	} else {
+		d.engine.wakeCoord.Forget(appID)
+	}
+	acted, err := d.engine.ReconcileDeletedApp(ctx, appID)
+	if err != nil {
+		d.log.Warn("schedd: app-delete subscriber lifecycle reconcile failed",
+			"app", appID, "acted", acted, "err", err)
 		return
 	}
-	d.engine.wakeCoord.Forget(appID)
-	d.log.Info("schedd: app-delete subscriber forgot wake-coord entry",
-		"app", appID)
+	d.log.Info("schedd: app-delete subscriber reconciled app",
+		"app", appID, "acted", acted)
 }

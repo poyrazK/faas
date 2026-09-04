@@ -3,31 +3,100 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}} — onebox faas</title>
-  <script src="https://unpkg.com/htmx.org@2.0.4" nonce="{{.Nonce}}" defer></script>
+  <title>{{.Title}} — Gregale</title>
   <style nonce="{{.Nonce}}">
-    :root { color-scheme: light dark; }
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
-    .flash { background: #fff8c5; padding: 0.5rem 1rem; border: 1px solid #e2cf6e; margin: 1rem 0; }
-    .error { background: #fde7e9; padding: 0.5rem 1rem; border: 1px solid #e0a3aa; margin: 1rem 0; }
-    main { padding: 2rem 0; }
-    h1 { margin-top: 0; }
-    form { display: grid; gap: 0.5rem; max-width: 360px; }
-    input, button { padding: 0.5rem 0.7rem; font: inherit; }
-    button { cursor: pointer; }
-    code { background: #eee; padding: 0.1rem 0.3rem; border-radius: 3px; }
+    /* The CLI handshake page. Nothing decorative: the page exists to show
+       one code and one button, and to get out of the way. Follows the OS
+       polarity; no animation, no external origins. */
+    :root {
+      color-scheme: light dark;
+      --fg: #111;
+      --muted: #6b6b6b;
+      --line: #e4e4e4;
+      --bg: #fff;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --fg: #ededed; --muted: #979797; --line: #2a2a2a; --bg: #0d0d0d; }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--fg);
+      font: 15px/1.6 ui-sans-serif, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    main { width: min(22rem, calc(100vw - 3rem)); padding: 3rem 0; }
+    .brand { font-size: 0.9rem; font-weight: 600; letter-spacing: 0.01em; margin: 0 0 2.5rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 0.75rem; }
+    p { margin: 0 0 1.5rem; color: var(--muted); }
+    p strong { color: var(--fg); font-weight: 600; }
+    code { font-family: var(--mono); font-size: 0.9em; }
+
+    .code-label {
+      margin: 0 0 0.35rem;
+      font-size: 0.75rem; color: var(--muted);
+    }
+    .code {
+      font-family: var(--mono); font-size: 1rem; letter-spacing: 0.06em;
+      border: 1px solid var(--line); border-radius: 6px;
+      padding: 0.6rem 0.75rem; margin: 0 0 1.5rem;
+      word-break: break-all;
+    }
+
+    form { margin: 0 0 1.25rem; }
+    button {
+      width: 100%;
+      font: inherit; font-weight: 600;
+      color: var(--bg); background: var(--fg);
+      border: 1px solid var(--fg); border-radius: 6px;
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+    }
+    button:hover { opacity: 0.85; }
+    button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+    .fine { font-size: 0.8rem; margin: 0; }
+
+    .flash, .errorbox {
+      border: 1px solid var(--line); border-radius: 6px;
+      padding: 0.6rem 0.75rem; margin: 0 0 1.5rem;
+      font-size: 0.85rem;
+    }
+    .errorbox { color: #b3261e; border-color: #b3261e; }
+    @media (prefers-color-scheme: dark) { .errorbox { color: #ff8f88; border-color: #7a3733; } }
   </style>
 </head>
 <body>
-  {{if .Flash}}
-    {{if index .Data "Error"}}<div class="error">{{.Flash}}</div>{{else}}<div class="flash">{{.Flash}}</div>{{end}}
-  {{end}}
   <main>
+    <p class="brand">Gregale</p>
+
+    {{if .Flash}}
+      {{if index .Data "Error"}}<div class="errorbox" role="alert">{{.Flash}}</div>{{else}}<div class="flash">{{.Flash}}</div>{{end}}
+    {{end}}
+
     <h1>{{.Title}}</h1>
+
     {{if index .Data "Error"}}
-      <p>This code is no longer usable. Open a fresh terminal and run <code>faas login</code> again to get a new code.</p>
+      <p>
+        This code was already used or has expired. Codes work exactly once.
+        Run <code>gregale login</code> again for a new one.
+      </p>
+      <p class="fine">Nothing was authorized. You can close this tab.</p>
     {{else}}
-      <p>Your terminal opened this page from <code>faas login</code>. You are signed in as <strong>{{index .Data "AccountEmail"}}</strong>. Authorize this browser session for your CLI.</p>
+      <p>
+        <code>gregale login</code> opened this page. Authorizing gives that
+        terminal access as <strong>{{index .Data "AccountEmail"}}</strong> — this
+        account only.
+      </p>
+
+      <p class="code-label">Code, as printed in your terminal</p>
+      <div class="code">{{index .Data "Code"}}</div>
+
       <form method="POST" action="/cli-auth">
         <input type="hidden" name="code" value="{{index .Data "Code"}}">
         {{/* CSRF guard. The csrf_token value is a sealed envelope bound to
@@ -35,9 +104,10 @@
             carries the same value, and postCliAuthPage verifies both after
             sessionAuth has established the account. */}}
         <input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}">
-        <button type="submit">Authorize CLI</button>
+        <button type="submit">Authorize</button>
       </form>
-      <p style="font-size: 0.9em; color: #666;">The CLI will receive access only for this signed-in Gregale account.</p>
+
+      <p class="fine">Didn't run this? Close the tab — nothing happens without the button.</p>
     {{end}}
   </main>
 </body>

@@ -86,10 +86,10 @@
       {{if .Data.HasPaidPlan}}
         <h2>Manage billing</h2>
         {{if .Data.PortalURL}}
-          <p><a class="btn" href="{{.Data.PortalURL}}" rel="noopener">Open Stripe billing portal</a></p>
-          <p>Update card, view invoices, download receipts. The portal is hosted by Stripe; no card data touches this server.</p>
+          <p><a class="btn" href="{{.Data.PortalURL}}" rel="noopener">Open {{if eq .Data.Provider "polar"}}Polar{{else if eq .Data.Provider "paddle"}}Paddle{{else}}billing{{end}} portal</a></p>
+          <p>Update your payment method, manage your subscription, view invoices, and download receipts. The portal is hosted by the billing provider; no card data touches this server.</p>
         {{else}}
-          <p>Stripe portal is not configured on this box. Use the CLI: <code>faas billing portal</code>.</p>
+          <p>The billing portal is not available on this box. Use the CLI: <code>faas billing portal</code>.</p>
         {{end}}
 
         <h2>Last invoice</h2>

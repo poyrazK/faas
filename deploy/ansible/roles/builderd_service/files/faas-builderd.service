@@ -14,9 +14,8 @@ Type=simple
 User=faas-builderd
 Group=faas
 # builderd reads FAAS_BUILDERD_CONFIG env var (cmd/builderd/main.go:66)
-# — no --config flag. /etc/faas/sealed.env is the canonical source the
-# env-var falls back to when the drop-in (set by the Mega-PR-C tasks)
-# does not override.
+# — no --config flag. The role drop-in and runtime environment files carry
+# the canonical production configuration.
 ExecStart=/opt/faas/current/bin/builderd
 Restart=on-failure
 RestartSec=2s
@@ -37,13 +36,18 @@ MemoryMax=512M
 # staging root for the build artifact; ReadWritePaths= below
 # whitelists exactly the paths the daemon writes to.
 # FAAS_BUILDERD_CONFIG set via the 99-faas-role.conf drop-in (Mega-PR-C);
-# sealed.env is no longer read (issue #585 / ADR-127 — apid-only).
+# The old monolithic sealed.env is no longer read (issue #585 / ADR-127 —
+# apid-only).
 # compute-db.env is kept for the optional DATABASE_URL the TOML config
 # references on OCI-backed storage backends.
 EnvironmentFile=-/etc/faas/compute-db.env
 # Shared OCI storage contract. Optional for single-box/local deployments;
 # required on a multi-box fleet and identical on every storage consumer.
 EnvironmentFile=-/etc/faas/storage.env
+# Runtime base contract. Named compute nodes must provision the populated
+# digest-pinned file before enabling this unit; the application resolver also
+# fails closed if a runtime ref is absent or unpinned.
+EnvironmentFile=-/etc/faas/runtime-bases.env
 
 NoNewPrivileges=yes
 ProtectSystem=strict

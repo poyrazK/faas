@@ -36,16 +36,18 @@ const (
 // cover everything guest-init needs to run one build to completion without
 // further host contact.
 type BuildManifest struct {
-	SchemaVersion int            `json:"schema_version"`
-	BuildID       string         `json:"build_id"`
-	TenantID      string         `json:"tenant_id"`
-	DeploymentID  string         `json:"deployment_id"`
-	SourceTarPath string         `json:"source_tar_path"` // absolute path on drive1
-	Workdir       string         `json:"workdir"`         // default /build/src
-	OutDir        string         `json:"out_dir"`         // default /build/out
-	Framework     BuildFramework `json:"framework"`
-	TimeoutSec    int            `json:"timeout_sec"`
-	LogTailBytes  int            `json:"log_tail_bytes"` // default 64 KiB
+	SchemaVersion  int            `json:"schema_version"`
+	BuildID        string         `json:"build_id"`
+	TenantID       string         `json:"tenant_id"`
+	DeploymentID   string         `json:"deployment_id"`
+	SourceTarPath  string         `json:"source_tar_path"` // absolute path on drive1
+	Workdir        string         `json:"workdir"`         // default /build/src
+	OutDir         string         `json:"out_dir"`         // default /build/out
+	Framework      BuildFramework `json:"framework"`
+	Runtime        string         `json:"runtime,omitempty"`
+	RuntimeBaseRef string         `json:"runtime_base_ref,omitempty"`
+	TimeoutSec     int            `json:"timeout_sec"`
+	LogTailBytes   int            `json:"log_tail_bytes"` // default 64 KiB
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init

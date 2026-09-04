@@ -24,6 +24,9 @@ func TestRingBuffer_PerAppSum(t *testing.T) {
 	if got := r.AppRPS("app1", base.Add(2*time.Second)); got != 20 {
 		t.Errorf("AppRPS = %v, want 20 (first-touch seed is delta=0)", got)
 	}
+	if got := r.AppRate("app1", base.Add(2*time.Second)); got != 4 {
+		t.Errorf("AppRate = %v, want 4 requests/s over the 5-second window", got)
+	}
 }
 
 // TestRingBuffer_EvictsOldBuckets verifies that ticks older than
@@ -44,6 +47,9 @@ func TestRingBuffer_EvictsOldBuckets(t *testing.T) {
 	got := r.AppRPS("app1", base.Add(5*time.Second))
 	if got != 50 {
 		t.Errorf("AppRPS = %v, want 50 (first tick evicted, 5 buckets summed)", got)
+	}
+	if got := r.AppRate("app1", base.Add(5*time.Second)); got != 10 {
+		t.Errorf("AppRate = %v, want 10 requests/s", got)
 	}
 }
 
@@ -73,6 +79,9 @@ func TestRingBuffer_GatewayRestartDoesNotSpike(t *testing.T) {
 	if got := r.AppRPS("app1", base.Add(2*time.Second)); got != 10 {
 		t.Errorf("AppRPS after restart + 1 delta tick = %v, want 10", got)
 	}
+	if got := r.AppRate("app1", base.Add(2*time.Second)); got != 2 {
+		t.Errorf("AppRate after restart + 1 delta tick = %v, want 2 requests/s", got)
+	}
 }
 
 // TestRingBuffer_UnknownAppReturnsZero verifies that an app not
@@ -81,6 +90,9 @@ func TestRingBuffer_UnknownAppReturnsZero(t *testing.T) {
 	r := NewRingBuffer(5, time.Second, time.Second)
 	if got := r.AppRPS("never-seen", time.Now()); got != 0 {
 		t.Errorf("AppRPS = %v, want 0", got)
+	}
+	if r.HasObservation("never-seen") {
+		t.Error("HasObservation(never-seen) = true, want false")
 	}
 }
 

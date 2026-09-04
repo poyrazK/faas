@@ -60,10 +60,21 @@
             regex_search('(?m)^FAAS_OCI_REGISTRY=\S+$')) is not none
           - >-
             (lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=none\s*$')) is not none
+          - >-
+            (lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_REQUIRE_SHARED_ARTIFACTS=1\s*$')) is not none
+          - >-
+            (lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_CACHE_SERVE_STALE=0\s*$')) is not none
+          - >-
+            (lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=.*snap/')) is none
         fail_msg: >-
           storage.env must set FAAS_STORAGE_BACKEND=oci and
-          FAAS_OCI_REGISTRY, and must not route snap/ through
+          FAAS_OCI_REGISTRY, set FAAS_STORAGE_LOCAL_PREFIXES=none,
+          FAAS_REQUIRE_SHARED_ARTIFACTS=1, and set
+          FAAS_STORAGE_CACHE_SERVE_STALE=0. It must not route snap/ through
           FAAS_STORAGE_LOCAL_PREFIXES for a multi-box compute node.
       no_log: true
 
@@ -98,6 +109,40 @@
         group: faas
         mode: "0440"
       no_log: true
+
+    - name: Stage the release-bound runtime base contract
+      ansible.builtin.copy:
+        src: "{{ faas_join_runtime_bases_env_source }}"
+        dest: /etc/faas/runtime-bases.env
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    # These files were used by the pre-release/live-e2e rollout path. The
+    # signed runtime-bases.env and storage.env are now the only sources of
+    # truth; leaving the legacy files in place would clear or override the
+    # release EnvironmentFiles, make builderd and imaged resolve different
+    # bases, and retain obsolete registry credentials on the host.
+    - name: Remove legacy imaged runtime EnvironmentFile override
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-imaged.service.d/99-release-runtime.conf
+        state: absent
+
+    - name: Remove legacy per-runtime Environment override
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-imaged.service.d/zz-faas-function-runners.conf
+        state: absent
+
+    - name: Remove legacy builderd OCI environment override
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-builderd.service.d/99-codex-oci-source.conf
+        state: absent
+
+    - name: Remove legacy live-E2E environment file
+      ansible.builtin.file:
+        path: /etc/faas/oci-e2e.env
+        state: absent
 
     - name: Stage the compute trust bundle (the source never includes the CA private key)
       ansible.builtin.copy:
@@ -184,6 +229,22 @@
         group: root
         mode: "0644"
 
+    - name: Stage the release-pinned Firecracker guest kernel
+      ansible.builtin.shell:
+        cmd: >-
+          set -euo pipefail;
+          umask 077;
+          tmp=$(mktemp /var/lib/faas/bootstrap/vmlinux.XXXXXX);
+          trap 'rm -f "$tmp"' EXIT;
+          tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz
+          --to-stdout vmlinux > "$tmp";
+          test -s "$tmp";
+          install -o root -g root -m 0644 "$tmp"
+          /var/lib/faas/bootstrap/vmlinux;
+          trap - EXIT
+        executable: /bin/bash
+      changed_when: true
+
     - name: Stage the release signature bundle
       ansible.builtin.copy:
         src: "{{ faas_join_release_signature_source }}"
@@ -199,6 +260,41 @@
         owner: root
         group: root
         mode: "0644"
+
+    # The signed release tarball carries vmlinux, but production split-box
+    # storage is remote-only. vmmd therefore resolves the kernel through the
+    # shared OCI backend at wake time. Verify and prewarm that exact key before
+    # bootstrap handlers or service restarts can make this node schedulable.
+    - name: Verify the release-pinned kernel is present in shared storage
+      ansible.builtin.command:
+        argv:
+          - /var/lib/faas/bootstrap/gregalectl
+          - artifact
+          - verify
+          - --env-file
+          - /etc/faas/storage.env
+          - --manifest-file
+          - /etc/faas/manifest.yaml
+          - --no-cache
+      register: faas_release_kernel_verify
+      changed_when: false
+
+    - name: Prewarm the verified release-pinned kernel in the node cache
+      ansible.builtin.command:
+        argv:
+          - /var/lib/faas/bootstrap/gregalectl
+          - artifact
+          - verify
+          - --env-file
+          - /etc/faas/storage.env
+          - --manifest-file
+          - /etc/faas/manifest.yaml
+          # The node may already cache the previous release under the same
+          # logical key. Refresh forces this integrity check to read the
+          # shared store and replace that entry before vmmd can be promoted.
+          - --refresh
+      register: faas_release_kernel_prewarm
+      changed_when: false
 
 - import_playbook: bootstrap.yml
 
@@ -268,6 +364,18 @@
           [Service]
           Environment=FAAS_MANIFEST_PATH=/etc/faas/manifest.yaml
           Environment=FAAS_BUILDER_BASE_REF={{ faas_builder_base_ref | default(faas_join_builder_base_ref) }}
+
+    - name: Pin imaged guest-init to the active release
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-guest-init.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          # Runtime bases embed guest/init as PID 1. Do not allow a legacy
+          # /usr/local/bin/faas-guest-init override to survive node adoption.
+          Environment=FAAS_GUEST_INIT=/opt/faas/current/bin/init
 
     - name: Pre-register the adopted node as drained before release installation
       ansible.builtin.command:

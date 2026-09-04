@@ -280,7 +280,7 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 
 // JobSoftDelete flips status='active'|'paused' to status='deleted'
 // iff no live job_task instance exists for the job. Implemented as:
-//  1. SELECT count(*) of live (non-parked, non-destroyed) instances
+//  1. SELECT count(*) of live (waking/cold_booting/running) instances
 //     with kind='job_task' for this job (defensive — the helper
 //     ALSO checks this predicate, but the explicit count lets us
 //     distinguish "already deleted" from "live instances exist"
@@ -301,14 +301,14 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 // helper signature.
 func (s *PgStore) JobSoftDelete(ctx context.Context, id string) (deleted bool, hasLiveInstances bool, err error) {
 	// 1. Live-instance count. The helper's predicate mirrors this
-	//    exactly (kind='job_task' AND state NOT IN ('parked','destroyed'))
+	//    exactly (kind='job_task' AND state IN ('waking','cold_booting','running'))
 	//    so a non-zero count means the helper will refuse the flip.
 	var liveCount int
 	if err := s.pool.QueryRow(ctx,
 		`select count(*) from instances
 		  where job_id = $1::uuid
 		    and kind   = 'job_task'
-		    and state not in ('parked', 'destroyed')`,
+		    and state in ('waking', 'cold_booting', 'running')`,
 		id,
 	).Scan(&liveCount); err != nil {
 		return false, false, fmt.Errorf("state: count live instances for job %s: %w", id, err)
@@ -369,22 +369,23 @@ func (s *PgStore) JobCountByAccount(ctx context.Context, accountID string) (int,
 }
 
 // JobConcurrentByAccount counts the live job_task instances on the
-// account (instances.kind='job_task' AND status NOT IN ('parked','destroyed')).
+// account (instances.kind='job_task' AND state IN ('waking',
+// 'cold_booting','running')).
 // Used by apid's admission-control gate to enforce JobConcurrentPerAccount
 // before accepting a new run + by meterd's billing sweep for the live-pool
 // bill.
 func (s *PgStore) JobConcurrentByAccount(ctx context.Context, accountID string) (int, error) {
 	// job_task instances carry job_id (no app_id); we resolve the
 	// owning account via the FK to jobs. The state predicate
-	// matches the soft-delete helper (00576) so a parked/
-	// destroyed instance never counts against the cap.
+	// matches the soft-delete helper (00576) so terminal instances
+	// never count against the cap.
 	var count int
 	err := s.pool.QueryRow(ctx,
 		`select count(*) from instances i
 		   join jobs     j on j.id = i.job_id
 		  where j.account_id = $1::uuid
 		    and i.kind       = 'job_task'
-		    and i.state      not in ('parked', 'destroyed')`,
+		    and i.state      in ('waking', 'cold_booting', 'running')`,
 		accountID,
 	).Scan(&count)
 	if err != nil {
@@ -923,19 +924,18 @@ func (s *PgStore) JobTaskList(ctx context.Context, runID string, limit, offset i
 // ListJobInstances returns every kind='job_task' instance for the
 // meterd sampler. Uses instances_job_active_idx
 // (migrations/00540_job_id_on_delete_restrict.sql) — a partial
-// index on (job_id) WHERE kind='job_task' AND status NOT IN
-// ('parked','destroyed') — so the sampler is O(active job
+// index on (job_id) WHERE kind='job_task' AND state IN
+// ('waking','cold_booting','running') — so the sampler is O(active job
 // instances), not O(total instances).
 //
 // Called once per minute from cmd/meterd/main.go's SampleJobsAndRoll
 // goroutine; bounded by the partial index on the small active
-// subset (parked/destroyed job rows are excluded by the index
+// subset (terminal job rows are excluded by the index
 // predicate). No transaction needed — a single SELECT on a
 // hot-index-friendly predicate.
 //
-// Status filter mirrors the memstore path's destroyed/parked
-// guard; an in-progress instance always has status in
-// (waking, cold_booting, running).
+// State filter mirrors the memstore path's live-state guard; terminal
+// rows are retained for audit but must not be billed or sampled.
 //
 // Scans only the four columns the sampler reads (id, state,
 // ram_mb, job_id) directly into a partial Instance rather than
@@ -947,8 +947,8 @@ func (s *PgStore) ListJobInstances(ctx context.Context) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, state, ram_mb, job_id from instances
 		  where kind = 'job_task'::text
-		    and state not in ('destroyed', 'parked')
-		  order by created_at`)
+		    and state in ('waking', 'cold_booting', 'running')
+		  order by started_at nulls last, id`)
 	if err != nil {
 		return nil, fmt.Errorf("state: list job_task instances: %w", err)
 	}

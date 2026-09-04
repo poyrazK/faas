@@ -115,6 +115,38 @@ type Leaser[T any] interface {
 	Lookup(ctx context.Context, token LeaseToken) (key string, expiresAt time.Time, ownerID string, ok bool, err error)
 }
 
+// JobLeaser is the type-erased lease surface used by Engine.WakeJob. The
+// generic Leaser retains implementation-specific handles for callers that
+// need them, but the job lifecycle only needs the token. Keeping this adapter
+// explicit avoids the false Leaser[any] assertion: Leaser[*memLeaseRecord]
+// and Leaser[pgLeaseRecord] are not assignable to Leaser[any] in Go.
+type JobLeaser interface {
+	Acquire(ctx context.Context, key string, policy LeasePolicy, ownerID string) (LeaseToken, error)
+	Release(ctx context.Context, token LeaseToken, ownerID string) error
+}
+
+type jobLeaserAdapter[T any] struct {
+	inner Leaser[T]
+}
+
+func (a jobLeaserAdapter[T]) Acquire(ctx context.Context, key string, policy LeasePolicy, ownerID string) (LeaseToken, error) {
+	tok, _, err := a.inner.Acquire(ctx, key, policy, ownerID)
+	return tok, err
+}
+
+func (a jobLeaserAdapter[T]) Release(ctx context.Context, token LeaseToken, ownerID string) error {
+	return a.inner.Release(ctx, token, ownerID)
+}
+
+// AdaptJobLeaser exposes a concrete generic lease implementation through the
+// token-only surface Engine.WakeJob consumes.
+func AdaptJobLeaser[T any](l Leaser[T]) JobLeaser {
+	if l == nil {
+		return nil
+	}
+	return jobLeaserAdapter[T]{inner: l}
+}
+
 // ----------------------------------------------------------------------------
 // In-memory implementation (tests + schedd-local references)
 // ----------------------------------------------------------------------------

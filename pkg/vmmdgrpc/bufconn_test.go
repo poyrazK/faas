@@ -146,6 +146,16 @@ func (f *fakeVMM) DestroyWithExport(ctx context.Context, instance, exportDir str
 	return 0, nil
 }
 
+// SignalAndKill (M-2 / ADR-138 §Decision 1) is the graceful
+// stop sequence. Test fakes default to no-op + (false, 0, nil)
+// — parse-failure tests do not reach the inner Manager.
+// Behavioural coverage lives in pkg/fcvm/vmm_signal_kill_test.go
+// (portable) and the //go:build metal test
+// pkg/fcvm/vmm_signal_kill_metal_test.go.
+func (f *fakeVMM) SignalAndKill(_ context.Context, _ string, _ int32, _ int32) (bool, int32, error) {
+	return false, 0, nil
+}
+
 func (f *fakeVMM) ExportDirFor(instance string) string {
 	if f.exportDirFn != nil {
 		return f.exportDirFn(instance)

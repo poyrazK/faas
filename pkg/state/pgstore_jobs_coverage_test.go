@@ -493,3 +493,20 @@ func TestPg_Jobs_JobTaskList(t *testing.T) {
 		t.Errorf("JobTaskList: got %d, want %d", len(list), len(fanned))
 	}
 }
+
+func TestPg_Jobs_ListJobInstances(t *testing.T) {
+	s, pool, ctx := pgJobsStoreWithPool(t)
+	job, _, _ := pgJobsSeed(t, s, ctx, "job-instances")
+	id := pgJobsCreateJobTaskInstance(t, pool, ctx, job.AccountID, job.ID)
+
+	instances, err := s.ListJobInstances(ctx)
+	if err != nil {
+		t.Fatalf("ListJobInstances: %v", err)
+	}
+	for _, instance := range instances {
+		if instance.ID == id {
+			return
+		}
+	}
+	t.Fatalf("ListJobInstances did not return active job_task instance %s", id)
+}

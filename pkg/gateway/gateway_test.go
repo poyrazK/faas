@@ -249,6 +249,24 @@ func TestRouteCacheGetPut(t *testing.T) {
 	}
 }
 
+func TestRouteCachePeekDoesNotPromote(t *testing.T) {
+	c := NewRouteCache(2)
+	c.Put("a", "1")
+	c.Put("b", "2")
+
+	if id, ok := c.Peek("a"); !ok || id != "1" {
+		t.Fatalf("Peek(a) = %q, %v; want 1, true", id, ok)
+	}
+	c.Put("c", "3")
+
+	if _, ok := c.Peek("a"); ok {
+		t.Fatal("Peek should not promote a; it should remain the LRU entry")
+	}
+	if id, ok := c.Peek("b"); !ok || id != "2" {
+		t.Fatalf("Peek(b) = %q, %v; want 2, true", id, ok)
+	}
+}
+
 func TestRouteCacheLRUEviction(t *testing.T) {
 	c := NewRouteCache(2)
 	c.Put("a", "1")

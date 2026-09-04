@@ -5,9 +5,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -195,6 +197,63 @@ func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 		return "", "", "", "", 0, false, 0, liftErr(err)
 	}
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), nil
+}
+
+// AdmitInstances carries the scheduler's bounded-burst primitive over the
+// existing AdmitInstance RPC. The first call is ordinary; continuation calls
+// carry an additive marker so schedd bypasses only the per-app scale-out
+// cooldown that the first call already passed. Every result is reported,
+// including individual continuation failures, and sibling calls remain
+// independent just like sched.Engine.AdmitInstances.
+func (c *Client) AdmitInstances(ctx context.Context, appID, scope, trigger string, count int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, err error)) error {
+	if count <= 0 {
+		return nil
+	}
+	if count > api.ScaleUpMaxBurstPerTick {
+		count = api.ScaleUpMaxBurstPerTick
+	}
+	firstID, firstNode, firstDeployment, firstWake, firstMethod, firstAtCapacity, firstPort, err := c.AdmitInstance(ctx, appID, "", scope, trigger)
+	if report != nil {
+		report(firstID, firstNode, firstDeployment, firstWake, firstMethod, firstAtCapacity, firstPort, err)
+	}
+	if err != nil || firstAtCapacity || count == 1 {
+		return err
+	}
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+	)
+	for i := 1; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, callErr := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{
+				AppId:             appID,
+				Scope:             scope,
+				Trigger:           trigger,
+				BurstContinuation: true,
+			})
+			if callErr != nil {
+				callErr = liftErr(callErr)
+				if report != nil {
+					report("", "", "", "", 0, false, 0, callErr)
+				}
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = callErr
+				}
+				mu.Unlock()
+				return
+			}
+			if report != nil {
+				report(resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), nil)
+			}
+		}()
+	}
+	wg.Wait()
+	return firstErr
 }
 
 // EnsureWake (ADR-098) is the schedd-side single-flight wake entry.

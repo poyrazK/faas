@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/zalando/go-keyring"
 )
 
@@ -139,11 +140,15 @@ func legacyTokenPath() (string, error) {
 
 // loadToken returns the token from $FAAS_TOKEN, the OS keychain, or
 // the plaintext-file fallback — in that priority order. A non-empty
-// env var always wins (CI). When the keychain returns ErrNotFound
-// we silently fall through to the file (a fresh install with no
-// entry yet is indistinguishable from "no user logged in"). Any
-// other keychain error triggers a one-shot WARN and the same file
-// fallback.
+// env var always wins (CI) and is intentionally not format-validated:
+// callers may use an explicitly supplied short-lived bearer there.
+// Persisted stores are different: only the current long-lived API-key
+// format is accepted. An invalid keychain entry therefore cannot
+// shadow a valid file fallback (the reported stale-Keychain failure).
+// When the keychain returns ErrNotFound we silently fall through to
+// the file (a fresh install with no entry yet is indistinguishable
+// from "no user logged in"). Any other keychain error, or an invalid
+// persisted value, triggers a WARN and the next fallback is tried.
 //
 // Pre-#439 legacy lookup is silently chained AFTER the new keychain
 // + new file: a pre-#439 install never wrote to the new keychain
@@ -158,7 +163,11 @@ func loadToken() string {
 		v, err := kr.Get(keyringService, keyringAccount)
 		switch {
 		case err == nil:
-			return strings.TrimSpace(v)
+			v = strings.TrimSpace(v)
+			if validPersistedToken(v) {
+				return v
+			}
+			PrintWarn(os.Stderr, "OS keychain contains an invalid Gregale API key; falling back to the token file.")
 		case errors.Is(err, keyring.ErrNotFound):
 			// fall through to file — not an error worth a WARN
 		default:
@@ -167,7 +176,7 @@ func loadToken() string {
 	}
 	p, err := tokenPath()
 	if err != nil {
-		return ""
+		return loadLegacyToken()
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -176,12 +185,14 @@ func loadToken() string {
 		// new keychain service nor the new file, so this loop is the
 		// load path for everyone who hasn't re-logged-in after the
 		// rename.
-		if v := loadLegacyToken(); v != "" {
+	} else {
+		v := strings.TrimSpace(string(b))
+		if validPersistedToken(v) {
 			return v
 		}
-		return ""
+		PrintWarn(os.Stderr, "Token file contains an invalid Gregale API key; trying legacy stores.")
 	}
-	return strings.TrimSpace(string(b))
+	return loadLegacyToken()
 }
 
 // loadLegacyToken probes the pre-#439 keychain service and the
@@ -193,7 +204,11 @@ func loadLegacyToken() string {
 		v, err := kr.Get(legacyKeyringService, keyringAccount)
 		switch {
 		case err == nil:
-			return strings.TrimSpace(v)
+			v = strings.TrimSpace(v)
+			if validPersistedToken(v) {
+				return v
+			}
+			PrintWarn(os.Stderr, "Legacy OS keychain contains an invalid Gregale API key; trying the legacy token file.")
 		case errors.Is(err, keyring.ErrNotFound):
 			// fall through to legacy file
 		default:
@@ -202,15 +217,29 @@ func loadLegacyToken() string {
 	}
 	if p, err := legacyTokenPath(); err == nil {
 		if b, err := os.ReadFile(p); err == nil {
-			return strings.TrimSpace(string(b))
+			v := strings.TrimSpace(string(b))
+			if validPersistedToken(v) {
+				return v
+			}
+			PrintWarn(os.Stderr, "Legacy token file contains an invalid Gregale API key; ignoring it.")
 		}
 	}
 	return ""
 }
 
-// saveToken persists the token to the OS keychain, falling back to
-// the plaintext file at 0o600 if the keychain is unavailable. On
-// the first successful keychain Set the legacy plaintext file (if
+// validPersistedToken keeps the on-disk/keychain stores aligned with the
+// server's long-lived API-key contract. FAAS_TOKEN is handled separately in
+// loadToken because explicit environment overrides are also used for
+// short-lived bearer credentials in automation.
+func validPersistedToken(token string) bool {
+	return api.ValidAPIKeyFormat(token)
+}
+
+// saveToken persists a current API key to the OS keychain, falling
+// back to the plaintext file at 0o600 if the keychain is unavailable.
+// Invalid values are rejected before either store is touched, so a
+// malformed auth response can never become the next stale credential.
+// On the first successful keychain Set the legacy plaintext file (if
 // any) is removed — a one-shot migration so customers do not keep a
 // redundant plaintext copy on disk after the upgrade. Issue #293.
 //
@@ -221,6 +250,9 @@ func loadLegacyToken() string {
 // is erased, not republished.
 func saveToken(token string) error {
 	token = strings.TrimSpace(token)
+	if !validPersistedToken(token) {
+		return errors.New("gregale: refusing to persist an invalid API key")
+	}
 
 	kr := effectiveKeyring()
 	if err := kr.Set(keyringService, keyringAccount, token); err == nil {

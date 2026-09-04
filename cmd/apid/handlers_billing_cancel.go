@@ -14,8 +14,8 @@
 // Provider dispatch (Stripe vs Paddle) goes through the
 // billing.Provider interface — s.billingProvider is the seam.
 // Stripe: Subscriptions.Update(cancel_at_period_end=true).
-// Paddle: Customer.Update stamps scheduled_change on the
-// Customer object.
+// Paddle: Subscriptions.Cancel with
+// EffectiveFromNextBillingPeriod.
 package main
 
 import (

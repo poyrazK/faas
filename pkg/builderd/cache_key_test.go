@@ -3,6 +3,7 @@ package builderd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -53,6 +54,26 @@ func TestCacheKey_SamePlanHits(t *testing.T) {
 	}
 	if got.Bytes != 7 {
 		t.Errorf("bytes = %d, want 7", got.Bytes)
+	}
+}
+
+func TestCacheKey_RuntimeBasePartition(t *testing.T) {
+	root := t.TempDir()
+	c := NewCache(root)
+	src := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(src, []byte("base-specific layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baseA := "ghcr.io/poyrazk/runner-node22@sha256:" + strings.Repeat("a", 64)
+	baseB := "ghcr.io/poyrazk/runner-node22@sha256:" + strings.Repeat("b", 64)
+	if err := c.StoreWithBase("source-hash", FrameworkNode, api.PlanHobby, baseA, src, 19); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.LookupWithBase("source-hash", FrameworkNode, api.PlanHobby, baseB); ok {
+		t.Fatal("runtime base change must not reuse the previous cache entry")
+	}
+	if got, ok := c.LookupWithBase("source-hash", FrameworkNode, api.PlanHobby, baseA); !ok || got.Bytes != 19 {
+		t.Fatalf("base-specific cache lookup = %+v, %v; want the baseA entry", got, ok)
 	}
 }
 

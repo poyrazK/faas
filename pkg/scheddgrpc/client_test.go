@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -192,6 +193,75 @@ func TestClientAdmitInstance_AdmitsNewInstance(t *testing.T) {
 	// must pass through AdmitInstance as int32 0.
 	if method != 0 {
 		t.Errorf("method = %d, want 0 (WAKE_COLD_BOOT)", method)
+	}
+}
+
+type burstContinuationEngine struct {
+	fakeEngine
+	mu              sync.Mutex
+	flags           []bool
+	placementSpread []bool
+}
+
+func (e *burstContinuationEngine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (sched.WakeResult, error) {
+	e.mu.Lock()
+	e.flags = append(e.flags, sched.IsBurstContinuation(ctx))
+	e.placementSpread = append(e.placementSpread, sched.IsBurstPlacementSpread(ctx))
+	e.mu.Unlock()
+	return e.fakeEngine.AdmitInstance(ctx, appID, deploymentID, scope, trigger)
+}
+
+func TestClientAdmitInstancesCarriesContinuationMarker(t *testing.T) {
+	eng := &burstContinuationEngine{
+		fakeEngine: fakeEngine{
+			admitInstanceFn: func(context.Context, string, string) (sched.WakeResult, error) {
+				return sched.WakeResult{InstanceID: "i-1", NodeID: "node-1", WakeID: "wake-1"}, nil
+			},
+		},
+	}
+	c := newClient(t, eng)
+
+	var mu sync.Mutex
+	results := 0
+	err := c.AdmitInstances(context.Background(), "app-1", "", sched.TriggerGateway, 4,
+		func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, err error) {
+			if err != nil {
+				t.Errorf("reported admission error: %v", err)
+			}
+			mu.Lock()
+			results++
+			mu.Unlock()
+		})
+	if err != nil {
+		t.Fatalf("AdmitInstances: %v", err)
+	}
+	if results != 4 {
+		t.Fatalf("reported results = %d, want 4", results)
+	}
+	eng.mu.Lock()
+	defer eng.mu.Unlock()
+	if len(eng.flags) != 4 {
+		t.Fatalf("engine calls = %d, want 4", len(eng.flags))
+	}
+	continuations := 0
+	for _, continuation := range eng.flags {
+		if continuation {
+			continuations++
+		}
+	}
+	if continuations != 3 {
+		t.Fatalf("continuation calls = %d, want 3", continuations)
+	}
+	if len(eng.placementSpread) != 4 {
+		t.Fatalf("placement marker calls = %d, want 4", len(eng.placementSpread))
+	}
+	if eng.placementSpread[0] {
+		t.Error("first admission unexpectedly carried placement-spread marker")
+	}
+	for i, spread := range eng.placementSpread[1:] {
+		if !spread {
+			t.Errorf("continuation #%d missing placement-spread marker", i+1)
+		}
 	}
 }
 

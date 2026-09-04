@@ -19,9 +19,12 @@
 //     and populates the cache. On parent failure, Get returns
 //     the wrapped error UNLESS FAAS_STORAGE_CACHE_SERVE_STALE=true,
 //     in which case Get serves the last-known-good blob from the
-//     cache (Warn-level log + observer notification). The
-//     fail-loud default is pinned by TestLocalCacheBackend_ParentFailureSurfaces
-//     — single-box operators are not surprised by silent staleness.
+//     cache (Warn-level log + observer notification). A caller can
+//     set FAAS_STORAGE_CACHE_REFRESH=true for one controlled read to
+//     bypass and replace an existing cache entry; refresh never falls
+//     back to stale bytes. The fail-loud default is pinned by
+//     TestLocalCacheBackend_ParentFailureSurfaces — single-box
+//     operators are not surprised by silent staleness.
 //   - Delete evicts from cache + forwards to parent. Best-effort
 //     propagation: a parent-side delete that fails is logged and
 //     the cache entry is evicted anyway, because stale data is
@@ -67,17 +70,24 @@
 //     without it, every cross-node restore round-trips the
 //     registry.
 //
-// Streaming Put/Get (a separate streaming-only interface) is
-// NOT needed for v1 — the existing OCI Put path uses
-// bufferAndHash for SHA-256 manifest computation, and a
-// streaming variant would only move the buffer inside the
-// OCI backend. A v1.1 optimisation may revisit this if the
-// snapshot blobs grow past the 130 MB fleet target.
+// Streaming Put/Get. Both directions are file-backed: Get
+// materialises a parent response through materializeCache, and Put
+// tees into a spool file in the destination bucket. Neither holds a
+// blob in memory.
+//
+// Put was NOT always file-backed. v1 teed into a bytes.Buffer on the
+// reasoning that a streaming variant "would only move the buffer
+// inside the OCI backend", with a note to revisit "if the snapshot
+// blobs grow past the 130 MB fleet target". They did — a Scale park
+// writes a 1 GiB mem blob — and the buffer's doubling growth cost
+// ~2 GiB of resident memory per capture on vmmd. The premise was
+// also wrong: the OCI backend's own bufferAndHash spools to a temp
+// FILE, so the bytes.Buffer was the only in-memory copy in the
+// chain, not a duplicate of an unavoidable one.
 
 package storage
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -254,15 +264,25 @@ func (c *LocalCacheBackend) cacheFileFor(key string) (path string, metaPath stri
 // failure is logged + swallowed (the parent has the canonical
 // copy; the next Get will repopulate).
 //
-// Streaming: r is piped to the parent via io.Copy+io.TeeReader
-// so the blob is not buffered twice. The cache write reads
-// from the same TeeReader buffer after the parent has accepted
-// the bytes — so the in-memory footprint is one copy of the
-// blob, not two.
+// Streaming: r is piped to the parent via io.TeeReader whose sink
+// is a temp FILE in the destination bucket, so the blob is never
+// held in memory. The temp file is renamed into place once the
+// parent has accepted the bytes — the same spool-then-rename shape
+// materializeCache already uses on the Get path.
+//
+// This used to tee into a bytes.Buffer. That made the resident cost
+// of a Put proportional to the blob, and bytes.Buffer's doubling
+// growth made the peak ~2x: on 2026-09-04 a 1 GiB snapshot capture
+// drove vmmd's anon from 25 MB to 2.17 GB in 24 s. That is the
+// "vmmd RSS 2.1 GB" growth behind the 2026-09-03 OOM (see
+// docs/runbooks/FaasComputeNodeStuckInactive.md) — it was never a
+// leak, it was this buffer. The bytes hit the same cache file
+// either way, so streaming costs no extra disk I/O; it only removes
+// the memory spike.
 //
 // Hard pre-check: an oversized blob (len > maxBytes) is rejected
-// before any read. A pathological caller can't OOM the daemon
-// by streaming a multi-GiB blob into a 1 GiB-budget cache.
+// before any read. A pathological caller can't fill the cache disk
+// by streaming a multi-GiB blob into a smaller-budget cache.
 func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) error {
 	if err := validateKey(key); err != nil {
 		return err
@@ -270,7 +290,7 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	// Hard pre-check spans two cases:
 	//   1. Caller already knows the size (e.g. via SizeReader).
 	//   2. Caller passes the raw bytes (Put-from-stream).
-	// We sniff for a SizeReader first to avoid buffering when
+	// We sniff for a SizeReader first to avoid spooling when
 	// the upstream is already introspectable.
 	var size int64 = -1
 	if sr, ok := r.(interface {
@@ -282,47 +302,100 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 		return fmt.Errorf("storage: cache: put %q: size %d exceeds maxBytes %d: %w",
 			key, size, c.maxBytes, errCacheBlobOversized)
 	}
-	// TeeReader pipes r into the parent while a bytes.Buffer
-	// accumulates the bytes for the cache write. The buffer is
-	// only allocated if the upstream provides a stream; for
-	// in-memory callers (the common path) the buffer is just a
-	// copy of the source slice.
-	//
-	// Why a buffer at all? The cache write is file-backed and
-	// runs after the parent has accepted the bytes. Re-reading
-	// from r would either re-fetch from upstream (defeating the
-	// tee) or fail (a stream that was consumed by the parent).
-	// The buffer is the single source of truth for the cache write.
-	var buf bytes.Buffer
-	if size >= 0 {
-		buf.Grow(int(size))
+
+	path, metaPath := c.cacheFileFor(key)
+	dir := filepath.Dir(path)
+	// Cache population is best-effort by contract: if the spool
+	// file cannot be created (cache dir gone, disk full, EROFS),
+	// fall through to an uncached parent Put rather than failing a
+	// write the parent could have accepted. A broken cache must
+	// degrade this backend to a pass-through, never to an outage.
+	tmp, tmpErr := c.spoolFile(dir)
+	if tmpErr != nil {
+		if err := c.parent.Put(ctx, key, r); err != nil {
+			return fmt.Errorf("storage: cache: put %q: parent: %w", key, err)
+		}
+		return nil
 	}
-	tee := io.TeeReader(r, &buf)
-	if err := c.parent.Put(ctx, key, tee); err != nil {
+	tmpPath := tmp.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	// Spool the whole blob to the temp file FIRST, then hand the
+	// parent that file rather than a TeeReader over the caller's
+	// stream.
+	//
+	// Why not tee straight through: the OCI parent cannot upload
+	// until it knows the blob's digest (the monolithic-PUT endpoint
+	// takes ?digest=sha256:...), so bufferAndHash spools the stream
+	// to a temp file of its own before it sends a byte. Teeing
+	// therefore did not pipeline anything — it just meant the same
+	// bytes were written to disk TWICE per capture, once into this
+	// cache spool and once into the parent's. Measured on a
+	// production node on 2026-09-04, a 1 GiB capture spent ~52 s of
+	// its ~100 s in the parent's redundant copy alone (~20 MB/s on
+	// pd-standard), against a 75 s budget — so parks failed by
+	// timing out on work that never needed doing.
+	//
+	// Handing over an *os.File lets the parent hash in place and
+	// upload from the same fd. One write, not two.
+	written, spoolErr := copyContext(ctx, tmp, r)
+	if spoolErr != nil {
+		return fmt.Errorf("storage: cache: put %q: spool: %w", key, spoolErr)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("storage: cache: put %q: fsync spool: %w", key, err)
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("storage: cache: put %q: rewind spool: %w", key, err)
+	}
+	if err := c.parent.Put(ctx, key, tmp); err != nil {
 		return fmt.Errorf("storage: cache: put %q: parent: %w", key, err)
 	}
-	// Post-parent size check covers the no-SizeReader case. By
-	// here the buffer holds the entire blob; if it accidentally
-	// exceeded maxBytes (e.g. a streaming caller lied or
-	// didn't expose Size), the cache write below will respect
-	// the budget via writeCache's eviction loop, but we still
-	// want to refuse to cache a blob we can't guarantee
-	// eviction for. The cache budget is per-blob-eviction so
-	// a single oversized blob is allowed to evict to fit; the
-	// pre-check is for the read-buffer-overflow case only.
-	data := buf.Bytes()
-	if int64(len(data)) > c.maxBytes {
-		// Parent has the canonical copy; surface the size
-		// error to the caller but don't try to evict the
-		// whole cache to fit a single oversized blob.
+
+	// Post-parent size check covers the no-SizeReader case: a stream
+	// that didn't expose Size can't be pre-checked, so it is measured
+	// here from what was actually spooled. The parent holds the
+	// canonical copy; we surface the size error but do not install an
+	// entry we can't guarantee eviction for.
+	if written > c.maxBytes {
 		return fmt.Errorf("storage: cache: put %q: streamed size %d exceeds maxBytes %d: %w",
-			key, len(data), c.maxBytes, errCacheBlobOversized)
+			key, written, c.maxBytes, errCacheBlobOversized)
 	}
-	if werr := c.writeCache(key, data); werr != nil {
-		// Best-effort.
-		_ = werr
+	if err := tmp.Close(); err != nil {
+		return nil
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := os.Rename(tmpPath, path); err != nil {
+		return nil // spool file is removed by the deferred cleanup
+	}
+	keep = true
+	_ = os.Chmod(path, 0o644)
+	if err := os.WriteFile(metaPath, []byte(key), 0o644); err != nil {
+		// Sidecar failure is non-fatal but degrades List.
+		_ = err
+	}
+	if err := c.enforceBudgetLocked(); err != nil {
+		_ = err
 	}
 	return nil
+}
+
+// spoolFile creates the Put-path temp file inside the destination
+// bucket directory so the install step is a same-filesystem rename.
+func (c *LocalCacheBackend) spoolFile(dir string) (*os.File, error) {
+	if err := os.MkdirAll(dir, 0o770); err != nil {
+		return nil, fmt.Errorf("storage: cache: mkdir %q: %w", dir, err)
+	}
+	_ = os.Chmod(dir, 0o770)
+	return os.CreateTemp(dir, ".faas-cache-put-*")
 }
 
 // errCacheBlobOversized is the typed error Put returns when a
@@ -339,23 +412,27 @@ var errCacheBlobOversized = errors.New("storage: cache: blob exceeds maxBytes")
 // On parent failure, Get returns the wrapped error UNLESS
 // FAAS_STORAGE_CACHE_SERVE_STALE=true, in which case Get serves the
 // last-known-good cached blob (must have been Put earlier — the cache
-// only stores blobs the parent has accepted). The first openCache call
-// at the top of Get is the cache-first path; the second openCache call
-// below is the stale-fallback path. Both run only when the cache holds
-// the key (Put has mirrored it). When the cache is empty, stale-fallback
-// is a no-op and the wrapped parent error is returned regardless of the
-// env var. Cache hits and parent misses are file-backed so large OCI
-// layers never become a heap-sized byte slice.
+// only stores blobs the parent has accepted). A caller can set
+// FAAS_STORAGE_CACHE_REFRESH=true for one controlled read to bypass
+// and replace an existing cache entry; refresh never falls back to
+// stale bytes. Cache hits and parent misses are file-backed so large
+// OCI layers never become a heap-sized byte slice.
 func (c *LocalCacheBackend) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
 	}
-	if cached, ok := c.openCache(key); ok {
-		return cached, nil
+	refresh := c.refresh()
+	if !refresh {
+		if cached, ok := c.openCache(key); ok {
+			return cached, nil
+		}
 	}
 	rc, err := c.parent.Get(ctx, key)
 	if err != nil {
-		if c.serveStale() {
+		// A refresh is an explicit integrity operation (used when
+		// adopting a newly signed release). Never let the normal
+		// stale-fallback policy turn it into another cache hit.
+		if !refresh && c.serveStale() {
 			if cached, ok := c.openCache(key); ok {
 				c.notifyStaleFallback()
 				return cached, nil
@@ -369,6 +446,19 @@ func (c *LocalCacheBackend) Get(ctx context.Context, key string) (io.ReadCloser,
 		return nil, fmt.Errorf("storage: cache: get %q: parent read: %w", key, err)
 	}
 	return cached, nil
+}
+
+// refresh reports whether the next Get must read the parent and replace the
+// local entry. It is intentionally an environment seam rather than a
+// permanent cache mode: release adoption sets it only around the explicit
+// prewarm verification, while normal daemon reads retain cache-first latency.
+func (c *LocalCacheBackend) refresh() bool {
+	v := os.Getenv("FAAS_STORAGE_CACHE_REFRESH")
+	if v == "" {
+		return false
+	}
+	on, err := strconv.ParseBool(v)
+	return err == nil && on
 }
 
 // SetObserver wires a CacheObserver onto the cache. The observer
@@ -601,30 +691,6 @@ func (r *cacheTempReader) Close() error {
 		err = removeErr
 	}
 	return err
-}
-
-// writeCache writes the blob + sidecar metadata to the cache
-// directory and enforces the byte budget by evicting the
-// oldest entries until the directory fits under maxBytes.
-func (c *LocalCacheBackend) writeCache(key string, data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	path, metaPath := c.cacheFileFor(key)
-	if err := os.MkdirAll(filepath.Dir(path), 0o770); err != nil {
-		return fmt.Errorf("storage: cache: mkdir %q: %w", filepath.Dir(path), err)
-	}
-	_ = os.Chmod(filepath.Dir(path), 0o770)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("storage: cache: write %q: %w", path, err)
-	}
-	if err := os.WriteFile(metaPath, []byte(key), 0o644); err != nil {
-		// Sidecar failure is non-fatal but degrades List.
-		_ = err
-	}
-	if err := c.enforceBudgetLocked(); err != nil {
-		_ = err
-	}
-	return nil
 }
 
 // evictCache removes a single entry + sidecar. Best-effort:

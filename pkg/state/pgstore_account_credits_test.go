@@ -271,11 +271,10 @@ func TestPgStoreCurrentMonthOverageCents_Formula(t *testing.T) {
 	}
 	appID := uuid.NewString()
 	instID := uuid.NewString()
-	// 1200 cents = 12 GB-h. 12 GB-h = 12 * 1024 * 3600 = 44_236_800
-	// mb_seconds. The CENTS=mb_seconds*100/3600 derivation lands
-	// 43_200_000 mb_seconds at exactly 1200 cents.
-	const wantCents = int64(1200)
-	mbSeconds := wantCents * 3600 / 100
+	// Hobby includes 50 GB-hours. Twelve additional GB-hours should be
+	// billed at one cent per GB-hour.
+	const wantCents = int64(12)
+	mbSeconds := int64(api.PlanHobby.PlanIncludedGBHours()+int(wantCents)) * api.SecondsPerGBHour
 	now := time.Now().UTC()
 	if err := store.AppendUsage(ctx, acct.ID, appID, instID, now, mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append: %v", err)
@@ -547,31 +546,23 @@ func TestPgStoreCurrentMonthOverageCents_NonUTC(t *testing.T) {
 	firstHour := thisMonthStart
 	secondHour := thisMonthStart.Add(time.Hour)
 	prevMonthLate := thisMonthStart.Add(-time.Hour)
-	if err := store.AppendUsage(ctx, acct.ID, appID, instID, firstHour, 3_600_000, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, appID, instID, firstHour, 50*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append firstHour: %v", err)
 	}
-	if err := store.AppendUsage(ctx, acct.ID, appID, instID, secondHour, 7_200_000, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, appID, instID, secondHour, 2*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append secondHour: %v", err)
 	}
 	if err := store.AppendUsage(ctx, acct.ID, appID, instID, prevMonthLate, 9_000_000, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append prevMonthLate: %v", err)
 	}
 
-	// Both in-month rows must be summed; the previous-month row
-	// excluded. 3_600_000 + 7_200_000 = 10_800_000 mb_seconds. Cents
-	// = 10_800_000 * 100 / 3600 = 300_000. (The bug returned
-	// (3_600_000 + 7_200_000) on a previous-month row that
-	// accidentally rolled into the local month's bound, plus the
-	// 9_000_000 from prevMonthLate if Istanbul's month started
-	// before thisMonthStart.Add(-3h). With this fixture the bug
-	// would NOT drop firstHour, so this test mainly exercises the
-	// prevMonthLate exclusion under both forms; the more demanding
-	// boundary tests live in UsageByMonth above.)
+	// Both in-month rows must be summed, the previous-month row excluded,
+	// and the 50 GB-hour allowance applied once. The result is 2 cents.
 	got, err := store.CurrentMonthOverageCents(ctx, acct.ID)
 	if err != nil {
 		t.Fatalf("CurrentMonthOverageCents: %v", err)
 	}
-	const wantCents = int64(300_000)
+	const wantCents = int64(2)
 	if got != wantCents {
 		t.Fatalf("got %d cents, want %d (boundary + previous-month exclusion under Istanbul TZ)", got, wantCents)
 	}

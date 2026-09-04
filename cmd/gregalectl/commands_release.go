@@ -51,6 +51,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
+	"github.com/onebox-faas/faas/pkg/releaseretention"
 	"github.com/onebox-faas/faas/pkg/roleTemplating"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -660,6 +661,10 @@ func cmdReleaseInstall(args []string) int {
 			_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: defer activation: %v\n", err)
 			return 3
 		}
+	}
+	if _, err := releaseretention.Prune(*releasesRoot, releaseinstall.CurrentSymlink(*releasesRoot), releaseretention.DefaultKeepPrevious); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: prune old releases: %v\n", err)
+		return 3
 	}
 	// PR-B (issue #935): the post-mutation role write happens
 	// INSIDE the role-branch else-block above (so idempotent re-runs

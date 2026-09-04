@@ -1061,3 +1061,25 @@ func TestDefaultDeps_MetricsListenAndServe_AppliesCanonicalShape(t *testing.T) {
 	defer stopCancel()
 	_ = srv.Shutdown(stopCtx)
 }
+
+func TestValidateBillingPushInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		interval time.Duration
+		wantErr  bool
+	}{
+		{name: "polar hourly", provider: provPolar, interval: time.Hour},
+		{name: "polar faster than hourly", provider: provPolar, interval: 30 * time.Minute},
+		{name: "polar daily rejected", provider: provPolar, interval: 24 * time.Hour, wantErr: true},
+		{name: "stripe legacy daily", provider: provStripe, interval: 24 * time.Hour},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateBillingPushInterval(tc.provider, tc.interval)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateBillingPushInterval(%q, %s) = %v, wantErr=%v", tc.provider, tc.interval, err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -17,6 +17,14 @@ func TestMemStoreCoverageWebhookDedupe(t *testing.T) {
 	if n, err := m.SweepExpiredWebhookDeliveries(ctx, now); err != nil || n != 0 {
 		t.Fatalf("fresh sweep = %d, %v", n, err)
 	}
+	claimed, err := m.ClaimWebhookDelivery(ctx, "polar", "del-atomic", now.Add(-5*time.Minute), now.Add(5*time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("first atomic claim = %v, %v", claimed, err)
+	}
+	claimed, err = m.ClaimWebhookDelivery(ctx, "polar", "del-atomic", now.Add(-5*time.Minute), now.Add(5*time.Minute))
+	if err != nil || claimed {
+		t.Fatalf("duplicate atomic claim = %v, %v", claimed, err)
+	}
 	// Record → replay within TTL is true.
 	if err := m.RecordWebhookDelivery(ctx, "stripe", "del-1", now.Add(time.Minute)); err != nil {
 		t.Fatal(err)

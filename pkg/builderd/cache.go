@@ -46,6 +46,13 @@ type Cache struct {
 	root string
 }
 
+// cacheArtifactMode is the shared publication mode for cache artifacts.
+// builderd owns the files, while imaged runs as a sibling daemon in the faas
+// group and must be able to read a freshly-published layer and sidecar.
+// CreateTemp defaults to 0600, which made a split-box cache hit fail with
+// EACCES even though the cache directory itself was correctly shared.
+const cacheArtifactMode os.FileMode = 0o640
+
 // NewCache wires a Cache rooted at dir. The dir is created lazily.
 func NewCache(dir string) *Cache { return &Cache{root: dir} }
 
@@ -67,6 +74,17 @@ func NewCache(dir string) *Cache { return &Cache{root: dir} }
 // layer, not the source, and is out of scope for #195 (Tier 3 cosign
 // signing territory).
 func (c *Cache) Lookup(sourceHash string, fw Framework, plan api.Plan) (CacheEntry, bool) {
+	return c.lookupKey(sourceHash, fw, plan)
+}
+
+// LookupWithBase is the deployment-build cache lookup. The runtime base is
+// part of the key so a base-image rollout cannot reuse an OCI artifact built
+// against a different runner chain.
+func (c *Cache) LookupWithBase(sourceHash string, fw Framework, plan api.Plan, runtimeBaseRef string) (CacheEntry, bool) {
+	return c.lookupKey(cacheKey(sourceHash, runtimeBaseRef), fw, plan)
+}
+
+func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (CacheEntry, bool) {
 	if c == nil || c.root == "" {
 		return CacheEntry{}, false
 	}
@@ -140,6 +158,17 @@ func (c *Cache) checksumPath(sourceHash string, fw Framework, plan api.Plan) str
 //     nil without rewriting. Content-addressed storage means later
 //     writers should produce identical bytes; the existing copy is fine.
 func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {
+	return c.storeKey(sourceHash, fw, plan, layerPath, bytes)
+}
+
+// StoreWithBase publishes a cache entry whose key includes the exact
+// Railpack runtime base ref used to build it. This prevents stale cache hits
+// after the pinned runtime base changes.
+func (c *Cache) StoreWithBase(sourceHash string, fw Framework, plan api.Plan, runtimeBaseRef, layerPath string, bytes int64) error {
+	return c.storeKey(cacheKey(sourceHash, runtimeBaseRef), fw, plan, layerPath, bytes)
+}
+
+func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {
 	if c == nil || c.root == "" {
 		return errors.New("cache: not configured")
 	}
@@ -154,6 +183,12 @@ func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath 
 	// the new Lookup, and the sidecar is the small bit of metadata that
 	// makes it a hit again).
 	if _, err := os.Stat(dst); err == nil {
+		// Repair entries published by older builderd versions. The first
+		// release used CreateTemp's 0600 default, which is readable by
+		// builderd but not by the sibling imaged daemon on a split box.
+		if err := os.Chmod(dst, cacheArtifactMode); err != nil {
+			return fmt.Errorf("cache: store %s: chmod existing layer: %w", dst, err)
+		}
 		return c.writeSidecar(sourceHash, fw, plan)
 	}
 	// Step 1: open source for reading (never write to it).
@@ -197,6 +232,9 @@ func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath 
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("cache: store %s: fsync tmp: %w", dst, err)
 	}
+	if err := os.Chmod(tmpPath, cacheArtifactMode); err != nil {
+		return fmt.Errorf("cache: store %s: chmod tmp: %w", dst, err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("cache: store %s: close tmp: %w", dst, err)
 	}
@@ -234,6 +272,11 @@ func (c *Cache) writeSidecar(sourceHash string, fw Framework, plan api.Plan) err
 	}
 	cs := c.checksumPath(sourceHash, fw, plan)
 	if _, err := os.Stat(cs); err == nil {
+		// Repair a sidecar that was published with the pre-split-box 0600
+		// mode, keeping an otherwise valid cache entry usable by imaged.
+		if err := os.Chmod(cs, cacheArtifactMode); err != nil {
+			return fmt.Errorf("cache: sidecar chmod existing: %w", err)
+		}
 		return nil // already published
 	}
 	if err := os.MkdirAll(filepath.Dir(cs), 0o755); err != nil {
@@ -257,6 +300,9 @@ func (c *Cache) writeSidecar(sourceHash string, fw Framework, plan api.Plan) err
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("cache: sidecar fsync: %w", err)
 	}
+	if err := os.Chmod(tmpPath, cacheArtifactMode); err != nil {
+		return fmt.Errorf("cache: sidecar chmod tmp: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("cache: sidecar close: %w", err)
 	}
@@ -270,6 +316,14 @@ func (c *Cache) writeSidecar(sourceHash string, fw Framework, plan api.Plan) err
 
 func (c *Cache) entryPath(sourceHash string, fw Framework, plan api.Plan) string {
 	return filepath.Join(c.root, sourceHash+"."+string(fw)+"."+string(plan), "layer.ext4")
+}
+
+func cacheKey(sourceHash, runtimeBaseRef string) string {
+	if runtimeBaseRef == "" {
+		return sourceHash
+	}
+	sum := sha256.Sum256([]byte(runtimeBaseRef))
+	return sourceHash + ".base-" + hex.EncodeToString(sum[:])
 }
 
 // CacheGCSweepLoop is the free-function goroutine that calls

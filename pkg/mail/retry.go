@@ -62,6 +62,11 @@ type RetryingSender struct {
 	// sleep. Tests inject a recording stub so the suite does not
 	// actually wait for MailRetryMaxWallClockMS per row.
 	Sleep func(ctx context.Context, d time.Duration)
+	// Backoff computes the default retry delay. nil uses the
+	// production full-jitter exponential backoff. The seam lets
+	// tests exercise Retry-After precedence deterministically without
+	// depending on a random draw being larger than the provider hint.
+	Backoff func(attempt int, base time.Duration) time.Duration
 }
 
 // Send retries the inner Sender on *TransientError. Non-transient
@@ -115,7 +120,7 @@ func (r *RetryingSender) Send(ctx context.Context, msg Message) error {
 			return err
 		}
 
-		delay := backoffDelay(attempt, time.Duration(api.MailRetryBaseDelayMS)*time.Millisecond)
+		delay := r.backoff()(attempt, time.Duration(api.MailRetryBaseDelayMS)*time.Millisecond)
 		if te.RetryAfter > 0 && te.RetryAfter < delay {
 			// Provider-supplied Retry-After is more honest than
 			// our jitter; honour it when it's the shorter of the
@@ -193,6 +198,13 @@ func (r *RetryingSender) sleep() func(context.Context, time.Duration) {
 		case <-t.C:
 		}
 	}
+}
+
+func (r *RetryingSender) backoff() func(int, time.Duration) time.Duration {
+	if r.Backoff != nil {
+		return r.Backoff
+	}
+	return backoffDelay
 }
 
 func (r *RetryingSender) transportLabel() string {

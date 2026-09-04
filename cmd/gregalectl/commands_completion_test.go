@@ -34,6 +34,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchRelease":      "release",
 		"dispatchDoctor":       "doctor",
 		"dispatchSecrets":      "secrets",
+		"dispatchArtifact":     "artifact",      // release-pinned shared artifact publication
 		"dispatchComputeNodes": "compute-nodes", // PR-911 image rollout (PR #929; ADR-110 + ADR-111)
 		"dispatchDeploy":       "deploy",        // PR-B (multi-host scale-out gap #2)
 		"dispatchInstances":    "instances",     // P2 of operator-obs mega-PR (Commit 5b)

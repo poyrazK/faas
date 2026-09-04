@@ -1,16 +1,12 @@
 // commands_billing_retry.go — `faas billing retry` (issue #242).
 //
-// Closes the customer-trust lie in the dunning email:
-// `pkg/mail/account.go:107` (AccountSuspendedBody) and `:150`
-// (PaymentFailedBody) promise the customer they can recover
-// from a failed card by running `faas billing retry`; this
-// subcommand is the implementation.
+// The command is available when the active provider exposes a direct retry
+// operation. Polar intentionally returns billing_retry_unsupported because
+// payment-method recovery happens in its customer portal.
 //
 // Calls POST /v1/billing/retry. apid dispatches to the active
-// billing Provider's RetryLatestCharge method — Stripe: Invoices.Pay
-// on the latest open invoice; Paddle: CreateTransaction against
-// the existing customer. Idempotency-Key is pinned server-side
-// so a flaky-network redelivery collapses to one provider attempt.
+// billing Provider's RetryLatestCharge method. Idempotency-Key is pinned
+// server-side so a flaky-network redelivery collapses to one provider attempt.
 package main
 
 import (
@@ -56,6 +52,9 @@ func cmdBillingRetry(args []string) int {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Problem.Code == "billing_no_open_charge" {
 			return printErr("No open charge to retry — your account is in good standing", err)
+		}
+		if errors.As(err, &apiErr) && apiErr.Problem.Code == "billing_retry_unsupported" {
+			return printErr("Direct billing retry is unavailable — update your payment method in the billing portal", err)
 		}
 		return printErr("Retry failed", err)
 	}

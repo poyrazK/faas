@@ -124,11 +124,16 @@ mine_raw="$(git diff --name-only --diff-filter=A "${base}" HEAD -- 'migrations/*
 mine="$(printf '%s\n' "${mine_raw}" | slots_from_paths)"
 
 if [[ -z "${mine}" ]]; then
-	emit_external_slots ""
-	echo "no new migration slots in this PR; nothing to check"
-	exit 0
+	# Keep walking open PRs below so the caller can still receive the
+	# externally claimed gaps. A migration-free PR can be tested against
+	# a merge ref that contains a real migration from main followed by
+	# slots owned by sibling PRs; exiting here would leave
+	# FAAS_MIGRATION_ALLOWED_GAPS empty and make that unrelated PR fail
+	# TestMigrationsContiguous.
+	echo "no new migration slots in this PR; checking sibling claims for contiguity"
+else
+	echo "this PR claims slot(s): $(echo "${mine}" | tr '\n' ' ')"
 fi
-echo "this PR claims slot(s): $(echo "${mine}" | tr '\n' ' ')"
 
 reserved="$(printf '%s\n' "${mine_raw}" | reserved_from_paths | tr '\n' ' ' || true)"
 if [[ -n "${reserved}" ]]; then

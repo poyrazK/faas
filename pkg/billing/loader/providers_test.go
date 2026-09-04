@@ -12,14 +12,14 @@ import (
 )
 
 func TestProviders_RegistersAllProviders(t *testing.T) {
-	// PR-P2: alphabetical sort (paddle, stripe). The PR-P1 slice
+	// PR-P2: alphabetical sort (paddle, polar, stripe). The PR-P1 slice
 	// literal was [stripe, paddle]; after PR-P2 the registry order
 	// is determined by Register() call order at init() time, which
 	// is implementation-defined. The loader sorts by Name to keep
 	// output deterministic, so this test asserts the alphabetical
-	// ordering. PR-P5 (new provider example) will extend this slice.
+	// ordering.
 	got := Providers()
-	want := []string{"paddle", "stripe"}
+	want := []string{"paddle", "polar", "stripe"}
 	if len(got) != len(want) {
 		t.Fatalf("Providers() returned %d entries, want %d (%v)", len(got), len(want), got)
 	}
@@ -68,8 +68,7 @@ func TestProviders_Paddle(t *testing.T) {
 		if m.Name != "paddle" {
 			continue
 		}
-		// Paddle exposes: hosted checkout, line-item usage, sandbox.
-		// No refund (issue #279, returns ErrNotImplemented).
+		// Paddle exposes: hosted checkout, refunds, line-item usage, sandbox.
 		// No usage_reconcile (Paddle Billing has no usage-summary endpoint).
 		if !m.Capabilities.Has(billing.CapHostedCheckout) {
 			t.Error("paddle missing CapHostedCheckout")
@@ -80,8 +79,8 @@ func TestProviders_Paddle(t *testing.T) {
 		if !m.Capabilities.Has(billing.CapSandbox) {
 			t.Error("paddle missing CapSandbox")
 		}
-		if m.Capabilities.Has(billing.CapRefund) {
-			t.Error("paddle should NOT include CapRefund — returns ErrNotImplemented")
+		if !m.Capabilities.Has(billing.CapRefund) {
+			t.Error("paddle missing CapRefund")
 		}
 		if m.Capabilities.Has(billing.CapUsageReconcile) {
 			t.Error("paddle should NOT include CapUsageReconcile — Paddle has no usage-summary endpoint")
@@ -92,6 +91,31 @@ func TestProviders_Paddle(t *testing.T) {
 		return
 	}
 	t.Fatal("paddle provider not found in Providers()")
+}
+
+func TestProviders_Polar(t *testing.T) {
+	for _, m := range Providers() {
+		if m.Name != "polar" {
+			continue
+		}
+		if !m.Capabilities.Has(billing.CapHostedCheckout) {
+			t.Error("polar missing CapHostedCheckout")
+		}
+		if !m.Capabilities.Has(billing.CapRefund) {
+			t.Error("polar missing CapRefund")
+		}
+		if !m.Capabilities.Has(billing.CapUsageMetered) {
+			t.Error("polar missing CapUsageMetered")
+		}
+		if !m.Capabilities.Has(billing.CapSandbox) {
+			t.Error("polar missing CapSandbox")
+		}
+		if m.Capabilities.Has(billing.CapUsageReconcile) {
+			t.Error("polar should not advertise CapUsageReconcile")
+		}
+		return
+	}
+	t.Fatal("polar provider not found in Providers()")
 }
 
 func TestProviders_HasEnvVarsPerProvider(t *testing.T) {

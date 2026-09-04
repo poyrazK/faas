@@ -219,6 +219,11 @@ func TestCmdAlertPresetEnable_CooldownOverride(t *testing.T) {
 // targeted tests above.
 func TestCmdAlertsPreset_DispatchTable(t *testing.T) {
 	resetJSONOut(t)
+	// Keep this dispatcher table independent of any real developer
+	// Keychain entry. The command reaches an authenticated list route
+	// for the final case, so an explicit env token is the hermetic
+	// credential source for the fake API.
+	t.Setenv("FAAS_TOKEN", "test-token")
 	cases := []struct {
 		args     []string
 		wantCode int

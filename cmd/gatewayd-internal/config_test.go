@@ -259,6 +259,34 @@ func TestConfig_AppErrorsTargetAndTLS(t *testing.T) {
 	}
 }
 
+func TestConfig_RequestTelemetryTargetFollowsTopology(t *testing.T) {
+	t.Run("explicit target wins", func(t *testing.T) {
+		c := &Config{AppErrorsTarget: "tcp://apid.faas:9093"}
+		env := func(key string) string {
+			if key == "FAAS_APID_REQUEST_TELEMETRY_TARGET" {
+				return "tcp://telemetry.faas:9443"
+			}
+			return ""
+		}
+		if got := c.GetRequestTelemetryTarget(env); got != "tcp://telemetry.faas:9443" {
+			t.Fatalf("explicit target = %q", got)
+		}
+	})
+
+	t.Run("split target reuses app errors endpoint", func(t *testing.T) {
+		c := &Config{AppErrorsTarget: "tcp://apid.faas:9093"}
+		if got := c.GetRequestTelemetryTarget(func(string) string { return "" }); got != "tcp://apid.faas:9093" {
+			t.Fatalf("split target = %q, want app errors endpoint", got)
+		}
+	})
+
+	t.Run("single box keeps dedicated socket", func(t *testing.T) {
+		if got := (&Config{}).GetRequestTelemetryTarget(func(string) string { return "" }); got != "/run/faas/request_telemetry.sock" {
+			t.Fatalf("single-box target = %q, want request telemetry socket", got)
+		}
+	})
+}
+
 // writeTLSFixtures writes a self-signed client cert + key + CA into
 // dir and returns the three paths. Used by
 // TestConfig_LoadVMMDPingTLS to exercise wire.LoadClientTLSConfigWithPrefix

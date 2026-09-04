@@ -238,6 +238,15 @@ type Scheduler interface {
 	AdmitMirrorInstance(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (instanceID, wakeID string, err error)
 }
 
+// burstScheduler is an optional extension implemented by the production
+// schedd client. The callback shape keeps the gateway package independent of
+// schedd protobuf result types while preserving all fields needed to cache a
+// target. Implementations must call report once for the first admission and
+// once for each bounded continuation, including an error result.
+type burstScheduler interface {
+	AdmitInstances(ctx context.Context, appID, scope, trigger string, count int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, err error)) error
+}
+
 // ErrSchedulerUnconfigured is returned by NoopScheduler.AdmitInstance.
 var ErrSchedulerUnconfigured = errors.New("gateway: scheduler not configured (M5)")
 

@@ -112,7 +112,7 @@ func readSavedToken(t *testing.T) string {
 // Asserts: exit 0, token file has plaintext, stdout contains the
 // "Logged in as" line, browser saw exactly one URL.
 func TestCmdLogin_InteractiveHappyPath_BrowserOpens(t *testing.T) {
-	const plaintext = "fp_live_abcdef0123456789abcdef0123456789abcdef0123456789"
+	plaintext := testAPIKey('a')
 	var mintCalls, exchangeCalls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -170,7 +170,7 @@ func TestCmdLogin_InteractiveHappyPath_BrowserOpens(t *testing.T) {
 // user types the code into the same terminal so the polling loop is
 // skipped. Asserts exactly one exchange call (no 404s).
 func TestCmdLogin_InteractiveHappyPath_PasteCode(t *testing.T) {
-	const plaintext = "fp_live_pastecode12345678901234567890123456789012345678"
+	plaintext := testAPIKey('b')
 	var exchangeCalls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -218,7 +218,7 @@ func TestCmdLogin_InteractiveHappyPath_PasteCode(t *testing.T) {
 // still reach the success path AND print the URL + "Could not open
 // browser" to stderr so the user can copy it.
 func TestCmdLogin_BrowserOpenFailure_FallsBackToURL(t *testing.T) {
-	const plaintext = "fp_live_browserfail123456789012345678901234567890123456"
+	plaintext := testAPIKey('c')
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/cli-auth/code":
@@ -389,7 +389,7 @@ func TestCmdLogin_ServerUnreachable(t *testing.T) {
 // must be >= 3s (proves the loop isn't tight-looping). The CLI
 // uses a 1s time.After backoff per iteration.
 func TestCmdLogin_PollingBackoff(t *testing.T) {
-	const plaintext = "fp_live_polling12345678901234567890123456789012345678"
+	plaintext := testAPIKey('d')
 	var exchangeCalls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -447,7 +447,7 @@ func TestCmdLogin_PollingBackoff(t *testing.T) {
 // new"). CLI must accept this without complaint and write the
 // token; no separate signup command exists.
 func TestCmdLogin_AutoCreatesAccount(t *testing.T) {
-	const plaintext = "fp_live_autocreate123456789012345678901234567890123456"
+	plaintext := testAPIKey('e')
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/cli-auth/code":
@@ -504,8 +504,9 @@ func TestCmdLogin_TokenFlagRegression(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "")
 	setFakeKeyring(t)
+	token := testAPIKey('d')
 
-	if code := cmdLogin([]string{"--token", "fp_live_x"}); code != 0 {
+	if code := cmdLogin([]string{"--token", token}); code != 0 {
 		t.Fatalf("cmdLogin --token regression = %d, want 0", code)
 	}
 }

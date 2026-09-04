@@ -57,3 +57,42 @@ func TestSlot_ZeroCeilingFallsBack(t *testing.T) {
 		t.Errorf("zero ceiling: got %+v, want guaranteed (fallback)", got)
 	}
 }
+
+func TestBuilderSlots_EnforceOneGuaranteedPlusOneOpportunistic(t *testing.T) {
+	b := &Builderd{resid: fakeResid{mb: 0}}
+
+	first, releaseFirst, ok := b.acquireSlot()
+	if !ok || first.Label != "guaranteed" {
+		t.Fatalf("first slot = %+v, acquired=%v; want guaranteed", first, ok)
+	}
+	second, releaseSecond, ok := b.acquireSlot()
+	if !ok || second.Label != "opportunistic" {
+		t.Fatalf("second slot = %+v, acquired=%v; want opportunistic", second, ok)
+	}
+	third, _, ok := b.acquireSlot()
+	if ok || third.Allowed {
+		t.Fatalf("third slot = %+v, acquired=%v; want denial", third, ok)
+	}
+
+	releaseSecond()
+	releaseFirst()
+	if _, release, ok := b.acquireSlot(); !ok {
+		t.Fatal("slot should be reusable after releases")
+	} else {
+		release()
+	}
+}
+
+func TestBuilderSlots_NoResidencyProbeKeepsSecondClosed(t *testing.T) {
+	b := &Builderd{}
+	_, release, ok := b.acquireSlot()
+	if !ok {
+		t.Fatal("guaranteed slot should be available without a probe")
+	}
+	defer release()
+
+	got, _, ok := b.acquireSlot()
+	if ok || got.Allowed {
+		t.Fatalf("second slot without probe = %+v, acquired=%v; want denial", got, ok)
+	}
+}

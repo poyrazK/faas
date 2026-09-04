@@ -63,6 +63,16 @@ type VMM interface {
 	// racing a wake-park cycle is expected during instance churn).
 	FrameworkReady(ctx context.Context, instance string, warmupMs int64) error
 	Destroy(ctx context.Context, instance string) error
+	// StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
+	// signal-grace-SIGKILL sequence. Distinct from Destroy (a hard
+	// SIGKILL). Engine.StopInstance (commit 6) dispatches per
+	// Instance.ExecutionMode: worker/job → StopInstance;
+	// request/service → existing snapshotAndPark/Destroy path.
+	// signal is a POSIX signal number (0 = use manifest StopSignal,
+	// defaulting to SIGTERM). graceSeconds is the upper bound on
+	// clean-shutdown wait; 0 = immediate SIGKILL (the legacy
+	// Destroy shape, preserved for compatibility).
+	StopInstance(ctx context.Context, instance string, signal int32, graceSeconds int32) (*StopInstanceOutcome, error)
 	// Ping is the wire-level liveness probe (issue #97 / ADR-025
 	// axis 3, PR #114). schedd's heartbeat loop calls this every
 	// HeartbeatInterval on every active compute_node; a non-error
@@ -238,11 +248,11 @@ type StatsSnapshot struct {
 }
 
 // VMInstanceStat is the sched-side view of vmmdpb.InstanceStats —
-// one per live VM the queried vmmd owns. InflightRequests and
-// LastRequestAt are populated by PR-B (the vmmd ActivityTracker +
-// stats handler extraction); until that lands the wire carries
-// zero / zero-time and the reader falls back to
-// state.Instance.LastRequestAt for the durable timestamp.
+// one per live VM the queried vmmd owns. InflightRequests,
+// LastRequestAt, and RequestCountTotal are populated by the vmmd
+// ActivityTracker when available; older vmmds may still return the
+// zero / absent shape and the poller falls back to durable state for
+// the timestamp.
 type VMInstanceStat struct {
 	InstanceID    string
 	LeaseUID      int32
@@ -286,6 +296,10 @@ type VMInstanceStat struct {
 	NetRxBytes       *int64
 	InflightRequests int64
 	LastRequestAt    time.Time
+	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
+	// instance. It is optional because older vmmds do not emit it and the
+	// counter resets when vmmd or the instance is recreated.
+	RequestCountTotal *int64
 }
 
 // AppSpec is the flat set of fields vmmd needs to boot an instance (ADR-014).
@@ -330,6 +344,11 @@ type AppSpec struct {
 	SealedEnv       []fcvm.SealedEnvEntry
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
+	// Sidecars carries the deployment's immutable sidecar layer handles and
+	// per-workload policy. Image defaults and command metadata are baked into
+	// each sidecar layer; sealed deployment env overrides travel separately in
+	// the sidecar spec and are opened only by vmmd into the instance upper.
+	Sidecars []fcvm.WorkloadSpec
 	// Port (issue #460 / ADR-053 §Decision 1, PR-C) is the per-deployment
 	// override port the customer's app binds inside the guest. 0 = legacy
 	// 8080 (netns.AppPort default at the vmmd wire boundary). The host's
@@ -431,6 +450,19 @@ type WakeOutcome struct {
 	Method           vmmdpb.WakeMethod
 	RequestedMethod  vmmdpb.WakeMethod
 	Characterization api.CharacterizationReport
+}
+
+// StopInstanceOutcome (M-2 / ADR-138 §Decision 1) is the vmmd-side
+// result of the StopInstance RPC. Engine.StopInstance (commit 6)
+// reads KillSignalSent to decide whether the workload exited
+// cleanly within the grace window (clean_exit lifecycle_failure_reason)
+// or whether vmmd had to escalate to SIGKILL after the grace period
+// elapsed (killed_after_grace — surfaced as a future taxonomy
+// addition; for M-2 the engine simply logs and continues).
+type StopInstanceOutcome struct {
+	Instance       string
+	ExitCode       int32
+	KillSignalSent bool
 }
 
 // VMMClient is the production VMM: a gRPC connection to vmmd's unix socket.
@@ -589,6 +621,30 @@ func (c *VMMClient) Destroy(ctx context.Context, instance string) error {
 		return liftErr(err)
 	}
 	return nil
+}
+
+// StopInstance implements VMM (M-2 / ADR-138 §Decision 1). Wire is
+// the vmmdpb.StopInstance RPC (regenerated in commit 5). The signal
+// value is a POSIX signal number (0 = use manifest StopSignal,
+// defaulting to SIGTERM); grace is the upper bound on clean-shutdown
+// wait in seconds (0 = immediate SIGKILL, the legacy Destroy shape).
+// Returns the vmmd-side StopInstanceOutcome so Engine.StopInstance
+// (commit 6) can decide whether to record lifecycle_failure_reason
+// = clean_exit vs killed_after_grace.
+func (c *VMMClient) StopInstance(ctx context.Context, instance string, signal int32, graceSeconds int32) (*StopInstanceOutcome, error) {
+	resp, err := c.cli.StopInstance(ctx, &vmmdpb.StopInstanceRequest{
+		Instance:     instance,
+		Signal:       signal,
+		GracePeriodS: graceSeconds,
+	})
+	if err != nil {
+		return nil, liftErr(err)
+	}
+	return &StopInstanceOutcome{
+		Instance:       resp.Instance,
+		ExitCode:       resp.ExitCode,
+		KillSignalSent: resp.KillSignalSent,
+	}, nil
 }
 
 // UpdateEgressAllowlist implements VMM. The wire is a repeated
@@ -840,10 +896,10 @@ func (c *VMMClient) Stats(ctx context.Context) (*StatsSnapshot, error) {
 
 // vmInstanceStatFromProto decodes one vmmdpb.InstanceStats row into
 // the typed wrapper. Pointer fields are nil when the proto wrapper
-// is absent (the caller maps that to Unknown). InflightRequests and
-// LastRequestAt are populated by PR-B; today the wire carries
-// zero / zero-time, which the poller treats as "no signal yet"
-// and falls back to state.Instance.LastRequestAt.
+// is absent (the caller maps that to Unknown). InflightRequests,
+// LastRequestAt, and RequestCountTotal are optional activity signals;
+// the poller treats absent values as "no signal yet" and falls back
+// to state.Instance.LastRequestAt for the timestamp.
 func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 	row := VMInstanceStat{
 		InstanceID:       in.GetInstance(),
@@ -871,6 +927,10 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		b := v.GetValue()
 		row.NetTxBytes = &b
 	}
+	if v := in.GetRequestCountTotal(); v != nil {
+		c := v.GetValue()
+		row.RequestCountTotal = &c
+	}
 	if t := in.GetLastRequestAt(); t != nil {
 		row.LastRequestAt = t.AsTime()
 	}
@@ -893,6 +953,27 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			Value: e.Value,
 		})
 	}
+	sidecars := make([]*vmmdpb.SidecarSpec, 0, len(a.Sidecars))
+	for _, sc := range a.Sidecars {
+		sealedSidecarEnv := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedEnv))
+		for _, entry := range sc.SealedEnv {
+			sealedSidecarEnv = append(sealedSidecarEnv, &vmmdpb.SealedSecret{
+				Key:        entry.Key,
+				Ciphertext: entry.Ciphertext,
+			})
+		}
+		sidecars = append(sidecars, &vmmdpb.SidecarSpec{
+			Name:       sc.Name,
+			Type:       sc.Type,
+			Image:      sc.Image,
+			RamMb:      int32(sc.RamMB),
+			Port:       uint32(sc.Port),
+			Essential:  sc.Essential,
+			StorageKey: sc.StorageKey,
+			DriveSlot:  sc.DriveID,
+			SealedEnv:  sealedSidecarEnv,
+		})
+	}
 	return &vmmdpb.AppSpec{
 		BaseKey:         a.BaseKey,
 		LayerKey:        a.LayerKey,
@@ -901,6 +982,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		EgressMbit:      a.EgressMbit,
 		SealedEnv:       sealed,
 		ApiEnv:          apiEnv,
+		Sidecars:        sidecars,
 		EgressAllowlist: a.EgressAllowlist,
 		Port:            uint32(a.Port),
 		// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment

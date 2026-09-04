@@ -52,12 +52,10 @@ func TestRunQuotaOnce_OverageCapHonored(t *testing.T) {
 	// as "before monthStart" — cap hit never registers.
 	store.SetClockForTest(func() time.Time { return now })
 
-	// 1200 cents of derived overage this month. 100 cents = 1 GB-h, so
-	// 1200 cents = 12 GB-h = 12 * 1024 * 3600 = 44_236_800 mb_seconds.
-	// Round to 44_280_000 to land at 1200 cents exactly (44_280_000 / 3600 * 100 = 1_230_000; wait — formula is
-	// mb_seconds * 100 / 3600 = cents. 43_200_000 * 100 / 3600 = 1_200_000 cents = 1200 cents.
+	// Hobby includes 50 GB-hours. Add 1200 billable GB-hours so the
+	// derived overage is 1200 cents and exceeds the 1000-cent cap.
 	const targetCents = int64(1200)
-	mbSeconds := targetCents * 3600 / 100 // 43_200_000
+	mbSeconds := int64(api.PlanHobby.PlanIncludedGBHours()+int(targetCents)) * api.SecondsPerGBHour
 	month := meter.AccountMonthKey(now)
 	// UsageByMonth is keyed by month; planting a single row in the
 	// current month is enough — the cap gate sums usage_minutes, not
@@ -128,8 +126,9 @@ func TestRunQuotaOnce_OverageCapBelowThreshold(t *testing.T) {
 	store.SetOverageCapCentsForTest(acct.ID, 10_000)
 	store.SetClockForTest(func() time.Time { return now })
 
-	// 500 cents of overage (5 GB-h). Below the 10_000 cap.
-	mbSeconds := int64(500) * 3600 / 100 // 18_000 mb_seconds
+	// Pro includes 250 GB-hours. Add 500 billable GB-hours, below the
+	// 10_000-cent cap.
+	mbSeconds := int64(api.PlanPro.PlanIncludedGBHours()+500) * api.SecondsPerGBHour
 	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now.Add(time.Minute), mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append usage: %v", err)
 	}
@@ -282,8 +281,8 @@ func TestRunQuotaOnce_OverageCapAtCap(t *testing.T) {
 	store.SetOverageCapCentsForTest(acct.ID, 500) // cents
 	store.SetClockForTest(func() time.Time { return now })
 
-	// Exactly 500 cents of derived overage.
-	mbSeconds := int64(500) * 3600 / 100 // 18_000 mb_seconds
+	// Scale includes 1500 GB-hours. Add exactly 500 billable GB-hours.
+	mbSeconds := int64(api.PlanScale.PlanIncludedGBHours()+500) * api.SecondsPerGBHour
 	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now.Add(time.Minute), mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append usage: %v", err)
 	}
@@ -369,10 +368,10 @@ func TestOverageCap_MeterdAdvisory(t *testing.T) {
 	// anchor AppendUsage uses.
 	store.SetClockForTest(func() time.Time { return now })
 
-	// 1200 cents of derived overage this month. The cap is 1000
-	// cents so the cap-hit branch fires.
+	// Hobby includes 50 GB-hours. Add 1200 billable GB-hours. The cap is
+	// 1000 cents so the cap-hit branch fires.
 	const targetCents = int64(1200)
-	mbSeconds := targetCents * 3600 / 100 // 43_200_000
+	mbSeconds := int64(api.PlanHobby.PlanIncludedGBHours()+int(targetCents)) * api.SecondsPerGBHour
 	month := meter.AccountMonthKey(now)
 	row, err := store.UsageByMonth(ctx, acct.ID, month)
 	if err != nil {

@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,6 +37,9 @@ import (
 //	FAAS_STORAGE_LOCAL_PREFIXES   oci-only — comma-separated prefix list
 //	                                routed to the local backend (default
 //	                                "snap/,base/,kernel/,layers/"). The
+//	                                literal "none" disables all local
+//	                                routes; this is required with
+//	                                FAAS_REQUIRE_SHARED_ARTIFACTS=1.
 //	                                local-only backend IGNORES this — every
 //	                                key falls through to FAAS_STORAGE_ROOT
 //	                                with the full prefix preserved (the
@@ -62,6 +66,11 @@ import (
 //	FAAS_OCI_USERNAME             oci-only — optional Basic-Auth user for token endpoint
 //	FAAS_OCI_PASSWORD             oci-only — optional Basic-Auth password
 //	FAAS_OCI_TIMEOUT_SECONDS      oci-only — per-request timeout (default 60)
+//	FAAS_REQUIRE_SHARED_ARTIFACTS  when "1"/"true", require the OCI backend
+//	                                with FAAS_STORAGE_LOCAL_PREFIXES=none.
+//	                                This is the production split-node gate:
+//	                                snapshots, bases, kernels, and layers
+//	                                must resolve from one shared store.
 //
 // The "apps-root can differ from fc-root" composition only makes sense
 // for the local backend (an OCI backend namespaces all prefixes under
@@ -71,6 +80,9 @@ import (
 // disk while routing per-app layers to the registry. ADR-054.
 func BackendFromEnv() (StorageBackend, error) {
 	kind := envOr("FAAS_STORAGE_BACKEND", "local")
+	if err := validateSharedArtifactMode(kind); err != nil {
+		return nil, err
+	}
 	var be StorageBackend
 	var err error
 	switch kind {
@@ -168,6 +180,14 @@ func parseLocalPrefixes(raw string) ([]string, error) {
 	if raw == "" {
 		return defaultLocalPrefixes, nil
 	}
+	// An explicit remote-only value is intentionally different from an
+	// empty environment variable. Empty preserves the historical default
+	// for single-box and mixed OCI deployments; "none" is the fail-closed
+	// production declaration that no artifact namespace may be served from
+	// a node-local filesystem.
+	if strings.EqualFold(strings.TrimSpace(raw), "none") {
+		return []string{}, nil
+	}
 	seen := make(map[string]struct{})
 	out := make([]string, 0, 4)
 	for _, p := range strings.Split(raw, ",") {
@@ -193,6 +213,41 @@ func parseLocalPrefixes(raw string) ([]string, error) {
 		return nil, errors.New("storage: FAAS_STORAGE_LOCAL_PREFIXES is empty after parsing")
 	}
 	return out, nil
+}
+
+// validateSharedArtifactMode enforces the split-node storage contract before
+// constructing any backend. A PrefixRouter with a local fallback is otherwise
+// perfectly valid from the storage package's perspective, but it is unsafe for
+// snapshot restore: identical logical keys can resolve to different bytes on
+// different compute nodes. Keep the gate in the shared env seam so vmmd,
+// imaged, and any future artifact consumer cannot accidentally diverge.
+func validateSharedArtifactMode(kind string) error {
+	raw, ok := os.LookupEnv("FAAS_REQUIRE_SHARED_ARTIFACTS")
+	if !ok || strings.TrimSpace(raw) == "" || raw == "0" || strings.EqualFold(strings.TrimSpace(raw), "false") {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(raw), "1") && !strings.EqualFold(strings.TrimSpace(raw), "true") {
+		return fmt.Errorf("storage: FAAS_REQUIRE_SHARED_ARTIFACTS=%q must be 0, 1, false, or true", raw)
+	}
+	if kind != "oci" {
+		return fmt.Errorf("storage: FAAS_REQUIRE_SHARED_ARTIFACTS requires FAAS_STORAGE_BACKEND=oci; got %q", kind)
+	}
+	rawPrefixes, set := os.LookupEnv("FAAS_STORAGE_LOCAL_PREFIXES")
+	if !set || !strings.EqualFold(strings.TrimSpace(rawPrefixes), "none") {
+		return errors.New("storage: shared artifact mode requires explicit FAAS_STORAGE_LOCAL_PREFIXES=none; refusing node-local artifact routes")
+	}
+	registry := strings.TrimSpace(os.Getenv("FAAS_OCI_REGISTRY"))
+	parsedRegistry, err := url.Parse(registry)
+	if err != nil || !strings.EqualFold(parsedRegistry.Scheme, "https") || parsedRegistry.Host == "" {
+		return errors.New("storage: shared artifact mode requires FAAS_OCI_REGISTRY to use an HTTPS URL")
+	}
+	if stale := strings.TrimSpace(os.Getenv("FAAS_STORAGE_CACHE_SERVE_STALE")); stale != "" {
+		on, err := strconv.ParseBool(stale)
+		if err != nil || on {
+			return errors.New("storage: shared artifact mode forbids FAAS_STORAGE_CACHE_SERVE_STALE; stale local blobs cannot be trusted")
+		}
+	}
+	return nil
 }
 
 // localBackendFromEnv builds a PrefixRouter over FAAS_STORAGE_ROOT +

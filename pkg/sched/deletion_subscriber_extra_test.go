@@ -17,6 +17,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -41,8 +42,13 @@ func (e *errStore) ListInstancesForAccount(_ context.Context, _ string) ([]state
 // so a minimal stub is enough — see the helper below.
 func newSubscriberForTest(store state.Store) *DeletionSubscriber {
 	return &DeletionSubscriber{
-		engine: &Engine{store: store},
-		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		engine: &Engine{
+			store:  store,
+			ledger: NewNodeLedger(),
+			vmm:    &fakeVMM{},
+			appMu:  make(map[string]*sync.Mutex),
+		},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 
@@ -99,6 +105,9 @@ func TestEvictAccount_NoLiveInstances(t *testing.T) {
 func TestEvictAccount_SkipsTerminalInstances(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "mixed-account@example.com")
+	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
+		t.Fatalf("mark account pending: %v", err)
+	}
 	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("create RUNNING instance: %v", err)
 	}

@@ -130,8 +130,9 @@ type Config struct {
 	// endpoint (issue #169 / #172). The schedd scale-up trigger
 	// scrapes this URL every cfg.ScaleUpInterval for
 	// `gateway_requests_total{app=...}` so it can compute per-app
-	// RPS. Empty disables the trigger (Loop.WithScaleUp is not
-	// called → the ticker arm never fires). Defaults to
+	// RPS. Empty disables only this optional scrape; the trigger
+	// can still use the provider-independent VMMD activity-counter
+	// signal from the instancestats reader. Defaults to
 	// http://127.0.0.1:9090/metrics, matching gatewayd-internal's
 	// ControlAddr default (cmd/gatewayd-internal/config.go).
 	GatewayMetricsURL string `toml:"gateway_metrics_url"`

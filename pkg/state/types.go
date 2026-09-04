@@ -3052,32 +3052,55 @@ type Instance struct {
 	JobTaskIndex int
 }
 
-// InstanceMode (issue #72 / ADR-125) is the closed vocabulary for
-// the `instances.mode` column. The string values match the
-// migrations/00349 + 00577 CHECK; the sampler, reaper, and schedd
-// engine compare against these constants rather than literal
-// strings so a future widening lands as a compile error at every
-// callsite.
+// InstanceMode (issue #72 / ADR-125 + issue #1186 / ADR-137) is the
+// closed vocabulary for the `instances.mode` column. The string
+// values match the migrations/00385 (initial) + 00570 (M-2 widening)
+// CHECK constraints; main's 00577 adds 'job' (PR #1195) and was
+// absorbed into the M-2 superset widening {normal, mirror, worker,
+// service, job} so M-2 lands as a single widening, not a tightening.
+// The sampler, reaper, and schedd engine compare against these
+// constants rather than literal strings so a future widening lands
+// as a compile error at every callsite.
+//
+// The closed set is {normal, mirror, worker, service, job} after M-2
+// commit 4 lands. `normal` and `mirror` are the legacy two-value
+// shape (ADR-125); `worker`, `service`, `job` are the M-2 / ADR-137
+// execution-mode axis mirrored on the instance row. The Go-side
+// constants here are the single source of truth — every call site
+// compares via these constants or via the IsMeteredSkippableMode /
+// CountsForRAMByMode helpers (pkg/state/machine.go).
 type InstanceMode string
 
 const (
 	// InstanceModeNormal is the default for every customer-facing
 	// wake. The schedd engine stamps this at instance creation
-	// unless the WakeRequest carries is_mirror=true.
+	// unless the WakeRequest carries is_mirror=true or the app's
+	// execution_mode is worker/service/job (issue #1186 §D / ADR-137).
 	InstanceModeNormal InstanceMode = "normal"
 	// InstanceModeMirror tags an instance that the schedd created
 	// to serve a mirror invocation (issue #72 / ADR-125). The
 	// customer is never billed for this row; the reaper does not
 	// idle-reap it (the request-completion path self-parks it).
 	InstanceModeMirror InstanceMode = "mirror"
-	// InstanceModeJob (issue #1184 Workstream A / ADR-099
-	// supplement) tags an instance that the schedd created to
-	// run a single job task. Unlike mirror, a job VM IS
+	// InstanceModeWorker tags an instance whose app is
+	// execution_mode='worker' (ADR-137). Long-running, no public
+	// port, idle-reap exempt, billed at the standard mb_seconds
+	// rate (no skip). Created by schedd commit 6.
+	InstanceModeWorker InstanceMode = "worker"
+	// InstanceModeService tags an instance whose app is
+	// execution_mode='service' (ADR-137). Replicated per
+	// deployment.service_replicas; the engine maintains
+	// desired-count via replacement wakes (commit 6).
+	InstanceModeService InstanceMode = "service"
+	// InstanceModeJob tags an instance that the schedd created to
+	// run a single job task (issue #1184 Workstream A / ADR-099
+	// supplement + ADR-137). Unlike mirror, a job VM IS
 	// billable — the sampler path counts it like a normal VM;
 	// the only mode-specific branch is the per-account
 	// JobConcurrentByAccount quota gate (which uses kind=
-	// 'job_task', not mode). Mode='job' is observability for
-	// the dashboard's workload-class breakdown.
+	// 'job_task', not mode). For apps with execution_mode='job'
+	// (ADR-137) the run-to-completion RestartPolicy default 'no'
+	// applies; billed at standard rate while RUNNING.
 	InstanceModeJob InstanceMode = "job"
 )
 
@@ -3748,6 +3771,15 @@ type Usage struct {
 	ColdBootCount int64
 }
 
+// UsageWindow is the account-level billable usage aggregate for one
+// completed UTC hour. It is intentionally provider-neutral: every metered
+// provider uses the same durable source rows and its own idempotency key.
+type UsageWindow struct {
+	AccountID string
+	Hour      time.Time
+	MBSeconds int64
+}
+
 // DailyUsage is the per-(account, app, day) row read by
 // Store.UsageDaily (ADR-048 §5). Mirrors the columns declared
 // in migrations/00067_extend_metering_telemetry.sql::usage_daily.
@@ -3804,7 +3836,7 @@ type StorageUsage struct {
 type Invoice struct {
 	ID                string
 	AccountID         string
-	Provider          string // "stripe" | "paddle"
+	Provider          string // "stripe" | "paddle" | "polar"
 	ProviderInvoiceID string
 	Number            string
 	Status            string // "draft" | "open" | "paid" | "uncollectible" | "void"

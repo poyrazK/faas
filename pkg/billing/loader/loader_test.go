@@ -13,10 +13,15 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
+	"github.com/onebox-faas/faas/pkg/billing/polar"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -37,6 +42,7 @@ func resolveCfg(t *testing.T, env func(string) string) *RootBillingConfig {
 	cfg := &RootBillingConfig{
 		Stripe: &stripe.Config{},
 		Paddle: &paddle.Config{},
+		Polar:  &polar.Config{},
 	}
 	return ApplyBillingEnvOverlay(cfg, env)
 }
@@ -45,33 +51,69 @@ func discardLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+// polarCatalogServer is the hermetic catalog endpoint used by the Polar
+// loader tests. EnsurePlanProducts deliberately performs a live preflight so
+// a typo cannot survive daemon startup; tests must therefore provide the same
+// local contract instead of relying on an external Polar account.
+func polarCatalogServer(t *testing.T, includeMeter bool) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/products/"):
+			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
+			if id == "" {
+				http.NotFound(w, r)
+				return
+			}
+			fixed := 900
+			switch id {
+			case "pro-product":
+				fixed = 2900
+			case "scale-product":
+				fixed = 9900
+			}
+			_, _ = io.WriteString(w, `{"id":"`+id+`","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"eur","price_amount":`+strconv.Itoa(fixed)+`,"is_archived":false},{"amount_type":"metered_unit","price_currency":"eur","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`)
+		case includeMeter && r.URL.Path == "/v1/meters/meter-1":
+			_, _ = io.WriteString(w, `{"id":"meter-1","unit":"scalar","archived_at":null,"filter":{"conjunction":"and","clauses":[{"property":"name","operator":"eq","value":"ram_usage"}]},"aggregation":{"func":"sum","property":"gb_ram_hours"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
 // TestLoadProviderForAPID_Default confirms the empty-env case returns
-// (provider, "paddle", nil) — the production billing provider path is
-// the default at v2 (ADR-032 v2). The legacy Stripe surface is still
+// (provider, "polar", nil) — Polar is the public-release billing provider.
+// The legacy Stripe surface is still
 // bootable from FAAS_BILLING_PROVIDER=stripe (see TestLoadProviderForAPID_Stripe).
 //
-// The Paddle constructor needs a non-empty apiKey + sandbox flag so we
-// seed the env map with the canonical test values; the loader passes
-// these through pkg/billing/paddle.NewProvider and the SDK constructor
-// only fails on programmer error (sandbox / live host differs by
-// env), so the loader never returns an error from this path.
+// The Polar constructor needs a token, product IDs, meter ID, and a
+// hermetic catalog endpoint because the loader performs a startup preflight.
 func TestLoadProviderForAPID_Default(t *testing.T) {
 	t.Parallel()
+	catalogURL := polarCatalogServer(t, true)
 	env := mapEnv(map[string]string{
-		"FAAS_PADDLE_API_KEY":        "pdl_test_loader_default",
-		"FAAS_PADDLE_WEBHOOK_SECRET": "whk_test_loader_default",
-		"FAAS_PADDLE_SANDBOX":        "1",
+		"FAAS_POLAR_ACCESS_TOKEN":     "polar_test_loader_default",
+		"FAAS_POLAR_WEBHOOK_SECRET":   "polar_whs_test_loader_default",
+		"FAAS_POLAR_HOBBY_PRODUCT_ID": "hobby-product",
+		"FAAS_POLAR_PRO_PRODUCT_ID":   "pro-product",
+		"FAAS_POLAR_SCALE_PRODUCT_ID": "scale-product",
+		"FAAS_POLAR_USAGE_EVENT_NAME": "ram_usage",
+		"FAAS_POLAR_METER_ID":         "meter-1",
+		"FAAS_POLAR_BASE_URL":         catalogURL,
 	})
 	cfg := resolveCfg(t, env)
 	p, name, err := LoadProviderForAPID(context.Background(), cfg, env, discardLog())
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
-	if name != "paddle" {
-		t.Errorf("name = %q, want %q", name, "paddle")
+	if name != "polar" {
+		t.Errorf("name = %q, want %q", name, "polar")
 	}
 	if p == nil {
-		t.Errorf("provider = nil, want non-nil paddle.Provider")
+		t.Errorf("provider = nil, want non-nil polar.Provider")
 	}
 }
 
@@ -133,6 +175,80 @@ func TestLoadProviderForAPID_Paddle_BuildsProvider(t *testing.T) {
 	}
 }
 
+func TestLoadProviderForAPID_Polar_BuildsProvider(t *testing.T) {
+	t.Parallel()
+	catalogURL := polarCatalogServer(t, true)
+	env := mapEnv(map[string]string{
+		"FAAS_BILLING_PROVIDER":                "polar",
+		"FAAS_POLAR_ACCESS_TOKEN":              "polar_test_token",
+		"FAAS_POLAR_WEBHOOK_SECRET":            "dGVzdA==",
+		"FAAS_POLAR_HOBBY_PRODUCT_ID":          "hobby-product",
+		"FAAS_POLAR_PRO_PRODUCT_ID":            "pro-product",
+		"FAAS_POLAR_SCALE_PRODUCT_ID":          "scale-product",
+		"FAAS_POLAR_USAGE_EVENT_NAME":          "ram_usage",
+		"FAAS_POLAR_METER_ID":                  "meter-1",
+		"FAAS_POLAR_SANDBOX":                   "true",
+		"FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS": "120",
+		"FAAS_POLAR_BASE_URL":                  catalogURL,
+	})
+	cfg := resolveCfg(t, env)
+	p, name, err := LoadProviderForAPID(context.Background(), cfg, env, discardLog())
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if name != "polar" {
+		t.Fatalf("name = %q, want polar", name)
+	}
+	if _, ok := p.(*polar.Provider); !ok {
+		t.Fatalf("provider = %T, want *polar.Provider", p)
+	}
+	if !p.Capabilities().Has(billing.CapUsageReconcile) {
+		t.Fatal("configured Polar meter should enable CapUsageReconcile")
+	}
+}
+
+func TestLoadProviderForMeterd_Polar_BuildsProvider(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	catalogURL := polarCatalogServer(t, true)
+	env := mapEnv(map[string]string{
+		"FAAS_BILLING_PROVIDER":       "polar",
+		"FAAS_POLAR_ACCESS_TOKEN":     "polar_test_token",
+		"FAAS_POLAR_HOBBY_PRODUCT_ID": "hobby-product",
+		"FAAS_POLAR_PRO_PRODUCT_ID":   "pro-product",
+		"FAAS_POLAR_SCALE_PRODUCT_ID": "scale-product",
+		"FAAS_POLAR_USAGE_EVENT_NAME": "ram_usage",
+		"FAAS_POLAR_METER_ID":         "meter-1",
+		"FAAS_POLAR_SANDBOX":          "1",
+		"FAAS_POLAR_BASE_URL":         catalogURL,
+	})
+	cfg := resolveCfg(t, env)
+	p, name, err := LoadProviderForMeterd(cfg, env, store, discardLog())
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if name != "polar" {
+		t.Fatalf("name = %q, want polar", name)
+	}
+	if _, ok := p.(*polar.Provider); !ok {
+		t.Fatalf("provider = %T, want *polar.Provider", p)
+	}
+}
+
+func TestLoadProviderForMeterd_PolarFailsMissingCatalogID(t *testing.T) {
+	t.Parallel()
+	env := mapEnv(map[string]string{
+		"FAAS_BILLING_PROVIDER":       "polar",
+		"FAAS_POLAR_ACCESS_TOKEN":     "polar_test_token",
+		"FAAS_POLAR_HOBBY_PRODUCT_ID": "hobby-product",
+		"FAAS_POLAR_PRO_PRODUCT_ID":   "pro-product",
+	})
+	cfg := resolveCfg(t, env)
+	if _, _, err := LoadProviderForMeterd(cfg, env, state.NewMemStore(), discardLog()); err == nil || !strings.Contains(err.Error(), "Scale") && !strings.Contains(err.Error(), "scale") {
+		t.Fatalf("LoadProviderForMeterd error = %v, want missing scale product preflight", err)
+	}
+}
+
 // TestLoadProviderForAPID_Unknown fails the boot loudly on a typo.
 // "braintree" is the canonical bad-value example (real product, not a
 // supported provider) — the loader must return an error rather than
@@ -151,30 +267,36 @@ func TestLoadProviderForAPID_Unknown(t *testing.T) {
 	}
 }
 
-// TestLoadProviderForMeterd_Default_BuildsPaddle asserts the meterd
-// default path constructs a *paddle.Provider (not nil) — the production
-// billing provider at v2 (ADR-032 v2).
+// TestLoadProviderForMeterd_Default_BuildsPolar asserts the meterd
+// default path constructs a *polar.Provider (not nil) — the public-release
+// billing provider.
 //
 // We don't assert on the concrete type here (just non-nil) — the
 // compile-time conformance var in pkg/billing/paddle/provider.go pins
 // the shape.
-func TestLoadProviderForMeterd_Default_BuildsPaddle(t *testing.T) {
+func TestLoadProviderForMeterd_Default_BuildsPolar(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
+	catalogURL := polarCatalogServer(t, true)
 	env := mapEnv(map[string]string{
-		"FAAS_PADDLE_API_KEY": "pdl_test_meterd_default",
-		"FAAS_PADDLE_SANDBOX": "1",
+		"FAAS_POLAR_ACCESS_TOKEN":     "polar_test_meterd_default",
+		"FAAS_POLAR_HOBBY_PRODUCT_ID": "hobby-product",
+		"FAAS_POLAR_PRO_PRODUCT_ID":   "pro-product",
+		"FAAS_POLAR_SCALE_PRODUCT_ID": "scale-product",
+		"FAAS_POLAR_USAGE_EVENT_NAME": "ram_usage",
+		"FAAS_POLAR_METER_ID":         "meter-1",
+		"FAAS_POLAR_BASE_URL":         catalogURL,
 	})
 	cfg := resolveCfg(t, env)
 	p, name, err := LoadProviderForMeterd(cfg, env, store, discardLog())
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
-	if name != "paddle" {
-		t.Errorf("name = %q, want %q", name, "paddle")
+	if name != "polar" {
+		t.Errorf("name = %q, want %q", name, "polar")
 	}
 	if p == nil {
-		t.Errorf("provider = nil, want non-nil *paddle.Provider")
+		t.Errorf("provider = nil, want non-nil *polar.Provider")
 	}
 }
 
@@ -330,31 +452,37 @@ func TestLoadProviderForMeterd_TOMLStripeBlock(t *testing.T) {
 	}
 }
 
-// TestLoadProviderForMeterd_EmptyTOMLFallsThroughToPaddle asserts an
-// empty cfg.Provider (no TOML header, no env override) → Paddle (the
-// production default at v2, ADR-032 v2). The legacy Stripe opt-in is
+// TestLoadProviderForMeterd_EmptyTOMLFallsThroughToPolar asserts an
+// empty cfg.Provider (no TOML header, no env override) → Polar (the
+// public-release default). The legacy Stripe opt-in is
 // still bootable from FAAS_BILLING_PROVIDER=stripe (see
 // TestLoadProviderForMeterd_Stripe).
-func TestLoadProviderForMeterd_EmptyTOMLFallsThroughToPaddle(t *testing.T) {
+func TestLoadProviderForMeterd_EmptyTOMLFallsThroughToPolar(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
+	catalogURL := polarCatalogServer(t, true)
 	env := mapEnv(map[string]string{
-		"FAAS_PADDLE_API_KEY": "pdl_x",
-		"FAAS_PADDLE_SANDBOX": "1",
+		"FAAS_POLAR_ACCESS_TOKEN":     "polar_x",
+		"FAAS_POLAR_HOBBY_PRODUCT_ID": "hobby-product",
+		"FAAS_POLAR_PRO_PRODUCT_ID":   "pro-product",
+		"FAAS_POLAR_SCALE_PRODUCT_ID": "scale-product",
+		"FAAS_POLAR_USAGE_EVENT_NAME": "ram_usage",
+		"FAAS_POLAR_METER_ID":         "meter-1",
+		"FAAS_POLAR_BASE_URL":         catalogURL,
 	})
 	cfg := resolveCfg(t, env)
 	if cfg.Provider != "" {
-		t.Fatalf("cfg.Provider = %q, want empty (default falls through to paddle)", cfg.Provider)
+		t.Fatalf("cfg.Provider = %q, want empty (default falls through to polar)", cfg.Provider)
 	}
 	p, name, err := LoadProviderForMeterd(cfg, env, store, discardLog())
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
-	if name != "paddle" {
-		t.Errorf("name = %q, want %q (empty cfg.Provider falls through to paddle)", name, "paddle")
+	if name != "polar" {
+		t.Errorf("name = %q, want %q (empty cfg.Provider falls through to polar)", name, "polar")
 	}
 	if p == nil {
-		t.Error("provider = nil, want non-nil *paddle.Provider")
+		t.Error("provider = nil, want non-nil *polar.Provider")
 	}
 }
 
@@ -487,12 +615,12 @@ func TestLoadProviderForMeterd_TOMLPaddleKeyUsedWhenEnvEmpty(t *testing.T) {
 	}
 }
 
-// TestRootBillingConfig_DefaultProvider_PaddleAtV2 pins the implicit
+// TestRootBillingConfig_DefaultProvider_Polar pins the implicit
 // default hoisted into RootBillingConfig.DefaultProvider() (PR #962
 // MED-1 fix). The single seam means a future default flip is a
 // one-edit change rather than a three-edit change. Both the legacy
 // "stripe" opt-in and an empty cfg must produce the right answer.
-func TestRootBillingConfig_DefaultProvider_PaddleAtV2(t *testing.T) {
+func TestRootBillingConfig_DefaultProvider_Polar(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -502,10 +630,10 @@ func TestRootBillingConfig_DefaultProvider_PaddleAtV2(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "empty provider field → paddle (v2 default)",
+			name:   "empty provider field → polar (public-release default)",
 			cfg:    &RootBillingConfig{Provider: ""},
 			expose: func(c *RootBillingConfig) string { return c.DefaultProvider() },
-			want:   "paddle",
+			want:   "polar",
 		},
 		{
 			name:   "explicit stripe is honoured",
@@ -523,7 +651,7 @@ func TestRootBillingConfig_DefaultProvider_PaddleAtV2(t *testing.T) {
 			name:   "nil receiver returns the default (graceful)",
 			cfg:    nil,
 			expose: func(c *RootBillingConfig) string { return c.DefaultProvider() },
-			want:   "paddle",
+			want:   "polar",
 		},
 		{
 			name:   "explicit unknown value is passed through (loader surfaces the 'unknown' error)",

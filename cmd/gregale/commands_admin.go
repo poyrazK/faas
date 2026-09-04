@@ -1,11 +1,10 @@
 // Issue #279 — operator CLI surface for billing operations.
 //
-// `gregale admin credit <account_uuid> <cents> --reason <text>` is the
-// operator's only path to refund/credit a customer without leaving
-// the platform. The dispatch is single-level: `gregale admin <sub>`,
-// not `gregale admin credit <account> <cents> ...`. Future subcommands
-// (refund-via-stripe, set-overage-cap, etc.) land as additional
-// dispatch arms in cmdAdmin.
+// `gregale admin credit <account_uuid> <cents> --reason <text>` and
+// `gregale admin refund <account_uuid> <invoice_uuid> <cents> --reason <text>`
+// are the operator's billing operations that do not require leaving the
+// platform. The dispatch is single-level: `gregale admin <sub>`. Future
+// provider-specific operations land as additional dispatch arms in cmdAdmin.
 //
 // Auth model: the SDK call requires an admin-scoped API key
 // (ScopesAdminOnly) AND the caller's email must be in
@@ -24,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -38,8 +38,9 @@ import (
 // the account uuid + cents positionals.
 func cmdAdmin(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gregale admin <credit|consume-credits>")
+		fmt.Fprintln(os.Stderr, "usage: gregale admin <credit|refund|consume-credits>")
 		fmt.Fprintln(os.Stderr, "  gregale admin credit --reason <text> <account_uuid> <cents>")
+		fmt.Fprintln(os.Stderr, "  gregale admin refund --reason <text> [--idempotency-key K] <account_uuid> <invoice_uuid> <cents>")
 		fmt.Fprintln(os.Stderr, "  gregale admin consume-credits <invoice-id>")
 		PrintUsage(os.Stderr, "usage: gregale admin <subcommand>", "admin")
 		return 2
@@ -47,12 +48,71 @@ func cmdAdmin(args []string) int {
 	switch args[0] {
 	case "credit":
 		return cmdAdminCredit(args[1:])
+	case "refund":
+		return cmdAdminRefund(args[1:])
 	case "consume-credits":
 		return cmdAdminConsumeCredits(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregale: unknown admin subcommand %q\n", args[0])
 		return 2
 	}
+}
+
+// cmdAdminRefund refunds a paid Polar order selected by the local invoice ID.
+// The CLI derives a stable operation key from the full refund intent unless
+// the operator supplies --idempotency-key, which permits two deliberate
+// same-amount partial refunds to remain distinct operations.
+func cmdAdminRefund(args []string) int {
+	fs := flag.NewFlagSet("admin refund", flag.ContinueOnError)
+	reason := fs.String("reason", "", "reason text (required, 3..500 chars)")
+	idem := fs.String("idempotency-key", "", "stable provider idempotency key (optional)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 3 {
+		fmt.Fprintln(os.Stderr, "usage: gregale admin refund --reason <text> [--idempotency-key K] <account_uuid> <invoice_uuid> <cents>")
+		return 2
+	}
+	accountUUID, err := uuid.Parse(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gregale: account must be a UUID")
+		return 2
+	}
+	invoiceUUID, err := uuid.Parse(fs.Arg(1))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gregale: invoice must be a UUID")
+		return 2
+	}
+	cents, err := strconv.ParseInt(fs.Arg(2), 10, 64)
+	if err != nil || cents <= 0 {
+		fmt.Fprintln(os.Stderr, "gregale: cents must be a positive integer (in EUR cents)")
+		return 2
+	}
+	if n := len(strings.TrimSpace(*reason)); n < 3 || n > 500 {
+		fmt.Fprintln(os.Stderr, "gregale: --reason must be 3..500 chars")
+		return 2
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	key := strings.TrimSpace(*idem)
+	if key == "" {
+		h := sha256.Sum256([]byte(accountUUID.String() + "\x00" + invoiceUUID.String() + "\x00" + strconv.FormatInt(cents, 10) + "\x00" + strings.TrimSpace(*reason)))
+		key = "cli-admin-refund-" + hex.EncodeToString(h[:16])
+	}
+	resp, err := client.RefundAccount(context.Background(), accountUUID.String(), invoiceUUID.String(), key, cents, strings.TrimSpace(*reason))
+	if err != nil {
+		return printErr("Refund failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	PrintOK(osStdout, "Refunded %d cents for invoice %s.", resp.AmountCents, resp.InvoiceID)
+	_, _ = fmt.Fprintf(osStdout, "  provider:  %s\n", resp.Provider)
+	_, _ = fmt.Fprintf(osStdout, "  refund:    %s\n", resp.ProviderRefundID)
+	_, _ = fmt.Fprintf(osStdout, "  status:    %s\n", resp.Status)
+	return 0
 }
 
 // cmdAdminCredit issues an account credit via POST /v1/admin/

@@ -1,203 +1,172 @@
-# Billing provider switch (Paddle → Stripe legacy opt-in)
+# Billing provider operations
 
-The launch production billing provider is **Paddle Billing v2** (ADR-032 v2,
-accepted 2026-08-18). The legacy Stripe surface is still bootable from
-`FAAS_BILLING_PROVIDER=stripe` for a node-level opt-out, but the
-deploy template is Paddle-only. This runbook covers:
-
-- The selector semantics in both directions.
-- The cutover procedure for a node-level rollback to Stripe (the
-  on-launch option, intended for a single-node hot-fix while the
-  broader cluster rolls forward).
-- The four `launch-checklist` gates a maintainer must run before the
-  v1.0.0 tag.
-
-> **Operator reminder (v2):** at launch there are no production
-> customers on Stripe. The pinned `stripe-go v70.15.0+incompatible`
-> module is preserved for admin endpoints + tests; only the runtime
-> dispatch is unwired.
+Polar is Gregale’s public-release merchant of record and the default provider.
+Paddle and Stripe remain explicit compatibility options. `apid` and `meterd`
+use the same selector and fail closed when the selected provider is not
+configured.
 
 ## Selector
 
-| `FAAS_BILLING_PROVIDER` | Behavior                                         |
-|-------------------------|--------------------------------------------------|
-| (empty) / unset         | Paddle (default — production billing provider).  |
-| `paddle`                | Paddle (explicit). Requires `FAAS_PADDLE_*`.    |
-| `stripe`                | Stripe (legacy opt-in for a node-level rollback). Requires `STRIPE_*`. |
-| anything else           | Daemon fails to boot with a typed error.         |
+| `FAAS_BILLING_PROVIDER` | Behavior |
+|---|---|
+| empty / unset | Polar (public-release default) |
+| `polar` | Polar MoR; requires access token, webhook secret, three products, and meter |
+| `paddle` | Paddle compatibility provider; requires `FAAS_PADDLE_*` |
+| `stripe` | Stripe legacy provider; requires the legacy `STRIPE_*` path |
+| anything else | Daemon boot fails with an unknown-provider error |
 
-The selector is the canonical name for both `apid` and `meterd`; both
-daemons import the same loader (`pkg/billing/loader`) so a config drift
-between them cannot happen.
+The selector is the canonical name for both daemons. Environment values
+override the matching `[billing.*]` TOML block.
 
-## Env vars
+## Polar configuration
 
-### Stripe (default — pre-existing)
+Required on `apid` and `meterd`:
 
-| Var                       | Required         | Used by                  |
-|---------------------------|------------------|--------------------------|
-| `STRIPE_API_KEY`          | Yes (paid plans) | apid + meterd            |
-| `STRIPE_WEBHOOK_SECRET`   | Yes              | apid (`/v1/webhooks/stripe`) |
-| `FAAS_BILLING_PORTAL_URL` | Recommended      | apid (changePlan 402 template) |
+| Variable | Purpose |
+|---|---|
+| `FAAS_POLAR_ACCESS_TOKEN` | Polar organization access token |
+| `FAAS_POLAR_HOBBY_PRODUCT_ID` | Monthly Hobby product UUID |
+| `FAAS_POLAR_PRO_PRODUCT_ID` | Monthly Pro product UUID |
+| `FAAS_POLAR_SCALE_PRODUCT_ID` | Monthly Scale product UUID |
+| `FAAS_POLAR_METER_ID` | Usage meter UUID |
 
-### Paddle (opt-in)
+Required on `apid`:
 
-| Var                          | Required | Used by                                       |
-|------------------------------|----------|-----------------------------------------------|
-| `FAAS_PADDLE_API_KEY`        | Yes      | apid + meterd                                 |
-| `FAAS_PADDLE_WEBHOOK_SECRET` | Yes      | apid (`/v1/webhooks/paddle`)                  |
-| `FAAS_PADDLE_SANDBOX`        | Recommended for non-prod (`1` / `true`) | apid + meterd — sandbox host (`api.sandbox.paddle.com`) vs production (`api.paddle.com`) |
+| Variable | Purpose |
+|---|---|
+| `FAAS_POLAR_WEBHOOK_SECRET` | Standard Webhooks signing secret |
 
-The Paddle webhook secret is the shared HMAC-SHA256 key Paddle's
-dashboard shows under **Developer tools → Notifications → Endpoints**.
-The same key signs all events for that endpoint; the
-`Paddle-Signature` header carries `ts=…;h1=…` and
-`paddle.Provider.VerifyWebhook` checks both halves with a 5-minute
-clock-skew tolerance.
+Optional variables are `FAAS_POLAR_SANDBOX`, `FAAS_POLAR_USAGE_EVENT_NAME`
+(default `faas_ram_usage`), `FAAS_POLAR_SUCCESS_URL`,
+`FAAS_POLAR_RETURN_URL`, `FAAS_POLAR_BASE_URL`, and
+`FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS` (default 300 seconds).
 
-## Cutover procedure (Stripe → Paddle)
+Create one active monthly recurring product per paid plan in the selected
+Polar environment. Each product must contain the fixed monthly price and a
+metered EUR price backed by the configured meter. The meter must sum the
+`gb_ram_hours` property for the configured event name. Gregale removes the
+included calendar-month allowance locally before sending overage events, so
+do not add a Polar meter-credit benefit to these products.
 
-1. **Inventory the existing customer mappings.** Stripe
-   `cus_…` values live in `accounts.provider_customer_id`. Paddle uses
-   `ctm_…`. The column is **reused** for both providers per ADR-032
-   (the rename to `provider_customer_id` is a separate follow-up PR).
-   New Paddle customers get fresh `ctm_…` IDs on first checkout; there
-   is no in-place cus→ctm migration.
+`apid` validates the catalog at boot. `meterd` validates it before starting
+the usage loop. A missing product, archived resource, wrong recurring period,
+wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
 
-2. **Provision the Paddle credentials.**
-   - Generate a Paddle API key (sandbox or live).
-   - Create a webhook endpoint in the Paddle dashboard pointing at
-     `https://apid.gregale.dev/v1/webhooks/paddle`. Copy the webhook secret.
+## Runtime behavior
 
-3. **Stand up the new billing surface in parallel.** The two providers
-   can coexist in different environments — do not point the production
-   apid at Paddle until a small set of test customers has completed
-   first-time checkout + a paid upgrade + a payment-failed recovery
-   on the sandbox.
+- Polar checkout creates/reuses a customer using Gregale’s external account ID.
+- Customer portal sessions are created on demand for payment-method and
+  subscription management.
+- Plan upgrades use hosted checkout when no subscription exists.
+- Paid-to-paid downgrades are scheduled with the provider for the next period;
+  the local entitlement remains active until a subscription webhook confirms
+  the change. Free is represented by cancellation at period end.
+- `meterd` pushes completed UTC-hour net overage events and replays a durable
+  30-day lookback after restart or provider outage. Usage is not marked
+  complete until the provider call succeeds.
+- Overage caps fail closed. A window that would cross the monthly cap is held
+  for a later replay rather than partially billed under an hourly dedupe key.
+- Polar invoice PDF generation is retried asynchronously after the webhook is
+  acknowledged; invoice persistence and entitlement updates remain retryable
+  on database failure.
+- Polar does not expose a direct saved-card retry operation. `faas billing
+  retry` returns an unsupported result with the portal fallback; the customer
+  must update the payment method in the portal.
+- Operator refunds use `POST /v1/admin/accounts/{id}/refunds`. The route
+  requires the local invoice UUID, a positive EUR-cent amount, a reason, and
+  an explicit `Idempotency-Key`; it binds the Polar order to the target
+  account before calling Polar and requires the admin scope plus the operator
+  email allowlist. The Polar provider's idempotency key is the recovery path
+  when the response to a money-moving request is ambiguous.
 
-4. **Set the env vars on apid + meterd.** Restart both daemons. Boot
-   logs include the line `billing provider loaded provider=paddle` —
-   absence of this line means the env var didn't reach the daemon
-   (systemd drop-in mis-config, container env filter, etc.).
+## Operator checks
 
-5. **Watch the dunning state machine for one full cycle.** A redelivered
-   Paddle event should land in `journalctl -u faas-apid` as a 200
-   with no side effect; a `transaction.payment_failed` flips the
-   seeded account to `past_due`; a `transaction.paid` flips it back
-   to `active`.
-
-## Cutover procedure (Paddle → Stripe)
-
-Unset `FAAS_BILLING_PROVIDER` and redeploy. Stripe is the default, so
-the absence of the var is sufficient. The Stripe path is bit-for-bit
-unchanged from pre-PR-#3 — the apid changePlan 402 returns
-`billing_portal_url` with the `{account_id}` substitution, the
-`/v1/webhooks/paddle` mount returns 503 if a request does land there
-(provider not configured), and meterd pusher loop dispatches through
-the legacy `stripe.Client`.
-
-## Failure modes
-
-| Symptom                                                    | Likely cause                                                                  | Diagnostic                                                                                          |
-|------------------------------------------------------------|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
-| Boot fails with `unknown FAAS_BILLING_PROVIDER`            | Typo in the env var (e.g. `braintree`, `paypal`). Set to `paddle` or unset.  | Boot log carries the typed error.                                                                   |
-| Boot fails with `paddle EnsurePlanProducts: …`             | Network egress to `api.paddle.com` blocked (or `api.sandbox.paddle.com` if sandbox=1). Check `iptables` + `FAAS_BRIDGE_OUTBOUND`. | Boot log line; idempotent — re-run after fixing.                                                    |
-| Webhook returns 503                                        | `FAAS_PADDLE_WEBHOOK_SECRET` is empty. Provider refuses to verify.            | Boot log `paddle_webhook.no_provider`.                                                              |
-| Webhook returns 400 (`code: validation_failed`)            | Signature mismatch (wrong secret in dashboard) or clock skew > tolerance.     | `journalctl -u faas-apid` shows `paddle_webhook.verify_failed err=…`. Also increments `paddle_webhook_verify_failed_total`. |
-| `transaction.paid` 200 but no state flip                   | Unknown customer (event's `data.customer_id` doesn't match `accounts.provider_customer_id`). 200 stops Paddle from retrying. | `journalctl -u faas-apid` shows `paddle_webhook.unknown_customer customer_id=…`. Check the mapping. |
-| `changePlan` 402 carries `paddle_checkout_url` but URL 404 | Paddle sandbox product/price IDs not yet created. Run `EnsurePlanProducts` manually (it's idempotent — re-running on an existing catalog is a no-op). | `faas billing price-catalog list` shows the catalog snapshot.                                       |
-| Duplicate Paddle events arriving within seconds            | Paddle redelivery (network blip). Deduped by `pkg/webhookdedupe` (5-min TTL). | `paddle_webhook_replay_suppressed_total` increments; audit row `webhook.replay_rejected` is emitted. |
-
-## Webhook hardening knobs
-
-| Env var                                   | Default | Purpose                                                                                  |
-|-------------------------------------------|---------|------------------------------------------------------------------------------------------|
-| `FAAS_PADDLE_WEBHOOK_TOLERANCE_SECONDS`   | `300`   | Replay-protection window. Applies symmetrically (rejects future-dated too). The default matches Stripe. Useful when sandbox VMs have bad NTP. |
-
-Prometheus counters (single-registry on every daemon; only `apid` increments):
-
-- `paddle_webhook_verify_failed_total` — unlabelled; tripwire for "wrong webhook secret in dashboard" or "clock skew beyond tolerance".
-- `paddle_webhook_replay_suppressed_total` — unlabelled; tripwire for "Paddle is redelivering" (sustained rate is normal during a Paddle-side incident; sustained rate over 30 min is the alert).
-
-## Sandbox walk
-
-`make e2e-sandbox` exercises the full `changePlan → 402 → webhook → state-flip` round-trip against `api.sandbox.paddle.com`. Operator-only — gated on `secrets/.env.sandbox` + `FAAS_PADDLE_SANDBOX_E2E=1`. Skipped in CI by design (no Paddle sandbox account in CI secrets).
+After rendering deployment configuration:
 
 ```sh
-# 1. Create secrets/.env.sandbox with the two keys from
-#    https://sandbox-vendors.paddle.com → Developer tools → Authentication.
-cat > secrets/.env.sandbox <<EOF
-FAAS_PADDLE_SANDBOX_API_KEY=pdl_sandbox_…
-FAAS_PADDLE_SANDBOX_WEBHOOK_SECRET=whk_…
-EOF
-chmod 0600 secrets/.env.sandbox
-
-# 2. Set DATABASE_URL for the harness (any reachable Postgres).
-export DATABASE_URL=postgres:///faas?host=/run/postgresql&user=faas
-
-# 3. Run the walk.
-make e2e-sandbox
+sudo deploy/scripts/verify-secrets.sh
 ```
 
-The walk fires five sequential tests via a `/tmp/faas-paddle-sandbox-handoff.json` file:
+Confirm both boot logs contain their provider name:
 
-1. `TestPaddleSandbox_ChangePlanReturnsCheckoutURL` — signup → `PATCH /v1/account/plan {plan: hobby}` → asserts 402 + `paddle_checkout_url` + `tx_id`. Writes the customer + transaction IDs to the handoff file.
-2. `TestPaddleSandbox_SubscriptionCreatedStampsCustomerID` — POSTs a signed `subscription.created` event with the handoff's `ctm_…` ID → asserts `accounts.provider_customer_id` is populated.
-3. `TestPaddleSandbox_TransactionCompletedIsNoop` — POSTs a signed `transaction.completed` event → asserts no state flip.
-4. `TestPaddleSandbox_PerWindowClaimRoundTrip` — runs the meterd production path (`NewProviderWithDedupe` → `EnsurePlanProducts` → `PushUsageRecord`) directly against the sandbox and asserts the `paddle_overage_dedupe` row is stamped with `state=completed`, `pushed_at` non-null, `claimed_by` non-null, `pushed_mb_seconds` = the integer the test pushed. Distinct from `pkg/billing/paddle/sandbox_test.go` (which exercises the Provider with `dedupe=nil`); this one wires the production constructor and asserts the dedupe row state after a real SDK POST.
-5. `TestPaddleSandbox_WebhookSignatureRoundTrip` — SDK-side pinning of the contract Tests 2/3 prove at the apid HTTP layer. Signs a real Paddle-shaped JSON body with the operator's webhook secret; asserts `VerifyWebhook` accepts it with canonical and lowercase header keys, and rejects a tampered body with `errors.Is(err, billing.ErrBadSignature)`.
+```text
+billing provider loaded provider=polar
+meterd billing provider loaded provider=polar
+```
 
-A passing run validates that the apid webhook handler, the catalog OpProvider, the meterd pusher, and the live Paddle sandbox all agree on the customer → account mapping AND on the wire shape the SDK signs/verifies. Re-run is idempotent (every test creates fresh state).
+The admin catalog endpoint retains its historical path,
+`/v1/admin/billing-paddle-catalog`, but is provider-neutral at runtime. It
+returns Polar product IDs after the successful catalog preflight, so
+`faas billing status` and `faas billing price-catalog sync` work with Polar as
+well as Paddle. A provider without this operator surface returns 501.
 
-The B4 pre-flight has a separate pgstore-level pin in `pkg/state/pgstore_paddle_overage_schema_test.go` that runs in CI's pg shard (no sandbox credentials required). The two probes (`TestPgStorePaddleOverageDedupeSchema_PostApply` + `_PreApply_ReturnsTableMissing`) keep the to_regclass + information_schema probe honest — a future migration that drops a 00041 column or breaks the missing-table hint flips them red.
+Monitor these metrics and logs:
+
+- `meterd_billing_drift_mb_seconds` and `meterd_billing_drift_ratio` show the
+  last successful provider-vs-local comparison.
+- `meterd_billing_drift_reconcile_failures_total{provider,reason}` shows when
+  those gauges may be stale.
+- `polar_webhook.verify_failed` and `polar_webhook.unknown_customer` identify
+  signature or customer-binding failures.
+- `meter` logs with `replay=true` show durable usage recovery after an outage.
+
+## Switching providers
+
+Provider switching is a deployment operation, not an account-data migration.
+Set the selector explicitly, provide the complete credentials/catalog for the
+new provider, and restart both daemons together. Do not reuse a Polar customer
+or subscription ID in Paddle or Stripe; provider identifiers are not portable.
+
+For a Paddle compatibility deployment:
+
+```text
+FAAS_BILLING_PROVIDER=paddle
+FAAS_PADDLE_API_KEY=...
+FAAS_PADDLE_WEBHOOK_SECRET=...
+FAAS_PADDLE_SANDBOX=1       # sandbox only
+```
+
+For the legacy Stripe path:
+
+```text
+FAAS_BILLING_PROVIDER=stripe
+STRIPE_API_KEY=...
+STRIPE_WEBHOOK_SECRET=...
+```
+
+Restart with `systemctl restart faas-apid faas-meterd`, then verify the
+provider name in both boot logs and use the provider-specific webhook URL.
+Unset the selector only when Polar is fully configured, because empty now
+means Polar.
 
 ## Secret rotation
 
-Paddle API keys and webhook secrets are configured through the `sealed.env` systemd `EnvironmentFile=` (`/etc/faas/sealed.env`), not through on-disk secret files. The TOML equivalent (`[billing.paddle]` in `apid.toml` / `meterd.toml`) covers the same fields for containerized deploys; the loader's `ApplyBillingEnvOverlay` makes **env win over TOML** when both are set (`pkg/billing/loader/config.go:157-172`). Rotation cadence is monthly per `docs/ops/secrets-rotation.md`.
+Rotate the active provider credentials in the deployment secret store, render
+the service configuration, and restart both billing daemons together. Verify
+`faas billing status`, the provider name in both boot logs, and one signed
+webhook or sandbox checkout before revoking the old credential. See
+[`secrets-rotation.md`](secrets-rotation.md) for the cadence and host-secret
+handling rules.
 
-Procedure (env form):
+## Webhook and failure handling
 
-1. Generate the new key/secret in the Paddle dashboard (Developer tools → Authentication, Developer tools → Notifications).
-2. Edit `/etc/faas/sealed.env` — replace `FAAS_PADDLE_API_KEY` and/or `FAAS_PADDLE_WEBHOOK_SECRET`. The file is mode `0600 root:root`; do not `chmod` it.
-3. `systemctl restart faas-apid faas-meterd` — both daemons read the env vars at boot; mid-flight rotation requires a process restart.
-4. Validate: `faas billing status` prints the new catalog SyncedAt timestamp (re-stamped on `EnsurePlanProducts` at boot). Send a Paddle test event from the dashboard (Notifications → your endpoint → Send test) and confirm `journalctl -u faas-apid` shows `paddle_webhook` activity without `verify_failed`.
+Register `https://<host>/v1/webhooks/polar` and subscribe to subscription
+creation/update/cancellation/past-due/revocation plus order creation/payment/
+refund events. Polar Standard Webhooks headers are verified before parsing;
+database persistence and replay-claim failures return non-2xx so the provider
+can retry. A valid duplicate delivery is acknowledged without repeating the
+state transition.
 
-Procedure (TOML form — for containers / k8s):
+The hourly pusher is intentionally at-least-once. If Polar is unavailable,
+the failed window remains durable and is retried on the next pass. Investigate
+the provider failure counter and logs before clearing any local usage data.
 
-1. Generate the new key/secret in the Paddle dashboard.
-2. Update the `[billing.paddle]` block in `apid.toml` / `meterd.toml` and redeploy. The `Secrets:` secret-store abstraction (k8s `Secret`, docker `--env-file`, etc.) is the operator's choice.
-3. Roll the daemons.
+## References
 
-For gap-G2 sealing at rest (sensitive providers), wrap the `sealed.env` write in the operator's age / sops / vault flow — the repo's `host.age` precedent (`docs/ops/host-age-rotation.md`) is the canonical pattern.
-
-## Health checks
-
-- `/v1/webhooks/paddle` should respond 503 (provider not configured) on
-  a Stripe-default box — a 200 here is a bug.
-- The `apid` boot log line `billing provider loaded provider=paddle`
-  is the canonical "the env var reached the daemon" signal.
-- `meterd` boot log: `meterd billing provider loaded provider=paddle`.
-- After PR-P4 (this PR): `make verify-secrets` fails the playbook if
-  `FAAS_BILLING_PROVIDER=paddle` is set without `FAAS_PADDLE_API_KEY`.
-- Operator-side smoke test: `make doctor-paddle` (operator-only target,
-  not in CI) prints `faas billing status --watch` output + the last
-  60 seconds of `faas-apid` journal lines.
-
-## Column rename history (note)
-
-The rename `accounts.stripe_customer_id → accounts.provider_customer_id` already shipped in migration **00040** (well before PR-P4). Both providers write to the same column: `stripe.Customer.ID` → `cus_…`, `paddle.Customer.ID` → `ctm_…`. For an operator querying the table:
-
-```sql
-SELECT provider_customer_id FROM accounts WHERE id = '…';
-```
-
-The column has been provider-neutral since 00040; PR-P4 added **no** rename migration. The earlier plan for PR-P4 included the rename as Stream F, but the work was already done upstream and a re-rename would have been a no-op guarded by the DO-block — the migration was removed before commit. ADR-032 §Consequences records the original deferral and its subsequent resolution.
-
-## Related
-
-- ADR-032 — Paddle as an opt-in billing provider (decision record; PR-split section amended by PR-P4 to reflect that the column rename was already shipped in 00040).
-- ADR-025 — provider-pluggable billing layer (the abstraction).
-- ADR-042 — webhook replay protection (the `pkg/webhookdedupe` contract).
-- `pkg/billing/loader/` — the canonical selector implementation.
-- `pkg/billing/paddle/` — the Paddle Billing v2 implementation.
-- `docs/runbooks/BillingDrift.md` — alert runbook for `meterd_billing_drift_*` (works for both providers).
+- [Polar checkout sessions](https://polar.sh/docs/api-reference/checkouts/create-session)
+- [Polar customer portal sessions](https://polar.sh/docs/api-reference/customer-portal/sessions/create)
+- [Polar event ingestion](https://polar.sh/docs/api-reference/events/ingest)
+- [Polar meter quantities](https://polar.sh/docs/api-reference/meters/get-quantities)
+- [Polar usage meters](https://polar.sh/docs/features/usage-based-billing/meters)
+- [Polar subscription management](https://polar.sh/docs/features/subscriptions/manage)
+- [Polar Standard Webhooks](https://polar.sh/docs/integrate/webhooks/delivery)

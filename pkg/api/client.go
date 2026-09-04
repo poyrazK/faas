@@ -104,9 +104,22 @@ func NewClient(baseURL, token string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		token:   token,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{Timeout: 30 * time.Second, Transport: newClientTransport()},
 		cache:   NewCompletionCache(),
 	}
+}
+
+// newClientTransport returns a private copy of the standard transport. The
+// default HTTP transport is process-global; httptest.Server.Close calls
+// CloseIdleConnections on it, so sharing it makes independent clients race
+// when tests (or applications) close test servers while another request is
+// in flight. Clone preserves the standard proxy, dial, TLS, and idle-pool
+// settings without coupling this client to that global lifecycle.
+func newClientTransport() http.RoundTripper {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		return transport.Clone()
+	}
+	return http.DefaultTransport
 }
 
 // SetCompletionCache wires a (possibly nil) cache. Passing nil
@@ -136,7 +149,7 @@ func (c *Client) CompletionCache() *CompletionCache {
 func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Duration) *Client {
 	c := NewClient(baseURL, token)
 	if deployTimeout > 0 {
-		c.deployHTTP = &http.Client{Timeout: deployTimeout}
+		c.deployHTTP = &http.Client{Timeout: deployTimeout, Transport: newClientTransport()}
 	}
 	return c
 }
@@ -3036,7 +3049,7 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
-// GetBillingPortal returns the operator-configured Stripe billing
+// GetBillingPortal returns the active provider's billing
 // portal URL for the authenticated account (issue #253). Empty string
 // means the box has FAAS_BILLING_PORTAL_URL unset — the CLI prints a
 // friendly hint instead of opening the browser to "". The endpoint
@@ -3153,6 +3166,39 @@ func (c *Client) IssueAccountCredit(ctx context.Context, accountID, idemKey stri
 	req.Header.Set("Idempotency-Key", idemKey)
 	req.Header.Set("Content-Type", "application/json")
 	var out AccountCreditResponse
+	return out, c.doReq(c.http, req, &out)
+}
+
+// RefundAccount issues an operator-initiated refund for a local invoice via
+// POST /v1/admin/accounts/{id}/refunds. The server resolves the provider order
+// from invoiceID and verifies that it belongs to accountID before moving money.
+//
+// idemKey is forwarded to the provider's native idempotency mechanism. Pass a
+// stable key when retrying an ambiguous request; an empty key is auto-generated
+// for one-shot SDK calls.
+func (c *Client) RefundAccount(ctx context.Context, accountID, invoiceID, idemKey string, amountCents int64, reason string) (AdminRefundResponse, error) {
+	if idemKey == "" {
+		idemKey = newUUIDv4()
+	}
+	body, err := json.Marshal(map[string]any{
+		"invoice_id":   invoiceID,
+		"amount_cents": amountCents,
+		"reason":       reason,
+	})
+	if err != nil {
+		return AdminRefundResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		c.baseURL+"/v1/admin/accounts/"+accountID+"/refunds", bytes.NewReader(body))
+	if err != nil {
+		return AdminRefundResponse{}, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Idempotency-Key", idemKey)
+	req.Header.Set("Content-Type", "application/json")
+	var out AdminRefundResponse
 	return out, c.doReq(c.http, req, &out)
 }
 

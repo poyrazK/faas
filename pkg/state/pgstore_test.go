@@ -3991,6 +3991,27 @@ func TestPg_CreateInstance_PartialUniqueIndexBlocks(t *testing.T) {
 	}
 }
 
+// CreateInstanceWithMode shares the same wake_id partial index as the normal
+// insert path. Keep its duplicate translation pinned too: mirror/canary
+// admission must recover through ErrConcurrentWake just like a regular wake.
+func TestPg_CreateInstanceWithMode_PartialUniqueIndexBlocks(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	wakeID := "33333333-3333-4333-8333-333333333333"
+
+	if _, err := s.CreateInstanceWithMode(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID, string(state.InstanceModeNormal)); err != nil {
+		t.Fatalf("first CreateInstanceWithMode: %v", err)
+	}
+	_, err := s.CreateInstanceWithMode(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID, string(state.InstanceModeMirror))
+	if err == nil {
+		t.Fatal("duplicate CreateInstanceWithMode: expected error, got nil")
+	}
+	if !errors.Is(err, state.ErrConcurrentWake) {
+		t.Fatalf("duplicate CreateInstanceWithMode: got %v, want ErrConcurrentWake", err)
+	}
+}
+
 // TestPg_CreateInstance_PartialUniqueIndex_AllowsAfterPark pins the
 // partial predicate of instances_wake_attempt_active_idx: once an
 // instance parks (state moves out of the WAKING/COLD_BOOTING/RUNNING

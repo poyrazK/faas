@@ -968,11 +968,11 @@ type UsageData struct {
 // BillingData is the /dashboard/billing page payload (issue #253).
 //
 // HasPaidPlan gates the "Manage billing" + "Last invoice" sections so a
-// Free-tier account never sees a Stripe portal link. PortalURL is the
+// Free-tier account never sees a billing portal link. Provider identifies
+// the active billing integration for customer-facing copy. PortalURL is a
+// provider-authenticated session when supported, otherwise the
 // operator-configured FAAS_BILLING_PORTAL_URL template (already substituted
-// with the account's ID by the handler), same shape as the changePlan
-// 402 path. Empty URL means the box has no portal configured; the
-// template renders a CLI fallback instead of a broken link.
+// with the account's ID by the handler).
 //
 // Current-month usage is informational only (mirrors /dashboard/usage);
 // the billable floor is included GB-hours, not raw mb_seconds.
@@ -1007,8 +1007,10 @@ type BillingData struct {
 	LastInvoiceTotalFormatted string
 	LastInvoiceCurrency       string
 
-	// Stripe billing portal link; empty for free accounts.
+	// Billing portal link; empty for free accounts or an unavailable provider
+	// session. Provider is a closed set emitted by the apid provider resolver.
 	HasPaidPlan bool
+	Provider    string
 	PortalURL   string
 
 	// Issue #561 — spend cap pause-workload. *int64 so the template

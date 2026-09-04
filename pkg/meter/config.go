@@ -71,7 +71,7 @@ const DefaultDeploymentFailureSweepInterval = 60 * time.Second
 //
 //   - sample tick:    60 s  (every minute flush)
 //   - quota tick:     60 s  (every minute verdict per account)
-//   - stripe tick:    24 h  (every day push, integer-arithmetic wire quantity)
+//   - stripe tick:    60 m  (hourly push with durable backfill)
 //   - dunning tick:   1 h   (dunning state machine 7d/21d clocks)
 //   - residency tick: 60 s  (§12 dashboard panel)
 //   - alerts tick:    60 s  (issue #396 / ADR-045 alert evaluator)
@@ -87,14 +87,16 @@ type Config struct {
 	// QuotaInterval is how often the quota loop walks every account.
 	// Zero means the production default (60 s).
 	QuotaInterval time.Duration
-	// StripeInterval is how often the Stripe pusher fires. Zero means
-	// the production default (24 h). The integer-arithmetic wire
-	// quantity (pkg/billing/stripe/usage.go) is deterministic across the full
-	// window, so the pusher posts *one* metered usage record per
-	// account per 24h instead of one per hour — eliminates per-hour
-	// fractional truncation loss on the wire (was ~0.3 % of the bill
-	// for a Hobby instance; spec gate is 0.1 %).
+	// StripeInterval is the cadence of the provider usage backfill pass.
+	// The historical field name is retained for config compatibility. Zero
+	// means the production default (1 h); each pass scans BillingLookback
+	// of completed UTC-hour windows and provider idempotency keys make replay
+	// safe after a restart or transient outage.
 	StripeInterval time.Duration
+	// BillingLookback is the completed usage history meterd rechecks on each
+	// provider pass. Zero means 30 days, which covers a prolonged outage while
+	// remaining bounded by the usage retention/index range.
+	BillingLookback time.Duration
 	// DunningInterval is how often the dunning timer sweeps accounts
 	// for the past_due → 7d → suspended and suspended → 21d →
 	// deleted_pending transitions (spec §4.7, §17 dunning state
@@ -235,7 +237,10 @@ func (c *Config) Defaults() {
 		c.QuotaInterval = 60 * time.Second
 	}
 	if c.StripeInterval == 0 {
-		c.StripeInterval = 24 * time.Hour
+		c.StripeInterval = time.Hour
+	}
+	if c.BillingLookback == 0 {
+		c.BillingLookback = 30 * 24 * time.Hour
 	}
 	if c.DunningInterval == 0 {
 		c.DunningInterval = time.Hour

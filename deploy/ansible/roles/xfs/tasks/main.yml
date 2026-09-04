@@ -212,3 +212,26 @@
     dump: "0"
     passno: "0"
     state: mounted
+
+- name: xfs — verify /srv/fc/jail is the required tmpfs
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - SOURCE,FSTYPE,OPTIONS
+      - --mountpoint
+      - /srv/fc/jail
+  register: jail_mount
+  changed_when: false
+
+- name: xfs — fail when the jail tmpfs contract is not active
+  ansible.builtin.assert:
+    that:
+      - jail_mount.rc == 0
+      - "'tmpfs' in jail_mount.stdout"
+      - "'nodev' in jail_mount.stdout"
+      - "'nosuid' in jail_mount.stdout"
+    fail_msg: >-
+      /srv/fc/jail is not mounted as the required nodev,nosuid tmpfs;
+      refusing to leave Jailer state on the persistent Firecracker volume.

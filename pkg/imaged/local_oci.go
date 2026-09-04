@@ -3,6 +3,7 @@ package imaged
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -101,6 +102,9 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 	if err != nil {
 		return fail(fmt.Errorf("parse OCI config: %w", err))
 	}
+	if len(manifest.Layers) != len(config.DiffIDs) {
+		return fail(fmt.Errorf("OCI layer count mismatch: manifest=%d config=%d", len(manifest.Layers), len(config.DiffIDs)))
+	}
 	for i, f := range layerFiles {
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return fail(fmt.Errorf("rewind OCI layer %d: %w", i, err))
@@ -111,6 +115,161 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 		readers[i] = f
 	}
 	return config, readers, cleanup, nil
+}
+
+// functionBuildArtifact selects the portion of a builderd OCI export that
+// belongs on a function's drive1. Node and Python builds are expected to be
+// based on the selected runtime image, so only layers above that base are
+// copied. Go builds are normalized to one small layer containing Railpack's
+// static /app/server binary; this makes both glibc and Alpine Go runtimes
+// independent of the builder VM's base chain.
+func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePath string) ([]io.Reader, string, func(), error) {
+	config, layers, cleanup, err := loadLocalOCIArchive(archivePath)
+	if err != nil {
+		return nil, "", func() {}, fmt.Errorf("load built OCI image: %w", err)
+	}
+	sourcePath, _, err := functionHandlerPaths(runtime)
+	if err != nil {
+		cleanup()
+		return nil, "", func() {}, err
+	}
+	if runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine {
+		goLayer, goCleanup, err := makeGoHandlerLayer(layers)
+		if err != nil {
+			cleanup()
+			return nil, "", func() {}, err
+		}
+		return []io.Reader{goLayer}, sourcePath, func() {
+			goCleanup()
+			cleanup()
+		}, nil
+	}
+
+	mp, ok := h.oci.(oci.ManifestPuller)
+	if !ok {
+		cleanup()
+		return nil, "", func() {}, errors.New("builder OCI function artifact requires a manifest-capable runtime base puller")
+	}
+	baseRef := h.deployBaseRefOverride
+	if baseRef == "" {
+		baseRef, err = resolveDeployBaseRef(runtime, os.Getenv)
+		if err != nil {
+			cleanup()
+			return nil, "", func() {}, err
+		}
+	}
+	baseManifest, err := pullManifestWithAuth(ctx, mp, baseRef, nil)
+	if err != nil {
+		cleanup()
+		return nil, "", func() {}, fmt.Errorf("pull runtime base manifest %q: %w", baseRef, err)
+	}
+	baseRepo := repoWithHost(baseRef)
+	if baseRepo == "" {
+		cleanup()
+		return nil, "", func() {}, fmt.Errorf("invalid runtime base reference %q", baseRef)
+	}
+	baseConfig, err := h.pullConfig(ctx, mp, baseRepo, baseManifest.Config.Digest, nil)
+	if err != nil {
+		cleanup()
+		return nil, "", func() {}, fmt.Errorf("pull runtime base config %q: %w", baseRef, err)
+	}
+	above, err := oci.LayersAboveBase(baseConfig.DiffIDs, config.DiffIDs)
+	if err != nil {
+		cleanup()
+		return nil, "", func() {}, fmt.Errorf("runtime base %q does not match builder artifact: %w", baseRef, err)
+	}
+	start := len(config.DiffIDs) - len(above)
+	if start < 0 || start > len(layers) {
+		cleanup()
+		return nil, "", func() {}, fmt.Errorf("runtime base layer boundary %d is outside artifact layer count %d", start, len(layers))
+	}
+	return layersAsReaders(layers[start:]), sourcePath, cleanup, nil
+}
+
+func functionHandlerPaths(runtime string) (source, target string, err error) {
+	switch runtime {
+	case RuntimeNode22:
+		return "/app/handler.js", "/app/node22.js", nil
+	case RuntimeNode24:
+		return "/app/handler.js", "/app/node24.js", nil
+	case RuntimePython312, RuntimePython313:
+		return "/app/handler.py", "/app/handler.py", nil
+	case RuntimeGo124, RuntimeGo124Alpine:
+		return "/app/server", "/app/handler", nil
+	default:
+		return "", "", fmt.Errorf("unsupported function runtime %q", runtime)
+	}
+}
+
+func makeGoHandlerLayer(layers []io.ReadCloser) (io.ReadCloser, func(), error) {
+	staging, err := os.MkdirTemp("", "faas-go-handler-")
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("create Go handler staging dir: %w", err)
+	}
+	cleanupStaging := func() { _ = os.RemoveAll(staging) }
+	for i, layer := range layers {
+		if err := rootfs.ApplyLayerGz(staging, layer); err != nil {
+			cleanupStaging()
+			return nil, func() {}, fmt.Errorf("apply Go build layer %d: %w", i, err)
+		}
+	}
+	source := filepath.Join(staging, "app", "server")
+	info, err := os.Stat(source)
+	if err != nil {
+		cleanupStaging()
+		return nil, func() {}, fmt.Errorf("go build artifact missing /app/server: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		cleanupStaging()
+		return nil, func() {}, errors.New("go build artifact /app/server is not an executable regular file")
+	}
+
+	archive, err := os.CreateTemp("", "faas-go-handler-*.tar.gz")
+	if err != nil {
+		cleanupStaging()
+		return nil, func() {}, fmt.Errorf("create Go handler layer: %w", err)
+	}
+	removeArchive := func() {
+		_ = archive.Close()
+		_ = os.Remove(archive.Name())
+		cleanupStaging()
+	}
+	zw := gzip.NewWriter(archive)
+	tw := tar.NewWriter(zw)
+	hdr := &tar.Header{Name: "app/server", Mode: int64(info.Mode().Perm()), Size: info.Size(), Typeflag: tar.TypeReg}
+	if err := tw.WriteHeader(hdr); err != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("write Go handler layer header: %w", err)
+	}
+	//nolint:forbidigo // source is the file we just validated under a private temporary staging directory.
+	src, err := os.Open(source)
+	if err != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("open Go handler binary: %w", err)
+	}
+	_, copyErr := io.Copy(tw, src)
+	closeErr := src.Close()
+	if copyErr != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("copy Go handler binary: %w", copyErr)
+	}
+	if closeErr != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("close Go handler binary: %w", closeErr)
+	}
+	if err := tw.Close(); err != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("close Go handler tar: %w", err)
+	}
+	if err := zw.Close(); err != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("close Go handler gzip: %w", err)
+	}
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("rewind Go handler layer: %w", err)
+	}
+	return archive, removeArchive, nil
 }
 
 func readLocalOCIEntry(archivePath, name string, maxBytes int64) ([]byte, error) {

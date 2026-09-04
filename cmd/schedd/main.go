@@ -728,7 +728,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// + reaper tickers in loop.Run are gated on jobsDispatched;
 	// the engine methods stay wired so a missed tick in one
 	// window drains on the next).
-	jobsDispatched := os.Getenv("FAAS_JOBS_DISPATCH") != ""
+	jobsDispatched := jobsDispatchEnabled(os.Getenv("FAAS_JOBS_DISPATCH"))
 	if jobsDispatched {
 		log.Info("schedd jobs dispatch enabled — clustering flag FAAS_JOBS_DISPATCH=1 set")
 	} else {
@@ -1246,14 +1246,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		hb.Interval = deps.heartbeatInterval
 	}
 	// PR-A observability slice (issue #170): per-{app,node} instance
-	// stats poller. Builds a Reader (the canonical seam #171 reaper
-	// and #169 scale-up will read from), wires the Poller with the
+	// stats poller. Builds a Reader (the canonical seam for per-instance
+	// policy consumers; #169 scale-up reads from it), wires the Poller with the
 	// same deps.dialVMM the heartbeat uses (so dial churn is bounded
 	// by the dialer — same pattern PR #120 established), and
-	// attaches it via WithInstanceStats. The Reader is intentionally
-	// NOT threaded to the reaper or any policy consumer today —
-	// that's #171 / #169's job. PR-A keeps the reader as the only
-	// public surface.
+	// attaches it via WithInstanceStats. The same Reader is passed to
+	// the reactive scale-up trigger below; its cumulative activity
+	// counter is the provider-independent RPS fallback when the
+	// optional gateway metrics endpoint is unavailable.
 	reader := instancestats.NewReader()
 	statsPoller := instancestats.NewPoller(
 		store,
@@ -1290,9 +1290,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cfg.ScaleUpInterval (default 1s); admits another instance
 	// when measured per-instance RPS or CPU exceeds the target
 	// and headroom is available. The trigger is nil-safe on every
-	// dep; an empty GatewayMetricsURL disables the RPS path (and
-	// the trigger still fires on CPU when PR #205's
-	// instancestats.Reader is wired). The engine adapter converts
+	// dep; an empty GatewayMetricsURL disables only the optional
+	// gateway scrape. The VMMD activity-counter signal from the
+	// instancestats.Reader remains available for split-box and
+	// bare-metal deployments. The engine adapter converts
 	// sched.WakeResult → scaleup.AdmitResult (a small subset —
 	// the trigger only inspects AtCapacity).
 	//
@@ -1425,106 +1426,106 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		engine.ReconcileDeadNodeInstances,
 		time.Duration(dnrInterval)*time.Second,
 		log))
+	// Issue #171: share a single HTTPPromScraper between the gateway
+	// scrape path for the RPS scale-up trigger and the aggressive-
+	// reaper signal mirror.
+	// The concurrent_requests and CPU triggers do not depend on the
+	// optional gateway metrics endpoint, so an empty metrics URL must
+	// not disable those workers.
+	var scraper scaleup.PromScraper
 	if cfg.GatewayMetricsURL != "" {
-		// Issue #171: share a single HTTPPromScraper between the
-		// scale-up trigger and the aggressive-reaper signal mirror.
-		// The scraper surface is stateless (one Scrape call → one
-		// HTTP GET + parse); two callers are safe and a shared
-		// connection keeps gatewayd-internal's listener traffic to ~1
-		// req/sec instead of ~2.
-		var scraper scaleup.PromScraper = scaleup.NewHTTPPromScraper(cfg.GatewayMetricsURL)
-		trigger := scaleup.New(
-			// PR-C (issue #462): thread the *instancestats.Reader
-			// into the scale-up trigger so InstatsReader.MaxCPU
-			// is callable. The reader was nil before PR-B / PR-C;
-			// PR-B added the accessor; PR-C wires the dependency
-			// so the trigger can consult live CPU values alongside
-			// the RPS scrape. MaxInflightForApp is exposed by the
-			// same interface but the scaleup trigger itself does
-			// not read it (the concurrent_requests axis lives in
-			// pkg/sched/targets — see loop.WithTargets below).
-			store, reader, scraper,
-			schedScaleUpEngine{engine: engine},
-			engine.Ledger(),
-			scaleup.Options{
+		scraper = scaleup.NewHTTPPromScraper(cfg.GatewayMetricsURL)
+	}
+	trigger := scaleup.New(
+		// PR-C (issue #462): thread the *instancestats.Reader
+		// into the scale-up trigger so InstatsReader.MaxCPU
+		// is callable. The reader was nil before PR-B / PR-C;
+		// PR-B added the accessor; PR-C wires the dependency
+		// so the trigger can consult live CPU values alongside
+		// the RPS scrape. MaxInflightForApp is exposed by the
+		// same interface but the scaleup trigger itself does
+		// not read it (the concurrent_requests axis lives in
+		// pkg/sched/targets — see loop.WithTargets below).
+		store, reader, scraper,
+		schedScaleUpEngine{engine: engine},
+		engine.Ledger(),
+		scaleup.Options{
+			Logger:   log,
+			Metrics:  ops,
+			Interval: cfg.ScaleUpInterval,
+		},
+	)
+	trigger.WithOwnerNodeID(ownerNodeID)
+	loop.WithScaleUp(trigger)
+	// The concurrent_requests trigger consumes the instance-stats reader
+	// directly and must not depend on the optional Prometheus scrape URL.
+	// Keep this wiring independent so disabling GatewayMetricsURL only
+	// disables the RPS/recent-load path, not in-flight based scale-out.
+	if reader != nil {
+		targetsTrigger := targets.New(
+			store, reader,
+			schedTargetsEngine{engine: engine},
+			schedTargetsLedger{ledger: engine.Ledger()},
+			targets.Options{
 				Logger:   log,
 				Metrics:  ops,
 				Interval: cfg.ScaleUpInterval,
 			},
 		)
-		loop.WithScaleUp(trigger)
-		// PR-C (issue #462): concurrent_requests target scale-up
-		// trigger. Reads InstatsReader.MaxInflightForApp and
-		// compares against ScalingPolicy.Target.Value per app.
-		// Distinct from the RPS/CPU scale-up trigger (above) which
-		// is unchanged. The instats reader is the same one already
-		// constructed for the scaleup trigger; both triggers share
-		// the reader (it's read-only). nil reader ⇒ targets
-		// construction is skipped (test wiring without Instats).
-		if reader != nil {
-			targetsTrigger := targets.New(
-				store, reader,
-				schedTargetsEngine{engine: engine},
-				schedTargetsLedger{ledger: engine.Ledger()},
-				targets.Options{
-					Logger:   log,
-					Metrics:  ops,
-					Interval: cfg.ScaleUpInterval,
-				},
-			)
-			loop.WithTargets(targetsTrigger)
-			log.Info("concurrent_requests target trigger enabled",
-				"interval", cfg.ScaleUpInterval)
-		}
-		// Issue #557 / ADR-071: proactive min-instances floor
-		// reconciler. Walks every app the schedd owns each tick and
-		// admits instances up to the effective floor (max of legacy
-		// column + ScalingPolicy jsonb). Distinct from the scale-up
-		// and targets triggers — those are reactive (RPS / CPU /
-		// inflight signal); the floor trigger is proactive, the
-		// customer's SLA is "min N resident at all times". Uses the
-		// same engine + ledger as the other triggers so the engine's
-		// wake-gate remains the single admission authority.
-		//
-		// FAAS_FLOOR_INTERVAL_SECONDS overrides the trigger cadence
-		// (operator can dampen during incidents without restarting).
-		// Default falls back to cfg.ScaleUpInterval so a single
-		// shared dial governs all three triggers when no env is set;
-		// api.FloorDecisionIntervalSeconds (1s) is the trigger's own
-		// last-resort default. A non-positive / unparseable env
-		// returns a typed error so a typo surfaces at boot rather
-		// than silently damping the floor reconciler off.
-		floorInterval := cfg.ScaleUpInterval
-		if v := os.Getenv("FAAS_FLOOR_INTERVAL_SECONDS"); v != "" {
-			n, parseErr := strconv.Atoi(v)
-			if parseErr != nil || n <= 0 {
-				return fmt.Errorf("FAAS_FLOOR_INTERVAL_SECONDS: %s", v)
-			}
-			floorInterval = time.Duration(n) * time.Second
-		}
-		floorTrigger := floor.New(
-			store,
-			store, // deploymentStore — issue #557 closure / ADR-074 (per-deployment walk)
-			schedFloorLedger{ledger: engine.Ledger()},
-			schedFloorEngine{engine: engine},
-			floor.Options{
-				Logger:       log,
-				Metrics:      ops,
-				Interval:     floorInterval,
-				Auditor:      schedulerAuditor,
-				PlanResolver: schedFloorPlanResolver{store: store},
-			},
-		)
-		floorTrigger.WithOwnerNodeID(ownerNodeID)
-		loop.WithFloor(floorTrigger)
-		log.Info("min-instances floor reconciler enabled",
-			"interval", floorInterval,
+		targetsTrigger.WithOwnerNodeID(ownerNodeID)
+		loop.WithTargets(targetsTrigger)
+		log.Info("concurrent_requests target trigger enabled",
+			"interval", cfg.ScaleUpInterval,
 			"owner_node_id", ownerNodeID)
-		// Issue #171: wire the recent-load mirror off the same
-		// scraper so the reaper sees per-app RPS without duplicating
-		// the scraping wiring. nil scraper ⇒ mirror is a no-op
-		// (recentload.New handles nil); the loop's WithRecentLoad
-		// nil-check keeps the ticker + runReaper block disabled.
+	}
+	// Issue #557 / ADR-071: proactive min-instances floor
+	// reconciler. Walks every app the schedd owns each tick and
+	// admits instances up to the effective floor (max of legacy
+	// column + ScalingPolicy jsonb). Distinct from the scale-up
+	// and targets triggers — those are reactive (RPS / CPU /
+	// inflight signal); the floor trigger is proactive, the
+	// customer's SLA is "min N resident at all times". Uses the
+	// same engine + ledger as the other triggers so the engine's
+	// wake-gate remains the single admission authority.
+	//
+	// FAAS_FLOOR_INTERVAL_SECONDS overrides the trigger cadence
+	// (operator can dampen during incidents without restarting).
+	// Default falls back to cfg.ScaleUpInterval so a single
+	// shared dial governs all three triggers when no env is set;
+	// api.FloorDecisionIntervalSeconds (1s) is the trigger's own
+	// last-resort default. A non-positive / unparseable env
+	// returns a typed error so a typo surfaces at boot rather
+	// than silently damping the floor reconciler off.
+	floorInterval := cfg.ScaleUpInterval
+	if v := os.Getenv("FAAS_FLOOR_INTERVAL_SECONDS"); v != "" {
+		n, parseErr := strconv.Atoi(v)
+		if parseErr != nil || n <= 0 {
+			return fmt.Errorf("FAAS_FLOOR_INTERVAL_SECONDS: %s", v)
+		}
+		floorInterval = time.Duration(n) * time.Second
+	}
+	floorTrigger := floor.New(
+		store,
+		store, // deploymentStore — issue #557 closure / ADR-074 (per-deployment walk)
+		schedFloorLedger{ledger: engine.Ledger()},
+		schedFloorEngine{engine: engine},
+		floor.Options{
+			Logger:       log,
+			Metrics:      ops,
+			Interval:     floorInterval,
+			Auditor:      schedulerAuditor,
+			PlanResolver: schedFloorPlanResolver{store: store},
+		},
+	)
+	floorTrigger.WithOwnerNodeID(ownerNodeID)
+	loop.WithFloor(floorTrigger)
+	log.Info("min-instances floor reconciler enabled",
+		"interval", floorInterval,
+		"owner_node_id", ownerNodeID)
+	// Issue #171: wire the recent-load mirror off the same scraper so the
+	// reaper sees per-app RPS without duplicating the scraping wiring.
+	// It has no signal source when the optional endpoint is not configured.
+	if scraper != nil {
 		mirror := recentload.New(scraper, api.ScaleUpWindowSeconds, time.Second)
 		loop.WithRecentLoad(mirror)
 		log.Info("autoscale signal mirror enabled",
@@ -1735,6 +1736,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// goroutine added a 7th long-term subscriber that tipped
 	// pool.MaxConns=16 over the edge and starved the async-invoke
 	// drain's BeginTx under e2e query bursts.
+	drainDispatchConcurrency := sched.DefaultDrainDispatchConcurrency
+	if v := strings.TrimSpace(os.Getenv("FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY")); v != "" {
+		n, parseErr := strconv.Atoi(v)
+		if parseErr != nil || n < 1 {
+			return fmt.Errorf("FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY must be a positive integer: %q", v)
+		}
+		drainDispatchConcurrency = n
+	}
 
 	// Move 1 drain: a second goroutine inside schedd that drains the
 	// unified invocations table on a 1s safety tick + invocation_due
@@ -1755,7 +1764,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			drain := sched.NewDrain(engine.Store(), engine,
 				sched.WithDrainGatewaySynth(synth),
 				sched.WithDrainNotifier(engine.Notifier()),
-				sched.WithDrainLogger(log))
+				sched.WithDrainLogger(log),
+				sched.WithDrainDispatchConcurrency(drainDispatchConcurrency))
 			notifC, subErr := db.SubscribeWithReconnect(ctx, pool,
 				[]string{db.NotifyInvocationDue}, log)
 			if subErr != nil {
@@ -1837,6 +1847,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	_ = lis.Close()
 	return nil
+}
+
+// jobsDispatchEnabled is intentionally an exact opt-in. Treating any
+// non-empty value (including "0" or "false") as enabled makes a templated
+// production environment unexpectedly activate an incomplete jobs path.
+func jobsDispatchEnabled(value string) bool {
+	return strings.TrimSpace(value) == "1"
 }
 
 // subscribeWithReconnect drains a pg_notify-style feed via the
@@ -1968,6 +1985,18 @@ func (s schedScaleUpEngine) AdmitInstance(ctx context.Context, appID, scope, tri
 	return scaleup.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity}, nil
 }
 
+// AdmitInstances implements scaleup.BurstEngine and preserves only the
+// result fields the trigger consumes. The wrapped scheduler still owns every
+// admission check and returns partial results with the first error.
+func (s schedScaleUpEngine) AdmitInstances(ctx context.Context, appID, scope, trigger string, count int) ([]scaleup.AdmitResult, error) {
+	results, err := s.engine.AdmitInstances(ctx, appID, scope, trigger, count)
+	out := make([]scaleup.AdmitResult, 0, len(results))
+	for _, r := range results {
+		out = append(out, scaleup.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity})
+	}
+	return out, err
+}
+
 // EnsureWake (ADR-098) implements scaleup.Engine: delegates to the
 // wrapped engine's single-flight wake entry and lifts the relevant
 // fields into the thinned scaleup.WakeOutcome. AtCapacity is dropped
@@ -2015,6 +2044,18 @@ func (s schedTargetsEngine) AdmitInstance(ctx context.Context, appID, scope, tri
 		return targets.AdmitResult{}, err
 	}
 	return targets.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity}, nil
+}
+
+// AdmitInstances implements targets.BurstEngine and preserves only the
+// result fields the trigger consumes. The wrapped scheduler still owns every
+// admission check and returns partial results with the first error.
+func (s schedTargetsEngine) AdmitInstances(ctx context.Context, appID, scope, trigger string, count int) ([]targets.AdmitResult, error) {
+	results, err := s.engine.AdmitInstances(ctx, appID, scope, trigger, count)
+	out := make([]targets.AdmitResult, 0, len(results))
+	for _, r := range results {
+		out = append(out, targets.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity})
+	}
+	return out, err
 }
 
 // EnsureWake (ADR-098) implements targets.Engine: delegates to the

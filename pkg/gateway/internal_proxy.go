@@ -448,6 +448,30 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
 			return
 		}
+		// Our own request budget firing is not an upstream fault.
+		// gatewayd-public installs the reqbudget middleware
+		// (cmd/gatewayd-public/main.go, Default=RequestBudgetDefault),
+		// so a slow-but-healthy upstream trips this deadline while
+		// still doing the work — under a 1000-concurrency burst the
+		// compute layer returned 200 for 99% of requests whose
+		// RoundTrip had already been cut here and reported as 502.
+		//
+		// Writing the 502 also pre-empted the middleware: it only
+		// synthesises its 504 when the inner handler wrote nothing
+		// (pkg/reqbudget/middleware.go, `case bw.wrote` wins), so
+		// every budget expiry was additionally recorded as
+		// outcome="set" instead of "exceeded" — under-reporting
+		// request_budget_exceeded_total. Emitting the canonical
+		// envelope here keeps the customer-visible status honest;
+		// the metric attribution is fixed separately since the
+		// middleware still observes bw.wrote.
+		if requestBudgetExpired(r.Context()) {
+			p.logger().Warn("internal round-trip exceeded request budget",
+				"target", p.Target.String(),
+				"err", err)
+			writeRequestBudgetExceeded(w)
+			return
+		}
 		p.logger().Warn("internal round-trip failed",
 			"target", p.Target.String(),
 			"err", err)

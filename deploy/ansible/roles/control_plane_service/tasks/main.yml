@@ -170,6 +170,45 @@
     group: root
     mode: "0644"
 
+# faas_apid_app_errors_listen (apid, the LISTENER) and
+# faas_gatewayd_app_errors_target (gatewayd-internal, the CLIENT) are a pair.
+# Setting only the client is silent and permanent: gatewayd-internal dials a
+# port nobody bound, retries, and drops every batch with a WARN. Both the
+# request_telemetry pipeline (ADR-127 debugger) and app_errors
+# (`gregale inspect --errors`) lose 100% of their data with no alert.
+#
+# Observed on the europe-west3 fleet 2026-09-03: the compute drop-in carried
+# FAAS_APID_APP_ERRORS_TARGET=tcp://apid.faas:9093 while the control plane had
+# no 99-faas-app-errors.conf at all, so apid listened only on 9101/8081 and
+# gatewayd-internal logged
+#   "dial tcp 10.156.0.3:9093: connect: connection refused"
+# continuously — 87 failures in a two-hour window.
+#
+# scale_check.yml already asserts BOTH halves (the control-plane and compute
+# host_vars blocks), but every caller runs it with --syntax-check only
+# (Makefile, .github/workflows/ci.yml), which never evaluates an assert. This
+# gate runs during the actual bootstrap instead.
+- name: control_plane_service — AppErrors listener must be set when any compute node ships to it
+  ansible.builtin.assert:
+    that:
+      - faas_apid_app_errors_listen | default('') | length > 0
+    fail_msg: >-
+      A compute node is configured to ship AppErrors/RequestTelemetry to apid
+      ({{ faas_app_errors_clients | join(', ') }} set
+      faas_gatewayd_app_errors_target) but this control-plane host has no
+      faas_apid_app_errors_listen, so apid will not bind the listener and every
+      batch will be dropped. Set faas_apid_app_errors_listen (production value:
+      tcp://0.0.0.0:9093) on this host, or clear
+      faas_gatewayd_app_errors_target on the compute hosts to keep the
+      single-box Unix-socket path.
+  vars:
+    faas_app_errors_clients: >-
+      {{ hostvars | dict2items
+         | selectattr('value.faas_gatewayd_app_errors_target', 'defined')
+         | selectattr('value.faas_gatewayd_app_errors_target', 'ne', '')
+         | map(attribute='key') | list }}
+  when: faas_app_errors_clients | length > 0
+
 # Split-box AppErrors is a private compute→control-plane mTLS listener. The
 # generated target is absent on single-box inventories, where apid keeps its
 # legacy Unix socket. Remove the drop-in on a role transition so a host does
@@ -574,35 +613,30 @@
 # (Original block referenced faas-imaged.service; see the matching
 # task in compute_only_service/tasks/main.yml.)
 
-# PR-P4 — soft assert on Paddle provider secrets (operator warning).
-# When FAAS_BILLING_PROVIDER=paddle is in /etc/faas/sealed.env, the
-# apid daemon refuses to boot without FAAS_PADDLE_API_KEY, so a
-# missing key already fails loud at the daemon level — we surface
-# it here too as a belt-and-braces so the operator sees it BEFORE
-# the systemd daemon-reload attempts the apid start. Soft assert:
-# not failed_when, because (a) the env may not be populated yet on
-# a fresh box where the operator intends to fill it post-bootstrap
-# and (b) the actual fail-closed is the daemon's own boot error.
-# The debug line is only emitted when the provider selector is set
-# to paddle — a Stripe-default install reports nothing.
-- name: control_plane_service — soft assert FAAS_PADDLE_API_KEY present when provider=paddle (PR-P4)
+# Public-release billing — soft assert on Polar provider secrets (operator warning).
+# When Polar is selected (or the selector is omitted), the apid and meterd
+# daemons fail closed without the access token. Surface the missing token
+# before systemd attempts the restart; the daemon remains the authoritative
+# fail-closed gate and this task intentionally stays a warning.
+- name: control_plane_service — soft assert Polar access token present
   ansible.builtin.shell: |
     set -euo pipefail
-    if grep -qE '^FAAS_BILLING_PROVIDER=paddle$' /etc/faas/sealed.env 2>/dev/null; then
-      if ! grep -qE '^FAAS_PADDLE_API_KEY=pdl_' /etc/faas/sealed.env; then
-        echo "WARNING: FAAS_BILLING_PROVIDER=paddle set but FAAS_PADDLE_API_KEY is missing or empty; apid will refuse to boot. Fill in /etc/faas/sealed.env before restarting the daemon."
+    if grep -qE '^FAAS_BILLING_PROVIDER=polar$' /etc/faas/sealed.env 2>/dev/null \
+      || ! grep -qE '^FAAS_BILLING_PROVIDER=' /etc/faas/sealed.env 2>/dev/null; then
+      if ! grep -qE '^FAAS_POLAR_ACCESS_TOKEN=.' /etc/faas/sealed.env; then
+        echo "WARNING: Polar is the active billing provider but FAAS_POLAR_ACCESS_TOKEN is missing or empty; apid and meterd will refuse to boot. Fill in /etc/faas/sealed.env before restarting the daemons."
         exit 0
       fi
-      echo "Paddle billing provider selected — FAAS_PADDLE_API_KEY present (mode-tripwire deferred to verify-secrets.sh + daemon-level fail-closed)."
+      echo "Polar billing provider selected — FAAS_POLAR_ACCESS_TOKEN present (catalog tripwire deferred to verify-secrets.sh + daemon-level fail-closed)."
     fi
   args:
     executable: /bin/bash
   changed_when: false
-  register: faas_paddle_soft_assert
-- name: control_plane_service — debug Paddle soft assert
+  register: faas_polar_soft_assert
+- name: control_plane_service — debug Polar soft assert
   ansible.builtin.debug:
-    msg: "{{ faas_paddle_soft_assert.stdout }}"
-  when: faas_paddle_soft_assert.stdout != ""
+    msg: "{{ faas_polar_soft_assert.stdout }}"
+  when: faas_polar_soft_assert.stdout != ""
 
 # Issue #246 / ADR-115 / spec G4 closure — mail transport must
 # be selected (or dev-mode explicit) before the daemon boots in

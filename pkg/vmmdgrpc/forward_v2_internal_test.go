@@ -148,6 +148,7 @@ func TestStreamBridgeEnv_SanitizesCRLF(t *testing.T) {
 // keep working. The test exercises the full env-var projection so a
 // future refactor that drops FAAS_BRIDGE_PROTOCOL fires loud here.
 func TestStreamBridgeEnv_AppProtocolWiring(t *testing.T) {
+	t.Setenv("FAAS_BRIDGE_PROTOCOL", "")
 	cases := []struct {
 		name        string
 		appProtocol string // ForwardHTTPRequestInit.AppProtocol
@@ -208,6 +209,22 @@ func TestAppProtocolToBridgeProtocol_ClosedSet(t *testing.T) {
 		if got := appProtocolToBridgeProtocol(in); got != want {
 			t.Errorf("appProtocolToBridgeProtocol(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestStreamBridgeProtocol_OperatorOverride(t *testing.T) {
+	req := &vmmdpb.ForwardHTTPRequestInit{AppProtocol: "grpc"}
+	t.Setenv("FAAS_BRIDGE_PROTOCOL", "h1")
+	if got := streamBridgeProtocol(req); got != "h1" {
+		t.Fatalf("operator h1 override = %q, want h1", got)
+	}
+	t.Setenv("FAAS_BRIDGE_PROTOCOL", "not-a-protocol")
+	if got := streamBridgeProtocol(req); got != "h1" {
+		t.Fatalf("invalid operator override = %q, want safe h1", got)
+	}
+	t.Setenv("FAAS_BRIDGE_PROTOCOL", "")
+	if got := streamBridgeProtocol(req); got != "h2c" {
+		t.Fatalf("empty override with grpc = %q, want h2c", got)
 	}
 }
 

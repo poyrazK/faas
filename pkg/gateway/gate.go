@@ -105,6 +105,9 @@ func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
 // cancellation, and recording them as ~0ms observations would push
 // the histogram's p95 toward zero during overload (the very signal
 // the SLO dashboard needs to surface).
+// Wait preserves the legacy gate contract for callers that do not have an
+// app policy. Handler request paths should use WaitWithPolicy so the cap and
+// wait budget are derived from the routed app's plan.
 func (g *WakeGate) Wait(
 	ctx context.Context,
 	appID string,
@@ -114,6 +117,32 @@ func (g *WakeGate) Wait(
 	shouldAbort func() bool,
 	onAbort func(reason string),
 ) error {
+	return g.WaitWithPolicy(ctx, appID, accountID, WakeAdmissionPolicy{
+		MaxWaiters: g.cap,
+		MaxWait:    g.ttl,
+	}, shouldWake, ensure, shouldAbort, onAbort)
+}
+
+// WaitWithPolicy is Wait with an app-specific waiter cap and caller wait
+// budget. The detached leader still uses the gate's lifecycle TTL so an
+// individual client cancellation cannot orphan the shared wake; only the
+// caller's wait is bounded by policy.MaxWait.
+//
+//nolint:contextcheck // the caller context is intentionally wrapped with the app's wait budget.
+func (g *WakeGate) WaitWithPolicy(
+	ctx context.Context,
+	appID string,
+	accountID string,
+	policy WakeAdmissionPolicy,
+	shouldWake func() bool,
+	ensure func(context.Context) error,
+	shouldAbort func() bool,
+	onAbort func(reason string),
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	policy = policy.normalized(g.cap, g.ttl)
 	start := time.Now()
 	// observed is set true only on the paths where the caller actually
 	// spent time in the queue. The deferred observer checks this flag.
@@ -126,13 +155,17 @@ func (g *WakeGate) Wait(
 
 	g.mu.Lock()
 	if call, ok := g.inflight[appID]; ok {
-		if call.waiters >= g.cap {
+		if call.waiters >= policy.MaxWaiters {
 			depth := call.waiters
 			g.mu.Unlock()
 			if g.onChange != nil {
 				g.onChange(appID, call.accountID, depth)
 			}
-			return ErrQueueFull
+			return &WakeQueueFullError{
+				Depth:      depth,
+				Limit:      policy.MaxWaiters,
+				RetryAfter: policy.MaxWait,
+			}
 		}
 		call.waiters++
 		depth := call.waiters
@@ -142,7 +175,7 @@ func (g *WakeGate) Wait(
 		}
 		observed = true
 		// Hold the followers' reference until await returns; release on exit.
-		err := g.await(ctx, call)
+		err := g.awaitWithPolicy(ctx, call, policy)
 		g.release(appID, call)
 		// ctx.Err() is also "didn't wait for an ensure result" — skip
 		// the metric on cancellation so a hung client's cancellation
@@ -171,7 +204,7 @@ func (g *WakeGate) Wait(
 		// Treat the leader itself as a waiter so release() can drop the
 		// entry; a follower that arrives later increments waiters to 2 then
 		// drops to 1 after await; both leader and follower call release().
-		_ = g.await(ctx, call)
+		_ = g.awaitWithPolicy(ctx, call, policy)
 		g.release(appID, call)
 		return nil
 	}
@@ -293,7 +326,7 @@ func (g *WakeGate) Wait(
 	}()
 
 	observed = true
-	err := g.await(ctx, call)
+	err := g.awaitWithPolicy(ctx, call, policy)
 	g.release(appID, call)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		observed = false
@@ -365,4 +398,14 @@ func (g *WakeGate) await(ctx context.Context, call *wakeCall) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (g *WakeGate) awaitWithPolicy(ctx context.Context, call *wakeCall, policy WakeAdmissionPolicy) error {
+	waitCtx, cancel := context.WithTimeout(ctx, policy.MaxWait)
+	defer cancel()
+	err := g.await(waitCtx, call)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return &WakeQueueWaitTimeoutError{RetryAfter: policy.MaxWait}
+	}
+	return err
 }

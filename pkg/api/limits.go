@@ -130,6 +130,33 @@ type Limits struct {
 	VCPU         int // firecracker vcpu_count (spec §4.4)
 	IdleTimeoutS int // default idle-reaper timeout (spec §4.3)
 
+	// M-2 / ADR-137+138: per-plan tier tightening for
+	// AppManifest.StopGracePeriod (DefaultStopGracePeriodS),
+	// AppManifest.StartupDeadlineS (DefaultStartupDeadlineS), and
+	// AppManifest.MaxRetries (DefaultMaxRetries). Replaces the
+	// gross MaxAppManifestStopGracePeriod / StartupDeadlineS /
+	// MaxRetries package-level constants: each plan now carries
+	// its own default and cap, and AppManifest.ValidatePlan reads
+	// them off the matching Limits entry. 0 on the field means
+	// "inherit default" (per ADR-138 §Decision 4).
+	//
+	// WorkerReplicasMax / ServiceReplicasMax / JobMaxRuntimeS
+	// (issue #1186 §D / ADR-137) bound the per-execution-mode
+	// capacity for each plan. Free has all three at zero — Free
+	// stays request-mode only (ADR-137 §Decision 3 / ADR-069
+	// precedent: sidecars are paid-only, so is every non-request
+	// execution mode). apid's updateApp + createApp handlers
+	// gate on these via the corresponding
+	// CodePlan{X}NotAllowed problem codes. The constants live
+	// here per CLAUDE.md's "Every plan quota/limit lives in this
+	// one table" rule.
+	DefaultStopGracePeriodS int // seconds; per-app StopGracePeriod default
+	DefaultStartupDeadlineS int // seconds; per-app StartupDeadlineS default
+	DefaultMaxRetries       int // per-app MaxRetries default
+	WorkerReplicasMax       int // per-account running worker instances
+	ServiceReplicasMax      int // per-deployment desired replicas
+	JobMaxRuntimeS          int // seconds; per-job max runtime
+
 	// CertExpiryWarningDays (issue #961 / Mega-A PR-3) is the threshold
 	// below which the cert engine emits a `cert.expiring_soon` audit
 	// row and the dashboard renders the yellow banner. Same across
@@ -1446,6 +1473,17 @@ var planLimits = map[Plan]Limits{
 		// value the store still reads.
 		CronLimitPerApp:     0,
 		CronLimitPerAccount: 0,
+		// M-2 / ADR-137+138: Free stays request-only — same
+		// posture as sidecars (ADR-069). Defaults are tight so
+		// a stray async deploy stays bounded; per-mode replica
+		// caps are zero so the gate is enforced by ValidatePlan
+		// before the store is touched.
+		DefaultStopGracePeriodS: 15,
+		DefaultStartupDeadlineS: 15,
+		DefaultMaxRetries:       3,
+		WorkerReplicasMax:       0, // Free disallows worker
+		ServiceReplicasMax:      0, // Free disallows service
+		JobMaxRuntimeS:          0, // Free disallows job
 		// ADR-124 queue controls — Free keeps cancel + clear-obsolete
 		// (the safety valves); reorder + deploy-immediately are
 		// locked. Queue depth caps are conservative because Free
@@ -1794,6 +1832,18 @@ var planLimits = map[Plan]Limits{
 		// template's tutorials.
 		CronLimitPerApp:     5,
 		CronLimitPerAccount: 10,
+		// M-2 / ADR-137+138: Hobby gets the documented 30 s
+		// StopGracePeriod default + 30 s StartupDeadline default
+		// (ADR-138 §Decision 4 / §Decision 5). Hobby unlocks
+		// worker (1 max) + service (3 replicas) + job (300 s max
+		// runtime) — enough for a tutorial workload, not for a
+		// production fan-out.
+		DefaultStopGracePeriodS: 30,
+		DefaultStartupDeadlineS: 30,
+		DefaultMaxRetries:       5,
+		WorkerReplicasMax:       1,
+		ServiceReplicasMax:      3,
+		JobMaxRuntimeS:          300,
 		// ADR-124 queue controls — Hobby unlocks the gated surface.
 		QueueControlsAllowed:   true,
 		MaxQueuedDeploysPerApp: 5,
@@ -2149,6 +2199,16 @@ var planLimits = map[Plan]Limits{
 		// run more apps (25) than Hobby (5).
 		CronLimitPerApp:     20,
 		CronLimitPerAccount: 50,
+		// M-2 / ADR-137+138: Pro doubles Hobby's defaults
+		// (ADR-138 §Decision 4 / §Decision 5). Replica caps
+		// scale to a meaningful production fan-out (3 workers,
+		// 5 service replicas, 30 min job runtimes).
+		DefaultStopGracePeriodS: 60,
+		DefaultStartupDeadlineS: 60,
+		DefaultMaxRetries:       10,
+		WorkerReplicasMax:       3,
+		ServiceReplicasMax:      5,
+		JobMaxRuntimeS:          1800,
 		// ADR-124 queue controls — Pro.
 		QueueControlsAllowed:   true,
 		MaxQueuedDeploysPerApp: 10,
@@ -2486,6 +2546,16 @@ var planLimits = map[Plan]Limits{
 		// at the per-app cap, the typical SaaS fan-out.
 		CronLimitPerApp:     100,
 		CronLimitPerAccount: 500,
+		// M-2 / ADR-137+138: Scale doubles Pro (ADR-138
+		// §Decision 4 / §Decision 5). Replica caps land where
+		// a single Scale customer can host a small SaaS
+		// (10 workers, 20 service replicas, 1 h jobs).
+		DefaultStopGracePeriodS: 120,
+		DefaultStartupDeadlineS: 120,
+		DefaultMaxRetries:       20,
+		WorkerReplicasMax:       10,
+		ServiceReplicasMax:      20,
+		JobMaxRuntimeS:          3600,
 		// ADR-124 queue controls — Scale (5× Hobby's 5).
 		QueueControlsAllowed:   true,
 		MaxQueuedDeploysPerApp: 25,
@@ -2905,6 +2975,32 @@ const (
 	WakeQueueCap        = 512              // per-app wake queue
 	WakeQueueTTLSeconds = 30
 
+	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
+	// admissions in one gateway process. The gateway still coalesces
+	// requests per app; this cap protects the control plane when many
+	// different apps become cold at the same time.
+	GatewayWakeAdmissionParallelism = 4
+	// GatewayWakeAdmissionQueueCap bounds distinct app leaders waiting
+	// for a gateway admission slot. Per-app waiter caps are enforced by
+	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
+	GatewayWakeAdmissionQueueCap = 128
+
+	// Gateway wake admission defaults are plan policy, kept here with the
+	// rest of the platform's quotas so gateway and scheduler-facing code do
+	// not grow separate copies of customer limits. Priority is intentionally
+	// equal across plans; plan-aware priority would let sustained paid
+	// traffic starve other customers.
+	GatewayWakeAdmissionFreeMaxWaiters  = 4
+	GatewayWakeAdmissionHobbyMaxWaiters = 16
+	GatewayWakeAdmissionProMaxWaiters   = 64
+	GatewayWakeAdmissionScaleMaxWaiters = 128
+	GatewayWakeAdmissionFreeMaxWait     = 10 * time.Second
+	GatewayWakeAdmissionPaidMaxWait     = 30 * time.Second
+	GatewayWakeAdmissionFreePriority    = 1
+	GatewayWakeAdmissionHobbyPriority   = 1
+	GatewayWakeAdmissionProPriority     = 1
+	GatewayWakeAdmissionScalePriority   = 1
+
 	// MirrorMaxLifetimeSeconds (issue #72 / ADR-125) is the hard
 	// upper bound on how long a single mirror goroutine can run.
 	// The gateway derives a per-request context via
@@ -3146,6 +3242,17 @@ const (
 	// point of use.
 	MaxAppManifestStopGracePeriod = 5 * time.Minute
 
+	// MaxAppManifestStartupDeadlineS is the gross upper bound on
+	// AppManifest.StartupDeadlineS (issue #1186 §D.2, ADR-137/138).
+	// Per-plan tightening replaces this in commit 10 of M-2 with
+	// per-plan tiers on the Limits struct.
+	MaxAppManifestStartupDeadlineS = 300
+
+	// MaxAppManifestMaxRetries is the gross upper bound on
+	// AppManifest.MaxRetries (issue #1186 §D.3, ADR-137/138). Per-plan
+	// tightening in M-2 commit 10.
+	MaxAppManifestMaxRetries = 20
+
 	// StreamingStatus is the per-request classification emitted via
 	// the Streaming-Status response header (ADR-102 D1/D2). The
 	// canonical wire values are the lower-case string forms of the
@@ -3377,6 +3484,12 @@ const (
 	// is already over by the time the trigger fires.
 	ScaleUpDecisionIntervalSeconds = 1
 	ScaleUpWindowSeconds           = 5
+	// ScaleUpMaxBurstPerTick bounds the number of additional instances a
+	// signal-driven scale-up decision may request in one scheduler tick. The
+	// desired-capacity calculation can ask for more when a large burst arrives,
+	// but admissions are deliberately paced across ticks so one bad metric
+	// sample cannot turn into an unbounded cold-boot fan-out.
+	ScaleUpMaxBurstPerTick = 4
 
 	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /
@@ -4045,46 +4158,43 @@ func (p Plan) Valid() bool {
 }
 
 // IsPaid reports whether the plan is a paid tier (hobby/pro/scale).
-// Free is the only non-paid plan; the changePlan handler (cmd/apid
-// handlers_ext.go) uses this to decide whether an API-only upgrade
-// requires a Stripe subscription item (issue #142).
+// Free is the only non-paid plan.
 func (p Plan) IsPaid() bool {
 	return p == PlanHobby || p == PlanPro || p == PlanScale
 }
 
-// RequiresStripeUpgradeTo reports whether moving from p → next counts as
-// a paid-upgrade that needs a Stripe subscription item. Downgrades
-// (any → free) and same-tier moves return false; the customer can
-// always downgrade without Stripe. The only free → paid direct path
-// is free → hobby (the v0 upgrade); free → pro/scale and any
-// hobby → pro/scale and pro → scale require a Stripe subscription item.
-//
-// The Stripe webhook is the legitimate path to set a paid plan — it
-// stamps StripeSubscriptionItem on the account record before the plan
-// change, so the same handler that rejects free → pro for an
-// API-key-only call accepts free → pro when the Stripe item is set.
+// IsUpgradeTo reports whether moving from p to next increases the plan tier.
+// Unknown plans and same-tier/downgrade moves return false.
+func (p Plan) IsUpgradeTo(next Plan) bool {
+	from, fromOK := planRank[p]
+	to, toOK := planRank[next]
+	return fromOK && toOK && to > from
+}
+
+// RequiresBillingUpgradeTo reports whether moving from p → next is a paid
+// upgrade that must be confirmed by the active billing provider. Downgrades,
+// same-tier moves, and upgrades to Free return false.
 //
 // Fail-closed on unknown plans: an unknown `from` (e.g. a future
 // enterprise tier added without updating this switch) returns true so
 // the 402 gate fires — a missing case must never silently let a
 // customer upgrade without billing. Reviewers: keep this default in
 // place if you extend the switch above.
-func (p Plan) RequiresStripeUpgradeTo(next Plan) bool {
+func (p Plan) RequiresBillingUpgradeTo(next Plan) bool {
 	if !next.Valid() {
 		return false // caller's plan.Valid() check already covers this
 	}
-	switch p {
-	case PlanFree:
-		return next == PlanPro || next == PlanScale
-	case PlanHobby:
-		return next == PlanPro || next == PlanScale
-	case PlanPro:
-		return next == PlanScale
-	case PlanScale:
-		return false
-	default:
-		return true // unknown source plan: require Stripe, do not silently allow
+	if _, ok := planRank[p]; !ok {
+		return true // unknown source plan: fail closed
 	}
+	return p.IsUpgradeTo(next) && next.IsPaid()
+}
+
+// RequiresStripeUpgradeTo is retained for source compatibility with older
+// callers. Billing is provider-neutral now; new call sites should use
+// RequiresBillingUpgradeTo.
+func (p Plan) RequiresStripeUpgradeTo(next Plan) bool {
+	return p.RequiresBillingUpgradeTo(next)
 }
 
 // MinInstancesAllowed reports whether the plan may set the per-app

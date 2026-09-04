@@ -45,7 +45,7 @@ gv_admin_password_file: ""
 
 # Internal Prometheus address Grafana queries. Keep the datasource local;
 # operators can use an SSH tunnel for the Grafana UI when needed.
-gv_prom_url: "http://127.0.0.1:9090"
+gv_prom_url: "http://127.0.0.1:9095"
 
 # When true, the role skips the admin-password-file permission assert
 # and the systemd service start. dev/CI hosts set this to true so

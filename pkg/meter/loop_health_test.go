@@ -1,7 +1,9 @@
 package meter_test
 
 import (
+	"context"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +116,60 @@ func TestLoop_Health_StaleAfterMultiplier(t *testing.T) {
 		if !found {
 			t.Errorf("Stale missing %q (have %v)", name, status.Stale)
 		}
+	}
+}
+
+// TestLoop_Health_ReportsFailedBillingTick guards the distinction between
+// "the ticker fired" and "the provider pass succeeded". A nil provider is
+// the smallest deterministic stand-in for a broken billing configuration;
+// the loop must keep running for retry, while /healthz remains unhealthy
+// and exposes the current failure.
+func TestLoop_Health_ReportsFailedBillingTick(t *testing.T) {
+	t.Parallel()
+	cfg := &meter.Config{}
+	cfg.Defaults()
+	cfg.SampleInterval = 20 * time.Millisecond
+	cfg.QuotaInterval = 20 * time.Millisecond
+	cfg.StripeInterval = 20 * time.Millisecond
+	loop := meter.NewLoop(
+		state.NewMemStore(),
+		nil,
+		&fakeParker{},
+		nil, // missing billing provider: every billing tick fails
+		&fakeNotifier{},
+		nil,
+		nil,
+		nil,
+		nil,
+		time.Now,
+		discardLog(),
+		cfg,
+		wire.NewOpsMetrics("meter_test_health_failure"),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- loop.Run(ctx) }()
+	time.Sleep(60 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop returned %v, want nil on cancel", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("loop did not return within 3s of cancel")
+	}
+
+	status := loop.Health(time.Now())
+	if status.Healthy {
+		t.Fatalf("Healthy = true after failed billing ticks (status=%+v)", status)
+	}
+	if got := status.Failed["stripe"]; !strings.Contains(got, "billing pusher not configured") {
+		t.Fatalf("Failed[stripe] = %q, want missing-provider error", got)
+	}
+	if _, ok := loop.LastTick("stripe"); !ok {
+		t.Fatal("LastTick(stripe) = false after failed billing tick")
 	}
 }
 

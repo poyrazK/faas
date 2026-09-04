@@ -11,7 +11,7 @@ Type=simple
 ExecStart=/usr/local/bin/alertmanager \
     --config.file=/etc/alertmanager/alertmanager.yml \
     --storage.path=/var/lib/alertmanager \
-    --web.listen-address=127.0.0.1:9093
+    --web.listen-address=127.0.0.1:9094
 Restart=on-failure
 RestartSec=10s
 

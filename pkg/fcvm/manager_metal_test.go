@@ -81,24 +81,32 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			id := fmt.Sprintf("m1-%d", i)
-			// Per contextcheck: don't capture the test's ctx into the
-			// goroutine — the goroutine's lifetime is bounded by wg.Wait
-			// below, so a detached ctx cannot outlive the test. Per-VM
-			// boot deadlines live inside ColdBoot itself.
-			if _, err := m.ColdBoot(context.Background(), ColdBootRequest{
-				Instance: id, BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
-			}); err != nil {
-				t.Errorf("boot %s: %v", id, err)
-			}
-		}(i)
+	type bootResult struct {
+		instance string
+		err      error
 	}
-	wg.Wait()
+	results := make(chan bootResult, n)
+	for i := 0; i < n; i++ {
+		bootCtx, bootCancel := context.WithTimeout(ctx, 30*time.Second)
+		go func(i int, bootCtx context.Context, bootCancel context.CancelFunc) {
+			defer bootCancel()
+			id := fmt.Sprintf("m1-%d", i)
+			_, err := m.ColdBoot(bootCtx, ColdBootRequest{
+				Instance: id, BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
+			})
+			results <- bootResult{instance: id, err: err}
+		}(i, bootCtx, bootCancel)
+	}
+	for i := 0; i < n; i++ {
+		select {
+		case result := <-results:
+			if result.err != nil {
+				t.Errorf("boot %s: %v", result.instance, result.err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("concurrent boot batch exceeded deadline: %v", ctx.Err())
+		}
+	}
 
 	if m.LiveCount() != n {
 		t.Fatalf("live=%d, want %d", m.LiveCount(), n)

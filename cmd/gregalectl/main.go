@@ -52,6 +52,7 @@ Commands:
   node-key     Provision the per-node CapacityReport signing keypair (node-key init|rotate|status)
   backup       Operator rclone / archive credentials (backup init|unseal-archive-creds|unseal-rclone)
   secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp; PR-X / issue #911 / ADR-110)
+  artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
   compute-nodes  Compute-node state machine (add|drain|drain-status|activate|force-drain; PR-A / multi-host scale-out)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
   obs           Operator-side meta-obs health snapshot (obs health; Obs-Meta + Trace-IDs Mega-PR / C8)
@@ -163,6 +164,12 @@ func run(args []string) int {
 		// fans to init / rotate / status. Local fs + optional
 		// compute_nodes write — never hits apid.
 		return cmdSecretsDispatch(args[1:])
+	case dispatchArtifact:
+		// Provider-neutral release artifact publication. The release workflow
+		// publishes kernel/<firecracker-version> through the exact same OCI
+		// storage backend that vmmd reads; node_join verifies it before the
+		// compute node is allowed to start.
+		return cmdArtifactDispatch(args[1:])
 	case dispatchComputeNodes:
 		// PR #929 (image rollout) + PR-A (multi-host scale-out
 		// gap #1). Subcommands: add (operator POST → state.Store.

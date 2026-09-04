@@ -129,7 +129,7 @@ func (s *PgStore) ClaimPendingOperatorIntent(ctx context.Context) (OperatorInten
 		       trace_id
 		FROM operator_intents
 		WHERE status = 'pending'
-		ORDER BY requested_at ASC
+		ORDER BY requested_at ASC, id ASC
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
 	`)

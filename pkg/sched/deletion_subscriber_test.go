@@ -72,6 +72,9 @@ func silenceLog() *slog.Logger {
 func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 	store := state.NewMemStore()
 	acctA, appA, depA := seedOneAccount(t, store, "owner-a@example.com")
+	if err := store.MarkAccountDeletionPending(context.Background(), acctA.ID); err != nil {
+		t.Fatalf("mark account A pending: %v", err)
+	}
 	if _, err := store.CreateInstance(context.Background(), appA.ID, depA.ID, "running", 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("instance A1: %v", err)
 	}
@@ -121,6 +124,9 @@ func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "dup@example.com")
+	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
+		t.Fatalf("mark account pending: %v", err)
+	}
 	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("instance: %v", err)
 	}
@@ -167,6 +173,9 @@ func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "bad@example.com")
+	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
+		t.Fatalf("mark account pending: %v", err)
+	}
 	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("instance: %v", err)
 	}

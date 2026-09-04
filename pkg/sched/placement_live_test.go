@@ -13,6 +13,7 @@ package sched
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -44,6 +45,29 @@ func seedTwoNodes(t *testing.T, store state.Store) (defaultLocal, remote string)
 		t.Fatalf("seed remote-1: %v", err)
 	}
 	return a.ID, b.ID
+}
+
+// TestWakeBurstPlacementSpreadIgnoresWarmHint pins the burst-specific
+// placement contract. The warm node has a valid hint but materially less
+// headroom; a burst sibling must choose the other active node instead of
+// repeatedly following the app's last-warm location.
+func TestWakeBurstPlacementSpreadIgnoresWarmHint(t *testing.T) {
+	store := state.NewMemStore()
+	localID, remoteID := seedTwoNodes(t, store)
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithWarmAffinity(NewWarmAffinity(time.Minute))
+	e.capacityTable.Replace(CapacityReport{NodeID: localID, UsedMB: 46000})
+	e.capacityTable.Replace(CapacityReport{NodeID: remoteID, UsedMB: 0})
+	e.warmAffinity.RecordWake(app.ID, localID)
+
+	got, err := e.Wake(WithBurstPlacementSpread(context.Background()), app.ID, "", "", "gateway")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if got.NodeID != remoteID {
+		t.Fatalf("burst placement NodeID = %q, want remote node %q", got.NodeID, remoteID)
+	}
 }
 
 // TestChoosePlacement_HonorsLiveCapacity pins the Tier A1 invariant:

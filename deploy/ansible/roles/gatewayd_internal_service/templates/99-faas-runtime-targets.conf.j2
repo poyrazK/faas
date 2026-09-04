@@ -10,6 +10,14 @@ Environment=FAAS_SCHEDD_SOCKET={{ faas_gatewayd_schedd_target | default(faas_vmm
 # Compute-only gatewayd reports grouped application errors to the control
 # plane over the private mTLS target rendered in gatewayd.toml.
 Environment=FAAS_APID_APP_ERRORS_TARGET={{ gatewayd_app_errors_target }}
+Environment=FAAS_APID_APP_ERRORS_TLS_CERT_PATH={{ gatewayd_app_errors_tls_cert_path }}
+Environment=FAAS_APID_APP_ERRORS_TLS_KEY_PATH={{ gatewayd_app_errors_tls_key_path }}
+Environment=FAAS_APID_APP_ERRORS_TLS_CA_PATH={{ gatewayd_app_errors_tls_ca_path }}
+# RequestTelemetry shares the same private listener and mTLS identity. The
+# daemon falls back to this target when no explicit request-telemetry target
+# is supplied, so the split-box path cannot accidentally select the missing
+# local Unix socket.
+Environment=FAAS_APID_REQUEST_TELEMETRY_TARGET={{ gatewayd_app_errors_target }}
 {% endif %}
 {% if gatewayd_egress_listen | default('') | length > 0 %}
 # Split-box meterd consumes the egress stream over the private mTLS

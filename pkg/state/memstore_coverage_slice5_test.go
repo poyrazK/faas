@@ -277,7 +277,9 @@ func TestMemStoreCoverageMeteringAndInvoices(t *testing.T) {
 	}
 	// GetInvoiceByID — hit + miss. SeedInvoiceForTest is the test seam;
 	// PeriodEnd must fall inside the month the list filter uses.
-	periodEnd := minute.Add(2 * time.Hour)
+	// Keep the fixture inside the selected month even when the suite runs
+	// during the final two hours of a UTC month.
+	periodEnd := time.Date(minute.Year(), minute.Month(), 15, 12, 0, 0, 0, time.UTC)
 	m.SeedInvoiceForTest(Invoice{ID: "inv-1", AccountID: account.ID, Provider: "stripe", Status: "paid", TotalCents: 100, PeriodEnd: periodEnd})
 	if got, err := m.GetInvoiceByID(ctx, "inv-1"); err != nil || got.ID != "inv-1" {
 		t.Fatalf("invoice by id = %+v, %v", got, err)

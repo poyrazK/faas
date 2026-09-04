@@ -1,7 +1,7 @@
 // commands_billing.go — `faas billing …` family (issue #253).
 //
 //   faas billing                       dispatch help (prints subcommand list)
-//   faas billing portal                open the Stripe billing portal in your browser
+//   faas billing portal                open the active billing provider's portal
 //                                      (or print the URL when --print is set / DISPLAY
 //                                      is unavailable)
 //   faas billing status                read the active billing Provider's cached
@@ -13,8 +13,8 @@
 //   faas billing webhook-test          signed round-trip POST to a webhook URL (PR-P4,
 //                                      operator-only; mirrors the production signer)
 //
-// This is the CLI companion to GET /dashboard/billing's "Open Stripe
-// billing portal" button. Same URL, same auth chain (Bearer via
+// This is the CLI companion to GET /dashboard/billing's provider-neutral
+// billing portal button. Same URL, same auth chain (Bearer via
 // FAAS_TOKEN / OS keychain). Future subcommands (`retry`, `cancel`,
 // `add-card`, `plan-via-portal`) land here per issue #265 without
 // touching the top-level dispatch in main.go.
@@ -86,16 +86,16 @@ func cmdBilling(args []string) int {
 
 func printBillingUsage(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "usage: faas billing <subcommand>\n\n"+
-		"  portal              open the Stripe billing portal in your browser\n"+
+		"  portal              open the active billing provider's portal in your browser\n"+
 		"                      (--print  print URL to stdout only; --no-open  skip browser)\n"+
 		"  payment-method      show the card-on-file summary; open the portal to update\n"+
 		"  retry               retry the latest unpaid charge (issue #242; closes the\n"+
 		"                      dunning-email lie at pkg/mail/account.go:107,150)\n"+
 		"  cancel              set cancel_at_period_end on the active subscription;\n"+
 		"                      y/N confirm (--yes for non-interactive shells)\n"+
-		"  status              read the active billing Provider's cached catalog (Paddle-only)\n"+
+		"  status              read the active billing Provider's catalog snapshot\n"+
 		"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n"+
-		"  price-catalog       list | sync | reset the Paddle price + product catalog\n"+
+		"  price-catalog       list | sync | reset the provider price + product catalog\n"+
 		"  reconcile <id>      run a single-account reconcile via the active billing Provider\n"+
 		"  reconcile-paddle-overage\n"+
 		"                      pre-flight the paddle_overage_dedupe schema for migration 00041\n"+

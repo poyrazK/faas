@@ -26,7 +26,7 @@ Usage:
 
 Commands:
   account      Manage the local account (account export|delete|restore|status|dpa|slo)
-  admin        Operator-only billing ops (admin credit --reason <text> <uuid> <cents>)
+  admin        Operator-only billing ops (admin credit|refund|consume-credits)
   alerts       Per-app alert rules (alerts list|add|info|update|rm|rotate-secret --app <slug>)
   audit-events Audit-log query (audit-events list|get <id>)
   apps         List your apps
@@ -79,7 +79,7 @@ Commands:
   secrets      Manage env secrets (secrets list|set|unset|list-all)
   slo          Per-app SLO panel (gregale slo <slug> [--window 24h])
   status       Personal SLO numbers (availability, wake p95, build success)
-  tail         Live tail of the unified event stream (--follow)
+  tail         Live tail of the unified event stream (--app <slug> | --include-stateless)
   traffic      Manage deployment traffic split (issue #556; Pro/Scale only)
   trusted-publishers  Per-app cosign trusted-publisher list (admin; trusted-publishers add|remove|list)
   usage        Show this month's usage (gregale usage [--month YYYY-MM]|daily [--day YYYY-MM-DD]|storage [--day YYYY-MM-DD]|summary)

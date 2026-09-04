@@ -106,6 +106,15 @@ func (f *fakeVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 func (f *fakeVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	panic("Destroy: not stubbed")
 }
+
+// StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
+// signal-grace-SIGKILL stop sequence. The forwardproxy test rig
+// never exercises it (the forwarder is request-shaped, not
+// worker/job); panic-on-call makes a future accidental
+// invocation surface as a clear test mistake.
+func (f *fakeVmmdClient) StopInstance(context.Context, *vmmdpb.StopInstanceRequest, ...grpc.CallOption) (*vmmdpb.StopInstanceResponse, error) {
+	panic("StopInstance: not stubbed")
+}
 func (f *fakeVmmdClient) Stats(context.Context, *vmmdpb.StatsRequest, ...grpc.CallOption) (*vmmdpb.StatsResponse, error) {
 	panic("Stats: not stubbed")
 }
@@ -1064,7 +1073,11 @@ func TestRawStreamReverseProxy_ClientCancel_TearsDownStream(t *testing.T) {
 	// The body goroutine parks inside cr.Read (the ctxReader
 	// wrapper at forwardproxy.go:555-556) until the cancel
 	// propagates from r.Context().
-	body := &blockingReader{ctx: ctx, exitedCh: make(chan struct{})}
+	body := &blockingReader{
+		ctx:      ctx,
+		exitedCh: make(chan struct{}),
+		closeCh:  make(chan struct{}),
+	}
 
 	// blockingStream blocks Recv on ctx.Done(); the receiver
 	// loop is parked inside stream.Recv until the cancel
@@ -1120,27 +1133,38 @@ func TestRawStreamReverseProxy_ClientCancel_TearsDownStream(t *testing.T) {
 	}
 }
 
-// blockingReader is an io.Reader that parks inside Read until the
-// supplied ctx is cancelled. Used by
+// blockingReader is an io.ReadCloser that parks inside Read until the
+// supplied ctx is cancelled or Close is called. Used by
 // TestRawStreamReverseProxy_ClientCancel_TearsDownStream to verify
 // the ctxReader cancellation path at
 // pkg/gateway/forwardproxy.go:555-556 (issue #471 review F3 fix).
 type blockingReader struct {
-	ctx      context.Context
-	exitedCh chan struct{}
-	exitOnce sync.Once
+	ctx       context.Context
+	exitedCh  chan struct{}
+	closeCh   chan struct{}
+	exitOnce  sync.Once
+	closeOnce sync.Once
 }
 
 func (b *blockingReader) Read(_ []byte) (int, error) {
-	// Park until ctx cancels. ctxReader wraps this Read
-	// with r.Context() so the cancel propagates; the
-	// test asserts this Read returns within 2 s of
-	// cancel.
-	<-b.ctx.Done()
+	// Park until ctx cancels or ctxReader closes the request body;
+	// the test asserts this Read returns within 2 s of cancel.
+	select {
+	case <-b.ctx.Done():
+	case <-b.closeCh:
+	}
 	b.exitOnce.Do(func() {
 		close(b.exitedCh)
 	})
-	return 0, b.ctx.Err()
+	if err := b.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 0, io.ErrClosedPipe
+}
+
+func (b *blockingReader) Close() error {
+	b.closeOnce.Do(func() { close(b.closeCh) })
+	return nil
 }
 
 // blockingRawBidiStream implements grpc.BidiStreamingClient and

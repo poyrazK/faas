@@ -5,18 +5,17 @@
 import type { BillingCatalogEntry } from './BillingCatalogEntry.js';
 /**
  * Wire shape for GET / POST / DELETE
- * /v1/admin/billing-paddle-catalog (PR-P3). Provider is
- * the active billing provider's name (paddle / stripe);
- * on a Stripe deployment the handler 501s before
- * serializing this struct. SyncedAt is the timestamp of
- * the most recent successful EnsurePlanProducts call;
- * empty string when no hydration has yet completed
- * (POST and DELETE both reset it).
+ * /v1/admin/billing-paddle-catalog compatibility endpoints
+ * (PR-P3). Provider is the active billing provider's name
+ * (polar / paddle); providers without a catalog surface
+ * return 501. SyncedAt is the timestamp of the most recent
+ * successful catalog preflight; empty when no hydration has
+ * completed.
  *
  */
 export type BillingCatalogResponse = {
   /**
-   * Active provider name (paddle / stripe).
+   * Active provider name (polar / paddle).
    */
   provider: string;
   /**

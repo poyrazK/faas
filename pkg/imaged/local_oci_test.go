@@ -28,6 +28,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +37,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/rootfs"
 )
 
 // digestFor returns the well-formed sha256:<64-hex> digest corresponding
@@ -96,13 +99,21 @@ func gzipBytes(t *testing.T, payload []byte) []byte {
 
 // minimalConfigBytes returns a minimal valid OCI config JSON blob that
 // oci.ParseConfig accepts.
-func minimalConfigBytes() []byte {
+func minimalConfigBytes(count ...int) []byte {
+	layers := 1
+	if len(count) > 0 {
+		layers = count[0]
+	}
+	diffIDs := make([]string, layers)
+	for i := range diffIDs {
+		diffIDs[i] = fmt.Sprintf("sha256:%064x", i+1)
+	}
 	cfg := map[string]any{
 		"architecture": "amd64",
 		"os":           "linux",
 		"rootfs": map[string]any{
 			"type":     "layers",
-			"diff_ids": []string{"sha256:" + strings.Repeat("00", 32)},
+			"diff_ids": diffIDs,
 		},
 	}
 	b, _ := json.Marshal(cfg)
@@ -295,7 +306,7 @@ func TestReadLocalOCIEntry_ArchiveMissing(t *testing.T) {
 
 func TestLoadLocalOCIArchive_HappyTwoLayers(t *testing.T) {
 	// Construct a valid OCI layout archive end-to-end.
-	cfg := minimalConfigBytes()
+	cfg := minimalConfigBytes(2)
 	layer0 := gzipBytes(t, []byte("layer0-payload"))
 	layer1 := gzipBytes(t, []byte("layer1-payload"))
 
@@ -545,6 +556,81 @@ func TestLoadLocalOCIArchive_CleanupReleasesFiles(t *testing.T) {
 	cleanup()
 	// Idempotent: a second cleanup must not panic.
 	cleanup()
+}
+
+func TestFunctionHandlerPaths_CoversAllSupportedRuntimes(t *testing.T) {
+	cases := map[string][2]string{
+		RuntimeNode22:      {"/app/handler.js", "/app/node22.js"},
+		RuntimeNode24:      {"/app/handler.js", "/app/node24.js"},
+		RuntimePython312:   {"/app/handler.py", "/app/handler.py"},
+		RuntimePython313:   {"/app/handler.py", "/app/handler.py"},
+		RuntimeGo124:       {"/app/server", "/app/handler"},
+		RuntimeGo124Alpine: {"/app/server", "/app/handler"},
+	}
+	for runtime, want := range cases {
+		t.Run(runtime, func(t *testing.T) {
+			source, target, err := functionHandlerPaths(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source != want[0] || target != want[1] {
+				t.Fatalf("paths = (%q, %q), want (%q, %q)", source, target, want[0], want[1])
+			}
+		})
+	}
+}
+
+func TestMakeGoHandlerLayerExtractsExecutableServer(t *testing.T) {
+	var layer bytes.Buffer
+	zw := gzip.NewWriter(&layer)
+	tw := tar.NewWriter(zw)
+	data := []byte("go-binary")
+	if err := tw.WriteHeader(&tar.Header{Name: "app/server", Mode: 0o755, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "source-layer.tar.gz")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(layer.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:forbidigo // path is a test-created local OCI fixture.
+	file, err = os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	result, cleanup, err := makeGoHandlerLayer([]io.ReadCloser{file})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	staging := t.TempDir()
+	if err := rootfs.ApplyLayerGz(staging, result); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(staging, "app", "server"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("server mode = %o, want 755", info.Mode().Perm())
+	}
 }
 
 // --- Misc helpers that round out local_oci_test ----------------------

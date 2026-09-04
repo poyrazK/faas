@@ -1,6 +1,11 @@
 package builderd
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // slot.go — builder slot gating (CLAUDE.md "Builder slots").
 //
@@ -28,6 +33,57 @@ type SlotDecision struct {
 // slotThresholdFraction is the tenant residency fraction below which the
 // opportunistic 2nd builder slot is granted (spec §13).
 const slotThresholdFraction = 0.60
+
+const maxBuilderSlots = 2
+
+// acquireSlot reserves one of the process-wide builder slots. The first
+// active build is always the guaranteed slot. A second build requires the
+// residency gate to return the opportunistic label. The returned release
+// function is idempotent so every caller can defer it safely.
+func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
+	b.slotMu.Lock()
+	defer b.slotMu.Unlock()
+
+	if b.activeSlots >= maxBuilderSlots {
+		return SlotDecision{
+			Allowed: false,
+			Label:   "none",
+			Reason:  "builder slot limit reached",
+		}, nil, false
+	}
+	decider := b.slotDecide
+	if decider == nil {
+		decider = DecideSlot
+	}
+	decision := decider(b.resid, api.RAMAdmissionCeilingMB)
+	if !decision.Allowed {
+		return decision, nil, false
+	}
+	if b.activeSlots > 0 && decision.Label != "opportunistic" {
+		return SlotDecision{
+			Allowed: false,
+			Label:   "none",
+			Reason:  "opportunistic slot denied by tenant residency gate",
+		}, nil, false
+	}
+	if b.activeSlots == 0 {
+		decision.Label = "guaranteed"
+		decision.Reason = "guaranteed slot available"
+	}
+	b.activeSlots++
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			b.slotMu.Lock()
+			if b.activeSlots > 0 {
+				b.activeSlots--
+			}
+			b.slotMu.Unlock()
+		})
+	}
+	return decision, release, true
+}
 
 // DecideSlot computes whether a builder spawn is allowed, given the current
 // tenant residency. residentMB and ceilingMB are in megabytes; a nil

@@ -81,16 +81,23 @@ type Unit struct {
 	Requires      []string
 
 	// [Service]
-	Type                  string // "simple" for every faas daemon today
-	User                  string
-	Group                 string
-	ExecStart             string
-	ExecStartPre          []string // ordered (vmmd has 2; nobody else has any)
-	ExecStartPost         []string // ordered post-start fixups (vmmd runtime dir)
-	Restart               string
-	RestartSec            string
-	RestartCountExport    string // systemd 254+; e.g. "SYSTEMD_RESTARTS_ON_FAILURE"
-	Slice                 string
+	Type               string // "simple" for every faas daemon today
+	User               string
+	Group              string
+	ExecStart          string
+	ExecStartPre       []string // ordered (vmmd has 2; nobody else has any)
+	ExecStartPost      []string // ordered post-start fixups (vmmd runtime dir)
+	Restart            string
+	RestartSec         string
+	RestartCountExport string // systemd 254+; e.g. "SYSTEMD_RESTARTS_ON_FAILURE"
+	Slice              string
+	// MemoryHigh is the soft limit: systemd applies reclaim pressure and
+	// throttles the cgroup past this point instead of killing it. Set it
+	// below MemoryMax so a slow leak degrades the daemon rather than
+	// dropping it — vmmd's 2026-09-03 OOM took its whole compute node out
+	// of rotation, and a hard cap alone would not have changed that.
+	// Empty omits the directive.
+	MemoryHigh            string
 	MemoryMax             string
 	Delegate              bool
 	CapabilityBoundingSet []string
@@ -135,7 +142,7 @@ func BoolPtr(b bool) *bool { return &b }
 // Render emits the unit file as bytes. Section ordering: [Unit] first,
 // then [Service], then [Install] — matching every shipped faas unit.
 // Inside [Service], field ordering is fixed (Type → User → Group →
-// ExecStartPre → ExecStart → Restart → RestartSec → Slice → MemoryMax → Delegate →
+// ExecStartPre → ExecStart → Restart → RestartSec → Slice → MemoryHigh → MemoryMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -184,6 +191,7 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "RestartCountExport", u.RestartCountExport)
 	writeStringKV(&buf, "Slice", u.Slice)
+	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
 	if u.Delegate {
 		buf.WriteString("Delegate=yes\n")
@@ -478,6 +486,8 @@ func apply(u *Unit, section, key, val string) error {
 		u.RestartCountExport = val
 	case "[Service]/Slice":
 		u.Slice = val
+	case "[Service]/MemoryHigh":
+		u.MemoryHigh = val
 	case "[Service]/MemoryMax":
 		u.MemoryMax = val
 	case "[Service]/Delegate":
@@ -653,6 +663,7 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "RestartSec", a.RestartSec, b.RestartSec)
 	add("[Service]", "RestartCountExport", a.RestartCountExport, b.RestartCountExport)
 	add("[Service]", "Slice", a.Slice, b.Slice)
+	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)
 	add("[Service]", "MemoryMax", a.MemoryMax, b.MemoryMax)
 	add("[Service]", "Delegate", boolStr(a.Delegate), boolStr(b.Delegate))
 	add("[Service]", "CapabilityBoundingSet",

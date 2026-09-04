@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -89,12 +91,18 @@ type Engine interface {
 	// scope (`pr-{N}`) forwarded to the underlying sched.Engine.
 	// Empty = prod (legacy).
 	AdmitInstance(ctx context.Context, appID, scope, trigger string) (AdmitResult, error)
-	// EnsureWake (ADR-098): the single-flight wake entry. Routes
-	// through this so a scaleup tick racing the gateway, cron, floor,
-	// or targets triggers on the same parked app coalesces into one
-	// virtual boot. trigger (ADR-127) is stamped on the emitted
-	// wake.boot_started / wake.boot_completed events.
+	// EnsureWake (ADR-098) is retained on the shared engine surface for
+	// compatibility with other wake producers. The reactive scale-up
+	// path deliberately does not call it: its idempotent Phase-1
+	// shortcut cannot create a second VM for a hot app.
 	EnsureWake(ctx context.Context, appID, trigger string) (WakeOutcome, error)
+}
+
+// BurstEngine is the optional fast path for engines that can admit a bounded
+// batch of instances. Keeping it separate from Engine preserves the small
+// fake/test seam and lets older adapters fall back to one admission at a time.
+type BurstEngine interface {
+	AdmitInstances(ctx context.Context, appID, scope, trigger string, count int) ([]AdmitResult, error)
 }
 
 // PromScraper is the per-app RPS signal source. Production impl
@@ -142,6 +150,14 @@ type InstatsReader interface {
 	MaxInflightForApp(appID string) (n int64, ok bool)
 }
 
+// RequestRateReader is an optional provider-independent RPS signal. The
+// concrete instancestats.Reader derives it from VMMD's cumulative activity
+// counter, so split-box and bare-metal deployments do not need to expose a
+// gateway metrics listener across node boundaries.
+type RequestRateReader interface {
+	RequestsPerSecond(appID string) (rps float64, ok bool)
+}
+
 // AppStats is the snapshot of inputs the pure decide() function
 // reads. Splitting this out keeps decide() trivially testable — no
 // mocks, no goroutines, no engine. The trigger's Tick assembles an
@@ -155,7 +171,7 @@ type AppStats struct {
 	PerInstanceRPS float64 // measured, 0 when no RPS signal
 	PerInstanceCPU float64 // measured, 0 when no CPU signal
 	HaveCPU        bool    // true iff InstatsReader returned a sample
-	HaveRPS        bool    // true iff the ring buffer has a sample
+	HaveRPS        bool    // true iff a current RPS signal is available
 }
 
 // Decision is the result of the pure decide() function. The trigger
@@ -171,6 +187,11 @@ type Decision struct {
 	// ObservedRPS is the per-instance RPS at decision time. Used to
 	// feed the scale_up_admit_rps histogram on the admit branch.
 	ObservedRPS float64
+	// Desired is the estimated resident-instance count, capped at
+	// MaxConcurrency. Admissions is the number of new instances this
+	// decision should request, before the per-tick burst bound.
+	Desired    int
+	Admissions int
 }
 
 // decide is the pure decision function. Extracted so tests can drive
@@ -204,11 +225,36 @@ func decide(s AppStats) Decision {
 	if headroom <= 0 {
 		return Decision{Outcome: OutcomeRejectAtCap, Headroom: 0}
 	}
+	desired := s.Concurrency + 1
+	if rpsHot && s.Concurrency > 0 {
+		// The ring stores total app RPS while the decision compares
+		// per-instance RPS. Reconstruct total demand and ceil so a
+		// fractional remainder gets capacity.
+		desired = int(math.Ceil((s.PerInstanceRPS * float64(s.Concurrency)) / float64(s.TargetRPS)))
+	}
+	// CPU is a saturation signal rather than a capacity measurement,
+	// so it safely contributes one additional instance when no
+	// stronger RPS estimate is available. When both signals are hot,
+	// retain the larger estimate.
+	if cpuHot && desired < s.Concurrency+1 {
+		desired = s.Concurrency + 1
+	}
+	if desired > s.MaxConcurrency {
+		desired = s.MaxConcurrency
+	}
+	if desired <= s.Concurrency {
+		desired = s.Concurrency + 1
+		if desired > s.MaxConcurrency {
+			desired = s.MaxConcurrency
+		}
+	}
 	return Decision{
 		ShouldAdmit: true,
 		Outcome:     OutcomeAdmit,
 		Headroom:    headroom,
 		ObservedRPS: s.PerInstanceRPS,
+		Desired:     desired,
+		Admissions:  desired - s.Concurrency,
 	}
 }
 
@@ -236,6 +282,12 @@ type Trigger struct {
 	// per-app ring buffer of per-app request deltas. Pre-allocated
 	// in New(); Touch is called on every Tick with the new scrape.
 	ring *RingBuffer
+
+	// admissionMu serializes the in-memory retry state. The loop normally
+	// runs one Tick at a time, but keeping this state protected also makes
+	// direct test/integration callers safe.
+	admissionMu      sync.Mutex
+	admissionBackoff map[string]admissionBackoffState
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -265,15 +317,16 @@ func New(appStore AppStore, instats InstatsReader, scraper PromScraper, engine E
 		opts.Interval = api.ScaleUpDecisionIntervalSeconds * time.Second
 	}
 	return &Trigger{
-		appStore:    appStore,
-		instats:     instats,
-		promScraper: scraper,
-		engine:      engine,
-		ledger:      ledger,
-		metrics:     opts.Metrics,
-		log:         opts.Logger,
-		interval:    opts.Interval,
-		ring:        NewRingBuffer(5, time.Second, opts.Interval),
+		appStore:         appStore,
+		instats:          instats,
+		promScraper:      scraper,
+		engine:           engine,
+		ledger:           ledger,
+		metrics:          opts.Metrics,
+		log:              opts.Logger,
+		interval:         opts.Interval,
+		ring:             NewRingBuffer(5, time.Second, opts.Interval),
+		admissionBackoff: make(map[string]admissionBackoffState),
 	}
 }
 
@@ -306,6 +359,29 @@ func (t *Trigger) WithOwnerNodeID(nodeID string) {
 	t.ownerNodeID = nodeID
 }
 
+// admit requests a bounded batch. Production's sched.Engine implements the
+// BurstEngine fast path; small adapters and existing tests intentionally fall
+// back to the original one-at-a-time call. The engine remains the authority on
+// capacity, so a race can still return AtCapacity for the final attempt.
+func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitResult, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+	if count > api.ScaleUpMaxBurstPerTick {
+		count = api.ScaleUpMaxBurstPerTick
+	}
+	if burst, ok := t.engine.(BurstEngine); ok {
+		return burst.AdmitInstances(ctx, appID, "", wakeBootTriggerScaleup, count)
+	}
+	// An older adapter has no safe way to carry the burst continuation
+	// marker, so preserve its original one-admission behavior.
+	result, err := t.engine.AdmitInstance(ctx, appID, "", wakeBootTriggerScaleup)
+	if err != nil {
+		return nil, err
+	}
+	return []AdmitResult{result}, nil
+}
+
 // Tick runs one sweep. It is the single public entry point the schedd
 // loop calls. Returns nil on success; errors are logged inside the
 // loop (the trigger never aborts the loop on a transient store
@@ -320,7 +396,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	if t == nil || t.appStore == nil {
 		return nil
 	}
-	// Feed the ring buffer one fresh scrape.
+	// Feed the ring buffer one fresh scrape. Keep the set of apps present
+	// in this scrape separately from the ring: an old ring observation must
+	// not mask a current scrape failure or make a disappeared app look like
+	// a fresh Prometheus signal.
+	var promApps map[string]struct{}
 	if t.promScraper != nil {
 		counts, err := t.promScraper.Scrape(ctx)
 		if err != nil {
@@ -332,6 +412,10 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			t.log.Warn("scaleup: scrape failed", "err", err)
 		} else {
 			t.ring.Touch(time.Now(), counts)
+			promApps = make(map[string]struct{}, len(counts))
+			for appID := range counts {
+				promApps[appID] = struct{}{}
+			}
 		}
 	}
 	// Phase 2 / Gate A: per-schedd slice. ownerNodeID set via
@@ -359,17 +443,28 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if t.ledger != nil {
 			conc = t.ledger.Concurrency(app.ID)
 		}
-		// Per-instance RPS = sum(window) / max(1, conc).
+		// Per-instance RPS = windowed requests/second / conc.
 		// When conc=0 (cold path: no instances yet), the rollup
 		// is undefined; we treat HaveRPS=false so the trigger
 		// fires no_signal. The first instant wake that lands an
 		// instance will be picked up by the next tick.
 		var perInstRPS float64
 		haveRPS := false
-		if conc > 0 && t.promScraper != nil {
-			rps := t.ring.AppRPS(app.ID, time.Now())
-			perInstRPS = rps / float64(conc)
-			haveRPS = true
+		if conc > 0 {
+			_, promAvailable := promApps[app.ID]
+			if promAvailable && t.ring.HasObservation(app.ID) {
+				rps := t.ring.AppRate(app.ID, time.Now())
+				perInstRPS = rps / float64(conc)
+				haveRPS = true
+			}
+		}
+		if conc > 0 && !haveRPS {
+			if reader, ok := t.instats.(RequestRateReader); ok {
+				if rps, ok := reader.RequestsPerSecond(app.ID); ok {
+					perInstRPS = rps / float64(conc)
+					haveRPS = true
+				}
+			}
 		}
 		var perInstCPU float64
 		haveCPU := false
@@ -397,42 +492,48 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if !dec.ShouldAdmit {
 			continue
 		}
-		// Admit path: call Engine.AdmitInstance. The engine
-		// enforces the cap via NodeLedger.Admit; if the cap
-		// is hit between the decide() check and the call
-		// (the ledger is concurrent), AdmitInstance returns
-		// WakeResult{AtCapacity: true} which we observe as
-		// reject_at_cap.
+		// Admit path: request the desired number of instances, bounded
+		// by ScaleUpMaxBurstPerTick. The engine enforces the cap via
+		// NodeLedger.Admit; if it is hit between the decide() check and
+		// a batch attempt, the corresponding result is AtCapacity.
 		if t.engine == nil {
 			continue
 		}
-		// ADR-098: route through EnsureWake so a scaleup tick racing the
-		// gateway, cron, floor, or targets triggers on the same parked
-		// app coalesces into one virtual boot. The detached leader ctx
-		// means a cancelled triggering tick doesn't kill an in-flight
-		// boot other callers still need.
-		result, err := t.engine.EnsureWake(ctx, app.ID, wakeBootTriggerScaleup)
+		if t.admissionBackoffActive(app.ID, time.Now()) {
+			continue
+		}
+		// Scale-out must use AdmitInstance, not EnsureWake. EnsureWake is
+		// deliberately idempotent: its Phase-1 fast path returns an
+		// existing RUNNING instance. Using it here makes a hot app with
+		// one running VM stay at one VM forever, even when decide() found
+		// headroom. AdmitInstance skips that fast path and reserves a new
+		// capacity slot through the shared ledger.
+		results, err := t.admit(ctx, app.ID, dec.Admissions)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
+			t.recordAdmissionFailure(app.ID, time.Now())
 			// Defensive: do not surface this as a hard
 			// error to the loop (the next tick can
 			// retry). Log + skip.
 			t.log.Warn("scaleup: admit failed", "app", app.ID, "err", err)
-			continue
+		} else {
+			t.clearAdmissionBackoff(app.ID)
 		}
-		// EnsureWake's leader runs Engine.Wake which honours the
-		// per-app max_concurrency ledger; a follower that arrives
-		// after the leader fills the last slot still sees a
-		// successful boot pointing at that slot. The leader's
-		// ledger closes the at-cap loop — we no longer need a
-		// reject_at_cap branch here.
-		// Successful admit: observe the per-instance RPS at
-		// decision time so the §12 dashboard can p95/p99 the
-		// "aggressiveness" of the trigger.
-		_ = result
-		t.metrics.ObserveScaleUpAdmitRPS(dec.ObservedRPS)
+		for _, result := range results {
+			if result.AtCapacity {
+				// The ledger can reach the cap between decide() and
+				// an individual batch attempt. Preserve the decision
+				// metric and record the effective rejection.
+				t.metrics.ObserveScaleUp(app.ID, string(OutcomeRejectAtCap))
+				continue
+			}
+			// Successful admit: observe the per-instance RPS at
+			// decision time so the dashboard can p95/p99 the
+			// trigger's aggressiveness.
+			t.metrics.ObserveScaleUpAdmitRPS(dec.ObservedRPS)
+		}
 	}
 	return nil
 }

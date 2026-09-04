@@ -59,6 +59,11 @@ on:
         required: false
         default: "22"
         type: string
+      ssh_host_key_sha256:
+        description: "Expected OpenSSH SHA256 host-key fingerprint for the provider SSH address (required for legacy dispatches)"
+        required: false
+        default: ""
+        type: string
       storage_device:
         description: "Optional absolute stable device path when not in the signed manifest"
         required: false
@@ -89,7 +94,7 @@ jobs:
       ssh_host: ${{ steps.resolve_bundle.outputs.ssh_host || steps.resolve_claim.outputs.ssh_host || steps.resolve_legacy.outputs.ssh_host }}
       ssh_user: ${{ steps.resolve_bundle.outputs.ssh_user || steps.resolve_claim.outputs.ssh_user || steps.resolve_legacy.outputs.ssh_user }}
       ssh_port: ${{ steps.resolve_bundle.outputs.ssh_port || steps.resolve_claim.outputs.ssh_port || steps.resolve_legacy.outputs.ssh_port }}
-      ssh_host_key_sha256: ${{ steps.resolve_bundle.outputs.host_key_sha256 || steps.resolve_claim.outputs.host_key_sha256 }}
+      ssh_host_key_sha256: ${{ steps.resolve_bundle.outputs.host_key_sha256 || steps.resolve_claim.outputs.host_key_sha256 || steps.resolve_legacy.outputs.host_key_sha256 }}
       storage_device: ${{ steps.resolve_bundle.outputs.storage_device || steps.resolve_claim.outputs.storage_device || steps.resolve_legacy.outputs.storage_device }}
       format_storage: ${{ steps.resolve_bundle.outputs.format_storage || steps.resolve_claim.outputs.format_storage || steps.resolve_legacy.outputs.format_storage }}
     env:
@@ -107,6 +112,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           NODE: ${{ inputs.node }}
           SSH_HOST: ${{ inputs.ssh_host }}
+          SSH_HOST_KEY_SHA256: ${{ inputs.ssh_host_key_sha256 }}
           FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
           FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
           FLEET_BUNDLE_SHA256: ${{ inputs.fleet_bundle_sha256 }}
@@ -155,6 +161,10 @@ jobs:
             }
             [[ -n "$SSH_HOST" ]] || {
               echo "::error::ssh_host is required when claim_file is omitted" >&2
+              exit 1
+            }
+            [[ "$SSH_HOST_KEY_SHA256" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]] || {
+              echo "::error::ssh_host_key_sha256 is required for legacy dispatches and must be an OpenSSH SHA256:<base64> fingerprint" >&2
               exit 1
             }
           fi
@@ -295,6 +305,7 @@ jobs:
         env:
           NODE: ${{ inputs.node }}
           SSH_HOST: ${{ inputs.ssh_host }}
+          SSH_HOST_KEY_SHA256: ${{ inputs.ssh_host_key_sha256 }}
           SSH_USER: ${{ inputs.ssh_user }}
           SSH_PORT: ${{ inputs.ssh_port }}
           STORAGE_DEVICE: ${{ inputs.storage_device }}
@@ -304,6 +315,7 @@ jobs:
           {
             printf 'node=%s\n' "$NODE"
             printf 'ssh_host=%s\n' "$SSH_HOST"
+            printf 'host_key_sha256=%s\n' "$SSH_HOST_KEY_SHA256"
             printf 'ssh_user=%s\n' "$SSH_USER"
             printf 'ssh_port=%s\n' "$SSH_PORT"
             printf 'storage_device=%s\n' "$STORAGE_DEVICE"
@@ -328,6 +340,17 @@ jobs:
             missing=1
           fi
           (( missing == 0 )) || exit 1
+
+      - name: Require a verified SSH host-key fingerprint
+        env:
+          SSH_HOST_KEY_SHA256: ${{ steps.resolve_bundle.outputs.host_key_sha256 || steps.resolve_claim.outputs.host_key_sha256 || steps.resolve_legacy.outputs.host_key_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_HOST_KEY_SHA256" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]] || {
+            echo "::error::the resolved compute claim must contain an OpenSSH SHA256:<base64> host-key fingerprint" >&2
+            echo "::error::provide ssh_host_key_sha256 for legacy dispatches or regenerate the signed claim" >&2
+            exit 1
+          }
 
       - name: Require an online trusted fleet runner
         env:
@@ -422,6 +445,26 @@ jobs:
             }
           done
 
+      - name: Require fleet runner disk headroom
+        run: |
+          set -euo pipefail
+          # The bootstrap CLI verifies a signed release in a private temp
+          # directory and the join artifact keeps a second copy. Fail early
+          # with an actionable diagnostic instead of allowing a mid-join
+          # "no space left on device" failure.
+          minimum_free_kb=$((5 * 1024 * 1024))
+          free_kb="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
+          [[ "$free_kb" =~ ^[0-9]+$ ]] || {
+            echo "::error::could not determine free space on fleet runner" >&2
+            exit 1
+          }
+          if (( free_kb < minimum_free_kb )); then
+            echo "::error::fleet runner has only ${free_kb} KiB free; at least ${minimum_free_kb} KiB is required" >&2
+            echo "::error::prune old /opt/faas/releases entries or repair runner retention before retrying" >&2
+            exit 1
+          fi
+          df -h "$RUNNER_TEMP"
+
       - name: Install pinned cosign verifier
         run: |
           set -euo pipefail
@@ -472,7 +515,7 @@ jobs:
               -o "$RELEASE_ROOT/$asset" "$asset_url"
           }
           for asset in release.tar.gz release.cosign.bundle release.sbom.json \
-            release-manifest.json production-manifest.yaml SHA256SUMS; do
+            release-manifest.json production-manifest.yaml runtime-bases.env SHA256SUMS; do
             download_asset "$asset"
           done
           (
@@ -518,9 +561,17 @@ jobs:
           for asset in release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml; do
             install -m 0644 "$RELEASE_ROOT/$asset" "$ARTIFACT_DIR/$asset"
           done
+          # This file is a release contract, not a secret, but keep the
+          # controller-side copy private because it is immediately staged as
+          # root:root 0600 on the adopted host.
+          install -m 0600 "$RELEASE_ROOT/runtime-bases.env" "$ARTIFACT_DIR/runtime-bases.env"
           tar --extract --gzip --file "$RELEASE_ROOT/release.tar.gz" \
             --to-stdout gregalectl > "$ARTIFACT_DIR/gregalectl-linux-amd64"
           chmod 0755 "$ARTIFACT_DIR/gregalectl-linux-amd64"
+          tar --extract --gzip --file "$RELEASE_ROOT/release.tar.gz" \
+            --to-stdout vmlinux > "$ARTIFACT_DIR/vmlinux"
+          test -s "$ARTIFACT_DIR/vmlinux"
+          chmod 0644 "$ARTIFACT_DIR/vmlinux"
           install -m 0755 "$RUNNER_TEMP/release-tools/cosign" "$ARTIFACT_DIR/cosign-linux-amd64"
 
           umask 077
@@ -607,7 +658,27 @@ jobs:
           fi
           echo "ARTIFACT_DIR=$ARTIFACT_DIR" >> "$GITHUB_ENV"
 
+      - name: Publish the release-pinned kernel to shared storage
+        env:
+          # Publishing uses the exact storage.env contract that is staged on
+          # the node. `--no-cache` keeps the trusted runner from treating its
+          # local filesystem as a second artifact source.
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          "$ARTIFACT_DIR/gregalectl-linux-amd64" artifact publish \
+            --env-file "$ARTIFACT_DIR/storage.env" \
+            --manifest-file "$ARTIFACT_DIR/production-manifest.yaml" \
+            --file "$ARTIFACT_DIR/vmlinux" \
+            --no-cache \
+            --json
+
       - name: Verify runner prerequisites and adopt the compute host
+        env:
+          # Keep Go/CLI temporary files inside the runner-owned scratch area
+          # so the final cleanup step can reclaim them after an interrupted
+          # join.
+          TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
           # The supplied deployment key/user are the fleet operator identity,
@@ -636,6 +707,15 @@ jobs:
             --yes
             --json
           )
+          # The CLI verifies the live provider address with ssh-keyscan and
+          # gives Ansible a temporary known_hosts file pinned to this exact
+          # fingerprint. Never fall back to the runner's ambient known_hosts
+          # or disable strict host-key checking for a production join.
+          [[ -n "$SSH_HOST_KEY_SHA256" ]] || {
+            echo "::error::resolved SSH host-key fingerprint is empty" >&2
+            exit 1
+          }
+          JOIN_ARGS+=(--ssh-host-key-sha256 "$SSH_HOST_KEY_SHA256")
           if [[ -n "$FLEET_BUNDLE_URL" ]]; then
             JOIN_ARGS+=(
               --fleet-bundle-file "$ARTIFACT_DIR/fleet-enrollment.yaml"
@@ -666,3 +746,17 @@ jobs:
           set -euo pipefail
           echo "release=${RELEASE_ID:-unknown} node=$NODE ssh_host=$SSH_HOST"
           echo "The join command is the readiness/activation gate; inspect its JSON result above."
+
+      - name: Clean compute rollout scratch
+        if: always()
+        run: |
+          set +e
+          rm -rf -- \
+            "$RUNNER_TEMP/gregale-compute-release" \
+            "$RUNNER_TEMP/gregale-compute-join" \
+            "$RUNNER_TEMP/compute-pki.tar.gz" \
+            "$RUNNER_TEMP/compute-pki-extracted" \
+            "$RUNNER_TEMP/release-tools"
+          find "$RUNNER_TEMP" -maxdepth 1 -mindepth 1 -type d \
+            \( -name 'gregalectl-release-bootstrap-*' -o -name 'release-cosign-*' -o -name 'release-tarball-*' \) \
+            -mmin +10 -exec rm -rf -- {} +

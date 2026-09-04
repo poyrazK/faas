@@ -143,6 +143,18 @@ release:
   # multi-arch index digest is not suitable for the amd64 ext4 staging path.
   builder_base_digest: 450b2c07495a85e47a1e5856a90e56dd4e33c6dc4d2c9b5e484ba2f0e2753fae
   runtime_base_digest: 362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143
+  # Release CI replaces these placeholders with the linux/amd64 child
+  # digests published by images.yml. They are copied to
+  # /etc/faas/runtime-bases.env on compute nodes so builderd and imaged use
+  # the same immutable runtime contract.
+  runtime_base_refs:
+    minimal: __RUNTIME_BASE_REF_MINIMAL__
+    node22: __RUNTIME_BASE_REF_NODE22__
+    python312: __RUNTIME_BASE_REF_PYTHON312__
+    go124: __RUNTIME_BASE_REF_GO124__
+    go124_alpine: __RUNTIME_BASE_REF_GO124_ALPINE__
+    node24: __RUNTIME_BASE_REF_NODE24__
+    python313: __RUNTIME_BASE_REF_PYTHON313__
 
 storage:
   fast_root: /srv/fc

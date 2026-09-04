@@ -206,6 +206,9 @@ func TestRetryingSender_HonoursRetryAfter(t *testing.T) {
 		Log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:           clk.Now,
 		Sleep:         clk.Sleep,
+		Backoff: func(int, time.Duration) time.Duration {
+			return 20 * time.Millisecond
+		},
 	}
 	if err := r.Send(context.Background(), mail.Message{}); err != nil {
 		t.Fatalf("Send: %v", err)

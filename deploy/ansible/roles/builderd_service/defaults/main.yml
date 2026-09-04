@@ -4,9 +4,8 @@
 # builderd_config_path is the canonical on-disk config the operator
 # copies builderd.toml.example to. builderd's main.go reads
 # FAAS_BUILDERD_CONFIG env var (lines 62-66) not a --config flag, so
-# the unit does NOT export --config here — the unit's
-# EnvironmentFile=/etc/faas/sealed.env carries the env var in
-# production. The TOML path is the dev/test override.
+# the unit does NOT export --config here — the role drop-in and environment
+# files carry the production contract. The TOML path is the dev/test override.
 builderd_config_path: /etc/faas/builderd.toml
 # builderd_build_staging_root matches the unit's ReadWritePaths=
 # pass at /srv/fc/builder. Must be writable by faas-builderd.

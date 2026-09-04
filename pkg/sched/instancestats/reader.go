@@ -2,6 +2,7 @@ package instancestats
 
 import (
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -9,9 +10,9 @@ import (
 // Validity tags the freshness of a single signal on an InstanceStat
 // row. The poller stamps Unknown on the first sample (CPUPct has no
 // prior baseline) and on transient cgroup reads; Stale is reserved
-// for a future "freshness budget" — when a row's SampledAt is older
-// than the budget, future readers should treat its values as
-// advisory. Today only Valid and Unknown are emitted.
+// for the freshness budget — when a row's SampledAt is older than
+// DefaultFreshness, signal readers treat its values as absent. The
+// poller may still retain the row for diagnostic/snapshot consumers.
 type Validity uint8
 
 const (
@@ -27,8 +28,8 @@ const (
 	// rows.
 	Unknown Validity = 1
 	// Stale means the value is older than the freshness budget.
-	// Reserved for a future gate; today the poller never stamps
-	// Stale (no budget is enforced).
+	// Reserved as an explicit producer tag. Reader signal accessors
+	// independently enforce the SampledAt freshness budget.
 	Stale Validity = 2
 )
 
@@ -82,9 +83,17 @@ type InstanceStat struct {
 	// ActivityTracker; PR-A leaves it zero and the poller
 	// falls back to state.Instance.LastRequestAt.
 	LastRequestAt time.Time
+	// RequestCountTotal is the cumulative number of ForwardHTTP
+	// requests observed by vmmd for this instance. The counter is
+	// process-local and may reset when vmmd or the instance is
+	// recreated; Reader detects that regression and establishes a
+	// new baseline. RequestCountValid distinguishes a real zero from
+	// a wire that did not provide the counter.
+	RequestCountTotal uint64
+	RequestCountValid bool
 	// SampledAt is the wall-clock time the poller stamped this
-	// row. Future freshness gating (Reader.PruneOlderThan) reads
-	// this; today's poller always stamps it.
+	// row. Signal readers reject rows older than DefaultFreshness;
+	// snapshot consumers can still inspect the row for diagnostics.
 	SampledAt time.Time
 	// CPU is the validity of CPUPct. PR-A semantics: Unknown
 	// when the wire reports nil (vmmd-side `usage_usec` is
@@ -93,8 +102,9 @@ type InstanceStat struct {
 	// recreation forces a baseline reset" branch lives in PR-B
 	// — PR-A treats nil-on-the-wire as Unknown and lets the
 	// rollup drop the row, without keeping a previous-sample
-	// baseline. The Stale value is reserved for #172's
-	// StatsFreshness budget; today the poller never stamps it.
+	// baseline. Reader signal accessors independently enforce the
+	// SampledAt freshness budget; the poller does not need to rewrite
+	// the validity tag when a row ages out.
 	CPU Validity
 	// RSS is the validity of RSSMB. Unknown on a transient
 	// cgroup miss; Valid otherwise.
@@ -181,6 +191,24 @@ type InstanceStat struct {
 // once per 200 ms).
 type Reader struct {
 	snap atomic.Pointer[[]InstanceStat]
+
+	// rateMu protects the cumulative-counter baselines and their
+	// derived app-level rates. These are deliberately separate from
+	// snap: Replace is the only writer, while the scale-up trigger can
+	// read a rate concurrently with a poller tick.
+	rateMu       sync.Mutex
+	previousRate map[string]requestRateSample
+	requestRates map[string]requestRate
+}
+
+type requestRateSample struct {
+	count   uint64
+	sampled time.Time
+}
+
+type requestRate struct {
+	rps   float64
+	valid bool
 }
 
 // NewReader returns a Reader with an empty snapshot. Safe to call
@@ -206,7 +234,71 @@ func (r *Reader) Replace(next []InstanceStat) {
 	})
 	cp := make([]InstanceStat, len(next))
 	copy(cp, next)
+	r.updateRequestRates(cp)
 	r.snap.Store(&cp)
+}
+
+// updateRequestRates converts each instance's cumulative vmmd request
+// counter into an aggregate app-level RPS signal. A first sample, a missing
+// counter, a timestamp regression, or a counter regression only establishes
+// a new baseline; it never turns an old counter value into a burst.
+func (r *Reader) updateRequestRates(rows []InstanceStat) {
+	r.rateMu.Lock()
+	defer r.rateMu.Unlock()
+	if r.previousRate == nil {
+		r.previousRate = make(map[string]requestRateSample)
+	}
+	if r.requestRates == nil {
+		r.requestRates = make(map[string]requestRate)
+	}
+
+	nextRates := make(map[string]requestRate)
+	seenInstances := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if row.AppID == "" || row.InstanceID == "" {
+			continue
+		}
+		seenInstances[row.InstanceID] = struct{}{}
+		if !row.RequestCountValid || row.SampledAt.IsZero() {
+			continue
+		}
+		current := requestRateSample{count: row.RequestCountTotal, sampled: row.SampledAt}
+		previous, ok := r.previousRate[row.InstanceID]
+		if ok && current.sampled.After(previous.sampled) && current.count >= previous.count {
+			elapsed := current.sampled.Sub(previous.sampled).Seconds()
+			if elapsed > 0 {
+				rate := float64(current.count-previous.count) / elapsed
+				value := nextRates[row.AppID]
+				value.rps += rate
+				value.valid = true
+				nextRates[row.AppID] = value
+			}
+		}
+		r.previousRate[row.InstanceID] = current
+	}
+	for instanceID := range r.previousRate {
+		if _, ok := seenInstances[instanceID]; !ok {
+			delete(r.previousRate, instanceID)
+		}
+	}
+	r.requestRates = nextRates
+}
+
+// RequestsPerSecond returns the aggregate request rate observed across the
+// app's live instances during the latest pair of stats snapshots. It is an
+// optional fallback signal for scale-up when gateway Prometheus scraping is
+// unavailable, and returns false until a valid delta exists.
+func (r *Reader) RequestsPerSecond(appID string) (float64, bool) {
+	if r == nil || appID == "" {
+		return 0, false
+	}
+	r.rateMu.Lock()
+	defer r.rateMu.Unlock()
+	rate, ok := r.requestRates[appID]
+	if !ok || !rate.valid {
+		return 0, false
+	}
+	return rate.rps, true
 }
 
 // SnapshotAll returns every row in the latest snapshot, in
@@ -283,10 +375,11 @@ func (r *Reader) MaxInflightForApp(appID string) (int64, bool) {
 	if cur == nil {
 		return 0, false
 	}
+	now := time.Now()
 	var max int64
 	var found bool
 	for _, row := range *cur {
-		if row.AppID != appID {
+		if row.AppID != appID || !freshSample(row.SampledAt, now) {
 			continue
 		}
 		if !found || row.InflightRequests > max {
@@ -325,10 +418,11 @@ func (r *Reader) MaxCPU(appID string) (float64, bool) {
 	if cur == nil {
 		return 0, false
 	}
+	now := time.Now()
 	var max float64
 	var seen bool
 	for _, row := range *cur {
-		if row.AppID != appID {
+		if row.AppID != appID || !freshSample(row.SampledAt, now) {
 			continue
 		}
 		// Any row for the app counts as "the app is live" —
@@ -346,4 +440,15 @@ func (r *Reader) MaxCPU(appID string) (float64, bool) {
 		return 0, false
 	}
 	return max, true
+}
+
+// freshSample is deliberately fail-closed. A zero timestamp means the
+// producer did not identify when the measurement was taken, and a future
+// timestamp is not trusted as fresh because it indicates a clock problem.
+func freshSample(sampledAt, now time.Time) bool {
+	if sampledAt.IsZero() {
+		return false
+	}
+	age := now.Sub(sampledAt)
+	return age >= 0 && age <= DefaultFreshness
 }

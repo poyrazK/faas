@@ -21,7 +21,7 @@ a file containing its own commit SHA. It also removes the mutable
 For a local pre-release check:
 
 ```sh
-./scripts/pre-release-check.sh
+RUNTIME_BASES_ENV=/secure/runtime-bases.env ./scripts/pre-release-check.sh
 ```
 
 For an explicit materialization:
@@ -29,8 +29,13 @@ For an explicit materialization:
 ```sh
 scripts/materialize-release-manifest.sh \
   --git-sha "$(git rev-parse HEAD)" \
+  --runtime-bases-env /secure/runtime-bases.env \
   --output /tmp/production-manifest.yaml
 ```
+
+The runtime contract must contain one immutable `@sha256:` OCI reference for
+each supported runtime. Release CI generates this file from the successful
+`images.yml` publisher run; local checks must provide an equivalent file.
 
 Never use the illustrative manifest under `deploy/manifest/examples/` or a
 temporary `live-e2e-*` release as a production release anchor. Operators

@@ -20,10 +20,9 @@ import (
 // touching the Reader API.
 const DefaultStatsInterval = 200 * time.Millisecond
 
-// DefaultFreshness is the staleness budget a future PruneOlderThan
-// gate would use. Today the poller never stamps Stale; the budget
-// is plumbed through so adding the gate later does not require a
-// signature change.
+// DefaultFreshness is the staleness budget used by Reader's signal
+// accessors. Rows remain available through snapshot accessors for
+// diagnostics, but stale rows cannot drive reactive scaling.
 const DefaultFreshness = 5 * time.Second
 
 // Dialer is the per-tick per-node VMM transport factory. Mirrors
@@ -243,7 +242,6 @@ func (p *Poller) decodeTelemetrySnapshot(
 	}
 	rows := make([]InstanceStat, 0, len(snapshot))
 	rolled := make([]wire.InstanceStatRow, 0, len(snapshot))
-	now := p.now()
 	for _, cached := range snapshot {
 		in := cached.Telemetry
 		if in.InstanceID == "" {
@@ -260,8 +258,11 @@ func (p *Poller) decodeTelemetrySnapshot(
 			InflightRequests: in.InflightRequests,
 			CPU:              Unknown,
 			RSS:              Unknown,
-			SampledAt:        now,
-			SidecarMBs:       sidecarByDeploy[durable.DeploymentID],
+			// Preserve the vmmd report timestamp. Using the local
+			// projection time here would make a stalled telemetry
+			// stream look fresh to the autoscaler.
+			SampledAt:  cached.SampledAt,
+			SidecarMBs: sidecarByDeploy[durable.DeploymentID],
 		}
 		wireRow := wire.InstanceStatRow{
 			AppID:            durable.AppID,
@@ -333,8 +334,7 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 	}
 	// Index durable sibling state by instance id for the join.
 	// The poller uses state.Instance.LastRequestAt as the
-	// fallback for LastRequestAt when the wire is zero (PR-A
-	// only; PR-B will populate wire from ActivityTracker).
+	// fallback for LastRequestAt when the wire is zero or absent.
 	sibByID := make(map[string]state.Instance, len(siblings))
 	for _, in := range siblings {
 		sibByID[in.ID] = in
@@ -369,6 +369,10 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 			// failed — both collapse to the legacy no-sidecar
 			// admission form on the meterd side.
 			SidecarMBs: sidecarByDeploy[durable.DeploymentID],
+		}
+		if in.RequestCountTotal != nil && *in.RequestCountTotal >= 0 {
+			row.RequestCountTotal = uint64(*in.RequestCountTotal)
+			row.RequestCountValid = true
 		}
 		wireRow := wire.InstanceStatRow{
 			AppID:            durable.AppID,

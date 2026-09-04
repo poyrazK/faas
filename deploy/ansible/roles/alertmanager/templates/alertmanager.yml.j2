@@ -101,7 +101,7 @@ receivers:
         retry: 1m            # Alertmanager <duration> field — unit required
         expire: 1h           # ditto; integer would fail amtool check-config
         title: "faas page"
-        url: "{{ am_alerts_url | default('http://127.0.0.1:9090/alerts') }}"
+        url: "{{ am_alerts_url | default('http://127.0.0.1:9095/alerts') }}"
 {% endif %}
 
   - name: faas-warn

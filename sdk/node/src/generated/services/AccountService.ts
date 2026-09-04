@@ -66,10 +66,12 @@ export class AccountService {
     });
   }
   /**
-   * Change billing plan.
+   * Change billing plan after provider confirmation.
    * Switch the account between `free`, `hobby`, `pro`, and `scale`. The
-   * Stripe subscription is updated server-side; the response carries the
-   * new plan only.
+   * local account moves to a paid tier only after the configured billing
+   * provider confirms payment. If a new subscription is required, the
+   * `payment_required` response includes `checkout_url`; if an existing
+   * subscription must be changed, it includes `billing_portal_url`.
    *
    * @returns AccountResponse The updated account profile after the plan change.
    * @throws ApiError

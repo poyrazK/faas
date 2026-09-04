@@ -24,6 +24,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
+	"github.com/onebox-faas/faas/pkg/billing/polar"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
 	"github.com/onebox-faas/faas/pkg/netns"
@@ -1044,6 +1045,9 @@ type OpsMetrics struct {
 	// Stripe histogram would lose the closed-set distinction the
 	// dashboard panel definitions depend on.
 	paddlePushDur *prometheus.HistogramVec
+	// polarPushDur is the per-push latency histogram for Polar event
+	// ingestion. It uses polar.PolarPushResultLabels() as its closed label set.
+	polarPushDur *prometheus.HistogramVec
 	// wakeIDV4Fallback: introduced in feat/wake-id review followup
 	// (gaps analysis 2026-07-23, finding #6). Increments when schedd
 	// mints a wake_id and uuid.NewV7 returns an error — the engine
@@ -1123,6 +1127,19 @@ type OpsMetrics struct {
 	// indicates a customer-configured floor is active (Hobby /
 	// Pro / Scale only; PR-A's PATCH gate rejects Free).
 	meterdFloorAppliedTotal *prometheus.CounterVec
+	// meteredMBSecondsTotal (issue #1186 / M-2 / ADR-137 §Decision 1):
+	// per-{mode,plan} MB-seconds counter fed by the sample loop's
+	// live-instance branch. mode ∈ {normal, worker, service, job} —
+	// the closed billable subset of pkg/state.InstanceMode; mirror
+	// is filtered upstream by IsMeteredSkippableMode and never
+	// reaches the counter. plan ∈ {free, hobby, pro, scale} so the
+	// §12 dashboard can split worker idle-RAM from
+	// request-driven RAM. Increment is Add(mbSeconds) — the
+	// counter is cumulative MB-seconds (NOT count of billable
+	// rows), so a dashboard query of
+	// rate(metered_mb_seconds_total{mode="worker"}[5m]) yields
+	// MB/sec, summing cleanly against the request-mode rate.
+	meteredMBSecondsTotal *prometheus.CounterVec
 	// auditOrgEvent: closed-vocab counter for org-action authorization
 	// outcomes (issue #190 / IAM-6 / ADR-061, PR 6). Labelled by
 	// `action` only — the 11-verb AllOrgActions vocabulary is a
@@ -2400,6 +2417,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// comparable.
 		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"result"})
+	polarPushDur := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_polar_push_duration_seconds",
+		Help:    "Per-push latency to Polar event ingestion, labelled by terminal result code.",
+		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 45, 60},
+	}, []string{"result"})
 	buildDur := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_build_duration_seconds",
 		Help: "Wall-clock duration of a builder-VM build, in seconds (ADR-030). Labelled by outcome {cache_hit,ok,failed} so the §12 panels can slice out cache-hit noise (<1 s); success/failure classification lives on ops_total{op=\"build\",code}.",
@@ -2431,6 +2453,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_meterd_floor_applied_total",
 		Help: "Count of meterd sample ticks where the per-app min_instances GB-h floor was applied and synthetic usage_minutes rows were appended (ADR-060, issue #515). Incremented once per (app, tick) when live instance count is below ScalingPolicy.MinInstances. Per-plan label so the §12 dashboard can split floor-applied apps across plans. Floor is Hobby/Pro/Scale only; PR-A's PATCH gate rejects Free.",
 	}, []string{"plan"})
+	// meteredMBSecondsTotal (issue #1186 / M-2 / ADR-137 §Decision 1):
+	// cumulative MB-seconds fed by the sample loop's live-instance
+	// branch, broken out by execution mode + plan. Dashboards query
+	// `rate(metered_mb_seconds_total{mode="worker"}[5m])` to chart
+	// worker idle-RAM bandwidth independently from request-mode.
+	// Mirror-mode rows are dropped upstream by IsMeteredSkippableMode
+	// and never reach this counter; the {mode} label set is the
+	// closed billable {normal,worker,service,job} subset.
+	meteredMBSecondsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_metered_mb_seconds_total",
+		Help: "Cumulative MB-seconds the meterd sample loop appended to usage_minutes for live billable instances, labelled by execution_mode ∈ {normal, worker, service, job} and plan ∈ {free, hobby, pro, scale}. Mirror-mode rows are dropped upstream by IsMeteredSkippableMode and never reach this counter. The counter is cumulative MB-seconds (not row-count) so dashboards can split worker idle-RAM from request-driven RAM via rate(_total[5m]). Worker / service / job rate the same as request-mode — billing formula is unchanged (ADR-138 §Decision 1), only the label splits the dashboard view.",
+	}, []string{"mode", "plan"})
 	// auditOrgEvent (PR 6 / issue #190): closed 11-verb counter per
 	// outcome. The increment site lives in pkg/authz/authorize.go
 	// (deny paths) — apid emits one Counter per deny + one per allow;
@@ -2981,9 +3015,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	commonCollectors := []prometheus.Collector{
 		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
-		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur,
+		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, residentGBPerCustomer, billingCapExceededTotal,
-		meterdFloorAppliedTotal,
+		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
 		// backs one of the 8 alert_presets catalog rows. Without
 		// registration the Vecs are created but never reach /metrics.
@@ -3899,6 +3933,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, label := range paddle.PushResultLabels() {
 		paddlePushDur.WithLabelValues(label)
 	}
+	for _, label := range polar.PolarPushResultLabels() {
+		polarPushDur.WithLabelValues(label)
+	}
 	// Pre-instantiate the closed plan set for the residentGBPerCustomer
 	// gauge so its HELP/TYPE and zero-valued samples surface in /metrics
 	// from the moment the daemon boots — same precedent as the histogram
@@ -3915,6 +3952,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, plan := range api.Plans {
 		billingCapExceededTotal.WithLabelValues(string(plan))
 		meterdFloorAppliedTotal.WithLabelValues(string(plan))
+	}
+	// Pre-instantiate the closed (mode, plan) cartesian for
+	// meteredMBSecondsTotal (M-2 / ADR-137 §Decision 1). The closed
+	// mode set is the billable subset of pkg/state.InstanceMode
+	// ({normal,worker,service,job}) — mirror is filtered upstream.
+	// An idle box with no live instances would otherwise render the §12
+	// "MB-seconds by mode" panel as "no data" until at least one tick
+	// fires, defeating the dashboard alert.
+	for _, mode := range []string{"normal", "worker", "service", "job"} {
+		for _, plan := range api.Plans {
+			meteredMBSecondsTotal.WithLabelValues(mode, string(plan))
+		}
 	}
 	// Pre-instantiate every (cidr, family) label tuple from the egress
 	// denylist catalog so the counter's HELP/TYPE and zero-valued series
@@ -4138,11 +4187,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		cronFireNowDispatchDur:               cronFireNowDispatchDur,
 		stripePushDur:                        stripePushDur,
 		paddlePushDur:                        paddlePushDur,
+		polarPushDur:                         polarPushDur,
 		buildDur:                             buildDur,
 		buildQueueWait:                       buildQueueWait,
 		residentGBPerCustomer:                residentGBPerCustomer,
 		billingCapExceededTotal:              billingCapExceededTotal,
 		meterdFloorAppliedTotal:              meterdFloorAppliedTotal,
+		meteredMBSecondsTotal:                meteredMBSecondsTotal,
 		auditOrgEvent:                        auditOrgEvent,
 		authzDenied:                          authzDenied,
 		authzAllowed:                         authzAllowed,
@@ -6011,6 +6062,12 @@ func (m *OpsMetrics) PaddlePushDuration(result string) prometheus.Observer {
 	return m.paddlePushDur.WithLabelValues(result)
 }
 
+// PolarPushDuration returns the per-(result) observer for the dedicated Polar
+// usage-ingestion histogram.
+func (m *OpsMetrics) PolarPushDuration(result string) prometheus.Observer {
+	return m.polarPushDur.WithLabelValues(result)
+}
+
 // WakePhaseEmitted returns the per-(phase, result) counter for
 // pkg/events.Platform.Emit (issue #517 / PR-C, ADR-064). phase is
 // the substring after `wake.` (e.g. "boot_started", "readiness_200",
@@ -6336,6 +6393,27 @@ func (m *OpsMetrics) MeterdFloorAppliedTotal(plan string) {
 		return
 	}
 	m.meterdFloorAppliedTotal.WithLabelValues(plan).Inc()
+}
+
+// MeteredMBSecondsTotal accumulates MB-seconds onto the
+// {mode,plan}-labelled counter wired into §12 dashboards. The
+// sample loop calls this with mode ∈ {normal, worker, service,
+// job} — mirror is filtered upstream by IsMeteredSkippableMode
+// and never reaches this method. Add(mbSeconds) carries the
+// per-row billable MB-seconds so the cumulative total reconciles
+// with the storage-side usage_minutes table (1:1). Dashboards
+// query `rate(metered_mb_seconds_total[5m])` to split
+// worker idle-RAM from request-driven RAM without a formula
+// change. Safe on a nil receiver so meterd unit tests without
+// metrics keep working.
+func (m *OpsMetrics) MeteredMBSecondsTotal(mode, plan string, mbSeconds int64) {
+	if m == nil {
+		return
+	}
+	if mode == "" {
+		mode = "normal"
+	}
+	m.meteredMBSecondsTotal.WithLabelValues(mode, plan).Add(float64(mbSeconds))
 }
 
 // AlertEvalSkippedDegradedTotal increments the alert-eval skip counter

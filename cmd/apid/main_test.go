@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -158,12 +159,25 @@ func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 	}
 }
 
+func TestResolvePrometheusURL(t *testing.T) {
+	if got := resolvePrometheusURL(func(string) string { return "" }, role.RoleControlPlane); got != prometheusURLDefault {
+		t.Fatalf("control-plane default = %q, want %q", got, prometheusURLDefault)
+	}
+	if got := resolvePrometheusURL(func(string) string { return "" }, role.RoleSingleBox); got != "" {
+		t.Fatalf("single-box default = %q, want empty", got)
+	}
+	if got := resolvePrometheusURL(func(string) string { return "http://prometheus.example:9095" }, role.RoleControlPlane); got != "http://prometheus.example:9095" {
+		t.Fatalf("explicit URL = %q", got)
+	}
+}
+
 // --- runWithDeps -----------------------------------------------------------
 
-// withBillingKeysForTest seeds the FAAS_PADDLE_* keys that
-// pkg/billing/paddle.NewProvider now requires at construction time
-// (PR #962 CRIT-2 fix; pre-fix the SDK accepted empty keys silently
-// and the loader warn-logged per-tick instead of refusing to boot).
+// withBillingKeysForTest explicitly selects the legacy Paddle adapter and
+// seeds the FAAS_PADDLE_* keys that pkg/billing/paddle.NewProvider requires
+// at construction time (PR #962 CRIT-2 fix; pre-fix the SDK accepted empty
+// keys silently and the loader warn-logged per-tick instead of refusing to
+// boot).
 //
 // runWithDeps exercises the full apid boot path including the
 // billing-loader step at main.go:1078. A test that exercises the
@@ -175,6 +189,10 @@ func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 // can succeed, which is what these tests want.
 func withBillingKeysForTest(t *testing.T) {
 	t.Helper()
+	// These lifecycle tests exercise listener/verifier wiring, not the
+	// public-release Polar catalog preflight. Keep that dependency explicit so
+	// a production default change cannot make the tests reach the network.
+	t.Setenv("FAAS_BILLING_PROVIDER", "paddle")
 	t.Setenv("FAAS_PADDLE_SANDBOX", "1")
 	t.Setenv("FAAS_PADDLE_API_KEY", "pdl_test_load_runwithdeps")
 }

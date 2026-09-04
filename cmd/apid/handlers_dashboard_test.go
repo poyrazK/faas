@@ -295,7 +295,7 @@ func TestDashboardHandler_Billing_PaidPlan(t *testing.T) {
 	for _, want := range []string{
 		"Plan: hobby",
 		"Manage billing",
-		"Open Stripe billing portal",
+		"Open billing portal",
 		// The {account_id} placeholder must be substituted; if a
 		// future refactor breaks the template helper, this fails
 		// before the click goes out.
@@ -351,7 +351,7 @@ func TestDashboardHandler_Billing_FreePlan(t *testing.T) {
 	}
 	for _, banned := range []string{
 		"Manage billing",
-		"Open Stripe billing portal",
+		"Open billing portal",
 		"Last invoice",
 	} {
 		if strings.Contains(body, banned) {

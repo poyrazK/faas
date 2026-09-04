@@ -166,6 +166,23 @@ func dataPlacementEnabledFromEnv(getenv func(string) string) bool {
 // (golangci-lint v2.4.0 fires at 3 occurrences).
 const metricsAddrDefault = "127.0.0.1:9101"
 
+// prometheusURLDefault is the control-plane-local Prometheus endpoint
+// installed by the Ansible role. Single-box and test callers can still
+// leave FAAS_PROMETHEUS_URL empty; only a role-correct control plane gets
+// the production default, so unit/e2e fixtures retain their explicit
+// degraded-without-Prometheus behavior.
+const prometheusURLDefault = "http://127.0.0.1:9095"
+
+func resolvePrometheusURL(getenv func(string) string, boxRole role.Role) string {
+	if v := getenv("FAAS_PROMETHEUS_URL"); v != "" {
+		return v
+	}
+	if boxRole == role.RoleControlPlane {
+		return prometheusURLDefault
+	}
+	return ""
+}
+
 // resolveMetricsAddr reads FAAS_APID_METRICS_ADDR via the test
 // seam (deps.getenv). Empty string disables the listener (the
 // deliberately-distinct envOr path: envOr() collapses empty→unset→
@@ -740,6 +757,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}()
 		}
+		// Public-release hardening: pg_notify is only the wakeup for
+		// imaged signature audits. The durable outbox replay loop
+		// recovers rows missed during a LISTEN reconnect or an apid
+		// restart, and also drains rows when the notification subscriber
+		// is unavailable.
+		if _, ok := srv.store.(state.AuditEventOutboxStore); ok {
+			go func() {
+				if err := runAuditOutbox(ctx, srv.store, log, srv.eventsPlatform); err != nil && ctx.Err() == nil {
+					log.Error("audit: durable outbox exited", "err", err)
+				}
+			}()
+		}
 		// ADR-126 / issue #975 item #2: bridge the two pg_notify
 		// channels that mutate the `?source=auto` cache inputs
 		// (NotifyAppOpenAPIDocChanged + NotifyEdgeRuleChanged)
@@ -1210,14 +1239,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// deploy, and never interpolate untrusted input.
 	srv.WithBillingPortalURL(deps.getenv("FAAS_BILLING_PORTAL_URL"))
 
-	// Billing provider dispatch (ADR-025 / PR #3 / ADR-032 v2).
-	// FAAS_BILLING_PROVIDER defaults to "paddle" (the v2 production
-	// provider) when unset — the loader constructs a *paddle.Provider
-	// and runs EnsurePlanProducts so the catalog is populated before
-	// the first /v1/webhooks/paddle POST can land. When unset, the
-	// daemon fatals at boot if FAAS_PADDLE_API_KEY is missing
-	// (NewProvider returns ErrNoAPIKey on empty key — see PR #962
-	// CRIT-2 fix). The legacy "stripe" opt-in still returns
+	// Billing provider dispatch (ADR-025 / public-release billing).
+	// FAAS_BILLING_PROVIDER defaults to "polar" when unset — the loader
+	// constructs a *polar.Provider and requires the configured catalog
+	// and meter to pass preflight before the daemon accepts billing traffic.
+	// The legacy "stripe" opt-in still returns
 	// (nil, "stripe", nil) so the changePlan 402 path falls back to
 	// the FAAS_BILLING_PORTAL_URL template above (the pre-PR-#3
 	// behaviour stays bit-for-bit unchanged).
@@ -1345,12 +1371,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Status page (spec §12 public surface). The Prometheus URL is
 	// the local box's Prometheus installed by deploy/ansible/roles/
-	// prometheus (default :9090 on the bridge). The HTML path defaults
+	// prometheus (default http://127.0.0.1:9095 on the control plane). The HTML path defaults
 	// to /etc/faas/statuspage/index.html; a dev override
 	// (FAAS_STATUSPAGE_PATH) lets us point at deploy/statuspage/
 	// index.html without installing.
 	srv.WithStatusCache(
-		deps.getenv("FAAS_PROMETHEUS_URL"),
+		resolvePrometheusURL(deps.getenv, cfg.Role),
 		deps.getenv("FAAS_STATUSPAGE_PATH"),
 	)
 
@@ -1579,6 +1605,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	} else {
 		log.Info("background re-seal disabled; set FAAS_REKEY_ENABLED=true to opt in (see docs/ops/host-age-rotation.md)")
+	}
+
+	// A single reconnecting LISTEN session fans invocation_done events out
+	// to all synchronous requests. If the optimization cannot start, keep
+	// the legacy per-request listener path so a transient database/listener
+	// issue does not prevent apid from serving traffic.
+	if deps.pool != nil {
+		completion := newInvocationCompletionWaiter(deps.pool, log)
+		if err := completion.Start(ctx); err != nil {
+			log.Warn("invocation completion fan-out unavailable; using per-request LISTEN fallback", "err", err)
+		} else {
+			srv.WithInvocationCompletionWaiter(completion)
+		}
 	}
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
@@ -2405,6 +2444,13 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		wire.TraceServerOptions()...,
 	)...)
 	registerAppErrorsReceiver(srv, store, ops, true)
+	// Split-box deployments reuse the same private mTLS listener for both
+	// gateway telemetry services. Single-box deployments use the dedicated
+	// request_telemetry.sock server below, preserving the separate DAC
+	// boundaries for the legacy Unix sockets.
+	if !isUnixSocketPath(target) && os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false" {
+		registerRequestTelemetryReceiver(srv, store, ops, nil, true)
+	}
 	return srv, lis, nil
 }
 

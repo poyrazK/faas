@@ -90,7 +90,7 @@ func TestSupportBinaryNames_NonEmptyAndStable(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("SupportBinaryNames empty")
 	}
-	want := []string{"gregale", "gregalectl", "init", "schedd-brokerq-apply", "vmmd-raw-bridge", "vmmd-stream-bridge"}
+	want := []string{"gregale", "gregalectl", "init", "schedd-brokerq-apply", "vmmd-raw-bridge", "vmmd-stream-bridge", "vmlinux"}
 	for i, name := range want {
 		if got[i] != name {
 			t.Errorf("[%d] = %q, want %q", i, got[i], name)

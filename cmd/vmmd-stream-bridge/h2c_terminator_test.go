@@ -24,6 +24,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,8 +34,8 @@ import (
 // newHandlerH2CGuest wires up a local H2C "guest" (httptest.NewServer
 // with srv.Protocols.SetUnencryptedHTTP2(true)) and an H2C inbound
 // "gatewayd" stack around newHandler. The bridge's handleH2CStream
-// reads the inbound H2C, dial a fresh guest H2C conn, and round-trips
-// the request. The test asserts headers + body + trailers survive
+// reads the inbound H2C, reuses a per-instance guest H2C transport, and
+// round-trips the request. The test asserts headers + body + trailers survive
 // the bridge transparently.
 //
 // Returns:
@@ -72,6 +73,11 @@ func newHandlerH2CGuest(t *testing.T, guestHandler http.HandlerFunc) (*http2.Tra
 
 	// Local H2C "guest" listener.
 	guestSrv := &http.Server{Handler: wrapped}
+	guestSrv.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			obs.connections.Add(1)
+		}
+	}
 	guestSrv.Protocols = new(http.Protocols)
 	guestSrv.Protocols.SetUnencryptedHTTP2(true)
 	guestLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -136,14 +142,48 @@ func guestAddr(t *testing.T, ln net.Listener) uint16 {
 
 // guestObservations captures what the guest saw.
 type guestObservations struct {
-	method  string
-	path    string
-	query   string
-	headers http.Header
-	trailer http.Header
-	body    string
+	method      string
+	path        string
+	query       string
+	headers     http.Header
+	trailer     http.Header
+	body        string
+	connections atomic.Int32
 	// For trailer assertions, the guest may also surface
 	// trailerPrefix fields through r.Trailer — captured above.
+}
+
+// TestHandleH2CStream_ReusesGuestConnection proves that the persistent bridge
+// reuses the guest-side HTTP/2 transport instead of paying a TCP + H2C
+// preface/SETTINGS exchange for every request.
+func TestHandleH2CStream_ReusesGuestConnection(t *testing.T) {
+	t.Setenv("FAAS_BRIDGE_PROTOCOL", "h2c")
+
+	rt, obs := newHandlerH2CGuest(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "2")
+		_, _ = io.WriteString(w, "ok")
+	})
+	for i := 0; i < 2; i++ {
+		req, err := http.NewRequest(http.MethodGet, "http://test.invalid/reuse", nil)
+		if err != nil {
+			t.Fatalf("new request %d: %v", i, err)
+		}
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
+			t.Fatalf("roundtrip %d: %v", i, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("read response %d: %v", i, err)
+		}
+		if string(body) != "ok" {
+			t.Fatalf("response %d body = %q, want ok", i, body)
+		}
+	}
+	if got := obs.connections.Load(); got != 1 {
+		t.Fatalf("guest TCP connections = %d, want one reused H2C connection", got)
+	}
 }
 
 // TestHandleH2CStream_UnaryRequest round-trips a single unary

@@ -68,10 +68,117 @@ func TestHandleSnapshotPrime(t *testing.T) {
 		Channel: db.NotifySnapshotPrime,
 		Payload: `{"app_id":"` + app.ID + `","deployment_id":"` + dep.ID + `"}`,
 	})
+	// Prime runs off the loop goroutine now (dispatchPrime) — wait for
+	// the worker before asserting on the rows it writes.
+	loop.waitPrimes()
 
 	rows, _ := store.ListInstancesForApp(context.Background(), app.ID)
 	if len(rows) != 1 || rows[0].State != string(state.StateParked) {
 		t.Fatalf("rows = %+v, want one parked row", rows)
+	}
+}
+
+func TestHandleSnapshotPrimeFailureMarksDeploymentAndStageFailed(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)
+	now := time.Now().UTC()
+	if _, err := store.AppendDeploymentStage(context.Background(), dep.ID,
+		state.StageSourceDownload, state.StageSnapshotPrepare, now, ""); err != nil {
+		t.Fatalf("AppendDeploymentStage: %v", err)
+	}
+	if err := store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus: %v", err)
+	}
+
+	vmm := &fakeVMM{wakeErr: api.ErrAppStartupTimeout("cold_boot_timeout", "35s")}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	loop := NewLoop(nil, engine, testLog())
+	loop.handleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotPrime,
+		Payload: `{"app_id":"` + app.ID + `","deployment_id":"` + dep.ID + `"}`,
+	})
+	loop.waitPrimes()
+
+	got, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if got.Status != state.DeployFailed {
+		t.Fatalf("deployment status = %q, want failed", got.Status)
+	}
+	if got.ErrorCode != api.CodeAppStartupTimeout {
+		t.Fatalf("deployment error code = %q, want %q", got.ErrorCode, api.CodeAppStartupTimeout)
+	}
+	var stages state.StageState
+	if err := json.Unmarshal(got.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != "" || len(stages.History) != 2 {
+		t.Fatalf("stage state = %+v, want closed failed stage", stages)
+	}
+	failed := stages.History[len(stages.History)-1]
+	if failed.Name != state.StageSnapshotPrepare || failed.Status != "failed" {
+		t.Fatalf("failed stage = %+v, want snapshot_prepare/failed", failed)
+	}
+}
+
+// TestHandleParkedAppNotification dispatches the app_changed parked event to
+// the instance lifecycle owner. This is the regression test for the original
+// bug, where the event was only logged and the VM remained RUNNING.
+func TestHandleParkedAppNotification(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 256, 2)
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	res, err := engine.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatalf("UpdateApp parked: %v", err)
+	}
+
+	loop := NewLoop(nil, engine, testLog())
+	loop.handleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyAppChanged,
+		Payload: `{"kind":"parked","app_id":"` + app.ID + `"}`,
+	})
+
+	row, err := store.InstanceByID(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if row.State != string(state.StateParked) {
+		t.Fatalf("instance state = %q, want parked", row.State)
+	}
+}
+
+func TestRunReaperReconcilesDeletedAppWithoutNotification(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 256, 2)
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	res, err := engine.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	deleted := state.AppDeleted
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Status: &deleted}); err != nil {
+		t.Fatalf("UpdateApp deleted: %v", err)
+	}
+
+	NewLoop(nil, engine, testLog()).runReaper(context.Background())
+
+	row, err := store.InstanceByID(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if row.State != string(state.StateStopped) {
+		t.Errorf("state = %q, want stopped", row.State)
+	}
+	if vmm.destroys != 1 {
+		t.Errorf("destroys = %d, want 1", vmm.destroys)
 	}
 }
 

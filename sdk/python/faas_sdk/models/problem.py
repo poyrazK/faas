@@ -23,15 +23,12 @@ class Problem:
     machine-readable identifier; clients branch on it. `limit` and
     `observed` are populated on quota errors. `docs_url` points the
     user at the next action. `billing_portal_url` is populated on
-    `code: payment_required` so the dashboard can deep-link the
-    customer to the Stripe-hosted billing portal (issue #142).
-    `paddle_checkout_url` + `tx_id` are populated instead when the
-    box is running on the Paddle billing provider
-    (`FAAS_BILLING_PROVIDER=paddle`, ADR-025) — the customer lands
-    on a Paddle-hosted checkout page for the target plan and the
-    dashboard renders the transaction handle as a confirmation id.
-    Exactly one of `billing_portal_url` or `paddle_checkout_url` is
-    populated on a given 402 — never both.
+    `code: payment_required` when the customer already has a
+    provider subscription and must update it in the provider
+    portal. `checkout_url` is populated when a new hosted checkout
+    is required. `paddle_checkout_url` is retained as a legacy
+    alias for Paddle clients, and `tx_id` carries the provider
+    checkout handle when one exists.
 
     `errors` carries per-field detail (Cloudflare / Stripe shape)
     for 422 sites that emit a list of field-level failures — used
@@ -56,11 +53,14 @@ class Problem:
     limit: int | None | Unset = UNSET
     observed: int | None | Unset = UNSET
     docs_url: str | Unset = UNSET
+    checkout_url: str | Unset = UNSET
+    """Provider-neutral hosted checkout URL on a `payment_required`
+    402 when a paid plan upgrade requires a new subscription.
+    """
     billing_portal_url: str | Unset = UNSET
     paddle_checkout_url: str | Unset = UNSET
-    """Paddle-hosted checkout URL on a `payment_required` 402 when
-    the box is running on the Paddle billing provider. Mutually
-    exclusive with `billing_portal_url`.
+    """Legacy Paddle-hosted checkout URL on a `payment_required`
+    402. Prefer the provider-neutral `checkout_url` field.
     """
     tx_id: str | Unset = UNSET
     """Paddle transaction handle (`txn_…`) on a `payment_required`
@@ -156,6 +156,8 @@ class Problem:
 
         docs_url = self.docs_url
 
+        checkout_url = self.checkout_url
+
         billing_portal_url = self.billing_portal_url
 
         paddle_checkout_url = self.paddle_checkout_url
@@ -210,6 +212,8 @@ class Problem:
             field_dict["observed"] = observed
         if docs_url is not UNSET:
             field_dict["docs_url"] = docs_url
+        if checkout_url is not UNSET:
+            field_dict["checkout_url"] = checkout_url
         if billing_portal_url is not UNSET:
             field_dict["billing_portal_url"] = billing_portal_url
         if paddle_checkout_url is not UNSET:
@@ -270,6 +274,8 @@ class Problem:
 
         docs_url = d.pop("docs_url", UNSET)
 
+        checkout_url = d.pop("checkout_url", UNSET)
+
         billing_portal_url = d.pop("billing_portal_url", UNSET)
 
         paddle_checkout_url = d.pop("paddle_checkout_url", UNSET)
@@ -320,6 +326,7 @@ class Problem:
             limit=limit,
             observed=observed,
             docs_url=docs_url,
+            checkout_url=checkout_url,
             billing_portal_url=billing_portal_url,
             paddle_checkout_url=paddle_checkout_url,
             tx_id=tx_id,

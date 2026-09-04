@@ -320,35 +320,45 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-093 / PR-B: end-to-end request budgets. The BudgetMiddleware
 	// stamps a per-request deadline onto r.Context() before the proxy
 	// forwards to gatewayd-internal, and writes a 504 RFC 7807
-	// problem envelope if the budget fires. Budgets come from the
-	// edge-rule kind=budget match (resolved deeper in the chain) or
-	// fall back to api.RequestBudgetDefault. The metrics registry is
+	// problem envelope if the budget fires. The metrics registry is
 	// a fresh one (gatewayd-public's ControlMux today exposes no
 	// default metrics — /metrics is empty unless we wire a
 	// registry), and is plumbed into the control mux below so
 	// /metrics scrapes both the budget histogram and the
 	// exceeded-counter families alongside any future series.
+	//
+	// ADR-093 amendment: this daemon stamps a BACKSTOP, not a policy.
+	//
+	// gatewayd-public does not resolve the app, so it cannot see a
+	// kind=budget rule. reqbudget derives a CHILD budget from
+	// whatever is already on the context, so anything stamped here
+	// becomes the parent of every downstream budget. The original
+	// PR-B wiring used api.RequestBudgetDefault (3 s) alongside a
+	// comment saying budgets "come from the edge-rule kind=budget
+	// match (resolved deeper in the chain)" — but the deeper match
+	// could then only tighten the 3 s it inherited, never widen it.
+	// Measured with a 25 s rule confirmed applied on 713/1000
+	// requests, upstream latency still capped at max 3121 ms.
+	//
+	// Every request this daemon forwards lands on a hop that stamps
+	// its own authoritative budget: controlPlaneProxy routes apid
+	// paths to apid (api.RequestBudgetApidDefault) and everything
+	// else to gatewayd-internal, whose applyEdgeRuleBudget always
+	// stamps (rule match, else plan default) and owns the 504 +
+	// request_budget_exceeded envelope. So the edge defers to the
+	// owner and keeps only the platform ceiling as a liveness guard
+	// — a wedged downstream is still cut at RequestBudgetMax, so a
+	// public connection can never be pinned indefinitely.
+	//
+	// This also subsumes the previous sync-invoke DefaultFor
+	// carve-out, which returned exactly this value for the same
+	// reason (apid owns its plan-aware wait).
 	budgetReg := prometheus.NewRegistry()
 	budgetMetrics, err := reqbudget.NewMetrics(budgetReg, "gateway")
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: reqbudget metrics: %w", err)
 	}
-	budgetCfg, err := reqbudget.NewMiddlewareConfig(reqbudget.MiddlewareConfig{
-		Default: api.RequestBudgetDefault,
-		Max:     api.RequestBudgetMax,
-		Route:   "forward",
-		Metrics: budgetMetrics,
-		Log:     log,
-		DefaultFor: func(r *http.Request) time.Duration {
-			if reqbudget.IsSyncInvokeRequest(r) {
-				// Synchronous invoke has its own plan-aware wait in apid;
-				// the public edge must not cut it at the general 3s
-				// forwarding budget before that handler can respond.
-				return api.RequestBudgetMax
-			}
-			return 0
-		},
-	})
+	budgetCfg, err := newForwardBudgetConfig(budgetMetrics, log)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: reqbudget middleware config: %w", err)
 	}

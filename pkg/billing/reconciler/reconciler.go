@@ -2,15 +2,15 @@
 //
 // The reconciler is the read-only complement to meterd's pusher
 // (pkg/meter/pusher.go). Every FAAS_RECONCILE_INTERVAL it walks
-// every paid account, sums the last-24h mb_seconds from the local
-// usage_minutes table, and asks the active billing.Provider for the
+// every paid account, derives the last-24h provider billable quantity from
+// the local usage_minutes table, and asks the active billing.Provider for the
 // matching summary. The diff between local and pushed totals is
 // exposed as Prometheus gauges so the BillingDrift alert can page
-// on real Stripe / Paddle outages that would otherwise go unobserved
+// on real provider outages that would otherwise go unobserved
 // (revenue leakage / over-billing).
 //
 // Failure mode is fail-soft. A single account's reconcile error
-// (network blip, Stripe rate-limit, Paddle not-yet-implemented
+// (network blip, provider rate-limit, or provider not-yet-implemented
 // ErrNotImplemented) is logged and the account is skipped — the
 // loop continues to the next account. The loop itself never
 // blocks on a single account; the long-run mean drift ratio is
@@ -64,6 +64,7 @@ type Reconciler struct {
 
 	driftMBSeconds *prometheus.GaugeVec
 	driftRatio     *prometheus.GaugeVec
+	failures       *prometheus.CounterVec
 }
 
 // DefaultInterval is the cadence the reconciler runs at when the
@@ -99,8 +100,12 @@ func New(providerName string, store state.Store, provider billing.Provider, log 
 			Name: "meterd_billing_drift_ratio",
 			Help: "abs(local-pushed) / max(local, pushed) over the rolling Window. ADR-049 §B.1. The BillingDrift alert pages on ratio > 0.005 for 1h.",
 		}, []string{"account_id", "provider"}),
+		failures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meterd_billing_drift_reconcile_failures_total",
+			Help: "Billing reconciliation failures by provider and failure source. A non-zero rate means the drift gauges may be stale and requires operator investigation.",
+		}, []string{"provider", "reason"}),
 	}
-	registry.MustRegister(r.driftMBSeconds, r.driftRatio)
+	registry.MustRegister(r.driftMBSeconds, r.driftRatio, r.failures)
 	return r
 }
 
@@ -123,16 +128,22 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 	}
 	accounts, err := r.Store.ListAllAccounts(ctx)
 	if err != nil {
+		r.failures.WithLabelValues(r.ProviderName, "store").Inc()
 		return fmt.Errorf("list accounts: %w", err)
 	}
 	end := time.Now().UTC().Truncate(time.Minute)
 	start := end.Add(-r.Window)
 	for _, acct := range accounts {
 		if err := r.reconcileOne(ctx, acct, start, end); err != nil {
-			// Fail-soft per account: log + skip. The BillingDrift
-			// alert fires on accumulated drift ratio, so a
-			// transient provider error does NOT page. The
-			// reconciler metric records the skip.
+			// Fail-soft per account: log + skip, but retain a fleet-level
+			// counter so provider outages cannot masquerade as a healthy
+			// zero-drift scrape.
+			reason := "account"
+			var classified *reconcileError
+			if errors.As(err, &classified) {
+				reason = classified.reason
+			}
+			r.failures.WithLabelValues(r.ProviderName, reason).Inc()
 			if r.Log != nil {
 				r.Log.Warn("reconcile account failed",
 					"account_id", acct.ID, "err", err)
@@ -141,6 +152,14 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 	}
 	return nil
 }
+
+type reconcileError struct {
+	reason string
+	err    error
+}
+
+func (e *reconcileError) Error() string { return e.err.Error() }
+func (e *reconcileError) Unwrap() error { return e.err }
 
 func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start, end time.Time) error {
 	// Skip non-paid plans — no Stripe / Paddle surface to drift
@@ -158,13 +177,21 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 	if !r.Provider.Capabilities().Has(billing.CapUsageReconcile) {
 		return nil
 	}
-	rows, err := r.Store.UsageByHour(ctx, acct.ID, start, end)
-	if err != nil {
-		return fmt.Errorf("usage by hour: %w", err)
-	}
 	var local int64
-	for _, u := range rows {
-		local += u.MBSeconds
+	var err error
+	if modeProvider, ok := r.Provider.(billing.UsageModeProvider); ok && modeProvider.UsageMode() == billing.UsageModeOverage {
+		local, err = billing.OverageMBSecondsForRange(ctx, r.Store, acct, start, end)
+		if err != nil {
+			return &reconcileError{reason: "usage", err: fmt.Errorf("usage by hour overage: %w", err)}
+		}
+	} else {
+		rows, err := r.Store.UsageByHour(ctx, acct.ID, start, end)
+		if err != nil {
+			return &reconcileError{reason: "usage", err: fmt.Errorf("usage by hour: %w", err)}
+		}
+		for _, u := range rows {
+			local += u.MBSeconds
+		}
 	}
 	pushed, err := r.Provider.ReconcileUsage(ctx, acct, start, end)
 	if err != nil {
@@ -177,7 +204,7 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 		if errors.Is(err, billing.ErrNotImplemented) {
 			return nil
 		}
-		return fmt.Errorf("provider reconcile: %w", err)
+		return &reconcileError{reason: "provider", err: fmt.Errorf("provider reconcile: %w", err)}
 	}
 	drift := local - pushed
 	r.emit(acct.ID, local, pushed, drift)

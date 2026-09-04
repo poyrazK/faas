@@ -159,17 +159,6 @@ func seedShadowAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, t0
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
-	// ProviderCustomerID / StripeSubscriptionItem are intentionally
-	// NOT seeded — with empty fields, Client.PushUsageRecord
-	// (client.go:118-125) short-circuits to a silent skip, which
-	// still produces the "meter: push usage" log line that the
-	// log-scrape oracle parses. The e2e doesn't assert on the
-	// dedupe table (the dedupe row is stamped AFTER the SDK call
-	// at client.go:136, so a 401 from the dummy key leaves it
-	// empty either way). Seeding the fields would change the
-	// code:"ok" silent-skip log to a code:"auth" 401 log — same
-	// oracle, just a different code label.
-
 	for h := int64(0); h < shadowHours; h++ {
 		minute := t0.Add(time.Duration(h) * time.Hour)
 		if err := store.AppendUsage(ctx, acct.ID, app.ID, ins.ID, minute, shadowPerHour, 1, 0, 0, 0, 0, 0, 0); err != nil {
@@ -177,6 +166,25 @@ func seedShadowAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, t0
 		}
 	}
 	return acct, app, ins
+}
+
+// seedShadowBillingIdentity makes the account pass meterd's fail-closed
+// billing-identity gate while keeping the provider call offline. The
+// identifiers only need the provider-shaped prefixes; placeholder API keys
+// make the subsequent SDK call fail locally or with authentication, which
+// still exercises the daemon-to-provider log path.
+func seedShadowBillingIdentity(t *testing.T, ctx context.Context, store state.Store, acct state.Account, provider string) {
+	t.Helper()
+	customerID, subscriptionID := "cus_test_e2e_dummy", "si_test_e2e_dummy"
+	if provider == "paddle" {
+		customerID, subscriptionID = "ctm_test_e2e_dummy", "sub_test_e2e_dummy"
+	}
+	if err := store.UpdateAccountProviderCustomerID(ctx, acct.ID, customerID); err != nil {
+		t.Fatalf("UpdateAccountProviderCustomerID: %v", err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, subscriptionID); err != nil {
+		t.Fatalf("UpdateAccountStripeSubscriptionItem: %v", err)
+	}
 }
 
 // pollShadowLog blocks until the meterd log has logged at least
@@ -326,6 +334,7 @@ func runShadowSubtest(t *testing.T, provider string) {
 		shadowEnv(provider, extraEnv...))
 
 	acct, _, _ := seedShadowAccount(t, ctx, pool, t0)
+	seedShadowBillingIdentity(t, ctx, state.NewPgStore(pool), acct, provider)
 
 	hits := pollShadowLog(t, h, acct.ID, int(shadowHours), shadowPerHour)
 	if int64(len(hits)) != shadowHours {

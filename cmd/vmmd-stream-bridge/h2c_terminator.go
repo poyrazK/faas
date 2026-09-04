@@ -1,16 +1,15 @@
 // H2C terminator (ADR-126, G19). For inbound H2C requests whose
 // app_protocol ∈ {http2, grpc}, the bridge originates HTTP/2
 // prior-knowledge frames to the guest instead of re-framing to
-// H1+chunked. The terminator is a per-stream io.ReadWriter against
-// a guest TCP conn — each inbound H2C request gets its own guest
-// dial (one-bridge-stream-per-guest-stream).
+// H1+chunked. The terminator is a per-stream request against a
+// bounded, per-instance guest transport pool. Independent inbound
+// H2C requests multiplex over a reusable guest TCP connection when
+// the guest permits it.
 //
-// Why per-stream dial: same rationale as today's v2 path
-// (main.go::handleH1Stream). HPACK state isolation per request,
-// no cross-stream HEADERS coupling, no conn migration hazard.
-// The cost is one dial per request — measured at ~1ms on the
-// same-host guest netns, and amortised to noise vs the 350 ms
-// cold-boot.
+// Each request still owns its HTTP/2 stream and request context, so
+// HPACK state remains transport-managed and cancellation closes only
+// that request. The transport itself is shared; this removes the
+// repeated TCP + H2C preface/SETTINGS cost without serializing calls.
 //
 // Wire envelope: HTTP/2 prior-knowledge (no Upgrade dance).
 //
@@ -61,15 +60,15 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/net/http2"
 )
 
 // h2cIdleConnTimeout is the per-guest H2C client transport idle
-// conn timeout. With one-bridge-stream-per-guest-stream this
-// fires on conn leak only (we close after every response); kept
-// short so a leaked conn doesn't pin a guest-side fd.
+// conn timeout. The per-instance pool keeps active connections
+// reusable but releases them promptly while the bridge is idle.
 const h2cIdleConnTimeout = 30 * time.Second
 
 // h2cDialTimeout caps the inner-leg TCP dial against the guest for
@@ -131,9 +130,9 @@ const (
 //     stdlib (srv.Protocols.SetUnencryptedHTTP2(true) at
 //     main.go:159-160).
 //
-//  2. Build the guest-side H2C client transport (or reuse a fresh
-//     one per request — same shape as handleH1Stream; per-stream
-//     isolation per ADR-126 §Decision 4).
+//  2. Acquire the per-instance guest-side H2C client transport. The
+//     transport is safe for concurrent RoundTrip calls and keeps the guest
+//     connection reusable across independent inbound streams.
 //
 //  3. RoundTrip the inbound request through the guest transport;
 //     round-trip synthesises the HTTP/2 frame envelope (preface +
@@ -149,9 +148,10 @@ const (
 // difference is the guest-side transport (H2C vs H1+chunked).
 // No application-level translation; HPACK state owned by the
 // transport.
-func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, guestPort uint16, deadline time.Time) {
+func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, guestPort uint16, deadline time.Time, pools ...*guestTransportPool) {
 	ctx, cancel := context.WithDeadline(r.Context(), deadline)
 	defer cancel()
+	guestPort = bridgeRequestPort(r, guestPort)
 
 	// ADR-127 §D2 (Layer 9) — panic recovery. The bridge is a
 	// per-instance child of vmmd; a panic that escapes to the
@@ -176,7 +176,7 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 	if uri == "" {
 		uri = "/"
 	}
-	host := r.Host
+	host := bridgeRequestHost(r, r.Host)
 	if host == "" {
 		// Defense-in-depth: never send an empty :authority
 		// pseudo-header. Use the bridge's bound guest IP. HTTP/2
@@ -184,21 +184,21 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 		host = guestIP
 	}
 
-	// Build the outbound guest H2C transport (prior-knowledge).
-	// Each call gets its own transport; one-bridge-stream-per-
-	// guest-stream (ADR-126 §Decision 4) means we don't
-	// concatenate streams onto a pooled conn — the v1 shape
-	// keeps the conn ownership simple. ADR-127 §D2 — the
-	// construction is funnelled through a package var so tests
-	// can inject a RoundTripper that panics for the panic-
-	// recovery contract test (TestHandleH2CStream_PanicRecovers).
-	transport := newGuestH2CTransportFn(guestIP, guestPort)
-	// ADR-127 §D2 (Layer 9) — close idle conns on the transport
-	// when the handler returns. Without this defer, a panic
-	// path that skips the explicit close would leak the
-	// transport's idle pool and the underlying guest-side TCP
-	// fd, pinning a 1 MiB H2 conn per leak.
-	defer transport.CloseIdleConnections()
+	// Reuse the per-instance guest-side H2C transport when the handler is
+	// running inside the production server. http2.Transport is safe for
+	// concurrent RoundTrip calls and multiplexes independent requests as H2
+	// streams on the same guest connection. The optional form preserves the
+	// direct-call shape used by focused tests and compatibility callers.
+	var pool *guestTransportPool
+	if len(pools) > 0 {
+		pool = pools[0]
+	}
+	var transport *http2.Transport
+	if pool != nil {
+		transport = pool.h2c(guestPort)
+	} else {
+		transport = newGuestH2CTransportFn(guestIP, guestPort)
+	}
 
 	// Compose the outbound H2C request body. The inbound r.Body
 	// is the bridge's H2C-side request stream; we pipe it
@@ -235,16 +235,14 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 	for k, vs := range r.Header {
 		// Skip hop-by-hop headers (RFC 7230 §6.1) and HTTP/2
 		// frame-control headers that the transport owns.
-		if isHopByHopHeader(k) {
+		if isHopByHopHeader(k) || isBridgeRequestHeader(k) || strings.EqualFold(k, "Host") {
 			continue
 		}
 		for _, v := range vs {
 			outboundReq.Header.Add(k, v)
 		}
 	}
-	if outboundReq.Header.Get("Host") == "" {
-		outboundReq.Header.Set("Host", host)
-	}
+	outboundReq.Host = host
 
 	// RoundTrip — this writes the HTTP/2 connection preface +
 	// client SETTINGS to the guest, opens a new H2 stream, sends
@@ -301,7 +299,8 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 }
 
 // newGuestH2CTransport builds the guest-side H2C client transport
-// for one inbound stream. Mirrors
+// for one guest port. The per-instance guestTransportPool creates
+// it once and reuses it across inbound streams. Mirrors
 // `pkg/vmmdgrpc/forward.go::newStreamBridgeH2CTransport` but the
 // DialTLSContext dials the guest TCP addr (10.0.0.2:<port>) under
 // an explicit ctx timeout, instead of the bridge's unix socket.
@@ -321,13 +320,10 @@ func newGuestH2CTransport(guestIP string, guestPort uint16) *http2.Transport {
 			var d net.Dialer
 			return d.DialContext(dctx, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 		},
-		// Pooling is disabled implicitly by returning a fresh
-		// transport per stream (one-bridge-stream-per-guest-
-		// stream per ADR-126 §Decision 4); the transport is
-		// unreachable to its own pool once the closure is
-		// discarded. Per-stream isolation: HPACK state lives
-		// only as long as the transport is alive (one request),
-		// no conn migration hazard, no cross-stream coupling.
+		// http2.Transport is safe for concurrent RoundTrip calls.
+		// The pool owns its lifetime and closes idle connections on
+		// bridge shutdown or port-entry eviction. Each request still
+		// receives an independent HTTP/2 stream and context.
 		IdleConnTimeout: h2cIdleConnTimeout,
 		ReadIdleTimeout: 30 * time.Second,
 		PingTimeout:     15 * time.Second,

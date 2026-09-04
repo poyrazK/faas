@@ -1,13 +1,12 @@
-// pgbackend_pernode_test.go — per-node sub-cursor tests for the
-// multi-box picker (placement scheduler PR, ADR-025 axis 3).
+// pgbackend_pernode_test.go — multi-node picker tests for the
+// placement scheduler (ADR-025 axis 3).
 //
-// The pre-multi-box picker used a single atomic.Uint64 round-robin
-// across all healthy entries for an app — fine when every instance
-// lived on the same node, broken in a multi-box fleet where we want
-// to (a) round-robin within the node that has the most healthy entries
-// and (b) prefer the warm-affinity node when the warm hint matches.
+// A target is already routable when it enters the gateway cache. The
+// request picker therefore round-robins across all targets, including
+// targets on different nodes. Warm affinity belongs to admission placement;
+// it must not pin request traffic to one node after a burst has fanned out.
 //
-// These tests pin both contracts at the unit level. They use a
+// These tests pin that contract at the unit level. They use a
 // FakeScheduler (gateway.NewFakeScheduler) but vary its returned
 // NodeID per Admit call via a small shim, since the public
 // FakeScheduler pins a single NodeID.
@@ -64,12 +63,11 @@ func (r *rotatingScheduler) AdmitMirrorInstance(context.Context, string, string,
 	return "mirror-" + strconv.FormatInt(idx, 10), "wake-mirror-" + strconv.FormatInt(idx, 10), nil
 }
 
-// TestPGBackend_PickRotatesWithinWinningNode seeds two nodes with
-// different healthy counts (a has 3, b has 1) and asserts the picker
-// round-robins WITHIN a — never returning the b node's instance
-// until a is exhausted. This is the load-bearing per-node sub-cursor
-// behavior: without it, the gateway would hammer the smallest node.
-func TestPGBackend_PickRotatesWithinWinningNode(t *testing.T) {
+// TestPGBackend_PickWeightsEveryHealthyTarget seeds two nodes with
+// different healthy counts (a has 3, b has 1) and asserts global
+// round-robin. A's three targets receive three quarters of the picks and
+// B's target receives the remaining quarter.
+func TestPGBackend_PickWeightsEveryHealthyTarget(t *testing.T) {
 	// First 3 admits → node A; last admit → node B.
 	admitIdx := atomic.Int64{}
 	sched := &rotatingScheduler{
@@ -94,32 +92,29 @@ func TestPGBackend_PickRotatesWithinWinningNode(t *testing.T) {
 		t.Fatalf("HealthyCount = %d, want 4", got)
 	}
 
-	// 8 picks: every one must be from node-A (it has 3 healthy,
-	// wins on count). Pick must never reach node-B until node-A is
-	// exhausted, which never happens here. The sub-cursor keeps
-	// rotating across the 3 A instances.
-	seenA := map[string]bool{}
+	// Global round-robin visits the four targets in insertion order.
+	seen := map[string]bool{}
+	nodeCounts := map[string]int{}
 	for i := 0; i < 8; i++ {
 		t1 := b.Pick("app-1")
 		if !t1.OK {
 			t.Fatal("Pick: !ok")
 		}
-		if t1.Target.NodeID != "node-A" {
-			t.Errorf("Pick #%d returned NodeID = %q, want node-A (winning node by healthyCount)", i, t1.Target.NodeID)
-		}
-		seenA[t1.Target.InstanceID] = true
+		seen[t1.Target.InstanceID] = true
+		nodeCounts[t1.Target.NodeID]++
 	}
-	// Round-robin across the 3 A instances.
-	if len(seenA) < 2 {
-		t.Errorf("Pick rotated %d distinct A instances in 8 picks, want ≥2 (round-robin)", len(seenA))
+	if len(seen) != 4 {
+		t.Errorf("Pick visited %d distinct targets, want 4", len(seen))
+	}
+	if nodeCounts["node-A"] != 6 || nodeCounts["node-B"] != 2 {
+		t.Errorf("Pick node distribution = %#v, want node-A=6/node-B=2", nodeCounts)
 	}
 }
 
-// TestPGBackend_PickPrefersWarmAffinityNode seeds two nodes with
-// equal healthy counts but configures a warm hint that pins
-// node-B. The picker must prefer B even though A wins on lex order
-// — this is the warm-bonus path in pkg/gateway/pgbackend.go.
-func TestPGBackend_PickPrefersWarmAffinityNode(t *testing.T) {
+// TestPGBackend_PickDoesNotPinWarmAffinityNode seeds two nodes with equal
+// healthy counts and configures a warm hint for node-B. The hint must not
+// pin all request traffic to B; both nodes remain routable.
+func TestPGBackend_PickDoesNotPinWarmAffinityNode(t *testing.T) {
 	admitIdx := atomic.Int64{}
 	sched := &rotatingScheduler{
 		nextNodeID: func() string {
@@ -146,29 +141,26 @@ func TestPGBackend_PickPrefersWarmAffinityNode(t *testing.T) {
 		}
 	}
 
-	// 12 picks: every one must be from node-B (warm hint overrides
-	// tie-break). node-A should never be returned while node-B is
-	// non-empty.
+	nodeCounts := map[string]int{}
 	for i := 0; i < 12; i++ {
 		t1 := b.Pick("app-1")
 		if !t1.OK {
 			t.Fatal("Pick: !ok")
 		}
-		if t1.Target.NodeID != "node-B" {
-			t.Errorf("Pick #%d returned NodeID = %q, want node-B (warm hint)", i, t1.Target.NodeID)
-		}
+		nodeCounts[t1.Target.NodeID]++
+	}
+	if nodeCounts["node-A"] != 6 || nodeCounts["node-B"] != 6 {
+		t.Errorf("Pick node distribution = %#v, want node-A=6/node-B=6", nodeCounts)
 	}
 }
 
-// TestPGBackend_PickColdPathHonorsLexOrder seeds two nodes with equal
-// counts and no warm hint. The picker must use lex order on the
-// stable nodeOrder — node-A sorts before node-B.
-func TestPGBackend_PickColdPathHonorsLexOrder(t *testing.T) {
+// TestPGBackend_PickColdPathRoundRobinsNodes seeds two nodes with equal
+// counts and no warm hint. The picker must use both routable nodes.
+func TestPGBackend_PickColdPathRoundRobinsNodes(t *testing.T) {
 	admitIdx := atomic.Int64{}
 	sched := &rotatingScheduler{
 		nextNodeID: func() string {
-			// Insert order matters: B comes first so nodeOrder
-			// has B before A. A still wins on lex tie-break.
+			// Insert order matters only for the first global pick.
 			n := admitIdx.Add(1)
 			if n == 1 {
 				return "node-B"
@@ -178,7 +170,7 @@ func TestPGBackend_PickColdPathHonorsLexOrder(t *testing.T) {
 		method: gateway.WireWakeColdBoot,
 	}
 	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil)
-	// No WithWarmHint set → picker uses healthyCount + lex tie-break.
+	// No WithWarmHint set → picker still rotates across both nodes.
 
 	for i := 0; i < 2; i++ {
 		if _, _, _, err := b.Admit(context.Background(), "app-1", "", "", "", 5); err != nil {
@@ -186,15 +178,16 @@ func TestPGBackend_PickColdPathHonorsLexOrder(t *testing.T) {
 		}
 	}
 
-	// 6 picks: all from node-A (lex order wins on tied counts).
+	nodeCounts := map[string]int{}
 	for i := 0; i < 6; i++ {
 		t1 := b.Pick("app-1")
 		if !t1.OK {
 			t.Fatal("Pick: !ok")
 		}
-		if t1.Target.NodeID != "node-A" {
-			t.Errorf("Pick #%d returned NodeID = %q, want node-A (lex tie-break)", i, t1.Target.NodeID)
-		}
+		nodeCounts[t1.Target.NodeID]++
+	}
+	if nodeCounts["node-A"] != 3 || nodeCounts["node-B"] != 3 {
+		t.Errorf("Pick node distribution = %#v, want node-A=3/node-B=3", nodeCounts)
 	}
 }
 
@@ -231,10 +224,9 @@ func TestPGBackend_PickSingleNodeFastPath(t *testing.T) {
 	}
 }
 
-// TestPGBackend_PickAfterEvictNodeEntry prunes the sub-cursor when
-// the last entry for a node is evicted. After the eviction, the
-// picker's nodeOrder must no longer mention the drained node —
-// subsequent picks must come from the surviving node only.
+// TestPGBackend_PickAfterEvictNodeEntry prunes cache metadata when the last
+// entry for a node is evicted. Subsequent picks must come from the surviving
+// node only.
 func TestPGBackend_PickAfterEvictNodeEntry(t *testing.T) {
 	admitIdx := atomic.Int64{}
 	sched := &rotatingScheduler{
@@ -284,8 +276,8 @@ func TestPGBackend_PickAfterEvictNodeEntry(t *testing.T) {
 //
 // Two nodes seeded with equal healthy counts (2 each). The cache
 // is initially empty (cold-start, ADR-005) — picker falls through
-// to lex tie-break (node-A wins). cache.Update("app", "node-B")
-// flips the bias; subsequent picks all land on node-B.
+// to global round-robin. cache.Update("app", "node-B") must not change
+// request distribution; the cache remains an admission-placement hint.
 func TestPGBackend_PickFollowsWarmHintCache(t *testing.T) {
 	admitIdx := atomic.Int64{}
 	sched := &rotatingScheduler{
@@ -309,43 +301,44 @@ func TestPGBackend_PickFollowsWarmHintCache(t *testing.T) {
 		}
 	}
 
-	// Phase 1: empty cache. Picker uses healthyCount + lex
-	// tie-break → node-A wins. 4 picks all from node-A.
+	// Phase 1: empty cache. Both nodes are routable.
+	phase1 := map[string]int{}
 	for i := 0; i < 4; i++ {
 		t1 := b.Pick("app")
 		if !t1.OK {
 			t.Fatal("Pick: !ok")
 		}
-		if t1.Target.NodeID != "node-A" {
-			t.Errorf("Pick #%d (phase 1) = NodeID %q, want node-A (lex tie-break, empty cache)", i, t1.Target.NodeID)
-		}
+		phase1[t1.Target.NodeID]++
+	}
+	if phase1["node-A"] != 2 || phase1["node-B"] != 2 {
+		t.Errorf("phase 1 node distribution = %#v, want 2/2", phase1)
 	}
 
-	// Phase 2: hint flips to node-B. All subsequent picks land
-	// on node-B (warm-bonus overrides lex tie-break on tied
-	// counts — same shape as TestPGBackend_PickPrefersWarmAffinityNode
-	// but driven through the real cache instead of a closure).
+	// Phase 2: hint flips to node-B. Request distribution remains balanced.
 	cache.Update("app", "node-B")
+	phase2 := map[string]int{}
 	for i := 0; i < 4; i++ {
 		t1 := b.Pick("app")
 		if !t1.OK {
 			t.Fatal("Pick: !ok")
 		}
-		if t1.Target.NodeID != "node-B" {
-			t.Errorf("Pick #%d (phase 2) = NodeID %q, want node-B (warm hint via cache)", i, t1.Target.NodeID)
-		}
+		phase2[t1.Target.NodeID]++
+	}
+	if phase2["node-A"] != 2 || phase2["node-B"] != 2 {
+		t.Errorf("phase 2 node distribution = %#v, want 2/2", phase2)
 	}
 
-	// Phase 3: Forget clears the hint; picker reverts to lex
-	// tie-break (node-A).
+	// Phase 3: Forget clears the hint; request distribution is unchanged.
 	cache.Forget("app")
+	phase3 := map[string]int{}
 	for i := 0; i < 4; i++ {
 		t1 := b.Pick("app")
 		if !t1.OK {
 			t.Fatal("Pick: !ok")
 		}
-		if t1.Target.NodeID != "node-A" {
-			t.Errorf("Pick #%d (phase 3) = NodeID %q, want node-A (hint cleared via Forget)", i, t1.Target.NodeID)
-		}
+		phase3[t1.Target.NodeID]++
+	}
+	if phase3["node-A"] != 2 || phase3["node-B"] != 2 {
+		t.Errorf("phase 3 node distribution = %#v, want 2/2", phase3)
 	}
 }

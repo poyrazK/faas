@@ -16,6 +16,7 @@ Slice=faas-cp.slice
 MemoryMax=512M
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/storage.env
+EnvironmentFile=-/etc/faas/runtime-bases.env
 Environment=FAAS_BUILDERD_CONFIG=/etc/faas/builderd.toml
 NoNewPrivileges=yes
 ProtectSystem=strict

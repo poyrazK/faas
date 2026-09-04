@@ -33,7 +33,7 @@
       "id": "stripe-billing",
       "category": "billing",
       "vendor": "Stripe",
-      "service": "Stripe Billing + metered usage records",
+      "service": "Stripe Billing + metered usage records (legacy opt-in)",
       "data_categories": [
         "customer email",
         "plan tier",
@@ -46,25 +46,44 @@
       "dpa_signed": true,
       "dpa_reference": "Stripe Data Processing Addendum (linked from Stripe Dashboard)",
       "operator_switch_env": "FAAS_BILLING_PROVIDER",
-      "rationale": "Default billing provider. We pass account-id + plan + metered usage; Stripe handles card data under its own PCI-DSS attestation. Processor never sees card numbers."
+      "rationale": "Legacy opt-in billing provider. We pass account-id + plan + metered usage; Stripe handles card data under its own PCI-DSS attestation. Processor never sees card numbers."
     },
     {
       "id": "paddle-billing",
       "category": "billing",
       "vendor": "Paddle",
-      "service": "Paddle Billing (opt-in alternative to Stripe)",
+      "service": "Paddle Billing (explicit compatibility provider)",
       "data_categories": [
         "customer email",
         "plan tier",
         "metered usage (account-id + hours + MB-RAM-hours)"
       ],
-      "data_region": "EU (Paddle default) or US (Paddle US entity)",
+      "data_region": "EU or US (Paddle entity selected by the merchant)",
       "encryption": "Paddle-managed; PCI-DSS Level 1 attestation",
       "retention_days": null,
       "dpa_signed": true,
       "dpa_reference": "Paddle Data Processing Addendum (linked from Paddle Dashboard)",
       "operator_switch_env": "FAAS_BILLING_PROVIDER",
-      "rationale": "Opt-in alternative for EU-jurisdiction customers who want EU billing data residency. Paddle Billing has no usage-summary endpoint, so ReconcileUsage + Refund return ErrNotImplemented for Paddle accounts (issue #279)."
+      "rationale": "Explicit compatibility provider for deployments that already use Paddle. Paddle Billing has no usage-summary endpoint, so ReconcileUsage returns ErrNotImplemented for Paddle accounts (issue #279)."
+    },
+    {
+      "id": "polar-billing",
+      "category": "billing",
+      "vendor": "Polar",
+      "service": "Polar merchant of record + usage-based billing",
+      "data_categories": [
+        "customer email",
+        "plan tier",
+        "metered usage (account-id + hours + GB-RAM-hours)",
+        "invoice and subscription metadata"
+      ],
+      "data_region": "Polar organization-configured region",
+      "encryption": "Polar-managed; provider PCI-DSS controls",
+      "retention_days": null,
+      "dpa_signed": true,
+      "dpa_reference": "Polar Data Processing Addendum (linked from Polar organization dashboard)",
+      "operator_switch_env": "FAAS_BILLING_PROVIDER",
+      "rationale": "Public-release merchant of record. Gregale sends customer email, plan, subscription metadata, and calendar-month net overage events; Polar handles payment data and applicable merchant-of-record tax obligations under its merchant-of-record model."
     },
     {
       "id": "transactional-email-resend",

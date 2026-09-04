@@ -22,6 +22,7 @@ func TestWakeEvent_AllKindsImplementInterface(t *testing.T) {
 	var _ WakeEvent = QueueAccepted{EmitAt: now, WakeID: "w", AppID: "a", RequestID: "r"}
 	var _ WakeEvent = Admitted{EmitAt: now, WakeID: "w", AppID: "a", RequestID: "r", AccountID: "acct-1", Plan: "hobby"}
 	var _ WakeEvent = BootStarted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Trigger: "gateway", QueuedCount: 2, ConcurrencyAtAdmit: 3, AtCapacity: true}
+	var _ WakeEvent = RestoreBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 596}
 	var _ WakeEvent = BootCompleted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Trigger: "gateway", QueuedCount: 2, ConcurrencyAtAdmit: 3}
 	var _ WakeEvent = BootFailed{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Reason: "stub"}
 	var _ WakeEvent = Readiness200{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", HealthcheckPath: "/healthz", ProbeCount: 1, ElapsedMs: 50}
@@ -55,6 +56,33 @@ func TestQueueAccepted_Shape(t *testing.T) {
 	}
 	if got := ev.Subject(); got != nil {
 		t.Errorf("Subject = %v, want nil", got)
+	}
+}
+
+// TestRestoreBreakdown_Shape pins the detailed restore timing contract. The
+// timeline endpoint intentionally keeps data generic, so these keys are the
+// compatibility surface consumed by the CLI and dashboard.
+func TestRestoreBreakdown_Shape(t *testing.T) {
+	ev := RestoreBreakdown{
+		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-restore", AppID: "a-restore",
+		InstanceID: "i-restore", ChrootMs: 2, MaterializeMemMs: 3,
+		MaterializeVMStateMs: 4, ResolveImagesMs: 5, StageDrivesMs: 6,
+		StageSnapshotMs: 7, HelperMs: 8, StartJailerMs: 9, BindTunMs: 10,
+		LoadSnapshotMs: 400, ResumeHookMs: 11, WaitReadyMs: 131, TotalMs: 596,
+	}
+	if got := ev.Kind(); got != WakeRestoreBreakdown {
+		t.Errorf("Kind = %q, want %q", got, WakeRestoreBreakdown)
+	}
+	p := ev.Payload()
+	for key, want := range map[string]any{
+		"wake_id":            "w-restore",
+		"materialize_mem_ms": int64(3),
+		"load_snapshot_ms":   int64(400),
+		"total_ms":           int64(596),
+	} {
+		if got := p[key]; got != want {
+			t.Errorf("payload[%q] = %v, want %v", key, got, want)
+		}
 	}
 }
 

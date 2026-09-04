@@ -95,12 +95,15 @@ type Loop struct {
 
 	lastTickMu sync.RWMutex
 	// lastTick records the wall-clock time each named tick body last
-	// completed successfully. Keys mirror the runTicks "name" argument:
+	// completed (successfully or with a retained error). Keys mirror the runTicks "name" argument:
 	// "sample", "stripe", "dunning", "residency", "alerts" are populated by
 	// runTicks; "quota" is populated by runQuotaOnce (same field,
 	// written outside runTicks because quota is loop-shaped, not
 	// single-tick).
 	lastTick map[string]time.Time
+	// lastTickErr records the latest error for each timer. A failed billing
+	// pass must not leave /healthz green merely because the ticker fired.
+	lastTickErr map[string]string
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
@@ -141,7 +144,8 @@ func NewLoop(store state.Store, cpu CPUSource, parker ScheddParker, pusher billi
 		store: store, cpu: cpu, parker: parker, pusher: pusher, notif: notif,
 		mailer: mailer, dunning: dunning, residency: residency, evaluator: evaluator,
 		now: now, log: log, cfg: cfg, ops: ops,
-		lastTick: make(map[string]time.Time),
+		lastTick:    make(map[string]time.Time),
+		lastTickErr: make(map[string]string),
 	}
 }
 
@@ -268,6 +272,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			rows, err := sampler.SampleAndRoll(c)
 			if err == nil {
 				l.emitFloorApplied(c, rows)
+				l.emitMeteredMB(c, rows)
 			}
 			// ADR-099 / issue #1184 Workstream A: job
 			// sampler. Same 1m tick, after the app rows,
@@ -288,7 +293,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	go func() { errc <- l.runQuotaTicks(ctx) }()
 	go func() {
 		errc <- l.runTicks(ctx, l.cfg.StripeInterval, func(c context.Context) error {
-			_, err := pusher.PushHour(c)
+			_, err := pusher.PushPending(c, l.cfg.BillingLookback)
 			return err
 		}, "stripe")
 	}()
@@ -395,10 +400,10 @@ func (l *Loop) Run(ctx context.Context) error {
 
 // runTicks is the shared timer driver. Per-tick errors are logged and
 // swallowed so a transient backend hiccup doesn't kill meterd (spec §14
-// hardening: metering must be self-healing). Each successful (or
-// failed-but-logged) tick is observed via ops.Observe and recorded in
-// lastTick[name] under lastTickMu — both writes happen together so the
-// two observability surfaces cannot drift.
+// hardening: metering must be self-healing). Every tick is observed via
+// ops.Observe; lastTick records the most recent attempt for diagnostics and
+// failures are retained separately so /healthz cannot report a failed billing
+// pass as healthy.
 func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(context.Context) error, name string) error {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -410,8 +415,12 @@ func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(c
 			start := time.Now()
 			err := tick(ctx)
 			l.ops.Observe(name, time.Since(start), err)
+			// Keep the timestamp as the last attempt for backwards-compatible
+			// diagnostics; lastTickErr separately makes the health verdict
+			// distinguish an attempted-but-failed tick from a healthy one.
 			l.recordTick(name, start)
 			if err != nil {
+				l.recordTickFailure(name, err)
 				l.log.Warn("meter: "+name+" tick", "err", err)
 			}
 		}
@@ -616,16 +625,64 @@ func (l *Loop) emitFloorApplied(ctx context.Context, rows []RolledRow) {
 	}
 }
 
-// recordTick stamps the last successful tick for /healthz. Centralized
-// so the runTicks / runQuotaTicks paths agree on the storage shape.
+// emitMeteredMB (M-2 / ADR-137 §Decision 1) walks the sampler's
+// returned RolledRows and accumulates MB-seconds onto
+// metered_mb_seconds_total{mode,plan} per live row. The counter
+// is cumulative MB-seconds (NOT row count) so dashboards query
+// rate(_total[5m]) and reconcile 1:1 with usage_minutes.
+// SyntheticFloor rows contribute too — the per-app floor IS
+// billable usage and the dashboard must count it in the
+// mode label, even though it has no backing instance. Mirror
+// is filtered upstream by the sampler and never reaches this
+// closure.
+//
+// Plan stamping is delegated to Sampler.SampleAndRoll — each
+// row carries its account's plan at construction time, so the
+// closure has no DB work. A nil receiver ops is tolerated (the
+// accessor is nil-safe), and rows with empty Plan fall through
+// to "free" via OpsMetrics.MeteredMBSecondsTotal's empty-mode
+// fallback.
+func (l *Loop) emitMeteredMB(ctx context.Context, rows []RolledRow) {
+	if l.ops == nil || len(rows) == 0 {
+		return
+	}
+	for _, r := range rows {
+		// Mirror rows would be skipped upstream; defensive
+		// check matches IsMeteredSkippableMode so a future
+		// refactor that pulls the filter out of the sampler
+		// can't accidentally emit a mirror row here.
+		if state.IsMeteredSkippableMode(r.Mode) {
+			continue
+		}
+		mode := r.Mode
+		if mode == "" {
+			mode = "normal"
+		}
+		l.ops.MeteredMBSecondsTotal(mode, r.Plan, r.MBSeconds)
+	}
+}
+
+// recordTick stamps the last attempted tick for diagnostics. Centralized so
+// the runTicks / runQuotaTicks paths agree on the storage shape.
 func (l *Loop) recordTick(name string, at time.Time) {
 	l.lastTickMu.Lock()
 	l.lastTick[name] = at
+	delete(l.lastTickErr, name)
 	l.lastTickMu.Unlock()
 }
 
-// LastTick returns the wall-clock time the named tick body last
-// completed. ok=false means the tick has never fired. Read-mostly path;
+func (l *Loop) recordTickFailure(name string, err error) {
+	l.lastTickMu.Lock()
+	if err == nil {
+		delete(l.lastTickErr, name)
+	} else {
+		l.lastTickErr[name] = err.Error()
+	}
+	l.lastTickMu.Unlock()
+}
+
+// LastTick returns the wall-clock time the named tick body last completed.
+// ok=false means the tick has never fired. Read-mostly path;
 // the RWMutex lets /healthz probes go lock-free against the writers in
 // the common case.
 func (l *Loop) LastTick(name string) (time.Time, bool) {

@@ -32,11 +32,8 @@ type BillingReconcileResponse struct {
 }
 
 // BillingCatalogKind discriminates the entries inside BillingCatalogResponse.
-//
-// Paddle exposes two distinct price types per plan (the recurring
-// monthly subscription and the flat-rate overage line item) plus a
-// parent product handle. Mirrors paddle.CatalogKind in the response
-// wire — duplicated here so pkg/api can stay leaf (no paddle import).
+// Providers may expose product handles only (Polar) or product plus monthly
+// and overage price handles (Paddle).
 type BillingCatalogKind string
 
 const (
@@ -45,13 +42,13 @@ const (
 	BillingCatalogKindProduct BillingCatalogKind = "product"
 )
 
-// BillingCatalogEntry is one row in the price + product catalog.
+// BillingCatalogEntry is one row in the provider product/price catalog.
 // Plan values are the billable api.Plan constants ("hobby", "pro",
 // "scale") — PlanFree is intentionally absent because it carries
-// no recurring line item. Handle is the Paddle-side id (pri_… for
-// monthly / overage, pro_… for product). SyncedAt is RFC 3339 UTC
-// from the catalog's lastSyncAt; the zero-value renders as
-// "0001-01-01T00:00:00Z" via the standard JSON marshaler.
+// no recurring line item. Handle is the provider-side product or price ID.
+// SyncedAt is RFC 3339 UTC from the provider's last successful preflight;
+// the zero-value renders as "0001-01-01T00:00:00Z" via the standard JSON
+// marshaler.
 type BillingCatalogEntry struct {
 	Plan     string             `json:"plan"`
 	Kind     BillingCatalogKind `json:"kind"`
@@ -60,13 +57,11 @@ type BillingCatalogEntry struct {
 }
 
 // BillingCatalogResponse is the wire shape for the
-// GET/POST/DELETE /v1/admin/billing-paddle-catalog endpoints.
-// Provider is the active billing provider's name (paddle / stripe);
-// on a Stripe deployment the handler 501s before serializing this
-// struct, so the field only ever carries a real value on the
-// Paddle path. SyncedAt is the timestamp of the most recent
-// successful EnsurePlanProducts call; empty string when no
-// hydration has yet completed (POST and DELETE both reset it).
+// GET/POST/DELETE /v1/admin/billing-paddle-catalog compatibility endpoints.
+// Provider is the active billing provider's name (polar / paddle). Providers
+// without a catalog surface receive a 501 before this struct is serialized.
+// SyncedAt is the timestamp of the most recent successful catalog preflight;
+// it is empty when no hydration has completed.
 type BillingCatalogResponse struct {
 	Provider string                `json:"provider"`
 	SyncedAt string                `json:"synced_at"`
@@ -99,4 +94,19 @@ type BillingPaddleOveragePreflightResponse struct {
 	HasClaimedBy   bool  `json:"has_claimed_by"`
 	PendingRows    int64 `json:"pending_rows"`
 	CompletedRows  int64 `json:"completed_rows"`
+}
+
+// AdminRefundResponse is the wire result of an operator-initiated refund.
+// The account and local invoice identifiers are echoed so an automation can
+// correlate the provider refund with the Gregale record without re-reading
+// the request body.
+type AdminRefundResponse struct {
+	AccountID        string `json:"account_id"`
+	InvoiceID        string `json:"invoice_id"`
+	Provider         string `json:"provider"`
+	ProviderRefundID string `json:"provider_refund_id"`
+	ChargeID         string `json:"charge_id"`
+	AmountCents      int64  `json:"amount_cents"`
+	Currency         string `json:"currency"`
+	Status           string `json:"status"`
 }

@@ -50,8 +50,14 @@ type BuildManifest struct {
 	Workdir       string         `json:"workdir"`         // default /build/src
 	OutDir        string         `json:"out_dir"`         // default /build/out
 	Framework     BuildFramework `json:"framework"`
-	TimeoutSec    int            `json:"timeout_sec"`
-	LogTailBytes  int            `json:"log_tail_bytes"` // default 64 KiB
+	// Runtime and RuntimeBaseRef make the builder output reproducible with
+	// imaged's deployment layer. Railpack otherwise chooses its own mutable
+	// runtime base (currently railpack-runtime), which cannot be consumed by
+	// the pinned Gregale runner base used during image materialisation.
+	Runtime        string `json:"runtime,omitempty"`
+	RuntimeBaseRef string `json:"runtime_base_ref,omitempty"`
+	TimeoutSec     int    `json:"timeout_sec"`
+	LogTailBytes   int    `json:"log_tail_bytes"` // default 64 KiB
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init

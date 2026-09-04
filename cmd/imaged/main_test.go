@@ -111,6 +111,37 @@ func TestBuilderBaseRef_SingleBoxKeepsDevelopmentDefault(t *testing.T) {
 	}
 }
 
+func TestResolveGuestInitPath_RejectsLegacyOverrideWhenReleaseBinaryExists(t *testing.T) {
+	exists := func(path string) bool { return path == canonicalGuestInitPath }
+	got := resolveGuestInitPath(legacyGuestInitPath, []string{
+		canonicalGuestInitPath,
+		legacyGuestInitPath,
+	}, exists)
+	if got != canonicalGuestInitPath {
+		t.Fatalf("resolveGuestInitPath() = %q, want canonical release path", got)
+	}
+}
+
+func TestResolveGuestInitPath_PreservesValidExplicitOverride(t *testing.T) {
+	const custom = "/tmp/test-guest-init"
+	got := resolveGuestInitPath(custom, []string{canonicalGuestInitPath}, func(string) bool {
+		return true
+	})
+	if got != custom {
+		t.Fatalf("resolveGuestInitPath() = %q, want explicit path %q", got, custom)
+	}
+}
+
+func TestResolveGuestInitPath_FallsBackToLegacyWhenReleaseMissing(t *testing.T) {
+	got := resolveGuestInitPath(legacyGuestInitPath, []string{
+		canonicalGuestInitPath,
+		legacyGuestInitPath,
+	}, func(path string) bool { return path == legacyGuestInitPath })
+	if got != legacyGuestInitPath {
+		t.Fatalf("resolveGuestInitPath() = %q, want legacy fallback", got)
+	}
+}
+
 // sha256hex64 returns a 64-hex-char fake sha256 digest. Used only to
 // satisfy the `sha256:<64 hex>` shape that oci.ParseReference requires;
 // the bytes themselves are not cryptographically meaningful.

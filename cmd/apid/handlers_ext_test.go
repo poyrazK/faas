@@ -2237,11 +2237,11 @@ func TestStripeWebhook_RefusesEmptySecret(t *testing.T) {
 	}
 }
 
-// TestStripeWebhook_AcceptsSigned fires a properly signed event and
-// asserts the handler returns 200 (Stripe expects 2xx for everything
-// it didn't recognize — the handler emits 200 with no side effect on
-// an unknown customer ID).
-func TestStripeWebhook_AcceptsSigned(t *testing.T) {
+// TestStripeWebhook_UnknownCustomerIsRetryable fires a properly signed
+// billing event and asserts the handler returns 503. A 200 would silently
+// discard an entitlement transition when the local customer binding is
+// temporarily missing.
+func TestStripeWebhook_UnknownCustomerIsRetryable(t *testing.T) {
 	const secret = "whsec_test_signing_secret"
 	srv := newStripeServer(t, secret)
 	body := []byte(`{"type":"invoice.payment_succeeded","data":{"object":{"customer":"cus_unknown"}}}`)
@@ -2251,8 +2251,8 @@ func TestStripeWebhook_AcceptsSigned(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Stripe-Signature", header)
 	srv.ServeHTTP(rec, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("signed event: status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("signed event: status = %d, want 503\nbody = %s", rec.Code, rec.Body.String())
 	}
 }
 

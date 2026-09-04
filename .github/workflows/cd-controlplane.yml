@@ -91,6 +91,7 @@ jobs:
             --pattern release.sbom.json \
             --pattern release-manifest.json \
             --pattern production-manifest.yaml \
+            --pattern runtime-bases.env \
             --pattern SHA256SUMS \
             --dir "$CANONICAL_ROOT"
           (
@@ -145,7 +146,7 @@ jobs:
           install -m 0644 "${CANONICAL_ROOT}/unpacked/release-manifest.json" \
             "${BUNDLE_ROOT}/release-manifest.json"
           rm -f "${BUNDLE_ROOT}/bin/release-manifest.json"
-          for asset in release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml SHA256SUMS; do
+          for asset in release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env SHA256SUMS; do
             install -m 0644 "${CANONICAL_ROOT}/${asset}" "${BUNDLE_ROOT}/${asset}"
           done
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \

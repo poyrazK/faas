@@ -360,7 +360,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 	// CategoryFor mis-classification can't ship silently.
 	wantPerCat := map[string][]string{
 		"hello":              {"hello-node", "hello-python", "hello-go"},
-		"function":           {"function-node", "function-python", "function-go", "cron-example"},
+		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example"},
 		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver"},
 		"ai":                 {"ai-chat"},
 	}

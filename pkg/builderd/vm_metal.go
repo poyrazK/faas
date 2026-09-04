@@ -154,16 +154,18 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		timeoutSec = api.BuildTimeoutSeconds
 	}
 	bManifest := api.BuildManifest{
-		SchemaVersion: 1,
-		BuildID:       req.BuildID,
-		TenantID:      req.TenantID,
-		DeploymentID:  req.DeploymentID,
-		SourceTarPath: "/build/src.tar",
-		Workdir:       "/build/src",
-		OutDir:        "/build/out",
-		Framework:     MapFramework(req.Framework),
-		TimeoutSec:    timeoutSec,
-		LogTailBytes:  64 * 1024,
+		SchemaVersion:  1,
+		BuildID:        req.BuildID,
+		TenantID:       req.TenantID,
+		DeploymentID:   req.DeploymentID,
+		SourceTarPath:  "/build/src.tar",
+		Workdir:        "/build/src",
+		OutDir:         "/build/out",
+		Framework:      MapFramework(req.Framework),
+		Runtime:        req.Runtime,
+		RuntimeBaseRef: req.RuntimeBaseRef,
+		TimeoutSec:     timeoutSec,
+		LogTailBytes:   64 * 1024,
 	}
 	if err := CreateBuildDrive1(ctx, drive1Path, bManifest, req.SourcePath); err != nil {
 		os.Remove(drive1Path)

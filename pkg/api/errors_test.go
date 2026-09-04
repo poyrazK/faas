@@ -486,20 +486,21 @@ func TestErrPlanQueueDepth_DistinctFromDelayedCap(t *testing.T) {
 	}
 }
 
-// TestProblem_PaddleExtensionMarshalled asserts the Paddle checkout
-// URL + tx_id extensions serialize correctly on a 402 — and stay
+// TestProblem_CheckoutExtensionsMarshalled asserts the provider-neutral
+// and legacy checkout URL + tx_id extensions serialize correctly on a 402 — and stay
 // omitted on a Problem that doesn't carry them (so the Stripe-default
 // response shape is unchanged).
 //
 // Pin for PR #3 / ADR-025: the 402 Problem carries at most one of
 // BillingPortalURL or PaddleCheckoutURL on the wire; the JSON omitempty
 // tag guarantees the unused field drops out cleanly.
-func TestProblem_PaddleExtensionMarshalled(t *testing.T) {
+func TestProblem_CheckoutExtensionsMarshalled(t *testing.T) {
 	t.Parallel()
 
 	t.Run("both fields populated", func(t *testing.T) {
 		p := &Problem{
 			Code:              CodePayment,
+			CheckoutURL:       "https://checkout.polar.sh/session-1",
 			PaddleCheckoutURL: "https://sandbox.paddle.example/checkout/abc",
 			TxID:              "txn_test_123",
 		}
@@ -509,6 +510,9 @@ func TestProblem_PaddleExtensionMarshalled(t *testing.T) {
 		}
 		if !strings.Contains(string(b), `"paddle_checkout_url":"https://sandbox.paddle.example/checkout/abc"`) {
 			t.Errorf("missing paddle_checkout_url in JSON: %s", b)
+		}
+		if !strings.Contains(string(b), `"checkout_url":"https://checkout.polar.sh/session-1"`) {
+			t.Errorf("missing checkout_url in JSON: %s", b)
 		}
 		if !strings.Contains(string(b), `"tx_id":"txn_test_123"`) {
 			t.Errorf("missing tx_id in JSON: %s", b)
@@ -523,6 +527,9 @@ func TestProblem_PaddleExtensionMarshalled(t *testing.T) {
 		}
 		if strings.Contains(string(b), "paddle_checkout_url") {
 			t.Errorf("paddle_checkout_url should be omitted when empty: %s", b)
+		}
+		if strings.Contains(string(b), "checkout_url") {
+			t.Errorf("checkout_url should be omitted when empty: %s", b)
 		}
 		if strings.Contains(string(b), "tx_id") {
 			t.Errorf("tx_id should be omitted when empty: %s", b)
@@ -545,6 +552,9 @@ func TestProblem_PaddleExtensionMarshalled(t *testing.T) {
 		}
 		if strings.Contains(string(b), "paddle_checkout_url") {
 			t.Errorf("paddle_checkout_url must not appear on the Stripe 402: %s", b)
+		}
+		if strings.Contains(string(b), "checkout_url") {
+			t.Errorf("checkout_url must not appear on the portal-only 402: %s", b)
 		}
 		if strings.Contains(string(b), "tx_id") {
 			t.Errorf("tx_id must not appear on the Stripe 402: %s", b)

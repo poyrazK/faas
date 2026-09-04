@@ -107,6 +107,16 @@ func (vmmStubBase) Destroy(_ context.Context, _ string) error { return nil }
 func (vmmStubBase) DestroyWithExport(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
+
+// SignalAndKill (M-2 / ADR-138 §Decision 1) is the
+// graceful stop sequence. Test fakes default to
+// no-op + (false, 0, nil) — parse-failure tests do not
+// reach the inner Manager. Behavioural coverage lives in
+// pkg/fcvm/vmm_signal_kill_test.go (portable) and the
+// //go:build metal test pkg/fcvm/vmm_signal_kill_metal_test.go.
+func (vmmStubBase) SignalAndKill(_ context.Context, _ string, _ int32, _ int32) (bool, int32, error) {
+	return false, 0, nil
+}
 func (vmmStubBase) UpdateEgressAllowlist(_ context.Context, _ string, _ []netip.Prefix) error {
 	return nil
 }

@@ -59,15 +59,14 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[BillingPortalResponse | Problem]:
-    """Get the operator-configured billing portal URL (and the card-on-file summary).
+    """Get a provider billing portal URL (and the card-on-file summary).
 
      Returns the URL the customer should be sent to in order to
     manage their subscription (update card, view invoices,
-    download receipts, cancel). The URL is server-rendered from
-    the operator's `FAAS_BILLING_PORTAL_URL` template; the server
-    does NOT call Stripe's `BillingPortal.Session` SDK on this
-    path (issue #253 acceptance #3 partial — a follow-up PR will
-    add the SDK call once the spec defines the contract).
+    download receipts, cancel). When the active provider exposes
+    customer sessions, the server creates a short-lived authenticated
+    portal URL. Otherwise it renders the operator's
+    `FAAS_BILLING_PORTAL_URL` template.
 
     The response also carries a `payment_method` block (issue
     #242) — the card-on-file summary (brand, last-4, expiry).
@@ -96,15 +95,14 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> BillingPortalResponse | Problem | None:
-    """Get the operator-configured billing portal URL (and the card-on-file summary).
+    """Get a provider billing portal URL (and the card-on-file summary).
 
      Returns the URL the customer should be sent to in order to
     manage their subscription (update card, view invoices,
-    download receipts, cancel). The URL is server-rendered from
-    the operator's `FAAS_BILLING_PORTAL_URL` template; the server
-    does NOT call Stripe's `BillingPortal.Session` SDK on this
-    path (issue #253 acceptance #3 partial — a follow-up PR will
-    add the SDK call once the spec defines the contract).
+    download receipts, cancel). When the active provider exposes
+    customer sessions, the server creates a short-lived authenticated
+    portal URL. Otherwise it renders the operator's
+    `FAAS_BILLING_PORTAL_URL` template.
 
     The response also carries a `payment_method` block (issue
     #242) — the card-on-file summary (brand, last-4, expiry).
@@ -129,15 +127,14 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[BillingPortalResponse | Problem]:
-    """Get the operator-configured billing portal URL (and the card-on-file summary).
+    """Get a provider billing portal URL (and the card-on-file summary).
 
      Returns the URL the customer should be sent to in order to
     manage their subscription (update card, view invoices,
-    download receipts, cancel). The URL is server-rendered from
-    the operator's `FAAS_BILLING_PORTAL_URL` template; the server
-    does NOT call Stripe's `BillingPortal.Session` SDK on this
-    path (issue #253 acceptance #3 partial — a follow-up PR will
-    add the SDK call once the spec defines the contract).
+    download receipts, cancel). When the active provider exposes
+    customer sessions, the server creates a short-lived authenticated
+    portal URL. Otherwise it renders the operator's
+    `FAAS_BILLING_PORTAL_URL` template.
 
     The response also carries a `payment_method` block (issue
     #242) — the card-on-file summary (brand, last-4, expiry).
@@ -164,15 +161,14 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> BillingPortalResponse | Problem | None:
-    """Get the operator-configured billing portal URL (and the card-on-file summary).
+    """Get a provider billing portal URL (and the card-on-file summary).
 
      Returns the URL the customer should be sent to in order to
     manage their subscription (update card, view invoices,
-    download receipts, cancel). The URL is server-rendered from
-    the operator's `FAAS_BILLING_PORTAL_URL` template; the server
-    does NOT call Stripe's `BillingPortal.Session` SDK on this
-    path (issue #253 acceptance #3 partial — a follow-up PR will
-    add the SDK call once the spec defines the contract).
+    download receipts, cancel). When the active provider exposes
+    customer sessions, the server creates a short-lived authenticated
+    portal URL. Otherwise it renders the operator's
+    `FAAS_BILLING_PORTAL_URL` template.
 
     The response also carries a `payment_method` block (issue
     #242) — the card-on-file summary (brand, last-4, expiry).

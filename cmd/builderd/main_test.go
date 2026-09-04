@@ -106,6 +106,24 @@ func TestDefaultDeps_NewResidentProbeWired(t *testing.T) {
 	}
 }
 
+func TestBuilderNotificationChannelsIncludeCancellation(t *testing.T) {
+	got := builderNotificationChannels()
+	want := map[string]bool{
+		"build_queued":  false,
+		"build_changed": false,
+	}
+	for _, channel := range got {
+		if _, ok := want[channel]; ok {
+			want[channel] = true
+		}
+	}
+	for channel, seen := range want {
+		if !seen {
+			t.Errorf("notification channels missing %q: %v", channel, got)
+		}
+	}
+}
+
 // ----------------------------------------------------------------------
 // PR-B: workerLoop (durable build-queue worker) acceptance
 // ----------------------------------------------------------------------

@@ -120,6 +120,15 @@ func (s *stubVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 func (s *stubVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	return &vmmdpb.DestroyResponse{}, nil
 }
+
+// StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
+// signal-grace-SIGKILL stop sequence. The forwardproxy handler
+// integration test never exercises it (the forwarder is
+// request-shaped, not worker/job), so the stub returns the
+// zero-value response — same shape as Destroy.
+func (s *stubVmmdClient) StopInstance(context.Context, *vmmdpb.StopInstanceRequest, ...grpc.CallOption) (*vmmdpb.StopInstanceResponse, error) {
+	return &vmmdpb.StopInstanceResponse{}, nil
+}
 func (s *stubVmmdClient) Stats(context.Context, *vmmdpb.StatsRequest, ...grpc.CallOption) (*vmmdpb.StatsResponse, error) {
 	return &vmmdpb.StatsResponse{}, nil
 }

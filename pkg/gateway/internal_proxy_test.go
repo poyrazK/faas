@@ -16,6 +16,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
 // stubDialer captures the (ctx, target) tuples for assertions and
@@ -241,6 +244,64 @@ func TestInternalReverseProxy_DialFailure_502BadGateway(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "internal round-trip failed") {
 		t.Errorf("body = %q, want substring \"internal round-trip failed\"", rr.Body.String())
+	}
+}
+
+// TestInternalReverseProxy_BudgetExpiry_504NotBadGateway pins the
+// production regression this fix closes. Under a 1000-concurrency
+// burst the compute layer answered 200 for 99% of requests, but the
+// public edge's own 3 s request budget fired mid-RoundTrip and the
+// proxy reported every one of them as 502 "bad gateway" — blaming
+// upstream for the edge's own deadline and discarding work the
+// customer was billed for. A fired budget must surface as the
+// canonical 504 + RFC 7807 request_budget_exceeded envelope.
+func TestInternalReverseProxy_BudgetExpiry_504NotBadGateway(t *testing.T) {
+	// Upstream is healthy but slower than the budget.
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	defer close(release)
+
+	dialer := &stubDialer{server: upstream}
+	p := NewInternalReverseProxy(dialer, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+
+	// Attach a request budget the way cmd/gatewayd-public's
+	// reqbudget middleware does, then let it expire.
+	req := httptest.NewRequest(http.MethodGet, "/app", nil)
+	ctx, cancel, _ := reqbudget.WithRemaining(req.Context(), 50*time.Millisecond,
+		api.RequestBudgetMax, "forward", "GET:/app")
+	defer cancel()
+	rr := httptest.NewRecorder()
+	p.ServeHTTP(rr, req.WithContext(ctx))
+
+	if rr.Code != http.StatusGatewayTimeout {
+		t.Errorf("status = %d, want 504 (budget expiry is not an upstream fault)", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), api.CodeRequestBudgetExceeded) {
+		t.Errorf("body = %q, want RFC 7807 code %q", rr.Body.String(), api.CodeRequestBudgetExceeded)
+	}
+	if strings.Contains(rr.Body.String(), "bad gateway") {
+		t.Errorf("body = %q, must not blame upstream for the edge's own deadline", rr.Body.String())
+	}
+}
+
+// A RoundTrip failure with NO budget attached must still be a 502 —
+// the fix must not swallow genuine upstream faults. Without this the
+// budget check could regress into "every transport error is a 504".
+func TestInternalReverseProxy_NoBudget_StillBadGateway(t *testing.T) {
+	dialer := &stubDialer{dialErr: io.EOF}
+	p := NewInternalReverseProxy(dialer, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	req := httptest.NewRequest(http.MethodGet, "/app", nil)
+	rr := httptest.NewRecorder()
+	p.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502 when no request budget is attached", rr.Code)
 	}
 }
 

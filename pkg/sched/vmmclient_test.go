@@ -82,6 +82,14 @@ func (f *fakeVMM) Destroy(ctx context.Context, instance string) error {
 	return nil
 }
 
+// StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
+// signal-then-grace-then-SIGKILL stop sequence. Test fakes
+// default to no-op + nil — the engine's per-mode dispatch lives
+// in pkg/sched/engine_stop_pgtest_test.go (commit 6).
+func (f *fakeVMM) StopInstance(_ context.Context, _ string, _, _ int32) (*sched.StopInstanceOutcome, error) {
+	return nil, nil
+}
+
 func (f *fakeVMM) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
 	// Schedd doesn't use the export path; treat as Destroy-equivalent.
 	if f.destFn != nil {
@@ -90,6 +98,15 @@ func (f *fakeVMM) DestroyWithExport(ctx context.Context, instance, exportDir str
 		}
 	}
 	return 0, nil
+}
+
+// SignalAndKill (M-2 / ADR-138 §Decision 1) is the graceful
+// stop sequence. Test fakes default to no-op + (false, 0, nil)
+// — the bufconn wire round-trip test asserts the gRPC envelope
+// shape and lift behaviour, not the inner teardown. Behavioural
+// coverage lives in pkg/fcvm/vmm_signal_kill_test.go (portable).
+func (f *fakeVMM) SignalAndKill(_ context.Context, _ string, _ int32, _ int32) (bool, int32, error) {
+	return false, 0, nil
 }
 
 func (f *fakeVMM) ExportDirFor(instance string) string { return "" }

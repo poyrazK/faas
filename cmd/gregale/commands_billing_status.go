@@ -2,14 +2,13 @@
 // `faas billing status --watch` (PR-P4).
 //
 // Prints the active billing Provider name + the cached catalog
-// snapshot. Backs the operator's at-a-glance "is Paddle wired up
+// snapshot. Backs the operator's at-a-glance "is billing wired up
 // correctly?" check. The endpoint is admin-scoped + email-allowlist
 // gated server-side; this CLI just renders the response.
 //
-// On a Stripe deployment the handler returns 501 with code
-// billing_op_unsupported — the CLI surfaces that as a typed error
-// so the operator knows the surface is Paddle-scoped, not a
-// transport failure.
+// On a provider without a catalog surface the handler returns 501 with
+// code billing_op_unsupported — the CLI surfaces that as a typed error
+// instead of an empty or misleading catalog.
 //
 // PR-P4 additions:
 //   - --watch N     re-poll the catalog every 5 s for N seconds
@@ -141,8 +140,8 @@ func parseBillingStatusFlags(args []string) (bool, time.Duration, bool, bool, er
 // clean exit (Ctrl-C handled by os.Interrupt → SIGINT → context
 // cancel via the harness's signal.NotifyContext; see
 // cmd/gregale/main.go). Returns non-zero if the FIRST poll fails
-// — a 501 on the first tick is a hard fail (Stripe-only deployment
-// has nothing to watch); a 501 on a later tick prints a warning
+// — a 501 on the first tick is a hard fail (a provider without a
+// catalog has nothing to watch); a 501 on a later tick prints a warning
 // but keeps the loop running, since a transient provider flip mid-
 // watch is a legitimate operator scenario.
 func runBillingStatusWatch(ctx context.Context, client *api.Client, watchDur time.Duration, asJSON, noClear bool) int {
@@ -202,10 +201,10 @@ func printBillingStatusJSON(w io.Writer, resp api.BillingCatalogResponse) error 
 
 // printBillingStatus renders the catalog as a tab-aligned table.
 // The first column is "plan / kind" so the operator can scan a row
-// per (plan, kind) pair; the second column is the Paddle-side
-// handle (pri_… / pro_…); the third is the SyncedAt timestamp.
+// per (plan, kind) pair; the second column is the provider-side
+// handle; the third is the SyncedAt timestamp.
 //
-// An empty catalog (no hydration yet) renders the "Provider: paddle,
+// An empty catalog (no hydration yet) renders the active provider,
 // SyncedAt: never synced" header followed by a one-line hint to run
 // `faas billing price-catalog sync`. We do not gate that hint on
 // the response — the operator's CLI subcommand is the right place

@@ -69,7 +69,32 @@ func cmdInvoke(args []string) int {
 	if len(resp.Result) > 0 {
 		_, _ = fmt.Fprintln(os.Stdout, string(resp.Result))
 	}
+	// A synchronous invoke that came back `failed` is a failed smoke
+	// test, so it must not exit 0. The HTTP call succeeded (the
+	// server returned 200 with a terminal state in the body), which
+	// is why the `err != nil` arm above does not catch this — the
+	// failure is in the payload, not the transport. Exiting 0 here
+	// made `gregale invoke` useless as a CI gate: a parked or broken
+	// app reported success. Result (if any) is still printed above so
+	// the operator sees the handler's own error body.
+	if !invokeStatusOK(resp.Status) {
+		_, _ = fmt.Fprintf(os.Stderr, "invoke: terminal state %q — see `gregale invocations get %s` for the error\n", resp.Status, resp.ID)
+		return 1
+	}
 	return 0
+}
+
+// invokeStatusOK reports whether a synchronous invoke's terminal
+// state should exit 0. The vocabulary is the invocations_state_check
+// CHECK in migrations/00064_invocations_dead_letter.sql:
+// pending|dispatching|completed|failed|cancelled|dead_letter.
+//
+// Only `completed` is success. The non-terminal states (pending /
+// dispatching) are treated as failure too: a synchronous invoke that
+// returns without reaching a terminal state has not demonstrated the
+// app works, which is the one question this command exists to answer.
+func invokeStatusOK(status string) bool {
+	return status == "completed"
 }
 
 // resolvePayload accepts three payload shapes:

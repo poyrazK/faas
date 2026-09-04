@@ -3,43 +3,109 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}} — onebox faas</title>
-  <script src="https://unpkg.com/htmx.org@2.0.4" nonce="{{.Nonce}}" defer></script>
+  <title>{{.Title}} — Gregale</title>
   <style nonce="{{.Nonce}}">
-    :root { color-scheme: light dark; }
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
-    .flash { background: #fff8c5; padding: 0.5rem 1rem; border: 1px solid #e2cf6e; margin: 1rem 0; }
-    .error { background: #fde7e9; padding: 0.5rem 1rem; border: 1px solid #e0a3aa; margin: 1rem 0; }
-    main { padding: 2rem 0; }
-    h1 { margin-top: 0; }
-    form { display: grid; gap: 0.5rem; max-width: 360px; }
-    input, button { padding: 0.5rem 0.7rem; font: inherit; }
-    button { cursor: pointer; }
-    .providers { display: grid; gap: 0.5rem; max-width: 360px; margin-top: 1.5rem; }
-    .oauth-link { text-decoration: none; padding: 0.5rem 0.7rem; border: 1px solid #ccc; border-radius: 4px; display: block; text-align: center; }
-    .oauth-link:hover { background: #f0f0f0; }
-    .forgot { margin-top: 0.5rem; font-size: 0.9em; }
+    /* The sign-in page `gregale login` opens. Nothing decorative: a form,
+       the OS polarity, no animation, no external origins. */
+    :root {
+      color-scheme: light dark;
+      --fg: #111;
+      --muted: #6b6b6b;
+      --line: #e4e4e4;
+      --bg: #fff;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --fg: #ededed; --muted: #979797; --line: #2a2a2a; --bg: #0d0d0d; }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--fg);
+      font: 15px/1.6 ui-sans-serif, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    main { width: min(22rem, calc(100vw - 3rem)); padding: 3rem 0; }
+    .brand { font-size: 0.9rem; font-weight: 600; letter-spacing: 0.01em; margin: 0 0 2.5rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 1.5rem; }
+
+    form { display: grid; gap: 1rem; margin: 0; }
+    label { display: grid; gap: 0.35rem; font-size: 0.8rem; color: var(--muted); }
+    input {
+      font: inherit; color: var(--fg);
+      background: transparent;
+      border: 1px solid var(--line); border-radius: 6px;
+      padding: 0.55rem 0.7rem;
+    }
+    input:focus { outline: none; border-color: var(--fg); }
+
+    button {
+      font: inherit; font-weight: 600;
+      color: var(--bg); background: var(--fg);
+      border: 1px solid var(--fg); border-radius: 6px;
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+    }
+    button:hover { opacity: 0.85; }
+    button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+    a { color: inherit; text-underline-offset: 3px; }
+    a:hover { color: var(--muted); }
+    .forgot { margin: 0; font-size: 0.8rem; }
+
+    .providers { display: grid; gap: 0.6rem; margin: 1.75rem 0 0; }
+    .oauth-link {
+      display: block; text-align: center; text-decoration: none;
+      font-size: 0.9rem;
+      border: 1px solid var(--line); border-radius: 6px;
+      padding: 0.55rem 0.7rem;
+    }
+    .oauth-link:hover { border-color: var(--fg); color: var(--fg); }
+
+    .signup { margin: 1.75rem 0 0; font-size: 0.85rem; color: var(--muted); }
+
+    .flash, .errorbox {
+      border: 1px solid var(--line); border-radius: 6px;
+      padding: 0.6rem 0.75rem; margin: 0 0 1.5rem;
+      font-size: 0.85rem;
+    }
+    .errorbox { color: #b3261e; border-color: #b3261e; }
+    @media (prefers-color-scheme: dark) { .errorbox { color: #ff8f88; border-color: #7a3733; } }
   </style>
 </head>
 <body>
-  {{if .Flash}}
-    {{if index .Data "Error"}}<div class="error">{{.Flash}}</div>{{else}}<div class="flash">{{.Flash}}</div>{{end}}
-  {{end}}
   <main>
+    <p class="brand">Gregale</p>
+
+    {{if .Flash}}
+      {{if index .Data "Error"}}<div class="errorbox" role="alert">{{.Flash}}</div>{{else}}<div class="flash">{{.Flash}}</div>{{end}}
+    {{end}}
+
     <h1>{{.Title}}</h1>
+
     <form method="POST" action="/login">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" required autocomplete="email">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" required autocomplete="current-password" minlength="12">
+      <label for="email">Email
+        <input id="email" name="email" type="email" required autocomplete="email">
+      </label>
+      <label for="password">Password
+        <input id="password" name="password" type="password" required autocomplete="current-password" minlength="12">
+      </label>
       <button type="submit">Sign in</button>
       <p class="forgot"><a href="/login/forgot">Forgot password?</a></p>
     </form>
-    <p>No account? <a href="/signup">Sign up</a></p>
+
+    {{if .Auth}}{{if or .Auth.GoogleEnabled .Auth.GitHubEnabled}}
     <div class="providers">
-      {{if .Auth}}{{if .Auth.GoogleEnabled}}<a class="oauth-link" href="/v1/auth/google">Sign in with Google</a>{{end}}{{end}}
-      {{if .Auth}}{{if .Auth.GitHubEnabled}}<a class="oauth-link" href="/v1/auth/github">Sign in with GitHub</a>{{end}}{{end}}
+      {{if .Auth.GoogleEnabled}}<a class="oauth-link" href="/v1/auth/google">Continue with Google</a>{{end}}
+      {{if .Auth.GitHubEnabled}}<a class="oauth-link" href="/v1/auth/github">Continue with GitHub</a>{{end}}
     </div>
+    {{end}}{{end}}
+
+    <p class="signup">No account? <a href="/signup">Sign up</a></p>
   </main>
 </body>
 </html>

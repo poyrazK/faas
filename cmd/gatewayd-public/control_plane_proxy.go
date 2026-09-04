@@ -57,6 +57,13 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger)
 }
 
 func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Prometheus consumes this registry-backed service-discovery endpoint only
+	// over apid's loopback listener. Do not let the public control-plane proxy
+	// turn it into an externally reachable API route.
+	if r.URL.Path == "/v1/internal/metrics/targets" {
+		http.NotFound(w, r)
+		return
+	}
 	if apid.IsApidPath(r.URL.Path) && !isComputeOwnedGatewayPath(r.URL.Path) {
 		p.proxy.ServeHTTP(w, r)
 		return

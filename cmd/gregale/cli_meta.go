@@ -95,6 +95,10 @@ type cliFlag struct {
 	// them); the marker exists for the man-page SYNOPSIS section
 	// to render the required marker `(<name>|<placeholder>)`.
 	Req bool
+	// Value is the placeholder for a value-taking flag (for example,
+	// "slug" or "PATH"). Empty means the flag is boolean unless Req or
+	// ClosedSet says otherwise.
+	Value string
 	// ClosedSet enumerates the allowed literal values, when the
 	// flag is a closed enum (plan, metric, comparison, window-spec,
 	// etc.). When non-empty, completion offers these as the flag's
@@ -103,7 +107,9 @@ type cliFlag struct {
 	ClosedSet []string
 }
 
-// templateNames13 is the canonical 13-name template catalog. Mirrors
+// templateNames13 is the canonical template catalog. The historical name is
+// retained because tests and completion metadata refer to this package-local
+// symbol; it now contains all 15 embedded templates. Mirrors
 // cmd/gregale/templates/embed.go::Names verbatim; the ClosedSet literals
 // in deploy/init reference this const so goconst stops flagging the
 // duplicated 13-name lists. Kept in sync with the embed FS by the
@@ -116,6 +122,8 @@ var templateNames13 = []string{
 	"function-node",
 	"function-python",
 	"function-go",
+	"function-node24",
+	"function-python313",
 	"s3-uploader",
 	"slack-bot",
 	"rest-api-postgres",
@@ -149,11 +157,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "admin",
 		DocSlug: "admin",
-		Short:   "Operator-only billing ops (admin credit --reason <text> <uuid> <cents>)",
+		Short:   "Operator-only billing ops (admin credit|refund|consume-credits)",
 		Subcommands: []cliSub{
 			{Name: "credit", Short: "Issue a billing credit", Flags: []cliFlag{
-				{Name: "reason", Short: "credit reason text", Req: true},
+				{Name: "reason", Short: "credit reason text", Req: true, Value: "text"},
 			}},
+			{Name: "refund", Short: "Refund a paid Polar invoice", Flags: []cliFlag{
+				{Name: "reason", Short: "refund reason text", Req: true, Value: "text"},
+				{Name: "idempotency-key", Short: "stable provider retry key", Value: "key"},
+			}},
+			{Name: "consume-credits", Short: "Consume credits against an invoice"},
 		},
 		Positionals: []string{"<uuid>", "<cents>"},
 	},
@@ -163,7 +176,7 @@ var cliCommands = []cliCommand{
 		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List alert rules", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}},
 			{Name: "add", Short: "Add an alert rule"},
 			{Name: "info", Short: "Show one alert rule"},
@@ -176,7 +189,7 @@ var cliCommands = []cliCommand{
 			// --webhook-url <url> --webhook-secret <s>.
 			{Name: "preset", Short: "Alert preset catalog (preset list|enable --app <slug>)"},
 		},
-		Flags: []cliFlag{{Name: "app", Short: "app slug"}},
+		Flags: []cliFlag{{Name: "app", Short: "app slug", Value: "slug"}},
 	},
 	{
 		Name:    "audit-events",
@@ -213,8 +226,8 @@ var cliCommands = []cliCommand{
 		},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
-			{Name: "ram", Short: "set RAM in MB"},
-			{Name: "max-concurrency", Short: "set max_concurrency"},
+			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
+			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
 		},
 	},
@@ -223,9 +236,19 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "billing",
 		DocSlug: "billing",
-		Short:   "Manage billing (gregale billing portal)",
+		Short:   "Manage billing (portal, invoices, subscription, card on file)",
+		// Mirrors every case in cmdBilling (commands_billing.go); the
+		// manifest had listed `portal` alone for eight real verbs.
 		Subcommands: []cliSub{
-			{Name: "portal", Short: "Open the Stripe billing portal"},
+			{Name: "portal", Short: "Open the active billing provider's portal"},
+			{Name: "retry", Short: "Retry failed payment when supported; Polar uses the portal"},
+			{Name: "cancel", Short: "Cancel the subscription at period end"},
+			{Name: "payment-method", Short: "Show the card on file"},
+			{Name: "status", Short: "Show subscription status"},
+			{Name: "price-catalog", Short: "Inspect the price catalog (admin)"},
+			{Name: "reconcile", Short: "Reconcile an invoice with the provider (admin)"},
+			{Name: "reconcile-paddle-overage", Short: "Reconcile Paddle overage charges (admin)"},
+			{Name: "webhook-test", Short: "Send a signed test webhook (operator)"},
 		},
 	},
 	{
@@ -326,8 +349,8 @@ var cliCommands = []cliCommand{
 		DocSlug: "deployments",
 		Short:   "List deployments (--limit N | --before C | --all)",
 		Flags: []cliFlag{
-			{Name: "limit", Short: "page size (1-200)"},
-			{Name: "before", Short: "pagination cursor (RFC3339Nano)"},
+			{Name: "limit", Short: "page size (1-200)", Value: "N"},
+			{Name: "before", Short: "pagination cursor (RFC3339Nano)", Value: "cursor"},
 			{Name: "all", Short: "walk every page"},
 		},
 	},
@@ -341,7 +364,7 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<id>"},
 		Flags: []cliFlag{
 			{Name: "show-scan", Short: "include the per-deploy grype scan payload"},
-			{Name: "min", Short: "min_instances floor (>= 0)"},
+			{Name: "min", Short: "min_instances floor (>= 0)", Value: "N"},
 		},
 	},
 	{
@@ -373,19 +396,19 @@ var cliCommands = []cliCommand{
 		DocSlug: "deploy",
 		Short:   "Deploy (--image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
 		Flags: []cliFlag{
-			{Name: "image", Short: "deploy from a container image reference"},
-			{Name: "tarball", Short: "deploy from a source tarball"},
-			{Name: "repo", Short: "deploy from a GitHub repo"},
+			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
+			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
+			{Name: "repo", Short: "deploy from a GitHub repo", Value: "OWNER/NAME"},
 			// Issue #739 / ADR-092: --ref pairs with --repo to
 			// drive the headless source-ref deploy (CI-friendly,
 			// no install-token env). Required when --repo is set.
-			{Name: "ref", Short: "git ref for --repo (branch, tag, or 40-char SHA)"},
+			{Name: "ref", Short: "git ref for --repo (branch, tag, or 40-char SHA)", Value: "REF"},
 			// Issue #270: --github emits a copy-paste Actions workflow
 			// snippet for the faas-deploy-action (companion repo
 			// poyrazK/faas-deploy-action). No auth, no side effects.
 			// The snippet uses --name / cwd as the app slug.
 			{Name: "github", Short: "emit a GitHub Actions workflow snippet for faas-deploy-action"},
-			{Name: "template", Short: "scaffold from a built-in template", ClosedSet: templateNames13},
+			{Name: "template", Short: "scaffold from a built-in template", Value: "NAME", ClosedSet: templateNames13},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);
@@ -405,10 +428,10 @@ var cliCommands = []cliCommand{
 			// Action path defaults to ${{ github.event.pull_request.number }}
 			// but operators running the CLI directly with a known
 			// PR number need an discoverable way to stamp it.
-			{Name: "reason", Short: "free-text deploy reason (≤280 chars)"},
-			{Name: "tag", Short: "annotation tag", ClosedSet: DeploymentAnnotationTags},
-			{Name: "deployed-by", Short: "operator label (auto-resolved from git config user.name)"},
-			{Name: "pr-number", Short: "GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action."},
+			{Name: "reason", Short: "free-text deploy reason (≤280 chars)", Value: "text"},
+			{Name: "tag", Short: "annotation tag", Value: "TAG", ClosedSet: DeploymentAnnotationTags},
+			{Name: "deployed-by", Short: "operator label (auto-resolved from git config user.name)", Value: "NAME"},
+			{Name: "pr-number", Short: "GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action.", Value: "N"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
 			// were added to cmdDeployTarball in PR-#1065 but the
 			// cli_meta manifest (this file's source of truth for
@@ -419,7 +442,7 @@ var cliCommands = []cliCommand{
 			// contract headline (slug, mutex with --only) without
 			// re-litigating the ADR-124 partition semantic — that's
 			// public docs site territory.
-			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)"},
+			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)", Value: "SLUGS"},
 			{Name: "show-affected", Short: "render the WillDeploy + Skipped + Unaffected + Removed partition (ADR-124)"},
 			// ADR-124 follow-up #3 (PR-B commit 5): write-side
 			// complement to --exclude. Records excluded slugs into
@@ -455,14 +478,14 @@ var cliCommands = []cliCommand{
 		Short:   "Manage tenant surfaces (multi-hostname SAN bundle per app)",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List tenant surfaces on an app", Flags: []cliFlag{
-				{Name: "app", Short: "app slug (required)"},
+				{Name: "app", Short: "app slug (required)", Value: "slug"},
 			}},
 			{Name: subAdd, Short: "Add a tenant surface (with seed hostnames)"},
 			{Name: subRm, Short: "Remove a tenant surface (cascades hostnames)"},
 			{Name: "hostname", Short: "Manage hostnames on a surface (add|rm)"},
 		},
 		Flags: []cliFlag{
-			{Name: "app", Short: "app slug"},
+			{Name: "app", Short: "app slug", Value: "slug"},
 		},
 	},
 	{
@@ -471,7 +494,7 @@ var cliCommands = []cliCommand{
 		Short:   "Per-app edge rules (edge-rules list|create|get|update|delete --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List edge rules", Flags: []cliFlag{
-				{Name: "app", Short: "filter to a single app slug"},
+				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
 				{Name: "kind", Short: "filter to a single kind", ClosedSet: edgeRuleKindVocab},
 			}},
 			{Name: subCreate, Short: "Add an edge rule"},
@@ -480,7 +503,7 @@ var cliCommands = []cliCommand{
 			{Name: subRm, Short: "Delete one edge rule"},
 		},
 		Flags: []cliFlag{
-			{Name: "app", Short: "app slug", Req: true},
+			{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			{Name: "kind", Short: "rule kind", ClosedSet: edgeRuleKindVocab},
 		},
 	},
@@ -501,7 +524,7 @@ var cliCommands = []cliCommand{
 		Name:    "env",
 		DocSlug: "env",
 		Short:   "Pull/push .env <-> sealed secrets (--app <slug>)",
-		Flags:   []cliFlag{{Name: "app", Short: "app slug", Req: true}},
+		Flags:   []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}},
 		Subcommands: []cliSub{
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)"},
 			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets"},
@@ -513,8 +536,8 @@ var cliCommands = []cliCommand{
 		DocSlug: "init",
 		Short:   "Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy])",
 		Flags: []cliFlag{
-			{Name: "template", Short: "template name", Req: true, ClosedSet: templateNames13},
-			{Name: "path", Short: "target directory", Req: true},
+			{Name: "template", Short: "template name", Req: true, Value: "NAME", ClosedSet: templateNames13},
+			{Name: "path", Short: "target directory", Req: true, Value: "DIR"},
 			{Name: "deploy", Short: "deploy after scaffolding"},
 		},
 	},
@@ -531,7 +554,7 @@ var cliCommands = []cliCommand{
 		// Flags block to surface the right verb shape.
 		Flags: []cliFlag{
 			{Name: "upstreams", Short: "List data upstreams captured for this app (ADR-098 §9.A)"},
-			{Name: "scope", Short: "filter by scope (forwarded as ?scope=, used with --upstreams)"},
+			{Name: "scope", Short: "filter by scope (forwarded as ?scope=, used with --upstreams)", Value: "scope"},
 		},
 	},
 	{
@@ -540,7 +563,7 @@ var cliCommands = []cliCommand{
 		Short:   "Functional smoke test (invoke [--async] <slug> [--payload J|@file|-])",
 		Flags: []cliFlag{
 			{Name: "async", Short: "return immediately with status_url"},
-			{Name: "payload", Short: "JSON payload (inline | @file | -)"},
+			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
 		},
 		Positionals: []string{"<slug>"},
 	},
@@ -596,7 +619,7 @@ var cliCommands = []cliCommand{
 		Name:    "login",
 		DocSlug: "auth",
 		Short:   "Authenticate this machine (--token for CI)",
-		Flags:   []cliFlag{{Name: "token", Short: "use a pre-minted token (CI)"}},
+		Flags:   []cliFlag{{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"}},
 	},
 	{
 		Name:    "logout",
@@ -608,7 +631,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "auth",
 		Short:   "Create a new account (signup [--email-only EMAIL | --password-stdin])",
 		Flags: []cliFlag{
-			{Name: "email-only", Short: "send a one-time signup link to this email (no password prompt)"},
+			{Name: "email-only", Short: "send a one-time signup link to this email (no password prompt)", Value: "EMAIL"},
 			{Name: "password-stdin", Short: "read password from stdin (CI; mutually exclusive with --email-only)"},
 		},
 	},
@@ -623,7 +646,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "metrics",
 		Short:   "Per-app or account-wide metrics (gregale metrics <slug> [--range 5m] | --account)",
 		Flags: []cliFlag{
-			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
+			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
 			{Name: "account", Short: "account-wide roll-up"},
 		},
 		Positionals: []string{"<slug>"},
@@ -735,7 +758,7 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
 			{Name: "action", Short: "recover action", ClosedSet: []string{"advance", "promote", "abort"}, Req: true},
-			{Name: "reason", Short: "operator-supplied reason (logged to deployment_audit)"},
+			{Name: "reason", Short: "operator-supplied reason (logged to deployment_audit)", Value: "text"},
 		},
 	},
 	{
@@ -743,9 +766,9 @@ var cliCommands = []cliCommand{
 		DocSlug: "scan",
 		Short:   "Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)",
 		Flags: []cliFlag{
-			{Name: "tarball", Short: "scan a source tarball"},
-			{Name: "path", Short: "scan a local directory"},
-			{Name: "repo", Short: "scan a GitHub repo"},
+			{Name: "tarball", Short: "scan a source tarball", Value: "PATH"},
+			{Name: "path", Short: "scan a local directory", Value: "DIR"},
+			{Name: "repo", Short: "scan a GitHub repo", Value: "OWNER/NAME"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
 			// ship on scan as well as deploy (the partition is the
 			// preview surface, scan is the operator's first stop).
@@ -753,7 +776,7 @@ var cliCommands = []cliCommand{
 			// added to cmdScan in PR-#1065 but missing from the
 			// manifest that drives `gregale man scan` and the shell
 			// completion tables.
-			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)"},
+			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)", Value: "SLUGS"},
 			{Name: "show-affected", Short: "render the WillDeploy + Unaffected tables (ADR-124)"},
 			// ADR-124 follow-up #3 (PR-B commit 5): symmetric flag
 			// set on scan (no-op on the scan path; the scan handler
@@ -795,7 +818,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "slo",
 		Short:   "Per-app SLO panel (gregale slo <slug> [--window 24h])",
 		Flags: []cliFlag{
-			{Name: "window", Short: "window (1h|24h|7d)", ClosedSet: []string{"1h", "24h", "7d"}},
+			{Name: "window", Short: "window (1h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 		},
 		Positionals: []string{"<slug>"},
 	},
@@ -807,8 +830,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "tail",
 		DocSlug: "tail",
-		Short:   "Live tail of the unified event stream (--follow)",
-		Flags:   []cliFlag{{Name: "follow", Short: "stream until interrupted"}},
+		Short:   "Live tail of the unified event stream",
+		// The stream is always followed; there is no --follow flag on
+		// cmdTail (commands5.go) and the manifest must not invent one.
+		Flags: []cliFlag{
+			{Name: "app", Short: "filter to a single app slug (optional)", Value: "slug"},
+			{Name: "include-stateless", Short: "also print stateless.advisory frames (default: hide)"},
+		},
 	},
 	{
 		Name:    dispatchTrustedPublishers,
@@ -830,8 +858,8 @@ var cliCommands = []cliCommand{
 			{Name: "summary", Short: "Account roll-up"},
 		},
 		Flags: []cliFlag{
-			{Name: "month", Short: "month (YYYY-MM)"},
-			{Name: "day", Short: "day (YYYY-MM-DD)"},
+			{Name: "month", Short: "month (YYYY-MM)", Value: "YYYY-MM"},
+			{Name: "day", Short: "day (YYYY-MM-DD)", Value: "YYYY-MM-DD"},
 		},
 	},
 	{
@@ -844,8 +872,8 @@ var cliCommands = []cliCommand{
 		DocSlug: "wake-timeline",
 		Short:   "Walk the per-wake event stream (wake-timeline <slug> <wake-id> [--since RFC3339] [--limit N] [--all])",
 		Flags: []cliFlag{
-			{Name: "since", Short: "RFC3339 timestamp"},
-			{Name: "limit", Short: "page size (1..1000)"},
+			{Name: "since", Short: "RFC3339 timestamp", Value: "RFC3339"},
+			{Name: "limit", Short: "page size (1..1000)", Value: "N"},
 			{Name: "all", Short: "walk every page"},
 		},
 		Positionals: []string{"<slug>", "<wake-id>"},
@@ -855,10 +883,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "throttle-suggestions",
 		Short:   "Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions <slug> [--range 5m] [--dry-run --candidate-rps N --candidate-burst N])",
 		Flags: []cliFlag{
-			{Name: "range", Short: "observation window (e.g. 5m|1h|24h)", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h"}},
+			{Name: "range", Short: "observation window (e.g. 5m|1h|24h)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h"}},
 			{Name: "dry-run", Short: "enable the dry-run preview pass (requires --candidate-rps)"},
-			{Name: "candidate-rps", Short: "candidate rate-limit rps for the dry-run preview"},
-			{Name: "candidate-burst", Short: "candidate burst for the dry-run preview"},
+			{Name: "candidate-rps", Short: "candidate rate-limit rps for the dry-run preview", Value: "N"},
+			{Name: "candidate-burst", Short: "candidate burst for the dry-run preview", Value: "N"},
 		},
 		Positionals: []string{"<slug>"},
 	},
@@ -870,7 +898,7 @@ var cliCommands = []cliCommand{
 			{Name: "dry-run", Short: "render every mail template against a fixture; print wire JSON"},
 		},
 		Flags: []cliFlag{
-			{Name: "unsubscribe-url", Short: "List-Unsubscribe URL (RFC 8058); empty disables the header"},
+			{Name: "unsubscribe-url", Short: "List-Unsubscribe URL (RFC 8058); empty disables the header", Value: "URL"},
 		},
 	},
 	{
@@ -887,8 +915,8 @@ var cliCommands = []cliCommand{
 				Name:  "set",
 				Short: "Set the traffic split for a deployment",
 				Flags: []cliFlag{
-					{Name: "deployment", Short: "deployment id to set the traffic split on", Req: true},
-					{Name: "percent", Short: "traffic weight in [0, 100]; -1 = unset (server default 100)", Req: true},
+					{Name: "deployment", Short: "deployment id to set the traffic split on", Req: true, Value: "ID"},
+					{Name: "percent", Short: "traffic weight in [0, 100]; -1 = unset (server default 100)", Req: true, Value: "N"},
 				},
 			},
 		},
@@ -899,39 +927,39 @@ var cliCommands = []cliCommand{
 		Short:   "Manage traffic mirroring (mirror list|create|info|update|rm|summary --app <slug>; issue #72 / ADR-124; Pro/Scale only)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List mirror rules", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}},
 			{Name: "create", Short: "Create a mirror rule", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true},
-				{Name: "source", Short: "source deployment id (live)", Req: true},
-				{Name: "mirror", Short: "mirror deployment id (live; same app)", Req: true},
-				{Name: "percent", Short: "fan-out percent in [0, 100]; 100 = every request"},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "source", Short: "source deployment id (live)", Req: true, Value: "ID"},
+				{Name: "mirror", Short: "mirror deployment id (live; same app)", Req: true, Value: "ID"},
+				{Name: "percent", Short: "fan-out percent in [0, 100]; 100 = every request", Value: "N"},
 				{Name: "include-body", Short: "include request/response bodies in the comparison ledger"},
-				{Name: "redact-header", Short: "extra header name to redact (repeatable)"},
+				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},
 			}},
 			{Name: "info", Short: "Show one mirror rule", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true},
-				{Name: "id", Short: "mirror rule id", Req: true},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "id", Short: "mirror rule id", Req: true, Value: "ID"},
 			}},
 			{Name: "update", Short: "Patch a mirror rule (patch semantics)", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true},
-				{Name: "id", Short: "mirror rule id", Req: true},
-				{Name: "percent", Short: "new percent in [0, 100]"},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "id", Short: "mirror rule id", Req: true, Value: "ID"},
+				{Name: "percent", Short: "new percent in [0, 100]", Value: "N"},
 				{Name: "enable", Short: "enable the rule (mutually exclusive with --disable)"},
 				{Name: "disable", Short: "disable the rule (mutually exclusive with --enable)"},
 				{Name: "include-body", Short: "enable body capture (mutually exclusive with --no-include-body)"},
 				{Name: "no-include-body", Short: "disable body capture"},
-				{Name: "redact-header", Short: "extra header name to redact (repeatable)"},
+				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},
 				{Name: "clear-redact", Short: "clear the customer's redact_headers list (drop to always-stripped only)"},
 			}},
 			{Name: "rm", Short: "Delete a mirror rule", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true},
-				{Name: "id", Short: "mirror rule id", Req: true},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "id", Short: "mirror rule id", Req: true, Value: "ID"},
 			}},
 			{Name: "summary", Short: "Aggregate mirror drift counts over a window", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true},
-				{Name: "id", Short: "mirror rule id", Req: true},
-				{Name: "window", Short: "summary window: 1h | 24h | 7d (default 1h)", ClosedSet: []string{"1h", "24h", "7d"}},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "id", Short: "mirror rule id", Req: true, Value: "ID"},
+				{Name: "window", Short: "summary window: 1h | 24h | 7d (default 1h)", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
 		},
 	},

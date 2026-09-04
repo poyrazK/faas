@@ -3,16 +3,13 @@
 // sec11_seccomp_e2e_test.go — M8 §11 cross-process seccomp gate.
 //
 // Spec §11: "Firecracker's default seccomp filter is in place." The
-// only parent of the firecracker process is jailer, and jailer applies
-// the filter via --seccomp-filter=<path>. pkg/fcvm itself ships a
-// default filter under /srv/fc/jailer/seccomp.bpf (the ansible role
-// places it; the Lima loop symlinks to the same one). Today NO test
-// asserts that the filter survived a jailer upgrade or a chroot
-// provisioning regression — pkg/fcvm/manager_metal_test.go covers the
-// in-process cgroup fence (PR A.1's neighbour), but the seccomp
-// surface is more fragile (it requires a real jailer process to
-// install the filter, and the filter file itself is a separate
-// artifact the operator can accidentally delete).
+// pinned musl Firecracker release embeds its target-specific default
+// filter and applies it in the Firecracker process; this test verifies
+// the resulting kernel state rather than a custom filter-file path.
+// Today NO test asserts that the filter survived a Firecracker binary
+// or service-command regression — pkg/fcvm/manager_metal_test.go covers
+// the in-process cgroup fence (PR A.1's neighbour), but the seccomp
+// surface requires a real jailed Firecracker process.
 //
 // This test closes the gap by reading /proc/<pid>/status from the
 // TEST process (cross-process, same as the memory.max fence test) for
@@ -28,11 +25,8 @@
 // as uid 0 (jailer requires CAP_NET_ADMIN + CAP_MKNOD + seccomp).
 //
 // Failure modes caught:
-//   - jailer upgrade that drops the --seccomp-filter flag.
-//   - /srv/fc/jailer/seccomp.bpf missing (deleted by an operator).
-//   - vmmd regression that spawns firecracker without going through
-//     jailer (the filter is applied by jailer, not by firecracker
-//     itself; if vmmd skips the jailer, Seccomp=0 trips here).
+//   - vmmd/service regression that disables Firecracker's default filter.
+//   - vmmd regression that starts an unexpected Firecracker binary.
 //   - Manager.InstancePID returning a stale PID (Kill ran but
 //     destroy/cgroup cleanup raced).
 //
@@ -69,7 +63,7 @@ import (
 //  1. Boot apid + schedd + imaged + vmmd + gatewayd as real
 //     subprocesses via e2etest.Start(..., DeployWake). Same
 //     harness A.1 uses; vmmd's BringUp spawns the jailer child
-//     which installs the seccomp filter before exec'ing firecracker.
+//     whose Firecracker child applies the embedded default filter.
 //  2. Deploy a tiny app on Hobby plan; let the prime cycle
 //     finish (cold-boot → snapshot → PARKED). The instance is
 //     PARKED at the end of step 2 — no live jailer child to probe.
@@ -90,8 +84,8 @@ import (
 //  6. Assert Mode == "filter" and FilterLen > 0. FilterLen == 0
 //     with Mode == "filter" means the kernel knows the seccomp
 //     mode is "filter" but no BPF program is attached — exactly
-//     the regression a forgotten --seccomp-filter flag would
-//     produce.
+//     the regression a disabled or unexpected Firecracker binary
+//     would produce.
 func TestSec11_SeccompFilterEnforced_CrossProcess(t *testing.T) {
 	// Pre-flight: same conditions as PR A.1's memory.max test.
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
@@ -225,7 +219,7 @@ func TestSec11_SeccompFilterEnforced_CrossProcess(t *testing.T) {
 		t.Fatalf("SeccompStatus Error=%q (kernel read failed)", resp.GetError())
 	}
 	if resp.GetMode() != "filter" {
-		t.Fatalf("SeccompStatus mode=%q want %q (jailer --seccomp-filter flag missing? filter file deleted at /srv/fc/jailer/seccomp.bpf?)",
+		t.Fatalf("SeccompStatus mode=%q want %q (Firecracker default seccomp filter missing)",
 			resp.GetMode(), "filter")
 	}
 	if resp.GetFilterLen() <= 0 {
@@ -248,7 +242,7 @@ func TestSec11_SeccompFilterEnforced_CrossProcess(t *testing.T) {
 		t.Errorf("wire filter_len=%d but kernel /proc says %d",
 			resp.GetFilterLen(), kernelFilterLen)
 	}
-	t.Logf("seccomp OK: instance=%s pid=%d mode=%s filter_len=%d (jailer default filter present)",
+	t.Logf("seccomp OK: instance=%s pid=%d mode=%s filter_len=%d (Firecracker default filter present)",
 		instanceID, resp.GetPid(), resp.GetMode(), resp.GetFilterLen())
 }
 

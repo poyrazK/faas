@@ -191,7 +191,12 @@ func TestResolveDeployBaseRef_PerRuntimeEnvOverride(t *testing.T) {
 		}
 	})
 	t.Run("env override tag-only ref fails loud", func(t *testing.T) {
-		tagOnly := func(string) string { return "mirror.gcr.io/library/node:22-alpine" }
+		tagOnly := func(key string) string {
+			if key == "FAAS_DEPLOY_BASE_REF_NODE22" {
+				return "mirror.gcr.io/library/node:22-alpine"
+			}
+			return ""
+		}
 		_, err := resolveDeployBaseRef(RuntimeNode22, tagOnly)
 		if err == nil {
 			t.Fatal("expected error for tag-only env override, got nil")
@@ -240,4 +245,62 @@ func TestResolveDeployBaseRef_PerRuntimeEnvOverride(t *testing.T) {
 			t.Errorf("got %q, want %q (nil envLookup should read os.Getenv)", got, BaseRefNode22)
 		}
 	})
+}
+
+func TestResolveDeployBaseRef_NamedNodeRequiresImmutableDefault(t *testing.T) {
+	envLookup := func(key string) string {
+		if key == "FAAS_NODE_NAME" {
+			return "fsn-2.faas"
+		}
+		return ""
+	}
+	if _, err := resolveDeployBaseRef(RuntimeNode24, envLookup); err == nil || !strings.Contains(err.Error(), "digest-pinned") {
+		t.Fatalf("named node default = %v, want digest-pin error", err)
+	}
+}
+
+func TestResolveDeployBaseRef_MinimalOverride(t *testing.T) {
+	const ref = "ghcr.io/poyrazk/base-minimal@sha256:81d93757457f988523814ae0009837ae893f38d3fe123f2c37896f118b4c7804"
+	envLookup := func(key string) string {
+		if key == "FAAS_DEPLOY_BASE_REF_MINIMAL" {
+			return ref
+		}
+		return ""
+	}
+	got, err := resolveDeployBaseRef("", envLookup)
+	if err != nil || got != ref {
+		t.Fatalf("minimal ref = (%q, %v), want (%q, nil)", got, err, ref)
+	}
+}
+
+func TestResolveDeployBaseRef_RetiresGlobalAndAllowsTestRedirect(t *testing.T) {
+	if _, err := resolveDeployBaseRef(RuntimeNode22, func(key string) string {
+		if key == "FAAS_DEPLOY_BASE_REF" {
+			return "registry.example/onebox/runtime:latest"
+		}
+		return ""
+	}); err == nil || !strings.Contains(err.Error(), "retired") {
+		t.Fatalf("global override error = %v, want retired error", err)
+	}
+	testRef := "127.0.0.1:5000/onebox/deploy-base:latest"
+	got, err := resolveDeployBaseRef(RuntimeNode22, func(key string) string {
+		if key == testDeployBaseRefEnv {
+			return testRef
+		}
+		return ""
+	})
+	if err != nil || got != testRef {
+		t.Fatalf("test redirect = (%q, %v), want (%q, nil)", got, err, testRef)
+	}
+	if _, err := resolveDeployBaseRef(RuntimeNode22, func(key string) string {
+		if key == testDeployBaseRefEnv {
+			return testRef
+		}
+		if key == "FAAS_NODE_NAME" {
+			return "compute-1"
+		}
+		return ""
+	}); err == nil || !strings.Contains(err.Error(), "test-only") {
+		t.Fatalf("named-node test redirect error = %v, want test-only error", err)
+	}
 }

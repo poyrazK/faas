@@ -307,7 +307,7 @@ func (c *Client) CreateUpgradeTransaction(_ context.Context, _ state.Account, _ 
 // present on the context, is forwarded to Refunds.New so a network
 // retry returns the same `re_…` id rather than creating a duplicate
 // refund. apid stamps the operator's request's Idempotency-Key
-// header onto the ctx before calling (cmd/apid/handlers_admin_credits.go).
+// header onto the ctx before calling (cmd/apid/handlers_admin_refunds.go).
 //
 // Returns a wrapped *stripe.Error when Stripe rejects the call
 // (e.g. amount_too_large, charge_already_refunded, charge_not_found).
@@ -406,24 +406,21 @@ func centsToMillicents(cents int64) int64 {
 	return cents * 10
 }
 
-// idempotencyKeyContextKey is the unexported context-key the apid
-// handler uses to forward the request's Idempotency-Key header to
-// Refund. Centralized so the apid path and the SDK path agree on
-// the key without importing the same context-key in two places.
+// idempotencyKeyContextKey is retained for compatibility with the package's
+// older focused tests. New callers should use billing.ContextWithIdempotencyKey
+// so the same operation key can cross provider implementations.
 type idempotencyKeyContextKey struct{}
 
-// idempotencyKeyFromContext reads the key set on ctx by the apid
-// handler. The bool return distinguishes a missing key from an
-// empty key; the helper is the only caller-side seam today because
-// the apid path doesn't currently invoke Stripe Refund (operator
-// credits are server-internal; the Stripe Refund seam is reserved
-// for a future Stripe-initiated refund flow).
+// idempotencyKeyFromContext retains the package-local helper used by the
+// Stripe tests while delegating the production context contract to the
+// shared billing package. The apid handler can therefore pass one key to any
+// selected provider without importing provider-private types.
 func idempotencyKeyFromContext(ctx context.Context) (string, bool) {
-	v, ok := ctx.Value(idempotencyKeyContextKey{}).(string)
-	if !ok || v == "" {
-		return "", false
+	if key, ok := billing.IdempotencyKeyFromContext(ctx); ok {
+		return key, true
 	}
-	return v, true
+	key, ok := ctx.Value(idempotencyKeyContextKey{}).(string)
+	return key, ok && key != ""
 }
 
 // mapStripeEventType translates Stripe's `type` strings into the

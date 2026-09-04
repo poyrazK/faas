@@ -5,6 +5,12 @@ FAAS_BUILDERD_ROLE drop-ins. Does NOT enable or start the daemon — the
 operator runs `systemctl enable --now faas-builderd` once the release
 bundle and operator-provisioned database/TLS configuration are present.
 
+On named compute nodes the role also requires
+`/etc/faas/runtime-bases.env` as `root:root 0600`, with an immutable digest
+for every supported runtime. The populated file is the shared contract
+between builderd and imaged; the role installs only an example, so release
+automation must render the real digests before enabling either daemon.
+
 The per-node CapacityReport signing key is owned by vmmd at
 `/etc/faas/secrets/vmmd/node.key`; builderd does not load a separate node
 key. Build attestations are handled by imaged's signing key.

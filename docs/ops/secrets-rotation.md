@@ -128,17 +128,16 @@ not use `secrets init --force` for this repair.
   or under incident). Restart required.
 - **Stripe API key** — lives in meterd's env. Rotation cadence: on
   personnel change or under incident; restart required.
-- **Paddle Billing (`FAAS_PADDLE_API_KEY`, `FAAS_PADDLE_WEBHOOK_SECRET`)** —
+- **Polar Billing (`FAAS_POLAR_ACCESS_TOKEN`, `FAAS_POLAR_WEBHOOK_SECRET`)** —
   lives in `sealed.env` on every node (read by `apid` + `meterd` via
   systemd `EnvironmentFile=`). The TOML equivalent
-  (`[billing.paddle]` in `apid.toml` / `meterd.toml`) covers
+  (`[billing.polar]` in `apid.toml` / `meterd.toml`) covers
   containerized deploys; the loader's `ApplyBillingEnvOverlay` makes
   **env win over TOML** when both are set
   (`pkg/billing/loader/config.go:157-172`). Rotation cadence: monthly
   under scheduled maintenance, immediately on personnel change. The
   full procedure — including the post-restart `faas billing status`
-  check and the "send a Paddle test event from the dashboard" smoke
-  test — lives in [`billing-provider-switch.md`](billing-provider-switch.md)
-  under "Secret rotation". PR-P4 added a `make verify-secrets` target
-  that fails the playbook if `FAAS_BILLING_PROVIDER=paddle` is set
-  without `FAAS_PADDLE_API_KEY`.
+  check and the "send a Polar test event from the dashboard" smoke
+  test — lives in [`billing-provider-switch.md`](billing-provider-switch.md).
+  `make verify-secrets` fails the playbook if Polar is selected (or the
+  selector is unset) without `FAAS_POLAR_ACCESS_TOKEN`.

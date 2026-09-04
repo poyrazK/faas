@@ -283,7 +283,7 @@ kernel_path = %q
 			}
 		}
 		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
-			env = append(env, "FAAS_DEPLOY_BASE_REF="+dbr)
+			env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
 		}
 		h.procs = append(h.procs, startProc(t, bin, "imaged", env))
 	}
@@ -331,6 +331,9 @@ build_export_dir = %q
 			"DATABASE_URL=" + dbURL,
 			"PATH=" + os.Getenv("PATH"),
 			"HOME=" + os.Getenv("HOME"),
+		}
+		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
+			env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
 		}
 		h.procs = append(h.procs, startProc(t, bin, "builderd", env))
 		h.BuilderdCfg = cfgPath
@@ -960,6 +963,9 @@ func testEnvCommon(dbURL string) []string {
 		"FAAS_DEV=1",
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
+		// E2E daemons use the Paddle placeholder credentials below and
+		// must opt out of the production Polar default explicitly.
+		"FAAS_BILLING_PROVIDER=paddle",
 		// PR #962 CRIT-2: paddle.NewProvider rejects empty / whitespace
 		// apiKey at construction. The e2e harness boots apid + meterd
 		// via startProc; the boot path is daemon-real (exec.Cmd, not

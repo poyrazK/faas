@@ -42,6 +42,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -103,6 +105,25 @@ const (
 	livenessOutcomeConnErr      = "conn_err"
 )
 
+// A liveness probe runs independently of the request bridge, but both paths
+// ultimately compete for the same guest and host resources. During a burst a
+// health probe can therefore time out even though the VM is recoverable. The
+// grace is deliberately finite: a continuously unhealthy VM still reaches
+// the normal liveness destroy path after the grace expires.
+const (
+	livenessLoadGrace        = 30 * time.Second
+	livenessRecentRequestAge = 30 * time.Second
+)
+
+// livenessActivityReader is the small part of vmmd's request activity cache
+// needed by the liveness loop. Keeping this as a local interface avoids
+// coupling the probe loop to the concrete cache implementation and gives
+// tests a deterministic seam.
+type livenessActivityReader interface {
+	Inflight(instanceID string) (int64, bool)
+	LastAt(instanceID string) (time.Time, bool)
+}
+
 // livenessProbeConfig aliases the pkg/fcvm.LivenessProbeConfig struct
 // (issue #554 / ADR-078). The cmd-side per-instance loop reads the
 // same fields the Manager already populates from the per-deployment
@@ -137,6 +158,17 @@ type livenessProbeLoop struct {
 	// connections must go through this userspace proxy and its CONNECT
 	// handshake; the guest CID is not directly dialable from the host.
 	socketPath string
+	// activityReader is vmmd's request activity cache. A transport-style
+	// liveness miss while requests are active (or were just admitted) gets a
+	// bounded grace so bridge saturation cannot trip the app-wide eviction
+	// circuit. nil preserves the legacy probe-only behavior.
+	activityReader livenessActivityReader
+	// processAliveFn corroborates transport failures. When the Firecracker
+	// process is gone, the failure is a confirmed VM crash and remains eligible
+	// for the restart circuit breaker even if request activity was present.
+	processAliveFn   func(instanceID string) bool
+	loadGraceStarted time.Time
+	loadGraceUsed    bool
 }
 
 // runLivenessProbeLoop is the entry point. Blocks until ctx is
@@ -146,10 +178,12 @@ type livenessProbeLoop struct {
 // VsockLivenessHardTimeoutMs.
 //
 // On every non-2xx / timeout / conn-refused response the count
-// increments; on every 2xx it resets to 0. When count reaches
-// cfg.ConsecutiveFailures the loop calls Manager.ReportLivenessFailed
-// and exits (the schedd side will paint the instance stopped, and
-// the Manager will cancel the loop via the destruction path).
+// normally increments; a transport-style miss correlated with local
+// request pressure gets a bounded grace instead. On every 2xx the
+// count resets to 0. When count reaches cfg.ConsecutiveFailures the
+// loop calls Manager.ReportLivenessFailed and exits (the schedd side
+// will paint the instance stopped, and the Manager will cancel the
+// loop via the destruction path).
 func (l *livenessProbeLoop) run(ctx context.Context) {
 	if l.cfg.PeriodSeconds <= 0 {
 		// The plan didn't enable liveness for this instance.
@@ -207,6 +241,28 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 	}
 	elapsed := time.Since(start).Seconds()
 	l.mgr.ObserveLivenessProbe(outcome, elapsed)
+	nowFn := l.nowFn
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	if deferFailure, reason := l.transportFailureReason(outcome, nowFn()); deferFailure {
+		// A probe miss observed during a request burst is not a clean
+		// consecutive liveness signal. Drop any earlier partial streak so
+		// failures from before the burst cannot be combined with it.
+		if l.count != 0 {
+			l.log.Debug("liveness: request pressure deferred failure",
+				"instance", l.instance, "prev_count", l.count)
+		}
+		l.count = 0
+		l.mgr.SetLivenessConsecutiveFailures(l.instance, 0)
+		return false
+	} else if reason != "" {
+		// Keep the real probe outcome in the histogram, but carry the
+		// stronger source classification to schedd when the bounded grace
+		// has been consumed. Schedd replaces this VM without charging the
+		// app-wide permanent-eviction budget.
+		outcome = reason
+	}
 
 	// Cooldown gate (issue #554 closure / ADR-078, code review
 	// #725 finding F1). After a successful liveness destroy the
@@ -226,10 +282,6 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 	// instance id is a fresh UUID. Reading via the Manager
 	// accessor keeps the loop goroutine out of m.mu on the
 	// hot path; the Manager stamps under its own lock.
-	nowFn := l.nowFn
-	if nowFn == nil {
-		nowFn = time.Now
-	}
 	if l.cfg.CooldownSeconds > 0 && l.deploymentID != "" {
 		if last := l.mgr.LastLivenessDestroyAtForDeployment(l.deploymentID); !last.IsZero() {
 			cooldown := time.Duration(l.cfg.CooldownSeconds) * time.Second
@@ -246,6 +298,8 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 
 	switch outcome {
 	case livenessOutcomeOK:
+		l.loadGraceStarted = time.Time{}
+		l.loadGraceUsed = false
 		// Reset on the first 2xx (AC #2 — intermittent failures
 		// must not produce oscillation).
 		if l.count > 0 {
@@ -264,7 +318,7 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 			// Mirror the reason the run-time classifies
 			// into the relay so the schedd side audit
 			// event names the cluster correctly.
-			reason := classifyLivenessOutcome(outcome)
+			reason := classifyLivenessFailureReason(outcome)
 			l.mgr.ReportLivenessFailed(ctx, l.instance, reason)
 			// Exit the loop — schedd's Engine.DestroyForLivenessFailure
 			// will Park / destroy the instance, and the
@@ -274,6 +328,69 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 		}
 	}
 	return false
+}
+
+// transportFailureReason returns whether a transport-style probe failure
+// should be deferred and, once the finite load grace is consumed, which
+// source classification should be sent to schedd. It uses the vmmd-local
+// activity signal, not Prometheus, so the decision remains valid when the
+// control plane is overloaded or metrics are unavailable.
+//
+// The first load-correlated miss starts a finite grace window. While inside
+// that window the failure streak is suppressed. Once the window is consumed,
+// a still-busy VM is recovered with an infrastructure reason; if Firecracker
+// has also exited, the process-exited reason preserves the crash-loop breaker.
+func (l *livenessProbeLoop) transportFailureReason(outcome string, now time.Time) (deferFailure bool, reason string) {
+	if !isTransportLivenessOutcome(outcome) {
+		l.loadGraceStarted = time.Time{}
+		l.loadGraceUsed = false
+		return false, ""
+	}
+	if l.activityReader == nil {
+		return false, ""
+	}
+	inflight, inflightSeen := l.activityReader.Inflight(l.instance)
+	lastAt, lastSeen := l.activityReader.LastAt(l.instance)
+	recentRequest := lastSeen && !lastAt.IsZero() && !lastAt.After(now) && now.Sub(lastAt) <= livenessRecentRequestAge
+	if !inflightSeen || (inflight <= 0 && !recentRequest) {
+		l.loadGraceStarted = time.Time{}
+		l.loadGraceUsed = false
+		return false, ""
+	}
+	if l.loadGraceStarted.IsZero() {
+		l.loadGraceStarted = now
+	}
+	if !l.loadGraceUsed && now.Sub(l.loadGraceStarted) < livenessLoadGrace {
+		return true, ""
+	}
+	l.loadGraceUsed = true
+	if l.processAliveFn != nil && !l.processAliveFn(l.instance) {
+		return false, fcvm.LivenessReasonProcessExited
+	}
+	return false, fcvm.LivenessReasonInfrastructure
+}
+
+func isTransportLivenessOutcome(outcome string) bool {
+	switch outcome {
+	case livenessOutcomeTimeout, livenessOutcomeConnRefused, livenessOutcomeConnErr:
+		return true
+	default:
+		return false
+	}
+}
+
+// classifyLivenessFailureReason is separate from the probe outcome classifier
+// because infrastructure/process-exit are source classifications, not new
+// metric outcomes.
+func classifyLivenessFailureReason(outcome string) string {
+	switch outcome {
+	case fcvm.LivenessReasonInfrastructure:
+		return fcvm.LivenessReasonInfrastructure
+	case fcvm.LivenessReasonProcessExited:
+		return fcvm.LivenessReasonProcessExited
+	default:
+		return classifyLivenessOutcome(outcome)
+	}
 }
 
 // classifyLivenessOutcome maps a closed-set probe outcome into
@@ -488,14 +605,26 @@ func writeLivenessAll(conn net.Conn, b []byte) error {
 // Mirrors the production-only start() helper that lived inline in
 // livenessRegistry prior to the PR-review refactor that moved the
 // registry into pkg/fcvm.
-func startLivenessLoopHelper(parent context.Context, mgr *fcvm.Manager, log *slog.Logger, instance string, slot int, deploymentID string, cfg fcvm.LivenessProbeConfig, socketPath string) context.CancelFunc {
+func startLivenessLoopHelper(parent context.Context, mgr *fcvm.Manager, log *slog.Logger, instance string, slot int, deploymentID string, cfg fcvm.LivenessProbeConfig, socketPath string, activityReader livenessActivityReader) context.CancelFunc {
 	loop := &livenessProbeLoop{
-		instance:     instance,
-		deploymentID: deploymentID,
-		cfg:          cfg,
-		mgr:          mgr,
-		log:          log,
-		socketPath:   socketPath,
+		instance:       instance,
+		deploymentID:   deploymentID,
+		cfg:            cfg,
+		mgr:            mgr,
+		log:            log,
+		socketPath:     socketPath,
+		activityReader: activityReader,
+		processAliveFn: func(instanceID string) bool {
+			if mgr == nil {
+				return false
+			}
+			pid, ok := mgr.InstancePID(instanceID)
+			if !ok || pid <= 0 {
+				return false
+			}
+			err := unix.Kill(pid, 0)
+			return err == nil || err == unix.EPERM
+		},
 	}
 	loopCtx, cancel := context.WithCancel(parent)
 	go func() {

@@ -118,3 +118,21 @@ func TestNodeLedger_HeadroomMB_ClampsNegativeToZero(t *testing.T) {
 		t.Errorf("got %d, want 0 (clamped)", got)
 	}
 }
+
+func TestNodeLedger_HeadroomMB_UsesPerNodeCeilings(t *testing.T) {
+	l := NewNodeLedger()
+	for _, r := range []Request{
+		{Instance: "a", AppID: "app-a", Plan: api.PlanFree, RAMMB: 128, VCPU: 1, MaxConcurrency: 1, NodeID: "small", NodeCeilingMB: 1000, VCPUBudget: api.VCPUSlots},
+		{Instance: "b", AppID: "app-b", Plan: api.PlanFree, RAMMB: 128, VCPU: 1, MaxConcurrency: 1, NodeID: "large", NodeCeilingMB: 2000, VCPUBudget: api.VCPUSlots},
+	} {
+		if err := l.Admit(r); err != nil {
+			t.Fatalf("Admit(%s): %v", r.Instance, err)
+		}
+	}
+	// Each reservation consumes 128 MB + 8 MB overhead.
+	const perInstance = 136
+	want := (1000 - perInstance) + (2000 - perInstance)
+	if got := l.HeadroomMB(); got != want {
+		t.Fatalf("HeadroomMB = %d, want %d", got, want)
+	}
+}

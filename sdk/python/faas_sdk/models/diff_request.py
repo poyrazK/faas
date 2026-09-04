@@ -49,7 +49,10 @@ class DiffRequest:
     resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are
     NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`,
     `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per
-    JSON semantics, so the widen is wire-compatible."""
+    JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with
+    `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern
+    the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults
+    preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."""
     env_by_scope: DiffRequestEnvByScope | Unset = UNSET
     """Per-scope env write. Full-replacement semantics per
     scope (ADR-090 D3). Keys are scope names ("default",

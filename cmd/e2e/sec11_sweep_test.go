@@ -233,6 +233,9 @@ func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 		// t.TempDir() with mode 0400. The key is private to the
 		// test process — never logged, never re-used across tests.
 		"FAAS_HOST_HMAC_KEY_PATH=" + hostHMACPath,
+		// E2E subprocesses use the Paddle placeholder credentials below
+		// and must opt out of the production Polar default explicitly.
+		"FAAS_BILLING_PROVIDER=paddle",
 		// PR #962 CRIT-2 — paddle.NewProvider rejects empty apiKey. Mirror
 		// of pkg/e2etest/harness.go:testEnvCommon so this file's parallel
 		// apid boot also gets the placeholder keys. The pdl_… shape with

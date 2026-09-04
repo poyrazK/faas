@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/role"
 )
 
 // fixedBackend is a Backend that returns whatever the test sets. Used to
@@ -349,4 +351,32 @@ func TestAssertLoopbackBind(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInstallComputeMetricsRoute(t *testing.T) {
+	control := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+
+	t.Run("compute role exposes private metrics route", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.Handle("/", http.NotFoundHandler())
+		installComputeMetricsRoute(mux, role.RoleComputeOnly, control)
+		r := httptest.NewRecorder()
+		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://compute/metrics", nil))
+		if r.Code != http.StatusTeapot {
+			t.Fatalf("metrics status = %d, want %d", r.Code, http.StatusTeapot)
+		}
+	})
+
+	t.Run("single box keeps catch all", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.Handle("/", http.NotFoundHandler())
+		installComputeMetricsRoute(mux, role.RoleSingleBox, control)
+		r := httptest.NewRecorder()
+		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://single/metrics", nil))
+		if r.Code != http.StatusNotFound {
+			t.Fatalf("single-box metrics status = %d, want %d", r.Code, http.StatusNotFound)
+		}
+	})
 }

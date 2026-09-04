@@ -89,8 +89,9 @@ func TestSaveAndLoadToken_FileRoundTrip(t *testing.T) {
 	// on hosts where the OS keychain is reachable (issue #293 — the
 	// file is now a fallback, not the primary store).
 	setFakeKeyring(t, withSetErr(errors.New("keychain unavailable")))
+	want := testAPIKey('f')
 
-	if err := saveToken("file-token-xyz"); err != nil {
+	if err := saveToken(want); err != nil {
 		t.Fatalf("saveToken: %v", err)
 	}
 
@@ -107,8 +108,8 @@ func TestSaveAndLoadToken_FileRoundTrip(t *testing.T) {
 		t.Errorf("token file perm = %o, want 0o600", got)
 	}
 
-	if got := loadToken(); got != "file-token-xyz" {
-		t.Errorf("loadToken (file) = %q, want file-token-xyz", got)
+	if got := loadToken(); got != want {
+		t.Errorf("loadToken (file) = %q, want valid file token", got)
 	}
 }
 
@@ -118,7 +119,8 @@ func TestSaveToken_TrimsAndAppendsNewline(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	// Force the file-fallback branch (see TestSaveAndLoadToken_FileRoundTrip).
 	setFakeKeyring(t, withSetErr(errors.New("keychain unavailable")))
-	if err := saveToken("  token-with-whitespace  \n"); err != nil {
+	want := testAPIKey('a')
+	if err := saveToken("  " + want + "  \n"); err != nil {
 		t.Fatal(err)
 	}
 	p, err := tokenPath()
@@ -129,7 +131,7 @@ func TestSaveToken_TrimsAndAppendsNewline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != "token-with-whitespace\n" {
+	if string(b) != want+"\n" {
 		t.Errorf("file content = %q", b)
 	}
 }
@@ -242,8 +244,9 @@ func TestCmdLogin_Success(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "")
 	setFakeKeyring(t)
+	want := testAPIKey('c')
 
-	if code := cmdLogin([]string{"--token", "fp_live_x"}); code != 0 {
+	if code := cmdLogin([]string{"--token", want}); code != 0 {
 		t.Fatalf("cmdLogin success = %d, want 0", code)
 	}
 	// Token must have been persisted. After issue #293 the canonical
@@ -251,8 +254,8 @@ func TestCmdLogin_Success(t *testing.T) {
 	// the file is no longer written. Use loadToken (priority env
 	// → keychain → file) so the assertion matches production
 	// semantics regardless of which store was written to.
-	if got := loadToken(); got != "fp_live_x" {
-		t.Errorf("loadToken = %q, want fp_live_x", got)
+	if got := loadToken(); got != want {
+		t.Errorf("loadToken = %q, want login token", got)
 	}
 }
 
@@ -301,7 +304,8 @@ func TestCmdApps_Empty(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	token := testAPIKey('a')
+	t.Setenv("FAAS_TOKEN", token)
 
 	var stdout bytes.Buffer
 	oldOut := osStdout
@@ -1259,14 +1263,15 @@ func TestCmdLogin_FirstRun_PrintsQuickstart(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	token := testAPIKey('a')
+	t.Setenv("FAAS_TOKEN", token)
 
 	var stdout bytes.Buffer
 	oldOut := osStdout
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdLogin([]string{"--token", "fp_live_x"}); code != 0 {
+	if code := cmdLogin([]string{"--token", token}); code != 0 {
 		t.Fatalf("cmdLogin exit = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -1298,14 +1303,15 @@ func TestCmdLogin_ExistingAccount_NoQuickstart(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	token := testAPIKey('b')
+	t.Setenv("FAAS_TOKEN", token)
 
 	var stdout bytes.Buffer
 	oldOut := osStdout
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdLogin([]string{"--token", "fp_live_x"}); code != 0 {
+	if code := cmdLogin([]string{"--token", token}); code != 0 {
 		t.Fatalf("cmdLogin exit = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -1334,14 +1340,15 @@ func TestCmdLogin_ListAppsFails_NoQuickstart(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	token := testAPIKey('c')
+	t.Setenv("FAAS_TOKEN", token)
 
 	var stdout bytes.Buffer
 	oldOut := osStdout
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdLogin([]string{"--token", "fp_live_x"}); code != 0 {
+	if code := cmdLogin([]string{"--token", token}); code != 0 {
 		t.Fatalf("cmdLogin exit = %d, want 0 (ListApps failure must not block)", code)
 	}
 	out := stdout.String()

@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/PaddleHQ/paddle-go-sdk/v5"
+	paddle "github.com/PaddleHQ/paddle-go-sdk/v5"
 )
 
 // recordingRoundTripper captures the inbound request and returns a

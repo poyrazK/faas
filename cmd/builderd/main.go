@@ -101,6 +101,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return runWithDeps(ctx, log, defaultDeps())
 }
 
+func builderNotificationChannels() []string {
+	return []string{db.NotifyBuildQueued, db.NotifyBuildChanged}
+}
+
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// DEPLOY-1 / ADR-075 capdecl gate. builderd is unprivileged —
 	// no Allow, no Deny. The build queue consumer, the vmmd
@@ -209,9 +213,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (Cache.Sweep is pure filesystem, no shared state with Builderd).
 	cache := builderdpkg.NewCache(cfg.CacheDir)
 
-	notifCh, err := db.SubscribeWithReconnect(ctx, pool, []string{
-		db.NotifyBuildQueued,
-	}, log)
+	notifCh, err := db.SubscribeWithReconnect(ctx, pool, builderNotificationChannels(), log)
 	if err != nil {
 		return err
 	}
@@ -321,7 +323,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			if n.Channel != db.NotifyBuildQueued {
 				if n.Channel == db.NotifyBuildChanged {
-					handleBuildCancelled(ctx, driver, n.Payload, log)
+					// Destroy may wait for vmmd to reap a VM and flush its
+					// export. Keep the LISTEN loop available for other
+					// cancellations and queued builds while that happens.
+					go handleBuildCancelled(ctx, driver, n.Payload, log)
 				}
 				continue
 			}
@@ -336,9 +341,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("builderd: build_queued missing build id", "payload", n.Payload)
 				continue
 			}
-			if _, err := b.ProcessOne(ctx, p.Build); err != nil {
-				log.Warn("builderd: process", "build", p.Build, "err", err)
-			}
+			// Keep the LISTEN loop responsive while a build waits for
+			// vmmd.Destroy/export. A synchronous ProcessOne would prevent
+			// the build_changed notification from being read, defeating
+			// cancellation for the exact in-flight build it is meant to stop.
+			go func(buildID string) {
+				if _, err := b.ProcessOne(ctx, buildID); err != nil {
+					log.Warn("builderd: process", "build", buildID, "err", err)
+				}
+			}(p.Build)
 		}
 	}
 }

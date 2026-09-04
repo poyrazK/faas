@@ -116,6 +116,42 @@ func TestMetricsResident_HappyPath(t *testing.T) {
 	}
 }
 
+func TestMetricsResident_StaleValueDeniesOpportunistic(t *testing.T) {
+	var serving atomic.Bool
+	serving.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !serving.Load() {
+			http.Error(w, "schedd unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprintln(w, "fcvm_resident_ram_pct 0")
+	}))
+	defer srv.Close()
+
+	old := residentStaleAfter
+	residentStaleAfter = 10 * time.Millisecond
+	t.Cleanup(func() { residentStaleAfter = old })
+
+	ctx := context.Background()
+	p := newMetricsResident(ctx, srv.URL+"/metrics", false)
+	if got := p.ResidentMB(); got != 0 {
+		t.Fatalf("initial probe = %d MB, want 0", got)
+	}
+
+	serving.Store(false)
+	if err := p.scrape(ctx); err == nil {
+		t.Fatal("expected scrape failure after schedd became unavailable")
+	}
+	time.Sleep(25 * time.Millisecond)
+
+	if got := p.ResidentMB(); got != denyOpportunisticResidentMB {
+		t.Errorf("stale probe = %d MB, want denyOpportunisticResidentMB (%d)", got, denyOpportunisticResidentMB)
+	}
+	if d := DecideSlot(p, api.RAMAdmissionCeilingMB); d.Label != "guaranteed" || !d.Allowed {
+		t.Errorf("stale slot decision: got %+v, want guaranteed allowed", d)
+	}
+}
+
 // TestMetricsResident_EmptyURLDeniesOpportunistic pins the "no schedd
 // wired" behaviour — empty URL means "operator hasn't pointed
 // ScheddMetricsURL at schedd yet", which must match the nil-probe posture

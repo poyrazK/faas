@@ -20,6 +20,10 @@ var supportBinaryNames = []string{
 	"schedd-brokerq-apply",
 	"vmmd-raw-bridge",
 	"vmmd-stream-bridge",
+	// vmlinux is the release-pinned Firecracker guest kernel. It is kept in
+	// the signed bundle so compute hosts never rebuild a host-specific kernel
+	// during a production join.
+	"vmlinux",
 }
 
 // legacyUnhashedSupportBinaryNames contains support files that appeared in

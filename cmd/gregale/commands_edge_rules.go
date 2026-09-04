@@ -259,6 +259,20 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs.Var(&cacheVaryOn, "cache-vary-on", "kind=cache: header to vary on (Accept-Language|Accept-Encoding; repeat)")
 	fs.Var(&cacheMethods, "cache-methods", "kind=cache: cacheable method (GET|HEAD; repeat; default GET,HEAD)")
 
+	// budget (ADR-093 §Decision). Per-request wall-clock deadline.
+	// budget-ms is required-as-positive: the server rejects 0 because
+	// a kind=budget rule with no budget is a silent no-op. The
+	// override header defaults to api.RequestBudgetDefaultOverrideHeader
+	// server-side when left empty.
+	budgetMs := fs.Int("budget-ms", 0, "kind=budget: per-request wall-clock budget in ms (>0; max 30000)")
+	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
+
+	// maintenance (ADR-091 D20 / issue #881). Per-route 503 with a
+	// Retry-After. Both fields are optional — a bare maintenance rule
+	// is a valid "hard down, no hint" shape.
+	maintenanceRetryAfter := fs.Int("maintenance-retry-after-seconds", 0, "kind=maintenance: Retry-After hint in seconds (>=0; max 86400)")
+	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: operator message surfaced to callers (<=512 bytes)")
+
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -305,6 +319,10 @@ func cmdEdgeRulesCreate(args []string) int {
 		CacheStaleIfErrorSeconds:   *cacheStaleIfError,
 		CacheVaryOn:                cacheVaryOn,
 		CacheMethods:               cacheMethods,
+		BudgetMs:                   *budgetMs,
+		BudgetOverrideHeader:       *budgetOverrideHeader,
+		MaintenanceRetryAfter:      *maintenanceRetryAfter,
+		MaintenanceMessage:         *maintenanceMessage,
 	})
 	if err != nil {
 		return printErr("Invalid flags for --kind="+*kind, err)
@@ -448,6 +466,14 @@ func cmdEdgeRulesUpdate(args []string) int {
 	fs.Var(&cacheVaryOn, "cache-vary-on", "kind=cache: header to vary on (Accept-Language|Accept-Encoding; repeat)")
 	fs.Var(&cacheMethods, "cache-methods", "kind=cache: cacheable method (GET|HEAD; repeat)")
 
+	// budget + maintenance (ADR-093 / ADR-091 D20). Mirror of the
+	// create-side flags; same structural checks run in
+	// buildEdgeRuleAction for both paths.
+	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new per-request wall-clock budget in ms (>0; max 30000)")
+	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
+	maintenanceRetryAfter := fs.Int("maintenance-retry-after-seconds", 0, "kind=maintenance: new Retry-After hint in seconds (>=0; max 86400)")
+	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: new operator message (<=512 bytes)")
+
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -539,6 +565,10 @@ func cmdEdgeRulesUpdate(args []string) int {
 			CacheStaleIfErrorSeconds:   *cacheStaleIfError,
 			CacheVaryOn:                cacheVaryOn,
 			CacheMethods:               cacheMethods,
+			BudgetMs:                   *budgetMs,
+			BudgetOverrideHeader:       *budgetOverrideHeader,
+			MaintenanceRetryAfter:      *maintenanceRetryAfter,
+			MaintenanceMessage:         *maintenanceMessage,
 		})
 		if err != nil {
 			return printErr("Invalid flags for --kind="+*kind, err)
@@ -657,6 +687,20 @@ type edgeRuleActionInputs struct {
 	CacheStaleIfErrorSeconds int
 	CacheVaryOn              []string
 	CacheMethods             []string
+	// budget (ADR-093 §Decision). Per-request wall-clock deadline.
+	// BudgetMs is required-as-positive: pkg/api.EdgeRuleBudgetAction
+	// .Validate rejects 0 because a kind=budget rule with no budget
+	// is a silent no-op — the worst shape for a safety primitive.
+	// BudgetOverrideHeader is optional; empty means the runtime uses
+	// api.RequestBudgetDefaultOverrideHeader (`x-faas-budget-ms`).
+	BudgetMs             int
+	BudgetOverrideHeader string
+	// maintenance (ADR-091 D20). Per-route 503 + Retry-After. Both
+	// fields are optional — a bare maintenance rule is the valid
+	// "hard down, no hint" shape, so neither is checked for
+	// presence, only for range.
+	MaintenanceRetryAfter int
+	MaintenanceMessage    string
 }
 
 // buildEdgeRuleAction marshals the per-kind inputs into the matching
@@ -868,6 +912,50 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			a.StaleIfErrorSeconds = api.ResponseCacheDefaultStaleIfErrorSeconds
 		}
 		return marshalAction(a)
+	case "budget":
+		// ADR-093 §Decision. Per-request wall-clock deadline.
+		// budget_ms is checked here as well as server-side because
+		// omitting --budget-ms is the overwhelmingly likely mistake
+		// and the local message can name the flag; the server's
+		// Validate only knows the wire field name.
+		//
+		// No CLI-side default: unlike kind=cache, a zero budget has
+		// no defensible meaning (it would expire every request
+		// immediately), so there is nothing to default TO. Rejecting
+		// is the only correct move and matches
+		// pkg/api.EdgeRuleBudgetAction.Validate.
+		if in.BudgetMs <= 0 {
+			return nil, fmt.Errorf("budget action: --budget-ms must be > 0 (got %d) — a kind=budget rule with no budget is a silent no-op; drop the rule if you want the platform default (%s) to apply", in.BudgetMs, api.RequestBudgetDefault)
+		}
+		a := api.EdgeRuleBudgetAction{
+			BudgetMs:            in.BudgetMs,
+			AllowOverrideHeader: in.BudgetOverrideHeader,
+		}
+		if err := a.Validate(); err != nil {
+			return nil, errToError(err)
+		}
+		return marshalAction(a)
+	case "maintenance":
+		// ADR-091 D20. Per-route 503 + Retry-After. Both fields are
+		// optional, so there is no presence check — only the range
+		// checks the server would run, surfaced locally.
+		a := api.EdgeRuleMaintenanceAction{
+			RetryAfterSeconds: in.MaintenanceRetryAfter,
+			Message:           in.MaintenanceMessage,
+		}
+		if err := a.Validate(); err != nil {
+			return nil, errToError(err)
+		}
+		return marshalAction(a)
+	case "validate":
+		// kind=validate is a real server-side kind
+		// (pkg/api.EdgeRuleValidateAction) but has no CLI flag
+		// surface yet: its action carries a JSON Schema 2020-12
+		// document, which needs a file/stdin loading UX rather than
+		// a scalar flag. Say so explicitly — the previous
+		// fallthrough reported "unknown kind", which contradicted
+		// edgeRuleKindVocab accepting it two checks earlier.
+		return nil, fmt.Errorf("kind=validate is not yet constructible from the CLI (its action carries a JSON Schema document); create it via the API, or use `gregale edge-rules update <id>` to toggle an existing rule")
 	}
 	return nil, fmt.Errorf("unknown kind %q", kind)
 }
@@ -1041,6 +1129,15 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"ip-allow", "ip-deny",
 		"limit-max-body-bytes", "limit-max-body-bytes-streaming",
 		"throttle-requests-per-second", "throttle-burst",
+		// geo + cache were added to the create/update flag sets but
+		// never to this list, so `edge-rules update <id> --geo-allow X`
+		// silently skipped the action rebuild and sent a metadata-only
+		// PATCH. Kept alongside the budget/maintenance entries below.
+		"geo-allow", "geo-deny",
+		"cache-max-age-seconds", "cache-stale-if-error-seconds",
+		"cache-vary-on", "cache-methods",
+		"budget-ms", "budget-allow-override-header",
+		"maintenance-retry-after-seconds", "maintenance-message",
 	}
 	for _, name := range kindFlagNames {
 		if visited[name] {

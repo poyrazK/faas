@@ -9,9 +9,11 @@
 // implementations today:
 //
 //   - pkg/billing/stripe — extracted from the original pkg/stripex package.
-//     Default provider when FAAS_BILLING_PROVIDER is empty.
-//   - pkg/billing/paddle — Paddle Billing v2 (current API). Opt-in via
-//     FAAS_BILLING_PROVIDER=paddle.
+//     Legacy opt-in via FAAS_BILLING_PROVIDER=stripe.
+//   - pkg/billing/paddle — Paddle Billing v2 (current API). Explicit opt-in
+//     via FAAS_BILLING_PROVIDER=paddle.
+//   - pkg/billing/polar — Polar MoR REST API + event-based usage billing.
+//     Public-release default and explicit option via FAAS_BILLING_PROVIDER=polar.
 //
 // Provider-specific behaviour stays inside each implementation; the rest
 // of the codebase (apid, meterd, the dunning state machine, the email
@@ -43,9 +45,9 @@ import (
 // bit before dispatching onto a provider-specific code path (e.g.
 // render the hosted-checkout URL only when CapHostedCheckout is set);
 // the runtime fallback is the previous sentinel-style contract —
-// CreateUpgradeTransaction returning ("", "", nil) ⇒ Stripe, methods
-// returning ErrNotImplemented ⇒ the provider doesn't support the
-// surface. The two co-exist so adding Capabilities() to existing
+// CreateUpgradeTransaction returning ("", "", nil) means no hosted
+// checkout, while methods returning ErrNotImplemented mean the provider
+// doesn't support the surface. The two co-exist so adding Capabilities() to existing
 // implementations is a non-breaking change.
 type Provider interface {
 	// Capabilities returns the bitmask of optional surfaces this
@@ -95,19 +97,16 @@ type Provider interface {
 	// customer has no active subscription item yet — the typical
 	// free → paid direct path (spec §4.7).
 	//
-	//   - Paddle: calls paddle.Client.CreateTransaction against the
-	//     per-plan monthly price and returns (txn_…,
-	//     https://paddle.checkout/…, nil). The 402 Problem carries
-	//     these as PaddleCheckoutURL + TxID extensions so the dashboard
-	//     can render an upsell button + confirmation id.
-	//   - Stripe: returns ("", "", nil) — a deliberate signal that the
-	//     apid handler should fall back to the precomputed
-	//     FAAS_BILLING_PORTAL_URL template (with {account_id}
-	//     substituted). Stripe's billing-portal session is operator-
-	//     configured, not SDK-created.
+	//   - Hosted-checkout providers return a provider checkout handle and
+	//     URL. The 402 Problem carries the URL in the provider-neutral
+	//     CheckoutURL field and retains legacy provider-specific aliases
+	//     where required by older clients.
+	//   - Providers without hosted checkout return ("", "", nil), which
+	//     tells apid to use a provider portal session or the configured
+	//     FAAS_BILLING_PORTAL_URL fallback.
 	//
-	// The "(txID == \"\") ⇒ Stripe stub" contract is the dispatch signal
-	// the apid handler branches on. Implementations should add a stable
+	// The "(txID == \"\") ⇒ no hosted checkout" contract is the dispatch
+	// signal the apid handler branches on. Implementations should add a stable
 	// Idempotency-Key (Paddle: recorded in CustomData) so a redelivered
 	// upgrade click doesn't create a duplicate Transaction.
 	CreateUpgradeTransaction(ctx context.Context, acct state.Account, targetPlan api.Plan) (txID, checkoutURL string, err error)
@@ -117,8 +116,10 @@ type Provider interface {
 	// FAAS_RECONCILE_INTERVAL and asks each implementation how
 	// many mb_seconds it has actually pushed for the given hour
 	// window. The reconciler compares that sum against the local
-	// `usage_minutes` total and exposes the diff as Prometheus
-	// gauges + the BillingDrift alert.
+	// provider quantity and exposes the diff as Prometheus gauges +
+	// the BillingDrift alert. Providers implementing
+	// UsageModeProvider may use net calendar-month overage instead of
+	// raw local usage.
 	//
 	// Read-only against the provider — implementations MUST NOT
 	// mutate customer / subscription state from this call.
@@ -132,7 +133,10 @@ type Provider interface {
 	// start, end) summed. Paddle: Paddle Billing does not yet
 	// expose a usage-summary endpoint, so the Paddle
 	// implementation returns ErrNotImplemented until the upstream
-	// adds one.
+	// adds one. Polar: the configured meter quantities endpoint is
+	// summed when FAAS_POLAR_METER_ID is set; without a meter ID it
+	// returns ErrNotImplemented for direct callers (startup validation
+	// rejects that configuration).
 	ReconcileUsage(ctx context.Context, acct state.Account, start, end time.Time) (pushedMBSeconds int64, err error)
 
 	// Refund issues an operator-initiated refund against a charge
@@ -141,28 +145,28 @@ type Provider interface {
 	// responsible for:
 	//
 	//   1. Translating cents → the provider's native unit (Stripe:
-	//      millicents; Paddle: not implemented → returns
-	//      ErrNotImplemented).
+	//      millicents; Paddle: adjustment line-item cents).
 	//   2. Forwarding a ctx-derived Idempotency-Key so a network-blip
 	//      retry does not create a duplicate refund. Stripe: read
-	//      via idempotencyKeyFromCtx; Paddle: not implemented.
+	//      via idempotencyKeyFromCtx; Paddle: ContextWithTransitID).
 	//   3. Mapping provider errors (Stripe: amount_too_large,
 	//      charge_already_refunded, etc.) onto errors the apid
 	//      handler can dispatch on. Today the handler returns
 	//      502 for any non-nil error; the refinement is a follow-up.
 	//
-	// apid's handler is the only caller (cmd/apid/handlers_admin_credits.go).
-	// The webhook (charge.refunded) is observational and routes
+	// apid's operator route is the caller
+	// (cmd/apid/handlers_admin_refunds.go). The webhook (charge.refunded or
+	// the provider-equivalent refund event) is observational and routes
 	// through VerifyWebhook → EventRefundProcessed, NOT through this
 	// method.
 	Refund(ctx context.Context, chargeID string, amountCents int64) (*RefundResult, error)
 
 	// RetryLatestCharge materializes a new charge attempt against
-	// the account's saved card (issue #242; closes the lie at
-	// pkg/mail/account.go:107,150 that promises `faas billing retry`
-	// which didn't exist). Returns the new attempt's id + the
-	// provider's reference id; the apid handler echoes them in
-	// BillingRetryResponse.
+	// the account's saved card where the provider exposes that operation
+	// (issue #242). Returns the new attempt's id + the provider's reference
+	// id; the apid handler echoes them in BillingRetryResponse. Providers
+	// without a direct retry surface return ErrNotImplemented and apid
+	// directs the customer to the billing portal.
 	//
 	//   - Stripe: walks the customer's open invoices in reverse
 	//     chronological order and calls Invoices.Pay on the latest
@@ -190,12 +194,9 @@ type Provider interface {
 	//   - Stripe: Subscriptions.Update(cancel_at_period_end=true).
 	//     The flag lives on Stripe-side; no local mirror. Returns
 	//     sub.CurrentPeriodEnd as the effective timestamp.
-	//   - Paddle: Paddle has no separate "scheduled cancellation"
-	//     primitive; the cancel intent lives on the Paddle
-	//     Customer object's scheduled_change field. apid's Paddle
-	//     impl stamps that field via Customer.Update. Returns
-	//     the next month-rollover instant as the effective
-	//     timestamp.
+	//   - Paddle: Subscriptions.Cancel with
+	//     EffectiveFromNextBillingPeriod. Returns the effective date
+	//     from Paddle's scheduled-change/current-period response.
 	//
 	// Sentinel errors:
 	//   - ErrAlreadyCancelled — no active subscription (Free / post-
@@ -222,6 +223,68 @@ type Provider interface {
 	// The only error path is the provider-SDK failure case
 	// (ErrNoAPIKey on Stripe when no SDK is constructed).
 	PaymentMethodSummary(ctx context.Context, acct state.Account) (PaymentMethod, error)
+}
+
+// UsageModeProvider is an optional provider contract for usage semantics.
+// Providers that return UsageModeOverage receive only the portion above
+// Gregale's included calendar-month quota. Providers without this optional
+// surface retain the historical raw-usage contract.
+type UsageModeProvider interface {
+	UsageMode() UsageMode
+}
+
+// UsageMode describes the quantity passed to PushUsageRecord and returned by
+// ReconcileUsage.
+type UsageMode string
+
+const (
+	// UsageModeRaw is the legacy provider contract: the quantity is all local
+	// usage in the requested window.
+	UsageModeRaw UsageMode = "raw"
+	// UsageModeOverage is the calendar-month net-overage contract. The
+	// included plan allowance is removed locally before provider ingestion.
+	UsageModeOverage UsageMode = "overage"
+)
+
+// CustomerPortalProvider is an optional provider surface for creating a
+// short-lived, customer-authenticated billing portal session. Providers that
+// do not expose a session API can continue using the operator-configured
+// BillingPortalURL fallback.
+type CustomerPortalProvider interface {
+	CreateCustomerPortalSession(ctx context.Context, acct state.Account, returnURL string) (portalURL string, err error)
+}
+
+// SubscriptionPlanChangeProvider is an optional provider surface for
+// scheduling a change to an existing subscription. The caller must not
+// change the local entitlement before the provider confirms the new product
+// through a webhook. Providers that do not expose subscription product
+// changes leave customers on the hosted billing portal path.
+//
+// targetPlan == api.PlanFree means cancel the subscription at period end;
+// paid-to-paid changes should use the provider's non-prorating or
+// next-period semantics unless the provider explicitly documents otherwise.
+type SubscriptionPlanChangeProvider interface {
+	ChangeSubscriptionPlan(ctx context.Context, acct state.Account, targetPlan api.Plan) (effectiveAt time.Time, err error)
+}
+
+// InvoicePDFRequester is an optional provider surface for requesting an
+// invoice PDF after a paid order. Providers whose invoices are generated
+// automatically need not implement it.
+type InvoicePDFRequester interface {
+	RequestInvoicePDF(ctx context.Context, providerInvoiceID string) error
+}
+
+// CatalogProvider is an optional operator surface for inspecting and
+// revalidating the active provider's configured product catalog. The API
+// endpoint retains its historical billing-paddle-catalog path for client
+// compatibility, but the response and this interface are provider-neutral.
+// Providers whose catalog is dashboard-owned may return ErrNotImplemented for
+// ResetBillingCatalog rather than pretending that a local reset deletes the
+// remote products.
+type CatalogProvider interface {
+	ListBillingCatalog(ctx context.Context) []api.BillingCatalogEntry
+	SyncBillingCatalog(ctx context.Context) ([]api.BillingCatalogEntry, error)
+	ResetBillingCatalog(ctx context.Context) error
 }
 
 // EventType is the provider-neutral "what happened" classifier apid
@@ -297,6 +360,23 @@ func (t EventType) Name() string {
 	}
 }
 
+// InvoiceData is the provider-neutral invoice projection carried by webhook
+// events. It is deliberately small and contains only fields the customer
+// invoice history API can persist.
+type InvoiceData struct {
+	ProviderInvoiceID string
+	Number            string
+	Status            string
+	PeriodStart       time.Time
+	PeriodEnd         time.Time
+	SubtotalCents     int64
+	TaxCents          int64
+	TotalCents        int64
+	AmountPaidCents   int64
+	Currency          string
+	PDFAvailable      bool
+}
+
 // Event is the normalized envelope apid's dunning state machine
 // dispatches on. Provider-shaped JSON stays inside each
 // implementation; Raw carries the original body for debugging.
@@ -360,6 +440,11 @@ type Event struct {
 	// operator can correlate the audit row with the provider
 	// dashboard.
 	ChargeID string
+
+	// Invoice is populated by providers that deliver an invoice/order
+	// projection (currently Paddle and Polar). It is persisted independently of the
+	// event type so order.created can populate invoice history before payment.
+	Invoice *InvoiceData
 }
 
 // RefundResult is what Provider.Refund returns on a successful refund.
@@ -371,6 +456,9 @@ type RefundResult struct {
 	ChargeID         string
 	AmountCents      int64
 	Currency         string
+	// Status is the provider's current refund state. Providers may return a
+	// pending state when a refund requires asynchronous approval.
+	Status string
 }
 
 // ErrBadSignature is the unified error returned by VerifyWebhook when
@@ -380,8 +468,7 @@ type RefundResult struct {
 var ErrBadSignature = errors.New("billing: bad webhook signature")
 
 // ErrNotImplemented is the unified error a Provider returns when the
-// selected billing backend does not support a method (issue #279:
-// Paddle's Refund). Callers should map this to a 501 Problem with
+// selected billing backend does not support a method. Callers should map this to a 501 Problem with
 // docs_url pointing at the spec — the operator picks a backend that
 // supports the surface they need.
 var ErrNotImplemented = errors.New("billing: provider does not implement this method")
@@ -470,9 +557,8 @@ const (
 	CapHostedCheckout Capability = 1 << iota
 
 	// CapRefund means Provider.Refund is implemented. apid's
-	// admin/refund route maps to a 502 when absent. Paddle: no
-	// (issue #279 — Paddle's refund ceremony is out of scope).
-	// Stripe: yes.
+	// admin/refund route maps to a 502 when absent. Paddle and
+	// Stripe both expose this surface.
 	CapRefund
 
 	// CapUsageReconcile means Provider.ReconcileUsage is implemented
@@ -480,6 +566,7 @@ const (
 	// (pkg/billing/reconciler) skips accounts whose active provider
 	// lacks this capability, before any SDK call fires. Paddle: no
 	// (Paddle Billing has no usage-summary endpoint). Stripe: yes.
+	// Polar: yes when a meter ID is configured.
 	CapUsageReconcile
 
 	// CapSandbox means the provider supports a sandbox / test

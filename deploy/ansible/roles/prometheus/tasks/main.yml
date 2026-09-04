@@ -43,9 +43,18 @@
       - prom_alertmanager_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?(/.*)?$')
     fail_msg: >-
       prom_alertmanager_url={{ prom_alertmanager_url }} is not a loopback
-      address. Alertmanager must bind 127.0.0.1:9093; off-box alert
+      address. Alertmanager must bind 127.0.0.1:9094; off-box alert
       routing leaks operational metadata over plaintext. Override the
       variable only via ansible-vault or remove the override entirely.
+
+- name: prometheus — assert compute discovery URL is loopback
+  ansible.builtin.assert:
+    that:
+      - prom_compute_metrics_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/targets$')
+    fail_msg: >-
+      prom_compute_metrics_discovery_url={{ prom_compute_metrics_discovery_url }}
+      must remain the loopback apid HTTP-SD endpoint. Compute registry
+      metadata must not be fetched over a public or provider-specific URL.
 
 - name: prometheus — create system user `prometheus`
   ansible.builtin.user:
@@ -104,6 +113,7 @@
     group: root
     mode: "0755"
     remote_src: true
+  notify: restart prometheus
 
 - name: prometheus — install promtool (used by config validation)
   ansible.builtin.copy:
@@ -191,8 +201,8 @@
   notify: reload prometheus
 
 - name: prometheus — install systemd unit
-  ansible.builtin.copy:
-    src: prometheus.service
+  ansible.builtin.template:
+    src: prometheus.service.j2
     dest: /etc/systemd/system/prometheus.service
     owner: root
     group: root
@@ -201,18 +211,36 @@
     - daemon-reload
     - restart prometheus
 
+- name: prometheus — read rendered config and unit
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop:
+    - /etc/prometheus/prometheus.yml
+    - /etc/systemd/system/prometheus.service
+  register: prom_rendered_files
+
+- name: prometheus — assert rendered files contain no Jinja placeholders
+  ansible.builtin.assert:
+    that:
+      - "'{' ~ '{' not in (item.content | b64decode)"
+      - "'}' ~ '}' not in (item.content | b64decode)"
+      - "'{' ~ '%' not in (item.content | b64decode)"
+      - "'%' ~ '}' not in (item.content | b64decode)"
+    fail_msg: "{{ item.source }} still contains an unrendered Ansible placeholder"
+  loop: "{{ prom_rendered_files.results }}"
+
+- name: prometheus — verify rendered config parses
+  ansible.builtin.command: /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
+  changed_when: false
+  register: prom_config_check
+  failed_when: prom_config_check.rc != 0
+
 - name: prometheus — enable + start service
   ansible.builtin.service:
     name: prometheus
     enabled: true
     state: started
   register: prom_svc
-  failed_when: false  # chroot/CI may lack systemd
-
-- name: prometheus — verify config parses
-  ansible.builtin.command: /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
-  changed_when: false
-  failed_when: false  # CI may not have a running Prometheus yet
 
 # Cleanup: the tarball and extracted dir live in /tmp (tmpfs on the
 # EX44 — moot — but accumulates on long-lived dev VMs). Removing after

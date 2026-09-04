@@ -15,6 +15,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 MANIFEST_TEMPLATE="${1:-$REPO_ROOT/deploy/manifest/production/gcp-live.template.yaml}"
 CURRENT_GIT_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
+RUNTIME_BASES_ENV="${RUNTIME_BASES_ENV:-}"
 MANIFEST_PATH=$(mktemp "${TMPDIR:-/tmp}/gregale-production-manifest.XXXXXX.yaml")
 SIM_OUT_DIR=""
 cleanup() {
@@ -34,12 +35,17 @@ if [[ ! -f "$MANIFEST_TEMPLATE" ]]; then
   echo "[-] ERROR: Manifest template not found: $MANIFEST_TEMPLATE" >&2
   exit 1
 fi
+if [[ -z "$RUNTIME_BASES_ENV" || ! -f "$RUNTIME_BASES_ENV" ]]; then
+  echo "[-] ERROR: set RUNTIME_BASES_ENV to the generated digest-pinned runtime contract." >&2
+  exit 1
+fi
 
 echo ""
 echo "[1/5] Materializing and validating production deployment manifest..."
 "$REPO_ROOT/scripts/materialize-release-manifest.sh" \
   --template "$MANIFEST_TEMPLATE" \
   --git-sha "$CURRENT_GIT_SHA" \
+  --runtime-bases-env "$RUNTIME_BASES_ENV" \
   --output "$MANIFEST_PATH"
 go run "$REPO_ROOT/cmd/gregalectl" manifest validate --file="$MANIFEST_PATH"
 echo "[+] Manifest validation passed."

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"path/filepath"
 
@@ -79,7 +80,18 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("db: set goose dialect: %w", err)
 	}
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
+	option, repaired, err := reservationMigrationOption(ctx, sqlDB)
+	if err != nil {
+		return fmt.Errorf("db: inspect migration ledger: %w", err)
+	}
+	if len(repaired) > 0 {
+		log.Printf("db: reconciling missing no-op migration reservations: %v", repaired)
+	}
+	var options []goose.OptionsFunc
+	if option != nil {
+		options = append(options, option)
+	}
+	if err := goose.UpContext(ctx, sqlDB, ".", options...); err != nil {
 		return fmt.Errorf("db: goose up: %w", annotateSchemaDrift(err))
 	}
 	return nil

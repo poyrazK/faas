@@ -36,6 +36,20 @@ already missing at PR #104's merge; once those rows are recorded,
 the block is dead weight (two `SELECT EXISTS` per deploy + a
 ~40-line heredoc + a `scp migrations/*.sql`).
 
+## Automatic repair for no-op reservation gaps
+
+Gregale's `db.MigrateUp` detects historical ledger gaps before invoking
+Goose. It opts into Goose's allow-missing mode only when every missing file is
+an explicitly named `_reserve_slot.sql` / `_reservation.sql` no-op fence.
+Goose then executes those no-op files and records their versions normally. A
+missing real schema migration keeps the strict failure path and still requires
+operator reconciliation; it is never silently skipped or applied out of order.
+
+This closes the production failure mode where a reservation fence is merged
+after a database has already advanced beyond that slot. The migration advisory
+lock remains held for the inspection and apply sequence, so two daemons cannot
+repair or migrate the same database concurrently.
+
 ## Pre-merge: verify prod is clean
 
 The follow-up PR is safe to merge when prod's `goose_db_version`

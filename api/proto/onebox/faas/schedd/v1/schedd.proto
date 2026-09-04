@@ -515,6 +515,12 @@ message AdmitInstanceRequest {
   // concurrent-VM cost circuit on this value. Additive per
   // ADR-016.
   string mirror_rule_id = 6;
+  // burst_continuation marks an admission as part of the bounded
+  // gateway burst whose first admission already passed the ordinary
+  // scale-out gates. It only bypasses the per-app scale-out cooldown;
+  // the ledger, placement, RAM, and node limits still apply to every
+  // admission. Additive per ADR-016.
+  bool burst_continuation = 7;
 }
 
 // AdmitInstanceResponse is the typed result of Engine.AdmitInstance.

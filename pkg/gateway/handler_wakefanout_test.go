@@ -114,9 +114,8 @@ func (b *wakefanoutBackend) ScheduleMirror(_ context.Context, _, _, _ string) (s
 // OK=false and ColdBucket="dep-B".
 //
 // Handler call ordering pinned here:
-//   - ensureCapacity sees HealthyCount=1 < maxConcurrency, takes the
-//     fan-out path (handler.go:2404) and calls Admit(appID, "") — the
-//     legacy single-deployment admit.
+//   - ensureCapacity sees an existing target and does not admit a
+//     needless extra VM.
 //   - Pick returns ColdBucket="dep-B" → wake-fan-out fires and calls
 //     Admit(appID, "dep-B") with the picked deploymentID.
 //   - Retry Pick returns the warmed dep-B Target → proxy.
@@ -160,18 +159,15 @@ func TestHandler_WakeFanOut_WakesLandedDeployment(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	// ensureCapacity does one Admit("") for the HealthyCount<cap
-	// fan-out; wake-fan-out does one Admit("dep-B") for the
-	// landed deployment. Together: 2 admits, one of which is on
-	// the picked bucket.
-	if got := b.totalAdmits.Load(); got != 2 {
-		t.Fatalf("totalAdmits = %d, want 2 (legacy fan-out + wake-fan-out)", got)
+	// Only the explicit cold deployment bucket is admitted.
+	if got := b.totalAdmits.Load(); got != 1 {
+		t.Fatalf("totalAdmits = %d, want 1 (wake-fan-out only)", got)
 	}
 	if got := b.admitsByDeploy["dep-B"]; got != 1 {
 		t.Errorf("admitsByDeploy[dep-B] = %d, want 1 (handler must wake the landed deployment)", got)
 	}
-	if got := b.admitsByDeploy[""]; got != 1 {
-		t.Errorf("admitsByDeploy[\"\"] = %d, want 1 (ensureCapacity legacy fan-out admit)", got)
+	if got := b.admitsByDeploy[""]; got != 0 {
+		t.Errorf("admitsByDeploy[\"\"] = %d, want 0 (warm capacity must be reused)", got)
 	}
 	if got := b.picks.Load(); got != 2 {
 		t.Errorf("Pick calls = %d, want 2 (initial cold + post-admit retry)", got)
@@ -185,8 +181,8 @@ func TestHandler_WakeFanOut_WakesLandedDeployment(t *testing.T) {
 // must NOT loop on additional admits. The plan's contract is
 // bounded-at-1.
 //
-// Counting: ensureCapacity = 1 Admit(""); wake-fan-out = 1 Admit
-// (ColdBucket); retry Pick fails → 503. Total = 2 admits, no third
+// Counting: ensureCapacity reuses the existing target; wake-fan-out = 1
+// Admit (ColdBucket); retry Pick fails → 503. Total = 1 admit, no third
 // retry.
 func TestHandler_WakeFanOut_AdmitsOnceEvenIfRetryStillCold(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -213,11 +209,11 @@ func TestHandler_WakeFanOut_AdmitsOnceEvenIfRetryStillCold(t *testing.T) {
 	if rec.Code/100 != 4 && rec.Code/100 != 5 {
 		t.Fatalf("status = %d, want 4xx/5xx (handler must surface failure, not loop); body=%s", rec.Code, rec.Body.String())
 	}
-	// 2 total: 1 from ensureCapacity fan-out + 1 from wake-fan-out.
+	// 1 total: only the wake-fan-out admit.
 	// The third Pick is NOT preceded by another Admit — that's the
 	// "bounded at 1 retry" contract.
-	if got := b.totalAdmits.Load(); got != 2 {
-		t.Fatalf("totalAdmits = %d, want 2 (legacy fan-out + single wake-fan-out retry)", got)
+	if got := b.totalAdmits.Load(); got != 1 {
+		t.Fatalf("totalAdmits = %d, want 1 (single wake-fan-out retry)", got)
 	}
 	if got := b.picks.Load(); got != 2 {
 		t.Errorf("Pick calls = %d, want 2 (initial + single retry)", got)
@@ -230,8 +226,7 @@ func TestHandler_WakeFanOut_AdmitsOnceEvenIfRetryStillCold(t *testing.T) {
 // is gated on `!pick.OK && pick.ColdBucket != ""`; a warm Pick with
 // ColdBucket="" must not fire the fan-out path.
 //
-// Counting: ensureCapacity = 1 Admit(""); warm Pick → no fan-out
-// → proxy. Total = 1 admit, on "".
+// Counting: warm Pick → no fan-out → proxy. Total = 0 admits.
 func TestHandler_WakeFanOut_NotTriggeredOnWarmPick(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("warm route"))
@@ -264,11 +259,11 @@ func TestHandler_WakeFanOut_NotTriggeredOnWarmPick(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (warm route should serve)", rec.Code)
 	}
-	if got := b.totalAdmits.Load(); got != 1 {
-		t.Errorf("totalAdmits = %d, want 1 (only ensureCapacity's legacy admit; no wake-fan-out)", got)
+	if got := b.totalAdmits.Load(); got != 0 {
+		t.Errorf("totalAdmits = %d, want 0 (warm route must not admit)", got)
 	}
-	if got := b.admitsByDeploy[""]; got != 1 {
-		t.Errorf("admitsByDeploy[\"\"] = %d, want 1", got)
+	if got := b.admitsByDeploy[""]; got != 0 {
+		t.Errorf("admitsByDeploy[\"\"] = %d, want 0", got)
 	}
 	if got := b.admitsByDeploy["dep-A"]; got != 0 {
 		t.Errorf("admitsByDeploy[dep-A] = %d, want 0 (no fan-out on warm pick)", got)

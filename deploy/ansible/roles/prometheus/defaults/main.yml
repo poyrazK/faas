@@ -17,16 +17,26 @@ prom_version: "2.54.1"
 # and bump both the version and the hash together. SHA-256 of
 # prometheus-2.54.1.linux-amd64.tar.gz from the upstream release.
 prom_release_sha256: "31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f"
-prom_listen_addr: "127.0.0.1:9090"
+# 9090 belongs to gatewayd-internal's control listener. Keep Prometheus on
+# its dedicated loopback port so a restart cannot collide with a daemon
+# health/metrics endpoint.
+prom_listen_addr: "127.0.0.1:9095"
 prom_retention_days: 15
 prom_data_dir: /var/lib/prometheus
+
+# The control-plane Prometheus discovers active compute gateway listeners from
+# apid's loopback registry endpoint. This is intentionally a URL, not an
+# inventory-derived target list, so node add/drain/replace operations converge
+# on the next refresh without editing Ansible or restarting Prometheus.
+prom_compute_metrics_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/targets"
+prom_compute_metrics_discovery_refresh_interval: "15s"
 
 # Alertmanager — loopback-only (operator dials the bridge to reach it).
 # Wired into prometheus.yml.j2 via the `alerting:` block. The role
 # asserts at template time that the parsed host is loopback (127/8 or
 # ::1) so an inventory mistake routing alert payloads off-box is caught
 # here, not after the operator's pager has been silent for a week.
-prom_alertmanager_url: "http://127.0.0.1:9093"
+prom_alertmanager_url: "http://127.0.0.1:9094"
 
 # faas daemon metrics endpoints. Each daemon exposes /metrics on its
 # MetricsAddr; see cmd/<daemon>/main.go for the exact port. Keep in
@@ -46,27 +56,24 @@ prom_alertmanager_url: "http://127.0.0.1:9093"
 # - imaged default 9102 (cmd/imaged/main.go — PR #132).
 # - githubd shares the loopback :8083 mux (pkg/githubd/server.go —
 #   no separate metrics port; webhook + /metrics on the same listener).
-# - gatewayd-public default 9090 (cmd/gatewayd-public/config.go — Prometheus role
-#   defaults previously had 9093; drifted from real).
-# - builderd/meterd MetricsAddr is operator-supplied TOML. The ports
+# - gatewayd-public control listener :9092 (the public HTTP listener is
+#   separate; see gatewayd_public_service/files/faas-gatewayd-public.service).
+# - meterd MetricsAddr is operator-supplied TOML. The ports
 #   here match the production deployment on the EX44:
 #   - meterd 9106 — deploy/digitalocean/config/meterd.toml pins it.
 #   - schedd 9103 — deploy/digitalocean/config/schedd.toml pins it;
 #     Prometheus scrapes it under metrics_path=/metrics/fcvm so the
 #     vmmd sibling-path collection doesn't collide.
-#   - builderd has no pinned port today (no deployment config). The
-#     port 9105 chosen here is the alert-rules PR's best-effort guess;
-#     production must set metrics_addr in builderd.toml to match,
-#     otherwise the builderd scrape job sits in 0/UP forever and the
-#     FaasBuildQueueBacklog + FaasBuildSuccessLow alerts can never
-#     fire. Tracked as a follow-up: write deploy/etc/builderd.toml.
+#   - builderd 9105 — the daemon's canonical loopback default and the
+#     value documented in builderd.toml.example. The single-box target
+#     is omitted automatically on a split control-plane host.
 prom_targets:
   - job: apid
     host: 127.0.0.1
     port: 9101
   - job: gatewayd
     host: 127.0.0.1
-    port: 9090
+    port: 9092
   - job: schedd
     host: 127.0.0.1
     port: 9103
@@ -81,6 +88,7 @@ prom_targets:
   - job: builderd
     host: 127.0.0.1
     port: 9105
+    box_roles: [single-box]
   - job: githubd
     host: 127.0.0.1
     port: 8083
@@ -89,7 +97,7 @@ prom_targets:
     port: 9106
   - job: alertmanager
     host: 127.0.0.1
-    port: 9093
+    port: 9094
   - job: node
     host: 127.0.0.1
     port: 9100

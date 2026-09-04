@@ -365,6 +365,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithNodeName(os.Getenv("FAAS_NODE_NAME")).
 		WithStorage(storageBackend).
 		WithRuntimeBaseStaging().
+		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).
 		WithOpsMetrics(ops).
 		// Issue #472 / ADR-054: per-app cosign signature-enforcement
@@ -455,22 +456,20 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged: function runner wired", "runtime", kw.runtime, "path", p)
 	}
 
-	// FAAS_DEPLOY_BASE_REF overrides the per-runtime base ref used by
-	// aboveBaseLayers at deploy time. Operator overrides must be
-	// digest-pinned (ADR-021 D4): a tag reference like `:latest` would
-	// resolve to whatever the registry serves TODAY, not when a deploy
-	// was first queued — and a per-app build that pins against today's
-	// `latest` would suddenly change what /srv/fc/base/<runtime>.ext4
-	// contains on the next imaged restart, invalidating the per-app
-	// diff_ids above. Refusing bare tags here makes the override an
-	// explicit, reproducible operator choice.
+	// Production base selection is per-runtime and comes from the
+	// FAAS_DEPLOY_BASE_REF_<RUNTIME> environment contract. The old global
+	// FAAS_DEPLOY_BASE_REF could make builderd and imaged select different
+	// layers, so fail closed if it is still present. Only the e2e harness may
+	// use the explicitly test-only global redirect to a local registry.
 	if dbr := os.Getenv("FAAS_DEPLOY_BASE_REF"); dbr != "" {
-		ref, err := oci.ParseReference(dbr)
-		if err != nil || ref.Digest == "" {
-			return fmt.Errorf("imaged: FAAS_DEPLOY_BASE_REF %q must be a digest-pinned reference (e.g. registry.gregale.dev/img@sha256:...)", dbr)
+		return fmt.Errorf("imaged: FAAS_DEPLOY_BASE_REF is retired; set FAAS_DEPLOY_BASE_REF_<RUNTIME> instead")
+	}
+	if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
+		if node := strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")); node != "" {
+			return fmt.Errorf("imaged: FAAS_TEST_DEPLOY_BASE_REF is test-only and cannot be set on named node %q", node)
 		}
 		h.WithDeployBaseRef(dbr)
-		log.Info("imaged: deploy base ref override", "ref", dbr)
+		log.Info("imaged: test deploy base ref override", "ref", dbr)
 	}
 
 	// F1 + F2: stage the builder-base ext4 on startup, then hand off to the
@@ -643,28 +642,50 @@ func builderBaseRefFromEnv() (string, error) {
 	return v, nil
 }
 
+const (
+	canonicalGuestInitPath = "/opt/faas/current/bin/init"
+	legacyGuestInitPath    = "/usr/local/bin/faas-guest-init"
+)
+
 // guestInitPathFromEnv resolves the boot-critical PID 1 binary. Older
 // single-box units defaulted to ./init, which depends on an implicit working
 // directory and silently left a stale guest-init inside an already-published
 // runtime base when the checkout was not present there. Prefer the paths used
 // by release installs, then keep the local checkout path as a development
-// fallback. An explicit FAAS_GUEST_INIT always wins.
+// fallback.
+//
+// A historical production override pointed FAAS_GUEST_INIT at
+// /usr/local/bin/faas-guest-init. That path is not release-managed and can
+// survive an otherwise successful daemon rollout, which makes the base image
+// embed an old PID 1. Once the canonical release binary exists, ignore that
+// one legacy override so a base refresh cannot silently preserve stale guest
+// code. Other explicit paths remain supported for local development.
 func guestInitPathFromEnv() string {
-	if v := os.Getenv("FAAS_GUEST_INIT"); v != "" {
-		return v
-	}
-	for _, candidate := range []string{
-		"/opt/faas/current/bin/init",
-		"/usr/local/bin/faas-guest-init",
+	explicit := os.Getenv("FAAS_GUEST_INIT")
+	return resolveGuestInitPath(explicit, []string{
+		canonicalGuestInitPath,
+		legacyGuestInitPath,
 		"./init",
-	} {
-		if _, err := os.Stat(candidate); err == nil {
+	}, func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
+	})
+}
+
+func resolveGuestInitPath(explicit string, candidates []string, exists func(string) bool) string {
+	if explicit != "" {
+		if explicit != legacyGuestInitPath || !exists(canonicalGuestInitPath) {
+			return explicit
+		}
+	}
+	for _, candidate := range candidates {
+		if exists(candidate) {
 			return candidate
 		}
 	}
 	// Return the release path even when the install is incomplete so the
 	// subsequent base-build error names the missing boot contract directly.
-	return "/opt/faas/current/bin/init"
+	return canonicalGuestInitPath
 }
 
 // envDuration parses a duration env var, returning fallback on parse error

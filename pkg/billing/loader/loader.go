@@ -33,12 +33,17 @@
 //
 // Env vars consumed (all optional except per the per-branch docs):
 //
-//	FAAS_BILLING_PROVIDER   "" | "stripe" | "paddle"   default ""
+//	FAAS_BILLING_PROVIDER   "" | "stripe" | "paddle" | "polar"   default "polar"
 //	STRIPE_API_KEY          required when Stripe is the active provider (apid + meterd)
 //	STRIPE_WEBHOOK_SECRET   required when Stripe is the active provider (apid only)
 //	FAAS_PADDLE_API_KEY     required when Paddle is the active provider (apid + meterd)
 //	FAAS_PADDLE_WEBHOOK_SECRET  required when Paddle is the active provider (apid only)
 //	FAAS_PADDLE_SANDBOX     "1" / "true" to use api.sandbox.paddle.com (apid + meterd)
+//	FAAS_POLAR_ACCESS_TOKEN required when Polar is active (apid + meterd)
+//	FAAS_POLAR_WEBHOOK_SECRET required when Polar is active (apid only)
+//	FAAS_POLAR_SANDBOX      "1" / "true" to use sandbox-api.polar.sh (apid + meterd)
+//	FAAS_POLAR_METER_ID    required when Polar is active; usage meter + reconciliation
+//	FAAS_POLAR_BASE_URL    optional; private API proxy / contract-test endpoint
 //
 // TOML config precedence: env > TOML > Defaults. The daemon's
 // LoadConfig reads the [billing] block from its TOML file via
@@ -52,10 +57,12 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
+	"github.com/onebox-faas/faas/pkg/billing/polar"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -66,6 +73,7 @@ import (
 const (
 	providerStripe = "stripe"
 	providerPaddle = "paddle"
+	providerPolar  = "polar"
 	// Keep optional remote catalog hydration from blocking the API listener
 	// indefinitely when the billing provider or internet path is unavailable.
 	// The provider remains wired and can retry on its normal request path.
@@ -107,6 +115,55 @@ func resolveSandbox(envVal string, tomlVal bool) bool {
 	default:
 		return tomlVal
 	}
+}
+
+func resolvedPolarConfig(cfg *RootBillingConfig, env func(string) string) polar.Config {
+	var out polar.Config
+	if cfg != nil && cfg.Polar != nil {
+		out = *cfg.Polar
+	}
+	if v := env("FAAS_POLAR_ACCESS_TOKEN"); v != "" {
+		out.APIKey = v
+	} else if v := env("FAAS_POLAR_API_KEY"); v != "" {
+		out.APIKey = v
+	}
+	if v := env("FAAS_POLAR_WEBHOOK_SECRET"); v != "" {
+		out.WebhookSecret = v
+	}
+	if v := env("FAAS_POLAR_SANDBOX"); v != "" {
+		out.Sandbox = resolveSandbox(v, out.Sandbox)
+	}
+	if v := env("FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			out.ToleranceSeconds = n
+		}
+	}
+	if v := env("FAAS_POLAR_HOBBY_PRODUCT_ID"); v != "" {
+		out.HobbyProductID = v
+	}
+	if v := env("FAAS_POLAR_PRO_PRODUCT_ID"); v != "" {
+		out.ProProductID = v
+	}
+	if v := env("FAAS_POLAR_SCALE_PRODUCT_ID"); v != "" {
+		out.ScaleProductID = v
+	}
+	if v := env("FAAS_POLAR_USAGE_EVENT_NAME"); v != "" {
+		out.UsageEventName = v
+	}
+	if v := env("FAAS_POLAR_METER_ID"); v != "" {
+		out.MeterID = v
+	}
+	if v := env("FAAS_POLAR_SUCCESS_URL"); v != "" {
+		out.SuccessURL = v
+	}
+	if v := env("FAAS_POLAR_RETURN_URL"); v != "" {
+		out.ReturnURL = v
+	}
+	if v := env("FAAS_POLAR_BASE_URL"); v != "" {
+		out.BaseURL = v
+	}
+	out.Defaults()
+	return out
 }
 
 // ProviderMeta describes one registered billing provider for the
@@ -267,6 +324,30 @@ func Providers() []ProviderMeta {
 				return p, nil
 			},
 		},
+		{
+			Name:         providerPolar,
+			Capabilities: polar.PolarCapabilities(),
+			EnvVars: []string{
+				"FAAS_POLAR_ACCESS_TOKEN", "FAAS_POLAR_WEBHOOK_SECRET",
+				"FAAS_POLAR_SANDBOX", "FAAS_POLAR_HOBBY_PRODUCT_ID",
+				"FAAS_POLAR_PRO_PRODUCT_ID", "FAAS_POLAR_SCALE_PRODUCT_ID",
+				"FAAS_POLAR_METER_ID", "FAAS_POLAR_BASE_URL",
+			},
+			BuildAPID: func(cfg *RootBillingConfig, env func(string) string, log *slog.Logger) (any, error) {
+				p, err := polar.NewProvider(resolvedPolarConfig(cfg, env), log)
+				if err != nil {
+					return nil, fmt.Errorf("billing/loader: build Polar provider for apid: %w", err)
+				}
+				return p, nil
+			},
+			BuildMeterd: func(cfg *RootBillingConfig, env func(string) string, store state.Store, log *slog.Logger) (any, error) {
+				p, err := polar.NewProviderWithDedupe(resolvedPolarConfig(cfg, env), log, store)
+				if err != nil {
+					return nil, fmt.Errorf("billing/loader: build Polar provider for meterd: %w", err)
+				}
+				return p, nil
+			},
+		},
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -275,7 +356,11 @@ func Providers() []ProviderMeta {
 // LoadProviderForAPID returns a billing.Provider for apid's webhook
 // ingress + changePlan handler.
 //
-//   - cfg.Provider empty or "stripe" → returns (nil, "stripe", nil).
+//   - cfg.Provider empty or "polar" → constructs a *polar.Provider.
+//     Polar is the public-release default and requires a configured
+//     access token, catalog products, and meter preflight.
+//
+//   - cfg.Provider "stripe" → returns (nil, "stripe", nil).
 //     The apid Stripe path stays inline; apid reads
 //     FAAS_BILLING_PORTAL_URL + STRIPE_WEBHOOK_SECRET directly because
 //     it doesn't need to construct a *stripe.Client (only the webhook
@@ -291,6 +376,10 @@ func Providers() []ProviderMeta {
 //     ingress is independent of the catalog). Returns the provider +
 //     the literal "paddle".
 //
+//   - cfg.Provider "polar" → constructs a *polar.Provider and
+//     requires its configured products and meter to pass the live
+//     catalog preflight before apid starts accepting billing traffic.
+//
 //   - Any other value → error so a typo fails the boot loudly.
 //
 // cfg is the env-overlaid TOML config (the caller called
@@ -305,7 +394,7 @@ func LoadProviderForAPID(ctx context.Context, cfg *RootBillingConfig, env func(s
 	if cfg == nil {
 		cfg = &RootBillingConfig{}
 	}
-	// cfg.DefaultProvider() applies the implicit default (v2 = Paddle)
+	// cfg.DefaultProvider() applies the implicit default (public release = Polar)
 	// when Provider is empty. The legacy Stripe opt-in
 	// (FAAS_BILLING_PROVIDER=stripe) is unaffected — an explicit value
 	// still wins. The default lives in exactly one place; both loader
@@ -340,17 +429,13 @@ func LoadProviderForAPID(ctx context.Context, cfg *RootBillingConfig, env func(s
 		// planOverage). The call is bounded by the SDK's HTTP timeout
 		// and the supplied ctx so a daemon shutdown can cancel it.
 		//
-		// Best-effort: a failed hydration is warn-logged, not fatal.
-		// The upgrade 402 will degrade to a 500 "monthly price missing"
-		// until the next EnsurePlanProducts run (e2e harness +
-		// transient Paddle outage at boot both need this). The webhook
-		// ingress is independent of the catalog — the dunning state
-		// machine reads acct.Plan, not price handles, so the boot
-		// failure mode is the upgrade 402 path only.
 		bootCtx, cancel := context.WithTimeout(ctx, providerBootHydrationTimeout)
 		err = bp.EnsurePlanProducts(bootCtx)
 		cancel()
 		if err != nil {
+			if m.Name == providerPolar {
+				return nil, m.Name, fmt.Errorf("billing: Polar catalog preflight failed: %w", err)
+			}
 			log.Warn("billing: EnsurePlanProducts failed at boot — upgrade 402 will degrade to 500 until next run",
 				"provider", m.Name, "err", err)
 		}
@@ -363,7 +448,7 @@ func LoadProviderForAPID(ctx context.Context, cfg *RootBillingConfig, env func(s
 // loop. Always non-nil on success — the meterd pusher requires a Provider
 // (the legacy *stripe.Client path is folded into the interface).
 //
-//   - cfg.Provider empty or "stripe" → the Stripe BuildMeterd closure
+//   - cfg.Provider "stripe" → the Stripe BuildMeterd closure
 //     constructs a *stripe.Client with the supplied state.Store as both
 //     the StateStore and the PushDedupe (the Stripe provider's
 //     NewClient takes both args; today every Store implementation
@@ -373,6 +458,9 @@ func LoadProviderForAPID(ctx context.Context, cfg *RootBillingConfig, env func(s
 //     a *paddle.Provider with the state.Store as the cross-process
 //     overage dedupe. meterd doesn't need the webhook secret (no
 //     ingress) so the second arg is empty.
+//
+//   - cfg.Provider "polar" → constructs a *polar.Provider and refuses
+//     to start meterd when the configured product catalog preflight fails.
 //
 //   - Any other value → error so a typo fails the boot loudly.
 //
@@ -409,6 +497,18 @@ func LoadProviderForMeterd(cfg *RootBillingConfig, env func(string) string, stor
 		bp, ok := p.(billing.Provider)
 		if !ok {
 			return nil, m.Name, fmt.Errorf("billing: provider %s BuildMeterd returned %T, does not satisfy billing.Provider", m.Name, p)
+		}
+		if m.Name == providerPolar {
+			// Polar's product and usage-event IDs are deployment-owned config,
+			// not lazily discovered data. Refuse to start meterd when the
+			// catalog cannot satisfy the billing contract; otherwise the box
+			// would sample usage forever while every checkout/push is unusable.
+			preflightCtx, cancel := context.WithTimeout(context.Background(), providerBootHydrationTimeout)
+			err := bp.EnsurePlanProducts(preflightCtx)
+			cancel()
+			if err != nil {
+				return nil, m.Name, fmt.Errorf("billing: Polar catalog preflight failed for meterd: %w", err)
+			}
 		}
 		return bp, m.Name, nil
 	}

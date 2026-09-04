@@ -39,6 +39,25 @@ func TestMapStripeTypeToEventType(t *testing.T) {
 	}
 }
 
+func TestBillingPlanFromProviderID(t *testing.T) {
+	cases := []struct {
+		id   string
+		want api.Plan
+	}{
+		{"pro", api.PlanPro},
+		{"plan_pro_monthly", api.PlanPro},
+		{"pri_scale_monthly", api.PlanScale},
+		{"product_hobby", api.PlanHobby},
+		{"product", ""},
+		{"price_unknown", ""},
+	}
+	for _, tc := range cases {
+		if got := billingPlanFromProviderID(tc.id); got != tc.want {
+			t.Errorf("billingPlanFromProviderID(%q) = %q, want %q", tc.id, got, tc.want)
+		}
+	}
+}
+
 // TestLookupAccountByStripeID covers the empty-id rejection branch
 // (handlers_ext.go:2545) and the happy lookup path through MemStore.
 func TestLookupAccountByStripeID(t *testing.T) {

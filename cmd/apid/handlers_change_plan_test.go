@@ -74,11 +74,11 @@ func TestChangePlan_GateMatrix(t *testing.T) {
 		wantPortalURLSet bool
 		wantPlanAfter    api.Plan
 	}{
-		// The free → hobby M5 path. No Stripe item required.
+		// Every free → paid path now requires provider confirmation.
 		{
 			name: "free→hobby_allowed", startingPlan: api.PlanFree, stripeItem: "",
-			requestedPlan: api.PlanHobby, wantStatus: 200, wantCode: "",
-			wantPlanAfter: api.PlanHobby,
+			requestedPlan: api.PlanHobby, wantStatus: 402, wantCode: api.CodePayment,
+			wantPortalURLSet: true, wantPlanAfter: api.PlanFree,
 		},
 		// The documented exploit path from issue #142. Must be 402.
 		{
@@ -102,34 +102,34 @@ func TestChangePlan_GateMatrix(t *testing.T) {
 			requestedPlan: api.PlanScale, wantStatus: 402, wantCode: api.CodePayment,
 			wantPortalURLSet: true, wantPlanAfter: api.PlanHobby,
 		},
-		// With a Stripe item, the upgrade proceeds (the gateway webhook
-		// stamps the item on the way through, so the same handler that
-		// 402s for an API-only call accepts the same upgrade here).
+		// An existing subscription is sent to the provider portal. The
+		// local plan changes only after the provider webhook confirms it.
 		{
 			name: "hobby→pro_allowed_with_stripe", startingPlan: api.PlanHobby, stripeItem: "si_abc",
-			requestedPlan: api.PlanPro, wantStatus: 200, wantCode: "",
-			wantPlanAfter: api.PlanPro,
+			requestedPlan: api.PlanPro, wantStatus: 402, wantCode: api.CodePayment,
+			wantPortalURLSet: true, wantPlanAfter: api.PlanHobby,
 		},
 		{
 			name: "pro→scale_allowed_with_stripe", startingPlan: api.PlanPro, stripeItem: "si_abc",
-			requestedPlan: api.PlanScale, wantStatus: 200, wantCode: "",
-			wantPlanAfter: api.PlanScale,
+			requestedPlan: api.PlanScale, wantStatus: 402, wantCode: api.CodePayment,
+			wantPortalURLSet: true, wantPlanAfter: api.PlanPro,
 		},
 		{
 			name: "pro→scale_blocked_no_stripe", startingPlan: api.PlanPro, stripeItem: "",
 			requestedPlan: api.PlanScale, wantStatus: 402, wantCode: api.CodePayment,
 			wantPortalURLSet: true, wantPlanAfter: api.PlanPro,
 		},
-		// Downgrades always pass.
+		// Downgrades are provider mutations too; the local entitlement stays
+		// unchanged until the provider confirms the scheduled change.
 		{
 			name: "pro→free_downgrade", startingPlan: api.PlanPro, stripeItem: "si_abc",
-			requestedPlan: api.PlanFree, wantStatus: 200, wantCode: "",
-			wantPlanAfter: api.PlanFree,
+			requestedPlan: api.PlanFree, wantStatus: 402, wantCode: api.CodePayment,
+			wantPortalURLSet: true, wantPlanAfter: api.PlanPro,
 		},
 		{
 			name: "scale→pro_downgrade", startingPlan: api.PlanScale, stripeItem: "si_abc",
-			requestedPlan: api.PlanPro, wantStatus: 200, wantCode: "",
-			wantPlanAfter: api.PlanPro,
+			requestedPlan: api.PlanPro, wantStatus: 402, wantCode: api.CodePayment,
+			wantPortalURLSet: true, wantPlanAfter: api.PlanScale,
 		},
 		// Idempotent same-tier: success, no gate.
 		{
@@ -199,8 +199,8 @@ func TestChangePlan_DoesNotEnableMFA(t *testing.T) {
 	e, _ := setupChangePlan(t, api.PlanHobby, "si_abc")
 	rec := e.do(t, "PATCH", "/v1/account/plan",
 		map[string]string{"plan": string(api.PlanPro)}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200\nbody = %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402\nbody = %s", rec.Code, rec.Body)
 	}
 	fresh, err := e.store.AccountByID(context.Background(), e.acct.ID)
 	if err != nil {
@@ -208,6 +208,70 @@ func TestChangePlan_DoesNotEnableMFA(t *testing.T) {
 	}
 	if fresh.MFARequired {
 		t.Fatal("plan upgrade silently enabled MFA; enrollment must be opt-in")
+	}
+	if fresh.Plan != api.PlanHobby {
+		t.Fatalf("plan = %q, want hobby until provider confirms upgrade", fresh.Plan)
+	}
+}
+
+func TestChangePlan_DowngradeWaitsForProviderConfirmation(t *testing.T) {
+	e, srv := setupChangePlan(t, api.PlanPro, "sub_123")
+	effectiveAt := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	fake := &fakeBillingProvider{planChangeEffective: effectiveAt}
+	srv.WithBillingProvider(fake)
+
+	rec := e.do(t, "PATCH", "/v1/account/plan",
+		map[string]string{"plan": string(api.PlanHobby)}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202\nbody = %s", rec.Code, rec.Body)
+	}
+	if fake.planChangeCalls != 1 || fake.planChangeTarget != api.PlanHobby {
+		t.Fatalf("provider plan change = (%d, %q), want (1, hobby)", fake.planChangeCalls, fake.planChangeTarget)
+	}
+	var response api.AccountResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("response is not AccountResponse: %v", err)
+	}
+	if response.Plan != string(api.PlanPro) {
+		t.Errorf("response plan = %q, want current plan %q", response.Plan, api.PlanPro)
+	}
+	if response.PlanChangeStatus != "pending_provider_confirmation" {
+		t.Errorf("plan_change_status = %q, want pending_provider_confirmation", response.PlanChangeStatus)
+	}
+	if response.RequestedPlan != string(api.PlanHobby) {
+		t.Errorf("requested_plan = %q, want hobby", response.RequestedPlan)
+	}
+	if response.EffectiveAt == nil || !response.EffectiveAt.Equal(effectiveAt) {
+		t.Errorf("effective_at = %v, want %v", response.EffectiveAt, effectiveAt)
+	}
+	updated, err := e.store.AccountByID(context.Background(), e.acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Plan != api.PlanPro {
+		t.Fatalf("stored plan = %q, want pro until provider confirmation", updated.Plan)
+	}
+}
+
+func TestChangePlan_DowngradeProviderFailureKeepsLocalPlan(t *testing.T) {
+	e, srv := setupChangePlan(t, api.PlanPro, "sub_123")
+	fake := &fakeBillingProvider{planChangeErr: errors.New("provider unavailable")}
+	srv.WithBillingProvider(fake)
+
+	rec := e.do(t, "PATCH", "/v1/account/plan",
+		map[string]string{"plan": string(api.PlanFree)}, nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502\nbody = %s", rec.Code, rec.Body)
+	}
+	if fake.planChangeCalls != 1 {
+		t.Fatalf("provider plan change calls = %d, want 1", fake.planChangeCalls)
+	}
+	updated, err := e.store.AccountByID(context.Background(), e.acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Plan != api.PlanPro {
+		t.Fatalf("stored plan = %q, want pro after provider failure", updated.Plan)
 	}
 }
 
@@ -290,7 +354,7 @@ func TestPlanIsPaidAndRequiresStripeUpgradeTo(t *testing.T) {
 	}
 	for _, r := range []req{
 		{api.PlanFree, api.PlanFree, false},
-		{api.PlanFree, api.PlanHobby, false}, // the M5 direct path
+		{api.PlanFree, api.PlanHobby, true},
 		{api.PlanFree, api.PlanPro, true},
 		{api.PlanFree, api.PlanScale, true},
 		{api.PlanHobby, api.PlanFree, false}, // downgrade
@@ -335,6 +399,10 @@ type fakeBillingProvider struct {
 	checkoutURL         string
 	err                 error
 	calls               int
+	planChangeCalls     int
+	planChangeTarget    api.Plan
+	planChangeEffective time.Time
+	planChangeErr       error
 	customerCreateCalls int
 	customerCreateID    string
 	customerCreateErr   error
@@ -363,6 +431,12 @@ func (f *fakeBillingProvider) CreateUpgradeTransaction(_ context.Context, acct s
 		return "", "", f.err
 	}
 	return f.txnID, f.checkoutURL, nil
+}
+
+func (f *fakeBillingProvider) ChangeSubscriptionPlan(_ context.Context, _ state.Account, target api.Plan) (time.Time, error) {
+	f.planChangeCalls++
+	f.planChangeTarget = target
+	return f.planChangeEffective, f.planChangeErr
 }
 
 // Refund is the issue #279 billing.Provider seam. The changePlan
@@ -437,6 +511,9 @@ func TestChangePlan_PaddleCheckout_RendersPaddleExtension(t *testing.T) {
 	}
 	if prob.Code != api.CodePayment {
 		t.Errorf("Code = %q, want %q", prob.Code, api.CodePayment)
+	}
+	if prob.CheckoutURL != fake.checkoutURL {
+		t.Errorf("CheckoutURL = %q, want %q", prob.CheckoutURL, fake.checkoutURL)
 	}
 	if prob.PaddleCheckoutURL != fake.checkoutURL {
 		t.Errorf("PaddleCheckoutURL = %q, want %q", prob.PaddleCheckoutURL, fake.checkoutURL)
@@ -820,6 +897,48 @@ func TestGetBillingPortal(t *testing.T) {
 			t.Errorf("url = %q, want empty when WithBillingPortalURL is not set", resp.URL)
 		}
 	})
+}
+
+type fakeCustomerPortalProvider struct {
+	*fakeBillingProvider
+	portalURL   string
+	portalError error
+	portalCalls int
+}
+
+func (f *fakeCustomerPortalProvider) CreateCustomerPortalSession(_ context.Context, _ state.Account, _ string) (string, error) {
+	f.portalCalls++
+	return f.portalURL, f.portalError
+}
+
+func TestGetBillingPortal_UsesProviderSession(t *testing.T) {
+	e, srv := setupChangePlan(t, api.PlanHobby, "si_test")
+	if err := e.store.UpdateAccountProviderCustomerID(context.Background(), e.acct.ID, "polar-customer"); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCustomerPortalProvider{
+		fakeBillingProvider: &fakeBillingProvider{},
+		portalURL:           "https://polar.test/customer-session/1",
+	}
+	srv.WithBillingProvider(provider)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/billing/portal", nil)
+	r.Header.Set("Authorization", "Bearer "+e.key)
+	e.h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	var resp api.BillingPortalResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if resp.URL != provider.portalURL {
+		t.Errorf("url = %q, want %q", resp.URL, provider.portalURL)
+	}
+	if provider.portalCalls != 1 {
+		t.Errorf("CreateCustomerPortalSession calls = %d, want 1", provider.portalCalls)
+	}
 }
 
 // TestHandleBillingEvent_SubscriptionPastDue (PR-P3) is the unit

@@ -17,8 +17,8 @@
   that prevented the build pipeline from working at all (issue
   #938). Two were vmmd self-registration bugs (see PR-A); the third
   was that **nothing published `builder-base`**. `images/builder-
-  base.Dockerfile` existed and was complete (debian:12-slim +
-  BuildKit 0.31.2 + Railpack 0.31.1 + git + the guest-init binary),
+  base.Dockerfile` existed and was complete (Alpine + BuildKit 0.32.2 +
+  Railpack 0.31.1 + git + the guest-init binary),
   but `grep -l 'docker buildx\|ghcr.io/poyrazk' .github/workflows/`
   returned zero matches. The only artifact flowing into imaged was
   the operator-set `FAAS_BUILDER_BASE_REF`, which defaulted to
@@ -43,7 +43,7 @@
      `images/Dockerfile.lock`), BuildKit, Railpack, git, OCI
      exporter, and the `guest-init` binary. guest-init is built
      inside the Dockerfile via a multi-stage cross-compile (a
-     `golang:1.23` builder stage, then `COPY --from=` into the
+     `golang:1.26.6` builder stage, then `COPY --from=` into the
      runtime stage). This was the deliberate fix for review
      finding #2 on PR #940: a host-side pre-build of the binary
      before the multi-arch buildx invocation would let arm64

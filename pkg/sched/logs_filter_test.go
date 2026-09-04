@@ -96,6 +96,18 @@ func (r *deploymentFilterFakeVMM) WarmSnapshot(context.Context, string, string, 
 }
 func (r *deploymentFilterFakeVMM) Destroy(context.Context, string, string) error { return nil }
 
+// StopInstance (M-2 / ADR-138 §Decision 1) is the
+// graceful signal-then-grace-then-SIGKILL stop
+// sequence. Test fakes default to no-op + nil —
+// the engine's per-mode dispatch lives in
+// pkg/sched/engine_stop_pgtest_test.go (commit 6).
+func (r *deploymentFilterFakeVMM) StopInstance(_ context.Context, _ string, _, _ int32) (*StopInstanceOutcome, error) {
+	return nil, nil
+}
+func (r *deploymentFilterFakeVMM) StopInstanceOnNode(_ context.Context, _, _ string, _, _ int32) (*StopInstanceOutcome, error) {
+	return nil, nil
+}
+
 // FrameworkReady implements RoutedVMM for the logs-filter test
 // fake (issue #470 / PR #470-FU-B). No-op — the logs-filter tests
 // exercise the per-deployment log filtering path, not the

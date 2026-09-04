@@ -163,6 +163,21 @@ func (r *RecentLoad) RecentRPS(appID string, now time.Time) float64 {
 	return float64(sum)
 }
 
+// RecentRate returns requests/second over the configured sliding window.
+// RecentRPS intentionally remains the raw window-count accessor for the
+// existing diagnostics surface; autoscale replica math uses this normalized
+// method so its target is genuinely expressed in requests/second.
+func (r *RecentLoad) RecentRate(appID string, now time.Time) float64 {
+	if r == nil {
+		return 0
+	}
+	windowSeconds := float64(r.windowSize) * r.bucketSize.Seconds()
+	if windowSeconds <= 0 {
+		return 0
+	}
+	return r.RecentRPS(appID, now) / windowSeconds
+}
+
 // RecentDesiredReplicas returns ceil(recent_rps / targetRPS) for appID.
 // targetRPS == 0 returns 0 — the reaper treats that as "no target
 // configured" and defers to the existing ReapIdle path. The reaper's
@@ -176,7 +191,7 @@ func (r *RecentLoad) RecentDesiredReplicas(appID string, now time.Time, targetRP
 	if r == nil || targetRPS <= 0 {
 		return 0
 	}
-	rps := r.RecentRPS(appID, now)
+	rps := r.RecentRate(appID, now)
 	if rps <= 0 {
 		return 0
 	}

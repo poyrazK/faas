@@ -241,6 +241,23 @@ type RolledRow struct {
 	Minute      time.Time
 	MBSeconds   int64
 	AdmissionMB int
+	// Mode (M-2 / ADR-137 §Decision 1) is the instance's
+	// execution_mode (normal / mirror / worker / service / job).
+	// The metered_mb_seconds_total{mode,plan} counter uses this
+	// as a label so dashboards can split worker idle-RAM from
+	// request-driven RAM. Mirror-mode rows are filtered out
+	// upstream via IsMeteredSkippableMode and never reach the
+	// row constructor — Mode stays "normal" / "worker" /
+	// "service" / "job".
+	Mode string
+	// Plan (M-2 / ADR-137 §Decision 1) is the owning account's
+	// billing plan (free / hobby / pro / scale). Mirrored onto the
+	// row so the meterd emitMetric closure can label
+	// metered_mb_seconds_total{mode,plan} without re-reading the
+	// store per row. Empty string falls back to "free" at
+	// emission time — matches the per-Plan fallback in
+	// OpsMetrics.MeteredMBSecondsTotal.
+	Plan string
 	// CPUUsec is the per-minute CPU-µs delta the sampler appended
 	// to usage_minutes.cpu_usec. Zero when the scheduler reader
 	// has no row for this instance this tick (test stubs, or the
@@ -326,6 +343,21 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	// M-2 / ADR-137 §Decision 1 — prefetch per-account plans so
+	// RolledRow.Plan is populated in one DB read rather than one
+	// per app. The lookup mirrors Residency's per-tick account
+	// fan-out: the sampler runs once per minute, so the scan cost
+	// is bounded by the customer count, not the app count. A
+	// failure here is non-fatal — the closure falls back to
+	// "free" at emission time (OpsMetrics.MeteredMBSecondsTotal
+	// treats empty as free) so a transient Postgres blip doesn't
+	// drop the entire tick's metric.
+	planByAccount := make(map[string]api.Plan)
+	if accounts, accErr := s.store.ListAllAccounts(ctx); accErr == nil {
+		for _, a := range accounts {
+			planByAccount[a.ID] = a.Plan
+		}
+	}
 	var out []RolledRow
 	for _, app := range apps {
 		if app.Status == state.AppDeleted {
@@ -383,7 +415,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			// NOT NULL DEFAULT 'normal' (migration 00349), so
 			// pre-feature rows backfill to the default and skip
 			// this branch.
-			if state.InstanceMode(ins.Mode) == state.InstanceModeMirror {
+			if state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
 			sidecarMBs := sidecarByDeploy[ins.DeploymentID]
@@ -394,6 +426,8 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				Minute:      minute,
 				AdmissionMB: api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs),
 				MBSeconds:   MBSecondsPerMinute(api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs)),
+				Mode:        ins.Mode,
+				Plan:        string(planByAccount[app.AccountID]),
 			}
 			// Move 1 (event-driven packaging): set usage_minutes.requests
 			// to the count of invocations the drain drove through this
@@ -493,7 +527,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			// floor enrichment either. Skipping them keeps the floor
 			// math symmetric — a customer with a mirror rule sees
 			// their floor counted from production instances only.
-			if state.InstanceMode(ins.Mode) == state.InstanceModeMirror {
+			if state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
 			if ins.DeploymentID == "" {

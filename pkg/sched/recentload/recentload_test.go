@@ -91,8 +91,8 @@ func TestRecentLoad_DesiredReplicas_Ceil(t *testing.T) {
 	r := New(nil, 5, time.Second) // scraper unused — we drive RecentRPS directly... but RecentRPS reads the ring, so we still need Touch.
 	// Drive the ring manually to exercise the accessor's math path.
 	r.byApp["app1"] = &appWindow{
-		buckets:  []bucket{{bucket: 1_000_000, count: 55}},
-		lastSeen: 55,
+		buckets:  []bucket{{bucket: 1_000_000, count: 275}},
+		lastSeen: 275,
 	}
 	got := r.RecentDesiredReplicas("app1", time.Unix(1_000_000, 0), 10)
 	if got != 6 {

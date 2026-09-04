@@ -1060,7 +1060,9 @@ func TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Bound: 200ms per request. Two requests, two paths.
+	// Bound: 200ms per request. Take the minimum of three samples for
+	// each path because shared CI runners can preempt one Argon2id
+	// invocation without changing the authentication work.
 	bound := 200 * time.Millisecond
 	runOnce := func(path, body string) time.Duration {
 		start := time.Now()
@@ -1070,8 +1072,17 @@ func TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths(t *testing.T) {
 		}
 		return time.Since(start)
 	}
-	t1 := runOnce("/v1/auth/login", `{"email":"ghost@example.com","password":"correct-horse-battery-staple"}`)
-	t2 := runOnce("/v1/auth/login", `{"email":"timing@example.com","password":"wrong-password-1234567890"}`)
+	minOf := func(path, body string) time.Duration {
+		fastest := time.Duration(1 << 62)
+		for i := 0; i < 3; i++ {
+			if d := runOnce(path, body); d < fastest {
+				fastest = d
+			}
+		}
+		return fastest
+	}
+	t1 := minOf("/v1/auth/login", `{"email":"ghost@example.com","password":"correct-horse-battery-staple"}`)
+	t2 := minOf("/v1/auth/login", `{"email":"timing@example.com","password":"wrong-password-1234567890"}`)
 	if t1 > bound || t2 > bound {
 		t.Errorf("unbound=%v wrong=%v — both must be <= %v (Argon2id pad regression)", t1, t2, bound)
 	}

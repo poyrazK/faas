@@ -74,10 +74,10 @@ func NewIdempotencyRT(inner http.RoundTripper) http.RoundTripper {
 	return &idempotencyRoundTripper{inner: inner}
 }
 
-// RoundTrip implements http.RoundTripper. On POSTs to /transactions,
-// copies the SDK's X-Transit-Id header (set by the SDK from
-// paddle.ContextWithTransitID) as Idempotency-Key. All other
-// requests are passed through unmodified.
+// RoundTrip implements http.RoundTripper. On POSTs to idempotent Paddle
+// write namespaces, copies the SDK's X-Transit-Id header (set by the SDK
+// from paddle.ContextWithTransitID) as Idempotency-Key. All other requests
+// are passed through unmodified.
 //
 // Per the net/http RoundTripper contract, an implementation MUST
 // NOT mutate the caller's *http.Request — the request may be reused
@@ -115,10 +115,10 @@ func (rt *idempotencyRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 const transactionsPathSegment = "transactions"
 
 // shouldInjectIdempotencyKey gates the header injection to POSTs
-// targeting the transactions API. Idempotency-Key on a GET is a
+// targeting transaction, subscription, or adjustment APIs. Idempotency-Key on a GET is a
 // documented anti-pattern (GETs must be safe and idempotent at the
-// protocol level); non-transaction writes (product create, customer
-// update) are not currently idempotent-keyed by meterd because
+// protocol level); other writes (product create, customer update) are not
+// currently idempotency-keyed because
 // the retry budget is on the meterd side, not the merchant side.
 //
 // Path matching uses segment equality rather than HasSuffix so
@@ -135,7 +135,7 @@ func shouldInjectIdempotencyKey(req *http.Request) bool {
 		return false
 	}
 	for _, seg := range strings.Split(strings.TrimPrefix(req.URL.Path, "/"), "/") {
-		if seg == transactionsPathSegment {
+		if seg == transactionsPathSegment || seg == "subscriptions" || seg == "adjustments" {
 			return true
 		}
 	}

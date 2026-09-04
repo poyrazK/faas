@@ -157,10 +157,10 @@ func (r *RingBuffer) Touch(now time.Time, counts map[string]int64) {
 	}
 }
 
-// AppRPS returns the per-app sum of all buckets that fall inside the
-// window. The caller divides by max(1, inflight_count) to get
-// per-instance RPS. Returns 0 when the buffer has no observation for
-// appID.
+// AppRPS returns the per-app request-count sum of all buckets that fall
+// inside the window. It is retained as a count accessor for diagnostics and
+// tests; callers that need a true rate should use AppRate. Returns 0 when the
+// buffer has no observation for appID.
 func (r *RingBuffer) AppRPS(appID string, now time.Time) float64 {
 	if r == nil {
 		return 0
@@ -182,4 +182,32 @@ func (r *RingBuffer) AppRPS(appID string, now time.Time) float64 {
 		}
 	}
 	return float64(sum)
+}
+
+// AppRate returns the per-app requests/second over the configured sliding
+// window. Keeping the normalization here makes all scale-up callers use the
+// same units regardless of whether the source is Prometheus or VMMD stats.
+func (r *RingBuffer) AppRate(appID string, now time.Time) float64 {
+	if r == nil {
+		return 0
+	}
+	windowSeconds := float64(r.windowSize) * r.bucketSize.Seconds()
+	if windowSeconds <= 0 {
+		return 0
+	}
+	return r.AppRPS(appID, now) / windowSeconds
+}
+
+// HasObservation reports whether Touch has ever accepted a cumulative
+// counter for appID. The trigger uses this to distinguish a real zero-rate
+// observation from an unavailable Prometheus signal and can then fall back
+// to the VMMD stats reader.
+func (r *RingBuffer) HasObservation(appID string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	buf, ok := r.byApp[appID]
+	return ok && buf != nil && len(buf.buckets) > 0
 }

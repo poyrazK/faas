@@ -11,36 +11,42 @@
 # spawn → runBuild → DestroyWithExport path works against a real artifact
 # producing engine rather than a busybox stub.
 #
-# Both railpack and buildkit are pulled as upstream release tarballs (neither is
-# packaged in Alpine). Versions are pinned via build-args so CI can
-# override them per release without churning this file.
+# Railpack is pulled as an upstream release tarball (it is not packaged in
+# Alpine). BuildKit and runc are compiled from their checksum-pinned sources
+# below so the image does not inherit stale Go dependencies from opaque
+# upstream binaries. Versions are pinned via build-args so CI can override
+# them per release without churning this file.
 
 # ---- railpack (Node/Python builder, spec §4.5) ---------------------------
 # Upstream switched from flat `-linux-amd64` binaries to Rust-target-triple
 # names in v0.10+. The current naming is `-x86_64-unknown-linux-musl` /
 # `-arm64-unknown-linux-musl`. v0.5.0 with the old naming is no longer
-# published, so bumping to v0.31.1 (current stable as of 2026-07) is mandatory.
-ARG RAILPACK_VERSION=0.31.1
+# published, so bumping to v0.38.0 (current stable as of 2026-08) is mandatory.
+ARG RAILPACK_VERSION=0.38.0
+ARG RAILPACK_SHA256_AMD64=7c3f0e70ca8bf80bde87e8c30cb0171414c2b6bbd794d6f60a19cc3b71772950
+ARG RAILPACK_SHA256_ARM64=d33716e87f0e39314898746c806e26d9edde890ac65156891b2f06c8d07ba8c4
 
-# Railpack 0.31.1 bootstraps mise 2026.7.6 using its glibc linux-x64
+# Railpack 0.38.0 bootstraps mise 2026.7.6 using its glibc linux-x64
 # asset. The builder rootfs is Alpine, so stage the matching musl asset and
 # let guest-init seed Railpack's expected cache path before prepare runs.
 ARG MISE_VERSION=2026.7.6
+ARG MISE_SHA256_AMD64=debdf9d7e776c3c0f9e3dfa7c4067bf02f3592fdc7c5d2bb5027fb2325c9916f
+ARG MISE_SHA256_ARM64=926914f938c55e86e48875f1c9253573ddf6d5efb5abb6e8721ea061fe2767f7
 
 # ---- buildkit (Dockerfile builds, spec §4.5 fallback path) ----------------
 # Rootless inside the VM — rootless-runc inside a VM is functionally root, and
 # the VM boundary is the actual security perimeter (ADR-003).
-ARG BUILDKIT_VERSION=0.31.2
+ARG BUILDKIT_VERSION=0.32.2
+ARG BUILDKIT_SOURCE_SHA256=b19deba3f8cf3eb05407aa85c246e22839770c437439a04d880ef3d645aed0aa
+ARG GO_ARCHIVE_VERSION=0.3.0
 
-# Alpine v3.22's packaged runc was built with Go 1.24.12. That leaves the
-# builder image exposed to GO-2026-4337 (CVE-2025-68121), which the runtime
-# admission gate correctly refuses. Use the upstream static runc release
-# instead of inheriting the vulnerable compiler/runtime from apk. The
-# checksums are for the official release assets and are deliberately kept
-# here beside the version so a bump cannot silently change the executable.
+# The latest upstream runc release still embeds golang.org/x/net v0.50.0 and
+# Go 1.25.12, which leaves this image exposed to fixed HIGH advisories. Build
+# the same release from checksum-pinned source with the image's Go 1.26.6
+# toolchain and an explicit dependency floor. The static-pie result runs on
+# Alpine without inheriting the host libc.
 ARG RUNC_VERSION=1.5.1
-ARG RUNC_SHA256_AMD64=177df879d50c913eb205e898d5c1c05a18f574053c0ce5524c471208eaf06f6f
-ARG RUNC_SHA256_ARM64=ca70e7dbd6616ca782a59b5d3ac86909123fdaa9fa3f89dcf29051c70eee7ce9
+ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214ca76e75
 
 # ---- guest-init version (issue #938 / PR-B / ADR-114) -------------------
 # Multi-arch builds CANNOT pre-stage guest-init in the build context because
@@ -52,12 +58,14 @@ ARG RUNC_SHA256_ARM64=ca70e7dbd6616ca782a59b5d3ac86909123fdaa9fa3f89dcf29051c70e
 # workflow) also lets the Lima local-build path stage a multi-arch rootfs
 # via buildx without per-arch file juggling.
 # Note: the version is intentionally baked into the FROM line (no ARG)
-# so images/Dockerfile.lock has a literal "golang:1.25.9" alias to
+# so images/Dockerfile.lock has a literal "golang:1.26.6" alias to
 # match against. Bumping the Go version is a two-step: change this
 # line, run `make images-lock-update` to refresh the lock and digest.
-# We use 1.25.9 (not 1.23.x) because BuildKit v0.31.2 requires
-# Go 1.25.9 and the repo's `tool` directive rejects older Go versions
-# with `unknown directive: tool` (verified during PR #940 review).
+# BuildKit v0.32.x requires Go 1.26.3 or newer. Use 1.26.6 so the
+# builder itself is not shipped with the Go standard-library advisories
+# fixed after 1.25.9; the repo's `tool` directive also rejects older
+# toolchains with `unknown directive: tool` (verified during PR #940
+# review).
 
 # ---- stage 1: build guest-init for the target arch -----------------------
 # Image registry digest pinned via images/Dockerfile.lock; make
@@ -65,10 +73,10 @@ ARG RUNC_SHA256_ARM64=ca70e7dbd6616ca782a59b5d3ac86909123fdaa9fa3f89dcf29051c70e
 # this line and the lock entry. The base manifest-list digest pins
 # every per-arch child manifest so buildx's per-arch resolution
 # stays race-free under multi-arch build (per-arch digests are not
-# stable across re-pulls, but the manifest-list digest is).
-# $TARGETPLATFORM is implicit on multi-arch FROM; the explicit
-# `--platform=` would emit a RedundantTargetPlatform warning.
-FROM golang:1.25.9@sha256:8a7adc288b77e9b787cd2695029eb54d10ae80571b21d44fed68d067ad0a9c96 AS guest-init-build
+# stable across re-pulls, but the manifest-list digest is). Use the native
+# build platform for the toolchain and cross-compile the target artifact; this
+# avoids emulating the Go compiler for arm64 multi-arch builds.
+FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS guest-init-build
 WORKDIR /src
 # guest-init is a pure-Go binary; no submodule vendoring needed. The
 # repository is the build context, so COPY . picks up the whole tree.
@@ -80,25 +88,80 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
       go build -trimpath -tags linux \
         -o /out/faas-guest-init ./guest/init
 
+# ---- runc (builder OCI runtime) -----------------------------------------
+# The official runc asset is intentionally not copied into the final image:
+# its embedded module metadata contains fixed HIGH vulnerabilities. Build the
+# pinned release from source instead. We build on TARGETPLATFORM because runc
+# enables cgo for seccomp; buildx's QEMU path is bounded to this small binary
+# and keeps the cross-compiled BuildKit stages native and fast.
+FROM --platform=$TARGETPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS runc-build
+WORKDIR /src/runc
+ARG RUNC_VERSION
+ARG RUNC_SOURCE_SHA256
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl libseccomp-dev && \
+      rm -rf /var/lib/apt/lists/* && \
+      curl -fsSL -o /tmp/runc-source.tgz \
+        "https://github.com/opencontainers/runc/archive/refs/tags/v${RUNC_VERSION}.tar.gz" && \
+      echo "${RUNC_SOURCE_SHA256}  /tmp/runc-source.tgz" | sha256sum -c - && \
+      tar -xzf /tmp/runc-source.tgz --strip-components=1 -C /src/runc && \
+      rm /tmp/runc-source.tgz && \
+      go mod edit -require=golang.org/x/net@v0.57.0 && \
+      go mod download && \
+      CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} \
+        go build -mod=mod -trimpath -buildmode=pie \
+          -tags "seccomp urfave_cli_no_docs netgo osusergo" \
+          -ldflags "-linkmode external -extldflags -static-pie -X main.gitCommit=v${RUNC_VERSION}" \
+          -o /out/runc . && \
+      go version -m /out/runc | tee /tmp/runc-build-info && \
+      grep -q 'golang.org/x/net.*v0.57.0' /tmp/runc-build-info && \
+      ! grep -Eq 'v0.50.0|go1.25.12' /tmp/runc-build-info
+
 # BuildKit's server has a deliberately strict session liveness check. The
 # stock buildctl release has no flag for its per-session timeout header, while
 # slow bare-metal builders can spend several minutes importing a remote layer.
-# Build the tiny upstream client with the repository patch that opts into a
-# bounded, longer session interval; buildkitd itself remains the pinned
-# upstream release binary below.
-FROM golang:1.25.9@sha256:8a7adc288b77e9b787cd2695029eb54d10ae80571b21d44fed68d067ad0a9c96 AS buildkit-client-build
+# Build both upstream binaries from the same source tree so the repository
+# patch and the dependency floors apply consistently to buildctl and buildkitd.
+FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS buildkit-client-build
 WORKDIR /src/buildkit
 ARG BUILDKIT_VERSION
 ARG TARGETOS
 ARG TARGETARCH
+ARG BUILDKIT_SOURCE_SHA256
+ARG GO_ARCHIVE_VERSION
 COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
+# BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
+# v1.82.1. Keep the source release's vendored dependency graph for a fast,
+# reproducible build, but replace those modules with fixed releases before
+# compiling. x/net is already fixed in this source release; pin it explicitly
+# too so a future source change cannot lower the builder's dependency floor
+# unnoticed.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && \
       rm -rf /var/lib/apt/lists/* && \
-      curl -fsSL "https://github.com/moby/buildkit/archive/refs/tags/v${BUILDKIT_VERSION}.tar.gz" | \
-        tar -xzf - --strip-components=1 -C /src/buildkit && \
+      curl -fsSL -o /tmp/buildkit-source.tgz \
+        "https://github.com/moby/buildkit/archive/refs/tags/v${BUILDKIT_VERSION}.tar.gz" && \
+      echo "${BUILDKIT_SOURCE_SHA256}  /tmp/buildkit-source.tgz" | sha256sum -c - && \
+      tar -xzf /tmp/buildkit-source.tgz --strip-components=1 -C /src/buildkit && \
+      rm /tmp/buildkit-source.tgz && \
       git apply /tmp/buildkit-session-health.patch && \
+      go mod edit -require=github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} && \
+      go mod edit -require=golang.org/x/net@v0.57.0 && \
+      go mod edit -require=google.golang.org/grpc@v1.83.1 && \
+      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v1.83.1 && \
+      archive_module="$(go env GOMODCACHE)/github.com/moby/go-archive@v${GO_ARCHIVE_VERSION}" && \
+      grpc_module="$(go env GOMODCACHE)/google.golang.org/grpc@v1.83.1" && \
+      rm -rf vendor/github.com/moby/go-archive && \
+      rm -rf vendor/google.golang.org/grpc && \
+      cp -a "${archive_module}" vendor/github.com/moby/go-archive && \
+      cp -a "${grpc_module}" vendor/google.golang.org/grpc && \
+      sed -i \
+        -e "s#github.com/moby/go-archive v0.2.0#github.com/moby/go-archive v${GO_ARCHIVE_VERSION}#" \
+        -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v1.83.1#" \
+        vendor/modules.txt && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-        go build -trimpath -o /out/buildctl ./cmd/buildctl
+        go build -mod=vendor -trimpath -o /out/buildkitd ./cmd/buildkitd && \
+      CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+        go build -mod=vendor -trimpath -o /out/buildctl ./cmd/buildctl
 
 # ---- stage 2: assemble the runtime rootfs -------------------------------
 # See the stage 1 FROM above re: $TARGETPLATFORM handling.
@@ -118,32 +181,27 @@ FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc
 ARG RAILPACK_VERSION
 ARG BUILDKIT_VERSION
 ARG MISE_VERSION
+ARG MISE_SHA256_AMD64
+ARG MISE_SHA256_ARM64
 ARG TARGETARCH
+ARG RAILPACK_SHA256_AMD64
+ARG RAILPACK_SHA256_ARM64
 ARG RUNC_VERSION
-ARG RUNC_SHA256_AMD64
-ARG RUNC_SHA256_ARM64
 
+# Railpack's mise/python-build path executes Bash scripts. Alpine's BusyBox
+# /bin/sh is not a substitute when invoked as "bash"; keep the real Bash
+# package in the runtime builder rootfs.
 RUN apk add --no-cache \
-      git ca-certificates curl xz shadow-subids fuse-overlayfs util-linux util-linux-misc
+      bash git ca-certificates curl xz shadow-subids fuse-overlayfs util-linux util-linux-misc && \
+    apk upgrade --no-cache
 
-# Replace Alpine's runc build with the upstream static release. Besides
-# removing the stale Go standard library embedded in Alpine's package, the
-# static asset keeps this image portable across the glibc/musl boundary used
-# by the builder rootfs. Verify the architecture-specific release asset
-# before it becomes executable code in the VM.
-RUN case "${TARGETARCH}" in \
-      amd64) RUNC_ASSET=runc.amd64; RUNC_SHA256="${RUNC_SHA256_AMD64}" ;; \
-      arm64) RUNC_ASSET=runc.arm64; RUNC_SHA256="${RUNC_SHA256_ARM64}" ;; \
-      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-    esac && \
-    curl -fsSL -o /tmp/runc \
-      "https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/${RUNC_ASSET}" && \
-    echo "${RUNC_SHA256}  /tmp/runc" | sha256sum -c - && \
-    install -m 0755 /tmp/runc /usr/bin/runc && \
-    rm /tmp/runc
+# Install the source-built static-pie runtime. The build stage applies the
+# same target-architecture selection that the final image uses.
+COPY --from=runc-build /out/runc /usr/bin/runc
+RUN chmod 0755 /usr/bin/runc
 
 # guest-init and BuildKit use the stable platform path for the OCI runtime;
-# the verified upstream asset above is installed under /usr/bin.
+# the source-built static-pie binary above is installed under /usr/bin.
 RUN ln -s /usr/bin/runc /usr/local/bin/runc
 
 # guest-init uses util-linux unshare's automatic subordinate-ID mapping. The
@@ -160,18 +218,12 @@ RUN test -x /usr/local/bin/runc && \
 RUN printf 'root:100000:65536\n' > /etc/subuid && \
     printf 'root:100000:65536\n' > /etc/subgid
 
-# BuildKit rootless. Two files: buildkitd (daemon) + buildctl (client). The
-# upstream tarball unpacks both into ./bin/.
-RUN mkdir -p /opt/buildkit && \
-      curl -fsSL -o /tmp/buildkit.tgz \
-      "https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.linux-${TARGETARCH}.tar.gz" && \
-      tar -C /opt/buildkit -xzf /tmp/buildkit.tgz && \
-      rm /tmp/buildkit.tgz && \
-      install -m 0755 /opt/buildkit/bin/buildkitd /usr/local/bin/buildkitd && \
-      rm -rf /opt/buildkit
-
+# BuildKit rootless. Both binaries come from the source build above; using the
+# upstream release tarball here would reintroduce its older Go modules and
+# standard library into the final image.
+COPY --from=buildkit-client-build /out/buildkitd /usr/local/bin/buildkitd
 COPY --from=buildkit-client-build /out/buildctl /usr/local/bin/buildctl
-RUN chmod 0755 /usr/local/bin/buildctl
+RUN chmod 0755 /usr/local/bin/buildkitd /usr/local/bin/buildctl
 
 # Railpack. The current naming convention is `<ver>-<arch>-unknown-linux-musl.tar.gz`
 # where <arch> is `x86_64` or `arm64`. We resolve the right arch from TARGETARCH.
@@ -182,6 +234,12 @@ RUN case "${TARGETARCH}" in \
     esac && \
     curl -fsSL -o /tmp/railpack.tgz \
       "https://github.com/railwayapp/railpack/releases/download/v${RAILPACK_VERSION}/railpack-v${RAILPACK_VERSION}-${RAILPACK_ARCH}-unknown-linux-musl.tar.gz" && \
+    case "${TARGETARCH}" in \
+      amd64) RAILPACK_SHA256="${RAILPACK_SHA256_AMD64}" ;; \
+      arm64) RAILPACK_SHA256="${RAILPACK_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    echo "${RAILPACK_SHA256}  /tmp/railpack.tgz" | sha256sum -c - && \
     tar -C /usr/local/bin -xzf /tmp/railpack.tgz railpack && \
       chmod +x /usr/local/bin/railpack && \
       rm /tmp/railpack.tgz && \
@@ -198,6 +256,12 @@ RUN case "${TARGETARCH}" in \
     mkdir -p /usr/local/lib/faas/mise /opt/mise && \
     curl -fsSL -o /tmp/mise.tgz \
       "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${MISE_ARCH}-musl.tar.gz" && \
+    case "${TARGETARCH}" in \
+      amd64) MISE_SHA256="${MISE_SHA256_AMD64}" ;; \
+      arm64) MISE_SHA256="${MISE_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    echo "${MISE_SHA256}  /tmp/mise.tgz" | sha256sum -c - && \
     tar -C /opt/mise -xzf /tmp/mise.tgz && \
     install -m 0755 /opt/mise/mise/bin/mise \
       "/usr/local/lib/faas/mise/mise-${MISE_VERSION}" && \

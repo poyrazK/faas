@@ -83,7 +83,7 @@ func UnitImaged() daemonunit.Unit {
 		// DATABASE_URL and storage.env carries the shared OCI snapshot/layer
 		// backend. The optional '-' prefix keeps image-seeded nodes bootable
 		// before secret and storage provisioning has populated the files.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env",
 		Environment: []daemonunit.KV{
 			// ProtectSystem=strict makes the host /tmp read-only. Keep OCI
 			// layer verification and upload scratch on the writable base disk.
@@ -92,6 +92,39 @@ func UnitImaged() daemonunit.Unit {
 			{Key: "FAAS_BASE_EXTRACT_ROOT", Value: "/srv/fc/base-staging"},
 			{Key: "FAAS_BASE_TMP_ROOT", Value: "/srv/fc/base"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
+
+			// Per-runtime function runner binaries (spec §4.9). imaged
+			// stages the runner into the app layer at
+			// /usr/local/bin/faas-runner when a deployment's app_type is
+			// `function`; without a path it refuses the build with
+			// "function runner binary not configured for runtime X".
+			//
+			// These were never wired. deploy/packer/scripts/compile-runners.sh
+			// builds the binaries and the image ships them at
+			// /opt/faas/current/bin/runners/<runtime>/faas-runner, and
+			// cmd/imaged/main.go has read FAAS_FUNCTION_RUNNER_<RUNTIME>
+			// since M6 — but nothing ever set the variables, so EVERY
+			// function deploy failed at build time on every node. Observed
+			// 2026-09-03: `gregale deploy --template function-node` fails
+			// with the message above, and basic-node-fn had accumulated 26
+			// consecutive failed deployments and lost its live deployment
+			// entirely, 404ing every wake.
+			//
+			// The only prior reference to the wiring is a comment in
+			// deploy/lima/faas-metal.yaml calling it an "M8 PR" follow-up
+			// that never landed.
+			//
+			// imaged os.Stat()s each path at boot and returns a startup
+			// error if one is missing, so a bad path fails loudly rather
+			// than silently reproducing this bug. Runtime list and env-var
+			// names are the closed set in cmd/imaged/main.go:441-446; keep
+			// them in lockstep.
+			{Key: "FAAS_FUNCTION_RUNNER_NODE22", Value: "/opt/faas/current/bin/runners/node22/faas-runner"},
+			{Key: "FAAS_FUNCTION_RUNNER_NODE24", Value: "/opt/faas/current/bin/runners/node24/faas-runner"},
+			{Key: "FAAS_FUNCTION_RUNNER_PYTHON312", Value: "/opt/faas/current/bin/runners/python312/faas-runner"},
+			{Key: "FAAS_FUNCTION_RUNNER_PYTHON313", Value: "/opt/faas/current/bin/runners/python313/faas-runner"},
+			{Key: "FAAS_FUNCTION_RUNNER_GO124", Value: "/opt/faas/current/bin/runners/go124/faas-runner"},
+			{Key: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Value: "/opt/faas/current/bin/runners/go124-alpine/faas-runner"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},

@@ -77,6 +77,49 @@ type fakeBackend struct {
 	pickCalls atomic.Int32
 }
 
+// reconcileBackend exposes the optional live-target reconciliation seam
+// without changing fakeBackend itself. The blocking hook lets the test keep
+// the first cold-wake leader in reconciliation while a follower joins the
+// WakeGate.
+type reconcileBackend struct {
+	*fakeBackend
+	reconcileCalls   atomic.Int32
+	reconcileStart   chan struct{}
+	reconcileRelease chan struct{}
+}
+
+// warmPathBackend exposes the production-only warm-path seam while retaining
+// fakeBackend's normal admission behavior for any unexpected fallback.
+type warmPathBackend struct {
+	*fakeBackend
+	warmPick     PickResult
+	healthyCalls atomic.Int32
+}
+
+func (b *warmPathBackend) PickWarm(_ string) PickResult {
+	return b.warmPick
+}
+
+func (b *warmPathBackend) HealthyCount(appID string) int {
+	b.healthyCalls.Add(1)
+	return b.fakeBackend.HealthyCount(appID)
+}
+
+func (b *reconcileBackend) ReconcileLiveTargets(context.Context, string) error {
+	b.reconcileCalls.Add(1)
+	if b.reconcileStart != nil {
+		select {
+		case <-b.reconcileStart:
+		default:
+			close(b.reconcileStart)
+		}
+	}
+	if b.reconcileRelease != nil {
+		<-b.reconcileRelease
+	}
+	return nil
+}
+
 // AddTarget seeds a Target into the per-app cache without going through
 // Admit (issue #168). Used by tests that simulate a pre-warmed fleet or
 // simulate eviction.
@@ -211,6 +254,47 @@ func newTestHandler(t *testing.T) (*Handler, *fakeBackend, *httptest.Server) {
 	return NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil))), b, upstream
 }
 
+func TestColdStartReconcilesOnlyThroughWakeLeader(t *testing.T) {
+	t.Parallel()
+	b := &reconcileBackend{
+		fakeBackend: &fakeBackend{
+			app: App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanFree},
+		},
+		reconcileStart:   make(chan struct{}),
+		reconcileRelease: make(chan struct{}),
+	}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	results := make(chan error, 2)
+	go func() {
+		_, _, _, err := h.coldStart(context.Background(), "app-1", "acct-1", "", 1, api.PlanFree)
+		results <- err
+	}()
+	<-b.reconcileStart
+	go func() {
+		_, _, _, err := h.coldStart(context.Background(), "app-1", "acct-1", "", 1, api.PlanFree)
+		results <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && h.gate.InflightWaiters("app-1") < 2 {
+		time.Sleep(time.Millisecond)
+	}
+	if got := h.gate.InflightWaiters("app-1"); got < 2 {
+		t.Fatalf("wake gate waiters = %d, want at least 2", got)
+	}
+	close(b.reconcileRelease)
+	for i := 0; i < 2; i++ {
+		if err := <-results; err != nil {
+			t.Fatalf("coldStart result %d: %v", i, err)
+		}
+	}
+	if got := b.reconcileCalls.Load(); got != 1 {
+		t.Fatalf("reconcile calls = %d, want 1 leader call", got)
+	}
+	if got := atomic.LoadInt32(&b.admits); got != 1 {
+		t.Fatalf("admit calls = %d, want 1 coalesced wake", got)
+	}
+}
+
 // setLegacyHot is the test helper that flips the fake backend into the
 // legacy pre-#168 single-target mode: one Target cached, no admit fires.
 // Replaces the old `b.running = true` idiom.
@@ -276,6 +360,45 @@ func TestHotPathDoesNotWakeOrTagCold(t *testing.T) {
 	}
 	if atomic.LoadInt32(b.Admits()) != 0 {
 		t.Errorf("hot path must not trigger an admit, got %d", atomic.LoadInt32(b.Admits()))
+	}
+}
+
+func TestHandlerWarmPathSkipsCapacityProbe(t *testing.T) {
+	t.Parallel()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("hello from app"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	base := &fakeBackend{
+		app:      App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanScale},
+		host:     "jane-api.apps.dom",
+		upstream: upstream.Listener.Addr().String(),
+	}
+	b := &warmPathBackend{
+		fakeBackend: base,
+		warmPick: PickResult{
+			Target: Target{NodeID: base.upstream, InstanceID: "i-warm"},
+			OK:     true,
+		},
+	}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if got := b.healthyCalls.Load(); got != 0 {
+		t.Fatalf("warm path HealthyCount calls = %d, want 0", got)
+	}
+	if got := b.pickCalls.Load(); got != 0 {
+		t.Fatalf("warm path fallback Pick calls = %d, want 0", got)
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 0 {
+		t.Fatalf("warm path admits = %d, want 0", got)
 	}
 }
 
@@ -612,10 +735,12 @@ func TestAccountRateLimitReturns429(t *testing.T) {
 	}
 }
 
-// TestConcurrentColdRequestsCoalesceToOneWake (issue #168) — at the
-// Free-plan cap of max_concurrency=1, 50 concurrent cold requests still
-// coalesce to exactly ONE admit (the WakeGate's single-flight guarantee).
-// Higher plans admit more; covered by TestCapThreeAdmitsThreeDistinctInstances.
+// TestConcurrentColdRequestsRespectPlanWakeWaiterCap (issue #168) — at the
+// Free-plan cap of max_concurrency=1, concurrent cold requests still
+// coalesce to exactly ONE admit. The plan-derived wake waiter budget is four,
+// so excess followers receive bounded 503 responses instead of creating an
+// unbounded queue. Higher plans admit more; covered by
+// TestCapThreeAdmitsThreeDistinctInstances.
 func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.app.Plan = api.PlanFree // cap = 1 → coalesces to one admit
@@ -623,6 +748,8 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 	h.WithAccountLimiter(unlimitedAccountLimiter()) // ADR-040 — 50 concurrent > Free per-account burst 50
 
 	var wg sync.WaitGroup
+	var successes atomic.Int32
+	var rejected atomic.Int32
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func() {
@@ -630,14 +757,22 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 			req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Errorf("status = %d, want 200", rec.Code)
+			switch rec.Code {
+			case http.StatusOK:
+				successes.Add(1)
+			case http.StatusServiceUnavailable:
+				rejected.Add(1)
+			default:
+				t.Errorf("status = %d, want 200 or bounded 503", rec.Code)
 			}
 		}()
 	}
 	wg.Wait()
 	if got := atomic.LoadInt32(b.Admits()); got != 1 {
 		t.Errorf("50 concurrent cold requests should trigger 1 admit, got %d", got)
+	}
+	if got := successes.Load() + rejected.Load(); got != 50 {
+		t.Errorf("all concurrent cold requests should finish with 200 or bounded 503, got %d/50", got)
 	}
 }
 
@@ -673,15 +808,11 @@ func TestHandlerStampsXFaasInstanceHeader(t *testing.T) {
 	}
 }
 
-// TestFanOutAdmitsUpToCapThenReuses (issue #168) — for plans with
-// max_concurrency > 1, a burst of concurrent cold requests admits up
-// to max_concurrency distinct instances; subsequent requests reuse
-// the cached targets without firing new admits.
-//
-// Hobby plan caps at 2, so 4 concurrent cold requests admit 2 distinct
-// instances (the leader's admit + 1 follower's fan-out admit), and the
-// remaining 2 followers hit the cache. A sequential 5th request also
-// reuses the cache.
+// TestFanOutAdmitsUpToCapThenReuses (issue #168) — max_concurrency is a
+// ceiling, not a request-per-instance target. A burst to a cold app
+// performs one wake and all followers reuse that target. Reactive scale-up
+// is driven by the scheduler's measured load signals, not by every request
+// racing through the gateway.
 func TestFanOutAdmitsUpToCapThenReuses(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.app.Plan = api.PlanHobby // max_concurrency = 2
@@ -704,14 +835,8 @@ func TestFanOutAdmitsUpToCapThenReuses(t *testing.T) {
 	}
 	wg.Wait()
 
-	// The cache must hold exactly max_concurrency targets after the
-	// burst — the cap is enforced, not "approximately". Note: the
-	// gateway may call Admit MORE than max_concurrency times when
-	// multiple followers race past the HealthyCount<cap check; schedd's
-	// ledger rejects the excess via atCapacity=true and those rejects
-	// don't add a Target. The cache size is the load-bearing invariant.
-	if got := b.HealthyCount("app-1"); got != 2 {
-		t.Errorf("HealthyCount after %d concurrent cold requests on Hobby cap = %d, want 2", fans, got)
+	if got := b.HealthyCount("app-1"); got != 1 {
+		t.Errorf("HealthyCount after %d concurrent cold requests = %d, want 1", fans, got)
 	}
 
 	// 5th request hits the cache — no new admit.
@@ -722,8 +847,8 @@ func TestFanOutAdmitsUpToCapThenReuses(t *testing.T) {
 	if post := atomic.LoadInt32(b.Admits()); post > preAdmit {
 		t.Errorf("5th request must reuse cached target, got %d new admits", post-preAdmit)
 	}
-	if got := b.HealthyCount("app-1"); got != 2 {
-		t.Errorf("HealthyCount after 5th request = %d, want 2", got)
+	if got := b.HealthyCount("app-1"); got != 1 {
+		t.Errorf("HealthyCount after 5th request = %d, want 1", got)
 	}
 }
 
@@ -1255,15 +1380,8 @@ func TestHandlerObserveWakeLocality(t *testing.T) {
 }
 
 // TestHandlerObserveWakeLocalityExactlyOncePerColdAdmit pins the
-// dual-increment contract: when the after-proxy chokepoint fires
-// twice (two distinct cold admits on the same app), the counter
-// increments exactly twice. Catches a future contributor who wraps
-// the increment in a loop, double-increments on a particular path,
-// or otherwise drifts from the "one increment per admission" rule.
-// Same canonical pattern as TestHandlerObserveWakeLocality: the
-// app is PlanPro (cap=5) so a second request still hits the cold
-// fan-out path (HealthyCount=1 < 5), admitting a second instance.
-// Both admits must enumerate.
+// one-increment-per-admission contract. A second sequential request is warm
+// even when the plan has spare max_concurrency capacity.
 func TestHandlerObserveWakeLocalityExactlyOncePerColdAdmit(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 
@@ -1277,8 +1395,8 @@ func TestHandlerObserveWakeLocalityExactlyOncePerColdAdmit(t *testing.T) {
 	}
 
 	gotCB := counterValueFromBody(t, h.metrics, `gateway_wake_locality_total{outcome="local_coldboot"}`)
-	if gotCB != 2 {
-		t.Errorf("local_coldboot count after 2 cold admits = %d, want 2 (exactly once per admit)", gotCB)
+	if gotCB != 1 {
+		t.Errorf("local_coldboot count after cold then warm request = %d, want 1", gotCB)
 	}
 	gotSnap := counterValueFromBody(t, h.metrics, `gateway_wake_locality_total{outcome="local_snapshot"}`)
 	if gotSnap != 0 {

@@ -2030,6 +2030,13 @@ type AccountResponse struct {
 	UsageGBHours  float64       `json:"usage_gb_hours"`
 	AppCount      int           `json:"app_count"`
 	GitHubInstall string        `json:"github_install_id,omitempty"`
+	// PlanChangeStatus and RequestedPlan are populated only when a plan
+	// change was accepted by the billing provider but is not yet reflected
+	// in the local entitlement. Keeping the current Plan in this response
+	// makes the confirmation boundary explicit to API and CLI callers.
+	PlanChangeStatus string     `json:"plan_change_status,omitempty"`
+	RequestedPlan    string     `json:"requested_plan,omitempty"`
+	EffectiveAt      *time.Time `json:"effective_at,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives

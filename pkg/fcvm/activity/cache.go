@@ -15,6 +15,12 @@ import (
 type instanceState struct {
 	inflight int64
 	lastAt   time.Time
+	// total is the monotonic number of ForwardHTTP requests observed
+	// for this instance since the tracker was created. Keeping this
+	// beside inflight makes the scheduler's scale signal local to the
+	// vmmd↔schedd stats path; it does not require Prometheus to reach
+	// across compute nodes.
+	total uint64
 }
 
 // ActivityTracker tracks the in-flight ForwardHTTP request
@@ -54,6 +60,7 @@ func (a *ActivityTracker) Begin(instanceID string) {
 		a.state[instanceID] = s
 	}
 	s.inflight++
+	s.total++
 	s.lastAt = a.now()
 	a.mu.Unlock()
 }
@@ -103,6 +110,20 @@ func (a *ActivityTracker) LastAt(instanceID string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return s.lastAt, true
+}
+
+// Total returns the cumulative number of ForwardHTTP requests observed for
+// instanceID and a "seen-ever" boolean. The counter resets when vmmd restarts
+// or when Forget is called for a destroyed instance; consumers must treat a
+// decrease as a new baseline.
+func (a *ActivityTracker) Total(instanceID string) (uint64, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s, ok := a.state[instanceID]
+	if !ok {
+		return 0, false
+	}
+	return s.total, true
 }
 
 // Forget drops per-instance state. Called from

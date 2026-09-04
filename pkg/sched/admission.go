@@ -44,6 +44,7 @@ type NodeLedger struct {
 type nodeReservation struct {
 	residentRAM int // Σ(ram_mb + PerVMOverheadMB) on this node
 	usedVCPU    int // Σ vCPU on this node
+	ceilingMB   int // latest per-node RAM admission ceiling
 }
 
 // reservation remembers the node it belongs to so Release can route
@@ -275,8 +276,14 @@ func (l *NodeLedger) Admit(r Request) error {
 	}
 	node := l.resident[r.NodeID]
 	if node == nil {
-		node = &nodeReservation{}
+		node = &nodeReservation{ceilingMB: ceiling}
 		l.resident[r.NodeID] = node
+	} else if r.NodeCeilingMB > 0 {
+		// Keep the aggregate headroom view aligned with the same row
+		// ceiling used for this admission. Operators may tune a node's
+		// ceiling while the process is running; the next admission then
+		// refreshes the stored value for subsequent floor decisions.
+		node.ceilingMB = ceiling
 	}
 	if node.residentRAM+r.admissionMB() > ceiling {
 		return api.ErrCapacity(fmt.Sprintf(
@@ -491,16 +498,19 @@ func (l *NodeLedger) UsedVCPUForNode(nodeID string) int {
 func (l *NodeLedger) HeadroomMB() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	// Global headroom is sum(ceiling - resident) across nodes;
-	// collapsing to api.RAMAdmissionCeilingMB for the legacy
-	// empty-node case keeps backwards compatibility for tests that
-	// pre-date PR #113.
+	// Global headroom is sum(per-node ceiling - resident) across nodes;
+	// collapsing to api.RAMAdmissionCeilingMB for the legacy empty-node
+	// case keeps backwards compatibility for tests that pre-date PR #113.
 	if len(l.resident) == 0 {
 		return api.RAMAdmissionCeilingMB
 	}
 	var head int
 	for nodeID, r := range l.resident {
-		head += l.ceilingForNode_locked(nodeID, api.Limits{}) - r.residentRAM
+		ceiling := r.ceilingMB
+		if ceiling <= 0 {
+			ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
+		}
+		head += ceiling - r.residentRAM
 	}
 	if head < 0 {
 		head = 0

@@ -24,25 +24,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestComputeInvoiceOverageCents_Floor pins the integer-cents math
-// that pgstore.CurrentMonthOverageCents and the financial model
-// already pin:
-//
-//	cents = floor(mb_seconds * 100 / 3600).
-//
-// This codebase treats `mb_seconds * 100 / 3600` as cents — the
-// canonical formula in CurrentMonthOverageCents
-// (pkg/state/pgstore.go:4013). The reducer uses the identical
-// formula so the two readers cannot drift.
-//
-// Boundary cases pinned here:
-//   - 0 mb-seconds → 0 cents (Free under quota)
-//   - 3_600_000 mb-seconds (one hour at 1000 MB) → 100_000 cents
-//     (integer division lands exactly)
-//   - 3_599_999 mb-seconds → 99_999 cents (floor under-collects by 1)
-//
-// No float near money (CLAUDE.md). Mirrors meter_cap_test.go's
-// pinning of the same formula.
+// TestComputeInvoiceOverageCents_Floor pins the integer-cents math shared by
+// the invoice reducer and the account overage-cap reader. The plan allowance
+// is removed once from the account aggregate, then each remaining GB-hour is
+// one cent. Fractional cents are floored and no float is used near money.
 func TestComputeInvoiceOverageCents_Floor(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
@@ -72,10 +57,9 @@ func TestComputeInvoiceOverageCents_Floor(t *testing.T) {
 		t.Fatalf("prior-month usage: %v", err)
 	}
 
-	// Inside the window — exactly 3_600_000 mb-seconds (one hour at
-	// 1000 MB), which divides cleanly: 3_600_000 * 100 / 3600 = 100_000.
+	// Inside the window — 50 included GB-hours plus 3 billable GB-hours.
 	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1",
-		periodStart.Add(2*time.Hour), 3_600_000, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		periodStart.Add(2*time.Hour), 53*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("mid-month usage: %v", err)
 	}
 
@@ -83,17 +67,18 @@ func TestComputeInvoiceOverageCents_Floor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compute: %v", err)
 	}
-	const wantCents = int64(100_000)
+	const wantCents = int64(3)
 	if got != wantCents {
 		t.Fatalf("got %d cents, want %d", got, wantCents)
 	}
 
-	// Floor check: 3_599_999 mb-seconds → 99_999 cents (floors).
+	// Add half a GB-hour. The total is 53.5 GB-hours, which still floors
+	// to 3 cents of overage.
 	inv2 := inv
 	inv2.ID = uuid.NewString()
 	inv2.ProviderInvoiceID = "in_test_002"
 	if err := store.AppendUsage(ctx, acct.ID, "app-2", "inst-2",
-		periodStart.Add(3*time.Hour), 3_599_999, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		periodStart.Add(3*time.Hour), api.SecondsPerGBHour/2, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("floor usage: %v", err)
 	}
 	store.SeedInvoiceForTest(inv2)
@@ -101,9 +86,7 @@ func TestComputeInvoiceOverageCents_Floor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compute 2: %v", err)
 	}
-	// 3_600_000 + 3_599_999 = 7_199_999 mb-seconds → 7_199_999 * 100 /
-	// 3600 = 199_999.97... → 199_999 cents (floor).
-	const wantCentsFloor = int64(199_999)
+	const wantCentsFloor = int64(3)
 	if got2 != wantCentsFloor {
 		t.Fatalf("got %d cents, want %d (floor under 1)", got2, wantCentsFloor)
 	}
@@ -171,11 +154,9 @@ func TestConsumeCreditsForInvoice_EndToEnd(t *testing.T) {
 	}
 	store.SeedInvoiceForTest(inv)
 
-	// Plant usage that drives 250 cents of overage:
-	//   250 cents = mb_seconds * 100 / 3600
-	//   mb_seconds = 250 * 3600 / 100 = 9_000
+	// Plant 50 included GB-hours plus 250 billable GB-hours.
 	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1",
-		periodStart.Add(24*time.Hour), 9_000, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		periodStart.Add(24*time.Hour), 300*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
 

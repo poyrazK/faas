@@ -15,12 +15,12 @@ import (
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
-// TestListTemplates_ReturnsAll13Names asserts every name in
+// TestListTemplates_ReturnsAll15Names asserts every name in
 // templates.Names shows up in the response with non-empty category
 // + description. Catches a future template added to embed.FS but
 // missed in templates.Names (or vice versa) and a description added
 // without a CategoryFor entry.
-func TestListTemplates_ReturnsAll13Names(t *testing.T) {
+func TestListTemplates_ReturnsAll15Names(t *testing.T) {
 	srv, cookie := newAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/templates", nil)

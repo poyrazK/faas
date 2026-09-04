@@ -119,10 +119,10 @@ func TestMemStoreCurrentMonthOverageCents_Formula(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	// 1 GB-h = 3_600_000 MB-seconds (1024 MB per GB).
-	// 1200 cents = 12 GB-h.
-	const wantCents = int64(1200)
-	mbSeconds := wantCents * 3600 / 100 // 43_200_000
+	// Hobby includes 50 GB-hours. Twelve additional GB-hours should be
+	// billed at one cent per GB-hour.
+	const wantCents = int64(12)
+	mbSeconds := int64(api.PlanHobby.PlanIncludedGBHours()+int(wantCents)) * api.SecondsPerGBHour
 	now := time.Now().UTC()
 	if err := s.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now, mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append usage: %v", err)

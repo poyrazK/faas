@@ -134,19 +134,18 @@ upcoming changes.
 - **Postgres hosting** (database): single-tenant managed Postgres
   with encryption at rest + TLS in transit. Daily encrypted
   snapshots retained 30 days.
-- **Stripe** (billing): processes card data under its own PCI-DSS
-  attestation; Processor never sees card numbers. Stripe is the
-  default billing provider (`FAAS_BILLING_PROVIDER` empty or
-  `=stripe`); Paddle is the opt-in alternative, see below.
-- **Paddle** (alternative billing processor, opt-in): the billing
-  provider switch (`FAAS_BILLING_PROVIDER=paddle`, ADR-025) selects
-  Paddle for the customer instead of Stripe. Paddle receives the
-  same billing data Stripe does (customer email + plan tier +
-  metered usage). Paddle Billing has no usage-summary endpoint,
-  so `ReconcileUsage` and `Refund` return `ErrNotImplemented` for
-  Paddle accounts (issue #279); the §10 (breach notification) and
-  §11 (data return on termination) obligations bind Processor
-  regardless of the billing provider in use.
+- **Polar** (billing): public-release merchant of record. Polar receives
+  customer email, plan and subscription metadata, and calendar-month net
+  metered usage; Polar handles payment data and applicable merchant-of-record
+  tax obligations under its own controls. The default is Polar when
+  `FAAS_BILLING_PROVIDER` is empty or `=polar`.
+- **Paddle** (billing compatibility provider, explicit opt-in): the provider
+  switch (`FAAS_BILLING_PROVIDER=paddle`) selects Paddle for deployments that
+  already use it. Paddle receives the same billing data and its catalog is
+  managed in the Paddle dashboard. Stripe remains an explicit legacy opt-in
+  through `FAAS_BILLING_PROVIDER=stripe`. The §10 (breach notification) and
+  §11 (data return on termination) obligations bind Processor regardless of the
+  billing provider in use.
 - **Resend / Postmark** (transactional email): receives recipient
   address + subject + body. Email bodies contain no end-user
   personal data — they target the account holder only. Today the

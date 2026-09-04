@@ -35,7 +35,7 @@ func runLoopBrief(t *testing.T, store state.Store, dunning *meter.Dunning) (*met
 		store,
 		nil,
 		&fakeParker{},
-		nil, // StripePusher — nil; the pusher returns nil, error "pusher not configured"
+		&recordingStripe{}, // no-op billing provider; health tests require a successful billing tick
 		&fakeNotifier{},
 		nil, // mailer — nil coerces to noopDunningSender in NewLoop
 		dunning,

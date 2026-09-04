@@ -307,10 +307,8 @@ func TestRequireAuthn_NotRequired_AllowsAnonymous(t *testing.T) {
 // short-circuit.
 //
 // Concretely: with RequireAuthn=true and a valid token, the
-// request must succeed AND the response must carry the
-// cold-wake header (we did setLegacyHot but the handler
-// re-evaluates on every request; the regression value is in
-// "no denial short-circuit between authz and the proxy").
+// request must succeed and reuse the pre-warmed target. Authz
+// must not introduce a short-circuit or trigger a needless wake.
 func TestRequireAuthn_AllowsWakesBeforeAuthz(t *testing.T) {
 	h, _, _, _, _ := newRequireAuthnTestHandler(t, true, "acct-1")
 
@@ -330,11 +328,9 @@ func TestRequireAuthn_AllowsWakesBeforeAuthz(t *testing.T) {
 	if rec.Header().Get("x-faas-request-id") == "" {
 		t.Error("x-faas-request-id missing; authz branch short-circuited the proxy")
 	}
-	// Sanity: the cold-wake header is on a fresh admit; we
-	// seed via setLegacyHot which sets running=true but
-	// admits=0, so this request is the first admit and the
-	// header MUST be present.
-	if got := rec.Header().Get(wire.WakeHeader); got != wire.ColdWakeValue {
-		t.Errorf("%s = %q, want %q (authz branch must not eat the wake gate)", wire.WakeHeader, got, wire.ColdWakeValue)
+	// The target was pre-warmed by the fixture, so this request must not
+	// advertise a cold wake.
+	if got := rec.Header().Get(wire.WakeHeader); got != "" {
+		t.Errorf("%s = %q, want empty for a warm request", wire.WakeHeader, got)
 	}
 }

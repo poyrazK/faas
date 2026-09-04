@@ -1040,6 +1040,17 @@ groups:
         annotations:
           summary: "Account {{ $labels.account_id }} drift > 5% for 15m"
           description: "Single-account drift exceeds 5% for 15m (ADR-049 §B.1). The 1h provider-aggregate BillingDrift alert may not fire for a single account if other accounts are quiet. Inspect the meterd_billing_drift_mb_seconds{account_id=…} gauge and Stripe's UsageRecordSummaries API for the affected subscription_item to confirm the gap."
+      - alert: BillingReconcileFailures
+        expr: sum by (provider) (rate(meterd_billing_drift_reconcile_failures_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: meterd
+          family: billing_drift
+        annotations:
+          summary: "Billing reconciliation is failing for {{ $labels.provider }}"
+          description: "meterd cannot refresh provider-vs-local billing drift for provider {{ $labels.provider }}. The drift gauges may be stale even when they are below threshold; inspect meterd logs and the reason-labelled meterd_billing_drift_reconcile_failures_total counter."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
 
       # ─────────────────────────────────────────────────────────────────
       # ADR-120 Tier A1: domain doctor staleness alerts.

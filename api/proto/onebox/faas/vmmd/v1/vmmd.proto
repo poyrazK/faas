@@ -87,6 +87,22 @@ service Vmmd {
   // Destroy tears down a running instance. Idempotent on unknown instances.
   rpc Destroy(DestroyRequest) returns (DestroyResponse);
 
+  // StopInstance is the M-2 / ADR-138 graceful stop sequence: send
+  // `signal` to the guest's PID 1, wait up to `grace_period_s`
+  // seconds for it to exit cleanly, then SIGKILL on deadline.
+  // Wired to `JailerVMM.SignalAndKill` (pkg/fcvm/vmm.go).
+  //
+  // Distinct from Destroy (which is a hard SIGKILL today) — the two
+  // RPCs coexist. schedd.Engine.StopInstance (commit 6) dispatches
+  // per Instance.ExecutionMode: worker/job use StopInstance;
+  // request/service use the existing snapshotAndPark/Destroy path.
+  // The signal value is a standard POSIX signal number (e.g. SIGTERM=15,
+  // SIGUSR1=10, SIGHUP=1); 0 means "use the manifest's StopSignal,
+  // defaulting to SIGTERM". grace_period_s is the upper bound on
+  // clean-shutdown wait; 0 means "no grace, immediate SIGKILL" which
+  // is the legacy Destroy shape — a future commit may deprecate it.
+  rpc StopInstance(StopInstanceRequest) returns (StopInstanceResponse);
+
   // Stats returns current liveness + allocator views. Used by schedd's
   // admission ledger (M4) and by Prometheus for the `vmmd_ops_total` /
   // `vmmd_op_duration_seconds` dashboards (ADR-016).
@@ -521,12 +537,18 @@ message SidecarSpec {
   // jail chroot (e.g. "layer-sidecar-1"). Mirrors
   // pkg/fcvm.DriveSidecarPrefix + index.
   string drive_slot = 8;
+  // sealed_env carries the per-sidecar ciphertext values from the
+  // deployment record. vmmd opens them only into the per-instance
+  // writable main layer before boot; plaintext never enters the wire
+  // or the shared immutable sidecar image.
+  repeated SealedSecret sealed_env = 9;
 }
 
-// SealedSecret is one (key, ciphertext) pair from app_secrets. The key is
-// the env-var name; the ciphertext is sealed by apid via filippo.io/age
-// under the host X25519 recipient. vmmd merges all entries into the
-// single envelope file written to drive1.
+// SealedSecret is one (key, ciphertext) pair from an app or sidecar env
+// store. The key is the env-var name; the ciphertext is sealed by apid via
+// filippo.io/age under the host X25519 recipient. vmmd opens the entries only
+// at wake time and writes the resulting plaintext to the appropriate
+// instance-scoped file.
 message SealedSecret {
   string key        = 1;
   bytes  ciphertext = 2;
@@ -799,6 +821,37 @@ message DestroyResponse {
   int32  exit_code = 2;
 }
 
+// StopInstanceRequest is the M-2 / ADR-138 graceful-stop input.
+// schedd's Engine.StopInstance (pkg/sched/engine.go, commit 6) emits
+// this RPC after reading `Instance.ExecutionMode` and the per-app
+// `StopSignal` / `StopGracePeriodS` from the manifest.
+message StopInstanceRequest {
+  string instance = 1;
+  // Signal number (POSIX). 0 = use manifest StopSignal (default SIGTERM).
+  // Maps to a syscall.Signal on the vmmd side; vmmd forwards via vsock
+  // to guest-init PID 1, which translates to the manifest's StopSignal
+  // or, if no manifest StopSignal is set, SIGTERM.
+  int32  signal = 2;
+  // Upper bound on the clean-shutdown wait, in seconds. 0 = immediate
+  // SIGKILL (legacy Destroy shape). schedd supplies the per-app
+  // manifest StopGracePeriodS capped at the per-plan tier table
+  // (commit 10).
+  int32  grace_period_s = 3;
+}
+
+// StopInstanceResponse echoes the instance id + exit_code semantics
+// of DestroyResponse. `kill_signal_sent` is true if vmmd had to fall
+// through to SIGKILL after the grace period elapsed; false means the
+// process exited cleanly within grace. Schedd records this on the
+// audit row (lifecycle_failure_reason='clean_exit' or
+// 'killed_after_grace' if added in a future commit).
+message StopInstanceResponse {
+  string instance = 1;
+  int32  exit_code = 2;
+  // True iff vmmd escalated to SIGKILL after grace_period_s elapsed.
+  bool   kill_signal_sent = 3;
+}
+
 message StatsRequest {}
 
 message StatsResponse {
@@ -882,6 +935,12 @@ message InstanceStats {
   // table. Zero is a real idle value; the enclosing Stats response is
   // additive so older schedd peers can ignore this field.
   int64 open_conns = 11;
+  // Cumulative ForwardHTTP requests observed by vmmd for this instance.
+  // Wrapper semantics match the other optional counters: absent means the
+  // activity tracker has not seen the instance yet, while zero is a real
+  // value after the first observation. Schedd uses the deltas between Stats
+  // samples as a topology-independent RPS signal for reactive scale-up.
+  google.protobuf.Int64Value request_count_total = 12;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the

@@ -10,15 +10,12 @@ import type { SecretFinding } from './SecretFinding.js';
  * machine-readable identifier; clients branch on it. `limit` and
  * `observed` are populated on quota errors. `docs_url` points the
  * user at the next action. `billing_portal_url` is populated on
- * `code: payment_required` so the dashboard can deep-link the
- * customer to the Stripe-hosted billing portal (issue #142).
- * `paddle_checkout_url` + `tx_id` are populated instead when the
- * box is running on the Paddle billing provider
- * (`FAAS_BILLING_PROVIDER=paddle`, ADR-025) — the customer lands
- * on a Paddle-hosted checkout page for the target plan and the
- * dashboard renders the transaction handle as a confirmation id.
- * Exactly one of `billing_portal_url` or `paddle_checkout_url` is
- * populated on a given 402 — never both.
+ * `code: payment_required` when the customer already has a
+ * provider subscription and must update it in the provider
+ * portal. `checkout_url` is populated when a new hosted checkout
+ * is required. `paddle_checkout_url` is retained as a legacy
+ * alias for Paddle clients, and `tx_id` carries the provider
+ * checkout handle when one exists.
  *
  * `errors` carries per-field detail (Cloudflare / Stripe shape)
  * for 422 sites that emit a list of field-level failures — used
@@ -40,11 +37,16 @@ export type Problem = {
   limit?: number | null;
   observed?: number | null;
   docs_url?: string;
+  /**
+   * Provider-neutral hosted checkout URL on a `payment_required`
+   * 402 when a paid plan upgrade requires a new subscription.
+   *
+   */
+  checkout_url?: string;
   billing_portal_url?: string;
   /**
-   * Paddle-hosted checkout URL on a `payment_required` 402 when
-   * the box is running on the Paddle billing provider. Mutually
-   * exclusive with `billing_portal_url`.
+   * Legacy Paddle-hosted checkout URL on a `payment_required`
+   * 402. Prefer the provider-neutral `checkout_url` field.
    *
    */
   paddle_checkout_url?: string;

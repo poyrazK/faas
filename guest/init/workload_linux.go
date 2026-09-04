@@ -34,10 +34,10 @@
 //   - The MAIN workload reads /etc/faas/secrets.env and
 //     /etc/faas/env.json from drive1 (the legacy paths). vmmd
 //     writes these at wake time via StageSecretsEnv / StageAPIEnv.
-//   - Sidecars don't read secrets.env / env.json — the customer's
-//     per-sidecar env is baked into the sidecar's ext4 at build
-//     time by imaged (PR-A's contract). The wake-time env wire
-//     stays flat so the vmmd proto surface is unchanged.
+//   - Sidecars don't read the main workload's secrets.env / env.json.
+//     Image defaults are baked into each sidecar's ext4 at build time;
+//     deployment-specific overrides are written to the main workload's
+//     instance-scoped upper at wake time under the sidecar's name.
 //
 // Per-workload cgroups (host side):
 //   - vmmd creates nested cgroup scopes under the per-instance
@@ -57,6 +57,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,8 +66,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -111,10 +114,12 @@ type workloadSpec struct {
 // sufficient; the merged-root sees drive1's copy.
 //
 // WorkloadSpecPath (single-workload envelope at /etc/faas/
-// workload.json) is the per-drive stamp vmmd also writes for
-// reverse-compat and operator visibility (debugging tools can
-// `cat` it inside the VM). The orchestrator reads the roster,
-// not the per-drive stamp.
+// workload.json) is the compatibility per-drive stamp vmmd can
+// write for operator visibility (debugging tools can `cat` it
+// inside the VM). New sidecars use the immutable, name-scoped
+// manifest under /etc/faas/workloads/<name>/workload.json. The
+// orchestrator reads the roster and then the matching sidecar
+// manifest, not the compatibility stamp.
 const workloadRosterPath = "/etc/faas/workloads.json"
 
 // workloadRoster mirrors the deployment-level roster shape.
@@ -146,6 +151,61 @@ func discoverRoster(fsys fs.FS) (workloadRoster, error) {
 	return roster, nil
 }
 
+// loadSidecarManifest reads the immutable runtime contract baked into a
+// sidecar layer by imaged. The deployment roster carries scheduling policy,
+// while this manifest carries the image's effective argv, environment,
+// working directory, and user. Validate the name before joining it into the
+// overlay path so a malformed roster cannot escape the sidecar directory.
+func loadSidecarManifest(name string) (api.AppManifest, error) {
+	if !validSidecarWorkloadName(name) {
+		return api.AppManifest{}, fmt.Errorf("sidecar workload: invalid name %q", name)
+	}
+	path := filepath.Join(api.SidecarWorkloadManifestPath, name, "workload.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return api.AppManifest{}, err
+	}
+	return api.ReadManifest(bytes.NewReader(data))
+}
+
+// loadSidecarEnv reads the deployment-specific env overrides staged by vmmd
+// into the writable main upper. A missing file means that this sidecar has no
+// overrides; any other read or parse failure is fatal so a permissions or
+// corruption problem cannot silently drop customer configuration.
+func loadSidecarEnv(name string) (map[string]string, error) {
+	if !validSidecarWorkloadName(name) {
+		return nil, fmt.Errorf("sidecar workload: invalid name %q", name)
+	}
+	path := filepath.Join(api.SidecarWorkloadManifestPath, name, "env.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	env := make(map[string]string)
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, fmt.Errorf("sidecar workload env: parse %q: %w", path, err)
+	}
+	return env, nil
+}
+
+func validSidecarWorkloadName(name string) bool {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || len(name) > 63 {
+		return false
+	}
+	for i, r := range name {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+		if i == 0 && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
 // runWorkloads (issue #463 / ADR-069 / PR-B) is the boot-side
 // orchestrator. The dispatch order:
 //
@@ -170,10 +230,10 @@ func discoverRoster(fsys fs.FS) (workloadRoster, error) {
 // mainManifest is the legacy api.AppManifest for the main
 // workload (passed in from boot's earlier os.Open +
 // ReadManifest). The orchestrator uses it for the main
-// workload's entrypoint + env. Sidecars' entrypoints live in
-// their baked ext4 images at the canonical
-// /usr/local/bin/start.sh (or whatever the customer image
-// provides) — guest-init exec's them verbatim.
+// workload's entrypoint + env. Sidecars' effective command and
+// env live in their baked, name-scoped workload manifests;
+// guest-init execs those values verbatim. Older sidecar layers
+// fall back to /usr/local/bin/start.sh or the roster command.
 func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy) error {
 	if log == nil {
 		log = slog.Default()
@@ -334,19 +394,18 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 // the merged env).
 func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, apiEnv map[string]string, log *slog.Logger) *Supervisor {
 	supRef := &Supervisor{Max: MaxRestarts}
-	supRef.Start = func() error { return runAppWithEnv(manifest, secrets, apiEnv, supRef) }
+	supRef.Start = func() error { return runAppWithRAM(manifest, secrets, apiEnv, supRef, spec.RamMB) }
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: main crashed (restart %d/%d): %v\n", attempt, MaxRestarts, err)
 	}
-	_ = spec // reserved for PR-C per-workload policy; ignored today
 	return supRef
 }
 
 // newSupervisorFor builds a sidecar supervisor
-// (issue #463 / ADR-069 / PR-B + PR-C §4). The sidecar's
-// entrypoint is the customer's image default — guest-init
-// exec's the sidecar's baked /usr/local/bin/start.sh (or
-// whatever the image provides). The essential flag drives
+// (issue #463 / ADR-069 / PR-B + PR-C §4). New sidecar layers
+// carry the image's effective command in a name-scoped manifest;
+// older layers fall back to the image's /usr/local/bin/start.sh
+// convention or the roster command. The essential flag drives
 // the restart policy: non-essential = Max=0 (no restart,
 // log-and-continue); essential = Max=MaxRestarts (restart
 // per the platform contract). PR-C §4 wires the supervisor's
@@ -381,57 +440,90 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 }
 
 // runSidecar exec's a sidecar workload (issue #463 /
-// ADR-069 / PR-B). The entrypoint is the customer's image
-// default (no manifest drives it). Secrets/env come from
-// the sidecar's baked ext4 — the wake-time env wire stays
-// flat so this layer doesn't read secrets.env / env.json.
+// ADR-069 / PR-B). New layers provide an immutable manifest
+// containing the image's effective command and default environment;
+// deployment-specific env overrides are read from the name-scoped
+// file staged in the writable main upper. Legacy layers use the
+// roster fallback while still accepting the same per-sidecar override.
 //
-// spec.Name and spec.Port are reserved for the wire-stable
-// log surface (PR-C extends to plumb through supervisor
-// restart events). The cmd field will land in PR-C; today
-// the sidecar's entrypoint is /usr/local/bin/start.sh by
-// convention.
+// spec.Name and spec.Port remain the wire-stable scheduling and log fields.
+// The effective command and image defaults are baked into the sidecar layer;
+// the roster command fields are retained for legacy layers.
 func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Supervisor) error {
-	// PR-C §6: the customer-image override surface. The
-	// manifest on the per-drive ext4 carries Cmd/Entrypoint
-	// when the deploy ships a custom entrypoint (e.g. a
-	// Dockerfile that EXPOSE's an alternate binary). The
-	// precedence matches the OCI image-spec:
-	//   - Entrypoint non-empty: exec Entrypoint[0] with
-	//     Entrypoint[1:] as argv[0:].
-	//   - Entrypoint empty + Cmd non-empty: exec Cmd[0]
-	//     with Cmd[1:] as argv[1:].
-	//   - Both empty: fall back to the baked image
-	//     entrypoint (/usr/local/bin/start.sh).
-	// The fallback preserves the PR-B contract for images
-	// that don't set cmd/entrypoint.
-	argv0, argv := resolveSidecarCommand(spec)
+	// New sidecar layers carry an immutable AppManifest under a name-scoped
+	// path. It is the only source that can preserve the image's Entrypoint,
+	// Cmd, default env, working directory, and user without exposing those values on
+	// the wake wire. Older layers fall back to the roster fields so existing
+	// snapshots remain bootable during rollout.
+	baked, manifestErr := loadSidecarManifest(spec.Name)
+	var (
+		argv0 string
+		argv  []string
+		env   []string
+		port  int
+	)
+	if manifestErr == nil {
+		if len(baked.Entrypoint) == 0 {
+			return fmt.Errorf("run sidecar %s: baked manifest has empty entrypoint", spec.Name)
+		}
+		argv0 = baked.Entrypoint[0]
+		argv = append([]string(nil), baked.Entrypoint[1:]...)
+		env = BuildEnv(os.Environ(), baked)
+		// The roster is authoritative for the port advertised to the
+		// scheduler. Older baked manifests may not carry a port, so use
+		// the baked value only as a compatibility fallback.
+		port = spec.Port
+		if port == 0 {
+			port = baked.Port
+		}
+	} else if isNotExist(manifestErr) {
+		argv0, argv = resolveSidecarCommand(spec)
+		env = os.Environ()
+		port = spec.Port
+		// Legacy sidecar layers did not contain a workload manifest. Keep
+		// their compatibility path, including the old shared env surface.
+		if len(secrets) > 0 || len(apiEnv) > 0 {
+			env = BuildEnvWithSecrets(env, api.AppManifest{}, secrets, apiEnv)
+		}
+	} else {
+		return fmt.Errorf("run sidecar %s: load baked manifest: %w", spec.Name, manifestErr)
+	}
+	// Per-sidecar deployment overrides are staged into the instance-scoped
+	// main upper by vmmd. They win over image defaults (and over the legacy
+	// shared env fallback), but main-workload secrets/API env never leak into
+	// the new sidecar manifest path.
+	if sidecarEnv, envErr := loadSidecarEnv(spec.Name); envErr == nil {
+		env = BuildEnvWithSecrets(env, api.AppManifest{}, sidecarEnv, nil)
+	} else if !isNotExist(envErr) {
+		return fmt.Errorf("run sidecar %s: load env overrides: %w", spec.Name, envErr)
+	}
+	// The scheduler-selected/listen port is authoritative, so stamp it after
+	// deployment env overrides rather than allowing a PORT override to change
+	// the port advertised to the host bridge.
+	if port > 0 {
+		env = StampOverridePortEnv(env, port)
+	}
 	cmd := exec.Command(argv0, argv...)
-	cmd.Env = os.Environ()
+	cmd.Env = env
+	if manifestErr == nil {
+		cmd.Dir = baked.EffectiveWorkingDir()
+		if uid := lookupUID(baked.EffectiveUser()); uid > 0 {
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
+			}
+		}
+	}
 	// Issue #463 / ADR-069 / PR-B AC #4: per-workload
 	// in-guest cgroup v2 partition. mkdir + write
 	// memory.max BEFORE Start so the kernel sees the
 	// cap on the very first page fault. The leaf is
 	// derived from (type, name) via cgroupSafeName; an
-	// empty safe name (path separator in the name)
-	// skips the partition — the workload runs under
-	// the parent scope, which still has the host-side
-	// cap.
-	leaf := leafDir(spec.Type, spec.Name)
-	if leaf != "" {
-		if perr := partitionInto(leaf, spec.RamMB); perr != nil {
-			slog.Default().Warn("cgroup partition into leaf failed",
-				"leaf", leaf, "name", spec.Name, "err", perr)
-		}
-	}
-	// Sidecar env can layer on top of the customer's baked
-	// env (imaged wrote the per-sidecar env into the ext4 at
-	// build time). The secrets/apiEnv args from wake are
-	// shared with the main workload's legacy readers; we
-	// pass them through but they only take effect when the
-	// sidecar's image was built without a baked env.
-	if len(secrets) > 0 || len(apiEnv) > 0 {
-		cmd.Env = BuildEnvWithSecrets(cmd.Env, api.AppManifest{}, secrets, apiEnv)
+	// invalid safe name or failed write aborts the
+	// workload before exec; otherwise it could run
+	// without its per-workload cap.
+	leaf, cgroupErr := prepareWorkloadCgroup(spec.Type, spec.Name, spec.RamMB, slog.Default())
+	if cgroupErr != nil {
+		return fmt.Errorf("prepare sidecar workload cgroup %q: %w", spec.Name, cgroupErr)
 	}
 	// Pipe stdout/stderr into the supervisor's ring buffer
 	// (Slice A PR-B contract).
@@ -452,7 +544,6 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 	// Run the sidecar. exec.Command blocks until the sidecar
 	// exits; the supervisor's Run() loop captures the exit
 	// code via trackExit and decides whether to restart.
-	_ = spec.Port
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
@@ -461,7 +552,9 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 	// killer scopes to the leaf (not the workload's
 	// siblings). Race window is benign — see
 	// placeIntoLeaf's doc.
-	placeIntoLeaf(leaf, cmd.Process.Pid, slog.Default())
+	if leaf != "" {
+		placeIntoLeaf(leaf, cmd.Process.Pid, slog.Default())
+	}
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}

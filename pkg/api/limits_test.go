@@ -40,6 +40,12 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #475: Free is gated off the reserved eviction tier.
 			// Fail-closed at 0/0 mirrors the cron 0/0 posture above.
 			EvictionPriorityReservedAllowed: false, ReservedConcurrencyPerAccount: 0,
+			// M-2 / ADR-137+138: Free stays request-only. Per-mode
+			// replica caps are zero so ValidatePlan rejects any
+			// worker / service / job ExecutionMode. StopGracePeriod
+			// caps tighten to 15 s (ADR-138 §Decision 4).
+			DefaultStopGracePeriodS: 15, DefaultStartupDeadlineS: 15, DefaultMaxRetries: 3,
+			WorkerReplicasMax: 0, ServiceReplicasMax: 0, JobMaxRuntimeS: 0,
 			// Issue #477 / ADR-079: Free stays on the no-signup-friction
 			// path — public-by-default. Bearer + basic both gated off.
 			// The 'open' mode is always available regardless of plan.
@@ -192,6 +198,11 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ScaleUpTargetRPSAllowed: false, ScaleUpTargetCPUAllowed: false,
 			// Cron: Hobby gets 5 per-app and 10 per-account.
 			CronLimitPerApp: 5, CronLimitPerAccount: 10,
+			// M-2 / ADR-137+138: Hobby's 30 s stop-grace, 30 s
+			// startup-deadline, 5-retry caps. Hobby unlocks worker
+			// (1) + service (3 replicas) + 5-min job runtime.
+			DefaultStopGracePeriodS: 30, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 5,
+			WorkerReplicasMax: 1, ServiceReplicasMax: 3, JobMaxRuntimeS: 300,
 			// Issue #475: Hobby gets 1 reserved-tier app.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 1,
 			// Issue #477 / ADR-079: Hobby unlocks bearer (admin
@@ -340,6 +351,11 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ScaleUpTargetRPSAllowed: true, ScaleUpTargetCPUAllowed: true,
 			// Cron: Pro gets 20 per-app and 50 per-account.
 			CronLimitPerApp: 20, CronLimitPerAccount: 50,
+			// M-2 / ADR-137+138: Pro doubles Hobby (60 s grace,
+			// 60 s deadline, 10 retries). 3 workers, 5 service
+			// replicas, 30-min job runtime.
+			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 60, DefaultMaxRetries: 10,
+			WorkerReplicasMax: 3, ServiceReplicasMax: 5, JobMaxRuntimeS: 1800,
 			// Issue #475: Pro gets 2 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 2,
 			// Issue #477 / ADR-079: Pro unlocks both bearer + basic.
@@ -495,6 +511,11 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ScaleUpTargetRPSAllowed: true, ScaleUpTargetCPUAllowed: true,
 			// Cron: Scale gets 100 per-app and 500 per-account.
 			CronLimitPerApp: 100, CronLimitPerAccount: 500,
+			// M-2 / ADR-137+138: Scale doubles Pro (120 s grace,
+			// 120 s deadline, 20 retries). 10 workers, 20
+			// service replicas, 1-h job runtime.
+			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 120, DefaultMaxRetries: 20,
+			WorkerReplicasMax: 10, ServiceReplicasMax: 20, JobMaxRuntimeS: 3600,
 			// Issue #475: Scale gets 4 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 4,
 			// Issue #477 / ADR-079: Scale unlocks both bearer + basic.

@@ -64,19 +64,23 @@ type Problem struct {
 	Observed *int64 `json:"observed,omitempty"`
 	// DocsURL points the user at the single next action.
 	DocsURL string `json:"docs_url,omitempty"`
-	// BillingPortalURL is set on payment_required (CodePayment) errors:
-	// the operator-controlled billing portal URL with the account id
-	// substituted. Optional; omitempty keeps the existing API shape
-	// unchanged for every other error code.
+	// CheckoutURL is the provider-neutral hosted checkout URL for a paid
+	// upgrade. PaddleCheckoutURL remains below for backwards compatibility
+	// with older SDKs that only know the Paddle-specific field.
+	CheckoutURL string `json:"checkout_url,omitempty"`
+	// BillingPortalURL is set on payment_required (CodePayment) errors
+	// when the customer must manage an existing subscription. It may be a
+	// provider-created session URL or an operator-controlled URL with the
+	// account id substituted.
 	BillingPortalURL string `json:"billing_portal_url,omitempty"`
 	// PaddleCheckoutURL is set on payment_required (CodePayment) errors
 	// when the platform is running on the Paddle provider. Mirrors
 	// BillingPortalURL's shape — the customer's next action is to land
 	// on a Paddle-hosted checkout page for the target plan. Optional +
-	// omitempty so the Stripe-default response shape is unchanged.
-	// Mutually exclusive with BillingPortalURL on a single Problem: the
-	// 402 carries either billing_portal_url (Stripe) or
-	// paddle_checkout_url+tx_id (Paddle), never both.
+	// omitempty so responses that use the provider-neutral field remain
+	// compact. CheckoutURL and PaddleCheckoutURL are mutually exclusive
+	// for Polar; legacy Paddle responses continue to carry both checkout
+	// aliases as needed.
 	PaddleCheckoutURL string `json:"paddle_checkout_url,omitempty"`
 	// TxID is the provider's transaction handle (Paddle: txn_…,
 	// Stripe: empty). The dashboard renders this as a confirmation id
@@ -2117,15 +2121,10 @@ func ErrStepUpRequired() *Problem {
 		"step-up MFA required for this action: complete /v1/account/mfa/verify to refresh")
 }
 
-// ErrBillingNotImplemented is returned by an apid handler that
-// invoked a billing.Provider method the selected provider (per
-// FAAS_BILLING_PROVIDER) does not support (issue #279: Paddle's
-// Refund). The 501 surfaces the seam so an operator picking the
-// billing backend knows up front which surface areas it disables;
-// today no apid handler invokes Provider.Refund — refunds are
-// Stripe-webhook-observational only — so this helper exists for
-// the future operator-initiated refund path. callers branch on
-// errors.Is(err, billing.ErrNotImplemented) and route here.
+// ErrBillingNotImplemented is returned by an apid handler when the selected
+// provider (per FAAS_BILLING_PROVIDER) does not support the requested billing
+// surface. The 501 makes provider capability gaps explicit to operators;
+// callers branch on errors.Is(err, billing.ErrNotImplemented) and route here.
 func ErrBillingNotImplemented(detail string) *Problem {
 	return NewProblem(http.StatusNotImplemented, CodeBillingNotImplemented,
 		"Billing provider does not support this surface", detail).

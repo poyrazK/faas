@@ -163,3 +163,28 @@ func TestDecide_TableDriven(t *testing.T) {
 		})
 	}
 }
+
+func TestDecide_DesiredCapacityUsesTotalRPSAndCap(t *testing.T) {
+	got := decide(AppStats{
+		TargetRPS:      50,
+		MaxConcurrency: 8,
+		Concurrency:    2,
+		PerInstanceRPS: 175,
+		HaveRPS:        true,
+	})
+	// 2 instances × 175 RPS / 50 target = 7 desired instances.
+	if got.Desired != 7 || got.Admissions != 5 {
+		t.Fatalf("desired=%d admissions=%d, want desired=7 admissions=5", got.Desired, got.Admissions)
+	}
+
+	got = decide(AppStats{
+		TargetRPS:      50,
+		MaxConcurrency: 4,
+		Concurrency:    2,
+		PerInstanceRPS: 175,
+		HaveRPS:        true,
+	})
+	if got.Desired != 4 || got.Admissions != 2 {
+		t.Fatalf("capped desired=%d admissions=%d, want desired=4 admissions=2", got.Desired, got.Admissions)
+	}
+}

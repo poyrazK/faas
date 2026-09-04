@@ -3,6 +3,7 @@ package scaleup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -47,21 +48,39 @@ func (l *fakeLedger) Concurrency(appID string) int {
 	return l.conc[appID]
 }
 
-// fakeEngine is a minimal Engine. Records every AdmitInstance call
-// and ships back a canned AdmitResult. The trigger calls
-// AdmitInstance exactly once per admit row, so the call count is the
-// trip-wire for the test.
+// fakeEngine is a minimal Engine. It records the two wake surfaces
+// separately because EnsureWake is idempotent while AdmitInstance is
+// the scale-out primitive. A test that only checks a combined call
+// count would miss accidentally wiring the wrong method.
 type fakeEngine struct {
-	mu      sync.Mutex
-	calls   []string // appIDs in call order
-	results map[string]AdmitResult
-	errs    map[string]error
+	mu              sync.Mutex
+	admitCalls      []string // appIDs in AdmitInstance call order
+	ensureWakeCalls []string // appIDs in EnsureWake call order
+	results         map[string]AdmitResult
+	errs            map[string]error
+}
+
+type burstFakeEngine struct {
+	*fakeEngine
+	mu          sync.Mutex
+	burstCounts []int
+}
+
+func (e *burstFakeEngine) AdmitInstances(_ context.Context, appID, _, _ string, count int) ([]AdmitResult, error) {
+	e.mu.Lock()
+	e.burstCounts = append(e.burstCounts, count)
+	e.mu.Unlock()
+	results := make([]AdmitResult, count)
+	for i := range results {
+		results[i] = AdmitResult{InstanceID: fmt.Sprintf("ins-%s-%d", appID, i)}
+	}
+	return results, nil
 }
 
 func (e *fakeEngine) AdmitInstance(_ context.Context, appID, _, _ string) (AdmitResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.calls = append(e.calls, appID)
+	e.admitCalls = append(e.admitCalls, appID)
 	if err, ok := e.errs[appID]; ok {
 		return AdmitResult{}, err
 	}
@@ -71,13 +90,12 @@ func (e *fakeEngine) AdmitInstance(_ context.Context, appID, _, _ string) (Admit
 	return AdmitResult{InstanceID: "ins-" + appID}, nil
 }
 
-// EnsureWake (ADR-098): scaleup's trigger-local WakeOutcome mirrors
-// the canned AdmitResult. The fake records a parallel call so tests
-// that need to count EnsureWake vs AdmitInstance calls can do so.
+// EnsureWake (ADR-098) remains on the compatibility interface for
+// other wake producers, but reactive scale-up must never call it.
 func (e *fakeEngine) EnsureWake(_ context.Context, appID, _ string) (WakeOutcome, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.calls = append(e.calls, appID)
+	e.ensureWakeCalls = append(e.ensureWakeCalls, appID)
 	if err, ok := e.errs[appID]; ok {
 		return WakeOutcome{}, err
 	}
@@ -103,13 +121,36 @@ func (s *fakeScraper) Scrape(_ context.Context) (map[string]int64, error) {
 	return out, nil
 }
 
+// sequenceScraper returns one valid sample and then a scrape error. It pins
+// the fail-closed contract: a failed scrape must not reuse the previous RPS
+// window as if it were current.
+type sequenceScraper struct {
+	mu    sync.Mutex
+	first map[string]int64
+	err   error
+	calls int
+}
+
+func (s *sequenceScraper) Scrape(_ context.Context) (map[string]int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.calls == 0 {
+		s.calls++
+		return s.first, nil
+	}
+	s.calls++
+	return nil, s.err
+}
+
 // fakeInstats is a minimal InstatsReader. Returns the per-app
 // max-CPU from byCPU; nil is the no-signal case. After PR-C
 // (issue #462) the interface also requires MaxInflightForApp —
-// byInflight is the per-app map; nil is the no-signal case.
+// byInflight is the per-app map; nil is the no-signal case. byRPS
+// exercises the optional provider-independent request-rate fallback.
 type fakeInstats struct {
 	byCPU      map[string]float64
 	byInflight map[string]int64
+	byRPS      map[string]float64
 }
 
 func (i *fakeInstats) MaxCPU(appID string) (float64, bool) {
@@ -128,6 +169,14 @@ func (i *fakeInstats) MaxInflightForApp(appID string) (int64, bool) {
 	return v, ok
 }
 
+func (i *fakeInstats) RequestsPerSecond(appID string) (float64, bool) {
+	if i == nil || i.byRPS == nil {
+		return 0, false
+	}
+	v, ok := i.byRPS[appID]
+	return v, ok
+}
+
 // --- tests ---------------------------------------------------------------
 
 // TestTrigger_AdmitOnRPSTargetHit is the happy path: a single app
@@ -141,16 +190,55 @@ func TestTrigger_AdmitOnRPSTargetHit(t *testing.T) {
 	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
 	engine := &fakeEngine{}
 	m := wire.NewOpsMetrics("test")
-	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 140}}, engine, ledger, Options{Metrics: m})
+	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 700}}, engine, ledger, Options{Metrics: m})
 	// Pretend the previous tick already seeded cumulative=0 so
-	// the first Touch sees a delta of 140 (matching 70 RPS/instance
-	// × 2 instances).
+	// the first Touch sees a delta of 700 (140 app RPS over the
+	// configured 5-second window, or 70 RPS/instance × 2).
 	tr.ring.Touch(t0(), map[string]int64{"app1": 0})
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(engine.calls) != 1 || engine.calls[0] != "app1" {
-		t.Errorf("engine.calls = %v, want [app1]", engine.calls)
+	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "app1" {
+		t.Errorf("engine.admitCalls = %v, want [app1]", engine.admitCalls)
+	}
+	if len(engine.ensureWakeCalls) != 0 {
+		t.Errorf("engine.ensureWakeCalls = %v, want []: scale-out must bypass EnsureWake", engine.ensureWakeCalls)
+	}
+}
+
+func TestTrigger_UsesBoundedDesiredCapacityBurst(t *testing.T) {
+	store := &fakeStore{apps: []state.App{
+		{ID: "app1", AutoscaleTargetRPS: 50, MaxConcurrency: 8},
+	}}
+	ledger := &fakeLedger{conc: map[string]int{"app1": 1}}
+	engine := &burstFakeEngine{fakeEngine: &fakeEngine{}}
+	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 2500}}, engine, ledger, Options{})
+	tr.ring.Touch(t0(), map[string]int64{"app1": 0})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	// 2500 requests over the configured 5-second window = 500 RPS;
+	// 500 RPS / 50 target = 10 desired, but the app has one
+	// instance and the trigger's per-tick burst bound is four.
+	if len(engine.burstCounts) != 1 || engine.burstCounts[0] != 4 {
+		t.Fatalf("burst counts = %v, want [4]", engine.burstCounts)
+	}
+}
+
+func TestTrigger_UsesInstanceStatsRPSWhenPrometheusUnavailable(t *testing.T) {
+	store := &fakeStore{apps: []state.App{
+		{ID: "app1", AutoscaleTargetRPS: 5, MaxConcurrency: 5},
+	}}
+	ledger := &fakeLedger{conc: map[string]int{"app1": 1}}
+	engine := &fakeEngine{}
+	instats := &fakeInstats{byRPS: map[string]float64{"app1": 6}}
+	tr := New(store, instats, nil, engine, ledger, Options{})
+
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "app1" {
+		t.Fatalf("engine.admitCalls = %v, want [app1]", engine.admitCalls)
 	}
 }
 
@@ -164,13 +252,13 @@ func TestTrigger_RejectAtCap(t *testing.T) {
 	ledger := &fakeLedger{conc: map[string]int{"app1": 5}}
 	engine := &fakeEngine{}
 	m := wire.NewOpsMetrics("test")
-	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 500}}, engine, ledger, Options{Metrics: m})
+	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 1500}}, engine, ledger, Options{Metrics: m})
 	tr.ring.Touch(t0(), map[string]int64{"app1": 0})
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(engine.calls) != 0 {
-		t.Errorf("engine.calls = %v, want []", engine.calls)
+	if len(engine.admitCalls) != 0 || len(engine.ensureWakeCalls) != 0 {
+		t.Errorf("engine calls = admit:%v ensure:%v, want no calls", engine.admitCalls, engine.ensureWakeCalls)
 	}
 }
 
@@ -187,8 +275,8 @@ func TestTrigger_NoTargetNoOp(t *testing.T) {
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(engine.calls) != 0 {
-		t.Errorf("engine.calls = %v, want []", engine.calls)
+	if len(engine.admitCalls) != 0 || len(engine.ensureWakeCalls) != 0 {
+		t.Errorf("engine calls = admit:%v ensure:%v, want no calls", engine.admitCalls, engine.ensureWakeCalls)
 	}
 }
 
@@ -210,8 +298,8 @@ func TestTrigger_NilScraperNoOp(t *testing.T) {
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(engine.calls) != 1 || engine.calls[0] != "cpu-app" {
-		t.Errorf("engine.calls = %v, want [cpu-app]", engine.calls)
+	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "cpu-app" {
+		t.Errorf("engine.admitCalls = %v, want [cpu-app]", engine.admitCalls)
 	}
 }
 
@@ -223,7 +311,7 @@ func TestTrigger_NilEngineNoOp(t *testing.T) {
 		{ID: "app1", AutoscaleTargetRPS: 50, MaxConcurrency: 5},
 	}}
 	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
-	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 140}}, nil, ledger, Options{})
+	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 700}}, nil, ledger, Options{})
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -257,34 +345,27 @@ func TestTrigger_NilReceiver(t *testing.T) {
 
 // TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap verifies
 // the race: the decide() check says headroom > 0, but between that
-// check and the engine call the ledger hits the cap. ADR-098:
-//
-//	under the single-flight model the trigger no longer receives a
-//	typed AtCapacity=true return value from EnsureWake. The leader's
-//	ledger closes the at-cap loop (it returns a successful admit
-//	pointing at the last live slot, OR the typed at-cap ErrQueueFull
-//	path that the trigger treats as a non-fatal error). The
-//	admit-RPS histogram still must NOT observe in the error case —
-//	a rejected admit has no observed RPS. This test pins the
-//	err-path contract under the new wire.
+// check and the engine call the ledger hits the cap. AdmitInstance
+// returns the typed AtCapacity result; the trigger must re-observe
+// reject_at_cap and must not record an admit-RPS sample.
 func TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap(t *testing.T) {
 	store := &fakeStore{apps: []state.App{
 		{ID: "app1", AutoscaleTargetRPS: 50, MaxConcurrency: 5},
 	}}
 	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
 	engine := &fakeEngine{
-		errs: map[string]error{
-			"app1": errAtCapacitySentinel,
+		results: map[string]AdmitResult{
+			"app1": {AtCapacity: true},
 		},
 	}
 	m := wire.NewOpsMetrics("test")
-	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 140}}, engine, ledger, Options{Metrics: m})
+	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 700}}, engine, ledger, Options{Metrics: m})
 	tr.ring.Touch(t0(), map[string]int64{"app1": 0})
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(engine.calls) != 1 {
-		t.Errorf("engine.calls = %d, want 1", len(engine.calls))
+	if len(engine.admitCalls) != 1 {
+		t.Errorf("engine.admitCalls = %d, want 1", len(engine.admitCalls))
 	}
 	// The admit-RPS histogram must NOT have observed (the
 	// admission was rejected).
@@ -292,6 +373,7 @@ func TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gather: %v", err)
 	}
+	foundReject := false
 	for _, fam := range gather {
 		if fam.GetName() == "test_scale_up_admit_rps" {
 			for _, m := range fam.GetMetric() {
@@ -300,24 +382,40 @@ func TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap(t *testing.T) {
 				}
 			}
 		}
+		// Gather normalizes CounterVec names by removing the _total
+		// suffix; the text exposition adds it back. Accept either
+		// representation so this assertion tests the label/value,
+		// not the protobuf naming convention.
+		if fam.GetName() != "test_scale_up_decisions" && fam.GetName() != "test_scale_up_decisions_total" {
+			continue
+		}
+		for _, metric := range fam.GetMetric() {
+			var app, outcome string
+			for _, label := range metric.GetLabel() {
+				switch label.GetName() {
+				case "app":
+					app = label.GetValue()
+				case "outcome":
+					outcome = label.GetValue()
+				}
+			}
+			if app == "app1" && outcome == "reject_at_cap" {
+				foundReject = true
+				if metric.GetCounter().GetValue() != 1 {
+					t.Errorf("reject_at_cap count = %v, want 1", metric.GetCounter().GetValue())
+				}
+			}
+		}
+	}
+	if !foundReject {
+		t.Error("reject_at_cap metric was not emitted")
 	}
 }
 
-// errAtCapacitySentinel is a stand-in for the leader-ledger "no slot
-// left" error path. Under ADR-098 the per-app ledger closes the
-// at-cap loop; the trigger treats any non-context-cancelled error
-// from EnsureWake as a non-fatal skip (matches the AdmitInstance
-// path's behaviour). The trigger still records the per-tick call so
-// the admit-RPS histogram stays unobserved.
-var errAtCapacitySentinel = errAtCap("at-capacity")
-
-type errAtCap string
-
-func (e errAtCap) Error() string { return string(e) }
-
 // TestTrigger_EngineErrorLogsNotPropagates verifies that a
 // transient engine error (e.g. vmmd dial failure) is logged but
-// does not propagate as a Tick error — the next tick retries.
+// does not propagate as a Tick error — retries are rate-limited by the
+// per-app admission backoff.
 func TestTrigger_EngineErrorLogsNotPropagates(t *testing.T) {
 	store := &fakeStore{apps: []state.App{
 		{ID: "app1", AutoscaleTargetRPS: 50, MaxConcurrency: 5},
@@ -328,10 +426,54 @@ func TestTrigger_EngineErrorLogsNotPropagates(t *testing.T) {
 			"app1": errors.New("vmmd dial: connection refused"),
 		},
 	}
-	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 140}}, engine, ledger, Options{})
+	tr := New(store, nil, &fakeScraper{byApp: map[string]int64{"app1": 700}}, engine, ledger, Options{})
 	tr.ring.Touch(t0(), map[string]int64{"app1": 0})
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Errorf("Tick should swallow engine errors, got %v", err)
+	}
+}
+
+func TestTrigger_ScrapeFailureDisablesStaleRPS(t *testing.T) {
+	store := &fakeStore{apps: []state.App{
+		{ID: "app1", AutoscaleTargetRPS: 50, MaxConcurrency: 5},
+	}}
+	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
+	engine := &fakeEngine{}
+	scraper := &sequenceScraper{
+		first: map[string]int64{"app1": 700},
+		err:   errors.New("metrics endpoint unavailable"),
+	}
+	tr := New(store, nil, scraper, engine, ledger, Options{})
+	tr.ring.Touch(t0(), map[string]int64{"app1": 0})
+
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+	if len(engine.admitCalls) != 1 {
+		t.Fatalf("engine.admitCalls = %d, want 1; stale RPS was reused after scrape failure", len(engine.admitCalls))
+	}
+}
+
+func TestTrigger_AdmissionErrorBackoff(t *testing.T) {
+	store := &fakeStore{apps: []state.App{
+		{ID: "app1", AutoscaleTargetCPUPct: 70, MaxConcurrency: 5},
+	}}
+	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
+	engine := &fakeEngine{errs: map[string]error{"app1": errors.New("vmmd unavailable")}}
+	instats := &fakeInstats{byCPU: map[string]float64{"app1": 80}}
+	tr := New(store, instats, nil, engine, ledger, Options{})
+
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+	if len(engine.admitCalls) != 1 {
+		t.Fatalf("engine.admitCalls = %d, want 1 while retry backoff is active", len(engine.admitCalls))
 	}
 }
 

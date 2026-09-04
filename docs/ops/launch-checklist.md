@@ -1,111 +1,81 @@
-# Launch checklist — Paddle-default at v1.0
+# Launch checklist — Polar-default at v1.0
 
-This is the **operator gate** that the v1.0 release (Paddle as the
-production billing provider, ADR-032 v2) must pass before the
-`v1.0.0` tag is cut. The four checks are sequential; each one
-must be green before the next starts. The maintainer who runs the
-checklist signs each row with their handle and the date.
-
-> **Pre-req for all four checks:** secrets/.env.sandbox must be
-> populated from the `pdl_sandbox_…` key + the matching webhook secret
-> from the Paddle sandbox dashboard. The file is `.gitignored`; never
-> commit it.
-
----
+This is the operator gate for the v1.0 release. Polar is the public-release
+merchant of record and the implicit billing-provider default. The checklist
+must be completed against the same Polar environment and catalog used by the
+production deployment.
 
 ## Pre-launch verification gates
 
-### 1. `make e2e-sandbox` — operator-only live walk
+### 1. Automated billing and metering suite
 
-- **What:** the five-test sandbox walk against `api.sandbox.paddle.com`
-  from `cmd/e2e/billing_paddle_sandbox_test.go`.
-- **Why:** the machine-readable CI cannot prove the wire-up against a
-  real merchant. The five tests cover CheckoutURL creation,
-  subscription.created-stamps-customer-id, transaction.completed-is-noop,
-  per-window-claim round-trip (the meterd production path), and
-  webhook-signature round-trip (the SDK pinning contract).
-- **How:** `make e2e-sandbox` against a fresh Lima box (the same
-  provisioning `make metal-lima` uses) with `secrets/.env.sandbox`
-  populated. Requires `DATABASE_URL` and `FAAS_PADDLE_SANDBOX_E2E=1`.
-- **Pass criterion:** all five tests pass with no `verify_failed`
-  lines in the test logs.
+- **Run:** `go test ./pkg/billing/... ./pkg/meter ./pkg/billing/reconciler ./cmd/apid`.
+- **Pass criterion:** all tests pass, including Polar catalog, webhook,
+  deferred plan-change, durable usage replay, cap-boundary, and reconciliation
+  failure tests.
 - **Signed:** ____________________  date: _________
 
-### 2. `.github/workflows/paddle-sandbox.yml` — CI workflow
+### 2. Polar sandbox smoke walk
 
-- **What:** the operator-only CI sibling of `stripex-sandbox.yml`,
-  triggered from the GitHub Actions UI.
-- **Why:** proves the workflow file behaves identically in CI to the
-  local `make e2e-sandbox` walk, so a future operator can debug via
-  the GitHub Actions logs.
-- **How:** with `PADDLE_SANDBOX_API_KEY` + `PADDLE_SANDBOX_WEBHOOK_SECRET`
-  set as repository secrets, dispatch the workflow from the UI.
-- **Pass criterion:** the workflow runs to completion with all five
-  tests `PASS`.
+- **Prepare:** create the Hobby, Pro, and Scale monthly products in the Polar
+  sandbox; attach the fixed monthly price and the `faas_ram_usage` metered
+  price; configure the meter to sum `gb_ram_hours`; register
+  `https://<host>/v1/webhooks/polar` with the Standard Webhooks secret.
+- **Exercise:** complete a fresh checkout, confirm `subscription.created` and
+  `order.paid` update the account, push one completed usage window, schedule a
+  paid-to-paid downgrade, and verify the provider portal opens. Also exercise
+  a failed payment and recovery delivery.
+- **Pass criterion:** the account is bound to the Polar customer and
+  subscription IDs, usage is visible in the Polar meter, the local plan stays
+  unchanged until the subscription update webhook, and invoice history is
+  populated without webhook retries caused by slow PDF generation.
+- **Evidence:** attach the provider event IDs and the corresponding apid and
+  meterd log excerpts to the release record.
 - **Signed:** ____________________  date: _________
 
-### 3. `make doctor-paddle` — operator smoke
+### 3. Deployment configuration and boot gate
 
-- **What:** the 60s `faas billing status --watch` + journal tail
-  defined in the Makefile.
-- **Why:** the doctor validates that the loader chooses Paddle, the
-  catalog hydration completed, and the webhook verify path has not
-  surfaced any `paddle_webhook.verify_failed` lines in the last five
-  minutes.
-- **How:** `make doctor-paddle` against a fresh Lima box (the same
-  provisioning `make metal-lima` uses). The output should show
-  `provider: paddle` in the JSON status and zero `verify_failed`
-  journal lines.
-- **Pass criterion:** status JSON shows `provider: paddle`, no
-  `verify_failed` lines, and the catalog `lastSyncAt` is recent.
+- **Run:** `make verify-secrets` after rendering `/etc/faas/sealed.env` and
+  the daemon TOML files.
+- **Verify:** `FAAS_BILLING_PROVIDER` is unset or `polar`; the Polar access
+  token, webhook secret, three product IDs, usage event name, and meter ID are
+  present and refer to the same environment.
+- **Pass criterion:** both daemons boot with
+  `billing provider loaded provider=polar` and
+  `meterd billing provider loaded provider=polar`; neither daemon logs a
+  catalog-preflight failure.
 - **Signed:** ____________________  date: _________
 
-### 4. Loader flip — sanity boot
+### 4. Observability and recovery gate
 
-- **What:** re-boot apid + meterd on a sandbox-tagged box and watch
-  the boot log for `billing provider loaded provider=paddle`.
-- **Why:** the loader change in PR-B is a two-line flip; this
-  confirms the env-overlaid TOML + the loader default agree on Paddle.
-- **How:** `systemctl restart faas-apid faas-meterd` on a box with
-  `FAAS_PADDLE_SANDBOX=1` + `FAAS_PADDLE_API_KEY=pdl_sandbox_…` and no
-  `FAAS_BILLING_PROVIDER` set. Grep the boot log for `provider=paddle`.
-- **Pass criterion:** the boot log line `billing provider loaded provider=paddle`
-  appears within 5 s of the daemons coming up.
+- **Verify:** `/v1/webhooks/polar` rejects bad signatures, valid deliveries
+  are acknowledged after durable processing, and `meterd` exposes
+  `meterd_billing_drift_reconcile_failures_total` alongside the drift gauges.
+- **Exercise:** temporarily make the Polar API unavailable, confirm the
+  meterd health/log surface records a failed push, restore access, and confirm
+  the hourly durable lookback replays the pending usage exactly once.
+- **Pass criterion:** no usage window is silently discarded, provider failures
+  are visible to operators, and the failure counter returns to a zero rate
+  after recovery.
 - **Signed:** ____________________  date: _________
 
----
+## Legacy-provider compatibility
 
-## Post-launch rollback (if Paddle misbehaves in production)
+Paddle remains an explicit compatibility option for existing deployments and
+is covered by `make e2e-sandbox`. Run that walk only when changing the Paddle
+adapter; it is not the Polar public-release acceptance gate. Stripe remains an
+explicit legacy opt-in through `FAAS_BILLING_PROVIDER=stripe`.
 
-The rollback is intentionally trivial — the legacy Stripe surface is
-still bootable per node without a migration:
+## Post-launch rollback
 
-1. **Set `FAAS_BILLING_PROVIDER=stripe`** in `sealed.env` on the
-   affected node.
-2. **Restart `apid` + `meterd`** with the legacy `STRIPE_*` keys
-   restored from the operator's cold-storage backup.
-3. **The Stripe module** is still in the workspace and the apid
-   Stripe path is still wired (`pkg/billing/loader/loader.go:313-318`
-   returns `nil, m.Name, nil` for the legacy surface).
-4. **No schema migration** is required. `accounts.provider_customer_id`
-   carries both `cus_…` (Stripe) and `ctm_…` (Paddle) values
-   (migration 00040 already renamed `stripe_customer_id`).
-5. **Existing Paddle customers' `ctm_…` IDs are not migrated** on
-   rollback; the Stripe side will create fresh `cus_…` IDs on next
-   checkout. The customer's billing dashboard will show two records
-   until the operator backfills manually. There are no existing
-   customers at launch, so this is a documented failure mode, not a
-   launch blocker.
-6. **The accept-time gate that Paddle is the default** is re-evaluated
-   in a follow-up ADR if the rollback was triggered by a Paddle-side
-   failure mode that affects production traffic.
-
-The rollback path is intentionally simple (no `stripe-go` removal).
-The invariant is: the legacy apid Stripe surface is always bootable
-from `FAAS_BILLING_PROVIDER=stripe`, even if Paddle is the production
-default.
-
----
+1. Set `FAAS_BILLING_PROVIDER=paddle` with complete Paddle credentials for a
+   Paddle fallback, or `FAAS_BILLING_PROVIDER=stripe` with the legacy Stripe
+   credentials for a Stripe fallback.
+2. Restart `faas-apid` and `faas-meterd`.
+3. Confirm the corresponding provider name in both boot logs and monitor the
+   provider-specific webhook and usage metrics.
+4. Do not assume Polar customer or subscription IDs can be reused by another
+   provider; provider mappings are not portable.
 
 ## Final sign-off
 
@@ -114,8 +84,4 @@ All four gates green. The maintainer signs the v1.0.0 tag push.
 - **Maintainer:** ____________________
 - **Date:** ____________________
 - **`v1.0.0` tag:** pushed at ____________________
-- **`release.yml` flow:** see
-  `.github/workflows/release.yml` — the tag push triggers the
-  cross-build + SHA256SUMS + moving-tag update + GitHub Release
-  attach. The pattern is documented in
-  `docs/adr/093-*` and the `release.yml` header comment.
+- **Release flow:** see `.github/workflows/release.yml`.

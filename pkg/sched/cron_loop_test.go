@@ -55,6 +55,18 @@ func (f *fakeWakeVMM) WarmSnapshot(_ context.Context, _, _, _, _ string) (Snapsh
 }
 func (f *fakeWakeVMM) Destroy(_ context.Context, _, _ string) error { return nil }
 
+// StopInstance (M-2 / ADR-138 §Decision 1) is the
+// graceful signal-then-grace-then-SIGKILL stop
+// sequence. Test fakes default to no-op + nil —
+// the engine's per-mode dispatch lives in
+// pkg/sched/engine_stop_pgtest_test.go (commit 6).
+func (f *fakeWakeVMM) StopInstance(_ context.Context, _ string, _, _ int32) (*StopInstanceOutcome, error) {
+	return nil, nil
+}
+func (f *fakeWakeVMM) StopInstanceOnNode(_ context.Context, _, _ string, _, _ int32) (*StopInstanceOutcome, error) {
+	return nil, nil
+}
+
 // FrameworkReady implements RoutedVMM for the cron-loop test fake
 // (issue #470 / PR #470-FU-B). No-op — the cron tests don't drive
 // the warm-capture path; the engine tests in engine_test.go have a

@@ -43,6 +43,12 @@ type fakeVMM struct {
 	forceColdFallback   bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
 	wakeErr             error
 	snapErr             error
+	// snapDeadline / snapHasDeadline capture the ctx deadline seen by
+	// PauseAndSnapshot. The RPC shipped with NO deadline and wedged the
+	// scheduler for 10+ minutes in production (2026-09-03); these let a
+	// test assert the deadline exists without waiting SnapshotTimeout.
+	snapDeadline    time.Time
+	snapHasDeadline bool
 	// warmSnapErr (issue #470 / PR A / ADR-055): injectable WarmSnapshot
 	// failure. Distinct from snapErr so the warm-capture failure test
 	// can simulate "vmmd's PauseAndSnapshot succeeded but WarmSnapshot
@@ -177,6 +183,9 @@ func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, _, instance string, ap
 }
 
 func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _, _ string) (SnapshotBytes, error) {
+	f.mu.Lock()
+	f.snapDeadline, f.snapHasDeadline = ctx.Deadline()
+	f.mu.Unlock()
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):
@@ -231,6 +240,23 @@ func (f *fakeVMM) Destroy(ctx context.Context, _, _ string) error {
 	}
 	f.destroys++
 	return nil
+}
+
+// StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
+// signal-then-grace-then-SIGKILL stop sequence. Test fakes
+// default to no-op + nil — the engine's per-mode dispatch lives
+// in pkg/sched/engine_stop_pgtest_test.go (commit 6).
+func (f *fakeVMM) StopInstance(_ context.Context, _ string, _, _ int32) (*StopInstanceOutcome, error) {
+	return nil, nil
+}
+
+// StopInstanceOnNode (M-2 / ADR-138 §Decision 1) is the routed
+// shape — same no-op default as StopInstance. The engine's
+// worker/job dispatch calls e.vmm.StopInstanceOnNode; the
+// service/request paths use snapshotAndPark and never invoke
+// either method.
+func (f *fakeVMM) StopInstanceOnNode(_ context.Context, _, _ string, _, _ int32) (*StopInstanceOutcome, error) {
+	return nil, nil
 }
 
 // FrameworkReady implements VMM for the engine-test fake (issue #470 /
@@ -915,6 +941,43 @@ func TestAdmitAndDispatch_MinFloorAlready_StaysPlanLimitConcur(t *testing.T) {
 	}
 	if got := p.HasHeader("Retry-After"); len(got) != 0 {
 		t.Errorf("Retry-After = %v, want nil (Retry-After is for cooldown_held, not min_floor)", got)
+	}
+}
+
+// TestAdmitInstanceForDeployment_DispatchesBoot pins the floor-trigger
+// contract: an explicit deployment admission must run the same vmmd and
+// Phase-4 commit path as a request-driven wake. The old helper only inserted
+// a COLD_BOOTING row and reserved ledger capacity, which left floor-created
+// instances to time out in the watchdog.
+func TestAdmitInstanceForDeployment_DispatchesBoot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	res, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, dep.ID, "", TriggerFloorDep)
+	if err != nil {
+		t.Fatalf("AdmitInstanceForDeployment: %v", err)
+	}
+	if res.InstanceID == "" {
+		t.Fatal("AdmitInstanceForDeployment returned an empty instance id")
+	}
+	ins, err := store.InstanceByID(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if ins.State != string(state.StateRunning) {
+		t.Fatalf("instance state = %q, want %q", ins.State, state.StateRunning)
+	}
+
+	vmm.mu.Lock()
+	coldBoots, restores := vmm.coldBoots, vmm.restores
+	vmm.mu.Unlock()
+	if coldBoots != 1 || restores != 0 {
+		t.Fatalf("coldBoots=%d restores=%d, want 1/0", coldBoots, restores)
+	}
+	if got := e.Ledger().Concurrency(app.ID); got != 1 {
+		t.Fatalf("ledger concurrency = %d, want 1", got)
 	}
 }
 
@@ -1746,7 +1809,8 @@ func TestEngineWake_AdmissionDeniedReturnsProblem(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanFree, 128, 1)
 	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	warm := NewWarmAffinity(0)
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithWarmAffinity(warm)
 
 	// Fill the ledger to the ceiling so the wake is refused for
 	// capacity. PR #113 moved the resident counter to a per-node
@@ -1795,6 +1859,9 @@ func TestEngineWake_AdmissionDeniedReturnsProblem(t *testing.T) {
 	rows, _ := store.ListInstancesForApp(context.Background(), app.ID)
 	if len(rows) != 1 || rows[0].State != string(state.StateFailed) {
 		t.Errorf("rows = %+v, want one failed row", rows)
+	}
+	if _, ok := warm.LastWarmNode(app.ID); ok {
+		t.Fatal("capacity-denied wake must not leave a warm placement hint")
 	}
 }
 
@@ -1966,6 +2033,186 @@ func TestEngineEvict_Destroys(t *testing.T) {
 	}
 	if got := e.Ledger().ResidentRAM(); got != 0 {
 		t.Errorf("resident = %d, want 0 after evict", got)
+	}
+}
+
+// TestEngineParkAppSnapshotsRunningInstance pins the app-level park contract:
+// once apid has changed the app to evicted_cold, schedd must perform the
+// instance lifecycle work instead of leaving a RUNNING row behind. The
+// operation is also idempotent so a redelivered notification is harmless.
+func TestEngineParkAppSnapshotsRunningInstance(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatalf("UpdateApp parked: %v", err)
+	}
+
+	acted, err := e.ParkApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ParkApp: %v", err)
+	}
+	if acted != 1 {
+		t.Fatalf("ParkApp acted = %d, want 1", acted)
+	}
+	if vmm.snapshots != 1 {
+		t.Errorf("snapshots = %d, want 1", vmm.snapshots)
+	}
+	row, err := store.InstanceByID(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if row.State != string(state.StateParked) {
+		t.Fatalf("instance state = %q, want parked", row.State)
+	}
+
+	acted, err = e.ParkApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("idempotent ParkApp: %v", err)
+	}
+	if acted != 0 {
+		t.Errorf("idempotent ParkApp acted = %d, want 0", acted)
+	}
+	if vmm.snapshots != 1 {
+		t.Errorf("idempotent snapshots = %d, want 1", vmm.snapshots)
+	}
+}
+
+func TestEngineReconcileDeletedAppDestroysRunningInstance(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	deleted := state.AppDeleted
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Status: &deleted}); err != nil {
+		t.Fatalf("UpdateApp deleted: %v", err)
+	}
+
+	acted, err := e.ReconcileLifecycleInstance(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("ReconcileLifecycleInstance: %v", err)
+	}
+	if !acted {
+		t.Fatal("ReconcileLifecycleInstance acted = false, want true")
+	}
+	if vmm.destroys != 1 {
+		t.Errorf("destroys = %d, want 1", vmm.destroys)
+	}
+	row, err := store.InstanceByID(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if row.State != string(state.StateStopped) {
+		t.Errorf("state = %q, want stopped", row.State)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0", got)
+	}
+
+	acted, err = e.ReconcileLifecycleInstance(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("idempotent ReconcileLifecycleInstance: %v", err)
+	}
+	if acted {
+		t.Errorf("idempotent reconcile acted = true, want false")
+	}
+	if vmm.destroys != 1 {
+		t.Errorf("idempotent destroys = %d, want 1", vmm.destroys)
+	}
+}
+
+func TestEngineReconcileAccountDeletionDestroysRunningInstance(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
+		t.Fatalf("MarkAccountDeletionPending: %v", err)
+	}
+
+	acted, err := e.ReconcileLifecycleInstance(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("ReconcileLifecycleInstance: %v", err)
+	}
+	if !acted {
+		t.Fatal("ReconcileLifecycleInstance acted = false, want true")
+	}
+	if vmm.destroys != 1 {
+		t.Errorf("destroys = %d, want 1", vmm.destroys)
+	}
+	row, err := store.InstanceByID(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if row.State != string(state.StateEvictingAccountDeleting) {
+		t.Errorf("state = %q, want evicting_account_deleting", row.State)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0", got)
+	}
+
+	acted, err = e.ReconcileLifecycleInstance(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("idempotent ReconcileLifecycleInstance: %v", err)
+	}
+	if !acted {
+		t.Fatal("idempotent account reconcile acted = false, want true for destroy retry")
+	}
+	if vmm.destroys != 2 {
+		t.Errorf("idempotent destroys = %d, want 2 (idempotent vmmd cleanup)", vmm.destroys)
+	}
+}
+
+func TestEngineReconcileDeletedAppRetriesAfterDestroyFailure(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{destroyErr: errors.New("vmmd unavailable")}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	deleted := state.AppDeleted
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Status: &deleted}); err != nil {
+		t.Fatalf("UpdateApp deleted: %v", err)
+	}
+
+	if acted, err := e.ReconcileLifecycleInstance(context.Background(), res.InstanceID); err == nil || acted {
+		t.Fatalf("failed reconcile = (%v, %v), want error and no action", acted, err)
+	}
+	row, _ := store.InstanceByID(context.Background(), res.InstanceID)
+	if row.State != string(state.StateRunning) {
+		t.Errorf("state after failed destroy = %q, want running for retry", row.State)
+	}
+	if got := e.Ledger().ResidentRAM(); got == 0 {
+		t.Error("resident ledger released after failed destroy; retry would lose accounting")
+	}
+
+	vmm.destroyErr = nil
+	if acted, err := e.ReconcileLifecycleInstance(context.Background(), res.InstanceID); err != nil || !acted {
+		t.Fatalf("retry reconcile = (%v, %v), want action without error", acted, err)
+	}
+	row, _ = store.InstanceByID(context.Background(), res.InstanceID)
+	if row.State != string(state.StateStopped) {
+		t.Errorf("state after retry = %q, want stopped", row.State)
 	}
 }
 

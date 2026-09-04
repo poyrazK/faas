@@ -255,7 +255,7 @@ type JobStore interface {
 	//     violate the schema constraint.
 	JobUpdate(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string) (Job, error)
 	// JobSoftDelete flips status='active'|'paused' to status='deleted'
-	// iff no live (non-parked, non-destroyed) job_task instance exists
+	// iff no live (waking, cold_booting, or running) job_task instance exists
 	// for the job. Implemented via the soft_delete_job_if_no_live_instances()
 	// PL/pgSQL helper (migrations/00576) on PgStore; memstore mirrors
 	// the predicate directly.
@@ -277,8 +277,8 @@ type JobStore interface {
 	// apid admission-control gate to enforce JobMaxPerAccount.
 	JobCountByAccount(ctx context.Context, accountID string) (int, error)
 	// JobConcurrentByAccount counts the live job_task instances on
-	// the account (instances.kind='job_task' AND status NOT IN
-	// ('parked','destroyed')). Used by the apid admission-control
+	// the account (instances.kind='job_task' AND state IN
+	// ('waking','cold_booting','running')). Used by the apid admission-control
 	// gate to enforce JobConcurrentPerAccount before accepting a
 	// new run + by meterd's billing sweep for the live-pool bill.
 	JobConcurrentByAccount(ctx context.Context, accountID string) (int, error)
@@ -423,10 +423,9 @@ type JobStore interface {
 	// ListJobInstances (issue #1184 Workstream A / ADR-099) returns
 	// every live kind='job_task' instance for the meterd
 	// sampler. Mirrors ListAllApps for the job workload class:
-	// only rows with state NOT IN ('destroyed','parked') are
-	// included; the sampler filters out the remaining
-	// parked/destroyed rows itself to keep the contract
-	// explicit.
+	// only rows with state IN ('waking','cold_booting','running') are
+	// included; terminal rows remain available through the normal
+	// instance retention path.
 	ListJobInstances(ctx context.Context) ([]Instance, error)
 }
 

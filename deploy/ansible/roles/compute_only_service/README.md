@@ -33,6 +33,11 @@ populated with both `DATABASE_URL` and `FAAS_VMMD_DBURL` (gap G2).
 - Installs the shared `storage.env.example`; the provider-neutral node join
   pipeline stages the populated `/etc/faas/storage.env` for OCI-backed
   multi-box deployments.
+- Installs `runtime-bases.env.example` and, on named compute nodes, refuses
+  convergence until `/etc/faas/runtime-bases.env` is `root:root 0600` with
+  digest-pinned refs for all supported runtimes. imaged and builderd consume
+  this same file so a node cannot build against one base and stage against
+  another.
 - **Mega-PR-C**: chowns `/run/faas` to root:faas 0775 at deploy time AND
   ships a `/etc/tmpfiles.d/faas.conf` rule so the same ownership
   survives every reboot. Mirrors `control_plane_service`'s PR-D + PR-M

@@ -105,13 +105,12 @@ func TestShouldInjectIdempotencyKey_PostTransactionsReturnsTrue(t *testing.T) {
 	}
 }
 
-// POST without the "transactions" segment → false (e.g. /products,
+// POST outside the idempotent write namespaces → false (e.g. /products,
 // /customers, /transactions-foo unrelated names).
-func TestShouldInjectIdempotencyKey_PostNoTransactionsReturnsFalse(t *testing.T) {
+func TestShouldInjectIdempotencyKey_PostNonIdempotentNamespaceReturnsFalse(t *testing.T) {
 	cases := []string{
 		"/products",
 		"/customers",
-		"/subscriptions/s1",
 		"/transactions-foo", // substring, not segment
 	}
 	for _, path := range cases {

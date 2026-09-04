@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -50,6 +55,24 @@ type Supervisor struct {
 	// the main workload's terminal state. nil = clean exit or
 	// never ran.
 	lastRunErr atomic.Pointer[error]
+
+	// stopOnce (M-2 / //code-review PR #1202 finding #6) guards
+	// against duplicate Stop() calls (a manifest that declares two
+	// stop-signals, a context cancel + signal race, etc.). Without
+	// it, two Stop() invocations could send SIGTERM twice (the
+	// second racing the SIGKILL escalation timer) and confuse the
+	// customer's signal handler.
+	//
+	// Per-supervisor (NOT package-level): guest-init runs multiple
+	// Supervisor instances concurrently (the main workload + each
+	// sidecar workload, ADR-069 PR-B). A package-level Once would
+	// be a single gate shared across every supervisor — the FIRST
+	// supervisor to call Stop() would consume the Once and every
+	// OTHER supervisor's Stop() would silently become a no-op,
+	// leaking the sidecars. Per-supervisor Once scopes the
+	// idempotency to "this one workload's stop sequence" which is
+	// what the contract actually means.
+	stopOnce sync.Once
 }
 
 // LastExitCode returns -1 if no fork has observed an exit yet;
@@ -211,4 +234,100 @@ func (s *Supervisor) Run() error {
 			s.OnCrash(restarts, err)
 		}
 	}
+}
+
+// Stop (M-2 / ADR-138 §Decision 1) is the graceful-stop hook the
+// PID 1 signal handler installs. The supervisor sends `sig` to
+// the tracked workload (cmd.Process.Pid), waits up to `grace`,
+// and escalates to SIGKILL if the workload hasn't exited by the
+// deadline. Idempotent — multiple Stop() calls run the sequence
+// exactly once; subsequent calls are no-ops.
+//
+// The tracked workload is the most-recently-forked cmd
+// (s.lastCmd); if no fork has happened yet (the supervisor
+// never reached runAppWithEnv), Stop returns nil silently
+// because there's nothing to stop.
+//
+// The function blocks until one of:
+//   - the workload exits (clean) → nil.
+//   - the grace timer fires → SIGKILL is sent, then we wait
+//     up to `grace` again for the SIGKILL'd child to be reaped.
+//   - ctx is cancelled → SIGKILL is sent immediately (the grace
+//     timer is overridden by ctx.Done).
+func (s *Supervisor) Stop(ctx context.Context, sig syscall.Signal, grace time.Duration) error {
+	cmd := s.lastCmd.Load()
+	if cmd == nil || cmd.Process == nil {
+		return nil // no fork yet — nothing to stop
+	}
+	pid := cmd.Process.Pid
+	var stopErr error
+	s.stopOnce.Do(func() {
+		// First: send the customer's signal (SIGTERM by default
+		// or AppManifest.StopSignal). SIGKILL is the escalation
+		// signal and is sent by the timer below, NOT here.
+		if sig == syscall.SIGKILL {
+			sig = syscall.SIGTERM // downgrade; SIGKILL is reserved for escalation
+		}
+		if perr := cmd.Process.Signal(sig); perr != nil && !errors.Is(perr, os.ErrProcessDone) {
+			stopErr = fmt.Errorf("supervisor: send %s to pid %d: %w", sig, pid, perr)
+			return
+		}
+		// Wait for the child to exit OR the grace timer to fire OR
+		// the context to cancel. The race is between three
+		// signals; whichever fires first wins.
+		waitDone := make(chan struct{})
+		go func() {
+			_ = cmd.Wait()
+			close(waitDone)
+		}()
+		graceTimer := time.NewTimer(grace)
+		defer graceTimer.Stop()
+		select {
+		case <-waitDone:
+			return // clean exit within grace
+		case <-graceTimer.C:
+			// Grace expired — escalate to SIGKILL. The kill
+			// is untrappable so the child exits within microseconds;
+			// we still wait for the Wait() above to reap the
+			// zombie before returning.
+			_ = cmd.Process.Kill()
+			// Bound the post-SIGKILL wait so a stuck descendant
+			// can't pin the supervisor forever. Same duration
+			// as the grace window — generous but bounded.
+			postKillTimer := time.NewTimer(grace)
+			defer postKillTimer.Stop()
+			select {
+			case <-waitDone:
+			case <-postKillTimer.C:
+				stopErr = fmt.Errorf("supervisor: post-SIGKILL wait exceeded %s for pid %d", grace, pid)
+			}
+		case <-ctx.Done():
+			// External cancellation (e.g. schedd eviction or
+			// guest-init context cancel) — escalate immediately.
+			_ = cmd.Process.Kill()
+			<-waitDone
+		}
+	})
+	return stopErr
+}
+
+// ForwardSignal (M-2 / ADR-138 §Decision 1) sends `sig` to the
+// tracked workload via cmd.Process.Signal. Used by the PID 1
+// signal-handler loop to forward non-stop signals (SIGINT, SIGQUIT,
+// etc.) that guest-init receives but doesn't itself react to.
+// Returns os.ErrProcessDone if the workload has already exited
+// (the kernel's ESRCH — surfaced as a benign sentinel so the
+// caller's warn-log doesn't spam during the post-stop tail).
+func (s *Supervisor) ForwardSignal(sig syscall.Signal) error {
+	cmd := s.lastCmd.Load()
+	if cmd == nil || cmd.Process == nil {
+		return nil // no fork yet — nothing to forward
+	}
+	if err := cmd.Process.Signal(sig); err != nil {
+		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	return nil
 }

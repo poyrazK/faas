@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -69,6 +71,7 @@ const (
 // up Postgres.
 type AppStore interface {
 	ListAllApps(ctx context.Context) ([]state.App, error)
+	ListAppsByNodeID(ctx context.Context, nodeID string) ([]state.App, error)
 }
 
 // Ledger is the read-only slice of NodeLedger the trigger needs.
@@ -86,12 +89,18 @@ type Engine interface {
 	// (`pr-{N}`) forwarded to the underlying sched.Engine.
 	// Empty = prod (legacy single-deployment behaviour).
 	AdmitInstance(ctx context.Context, appID, scope, trigger string) (AdmitResult, error)
-	// EnsureWake (ADR-098): the single-flight wake entry. Routes
-	// through this so a targets tick racing the gateway, cron, floor,
-	// or scaleup triggers on the same parked app coalesces into one
-	// virtual boot. trigger (ADR-127) is stamped on the emitted
-	// wake.boot_started / wake.boot_completed events.
+	// EnsureWake (ADR-098) is retained on the shared engine surface for
+	// compatibility with other wake producers. The reactive scale-up
+	// path deliberately does not call it: its idempotent Phase-1
+	// shortcut cannot create a second VM for a hot app.
 	EnsureWake(ctx context.Context, appID, trigger string) (WakeOutcome, error)
+}
+
+// BurstEngine is the optional fast path for engines that can admit a bounded
+// batch of instances. Keeping it separate from Engine preserves the small
+// fake/test seam and lets older adapters fall back to one admission at a time.
+type BurstEngine interface {
+	AdmitInstances(ctx context.Context, appID, scope, trigger string, count int) ([]AdmitResult, error)
 }
 
 // InstatsReader is the per-instance in-flight signal source (PR-C,
@@ -128,6 +137,11 @@ type Decision struct {
 	Outcome          Outcome
 	Headroom         int
 	ObservedInflight int64
+	// Desired is the estimated resident-instance count, capped at
+	// MaxConcurrency. Admissions is the number of new instances this
+	// decision should request, before the per-tick burst bound.
+	Desired    int
+	Admissions int
 }
 
 // decide is the pure decision function (PR-C, issue #462). Total —
@@ -182,11 +196,24 @@ func decide(s Stats) Decision {
 	if headroom <= 0 {
 		return Decision{Outcome: OutcomeRejectAtCap, Headroom: 0, ObservedInflight: s.PerInstanceInflight}
 	}
+	// The reader exposes the maximum per-instance in-flight count. When
+	// every current instance is similarly loaded, multiplying by the
+	// current fleet size estimates total demand; ceil keeps the target
+	// invariant true for fractional capacity.
+	desired := int(math.Ceil(float64(s.PerInstanceInflight) * float64(s.Concurrency) / s.TargetValue))
+	if desired <= s.Concurrency {
+		desired = s.Concurrency + 1
+	}
+	if desired > s.MaxConcurrency {
+		desired = s.MaxConcurrency
+	}
 	return Decision{
 		ShouldAdmit:      true,
 		Outcome:          OutcomeAdmit,
 		Headroom:         headroom,
 		ObservedInflight: s.PerInstanceInflight,
+		Desired:          desired,
+		Admissions:       desired - s.Concurrency,
 	}
 }
 
@@ -204,10 +231,20 @@ type Trigger struct {
 	log      *slog.Logger
 	interval time.Duration
 
+	// ownerNodeID is the durable shard key this schedd scales. Empty
+	// preserves the central/legacy posture and reads all apps.
+	ownerNodeID string
+
 	// per-app sliding window of per-instance max-inflight. Reads
 	// from instats on each Tick; the window keeps the most recent
 	// reading so the trigger can debounce single-tick spikes.
 	ring *RingBuffer
+
+	// admissionMu serializes the in-memory retry state. The loop normally
+	// runs one Tick at a time, but keeping this state protected also makes
+	// direct test/integration callers safe.
+	admissionMu      sync.Mutex
+	admissionBackoff map[string]admissionBackoffState
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -238,14 +275,15 @@ func New(appStore AppStore, instats InstatsReader, engine Engine, ledger Ledger,
 		opts.Interval = api.ScaleUpDecisionIntervalSeconds * time.Second
 	}
 	return &Trigger{
-		appStore: appStore,
-		instats:  instats,
-		engine:   engine,
-		ledger:   ledger,
-		metrics:  opts.Metrics,
-		log:      opts.Logger,
-		interval: opts.Interval,
-		ring:     NewRingBuffer(5, time.Second, opts.Interval),
+		appStore:         appStore,
+		instats:          instats,
+		engine:           engine,
+		ledger:           ledger,
+		metrics:          opts.Metrics,
+		log:              opts.Logger,
+		interval:         opts.Interval,
+		ring:             NewRingBuffer(5, time.Second, opts.Interval),
+		admissionBackoff: make(map[string]admissionBackoffState),
 	}
 }
 
@@ -256,6 +294,38 @@ func (t *Trigger) Interval() time.Duration {
 		return 0
 	}
 	return t.interval
+}
+
+// WithOwnerNodeID scopes the trigger to apps owned by this schedd's
+// compute node. Empty preserves the central one-box posture.
+func (t *Trigger) WithOwnerNodeID(nodeID string) {
+	if t == nil {
+		return
+	}
+	t.ownerNodeID = nodeID
+}
+
+// admit requests a bounded batch. Production's sched.Engine implements the
+// BurstEngine fast path; small adapters and existing tests intentionally fall
+// back to the original one-at-a-time call. The engine remains the authority on
+// capacity, so a race can still return AtCapacity for the final attempt.
+func (t *Trigger) admit(ctx context.Context, appID string, count int) ([]AdmitResult, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+	if count > api.ScaleUpMaxBurstPerTick {
+		count = api.ScaleUpMaxBurstPerTick
+	}
+	if burst, ok := t.engine.(BurstEngine); ok {
+		return burst.AdmitInstances(ctx, appID, "", wakeBootTriggerTargets, count)
+	}
+	// An older adapter has no safe way to carry the burst continuation
+	// marker, so preserve its original one-admission behavior.
+	result, err := t.engine.AdmitInstance(ctx, appID, "", wakeBootTriggerTargets)
+	if err != nil {
+		return nil, err
+	}
+	return []AdmitResult{result}, nil
 }
 
 // Tick runs one sweep. It is the single public entry point the
@@ -271,7 +341,13 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		return nil
 	}
 	now := time.Now()
-	apps, err := t.appStore.ListAllApps(ctx)
+	var apps []state.App
+	var err error
+	if t.ownerNodeID != "" {
+		apps, err = t.appStore.ListAppsByNodeID(ctx, t.ownerNodeID)
+	} else {
+		apps, err = t.appStore.ListAllApps(ctx)
+	}
 	if err != nil {
 		return fmt.Errorf("targets: list apps: %w", err)
 	}
@@ -320,30 +396,40 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if !dec.ShouldAdmit {
 			continue
 		}
-		// Admit path: call Engine.AdmitInstance. The engine
-		// enforces the cap via NodeLedger.Admit; if the cap is
-		// hit between the decide() check and the call (the
-		// ledger is concurrent), AdmitInstance returns
-		// AdmitResult{AtCapacity: true} which we re-observe as
-		// reject_at_cap.
+		// Admit path: request the desired number of instances, bounded
+		// by ScaleUpMaxBurstPerTick. The engine enforces the cap via
+		// NodeLedger.Admit; if it is hit between the decide() check and
+		// an individual batch attempt, the corresponding result is
+		// AtCapacity.
 		if t.engine == nil {
 			continue
 		}
-		// ADR-098: route through EnsureWake so a targets tick racing the
-		// gateway, cron, floor, or scaleup triggers on the same parked
-		// app coalesces into one virtual boot.
-		result, err := t.engine.EnsureWake(ctx, app.ID, wakeBootTriggerTargets)
-		if err != nil {
-			t.log.Warn("targets: admit failed", "app_id", app.ID, "err", err)
+		if t.admissionBackoffActive(app.ID, now) {
 			continue
 		}
-		// EnsureWake's leader runs Engine.Wake which honours the
-		// per-app max_concurrency ledger; a follower that arrives
-		// after the leader fills the last slot still sees a
-		// successful boot pointing at that slot. The leader's
-		// ledger closes the at-cap loop — we no longer need a
-		// reject_at_cap branch here.
-		_ = result
+		// Scale-out must use AdmitInstance, not EnsureWake. EnsureWake is
+		// deliberately idempotent: its Phase-1 fast path returns an
+		// existing RUNNING instance. Using it here prevents a hot app
+		// from adding a second VM even when this trigger has found
+		// headroom. AdmitInstance skips that fast path and reserves a
+		// new capacity slot through the shared ledger.
+		results, err := t.admit(ctx, app.ID, dec.Admissions)
+		if err != nil {
+			t.recordAdmissionFailure(app.ID, now)
+			t.log.Warn("targets: admit failed", "app_id", app.ID, "err", err)
+		} else {
+			t.clearAdmissionBackoff(app.ID)
+		}
+		for _, result := range results {
+			if result.AtCapacity {
+				// The ledger can reach the cap between decide() and
+				// an individual batch attempt. Re-observe the effective
+				// rejection so the pressure dashboard stays accurate.
+				if t.metrics != nil {
+					t.metrics.ObserveScaleUp(app.ID, string(OutcomeRejectAtCap))
+				}
+			}
+		}
 	}
 	return nil
 }

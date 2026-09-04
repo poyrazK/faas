@@ -71,8 +71,8 @@ func TestConsumeInvoice_HappyPath(t *testing.T) {
 		t.Fatalf("credit: %v", err)
 	}
 	// Invoice with provider_invoice_id "in_xxx" and PeriodEnd covering
-	// the usage we plant next. Overage target = 250 cents via the
-	// 9_000 mb-seconds trick.
+	// the usage we plant next. Overage target = 250 cents after the
+	// Hobby plan's 50 included GB-hour allowance.
 	inv := state.Invoice{
 		ID:                uuid.NewString(),
 		AccountID:         target.ID,
@@ -81,10 +81,10 @@ func TestConsumeInvoice_HappyPath(t *testing.T) {
 	}
 	e.store.SeedInvoiceForTest(inv)
 	if err := e.store.AppendUsage(context.Background(), target.ID, "app-1", "inst-1",
-		// past minute so UsageByAccount's "since" window picks it up.
+		// past minute so the all-usage compatibility path picks it up.
 		// The reducer passes inv.PeriodStart = zero time, so all rows
 		// land in the window.
-		time.Now().UTC(), 9_000, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		time.Now().UTC(), 300*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func TestConsumeInvoice_IdempotentReplay(t *testing.T) {
 	}
 	e.store.SeedInvoiceForTest(inv)
 	if err := e.store.AppendUsage(context.Background(), target.ID, "app-1", "inst-1",
-		time.Now().UTC(), 9_000, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		time.Now().UTC(), 300*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
 

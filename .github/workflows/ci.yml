@@ -34,10 +34,10 @@ permissions:
   security-events: write
 
 env:
-  # Pinned to a patch (not a minor) so the govulncheck image-scan gate
+  # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
   # and the go.mod `go 1.25.7` directive resolve to the same Go runtime.
   # go1.25.12 carries 7 stdlib vulnerabilities (GO-2026-5026/5972/6088/
-  # 6089/6090/6091/6218) fixed in go1.25.13 — the image-scan gate fails
+  # 6089/6090/6091/6218) fixed in go1.25.13 — the supply-chain gate fails
   # closed when the runner resolves "1.25" to a vulnerable patch. Bump
   # in lock-step with the go.mod `go` directive.
   GO_VERSION: "1.25.13"
@@ -133,11 +133,11 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.4.0
-          # The full repository lint is clean but can exceed three minutes
-          # on a cold hosted-runner cache. Keep the linter's own deadline
-          # above the observed ~3m20s runtime so timing is not reported as a
-          # lint failure.
-          args: --timeout=6m
+          # The full repository lint is clean but can exceed six minutes on
+          # a cold hosted-runner cache. Keep the linter deadline above the
+          # observed cold-cache runtime so timing is not reported as a lint
+          # failure while the job-level timeout remains bounded.
+          args: --timeout=8m
           # Cache is built into the action; default cache key works.
 
       # Re-runs the same checks golangci-lint covers as a fallback, in case
@@ -309,6 +309,46 @@ jobs:
           # topologies, then run Ansible check-mode against the largest one.
           cd ../..
           GREGALE_ANSIBLE_SCALE_CHECK=1 go test -count=1 -timeout=5m ./cmd/gregalectl -run '^TestRenderManifestAnsibleFiles_ScaleMatrix$'
+          # Join and control-plane adoption plays are separate production
+          # entrypoints and must be parsed independently; bootstrap syntax
+          # checking does not cover their task bodies.
+          ansible-playbook --syntax-check deploy/ansible/node_join.yml
+          ansible-playbook --syntax-check deploy/ansible/node_join_control_plane.yml
+
+      # Render the control-plane Prometheus artifacts with the production
+      # inventory. Syntax-check does not evaluate Jinja, so it would not catch
+      # a template stored in the wrong role directory or a missing HTTP-SD
+      # target for the split-box compute fleet.
+      - name: prometheus template convergence
+        run: |
+          set -euo pipefail
+          cd deploy/ansible
+          test ! -e roles/prometheus/files/prometheus.service
+          ansible control_plane -i inventory/hosts.ini -c local \
+            -e @roles/prometheus/defaults/main.yml \
+            -e ansible_hostname=ci-control-plane \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/prometheus/templates/prometheus.yml.j2 dest=$RUNNER_TEMP/prometheus.yml"
+          ansible control_plane -i inventory/hosts.ini -c local \
+            -e @roles/prometheus/defaults/main.yml \
+            -e ansible_hostname=ci-control-plane \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/prometheus/templates/prometheus.service.j2 dest=$RUNNER_TEMP/prometheus.service"
+          grep -q 'job_name: "gatewayd-internal"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q -- '--web.listen-address=127.0.0.1:9095' "$RUNNER_TEMP/prometheus.service"
+          if grep -q '{{' "$RUNNER_TEMP/prometheus.service"; then
+            echo 'rendered Prometheus systemd unit contains an unresolved template placeholder' >&2
+            exit 1
+          fi
+
+          rules_dir="$RUNNER_TEMP/prometheus-rules"
+          mkdir -p "$rules_dir"
+          cp roles/prometheus/files/{faas.rules.yml,bridge.rules.yml,pg_backup.rules.yml} "$rules_dir/"
+          cp ../../pkg/promqlrules/data_placement.yaml "$rules_dir/"
+          sed "s#/etc/prometheus#$rules_dir#g" \
+            "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"
+          promtool check config "$RUNNER_TEMP/prometheus-checked.yml"
 
       # Daemon smoke: every cmd/<daemon>/main.go is a one-box binary that wires
       # through pkg/wire.Daemon. `--help` must exit 0 with non-empty usage text
@@ -840,7 +880,7 @@ jobs:
         working-directory: sdk/python
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ruamel.yaml openapi-python-client pytest pytest-asyncio httpx
+          python -m pip install ruamel.yaml 'openapi-python-client==0.29.0' pytest pytest-asyncio httpx
           python -m pip install -e .
       - name: gen + assert clean diff
         working-directory: sdk/python
@@ -869,37 +909,20 @@ jobs:
         run: python -m pytest tests/ --ignore=tests/debug_chain.py -v
 
 
-  # issue #299 — supply-chain scan: govulncheck (HIGH+ severity floor)
-  # + Grype image scan + SARIF upload to Code Scanning. Runs in
-  # parallel with `test` / `unit-tests` / `spec-check` (no `needs:`,
-  # same precedent as spec-check). The runtime path (imaged →
-  # Grype sidecar + vmmd boot gate) is the canonical enforcement;
-  # this job is the static-input mirror that fails the PR when
-  # either (a) govulncheck finds a HIGH+ finding in the Go module
-  # graph, or (b) Grype surfaces a finding in images/*.Dockerfile
-  # that the runtime scan would also refuse at boot.
+  # issue #299 — supply-chain scan: govulncheck (HIGH+ severity floor).
+  # Actual OCI vulnerability scanning lives in images.yml, where the exact
+  # artifacts produced by each image matrix job are available. Keeping a
+  # Grype `dir:images/` invocation here was misleading: Dockerfiles are
+  # source text, not package databases, so a clean result did not establish
+  # anything about the resulting rootfs.
   image-scan:
-    name: image-scan (Grype + govulncheck high+)
+    name: supply-chain-scan (govulncheck high+)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      security-events: write
     env:
-      GRYPE_VERSION: "0.116.0"
-      # SHA-256 of grype_${GRYPE_VERSION}_linux_amd64.tar.gz from
-      # https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/.
-      # Pin at install time — see memory note ci-vacuum-binary-download
-      # for the same pattern used by vacuum/sqlc pins below.
-      # Compute locally via `curl -fsSL -o grype.tar.gz <url> && shasum -a 256 grype.tar.gz`.
-      # Bumped from 0.78.0 → 0.116.0: Anchore ships the vulnerability
-      # database baked into each release, and Grype refuses to scan when
-      # the bundled DB is older than 5 days (GRYPE_DB_VALIDATE_AGE=true
-      # by default). 0.78.0's bundled DB is now ~20 weeks stale; 0.116.0
-      # is the current stable line. The matching ansible pin lives at
-      # deploy/ansible/roles/supply_chain_scanners/defaults/main.yml —
-      # keep the two in lock-step.
-      GRYPE_SHA256_LINUX_AMD64: "40aff724297312f91ea390d003bed8d8651c74cc7f5b26732db80b3a408d2fc5"
+      GOVULNCHECK_VERSION: "1.7.0"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -907,8 +930,25 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
+      - name: download Go modules with retry
+        env:
+          GOPROXY: https://proxy.golang.org,direct
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if timeout 120s go mod download; then
+              echo "Go modules downloaded on attempt ${attempt}"
+              exit 0
+            fi
+            if [[ "${attempt}" == 3 ]]; then
+              echo "Go module download failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
+
       - name: install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install "golang.org/x/vuln/cmd/govulncheck@v${GOVULNCHECK_VERSION}"
       - name: govulncheck (severity high+)
         # govulncheck exit code 3 = findings at or above the
         # requested level. Failure propagates as a non-zero step.
@@ -920,53 +960,6 @@ jobs:
         run: |
           set -euo pipefail
           govulncheck -mode=source -show=verbose ./...
-      - name: install grype
-        # Anchored version + SHA-256, mirroring vacuum/sqlc pinning
-        # precedent at ci.yml:289-320 / ci.yml:780-805. Grype
-        # release tarball is flat (grype binary); the install path
-        # is the same $HOME/.local/<tool>/bin convention.
-        run: |
-          set -euo pipefail
-          GRYPE_TARBALL="grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
-          curl --fail --silent --show-error --location \
-            -o "$RUNNER_TEMP/${GRYPE_TARBALL}" \
-            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/${GRYPE_TARBALL}"
-          echo "${GRYPE_SHA256_LINUX_AMD64}  $RUNNER_TEMP/${GRYPE_TARBALL}" | sha256sum --check --strict
-          mkdir -p "$HOME/.local/grype/bin"
-          tar -xzf "$RUNNER_TEMP/${GRYPE_TARBALL}" -C "$RUNNER_TEMP" grype
-          cp "$RUNNER_TEMP/grype" "$HOME/.local/grype/bin/grype"
-          chmod +x "$HOME/.local/grype/bin/grype"
-          echo "$HOME/.local/grype/bin" >> "$GITHUB_PATH"
-      - name: grype db update (fetch fresh vulnerability DB)
-        # Grype refuses to scan when its bundled DB is older than 5
-        # days (GRYPE_DB_VALIDATE_AGE=true by default). Updating
-        # before the scan decouples the CI job from the freshness
-        # of the DB Anchore ships in each binary release — the
-        # version pin still anchors the binary, but the CVE feed is
-        # always current. Same precedent as the runtime Grype
-        # invocation in cmd/imaged (Grype is invoked at every base
-        # stage with an implicitly-fresh DB via `grype db update` in
-        # the imaged unit, if wired).
-        run: |
-          set -euo pipefail
-          grype db update
-      - name: grype dir scan (images/*.Dockerfile tree)
-        # dir: scan mode walks the local filesystem; SARIF is the
-        # canonical Code Scanning ingestion format. Default severity
-        # floor is "medium"; we explicitly set "high" so the failure
-        # path is symmetric with govulncheck. SARIF includes ALL
-        # severities by default (a documented Grype behavior change
-        # in 0.71+).
-        run: |
-          set -euo pipefail
-          grype dir:images/ -o sarif --file grype-results.sarif --only-fixed=false
-      - name: upload SARIF to Code Scanning
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: grype-results.sarif
-          category: grype-image-scan
-
   load:
     # M4 acceptance gate (spec §14 row 2): "1,000 rps to hot app adds < 2 ms p50".
     # Decoupled from the `test` job because (a) it is a load test, not a
@@ -1108,7 +1101,7 @@ jobs:
       # Paddle + Stripe blocks added by Streams A + B). The
       # script itself runs against /etc/faas/sealed.env on a real
       # control-plane node; CI only checks it parses + has the
-      # expected Paddle+Stripe block headers, via a hermetic
+      # expected Polar+legacy-provider block headers, via a hermetic
       # SECRETS_FILE override (an empty fixture that the script
       # must not reject as malformed). see cmd/gregale/_test for
       # the equivalent CLI flag parse-tripwire pattern.
@@ -1117,8 +1110,9 @@ jobs:
           set -euo pipefail
           test -x deploy/scripts/verify-secrets.sh
           bash -n deploy/scripts/verify-secrets.sh
-          grep -q "FAAS_PADDLE_API_KEY" deploy/scripts/verify-secrets.sh
-          grep -q "FAAS_BILLING_PROVIDER=paddle" deploy/scripts/verify-secrets.sh
+          grep -q "FAAS_POLAR_ACCESS_TOKEN" deploy/scripts/verify-secrets.sh
+          grep -q "FAAS_BILLING_PROVIDER=polar" deploy/scripts/verify-secrets.sh
+          grep -q "FAAS_POLAR_METER_ID" deploy/scripts/verify-secrets.sh
 
       # Cross-PR slot collision. TestMigrationsUniquePrefixes (in the static
       # step above) only sees one branch at a time: a PR builds against
@@ -1136,17 +1130,23 @@ jobs:
       - name: migration slot gate self-test
         run: BATS_TEST=1 ./scripts/ci/check_migration_slots.sh
       - name: migration slot collision (vs other open PRs)
-        if: github.event_name == 'pull_request'
+        # PR runs validate the new claim against sibling PRs. Main push runs
+        # repeat the same discovery so a merge does not turn a legitimate
+        # sibling-owned slot into a false contiguity failure while that PR is
+        # still waiting to merge.
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
         id: migration_slots
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
         run: ./scripts/ci/check_migration_slots.sh
       # A PR may append after a contiguous migration range owned by a sibling
       # PR. The cross-PR gate above has verified those slots are claimed and
       # non-overlapping; pass that verified list to the local contiguity test.
-      # Push/main runs leave this output empty and remain strictly 1..N.
+      # Both PR and main-push runs use the verified sibling slot list. A
+      # missing slot is therefore allowed only while an open PR claims it;
+      # once that PR closes without merging, main becomes strict again.
       - name: migrations check (static)
         env:
           FAAS_MIGRATION_ALLOWED_GAPS: ${{ steps.migration_slots.outputs.external_slots }}

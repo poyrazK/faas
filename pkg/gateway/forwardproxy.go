@@ -327,6 +327,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 
 	stream, err := cli.ForwardHTTPStream(ctx)
 	if err != nil {
+		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 			markStaleTarget(r.Context())
 		}
@@ -375,6 +378,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 		Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: init},
 	}); err != nil {
+		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 			markStaleTarget(r.Context())
 		}
@@ -389,10 +395,10 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// failure) wins; the receiver goroutine below surfaces
 	// it via sendErr so the bidi close is clean.
 	//
-	// Cancellation: when r.Context() is cancelled (client
-	// disconnect, gateway-side deadline), the goroutine exits
-	// promptly via the inner ctxReader.Read returning
-	// ctx.Err(). Without this, a client that uploads 1 byte
+	// Cancellation: when the derived stream context is cancelled
+	// (client disconnect, gateway-side deadline, or upstream
+	// receiver failure), the goroutine exits promptly via the
+	// ctxReader closing r.Body. Without this, a client that uploads 1 byte
 	// per second and then disconnects would leave the
 	// goroutine blocked on r.Body.Read until the gateway's
 	// http.Server.ReadTimeout fires — that's a goroutine
@@ -400,8 +406,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// review F3 fix.)
 	bodyErrCh := make(chan error, 1)
 	go func() {
+		cr, stopReader := newCtxReader(ctx, r.Body)
+		defer stopReader()
 		buf := make([]byte, 8*1024)
-		cr := &ctxReader{r: r.Body, ctx: r.Context()}
 		for {
 			n, err := cr.Read(buf)
 			if n > 0 {
@@ -439,10 +446,12 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			break
 		}
 		if err != nil {
-			// Drain the body goroutine so we don't leak.
-			select {
-			case <-bodyErrCh:
-			default:
+			// Cancel the derived stream context so the request body is
+			// closed and the body goroutine can finish before return.
+			cancel()
+			<-bodyErrCh
+			if handleForwardRequestCancellation(w, r, !wroteHeader) {
+				return
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				markStaleTarget(r.Context())
@@ -509,6 +518,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// is still unwinding.
 				log.Debug("gateway: forwarder stream client write failed",
 					"node", t.NodeID, "err", werr.Error())
+				cancel()
 				<-bodyErrCh
 				return
 			}
@@ -665,10 +675,10 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// chunks. The first error wins; the receiver loop below
 	// surfaces it via bodyErrCh so the bidi close is clean.
 	//
-	// Cancellation: when r.Context() is cancelled (client
-	// disconnect, gateway-side deadline), the goroutine exits
-	// promptly via the inner ctxReader.Read returning
-	// ctx.Err(). Same F3 fix as fwdStreamOnceWithEvents.
+	// Cancellation: when the derived stream context is cancelled
+	// (client disconnect, gateway-side deadline, or upstream
+	// receiver failure), the goroutine exits promptly via the
+	// ctxReader closing r.Body. Same F3 fix as fwdStreamOnceWithEvents.
 	//
 	// Issue #676 / ADR-080 follow-up, PR-B: the tx byte counter
 	// increments per `stream.Send` (the bytes flowing
@@ -680,8 +690,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// receiver loop is race-free without a mutex.
 	bodyErrCh := make(chan error, 1)
 	go func() {
+		cr, stopReader := newCtxReader(ctx, r.Body)
+		defer stopReader()
 		buf := make([]byte, 8*1024)
-		cr := &ctxReader{r: r.Body, ctx: r.Context()}
 		for {
 			n, err := cr.Read(buf)
 			if n > 0 {
@@ -748,11 +759,10 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			break
 		}
 		if err != nil {
-			// Drain the body goroutine so we don't leak.
-			select {
-			case <-bodyErrCh:
-			default:
-			}
+			// Cancel the derived stream context so the request body is
+			// closed and the body goroutine can finish before return.
+			cancel()
+			<-bodyErrCh
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				wsOutcome = WSOutcomeUpstreamUnavailable
 				log.Warn("gateway: raw forwarder stream Unavailable; surfacing 503",
@@ -854,6 +864,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				wsOutcome = WSOutcomeClientDisconnect
 				log.Debug("gateway: raw forwarder stream client write failed",
 					"node", t.NodeID, "err", werr.Error())
+				cancel()
 				<-bodyErrCh
 				return
 			}
@@ -998,41 +1009,71 @@ func ForwardingRawReverseProxyWithEventsAndDrain(nodes NodeClientLookup, log *sl
 	}
 }
 
-// ctxReader is a context-aware io.Reader wrapper used by
-// fwdStreamOnce's body-copy goroutine. It returns ctx.Err()
-// when the underlying context is cancelled (client disconnect,
-// gateway deadline, server shutdown) so the goroutine exits
-// promptly instead of staying blocked on r.Body.Read. The
-// base reader is used unchanged on the data path — the context
-// check is a non-blocking select race against the Read result.
+// ctxReader is a context-aware io.Reader wrapper used by the
+// stream body-copy goroutines. Request bodies normally implement
+// io.Closer, so newCtxReader watches the derived stream context and
+// closes them to unblock a real network read. The pre-read check handles
+// already-cancelled contexts without touching the body and avoids a
+// helper goroutine allocation for every body chunk.
 //
-// Issue #471 review F3: the body goroutine previously sat on
-// r.Body.Read until the gateway's http.Server.ReadTimeout fired
-// (up to 30 s). With ctxReader, the goroutine exits within the
-// gRPC client's normal stream-teardown latency (<1 s in
-// practice) on any context cancellation, so a client that
-// disconnects mid-upload doesn't pin the goroutine.
+// Issue #471 review F3: the body goroutine still exits when an inbound
+// HTTP request is cancelled because the server closes its Request.Body.
+// The previous implementation created an additional goroutine and
+// channel for every Read call, which amplified allocations and goroutine
+// pressure for large uploads.
 type ctxReader struct {
-	r   io.Reader
-	ctx context.Context
+	r        io.Reader
+	ctx      context.Context
+	closer   io.Closer
+	done     chan struct{}
+	stopOnce sync.Once
+}
+
+// newCtxReader attaches cancellation to a closable reader. The returned stop
+// function must be called when the owning goroutine exits so the watcher does
+// not outlive a completed request body.
+func newCtxReader(ctx context.Context, r io.Reader) (*ctxReader, func()) {
+	cr := &ctxReader{r: r, ctx: ctx}
+	closer, ok := r.(io.Closer)
+	if !ok {
+		return cr, func() {}
+	}
+	cr.closer = closer
+	cr.done = make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = closer.Close()
+		case <-cr.done:
+		}
+	}()
+	return cr, cr.stop
+}
+
+func (cr *ctxReader) stop() {
+	if cr.done != nil {
+		cr.stopOnce.Do(func() { close(cr.done) })
+	}
 }
 
 func (cr *ctxReader) Read(p []byte) (int, error) {
-	type result struct {
-		n   int
-		err error
+	if cr == nil || cr.r == nil {
+		return 0, io.EOF
 	}
-	ch := make(chan result, 1)
-	go func() {
-		n, err := cr.r.Read(p)
-		ch <- result{n, err}
-	}()
-	select {
-	case <-cr.ctx.Done():
-		return 0, cr.ctx.Err()
-	case r := <-ch:
-		return r.n, r.err
+	if cr.ctx != nil {
+		select {
+		case <-cr.ctx.Done():
+			return 0, cr.ctx.Err()
+		default:
+		}
 	}
+	n, err := cr.r.Read(p)
+	if cr.ctx != nil {
+		if ctxErr := cr.ctx.Err(); ctxErr != nil {
+			return 0, ctxErr
+		}
+	}
+	return n, err
 }
 
 // NodeClientCache is the production implementation of NodeClientLookup.
@@ -1048,9 +1089,19 @@ type NodeClientCache struct {
 	// refcount lets us close the conn once the last lease is released,
 	// avoiding an idle conn lingering for a node that just got drained.
 	refs map[string]int
+	// dialing coalesces the first-use resolver + gRPC dial for a node.
+	// Without this map, a burst that lands on a new node makes every
+	// request perform the same Postgres target lookup and start a
+	// duplicate connection before the cache re-check wins.
+	dialing map[string]*nodeDialCall
 
 	dial func(ctx context.Context, target string) (*grpc.ClientConn, error)
 	log  *slog.Logger
+}
+
+type nodeDialCall struct {
+	done        chan struct{}
+	invalidated bool
 }
 
 // NewNodeClientCache wires a cache with the given dialer (production:
@@ -1063,6 +1114,7 @@ func NewNodeClientCache(dial func(ctx context.Context, target string) (*grpc.Cli
 	return &NodeClientCache{
 		clients: map[string]*grpc.ClientConn{},
 		refs:    map[string]int{},
+		dialing: map[string]*nodeDialCall{},
 		dial:    dial,
 		log:     log,
 	}
@@ -1073,42 +1125,108 @@ func NewNodeClientCache(dial func(ctx context.Context, target string) (*grpc.Cli
 // surfaces 503. Each successful call increments the refcount so
 // Evict() can wait for in-flight requests before closing.
 //
-// On a cache miss, the cache looks the node's dial target up via the
+// On a cache miss, one caller looks the node's dial target up via the
 // resolver (production: pkg/state.ComputeNodeByID; tests: a fixed
-// map). On a cache hit, the conn is returned without dialing.
+// map) and establishes the connection. Concurrent callers wait for
+// that same dial and then lease the resulting connection.
 func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.VmmdClient, io.Closer, bool) {
+	if c == nil || nodeID == "" {
+		return nil, nil, false
+	}
 	c.mu.Lock()
+	if c.clients == nil {
+		c.clients = map[string]*grpc.ClientConn{}
+	}
+	if c.refs == nil {
+		c.refs = map[string]int{}
+	}
 	conn, ok := c.clients[nodeID]
-	if !ok {
-		c.mu.Unlock()
-		// Resolve target outside the lock: a postgres round-trip
-		// would block other nodes' lookups if we held it.
-		target, ok := c.resolveTarget(ctx, nodeID)
-		if !ok {
-			return nil, nil, false
-		}
-		conn, err := c.dial(ctx, target)
-		if err != nil {
-			c.log.Warn("gateway: vmmd dial failed",
-				"node", nodeID, "target", target, "err", err.Error())
-			return nil, nil, false
-		}
-		c.mu.Lock()
-		// Re-check under the lock; another goroutine may have raced
-		// us and inserted.
-		if existing, dup := c.clients[nodeID]; dup {
-			_ = conn.Close()
-			conn = existing
-		} else {
-			c.clients[nodeID] = conn
-		}
+	if ok {
 		c.refs[nodeID]++
 		c.mu.Unlock()
 		return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
 	}
-	c.refs[nodeID]++
+	if c.dialing == nil {
+		c.dialing = map[string]*nodeDialCall{}
+	}
+	if call, exists := c.dialing[nodeID]; exists {
+		c.mu.Unlock()
+		select {
+		case <-call.done:
+			c.mu.Lock()
+			conn, ok := c.clients[nodeID]
+			if ok {
+				c.refs[nodeID]++
+			}
+			c.mu.Unlock()
+			if !ok {
+				return nil, nil, false
+			}
+			return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
+		case <-ctx.Done():
+			return nil, nil, false
+		}
+	}
+	call := &nodeDialCall{done: make(chan struct{})}
+	c.dialing[nodeID] = call
 	c.mu.Unlock()
+
+	// Resolve and dial outside the cache lock: resolver/database work
+	// must not block hits for other nodes.
+	target, ok := c.resolveTarget(ctx, nodeID)
+	if !ok {
+		c.finishNodeDial(nodeID, call, nil)
+		return nil, nil, false
+	}
+	if c.dial == nil {
+		c.finishNodeDial(nodeID, call, nil)
+		return nil, nil, false
+	}
+	conn, err := c.dial(ctx, target)
+	if err != nil {
+		if c.log != nil {
+			c.log.Warn("gateway: vmmd dial failed",
+				"node", nodeID, "target", target, "err", err.Error())
+		}
+		c.finishNodeDial(nodeID, call, nil)
+		return nil, nil, false
+	}
+	if !c.finishNodeDial(nodeID, call, conn) {
+		// The node was evicted or the cache was closed while the dial
+		// was in flight. The dial result was not published and is now
+		// owned by this caller.
+		if conn != nil {
+			_ = conn.Close()
+		}
+		return nil, nil, false
+	}
 	return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
+}
+
+// finishNodeDial publishes a successful connection and wakes all waiters.
+// It returns false when an eviction/close invalidated the in-flight dial.
+func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn *grpc.ClientConn) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dialing != nil {
+		delete(c.dialing, nodeID)
+	}
+	if call.invalidated || conn == nil {
+		close(call.done)
+		return false
+	}
+	if c.clients == nil {
+		c.clients = map[string]*grpc.ClientConn{}
+	}
+	if c.refs == nil {
+		c.refs = map[string]int{}
+	}
+	c.clients[nodeID] = conn
+	// The leader took its lease before starting the external work.
+	// Keep that reference while publishing the connection.
+	c.refs[nodeID] = 1
+	close(call.done)
+	return true
 }
 
 // resolveTarget is the seam that turns a compute_node.id into the
@@ -1141,6 +1259,11 @@ func (c *NodeClientCache) resolveTarget(ctx context.Context, nodeID string) (str
 // finish on their existing refcount before the conn is closed.
 func (c *NodeClientCache) Evict(nodeID string) {
 	c.mu.Lock()
+	if c.dialing != nil {
+		if call, ok := c.dialing[nodeID]; ok {
+			call.invalidated = true
+		}
+	}
 	conn, ok := c.clients[nodeID]
 	if !ok {
 		c.mu.Unlock()
@@ -1160,6 +1283,9 @@ func (c *NodeClientCache) Evict(nodeID string) {
 // surfaces Unavailable); the listener stops accepting new ones.
 func (c *NodeClientCache) Close() error {
 	c.mu.Lock()
+	for _, call := range c.dialing {
+		call.invalidated = true
+	}
 	conns := c.clients
 	c.clients = map[string]*grpc.ClientConn{}
 	c.refs = map[string]int{}

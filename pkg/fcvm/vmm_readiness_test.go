@@ -122,6 +122,77 @@ func TestWaitReady_HealthcheckEmitsReadiness200(t *testing.T) {
 	}
 }
 
+// TestEmitRestoreBreakdown_EmitsTimelineRow pins the vmmd-side detailed
+// restore timing surface without starting Firecracker. The production
+// Restore path supplies the same correlation envelope and phase values after
+// its readiness probe succeeds.
+func TestEmitRestoreBreakdown_EmitsTimelineRow(t *testing.T) {
+	store := state.NewMemStore()
+	platform := buildReadinessPlatform(t, store)
+	v := &JailerVMM{events: platform}
+	wakeID := "w-restore-001"
+	appID := "app-restore-001"
+	ctx := wire.WithContext(context.Background(), wire.CorrelationFields{
+		WakeID: wakeID,
+		AppID:  appID,
+	})
+	at := time.Date(2026, time.August, 31, 12, 13, 58, 302741000, time.UTC)
+	v.emitRestoreBreakdown(ctx, Lease{Instance: "inst-restore-001"}, at, restoreTimingBreakdown{
+		ChrootMs:             2,
+		MaterializeMemMs:     3,
+		MaterializeVMStateMs: 4,
+		ResolveImagesMs:      5,
+		StageDrivesMs:        6,
+		StageSnapshotMs:      7,
+		HelperMs:             8,
+		StartJailerMs:        9,
+		BindTunMs:            10,
+		LoadSnapshotMs:       400,
+		ResumeHookMs:         11,
+		WaitReadyMs:          131,
+		TotalMs:              596,
+	})
+
+	rows, err := store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("ListEventsByWakeID: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].Kind != events.WakeRestoreBreakdown {
+		t.Fatalf("kind = %q, want %q", rows[0].Kind, events.WakeRestoreBreakdown)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rows[0].Data, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["wake_id"] != wakeID || payload["app_id"] != appID {
+		t.Errorf("correlation payload = wake_id:%v app_id:%v, want %s/%s", payload["wake_id"], payload["app_id"], wakeID, appID)
+	}
+	if got, ok := payload["load_snapshot_ms"].(float64); !ok || got != 400 {
+		t.Errorf("payload.load_snapshot_ms = %v, want 400", payload["load_snapshot_ms"])
+	}
+	if got, ok := payload["total_ms"].(float64); !ok || got != 596 {
+		t.Errorf("payload.total_ms = %v, want 596", payload["total_ms"])
+	}
+}
+
+func TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit(t *testing.T) {
+	store := state.NewMemStore()
+	platform := buildReadinessPlatform(t, store)
+	v := &JailerVMM{events: platform}
+	v.emitRestoreBreakdown(context.Background(), Lease{Instance: "inst-no-wake"}, time.Now(), restoreTimingBreakdown{TotalMs: 596})
+
+	rows, err := store.ListEventsByWakeID(context.Background(), "", time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("ListEventsByWakeID: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("rows = %d, want 0", len(rows))
+	}
+}
+
 // silence the unsued import warnings when the metric stubs are
 // inlined into the type — the lockless constructors below exist
 // solely to keep the test self-contained.

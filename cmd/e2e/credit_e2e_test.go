@@ -315,10 +315,9 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 		t.Fatalf("seed instance: %v", err)
 	}
 
-	// Plant usage that drives 250 cents of overage:
-	//   mb_seconds = 250 * 3600 / 100 = 9_000
+	// Plant 50 included GB-hours plus 250 billable GB-hours.
 	if err := store.AppendUsage(ctx, targetAcct.ID, app.ID, ins.ID,
-		time.Now().UTC(), 9_000, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		time.Now().UTC(), int64(targetAcct.Plan.PlanIncludedGBHours()+250)*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("seed usage: %v", err)
 	}
 

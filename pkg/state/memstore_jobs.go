@@ -170,7 +170,7 @@ func (m *MemStore) JobSoftDelete(_ context.Context, id string) (bool, bool, erro
 		return false, false, nil // idempotent re-call
 	}
 	// Live-instance predicate mirrors pgstore_jobs: kind='job_task'
-	// AND status NOT IN ('parked','destroyed'). The memstore doesn't
+	// AND status is non-terminal. The memstore doesn't
 	// track per-instance status (job_tasks is the dispatch surface,
 	// not the live-instance surface); we approximate "live" as "any
 	// non-terminal task exists for the job" which matches the pg
@@ -224,7 +224,7 @@ func (m *MemStore) JobCountByAccount(_ context.Context, accountID string) (int, 
 // across all runs on this account. Since the memstore doesn't track
 // a parallel `instances` table for job_tasks, this is the closest
 // in-memory mirror of the pgstore predicate (kind='job_task' AND
-// status NOT IN ('parked','destroyed')).
+// status is non-terminal).
 func (m *MemStore) JobConcurrentByAccount(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -769,7 +769,7 @@ func (m *MemStore) ListJobInstances(_ context.Context) ([]Instance, error) {
 		if ins.Kind != "job_task" {
 			continue
 		}
-		if ins.State == "destroyed" || ins.State == "parked" {
+		if ins.State != "waking" && ins.State != "cold_booting" && ins.State != "running" {
 			continue
 		}
 		out = append(out, ins)

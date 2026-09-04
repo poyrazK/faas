@@ -187,9 +187,9 @@ and an overage accumulator (`pkg/billing/paddle/usage.go`).
 through `billing.Provider` via
 `pkg/billing/loader/loader.go::LoadProviderForAPID` /
 `LoadProviderForMeterd`. Operator selects via
-`FAAS_BILLING_PROVIDER=paddle`; empty (or `stripe`) keeps the
-historical path bit-for-bit unchanged. apid also mounts
-`/v1/webhooks/paddle` with HMAC verification. ADR-032 records the
+`FAAS_BILLING_PROVIDER=polar`; empty selects the Polar public-release
+provider. Paddle and Stripe remain explicit compatibility paths. apid also mounts
+`/v1/webhooks/polar` with Standard Webhooks verification. ADR-032 records the
 decision; the operator runbook is
 `docs/ops/billing-provider-switch.md`.
 
@@ -531,6 +531,7 @@ The §14 M8 gates still on the board are listed in [What's next](#whats-next).
 - **ADR-063** (snapshot de-localization, revised 2026-08-26; issue #1054): snapshots use the shared OCI backend as the authoritative transport, while each active node's vmmd asynchronously prepositions both restore blobs through a durable event-cursor plus `snapshot_replicas` queue. Origin metadata restricts new fan-out to the producer's region; wake placement prefers ready local replicas and retains on-demand restore/cold-boot fallback. The two-node ≤200 ms prepositioned-wake measurement and 100-cycle leak drill remain M9 acceptance work.
 - **ADR-067** (migrating-instance watchdog, accepted 2026-08-16): 1 s ticker self-heals stuck `state='migrating'` rows that never committed (peer died mid-handoff, gRPC dropped, operator killed the new owner). The watchdog is the only writer that can move a row out of `migrating` without a peer commit.
 - **ADR-110** (declarative split-box manifest, accepted 2026-08-16): versioned YAML + typed schema at `deploy/manifest/splitbox.yaml` + `pkg/manifest/`; SemVer `schema_version (1.0.0)`; canonical validation through `gregalectl manifest validate` + the renderer + the release bundle installer + the doctor + the metal harness. PR-cluster shipped (PRs #912 #913 #914 #915 #917 #918 #919 #920 #921 #922 #923 #924).
+- **ADR-141** (durable imaged→apid audit delivery, accepted 2026-09-03): migration 00590 adds a deduplicated `audit_event_outbox`; imaged keeps `pg_notify` as the fast wakeup, while apid transactionally writes the audit row and replays pending or expired-lease handoffs every two seconds. Failed deliveries back off, dead-letter after twelve attempts, and queue metadata is pruned after 90 days without deleting audit evidence. This closes the signature-audit loss window identified in ADR-058.
 
 End-to-end smoke: `make metal-lima-2node` exercises the full four-phase handoff against a two-node Lima fleet. The acceptance row in spec §14 M9 is the gating test for the cluster.
 
@@ -1246,3 +1247,19 @@ add `deploy/ansible/roles/metal-h2c-acceptance/`).
     `deploy/ansible/metal-h2c-acceptance.yml`; the normal production
     `bootstrap.yml` remains unchanged. G19.2 still owns enabling the Go
     metal tests once a real acceptance host is available.
+
+## M8.7 — Public-release backend hardening foundation (ADR-140). 🚧
+
+This slice closes three backend failure modes that are disproportionately
+expensive in a public deployment:
+
+- warm placement hints are committed only after instance creation and ledger
+  admission;
+- stale schedd residency data fails closed after 30 seconds, preserving only
+  the guaranteed builder slot; and
+- HTTP and raw gateway streams actively cancel and drain request-body copying
+  on upstream failure or client disconnect.
+
+Remaining public-release gates are tracked separately: durable event replay,
+M9 two-node and leak-drill acceptance, service-replica convergence, real OTLP
+export, and the remaining state/export scale work.

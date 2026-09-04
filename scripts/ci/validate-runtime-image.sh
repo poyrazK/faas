@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+image_ref=${1:?image reference is required}
+runtime_image=${2:?runtime image name is required}
+expected_platform=${3:-linux/amd64}
+
+expected_os=${expected_platform%%/*}
+expected_arch=${expected_platform##*/}
+if [[ "${expected_os}" == "${expected_platform}" || -z "${expected_os}" || -z "${expected_arch}" ]]; then
+  echo "expected platform must be OS/ARCH, got ${expected_platform}" >&2
+  exit 2
+fi
+
+case "${runtime_image}" in
+  base-debian-parent)
+    # Debian bookworm uses merged-/usr; /bin is a symlink and docker export
+    # records the target path as usr/bin/sh.
+    required=(etc/passwd usr/bin/sh)
+    ;;
+  base-minimal)
+    required=(etc/passwd bin/busybox bin/sh)
+    ;;
+  runner-node22|runner-node24)
+    required=(etc/passwd usr/local/bin/node)
+    ;;
+  runner-python312|runner-python313)
+    required=(etc/passwd usr/local/bin/python3)
+    ;;
+  runner-go124)
+    # Go customer artifacts are compiled in the builder and executed
+    # directly; the compiler is deliberately absent from the runtime base.
+    required=(etc/passwd usr/lib/x86_64-linux-gnu/libc.so.6)
+    ;;
+  runner-go124-alpine)
+    required=(etc/passwd lib/ld-musl-x86_64.so.1)
+    ;;
+  *)
+    echo "unsupported runtime image ${runtime_image}" >&2
+    exit 2
+    ;;
+esac
+
+actual_platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${image_ref}")
+if [[ "${actual_platform}" != "${expected_platform}" ]]; then
+  echo "::error::${image_ref} has platform ${actual_platform}, want ${expected_platform}" >&2
+  exit 1
+fi
+
+container_id=$(docker create --entrypoint /bin/sh "${image_ref}" -c true)
+rootfs_tar=""
+rootfs_listing=""
+cleanup() {
+  docker rm -f "${container_id}" >/dev/null 2>&1 || true
+  if [[ -n "${rootfs_tar}" ]]; then
+    rm -f "${rootfs_tar}"
+  fi
+  if [[ -n "${rootfs_listing}" ]]; then
+    rm -f "${rootfs_listing}"
+  fi
+}
+trap cleanup EXIT
+
+rootfs_tar=$(mktemp)
+docker export "${container_id}" -o "${rootfs_tar}"
+rootfs_listing=$(mktemp)
+# Materialise the listing before matching. Piping tar into grep -q under
+# pipefail makes tar receive SIGPIPE as soon as grep finds a match, which
+# falsely turns a present path into a missing-path failure.
+tar -tf "${rootfs_tar}" >"${rootfs_listing}"
+for path in "${required[@]}"; do
+  if ! grep -Eq "^(\./)?${path}(/|$)" "${rootfs_listing}"; then
+    echo "::error::${image_ref} is missing /${path}" >&2
+    exit 1
+  fi
+done
+
+# The OCI image is also booted as a container here. Runtime bases deliberately
+# receive the Firecracker PID 1 binary during imaged's ext4 staging, so this
+# checks the shell contract at the OCI boundary and the staged /sbin/init
+# contract is checked by the runtime smoke script below.
+docker run --rm --platform "${expected_platform}" --entrypoint /bin/sh "${image_ref}" \
+  -ceu 'test -x /bin/sh && test -r /etc/passwd'
+echo "OK: ${image_ref} contains the ${runtime_image} rootfs contract"

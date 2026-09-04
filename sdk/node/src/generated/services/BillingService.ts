@@ -10,14 +10,13 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class BillingService {
   /**
-   * Get the operator-configured billing portal URL (and the card-on-file summary).
+   * Get a provider billing portal URL (and the card-on-file summary).
    * Returns the URL the customer should be sent to in order to
    * manage their subscription (update card, view invoices,
-   * download receipts, cancel). The URL is server-rendered from
-   * the operator's `FAAS_BILLING_PORTAL_URL` template; the server
-   * does NOT call Stripe's `BillingPortal.Session` SDK on this
-   * path (issue #253 acceptance #3 partial — a follow-up PR will
-   * add the SDK call once the spec defines the contract).
+   * download receipts, cancel). When the active provider exposes
+   * customer sessions, the server creates a short-lived authenticated
+   * portal URL. Otherwise it renders the operator's
+   * `FAAS_BILLING_PORTAL_URL` template.
    *
    * The response also carries a `payment_method` block (issue
    * #242) — the card-on-file summary (brand, last-4, expiry).
@@ -43,15 +42,11 @@ export class BillingService {
   }
   /**
    * Retry the latest unpaid invoice / transaction for this account.
-   * Stripe path: calls `Invoices.Pay` on the most recent open
-   * invoice for the customer. The Idempotency-Key header (auto
-   * UUIDv4 if absent) collapses retries on the same
-   * `acct.ID / retry / invoice.ID` key.
-   *
-   * Paddle path: creates a new `Transaction` against the
-   * existing customer for the same plan + month-to-date overage.
-   * The CLI forwards the merchant-dashboard URL via the
-   * response's `provider_ref_id` extension.
+   * The configured provider is asked to retry the most recent unpaid
+   * charge. The Idempotency-Key header (auto UUIDv4 if absent) is
+   * forwarded where the provider supports it. Providers without a
+   * direct retry API return 501 and the response includes a portal URL
+   * for payment-method recovery.
    *
    * @returns BillingRetryResponse New charge attempt created. The CLI prints attempt + provider reference IDs.
    * @throws ApiError
@@ -63,7 +58,8 @@ export class BillingService {
       errors: {
         401: `code: unauthorized`,
         404: `No open charge to retry — the account is in good standing, or the operator has not configured a billing provider.`,
-        502: `Provider-side failure (Stripe API error / Paddle timeout). The CLI surfaces this as 'retry failed'.`,
+        501: `The provider has no direct saved-card retry API; use the billing portal URL in the response.`,
+        502: `Provider-side failure. The CLI surfaces this as 'retry failed'.`,
       },
     });
   }

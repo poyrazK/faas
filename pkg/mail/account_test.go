@@ -35,8 +35,11 @@ func TestPaymentFailedBody(t *testing.T) {
 	if !strings.Contains(body, "2026-07-23 14:30 UTC") {
 		t.Errorf("body missing failure timestamp:\n%s", body)
 	}
-	if !strings.Contains(body, "faas billing retry") {
-		t.Errorf("body missing recovery command:\n%s", body)
+	if !strings.Contains(body, "faas billing portal") {
+		t.Errorf("body missing provider-neutral recovery command:\n%s", body)
+	}
+	if strings.Contains(body, "faas billing retry") {
+		t.Errorf("body promises unsupported direct retry command:\n%s", body)
 	}
 	if !strings.Contains(body, "21 days") {
 		t.Errorf("body missing 21-day deletion deadline:\n%s", body)
@@ -69,6 +72,9 @@ func TestAccountRestoredBody(t *testing.T) {
 	}
 	if !strings.Contains(body, "faas status") {
 		t.Errorf("body missing status command:\n%s", body)
+	}
+	if strings.Contains(body, "Stripe") {
+		t.Errorf("body names a provider-specific recovery path:\n%s", body)
 	}
 	if strings.Contains(body, "<") {
 		t.Errorf("body contains HTML; must be plaintext:\n%s", body)

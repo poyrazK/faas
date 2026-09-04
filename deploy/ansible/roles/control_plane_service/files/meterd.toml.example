@@ -56,27 +56,39 @@ egress_tls_key_path  = "/etc/faas/tls/meterd/egress-client.key"
 egress_tls_ca_path = ""
 
 # meter block — timer cadences + the per-tick behavior knobs. Default
-# cadences: sample 60s, quota 60s, stripe 60m. Override via env:
+# cadences: sample 60s, quota 60s, billing usage push 60m. Override via env:
 # FAAS_SAMPLE_INTERVAL, FAAS_QUOTA_INTERVAL, FAAS_STRIPE_INTERVAL.
-# Sample and quota intervals must be ≤ 60s on busy days; the stripe
-# interval can be longer (the §14 sample is monthly).
+# Sample and quota intervals must be ≤ 60s on busy days. Billing pushes
+# recheck a durable 30-day lookback and must stay hourly or faster.
 [meter]
 # sample_interval = "60s"
 # quota_interval = "60s"
 # stripe_interval = "60m"
+# billing_lookback = "720h"
 
-# [billing] block — provider config (PR-P2 + ADR-032 v2). meterd
+# [billing] block — provider config (PR-P2 + public-release billing). meterd
 # doesn't read webhook_secret (no ingress) but the surface is kept
 # for parity with apid's [billing] block; the loader accepts both.
 # Env wins over TOML.
 #
 # [billing]
-# provider = "paddle"     # "" | "stripe" | "paddle"; default "" (v2 = Paddle)
+# provider = "polar"      # "" | "stripe" | "paddle" | "polar"; default "" (public release = Polar)
 #
-# [billing.paddle]            # active at v2 (ADR-032 v2)
+# [billing.polar]             # public-release MoR provider
+# api_key                = "" # organization access token; or FAAS_POLAR_ACCESS_TOKEN env
+# webhook_secret         = "" # unused by meterd; or FAAS_POLAR_WEBHOOK_SECRET env
+# sandbox                = false # true → sandbox-api.polar.sh; or FAAS_POLAR_SANDBOX=1
+# meter_id               = "" # required Polar meter UUID; or FAAS_POLAR_METER_ID env
+# hobby_product_id       = "" # recurring Polar product UUID
+# pro_product_id         = "" # recurring Polar product UUID
+# scale_product_id       = "" # recurring Polar product UUID
+# usage_event_name       = "faas_ram_usage" # meter event filter name
+# base_url               = "" # empty = https://api.polar.sh
+#
+# [billing.paddle]            # explicit legacy provider
 # api_key        = ""    # pdl_live_… or pdl_sandbox_…; or FAAS_PADDLE_API_KEY env
 # webhook_secret = ""    # unused by meterd; or FAAS_PADDLE_WEBHOOK_SECRET env
-# tolerance_seconds = 300 # Paddle-Signature timestamp tolerance (default 5 min)
+# tolerance_seconds = 300 # unused by meterd
 #
 # [billing.stripe]            # legacy opt-in (FAAS_BILLING_PROVIDER=stripe)
 # api_key           = ""  # sk_test_… or sk_live_…; or STRIPE_API_KEY env

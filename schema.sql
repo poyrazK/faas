@@ -2359,7 +2359,7 @@ CREATE TABLE public.invoices (
     org_id uuid,
     CONSTRAINT invoices_amount_paid_cents_check CHECK ((amount_paid_cents >= 0)),
     CONSTRAINT invoices_currency_check CHECK ((currency = 'eur'::text)),
-    CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text]))),
+    CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
     CONSTRAINT invoices_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'uncollectible'::text, 'void'::text]))),
     CONSTRAINT invoices_subtotal_cents_check CHECK ((subtotal_cents >= 0)),
     CONSTRAINT invoices_tax_cents_check CHECK ((tax_cents >= 0)),
@@ -3534,7 +3534,7 @@ CREATE TABLE public.webhook_deliveries (
     delivery_id text NOT NULL,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
-    CONSTRAINT webhook_deliveries_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'stripe'::text, 'paddle'::text])))
+    CONSTRAINT webhook_deliveries_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'stripe'::text, 'paddle'::text, 'polar'::text, 'resend'::text])))
 );
 
 

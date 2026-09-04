@@ -75,3 +75,29 @@ func TestMemStore_ListInvoicesForAccount_Empty(t *testing.T) {
 		t.Fatalf("got %d rows, want 0", len(rows))
 	}
 }
+
+func TestMemStore_UpsertInvoiceIsIdempotentAndUpdatesStatus(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	inv := Invoice{
+		AccountID: "alice", Provider: "polar", ProviderInvoiceID: "order-1",
+		Status: "open", PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0),
+		TotalCents: 1000, Currency: "eur",
+	}
+	if err := m.UpsertInvoice(ctx, inv); err != nil {
+		t.Fatal(err)
+	}
+	inv.Status = "paid"
+	inv.AmountPaidCents = 1000
+	if err := m.UpsertInvoice(ctx, inv); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := m.ListInvoicesForAccount(ctx, "alice", nil, time.Time{}, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Status != "paid" || rows[0].AmountPaidCents != 1000 {
+		t.Fatalf("invoices after upsert = %+v, want one paid row", rows)
+	}
+}

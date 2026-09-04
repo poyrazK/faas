@@ -10,3 +10,18 @@ The runtime/base images are published under `ghcr.io/poyrazk/<image>` by the
 its separate multi-arch publication job. Runtime Dockerfiles are pinned to
 linux/amd64 child digests because `imaged` rejects manifest-list references at
 staging time.
+
+Every matrix job validates the concrete OCI artifact it built, runs the
+runtime contract smoke, and fails on actionable (fixed) CRITICAL Grype
+findings before promoting the `latest` or `sha-*` tags. The scan prints all
+matches, but only fixed CRITICAL matches block runtime-base publication;
+vendor-unfixed and unknown matches do not block a base whose upstream has not
+published a fix. The builder job uses a HIGH gate because it ships the
+BuildKit daemon and client, and performs those checks for both
+linux/amd64 and linux/arm64. BuildKit, Railpack, mise, crane, and the BuildKit
+source archive are checksum-verified before they enter the build or image
+verification path.
+
+For local images, use `make scan-images IMAGE_REFS="name:tag ..."`. Scanning
+`dir:images/` only scans source files and is not an OCI image vulnerability
+check.

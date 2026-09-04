@@ -726,6 +726,26 @@ func TestScanForStatefulShape_DockerfileFlagWithCleanDockerfile(t *testing.T) {
 	}
 }
 
+func TestArchiveHasRootDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	withDockerfile := writeTarToSpool(t, dir, buildTestTarGz(t, []tar.Header{
+		{Name: "myproject/Dockerfile"},
+	}, map[string][]byte{
+		"myproject/Dockerfile": []byte("FROM node:22-slim\n"),
+	}))
+	if got, err := archiveHasRootDockerfile(withDockerfile); err != nil || !got {
+		t.Fatalf("archiveHasRootDockerfile(clean): got %v, err %v; want true", got, err)
+	}
+	withoutDockerfile := writeTarToSpool(t, dir, buildTestTarGz(t, []tar.Header{
+		{Name: "myproject/index.js"},
+	}, map[string][]byte{
+		"myproject/index.js": []byte("exports.handler = () => 1;\n"),
+	}))
+	if got, err := archiveHasRootDockerfile(withoutDockerfile); err != nil || got {
+		t.Fatalf("archiveHasRootDockerfile(no Dockerfile): got %v, err %v; want false", got, err)
+	}
+}
+
 // TestScanForStatefulShape_TopLevelDataDir: a tarball with a top-level
 // data/ directory is rejected as stateless_only_violation with kind=tarball.
 // Fixtures wrap in a project root (matches validateTarballShape's

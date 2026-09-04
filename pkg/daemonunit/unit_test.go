@@ -241,6 +241,7 @@ func TestDecode_RoundTripBasic(t *testing.T) {
 		Restart:               "on-failure",
 		RestartSec:            "2s",
 		Slice:                 "faas-cp.slice",
+		MemoryHigh:            "192M",
 		MemoryMax:             "256M",
 		CapabilityBoundingSet: []string{},
 		Environment: []KV{
@@ -278,6 +279,9 @@ func TestDecode_RoundTripBasic(t *testing.T) {
 	}
 	if u.Slice != parsed.Slice {
 		t.Errorf("Slice: %q != %q", u.Slice, parsed.Slice)
+	}
+	if u.MemoryHigh != parsed.MemoryHigh {
+		t.Errorf("MemoryHigh: %q != %q", u.MemoryHigh, parsed.MemoryHigh)
 	}
 	if u.MemoryMax != parsed.MemoryMax {
 		t.Errorf("MemoryMax: %q != %q", u.MemoryMax, parsed.MemoryMax)
@@ -338,4 +342,41 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestRender_MemoryHighOmittedWhenEmpty pins the opt-in shape: only vmmd
+// sets a soft limit today, so every other unit must render without a
+// MemoryHigh line. An always-emitted `MemoryHigh=` would be a silent
+// behaviour change on eight daemons.
+func TestRender_MemoryHighOmittedWhenEmpty(t *testing.T) {
+	got := string(Unit{Type: "simple", ExecStart: "/bin/true", MemoryMax: "256M"}.Render())
+	if strings.Contains(got, "MemoryHigh") {
+		t.Errorf("MemoryHigh must be omitted when unset; got:\n%s", got)
+	}
+}
+
+// TestRender_MemoryHighPrecedesMemoryMax pins the directive order. systemd
+// does not care, but the generated files are byte-compared by
+// `make generate-check`, so the order is part of the contract.
+func TestRender_MemoryHighPrecedesMemoryMax(t *testing.T) {
+	got := string(Unit{Type: "simple", ExecStart: "/bin/true", MemoryHigh: "512M", MemoryMax: "1G"}.Render())
+	hi, max := strings.Index(got, "MemoryHigh="), strings.Index(got, "MemoryMax=")
+	if hi < 0 || max < 0 {
+		t.Fatalf("both directives must render; got:\n%s", got)
+	}
+	if hi > max {
+		t.Errorf("MemoryHigh must precede MemoryMax; got:\n%s", got)
+	}
+}
+
+// TestDiff_FiresOnMemoryHigh guards the drift gate: a spec that changes
+// only the soft limit must still be reported, otherwise `make
+// generate-check` would pass while the committed units disagree.
+func TestDiff_FiresOnMemoryHigh(t *testing.T) {
+	a := Unit{Type: "simple", ExecStart: "/bin/true", MemoryHigh: "256M"}
+	b := Unit{Type: "simple", ExecStart: "/bin/true", MemoryHigh: "512M"}
+	got := Diff(a, b)
+	if len(got) != 1 || !strings.Contains(got[0], "MemoryHigh") {
+		t.Errorf("Diff should fire on MemoryHigh; got %v", got)
+	}
 }

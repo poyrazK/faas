@@ -313,14 +313,17 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 	}
 	out := make([]fcvm.WorkloadSpec, 0, len(pbs))
 	for _, p := range pbs {
+		sealedEnv := sealedFromProto(p.GetSealedEnv())
 		out = append(out, fcvm.WorkloadSpec{
 			Name:       p.GetName(),
 			Type:       p.GetType(),
+			Image:      p.GetImage(),
 			StorageKey: p.GetStorageKey(),
 			DriveID:    p.GetDriveSlot(),
 			RamMB:      int(p.GetRamMb()),
 			Port:       int(p.GetPort()),
 			Essential:  p.GetEssential(),
+			SealedEnv:  sealedEnv,
 		})
 	}
 	return out

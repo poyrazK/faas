@@ -29,7 +29,8 @@
 // ConsumedCents without double-decrementing.
 //
 // Money: integer cents (CLAUDE.md: never float on money). The
-// reducer reports ConsumedCents = floor(mb_seconds * 100 / 3600).
+// reducer reports the plan-aware integer-cent overage after the included
+// calendar-month allowance has been removed.
 //
 // Audit: one `credit.consumed` row per drained credit (subject =
 // beneficiary account, actor = "apid", data carries invoice_id,

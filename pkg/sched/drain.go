@@ -110,12 +110,22 @@ type Drain struct {
 	// far past the SLO; long enough that the drain doesn't fan out a
 	// hot loop on a stuck backend.
 	retryAfterSeconds int
+	// dispatchConcurrency bounds the number of non-queue invocations
+	// dispatched in parallel for one drain tick. Queue-source rows stay
+	// serial per app so the FIFO contract is preserved.
+	dispatchConcurrency int
 	// accts caches Active(account_id) lookups for the suspended-skip
 	// check (Move 2). One entry per account; the 5s TTL collapses the
 	// 64-row batch's per-row AccountByID into ≤0.2 RPS at Meta's
 	// "everyone suspends at once" worst case.
 	accts *acctCache
 }
+
+// DefaultDrainDispatchConcurrency is deliberately small: it removes the
+// serial scheduler bottleneck without allowing one noisy account to consume
+// the entire schedd process. Operators can tune it with
+// FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY.
+const DefaultDrainDispatchConcurrency = 8
 
 // expiredInvocationReclaimer is implemented by the durable stores. Keeping
 // this as a narrow optional interface preserves the broad state.Store test
@@ -164,9 +174,12 @@ func (c *acctCache) put(accountID string, active bool, expiresAt time.Time) {
 // caller; cmd/schedd only sets the ones the production code cares about.
 type DrainOption func(*Drain)
 
-func WithDrainBatchSize(n int) DrainOption             { return func(d *Drain) { d.batchSize = n } }
-func WithDrainWakeLease(s int) DrainOption             { return func(d *Drain) { d.wakeLeaseSeconds = s } }
-func WithDrainRetryAfter(s int) DrainOption            { return func(d *Drain) { d.retryAfterSeconds = s } }
+func WithDrainBatchSize(n int) DrainOption  { return func(d *Drain) { d.batchSize = n } }
+func WithDrainWakeLease(s int) DrainOption  { return func(d *Drain) { d.wakeLeaseSeconds = s } }
+func WithDrainRetryAfter(s int) DrainOption { return func(d *Drain) { d.retryAfterSeconds = s } }
+func WithDrainDispatchConcurrency(n int) DrainOption {
+	return func(d *Drain) { d.dispatchConcurrency = n }
+}
 func WithDrainNow(now func() time.Time) DrainOption    { return func(d *Drain) { d.now = now } }
 func WithDrainLogger(l *slog.Logger) DrainOption       { return func(d *Drain) { d.log = l } }
 func WithDrainGatewaySynth(g GatewaySynth) DrainOption { return func(d *Drain) { d.gateway = g } }
@@ -176,13 +189,14 @@ func WithDrainNotifier(n Notifier) DrainOption         { return func(d *Drain) {
 // per tick, 60s wake lease, 5s retry-after, real clock.
 func NewDrain(store state.Store, engine *Engine, opts ...DrainOption) *Drain {
 	d := &Drain{
-		store:             store,
-		engine:            engine,
-		now:               time.Now,
-		batchSize:         64,
-		wakeLeaseSeconds:  60,
-		retryAfterSeconds: 5,
-		log:               slog.Default(),
+		store:               store,
+		engine:              engine,
+		now:                 time.Now,
+		batchSize:           64,
+		wakeLeaseSeconds:    60,
+		retryAfterSeconds:   5,
+		dispatchConcurrency: DefaultDrainDispatchConcurrency,
+		log:                 slog.Default(),
 	}
 	for _, o := range opts {
 		o(d)
@@ -262,8 +276,22 @@ func (d *Drain) Tick(ctx context.Context) {
 			}
 			byApp[r.AppID] = append(byApp[r.AppID], r)
 		}
+		parallelRows := make([]state.Invocation, 0, len(rows))
+		queueRowsByApp := make(map[string][]state.Invocation)
 		for _, appID := range order {
 			for _, inv := range byApp[appID] {
+				if inv.Source == state.InvocationQueue {
+					queueRowsByApp[appID] = append(queueRowsByApp[appID], inv)
+					continue
+				}
+				parallelRows = append(parallelRows, inv)
+			}
+		}
+		d.dispatchParallel(ctx, parallelRows)
+		// Queue rows remain serial per app so the FIFO contract is
+		// preserved. Other event sources use the bounded pool above.
+		for _, appID := range order {
+			for _, inv := range queueRowsByApp[appID] {
 				d.dispatchOne(ctx, inv)
 			}
 		}
@@ -271,6 +299,42 @@ func (d *Drain) Tick(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// dispatchParallel runs non-FIFO invocation sources through a bounded worker
+// pool. ClaimInvocationWithCap is the concurrency gate at the database layer,
+// while the pool prevents one schedd from creating an unbounded goroutine
+// storm when a large due batch is released at once.
+func (d *Drain) dispatchParallel(ctx context.Context, rows []state.Invocation) {
+	if len(rows) == 0 {
+		return
+	}
+	workers := d.dispatchConcurrency
+	if workers <= 1 {
+		for _, inv := range rows {
+			d.dispatchOne(ctx, inv)
+		}
+		return
+	}
+	if workers > len(rows) {
+		workers = len(rows)
+	}
+	jobs := make(chan state.Invocation)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for inv := range jobs {
+				d.dispatchOne(ctx, inv)
+			}
+		}()
+	}
+	for _, inv := range rows {
+		jobs <- inv
+	}
+	close(jobs)
+	wg.Wait()
 }
 
 // dispatchOne is per-row. The lifecycle:
@@ -335,10 +399,17 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 
-	// 3. Wake (Always-Wake = idempotent). Returns the live instance
-	// handle on success; the drain stamps it onto the row so the
-	// meter's per-instance count is non-zero for this minute.
-	wakeRes, err := d.engine.Wake(ctx, inv.AppID, "", "", TriggerMeterd)
+	// 3. EnsureWake coalesces same-app wake attempts while the bounded
+	// dispatch pool lets different apps progress concurrently. Returns
+	// the live instance handle on success; the drain stamps it onto the
+	// row so the meter's per-instance count is non-zero for this minute.
+	coord, err := d.engine.EnsureWake(ctx, inv.AppID, TriggerMeterd)
+	if err == nil && coord.Err != nil {
+		err = coord.Err
+	}
+	if err == nil && coord.Instance == nil {
+		err = errors.New("sched: ensure wake returned no instance")
+	}
 	if err != nil {
 		retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
 		// Permanent wake errors short-circuit to state='failed' — a
@@ -352,6 +423,13 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		_ = d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
 		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
 		return
+	}
+	wakeRes := WakeResult{
+		InstanceID:   coord.Instance.InstanceID,
+		NodeID:       coord.Instance.NodeID,
+		DeploymentID: coord.Instance.DeploymentID,
+		WakeID:       coord.Instance.WakeID,
+		Port:         int(coord.Instance.Port),
 	}
 	// 4. Stamp the live instance handle. Failure here is non-fatal —
 	// the dispatch can still proceed; the meter just under-counts
@@ -368,7 +446,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.emitDone(ctx, inv)
 		return
 	}
-	dispatched, err := d.gateway.Invoke(ctx, inv.AppID, inv)
+	var dispatched state.Invocation
+	if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
+		dispatched, err = prewoken.InvokeWithWake(ctx, inv.AppID, inv, wakeRes)
+	} else {
+		dispatched, err = d.gateway.Invoke(ctx, inv.AppID, inv)
+	}
 	if err != nil {
 		// Permanent invoke errors (4xx) terminal-fail; transient
 		// (network / 5xx) retry. The gateway is the source of

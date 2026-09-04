@@ -85,6 +85,17 @@ def test_parse_problem_rejects_non_problem_body() -> None:
     assert parse_problem(b"[]", "application/json", 500) is None
 
 
+def test_parse_problem_decodes_provider_neutral_checkout_url() -> None:
+    body = (
+        b'{"type":"about:blank","title":"payment required",'
+        b'"status":402,"code":"payment_required",'
+        b'"checkout_url":"https://checkout.polar.sh/session-1"}'
+    )
+    problem = parse_problem(body, "application/problem+json", 402)
+    assert problem is not None
+    assert problem.checkout_url == "https://checkout.polar.sh/session-1"
+
+
 @pytest.mark.parametrize(
     "code,expected_cls",
     [

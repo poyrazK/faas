@@ -351,12 +351,26 @@ func TestMeterdAlertEvaluator_FiresAndDedupes(t *testing.T) {
 	if got := receiver.snapshotCount(); got != 1 {
 		t.Fatalf("after first tick: receiver count = %d; want 1 (HMAC verify would have failed closed)", got)
 	}
-	deliveries, err := store.ListAlertDeliveriesForRule(ctx, rule.ID, 5, false)
-	if err != nil || len(deliveries) != 1 {
-		t.Fatalf("after first tick: ListAlertDeliveriesForRule err=%v count=%d; want 1", err, len(deliveries))
-	}
-	if deliveries[0].Status != state.AlertDeliveryDelivered {
-		t.Errorf("delivery[0].Status = %s; want delivered (last_error=%q)", deliveries[0].Status, deliveries[0].LastError)
+	// The receiver observes the HTTP request before webhookout records the
+	// terminal delivery status. Poll the row after the receiver signal so this
+	// cross-process assertion does not race the dispatcher's final DB update.
+	var deliveries []state.AlertDelivery
+	deliveryDeadline := time.Now().Add(alertEvalInterval*3 + 5*time.Second)
+	for {
+		deliveries, err = store.ListAlertDeliveriesForRule(ctx, rule.ID, 5, false)
+		if err == nil && len(deliveries) == 1 && deliveries[0].Status == state.AlertDeliveryDelivered {
+			break
+		}
+		if time.Now().After(deliveryDeadline) {
+			if err != nil {
+				t.Fatalf("after first tick: ListAlertDeliveriesForRule: %v", err)
+			}
+			if len(deliveries) != 1 {
+				t.Fatalf("after first tick: ListAlertDeliveriesForRule count=%d; want 1", len(deliveries))
+			}
+			t.Fatalf("after first tick: delivery status=%s; want delivered (last_error=%q)", deliveries[0].Status, deliveries[0].LastError)
+		}
+		time.Sleep(150 * time.Millisecond)
 	}
 	// Payload is non-empty JSON; observed_value is what we recorded
 	// when sealing (the evaluator passes the observed CountFailed).

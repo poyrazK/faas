@@ -15,6 +15,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -211,6 +212,60 @@ func TestCtxReader_Read_UnderlyingEOFReturnsEOF(t *testing.T) {
 	_, err := r.Read(buf)
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("got %v, want io.EOF", err)
+	}
+}
+
+type closeAwareBlockingReader struct {
+	started   chan struct{}
+	closed    chan struct{}
+	startOnce sync.Once
+	closeOnce sync.Once
+}
+
+func (r *closeAwareBlockingReader) Read(_ []byte) (int, error) {
+	r.startOnce.Do(func() { close(r.started) })
+	<-r.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (r *closeAwareBlockingReader) Close() error {
+	r.closeOnce.Do(func() { close(r.closed) })
+	return nil
+}
+
+func TestNewCtxReader_ClosesUnderlyingReaderOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	body := &closeAwareBlockingReader{
+		started: make(chan struct{}),
+		closed:  make(chan struct{}),
+	}
+	r, stop := newCtxReader(ctx, body)
+	defer stop()
+
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := r.Read(make([]byte, 8))
+		readDone <- err
+	}()
+	select {
+	case <-body.started:
+	case <-time.After(time.Second):
+		t.Fatal("underlying reader did not start")
+	}
+
+	cancel()
+	select {
+	case err := <-readDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Read error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("closable reader did not unblock after context cancellation")
+	}
+	select {
+	case <-body.closed:
+	default:
+		t.Fatal("context cancellation did not close the underlying reader")
 	}
 }
 

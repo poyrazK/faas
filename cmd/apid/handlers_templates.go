@@ -50,10 +50,10 @@ func templateDescription(name string) string {
 		return "minimal Go HTTP server — first-touch smoke test"
 	case "cron-example":
 		return "scheduled cron job worker — fires every minute"
-	case "function-node":
+	case "function-node", "function-node24":
 		return "Node.js function runtime — customise the handler"
-	case "function-python":
-		return "Python 3.12 function runtime — customise the handler"
+	case "function-python", "function-python313":
+		return "Python function runtime — customise the handler"
 	case "function-go":
 		return "Go function runtime — customise the handler"
 	case "s3-uploader":
@@ -129,7 +129,7 @@ func (s *server) listTemplates(w http.ResponseWriter, r *http.Request) {
 
 // projectAppsNewTemplates converts the wire templateView slice into
 // the dashboard-local views.AppsNewTemplateView so the template can
-// stay a pure renderer. Same 13 rows as /v1/templates returns; the
+// stay a pure renderer. Same 15 rows as /v1/templates returns; the
 // dashboard never recomputes descriptions / categories client-side.
 func projectAppsNewTemplates(wire []templateView) []views.AppsNewTemplateView {
 	out := make([]views.AppsNewTemplateView, 0, len(wire))

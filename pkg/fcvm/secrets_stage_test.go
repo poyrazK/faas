@@ -115,6 +115,79 @@ func TestWake_StageRoundTrip_UnsealsBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestWake_SidecarEnv_UnsealsIntoInstanceLayer(t *testing.T) {
+	// Sidecar env is sealed per value in apid. Manager.Wake must open it
+	// with the host identity and hand only a JSON map to the VMM's
+	// instance-scoped staging hook; the ciphertext must not be persisted in
+	// the shared sidecar artifact or passed into guest-init.
+	id := newIdentity(t)
+	ciphertext, err := secretbox.SealBytes(id.Recipient(), "sidecar_env", []byte("token-value"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{}
+	m := newTestManager(&fakeRunner{}, vmm)
+	m.SetHostIdentity(id)
+
+	cb := req("sidecar-env")
+	cb.Sidecars = []WorkloadSpec{{
+		Name:       "metrics",
+		Type:       "sidecar",
+		StorageKey: "/sidecar.ext4",
+		DriveID:    "layer-sidecar-0",
+		Essential:  true,
+		SealedEnv:  []SealedEnvEntry{{Key: "TOKEN", Ciphertext: ciphertext}},
+	}}
+	if _, err := m.ColdBoot(context.Background(), cb); err != nil {
+		t.Fatalf("ColdBoot: %v", err)
+	}
+	if got := len(vmm.stagedWorkloadEnvs); got != 1 {
+		t.Fatalf("StageWorkloadEnv called %d times, want 1", got)
+	}
+	entry := vmm.stagedWorkloadEnvs[0]
+	if entry.workloadName != "metrics" {
+		t.Fatalf("workload name = %q, want metrics", entry.workloadName)
+	}
+	var env map[string]string
+	if err := json.Unmarshal(entry.blob, &env); err != nil {
+		t.Fatalf("staged sidecar env is not JSON: %v", err)
+	}
+	if env["TOKEN"] != "token-value" {
+		t.Errorf("TOKEN = %q, want token-value", env["TOKEN"])
+	}
+	if strings.Contains(string(entry.blob), "AGE-") {
+		t.Errorf("sidecar ciphertext leaked into staged env: %q", entry.blob)
+	}
+}
+
+func TestWake_SidecarEnv_NoHostIdentity(t *testing.T) {
+	id := newIdentity(t)
+	ciphertext, err := secretbox.SealBytes(id.Recipient(), "sidecar_env", []byte("secret"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{}
+	m := newTestManager(&fakeRunner{}, vmm)
+
+	cb := req("sidecar-no-key")
+	cb.Sidecars = []WorkloadSpec{{
+		Name:      "metrics",
+		Type:      "sidecar",
+		DriveID:   "layer-sidecar-0",
+		SealedEnv: []SealedEnvEntry{{Key: "TOKEN", Ciphertext: ciphertext}},
+	}}
+	_, err = m.ColdBoot(context.Background(), cb)
+	if err == nil {
+		t.Fatal("ColdBoot accepted sidecar env without host key")
+	}
+	if !errors.Is(err, ErrNoHostKey) {
+		t.Errorf("err = %v, want ErrNoHostKey in chain", err)
+	}
+	if len(vmm.stagedWorkloadEnvs) != 0 {
+		t.Errorf("StageWorkloadEnv was called despite missing key")
+	}
+}
+
 func TestWake_MultipleEntries_MergedIntoEnvelope(t *testing.T) {
 	// The per-row storage shape means each secret is independently
 	// sealed — schedd ships a slice, the Manager merges them. This test

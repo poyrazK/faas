@@ -2,10 +2,10 @@
 #
 # Builds and publishes ghcr.io/poyrazk/builder-base for linux/amd64
 # + linux/arm64 on every push to main. PR builds run against a local
-# registry service container and a post-build crane-based verification
-# step asserts /usr/local/bin/faas-guest-init exists in the just-pushed
-# image's amd64 manifest (the kernel-cmdline PID1 binary every
-# builder microVM hands control to — see images/builder-base.Dockerfile).
+# registry service container and post-build verification checks both
+# architecture manifests for the kernel-cmdline PID1 binary every builder
+# microVM hands control to (see images/builder-base.Dockerfile). The same
+# concrete artifacts are vulnerability-scanned before the workflow can pass.
 #
 # guest-init is built INSIDE the Dockerfile via a multi-stage cross-
 # compile (see images/builder-base.Dockerfile stage 1). Each arch's
@@ -21,9 +21,14 @@
 #  - This workflow needs packages:write to push to ghcr.io; scoping it
 #    to its own file keeps the elevated permission minimal.
 #
-# Trigger paths: changes to the Dockerfile, the digest lock, the
-# guest-init source, or this workflow file. workflow_dispatch is the
-# manual reroll path (e.g. after a BuildKit / Railpack bump).
+# The workflow is intentionally always scheduled for pull requests and
+# main pushes. `runtime-change` is the cheap path filter inside the
+# workflow, which means the final `runtime-contract-gate` check exists on
+# every PR even when the eight-image matrix is not needed. Keeping the
+# decision in a job (rather than in `on.pull_request.paths`) prevents a
+# runtime-code change from silently bypassing the contract gate.
+# workflow_dispatch remains the manual reroll path (e.g. after a BuildKit /
+# Railpack bump).
 #
 # Why a service container for the local registry (PR #940 CI follow-
 # up, runs #1–#7): seven prior attempts all failed.
@@ -37,7 +42,7 @@
 #   #5 `localhost:5000` everywhere + custom buildkit driver — the
 #      curl/wait loop succeeded (curl on the runner namespace hits
 #      the bridge gateway), but the buildx push (running inside a
-#      separate `moby/buildkit:v0.31.2` container) hit
+#      separate `moby/buildkit:v0.32.2` container) hit
 #      `dial tcp [::1]:5000: connect: connection refused`.
 #   #6 `registry:5000` (service label) everywhere — runner's curl
 #      cannot resolve the label (DNS resolver doesn't try the
@@ -62,21 +67,7 @@ name: images
 on:
   push:
     branches: [main]
-    paths:
-      - 'images/builder-base.Dockerfile'
-      - 'images/buildkit-session-health.patch'
-      - 'images/*.Dockerfile'
-      - 'images/Dockerfile.lock'
-      - '.github/workflows/images.yml'
-      - 'guest/init/**'
   pull_request:
-    paths:
-      - 'images/builder-base.Dockerfile'
-      - 'images/buildkit-session-health.patch'
-      - 'images/*.Dockerfile'
-      - 'images/Dockerfile.lock'
-      - '.github/workflows/images.yml'
-      - 'guest/init/**'
   workflow_dispatch:
 
 concurrency:
@@ -88,8 +79,67 @@ permissions:
   packages: write   # ghcr.io/poyrazk push (GITHUB_TOKEN)
 
 jobs:
+  # Keep this detector small and dependency-free. It is the single source
+  # of truth for whether the expensive image matrix is required, and its
+  # output is consumed by the always-on gate below.
+  runtime-change:
+    name: runtime change detection
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.changed.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect runtime-affecting changes
+        id: changed
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch: runtime matrix requested."
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            base="$PR_BASE_SHA"
+            head="$PR_HEAD_SHA"
+          else
+            base="$PUSH_BEFORE_SHA"
+            head="$CURRENT_SHA"
+          fi
+
+          # A first push has no usable parent. Fail closed toward running
+          # the matrix; a false negative here would be a silent bypass.
+          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "No usable base SHA: runtime matrix requested."
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "$base" "$head")"
+          printf '%s\n' "$changed"
+          if grep -Eq '^(images/|guest/init/|guest/runners/|pkg/(builderd|imaged|oci|rootfs|api)/|cmd/imaged/|cmd/apid/handlers_templates(_test)?\.go$|cmd/gregale/templates/|cmd/gregale/cli_meta\.go$|cmd/gregale/commands_init|migrations/.*runtime.*\.sql$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image|validate-runtime-docs)\.sh$|docs/runtimes/|docs/faas_implementation_spec\.md$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "Runtime-affecting change detected."
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No runtime-affecting change detected."
+          fi
+
   builder-base:
     name: builder-base (linux/amd64 + linux/arm64)
+    needs: runtime-change
+    if: needs.runtime-change.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # Issue #938 / PR-B / ADR-114: PR builds push to a local
@@ -106,8 +156,8 @@ jobs:
           - 5000:5000
     env:
       IMAGE_NAME: ghcr.io/poyrazk/builder-base
-      BUILDKIT_VERSION: "0.31.2"
-      RAILPACK_VERSION: "0.31.1"
+      BUILDKIT_VERSION: "0.32.2"
+      RAILPACK_VERSION: "0.38.0"
     steps:
       - uses: actions/checkout@v7
 
@@ -133,7 +183,7 @@ jobs:
         #   - default driver + service label `registry:5000` →
         #     `dial tcp: lookup registry on 168.63.129.16:53: no
         #     such host` (DNS lookup misses; also no network join).
-        #   - explicit `image=moby/buildkit:v0.31.2` driver +
+        #   - explicit `image=moby/buildkit:v0.32.2` driver +
         #     `localhost:5000` → `dial tcp [::1]:5000: connect:
         #     connection refused` (custom container is on its own
         #     namespace; no host loopback).
@@ -170,7 +220,7 @@ jobs:
           echo "::error::local registry did not become ready"
           exit 1
 
-      - name: Build + push (main)
+      - name: Build + push staging image (main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           docker buildx build \
@@ -179,8 +229,7 @@ jobs:
             --build-arg RAILPACK_VERSION \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --tag "${IMAGE_NAME}:latest" \
-            --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
+            --tag "${IMAGE_NAME}:ci-${GITHUB_SHA}" \
             --push \
             -f images/builder-base.Dockerfile .
 
@@ -209,8 +258,8 @@ jobs:
             --push \
             -f images/builder-base.Dockerfile .
 
-      # Verify the linux/amd64 manifest in the just-built (or
-      # just-pushed) image contains /usr/local/bin/faas-guest-init.
+      # Verify both Linux manifests in the just-built (or just-pushed) image
+      # contain the architecture-matched /usr/local/bin/faas-guest-init.
       # The Lima local-build path checks the same thing at
       # deploy/lima/faas-metal.yaml:482-490; this is the CI
       # equivalent. imaged rejects manifest lists at
@@ -220,50 +269,101 @@ jobs:
       - name: Verify faas-guest-init is in the image
         run: |
           set -euo pipefail
-          # Earlier attempts called `go install
-          # github.com/google/go-containerregistry/cmd/crane@latest`
-          # which surfaced exit 127 ('command not found') on
-          # Ubuntu 24.04 GitHub runners: go-containerregistry
-          # v0.21.9 requires Go ≥ 1.25.0, so go install switched
-          # the toolchain to go1.25.13 and dropped the binary in
-          # $GOPATH/bin, which isn't on the step's PATH by
-          # default. Skip the toolchain dance and install a
-          # static pre-built crane from the upstream release
-          # tarball instead — same code, no Go-toolchain auto-
-          # fetch race, lands at an absolute path.
-          curl -fsSL -o /tmp/crane.tgz \
+          # Install a static, checksum-pinned crane. Avoid the Go-toolchain
+          # dance so this verification step cannot drift with @latest.
+          CRANE_SHA256=ffca5eafe0af8078f2c627fb852104f9d762fad1eb36c04e93ca14fce76d47d2
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            -o /tmp/crane.tgz \
             https://github.com/google/go-containerregistry/releases/download/v0.21.1/go-containerregistry_Linux_x86_64.tar.gz
+          echo "${CRANE_SHA256}  /tmp/crane.tgz" | sha256sum --check --strict
           tar -C /usr/local/bin -xzf /tmp/crane.tgz crane
           chmod +x /usr/local/bin/crane
           rm /tmp/crane.tgz
           if [ "${GITHUB_REF_NAME:-}" = "main" ] && \
              [ "${GITHUB_EVENT_NAME}" = "push" ]; then
-            # Verify the immutable full-SHA tag, not only the convenience
-            # latest tag. Deployments must be able to reproduce this exact
-            # image even after latest advances.
-            REF="${IMAGE_NAME}:sha-${GITHUB_SHA}"
+            # Verify the staging tag. The release-facing latest/sha tags are
+            # promoted only after both architecture checks and the scan pass.
+            REF="${IMAGE_NAME}:ci-${GITHUB_SHA}"
           else
             # Verify step runs from the runner namespace; the
             # published port is reachable via the bridge
             # gateway at localhost:5000 (same as step 7).
             REF="localhost:5000/pr-${GITHUB_SHA::12}"
           fi
-          DIGEST=$(crane manifest "${REF}" 2>/dev/null | \
-            jq -r '.manifests[] | select(.platform.architecture=="amd64").digest')
-          if [ -z "${DIGEST}" ] || [ "${DIGEST}" = "null" ]; then
-            echo "::error::no amd64 manifest in ${REF}"
-            exit 1
+          MANIFEST_JSON=$(crane manifest "${REF}")
+          VERIFY_ROOT=$(mktemp -d)
+          trap 'rm -rf "${VERIFY_ROOT}"' EXIT
+          for ARCH in amd64 arm64; do
+            DIGEST=$(jq -er --arg arch "${ARCH}" '
+              [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest] |
+              if length == 1 then .[0] else error("expected exactly one linux/" + $arch + " manifest") end' \
+              <<<"${MANIFEST_JSON}")
+            ROOTFS_TAR="${VERIFY_ROOT}/rootfs-${ARCH}.tar"
+            ROOTFS_DIR="${VERIFY_ROOT}/rootfs-${ARCH}"
+            mkdir -p "${ROOTFS_DIR}"
+            crane export "${REF}@${DIGEST}" "${ROOTFS_TAR}"
+            tar -xf "${ROOTFS_TAR}" -C "${ROOTFS_DIR}"
+            INIT="${ROOTFS_DIR}/usr/local/bin/faas-guest-init"
+            if [ ! -x "${INIT}" ]; then
+              echo "::error::faas-guest-init missing from ${REF}@${DIGEST} (${ARCH})"
+              echo "The build pipeline produced a rootfs without the PID1"
+              echo "binary. Check images/builder-base.Dockerfile COPY path"
+              echo "and the guest-init build stage."
+              exit 1
+            fi
+            FILE_OUTPUT=$(file "${INIT}")
+            case "${ARCH}" in
+              amd64) echo "${FILE_OUTPUT}" | grep -Eiq 'x86-64|AMD64' ;;
+              arm64) echo "${FILE_OUTPUT}" | grep -Eiq 'aarch64|ARM aarch64' ;;
+            esac || {
+              echo "::error::${INIT} has the wrong architecture: ${FILE_OUTPUT}"
+              exit 1
+            }
+            echo "OK: ${REF}@${DIGEST} contains ${ARCH} faas-guest-init"
+          done
+
+      - name: Install pinned Grype
+        env:
+          GRYPE_VERSION: "0.116.0"
+          GRYPE_SHA256: "40aff724297312f91ea390d003bed8d8651c74cc7f5b26732db80b3a408d2fc5"
+        run: |
+          bash scripts/ci/install-grype.sh "$RUNNER_TEMP/grype"
+
+      - name: Update Grype vulnerability database
+        env:
+          GRYPE_BIN: ${{ runner.temp }}/grype
+        run: bash scripts/ci/update-grype-db.sh
+
+      # Scan both exact architecture artifacts produced by this job before
+      # either can become a release input. Builder binaries are compiled from
+      # source in the Dockerfile, so fixed HIGH findings are release blockers
+      # here (runtime bases retain the stricter operational CRITICAL gate).
+      - name: Scan builder base for high vulnerabilities
+        env:
+          GRYPE_BIN: ${{ runner.temp }}/grype
+          GRYPE_FAIL_ON: high
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            ref="${IMAGE_NAME}:ci-${GITHUB_SHA}"
+          else
+            ref="localhost:5000/pr-${GITHUB_SHA::12}"
           fi
-          crane export "${REF}@${DIGEST}" /tmp/rootfs.tar
-          mkdir -p /tmp/rootfs && tar -xf /tmp/rootfs.tar -C /tmp/rootfs
-          if [ ! -x /tmp/rootfs/usr/local/bin/faas-guest-init ]; then
-            echo "::error::faas-guest-init missing from ${REF}@${DIGEST}"
-            echo "The build pipeline produced a rootfs without the PID1"
-            echo "binary. Check images/builder-base.Dockerfile COPY path"
-            echo "and the guest-init build stage."
-            exit 1
-          fi
-          echo "OK: ${REF}@${DIGEST} contains /usr/local/bin/faas-guest-init"
+          for arch in amd64 arm64; do
+            bash scripts/ci/scan-oci-image.sh registry "${ref}" "linux/${arch}"
+          done
+
+      - name: Promote verified builder base (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}:ci-${GITHUB_SHA}"
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
+            "${IMAGE_NAME}:ci-${GITHUB_SHA}"
 
   # Runtime bases are single-arch artifacts today because the image lock and
   # the production compute fleet pin linux/amd64 children. They are published
@@ -271,6 +371,8 @@ jobs:
   # concrete digest and imaged never receives a manifest list.
   runtime-bases:
     name: ${{ matrix.image }} (linux/amd64)
+    needs: runtime-change
+    if: needs.runtime-change.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -300,6 +402,11 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: Login to ghcr.io
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
@@ -308,13 +415,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build + push runtime base (main)
+      - name: Build + push staging runtime base (main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           docker buildx build \
             --platform linux/amd64 \
-            --tag "${IMAGE_NAME}:latest" \
-            --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
+            --tag "${IMAGE_NAME}:ci-${GITHUB_SHA}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --push \
@@ -328,3 +434,123 @@ jobs:
             --tag "${IMAGE_NAME}:pr-${GITHUB_SHA::12}" \
             --load \
             -f "${{ matrix.dockerfile }}" .
+
+      - name: Pull runtime base for contract validation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker pull "${IMAGE_NAME}:ci-${GITHUB_SHA}"
+
+      - name: Verify runtime rootfs contract
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            ref="${IMAGE_NAME}:ci-${GITHUB_SHA}"
+          else
+            ref="${IMAGE_NAME}:pr-${GITHUB_SHA::12}"
+          fi
+          bash scripts/ci/validate-runtime-image.sh "${ref}" "${{ matrix.image }}"
+          if [[ "${{ matrix.image }}" != "base-debian-parent" && "${{ matrix.image }}" != "base-minimal" ]]; then
+            bash scripts/ci/smoke-runtime-image.sh "${ref}" "${{ matrix.image }}"
+          fi
+
+      - name: Install pinned Grype
+        env:
+          GRYPE_VERSION: "0.116.0"
+          GRYPE_SHA256: "40aff724297312f91ea390d003bed8d8651c74cc7f5b26732db80b3a408d2fc5"
+        run: bash scripts/ci/install-grype.sh "$RUNNER_TEMP/grype"
+
+      - name: Update Grype vulnerability database
+        env:
+          GRYPE_BIN: ${{ runner.temp }}/grype
+        run: bash scripts/ci/update-grype-db.sh
+
+      - name: Scan runtime base for critical vulnerabilities
+        env:
+          GRYPE_BIN: ${{ runner.temp }}/grype
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            ref="${IMAGE_NAME}:ci-${GITHUB_SHA}"
+          else
+            ref="${IMAGE_NAME}:pr-${GITHUB_SHA::12}"
+          fi
+          bash scripts/ci/scan-oci-image.sh docker "${ref}" linux/amd64
+
+      - name: Promote verified runtime base (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}:ci-${GITHUB_SHA}"
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
+            "${IMAGE_NAME}:ci-${GITHUB_SHA}"
+
+  # Keep source-artifact tests parallel with the image matrix. This job runs
+  # on every PR because it is small enough to be a useful always-on signal;
+  # the final gate below still aggregates its result fail-closed.
+  runtime-source-contract:
+    name: runtime source contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # These tests exercise the builder-produced source-artifact handoff:
+      # dependency-complete Node/Python source stays intact, Go's /app/server
+      # becomes the runner's /app/handler, and every supported runtime keeps
+      # its canonical handler path.
+      - name: Source-artifact adapter smoke
+        run: >-
+          go test ./pkg/rootfs ./pkg/imaged
+          -run 'TestNormalizeFunctionHandler|TestBuildFunctionLayer_UsesSourceBuildOCIForGoRuntimes|TestMakeGoHandlerLayer|TestFunctionHandlerPaths_CoversAllSupportedRuntimes'
+          -count=1 -timeout=120s
+
+  # This exact job name is intended to become a required ruleset check after
+  # this workflow has merged. `always()` is essential: on unrelated PRs the
+  # expensive jobs are skipped by design, but this stable check must still
+  # report success instead of disappearing from the checks list.
+  runtime-contract-gate:
+    name: runtime-contract-gate
+    if: always()
+    needs: [runtime-change, runtime-source-contract, builder-base, runtime-bases]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate runtime documentation contract
+        run: bash scripts/ci/validate-runtime-docs.sh
+
+      - name: Enforce runtime matrix result
+        env:
+          DETECTION_RESULT: ${{ needs.runtime-change.result }}
+          SOURCE_RESULT: ${{ needs.runtime-source-contract.result }}
+          RELEVANT: ${{ needs.runtime-change.outputs.relevant }}
+          BUILDER_RESULT: ${{ needs.builder-base.result }}
+          BASES_RESULT: ${{ needs.runtime-bases.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$DETECTION_RESULT" != success ]]; then
+            echo "::error::runtime change detection did not complete: $DETECTION_RESULT"
+            exit 1
+          fi
+          if [[ "$SOURCE_RESULT" != success ]]; then
+            echo "::error::runtime source contract did not complete: $SOURCE_RESULT"
+            exit 1
+          fi
+          if [[ "$RELEVANT" != true ]]; then
+            echo "No runtime-affecting files changed; runtime image matrix was not required."
+            exit 0
+          fi
+          for result in "$BUILDER_RESULT" "$BASES_RESULT"; do
+            if [[ "$result" != success ]]; then
+              echo "::error::runtime image contract result: $result"
+              exit 1
+            fi
+          done
+          echo "Runtime image and source-artifact contracts passed."

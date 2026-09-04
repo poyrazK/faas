@@ -48,6 +48,29 @@ func TestControlPlaneProxyKeepsAPIOnControlPlane(t *testing.T) {
 	}
 }
 
+func TestControlPlaneProxyDoesNotExposeMetricsDiscovery(t *testing.T) {
+	var upstreamHits int
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamHits++
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	t.Cleanup(controlPlane.Close)
+
+	handler, err := newControlPlaneProxy(controlPlane.URL, http.NotFoundHandler(), slog.Default())
+	if err != nil {
+		t.Fatalf("newControlPlaneProxy: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://edge.local/v1/internal/metrics/targets", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404", rec.Code)
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("upstream hits=%d, want 0", upstreamHits)
+	}
+}
+
 func TestControlPlaneProxyReportsUnavailableAPI(t *testing.T) {
 	handler, err := newControlPlaneProxy("http://127.0.0.1:1", http.NotFoundHandler(), slog.Default())
 	if err != nil {

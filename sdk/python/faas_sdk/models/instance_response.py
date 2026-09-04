@@ -7,6 +7,30 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.instance_response_execution_mode_type_1 import (
+    InstanceResponseExecutionModeType1,
+    check_instance_response_execution_mode_type_1,
+)
+from ..models.instance_response_execution_mode_type_2_type_1 import (
+    InstanceResponseExecutionModeType2Type1,
+    check_instance_response_execution_mode_type_2_type_1,
+)
+from ..models.instance_response_execution_mode_type_3_type_1 import (
+    InstanceResponseExecutionModeType3Type1,
+    check_instance_response_execution_mode_type_3_type_1,
+)
+from ..models.instance_response_lifecycle_failure_reason_type_1 import (
+    InstanceResponseLifecycleFailureReasonType1,
+    check_instance_response_lifecycle_failure_reason_type_1,
+)
+from ..models.instance_response_lifecycle_failure_reason_type_2_type_1 import (
+    InstanceResponseLifecycleFailureReasonType2Type1,
+    check_instance_response_lifecycle_failure_reason_type_2_type_1,
+)
+from ..models.instance_response_lifecycle_failure_reason_type_3_type_1 import (
+    InstanceResponseLifecycleFailureReasonType3Type1,
+    check_instance_response_lifecycle_failure_reason_type_3_type_1,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="InstanceResponse")
@@ -30,6 +54,22 @@ class InstanceResponse:
     last_request_at: datetime.datetime | None | Unset = UNSET
     parked_at: datetime.datetime | None | Unset = UNSET
     min_instances_target: int | None | Unset = UNSET
+    execution_mode: (
+        InstanceResponseExecutionModeType1
+        | InstanceResponseExecutionModeType2Type1
+        | InstanceResponseExecutionModeType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Closed-set execution mode for this instance (ADR-137 §Decision 1)."""
+    lifecycle_failure_reason: (
+        InstanceResponseLifecycleFailureReasonType1
+        | InstanceResponseLifecycleFailureReasonType2Type1
+        | InstanceResponseLifecycleFailureReasonType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Reason for the most recent terminal transition (ADR-138 §Decision 2). null when still running."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +121,30 @@ class InstanceResponse:
         else:
             min_instances_target = self.min_instances_target
 
+        execution_mode: None | str | Unset
+        if isinstance(self.execution_mode, Unset):
+            execution_mode = UNSET
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        else:
+            execution_mode = self.execution_mode
+
+        lifecycle_failure_reason: None | str | Unset
+        if isinstance(self.lifecycle_failure_reason, Unset):
+            lifecycle_failure_reason = UNSET
+        elif isinstance(self.lifecycle_failure_reason, str):
+            lifecycle_failure_reason = self.lifecycle_failure_reason
+        elif isinstance(self.lifecycle_failure_reason, str):
+            lifecycle_failure_reason = self.lifecycle_failure_reason
+        elif isinstance(self.lifecycle_failure_reason, str):
+            lifecycle_failure_reason = self.lifecycle_failure_reason
+        else:
+            lifecycle_failure_reason = self.lifecycle_failure_reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -104,6 +168,10 @@ class InstanceResponse:
             field_dict["parked_at"] = parked_at
         if min_instances_target is not UNSET:
             field_dict["min_instances_target"] = min_instances_target
+        if execution_mode is not UNSET:
+            field_dict["execution_mode"] = execution_mode
+        if lifecycle_failure_reason is not UNSET:
+            field_dict["lifecycle_failure_reason"] = lifecycle_failure_reason
 
         return field_dict
 
@@ -191,6 +259,106 @@ class InstanceResponse:
 
         min_instances_target = _parse_min_instances_target(d.pop("min_instances_target", UNSET))
 
+        def _parse_execution_mode(
+            data: object,
+        ) -> (
+            InstanceResponseExecutionModeType1
+            | InstanceResponseExecutionModeType2Type1
+            | InstanceResponseExecutionModeType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_1 = check_instance_response_execution_mode_type_1(data)
+
+                return execution_mode_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_2_type_1 = check_instance_response_execution_mode_type_2_type_1(data)
+
+                return execution_mode_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_3_type_1 = check_instance_response_execution_mode_type_3_type_1(data)
+
+                return execution_mode_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                InstanceResponseExecutionModeType1
+                | InstanceResponseExecutionModeType2Type1
+                | InstanceResponseExecutionModeType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        execution_mode = _parse_execution_mode(d.pop("execution_mode", UNSET))
+
+        def _parse_lifecycle_failure_reason(
+            data: object,
+        ) -> (
+            InstanceResponseLifecycleFailureReasonType1
+            | InstanceResponseLifecycleFailureReasonType2Type1
+            | InstanceResponseLifecycleFailureReasonType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                lifecycle_failure_reason_type_1 = check_instance_response_lifecycle_failure_reason_type_1(data)
+
+                return lifecycle_failure_reason_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                lifecycle_failure_reason_type_2_type_1 = check_instance_response_lifecycle_failure_reason_type_2_type_1(
+                    data
+                )
+
+                return lifecycle_failure_reason_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                lifecycle_failure_reason_type_3_type_1 = check_instance_response_lifecycle_failure_reason_type_3_type_1(
+                    data
+                )
+
+                return lifecycle_failure_reason_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                InstanceResponseLifecycleFailureReasonType1
+                | InstanceResponseLifecycleFailureReasonType2Type1
+                | InstanceResponseLifecycleFailureReasonType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        lifecycle_failure_reason = _parse_lifecycle_failure_reason(d.pop("lifecycle_failure_reason", UNSET))
+
         instance_response = cls(
             id=id,
             app_id=app_id,
@@ -203,6 +371,8 @@ class InstanceResponse:
             last_request_at=last_request_at,
             parked_at=parked_at,
             min_instances_target=min_instances_target,
+            execution_mode=execution_mode,
+            lifecycle_failure_reason=lifecycle_failure_reason,
         )
 
         instance_response.additional_properties = d

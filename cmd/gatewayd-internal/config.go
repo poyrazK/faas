@@ -348,11 +348,47 @@ func (c *Config) GetAppErrorsTarget(env func(string) string) string {
 	return "/run/faas/app_errors.sock"
 }
 
+// GetRequestTelemetryTarget resolves the apid RequestTelemetry endpoint.
+// Single-box deployments keep a dedicated Unix socket. Split-box manifests
+// intentionally reuse the AppErrors mTLS listener so one private, firewall-
+// and certificate-managed control endpoint carries both gateway→apid
+// telemetry services. An explicit request-telemetry setting always wins.
+func (c *Config) GetRequestTelemetryTarget(env func(string) string) string {
+	if v := env("FAAS_APID_REQUEST_TELEMETRY_TARGET"); v != "" {
+		return v
+	}
+	if v := env("FAAS_APID_REQUEST_TELEMETRY_SOCKET"); v != "" {
+		return v
+	}
+	if v := env("FAAS_APID_APP_ERRORS_TARGET"); v != "" {
+		return v
+	}
+	if c != nil && c.AppErrorsTarget != "" {
+		return c.AppErrorsTarget
+	}
+	return "/run/faas/request_telemetry.sock"
+}
+
 // LoadAppErrorsTLS returns the client mTLS config gatewayd uses to report
 // errors to apid. Empty paths preserve the Unix-socket/single-box path.
 func (c *Config) LoadAppErrorsTLS() (*tls.Config, error) {
 	if c == nil {
 		return nil, nil
 	}
-	return wire.LoadClientTLSConfigWithPrefix("app_errors_", c.AppErrorsTLSCertPath, c.AppErrorsTLSKeyPath, c.AppErrorsTLSCAPath)
+	certPath := c.AppErrorsTLSCertPath
+	keyPath := c.AppErrorsTLSKeyPath
+	caPath := c.AppErrorsTLSCAPath
+	// Keep the generated systemd drop-in authoritative for split-box
+	// deployments. This prevents an operator-owned TOML file from silently
+	// discarding the mTLS client identity during a rolling update.
+	if v := os.Getenv("FAAS_APID_APP_ERRORS_TLS_CERT_PATH"); v != "" {
+		certPath = v
+	}
+	if v := os.Getenv("FAAS_APID_APP_ERRORS_TLS_KEY_PATH"); v != "" {
+		keyPath = v
+	}
+	if v := os.Getenv("FAAS_APID_APP_ERRORS_TLS_CA_PATH"); v != "" {
+		caPath = v
+	}
+	return wire.LoadClientTLSConfigWithPrefix("app_errors_", certPath, keyPath, caPath)
 }

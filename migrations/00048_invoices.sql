@@ -41,7 +41,7 @@
 create table invoices (
   id                  uuid primary key default gen_random_uuid(),
   account_id          uuid not null references accounts(id) on delete cascade,
-  provider            text not null check (provider in ('stripe','paddle')),
+  provider            text not null check (provider in ('stripe','paddle','polar')),
   provider_invoice_id text not null,
   number              text not null default '',
   status              text not null check (status in ('draft','open','paid','uncollectible','void')),

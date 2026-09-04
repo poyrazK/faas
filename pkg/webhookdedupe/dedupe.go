@@ -1,5 +1,7 @@
 // Package webhookdedupe is the shared replay-protection primitive
-// for the three webhook ingresses on the box.
+// for the external webhook ingresses on the box. Polar's apid ingress
+// uses the durable Store claim variant; the in-memory helper remains
+// available to legacy ingress adapters and tests.
 //
 // Issue #294 closes the SOC 2 CC6.1 expectation that every external
 // event ingestion be idempotent. The helper sits in front of the
@@ -9,7 +11,8 @@
 //
 // Replays are detected by delivery UUID (X-GitHub-Delivery for
 // GitHub, Stripe `event.id` for Stripe, Paddle `event_id` for
-// Paddle) rather than by request body — the UUID is provider-issued
+// Paddle, and Standard Webhooks `webhook-id` for Polar) rather than by
+// request body — the UUID is provider-issued
 // and stable across redeliveries, while body bytes can drift on
 // re-serialization. The TTL matches the Stripe / Paddle signature
 // tolerance windows (5 minutes) so a legitimate retry that falls
@@ -18,19 +21,17 @@
 //
 // # Storage
 //
-// The dedupe state is a process-local sync.Map (keyed by
-// provider+deliveryID) so this package has no persistence
-// dependency and can ship independently of any migration slot.
+// The legacy helper's dedupe state is a process-local sync.Map (keyed by
+// provider+deliveryID) so this package has no persistence dependency.
 // Trade-off: a daemon restart clears the dedupe window, so a
 // replay arriving within 5 minutes of restart can pass through.
 // This is acceptable for v1 because (a) the HMAC verify in front
 // of this package is still the authenticity gate, and (b) each
 // provider's own redelivery cadence concentrates retries in
 // seconds, not minutes, so the rest of the dedupe window is
-// rarely meaningful. A follow-up PR will back the sync.Map with
-// a shared `webhook_deliveries` table once migration slot
-// contention with PRs #335/#352/#369 (which currently claim
-// slots 56, 57, 58) clears.
+// rarely meaningful. Paddle and Polar's apid ingresses use the durable
+// `webhook_deliveries` claim in state.Store so their replay safety survives
+// daemon restarts and multiple apid instances.
 package webhookdedupe
 
 import (
@@ -41,7 +42,7 @@ import (
 )
 
 // Provider identifiers — values that land in the dedupe key
-// namespace. The set is closed (GitHub/Stripe/Paddle) and adding a
+// namespace. The set is closed (GitHub/Stripe/Paddle/Polar/Resend) and adding a
 // future provider is a one-line constant addition.
 const (
 	// ProviderGitHub is the source of the X-GitHub-Delivery UUID.
@@ -55,6 +56,9 @@ const (
 	// pkg/billing/paddle/webhook.go::parsePaddleEvent and surfaced
 	// via the billing.Event struct to apid.
 	ProviderPaddle = "paddle"
+	// ProviderPolar is the source of the Standard Webhooks webhook-id
+	// header surfaced via billing.Event.EventID.
+	ProviderPolar = "polar"
 	// ProviderResend is the source of Resend's `svix-id` header
 	// (issue #246 acceptance item 8). Resend uses Svix / Standard
 	// Webhooks — the verifier at pkg/mail/webhook_signature.go
@@ -153,4 +157,15 @@ func CheckReplay(_ context.Context, provider, deliveryID string) error {
 //	if webhookdedupe.IsReplay(err) { w.WriteHeader(200); return }
 func IsReplay(err error) bool {
 	return errors.Is(err, ErrReplay)
+}
+
+// ReleaseReplay removes a previously claimed in-process delivery. Ingress
+// handlers use this when durable business-state application fails after the
+// initial claim, so an upstream retry can actually re-run the event instead
+// of receiving a false replay acknowledgement.
+func ReleaseReplay(_ context.Context, provider, deliveryID string) {
+	if provider == "" || deliveryID == "" {
+		return
+	}
+	store.Delete(dedupeKey{provider: provider, deliveryID: deliveryID})
 }

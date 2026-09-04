@@ -25,7 +25,7 @@ import (
 	"testing"
 )
 
-const signupPlaintext = "fp_live_signupabcdef0123456789abcdef0123456789abcdef012"
+var signupPlaintext = testAPIKey('f')
 
 // fakeSignupServer returns the canonical ProgrammaticAuthResponse
 // body for the /v1/auth/{signup,login,signup/magic-link} routes. The

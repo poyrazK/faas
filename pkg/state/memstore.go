@@ -79,6 +79,21 @@ type paddleOverageClaimState struct {
 	mbSecondsSum int64
 }
 
+// auditEventOutboxRow is the in-memory mirror of audit_event_outbox. The
+// public queue item intentionally omits mutable claim metadata; keeping that
+// metadata private prevents callers from treating a stale claim as authority.
+type auditEventOutboxRow struct {
+	AuditEventOutbox
+	state       string
+	availableAt time.Time
+	claimedBy   string
+	claimedAt   time.Time
+	leaseUntil  time.Time
+	deliveredAt time.Time
+	createdAt   time.Time
+	lastError   string
+}
+
 // MemStore is an in-memory Store for tests and local development. It is safe for
 // concurrent use and enforces the same uniqueness constraints as the schema
 // (unique email, unique slug, unique key hash) so tests exercise real error
@@ -352,6 +367,12 @@ type MemStore struct {
 	// fan-out. Legacy snapshots without an entry remain globally eligible.
 	snapshotOrigins map[string]snapshotOriginRow
 	events          []Event
+	// auditOutbox mirrors audit_event_outbox. It is separate from the
+	// events slice because delivery claims need leases and retry state,
+	// while the resulting audit event remains append-only.
+	auditOutbox       map[int64]auditEventOutboxRow
+	auditOutboxByKey  map[string]int64
+	nextAuditOutboxID int64
 	// auditLog (issue #755 / PR-6) is the in-memory mirror of the
 	// pgstore.audit_log table. Append-only by spec — MemStore has no
 	// UpdateAuditLog / DeleteAuditLog pair. The DeleteAccount path
@@ -382,10 +403,7 @@ type MemStore struct {
 	// AccountByProviderCustomerID; keyed by Stripe `cus_…` ID.
 	stripeByCustomer map[string]string
 	// invoices is the in-memory mirror of the `invoices` table
-	// (migration 00050, issue #259). PR A reads via
-	// ListInvoicesForAccount; PR B adds the writer
-	// (UpsertInvoice via webhook ingestion). Seeded by tests for
-	// parity-with-pgstore checks.
+	// (migration 00050, issue #259).
 	invoices map[string]Invoice
 	// accountCredits is the in-memory mirror of the `account_credits`
 	// table (migration 00049, issue #279). Keyed by credit id. The
@@ -757,6 +775,9 @@ func NewMemStore() *MemStore {
 		snapshotReplicas:        map[snapshotReplicaKey]snapshotReplicaRow{},
 		snapshotOrigins:         map[string]snapshotOriginRow{},
 		events:                  []Event{},
+		auditOutbox:             map[int64]auditEventOutboxRow{},
+		auditOutboxByKey:        map[string]int64{},
+		nextAuditOutboxID:       1,
 		usage:                   []usageMinute{},
 		usageByMonth:            []Usage{},
 		idem:                    map[string]idemEntry{},
@@ -2915,6 +2936,49 @@ func (m *MemStore) ListInstancesByNodeID(_ context.Context, nodeID string) ([]In
 		if owner[ins.AppID] == nodeID {
 			out = append(out, ins)
 		}
+	}
+	return out, nil
+}
+
+// ListInstancesForLifecycleReconciliation mirrors the PgStore join used by
+// schedd's durable deletion sweep. The in-memory implementation deliberately
+// evaluates the same app/account status and instance-state predicates so
+// tests exercise the production contract rather than a looser approximation.
+func (m *MemStore) ListInstancesForLifecycleReconciliation(_ context.Context, nodeID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := make([]Instance, 0)
+	for _, ins := range m.instances {
+		app, ok := m.apps[ins.AppID]
+		if !ok || (nodeID != "" && app.NodeID != nodeID) {
+			continue
+		}
+		account, ok := m.accounts[app.AccountID]
+		if !ok {
+			continue
+		}
+
+		appDeleted := app.Status == AppDeleted && IsLive(ins.State)
+		accountDeleting := account.Status == AccountDeletedPending &&
+			(IsLive(ins.State) || State(ins.State) == StateEvictingAccountDeleting)
+		if !appDeleted && !accountDeleting {
+			continue
+		}
+		out = append(out, ins)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].StartedAt.Before(out[j].StartedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
@@ -6867,6 +6931,16 @@ func (m *MemStore) InsertOperatorIntent(
 	if metadata == nil {
 		metadata = json.RawMessage("{}")
 	}
+	requestedAt := time.Now().UTC()
+	// PostgreSQL's requested_at default is ordered by the database clock, but
+	// this in-memory twin can observe several inserts in the same clock tick.
+	// Keep insertion order strict so map iteration can never change FIFO claim
+	// semantics when timestamps collide.
+	for _, existing := range m.operatorIntents {
+		if !existing.RequestedAt.Before(requestedAt) {
+			requestedAt = existing.RequestedAt.Add(time.Nanosecond)
+		}
+	}
 	if traceID != nil && !isOTelHex32(*traceID) {
 		return "", fmt.Errorf("state: InsertOperatorIntent: trace_id %q must match ^[0-9a-f]{32}$", *traceID)
 	}
@@ -6879,7 +6953,7 @@ func (m *MemStore) InsertOperatorIntent(
 		Reason:      reason,
 		Metadata:    metadata,
 		Status:      OperatorIntentPending,
-		RequestedAt: time.Now().UTC(),
+		RequestedAt: requestedAt,
 		TraceID:     traceID,
 	}
 	return id, nil
@@ -6894,7 +6968,8 @@ func (m *MemStore) ClaimPendingOperatorIntent(_ context.Context) (OperatorIntent
 		if r.Status != OperatorIntentPending {
 			continue
 		}
-		if oldestID == "" || r.RequestedAt.Before(oldestAt) {
+		if oldestID == "" || r.RequestedAt.Before(oldestAt) ||
+			(r.RequestedAt.Equal(oldestAt) && id < oldestID) {
 			oldestID = id
 			oldestAt = r.RequestedAt
 		}
@@ -8063,6 +8138,42 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 		NodeID:       nodeID,
 		StartedAt:    time.Now(),
 		Mode:         mode,
+	}
+	if wakeID != "" {
+		ins.WakeID = wakeID
+	} else {
+		ins.WakeID = uuid.NewString()
+	}
+	m.instances[ins.ID] = ins
+	return ins, nil
+}
+
+// CreateJobInstance mirrors the PostgreSQL job-task insert. Job instances
+// have no app or deployment row: the job definition owns the OCI image and
+// the run/task coordinates live on the job task row.
+func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.jobs[jobID]; !ok {
+		return Instance{}, ErrNotFound
+	}
+	if instanceID == "" {
+		instanceID = newID()
+	}
+	if _, exists := m.instances[instanceID]; exists {
+		return Instance{}, ErrConflict
+	}
+	ins := Instance{
+		ID:           instanceID,
+		State:        state,
+		RAMMB:        ramMB,
+		NodeID:       nodeID,
+		StartedAt:    time.Now(),
+		Mode:         string(InstanceModeJob),
+		Kind:         "job_task",
+		JobID:        jobID,
+		JobRunID:     runID,
+		JobTaskIndex: taskIndex,
 	}
 	if wakeID != "" {
 		ins.WakeID = wakeID
@@ -10756,6 +10867,52 @@ func (m *MemStore) GetInvoiceByID(_ context.Context, id string) (Invoice, error)
 	return Invoice{}, ErrNotFound
 }
 
+// UpsertInvoice mirrors the production natural-key upsert used by webhook
+// ingestion. MemStore keeps the existing row id and created_at on updates so
+// list ordering and idempotency match Postgres.
+func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inv.AccountID == "" || inv.Provider == "" || inv.ProviderInvoiceID == "" {
+		return errors.New("state: invoice account, provider, and provider_invoice_id are required")
+	}
+	if inv.PeriodStart.IsZero() {
+		inv.PeriodStart = time.Now().UTC()
+	}
+	if inv.PeriodEnd.IsZero() {
+		inv.PeriodEnd = inv.PeriodStart
+	}
+	if inv.Currency == "" {
+		inv.Currency = "eur"
+	}
+	if inv.Status == "" {
+		inv.Status = "open"
+	}
+	for id, existing := range m.invoices {
+		if existing.AccountID == inv.AccountID && existing.Provider == inv.Provider && existing.ProviderInvoiceID == inv.ProviderInvoiceID {
+			inv.ID = existing.ID
+			inv.CreatedAt = existing.CreatedAt
+			if inv.CreatedAt.IsZero() {
+				inv.CreatedAt = time.Now().UTC()
+			}
+			inv.UpdatedAt = time.Now().UTC()
+			m.invoices[id] = inv
+			return nil
+		}
+	}
+	if inv.ID == "" {
+		inv.ID = uuid.NewString()
+	}
+	if inv.CreatedAt.IsZero() {
+		inv.CreatedAt = time.Now().UTC()
+	}
+	if inv.UpdatedAt.IsZero() {
+		inv.UpdatedAt = inv.CreatedAt
+	}
+	m.invoices[inv.ID] = inv
+	return nil
+}
+
 // SeedInvoiceForTest is the test-only seam PR A's listInvoices
 // handler tests use to plant invoice rows directly. PR B wires
 // UpsertInvoice via the webhook path; until then, no production
@@ -11100,9 +11257,9 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 }
 
 // CurrentMonthOverageCents sums the account's usage_minutes.mb_seconds
-// from the UTC month start and converts to integer cents. Formula:
-// 1 GB-h = 3600 GB-seconds; at €0.01/GB-h → 1 GB-h = 100 cents.
-// Integer math only — never float on money (CLAUDE.md).
+// from the UTC month start, removes the account plan's included calendar-
+// month allowance, and converts the remainder to integer cents. Integer
+// math only — never float on money (CLAUDE.md).
 //
 // Mirrors pgstore.CurrentMonthOverageCents: the scan is O(rows-in-month)
 // which on a one-box is bounded. The `now` argument is the caller's
@@ -11112,6 +11269,10 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 	defer m.mu.Unlock()
 	now := m.clock()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	var plan api.Plan
+	if acct, ok := m.accounts[accountID]; ok {
+		plan = acct.Plan
+	}
 	var mbSeconds int64
 	for _, u := range m.usage {
 		if u.AccountID != accountID {
@@ -11122,7 +11283,7 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 		}
 		mbSeconds += u.MBSeconds
 	}
-	return mbSeconds * 100 / 3600, nil
+	return api.OverageCentsForMBSeconds(plan, mbSeconds), nil
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -11252,6 +11413,42 @@ func (m *MemStore) UsageByHour(_ context.Context, accountID string, start, end t
 			CPUUsec: a.CPUUsec, TXBytes: a.TXBytes, NetTxBytes: a.NetTxBytes,
 		})
 	}
+	return out, nil
+}
+
+// UsageWindows mirrors PgStore.UsageWindows and gives tests the same
+// durable backfill shape as production without requiring Postgres.
+func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]UsageWindow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	start = start.UTC()
+	end = end.UTC()
+	type key struct {
+		account string
+		hour    time.Time
+	}
+	agg := make(map[key]int64)
+	for _, u := range m.usage {
+		if u.Minute.Before(start) || !u.Minute.Before(end) {
+			continue
+		}
+		hour := u.Minute.UTC().Truncate(time.Hour)
+		k := key{account: u.AccountID, hour: hour}
+		agg[k] += u.MBSeconds
+	}
+	out := make([]UsageWindow, 0, len(agg))
+	for k, mbSeconds := range agg {
+		if mbSeconds <= 0 {
+			continue
+		}
+		out = append(out, UsageWindow{AccountID: k.account, Hour: k.hour, MBSeconds: mbSeconds})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Hour.Equal(out[j].Hour) {
+			return out[i].Hour.Before(out[j].Hour)
+		}
+		return out[i].AccountID < out[j].AccountID
+	})
 	return out, nil
 }
 
@@ -11393,6 +11590,31 @@ func (m *MemStore) PaddleOverageDedupeSchema(_ context.Context) (PaddleOverageDe
 // in-memory map size bounded under long test runs. Returns false
 // on an absent row OR on an expired row (caller's `cutoff` is
 // computed as now()-TTL by pkg/webhookdedupe).
+func (m *MemStore) ClaimWebhookDelivery(_ context.Context, provider, deliveryID string, cutoff, expiresAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.webhookDeliveries == nil {
+		m.webhookDeliveries = map[webhookDeliveryKey]time.Time{}
+	}
+	key := webhookDeliveryKey{provider: provider, deliveryID: deliveryID}
+	if existing, ok := m.webhookDeliveries[key]; ok && existing.UTC().After(cutoff.UTC()) {
+		return false, nil
+	}
+	m.webhookDeliveries[key] = expiresAt.UTC()
+	return true, nil
+}
+
+// ReleaseWebhookDelivery mirrors PgStore's rollback path for a failed
+// webhook side-effect application.
+func (m *MemStore) ReleaseWebhookDelivery(_ context.Context, provider, deliveryID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.webhookDeliveries != nil {
+		delete(m.webhookDeliveries, webhookDeliveryKey{provider: provider, deliveryID: deliveryID})
+	}
+	return nil
+}
+
 func (m *MemStore) CheckWebhookReplay(_ context.Context, provider, deliveryID string, cutoff time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

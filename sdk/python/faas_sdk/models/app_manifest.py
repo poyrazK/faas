@@ -6,12 +6,37 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_manifest_execution_mode_type_1 import (
+    AppManifestExecutionModeType1,
+    check_app_manifest_execution_mode_type_1,
+)
+from ..models.app_manifest_execution_mode_type_2_type_1 import (
+    AppManifestExecutionModeType2Type1,
+    check_app_manifest_execution_mode_type_2_type_1,
+)
+from ..models.app_manifest_execution_mode_type_3_type_1 import (
+    AppManifestExecutionModeType3Type1,
+    check_app_manifest_execution_mode_type_3_type_1,
+)
+from ..models.app_manifest_restart_policy_type_1 import (
+    AppManifestRestartPolicyType1,
+    check_app_manifest_restart_policy_type_1,
+)
+from ..models.app_manifest_restart_policy_type_2_type_1 import (
+    AppManifestRestartPolicyType2Type1,
+    check_app_manifest_restart_policy_type_2_type_1,
+)
+from ..models.app_manifest_restart_policy_type_3_type_1 import (
+    AppManifestRestartPolicyType3Type1,
+    check_app_manifest_restart_policy_type_3_type_1,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_manifest_env import AppManifestEnv
     from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
     from ..models.app_manifest_healthcheck import AppManifestHealthcheck
+    from ..models.service_replicas import ServiceReplicas
 
 
 T = TypeVar("T", bound="AppManifest")
@@ -24,7 +49,10 @@ class AppManifest:
     host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are NEVER sealed
     ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`, `stop_signal`,
     `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the
-    widen is wire-compatible.
+    widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with `execution_mode`, `restart_policy`,
+    `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs
+    service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour
+    (execution_mode=request, restart_policy=on-failure).
 
     """
 
@@ -42,10 +70,37 @@ class AppManifest:
     seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1
     surfaces the field for the registry-pull path."""
     stop_signal: None | str | Unset = UNSET
-    """OCI STOPSIGNAL (default SIGTERM). Runtime wiring lands in M-2."""
+    """OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2."""
     stop_grace_period: None | str | Unset = UNSET
-    """OCI StopGracePeriod as a Go duration string (e.g. "5m"). Capped at MaxAppManifestStopGracePeriod (5m).
-    Currently always zero — populated by M-2."""
+    """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
+    enforced by Validate() — ADR-138 §Decision 4."""
+    execution_mode: (
+        AppManifestExecutionModeType1
+        | AppManifestExecutionModeType2Type1
+        | AppManifestExecutionModeType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Lifecycle contract for this app (ADR-137 §Decision 1). Default 'request' preserves today's behaviour."""
+    restart_policy: (
+        AppManifestRestartPolicyType1
+        | AppManifestRestartPolicyType2Type1
+        | AppManifestRestartPolicyType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for
+    worker/service, no for job, on-failure for request."""
+    startup_deadline_s: int | None | Unset = UNSET
+    """Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0
+    means 'use plan default'."""
+    max_retries: int | None | Unset = UNSET
+    """Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0
+    means 'use plan default'."""
+    service_replicas: ServiceReplicas | Unset = UNSET
+    """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
+    Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20). min ≤ desired ≤ max must
+    hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land in M-4."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,6 +154,46 @@ class AppManifest:
         else:
             stop_grace_period = self.stop_grace_period
 
+        execution_mode: None | str | Unset
+        if isinstance(self.execution_mode, Unset):
+            execution_mode = UNSET
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        else:
+            execution_mode = self.execution_mode
+
+        restart_policy: None | str | Unset
+        if isinstance(self.restart_policy, Unset):
+            restart_policy = UNSET
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        else:
+            restart_policy = self.restart_policy
+
+        startup_deadline_s: int | None | Unset
+        if isinstance(self.startup_deadline_s, Unset):
+            startup_deadline_s = UNSET
+        else:
+            startup_deadline_s = self.startup_deadline_s
+
+        max_retries: int | None | Unset
+        if isinstance(self.max_retries, Unset):
+            max_retries = UNSET
+        else:
+            max_retries = self.max_retries
+
+        service_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_replicas, Unset):
+            service_replicas = self.service_replicas.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -124,6 +219,16 @@ class AppManifest:
             field_dict["stop_signal"] = stop_signal
         if stop_grace_period is not UNSET:
             field_dict["stop_grace_period"] = stop_grace_period
+        if execution_mode is not UNSET:
+            field_dict["execution_mode"] = execution_mode
+        if restart_policy is not UNSET:
+            field_dict["restart_policy"] = restart_policy
+        if startup_deadline_s is not UNSET:
+            field_dict["startup_deadline_s"] = startup_deadline_s
+        if max_retries is not UNSET:
+            field_dict["max_retries"] = max_retries
+        if service_replicas is not UNSET:
+            field_dict["service_replicas"] = service_replicas
 
         return field_dict
 
@@ -132,6 +237,7 @@ class AppManifest:
         from ..models.app_manifest_env import AppManifestEnv
         from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
         from ..models.app_manifest_healthcheck import AppManifestHealthcheck
+        from ..models.service_replicas import ServiceReplicas
 
         d = dict(src_dict)
         entrypoint = cast(list[str], d.pop("entrypoint"))
@@ -211,6 +317,127 @@ class AppManifest:
 
         stop_grace_period = _parse_stop_grace_period(d.pop("stop_grace_period", UNSET))
 
+        def _parse_execution_mode(
+            data: object,
+        ) -> (
+            AppManifestExecutionModeType1
+            | AppManifestExecutionModeType2Type1
+            | AppManifestExecutionModeType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_1 = check_app_manifest_execution_mode_type_1(data)
+
+                return execution_mode_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_2_type_1 = check_app_manifest_execution_mode_type_2_type_1(data)
+
+                return execution_mode_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_3_type_1 = check_app_manifest_execution_mode_type_3_type_1(data)
+
+                return execution_mode_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                AppManifestExecutionModeType1
+                | AppManifestExecutionModeType2Type1
+                | AppManifestExecutionModeType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        execution_mode = _parse_execution_mode(d.pop("execution_mode", UNSET))
+
+        def _parse_restart_policy(
+            data: object,
+        ) -> (
+            AppManifestRestartPolicyType1
+            | AppManifestRestartPolicyType2Type1
+            | AppManifestRestartPolicyType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_1 = check_app_manifest_restart_policy_type_1(data)
+
+                return restart_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_2_type_1 = check_app_manifest_restart_policy_type_2_type_1(data)
+
+                return restart_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_3_type_1 = check_app_manifest_restart_policy_type_3_type_1(data)
+
+                return restart_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                AppManifestRestartPolicyType1
+                | AppManifestRestartPolicyType2Type1
+                | AppManifestRestartPolicyType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        restart_policy = _parse_restart_policy(d.pop("restart_policy", UNSET))
+
+        def _parse_startup_deadline_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        startup_deadline_s = _parse_startup_deadline_s(d.pop("startup_deadline_s", UNSET))
+
+        def _parse_max_retries(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        max_retries = _parse_max_retries(d.pop("max_retries", UNSET))
+
+        _service_replicas = d.pop("service_replicas", UNSET)
+        service_replicas: ServiceReplicas | Unset
+        if isinstance(_service_replicas, Unset):
+            service_replicas = UNSET
+        else:
+            service_replicas = ServiceReplicas.from_dict(_service_replicas)
+
         app_manifest = cls(
             entrypoint=entrypoint,
             env=env,
@@ -222,6 +449,11 @@ class AppManifest:
             healthcheck=healthcheck,
             stop_signal=stop_signal,
             stop_grace_period=stop_grace_period,
+            execution_mode=execution_mode,
+            restart_policy=restart_policy,
+            startup_deadline_s=startup_deadline_s,
+            max_retries=max_retries,
+            service_replicas=service_replicas,
         )
 
         app_manifest.additional_properties = d

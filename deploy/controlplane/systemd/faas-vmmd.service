@@ -15,6 +15,7 @@ Restart=on-failure
 RestartSec=2s
 RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
+MemoryMax=3G
 Delegate=yes
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 EnvironmentFile=-/etc/faas/compute-db.env

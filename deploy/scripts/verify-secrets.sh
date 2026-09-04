@@ -113,36 +113,48 @@ check "faas-apid.service loads the host HMAC credential" bash -c '
   grep -q "^LoadCredential=faas_host_hmac_key:" /etc/systemd/system/faas-apid.service
 '
 
-# 6. PR-P4 + ADR-032 v2 — billing provider mode.
-# Paddle is the production billing provider at v2 (ADR-032 v2), so
-# FAAS_PADDLE_API_KEY is mandatory on every PRODUCTION-tagged node.
-# When sandbox=1 the key MUST start with pdl_sandbox_; otherwise
-# it MUST start with pdl_live_. The Stripe legacy opt-in
-# (FAAS_BILLING_PROVIDER=stripe) still boots; the Stripe-side
-# Paddle-key check is skipped so the legacy path stays reachable
-# for the documented node-level rollback.
+# 6. Public-release billing provider mode.
+# Polar is the production billing provider, so
+# FAAS_POLAR_ACCESS_TOKEN is mandatory on every PRODUCTION-tagged node.
+# The Stripe legacy opt-in (FAAS_BILLING_PROVIDER=stripe) still boots;
+# the provider-specific checks below are skipped for that explicit rollback
+# path so the node-level escape hatch remains reachable.
 #
-# (The CI static-check at .github/workflows/ci.yml grep -qs for the
-# literals 'FAAS_PADDLE_API_KEY' and 'FAAS_BILLING_PROVIDER=paddle'
+# (The CI static-check at .github/workflows/ci.yml greps for the
+# literals 'FAAS_POLAR_ACCESS_TOKEN' and 'FAAS_BILLING_PROVIDER=polar'
 # inside this file as a regression sentinel — the production default
-# is Paddle and the script must name both the key + the provider.)
+# is Polar and the script must name both the key + the provider.)
 #
 # Dev boxes (Lima / CI runners / local playbooks): this script is
-# intended for production-tagged hosts only. The dev-box bill
-# is "set FAAS_BILLING_PROVIDER=stripe to skip Paddle (Stripe's
-# empty-env path returns nil + name and the apid changePlan 402
-# falls through to FAAS_BILLING_PORTAL_URL = '\'''\'')" OR set
-# FAAS_PADDLE_API_KEY to any pdl_* value with FAAS_PADDLE_SANDBOX=1
-# (the sandbox SDK accepts any key shape; auth fails at runtime,
-# not at boot). The CLAUDE.md local loop does not run this script
-# against Lima guests.
+# intended for production-tagged hosts only. The dev-box loop should
+# explicitly set FAAS_BILLING_PROVIDER=stripe when it does not have a
+# Polar account, or provide complete Polar sandbox credentials. The
+# CLAUDE.md local loop does not run this script against Lima guests.
 if [[ -f /etc/faas/sealed.env ]]; then
   if grep -q "^FAAS_BILLING_PROVIDER=stripe" /etc/faas/sealed.env; then
-    # Legacy opt-in path. Paddle-api-key check is skipped; the
-    # node-level operator has explicit knowledge of the legacy
-    # surface and a missing Paddle key is the expected state.
+    # Legacy opt-in path. Provider checks are skipped because the
+    # node-level operator has explicitly selected the rollback surface.
     :
-  else
+  elif grep -q "^FAAS_BILLING_PROVIDER=polar" /etc/faas/sealed.env \
+    || ! grep -q "^FAAS_BILLING_PROVIDER=" /etc/faas/sealed.env; then
+    check "sealed.env has FAAS_POLAR_ACCESS_TOKEN" bash -c '
+      grep -q "^FAAS_POLAR_ACCESS_TOKEN=." /etc/faas/sealed.env
+    '
+    check "sealed.env has FAAS_POLAR_WEBHOOK_SECRET" bash -c '
+      grep -qE "^FAAS_POLAR_WEBHOOK_SECRET=(whsec_[A-Za-z0-9+/=_-]+|polar_whs_[A-Za-z0-9_-]+|[A-Za-z0-9+/=_-]+)$" /etc/faas/sealed.env
+    '
+    check "Polar usage meter id is configured" bash -c '
+      grep -q "^FAAS_POLAR_METER_ID=." /etc/faas/sealed.env \
+        || grep -qsE "^[[:space:]]*meter_id[[:space:]]*=[[:space:]]+\"[^\"]+\"" /etc/faas/apid.toml /etc/faas/meterd.toml 2>/dev/null
+    '
+    for polar_product in hobby pro scale; do
+      polar_product_env=${polar_product^^}
+      check "Polar ${polar_product} product id is configured" bash -c "
+        grep -q \"^FAAS_POLAR_${polar_product_env}_PRODUCT_ID=.\" /etc/faas/sealed.env \\
+          || grep -qsE \"^[[:space:]]*${polar_product}_product_id[[:space:]]*=[[:space:]]+\\\"[^\\\"]+\\\"\" /etc/faas/apid.toml /etc/faas/meterd.toml 2>/dev/null
+      "
+    done
+  elif grep -q "^FAAS_BILLING_PROVIDER=paddle" /etc/faas/sealed.env; then
     check "sealed.env has FAAS_PADDLE_API_KEY" bash -c '
       grep -q "^FAAS_PADDLE_API_KEY=pdl_" /etc/faas/sealed.env
     '
@@ -157,6 +169,10 @@ if [[ -f /etc/faas/sealed.env ]]; then
     fi
     check "sealed.env has FAAS_PADDLE_WEBHOOK_SECRET" bash -c '
       grep -q "^FAAS_PADDLE_WEBHOOK_SECRET=whk_" /etc/faas/sealed.env
+    '
+  else
+    check "sealed.env has a supported billing provider selector" bash -c '
+      grep -qE "^FAAS_BILLING_PROVIDER=(polar|paddle|stripe)$" /etc/faas/sealed.env
     '
   fi
 fi

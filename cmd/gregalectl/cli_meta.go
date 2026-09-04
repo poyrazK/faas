@@ -65,6 +65,7 @@ type cliFlag struct {
 //   - node-key        (init | rotate | status)
 //   - backup          (init | unseal-rclone | unseal-archive-creds)
 //   - secrets         (init | rotate | status | stamp)
+//   - artifact        (publish | verify)
 //   - compute-nodes   (add | list | show | drain | drain-status | activate | force-drain)
 //   - deploy          (join-node | add-node)
 //   - obs             (health)
@@ -80,6 +81,33 @@ type cliFlag struct {
 // boundary — adding a customer command to gregalectl or an operator
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
+	{
+		Name:    dispatchArtifact,
+		DocSlug: "artifact",
+		Short:   "Publish or verify release-pinned shared artifacts",
+		Subcommands: []cliSub{
+			{
+				Name:  "publish",
+				Short: "Publish the release-pinned kernel to the configured storage backend",
+				Flags: []cliFlag{
+					{Name: "env-file", Short: "storage.env path (required)"},
+					{Name: "manifest-file", Short: "production manifest path (required)"},
+					{Name: "file", Short: "release vmlinux path (required for publish)"},
+					{Name: "no-cache", Short: "bypass the local read-through cache"},
+				},
+			},
+			{
+				Name:  "verify",
+				Short: "Verify the release-pinned kernel exists with the anchored digest",
+				Flags: []cliFlag{
+					{Name: "env-file", Short: "storage.env path (required)"},
+					{Name: "manifest-file", Short: "production manifest path (required)"},
+					{Name: "no-cache", Short: "bypass the local read-through cache"},
+					{Name: "refresh", Short: "fetch from shared storage and replace the local cache"},
+				},
+			},
+		},
+	},
 	{
 		Name:    "backup",
 		DocSlug: "backup",
@@ -212,6 +240,7 @@ var cliCommands = []cliCommand{
 					{Name: "claim-file", Short: "single ComputeNodeClaim YAML/JSON file (alternative to --nodes-file)"},
 					{Name: "manifest-file", Short: "split-box manifest (required)"},
 					{Name: "artifact-dir", Short: "standard shared join assets"},
+					{Name: "runtime-bases-env", Short: "release-bound digest-pinned runtime base refs"},
 					{Name: "max-parallel", Short: "bounded concurrent joins (default 4)"},
 					{Name: "skip-fleet-preflight", Short: "skip one shared fleet preflight"},
 					{Name: "resume", Short: "resume failed/interrupted joins"},
@@ -254,6 +283,7 @@ var cliCommands = []cliCommand{
 					{Name: "verify-key", Short: "image-signing public key"},
 					{Name: "compute-db-env", Short: "root-only compute DB environment"},
 					{Name: "storage-env", Short: "shared OCI storage environment"},
+					{Name: "runtime-bases-env", Short: "release-bound digest-pinned runtime base refs"},
 					{Name: "storage-device", Short: "optional dedicated fast-root block device"},
 					{Name: "format-storage", Short: "explicitly format a supplied blank device as XFS"},
 					{Name: "box-age-key", Short: "optional box-age identity source"},

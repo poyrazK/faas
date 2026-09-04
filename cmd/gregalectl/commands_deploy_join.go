@@ -30,41 +30,42 @@ import (
 )
 
 type deployJoinOptions struct {
-	ManifestFile         string
-	Node                 string
-	SSHHost              string
-	SSHUser              string
-	SSHPort              int
-	SSHHostKeySHA256     string
-	SSHKey               string
-	FleetBundleFile      string
-	FleetBundleSignature string
-	FleetReplayState     string
-	SSHKnownHostsFile    string
-	ReleaseTarball       string
-	ReleaseGitSHA        string
-	BootstrapBinary      string
-	CosignBinary         string
-	PKISource            string
-	SignKeySource        string
-	VerifyKeySource      string
-	ComputeDBEnvSource   string
-	StorageEnvSource     string
-	StorageDevice        string
-	FormatStorage        bool
-	BoxAgeKeySource      string
-	RcloneEnvelope       string
-	ArchiveEnvelope      string
-	ArtifactDir          string
-	AnsibleVarsFile      string
-	RepoRoot             string
-	SkipFleetPreflight   bool
-	Resume               bool
-	Timeout              time.Duration
-	LeaseTTL             time.Duration
-	DryRun               bool
-	Yes                  bool
-	JSON                 bool
+	ManifestFile          string
+	Node                  string
+	SSHHost               string
+	SSHUser               string
+	SSHPort               int
+	SSHHostKeySHA256      string
+	SSHKey                string
+	FleetBundleFile       string
+	FleetBundleSignature  string
+	FleetReplayState      string
+	SSHKnownHostsFile     string
+	ReleaseTarball        string
+	ReleaseGitSHA         string
+	BootstrapBinary       string
+	CosignBinary          string
+	PKISource             string
+	SignKeySource         string
+	VerifyKeySource       string
+	ComputeDBEnvSource    string
+	StorageEnvSource      string
+	RuntimeBasesEnvSource string
+	StorageDevice         string
+	FormatStorage         bool
+	BoxAgeKeySource       string
+	RcloneEnvelope        string
+	ArchiveEnvelope       string
+	ArtifactDir           string
+	AnsibleVarsFile       string
+	RepoRoot              string
+	SkipFleetPreflight    bool
+	Resume                bool
+	Timeout               time.Duration
+	LeaseTTL              time.Duration
+	DryRun                bool
+	Yes                   bool
+	JSON                  bool
 }
 
 type deployJoinReport struct {
@@ -136,6 +137,7 @@ func cmdDeployJoinNode(args []string) int {
 	verifyKey := fs.String("verify-key", "", "image-signing public key (required for apply)")
 	computeDBEnv := fs.String("compute-db-env", "", "root-only compute-db.env source (required for apply)")
 	storageEnv := fs.String("storage-env", "", "shared OCI storage.env source (required for multi-box apply)")
+	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs (required for apply)")
 	storageDevice := fs.String("storage-device", "", "optional fast-root block device (must be an absolute path; manifest host value is used when omitted)")
 	formatStorage := fs.Bool("format-storage", false, "format an explicitly supplied blank storage device as XFS with reflink support")
 	boxAgeKey := fs.String("box-age-key", "", "optional box-age identity source (artifact-dir convention: box-age-key)")
@@ -160,40 +162,41 @@ func cmdDeployJoinNode(args []string) int {
 	}
 
 	opts := deployJoinOptions{
-		ManifestFile:         *manifestFile,
-		Node:                 *node,
-		SSHHost:              *sshHost,
-		SSHUser:              *sshUser,
-		SSHPort:              *sshPort,
-		SSHHostKeySHA256:     *sshHostKey,
-		SSHKey:               *sshKey,
-		FleetBundleFile:      *fleetBundleFile,
-		FleetBundleSignature: *fleetBundleSignature,
-		FleetReplayState:     *fleetReplayState,
-		ReleaseTarball:       *releaseTarball,
-		ReleaseGitSHA:        *releaseGitSHA,
-		BootstrapBinary:      *bootstrapBinary,
-		CosignBinary:         *cosignBinary,
-		PKISource:            *pkiSource,
-		SignKeySource:        *signKey,
-		VerifyKeySource:      *verifyKey,
-		ComputeDBEnvSource:   *computeDBEnv,
-		StorageEnvSource:     *storageEnv,
-		StorageDevice:        *storageDevice,
-		FormatStorage:        *formatStorage,
-		BoxAgeKeySource:      *boxAgeKey,
-		RcloneEnvelope:       *rcloneEnvelope,
-		ArchiveEnvelope:      *archiveEnvelope,
-		ArtifactDir:          *artifactDir,
-		AnsibleVarsFile:      *ansibleVars,
-		RepoRoot:             *repoRoot,
-		SkipFleetPreflight:   *skipPreflight,
-		Resume:               *resume,
-		Timeout:              *timeout,
-		LeaseTTL:             *leaseTTL,
-		DryRun:               *dryRun,
-		Yes:                  *yes,
-		JSON:                 *jsonOut || jsonOutput,
+		ManifestFile:          *manifestFile,
+		Node:                  *node,
+		SSHHost:               *sshHost,
+		SSHUser:               *sshUser,
+		SSHPort:               *sshPort,
+		SSHHostKeySHA256:      *sshHostKey,
+		SSHKey:                *sshKey,
+		FleetBundleFile:       *fleetBundleFile,
+		FleetBundleSignature:  *fleetBundleSignature,
+		FleetReplayState:      *fleetReplayState,
+		ReleaseTarball:        *releaseTarball,
+		ReleaseGitSHA:         *releaseGitSHA,
+		BootstrapBinary:       *bootstrapBinary,
+		CosignBinary:          *cosignBinary,
+		PKISource:             *pkiSource,
+		SignKeySource:         *signKey,
+		VerifyKeySource:       *verifyKey,
+		ComputeDBEnvSource:    *computeDBEnv,
+		StorageEnvSource:      *storageEnv,
+		RuntimeBasesEnvSource: *runtimeBasesEnv,
+		StorageDevice:         *storageDevice,
+		FormatStorage:         *formatStorage,
+		BoxAgeKeySource:       *boxAgeKey,
+		RcloneEnvelope:        *rcloneEnvelope,
+		ArchiveEnvelope:       *archiveEnvelope,
+		ArtifactDir:           *artifactDir,
+		AnsibleVarsFile:       *ansibleVars,
+		RepoRoot:              *repoRoot,
+		SkipFleetPreflight:    *skipPreflight,
+		Resume:                *resume,
+		Timeout:               *timeout,
+		LeaseTTL:              *leaseTTL,
+		DryRun:                *dryRun,
+		Yes:                   *yes,
+		JSON:                  *jsonOut || jsonOutput,
 	}
 	if opts.FleetBundleFile == "" {
 		if opts.SSHUser == "" {
@@ -457,14 +460,15 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 		return report, nil
 	}
 	for name, path := range map[string]string{
-		"release-tarball":  opts.ReleaseTarball,
-		"bootstrap-binary": opts.BootstrapBinary,
-		"cosign-binary":    opts.CosignBinary,
-		"pki-dir":          opts.PKISource,
-		"sign-key":         opts.SignKeySource,
-		"verify-key":       opts.VerifyKeySource,
-		"compute-db-env":   opts.ComputeDBEnvSource,
-		"storage-env":      opts.StorageEnvSource,
+		"release-tarball":   opts.ReleaseTarball,
+		"bootstrap-binary":  opts.BootstrapBinary,
+		"cosign-binary":     opts.CosignBinary,
+		"pki-dir":           opts.PKISource,
+		"sign-key":          opts.SignKeySource,
+		"verify-key":        opts.VerifyKeySource,
+		"compute-db-env":    opts.ComputeDBEnvSource,
+		"storage-env":       opts.StorageEnvSource,
+		"runtime-bases-env": opts.RuntimeBasesEnvSource,
 	} {
 		if path == "" {
 			return report, fmt.Errorf("--%s is required for apply", name)
@@ -528,6 +532,9 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	}
 	if !hasComputeDatabaseEnv(opts.ComputeDBEnvSource) {
 		return report, errors.New("--compute-db-env must contain non-empty DATABASE_URL and FAAS_VMMD_DBURL entries")
+	}
+	if err := validateRuntimeBasesEnv(opts.RuntimeBasesEnvSource, m.Release.RuntimeBaseRefs); err != nil {
+		return report, fmt.Errorf("--runtime-bases-env: %w", err)
 	}
 	if opts.AnsibleVarsFile != "" {
 		if _, err := os.Stat(opts.AnsibleVarsFile); err != nil {
@@ -646,6 +653,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_verify_key_source":        opts.VerifyKeySource,
 		"faas_join_compute_db_env_source":    opts.ComputeDBEnvSource,
 		"faas_join_storage_env_source":       opts.StorageEnvSource,
+		"faas_join_runtime_bases_env_source": opts.RuntimeBasesEnvSource,
 		"faas_join_storage_device":           opts.StorageDevice,
 		"faas_join_format_storage":           opts.FormatStorage,
 		"faas_join_box_age_key_source":       opts.BoxAgeKeySource,
@@ -929,6 +937,7 @@ func resolveJoinArtifacts(opts *deployJoinOptions) {
 	resolve(&opts.VerifyKeySource, "sign-pub.pem")
 	resolve(&opts.ComputeDBEnvSource, "compute-db.env")
 	resolve(&opts.StorageEnvSource, "storage.env")
+	resolve(&opts.RuntimeBasesEnvSource, "runtime-bases.env")
 	resolveIfPresent(&opts.BoxAgeKeySource, "box-age-key")
 	resolveIfPresent(&opts.RcloneEnvelope, "rclone.conf.age")
 	resolveIfPresent(&opts.ArchiveEnvelope, "archive-creds.json.age")
@@ -1066,10 +1075,79 @@ func hasComputeDatabaseEnv(path string) bool {
 	return seen["DATABASE_URL"] && seen["FAAS_VMMD_DBURL"]
 }
 
+// validateRuntimeBasesEnv is the controller-side gate for the file that is
+// copied to /etc/faas/runtime-bases.env. The Ansible roles repeat the check on
+// the host, but rejecting a malformed release artifact here produces a fast,
+// provider-neutral error and prevents a partial join from reaching bootstrap.
+func validateRuntimeBasesEnv(path string, expected map[string]string) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	required := map[string]string{
+		"FAAS_DEPLOY_BASE_REF_MINIMAL":      "minimal",
+		"FAAS_DEPLOY_BASE_REF_NODE22":       "node22",
+		"FAAS_DEPLOY_BASE_REF_PYTHON312":    "python312",
+		"FAAS_DEPLOY_BASE_REF_GO124":        "go124",
+		"FAAS_DEPLOY_BASE_REF_GO124_ALPINE": "go124_alpine",
+		"FAAS_DEPLOY_BASE_REF_NODE24":       "node24",
+		"FAAS_DEPLOY_BASE_REF_PYTHON313":    "python313",
+	}
+	values := make(map[string]string, len(required))
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if _, ok := required[key]; !ok {
+			continue
+		}
+		if _, duplicate := values[key]; duplicate {
+			return fmt.Errorf("duplicate %s entry", key)
+		}
+		values[key] = strings.TrimSpace(value)
+	}
+	for envKey, manifestKey := range required {
+		value, ok := values[envKey]
+		if !ok {
+			return fmt.Errorf("missing %s entry", envKey)
+		}
+		if !isDigestPinnedRuntimeRef(value) {
+			return fmt.Errorf("%s must be an OCI reference pinned by @sha256:<64hex>", envKey)
+		}
+		if len(expected) != 0 && expected[manifestKey] != value {
+			return fmt.Errorf("%s does not match release.runtime_base_refs.%s", envKey, manifestKey)
+		}
+	}
+	return nil
+}
+
+func isDigestPinnedRuntimeRef(value string) bool {
+	marker := "@sha256:"
+	at := strings.LastIndex(value, marker)
+	if at <= 0 || len(value[at+len(marker):]) != 64 {
+		return false
+	}
+	if strings.ContainsAny(value[:at], "#= \t\r\n") {
+		return false
+	}
+	for _, char := range value[at+len(marker):] {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // validateSharedStorageEnv enforces the multi-box storage contract at the
 // provider-neutral join boundary. The file is still copied verbatim to both
 // hosts; parsing here only prevents a join that would silently run with
-// host-local snapshots or without a shared registry.
+// host-local snapshots, stale-cache fallback, or without a shared registry.
 func validateSharedStorageEnv(path string) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -1094,8 +1172,8 @@ func validateSharedStorageEnv(path string) error {
 	if values["FAAS_STORAGE_BACKEND"] != "oci" {
 		return errors.New("must set FAAS_STORAGE_BACKEND=oci")
 	}
-	if strings.TrimSpace(values["FAAS_OCI_REGISTRY"]) == "" {
-		return errors.New("must set FAAS_OCI_REGISTRY")
+	if !strings.HasPrefix(values["FAAS_OCI_REGISTRY"], "https://") {
+		return errors.New("FAAS_OCI_REGISTRY must use https://")
 	}
 	if raw := values["FAAS_STORAGE_LOCAL_PREFIXES"]; raw != "" {
 		for _, prefix := range strings.Split(raw, ",") {
@@ -1107,6 +1185,15 @@ func validateSharedStorageEnv(path string) error {
 				return errors.New("FAAS_STORAGE_LOCAL_PREFIXES must not include snap/")
 			}
 		}
+	}
+	if values["FAAS_STORAGE_LOCAL_PREFIXES"] != "none" {
+		return errors.New("must set FAAS_STORAGE_LOCAL_PREFIXES=none")
+	}
+	if values["FAAS_REQUIRE_SHARED_ARTIFACTS"] != "1" {
+		return errors.New("must set FAAS_REQUIRE_SHARED_ARTIFACTS=1")
+	}
+	if values["FAAS_STORAGE_CACHE_SERVE_STALE"] != "0" {
+		return errors.New("must set FAAS_STORAGE_CACHE_SERVE_STALE=0")
 	}
 	if seen["FAAS_STORAGE_CACHE_DIR"] && strings.TrimSpace(values["FAAS_STORAGE_CACHE_DIR"]) == "" {
 		return errors.New("FAAS_STORAGE_CACHE_DIR must not be empty; the node-local cache is required for prepositioned wakes")

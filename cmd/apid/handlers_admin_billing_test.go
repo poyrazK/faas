@@ -35,6 +35,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/billing/polar"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -178,5 +179,45 @@ func TestReconcileAccount_PaddleWithCapabilityCallsProvider(t *testing.T) {
 	}
 	if resp.MBSeconds != 4242 {
 		t.Errorf("MBSeconds = %d, want 4242", resp.MBSeconds)
+	}
+}
+
+func TestListBillingCatalog_PolarUsesProviderNeutralSurface(t *testing.T) {
+	e := newReconcileEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	p, err := polar.NewProvider(polar.Config{
+		APIKey:         "polar_test_token",
+		HobbyProductID: "prod_hobby",
+		ProProductID:   "prod_pro",
+		ScaleProductID: "prod_scale",
+		UsageEventName: polar.DefaultUsageEventName,
+		MeterID:        "meter-1",
+		BaseURL:        "http://127.0.0.1:1",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newServer(e.store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+	srv.WithAdminAllowlist("ops@example.com")
+	srv.WithBillingProvider(p)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/billing-paddle-catalog", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	var response struct {
+		Provider string                    `json:"provider"`
+		Entries  []api.BillingCatalogEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body)
+	}
+	if response.Provider != "polar" {
+		t.Errorf("provider = %q, want polar", response.Provider)
+	}
+	if len(response.Entries) != 3 {
+		t.Fatalf("entries = %d, want 3", len(response.Entries))
 	}
 }

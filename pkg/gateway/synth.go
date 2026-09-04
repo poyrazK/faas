@@ -44,6 +44,18 @@ type SynthDispatcher interface {
 	Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
 }
 
+// TargetAwareSynthDispatcher is the optimized dispatch seam used by schedd
+// when it already completed admission. The target is carried across the
+// synth socket so gatewayd-internal can forward the invocation without
+// performing a second app lookup and Wake RPC.
+//
+// SynthDispatcher remains the compatibility surface for legacy callers and
+// trigger batches. The single-record drain uses this optional interface when
+// the dispatcher implements it.
+type TargetAwareSynthDispatcher interface {
+	InvokeWithTarget(ctx context.Context, appID string, inv state.Invocation, target Target) (state.Invocation, error)
+}
+
 // SynthServer is the unix-socket HTTP listener that exposes
 // /v1/synthesize (legacy no-payload path) and /v1/invocations:dispatch
 // (Move 1 event-shaped path). Both routes share the unix-socket DAC
@@ -368,6 +380,14 @@ type invocationDispatchRequest struct {
 	// BodyB64 is base64-encoded so JSON encoding stays trivial and
 	// the cron path (no body) ships an empty string by default.
 	BodyB64 string `json:"body_b64,omitempty"`
+	// Target is populated by the schedd drain after it has already
+	// admitted/woken the instance. Empty values preserve the legacy
+	// wake-inside-gateway path for older callers.
+	InstanceID   string `json:"instance_id,omitempty"`
+	NodeID       string `json:"node_id,omitempty"`
+	DeploymentID string `json:"deployment_id,omitempty"`
+	WakeID       string `json:"wake_id,omitempty"`
+	Port         int    `json:"port,omitempty"`
 }
 
 func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Request) {
@@ -439,7 +459,19 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		"source", logsanitize.Field(req.Source),
 		"method", logsanitize.Field(method),
 		"path", logsanitize.Field(path))
-	out, err := s.dispatcher.Invoke(r.Context(), req.AppID, inv)
+	var out state.Invocation
+	var err error
+	if targetDispatcher, ok := s.dispatcher.(TargetAwareSynthDispatcher); ok && req.InstanceID != "" && req.NodeID != "" {
+		out, err = targetDispatcher.InvokeWithTarget(r.Context(), req.AppID, inv, Target{
+			InstanceID:   req.InstanceID,
+			NodeID:       req.NodeID,
+			DeploymentID: req.DeploymentID,
+			WakeID:       req.WakeID,
+			Port:         req.Port,
+		})
+	} else {
+		out, err = s.dispatcher.Invoke(r.Context(), req.AppID, inv)
+	}
 	if err != nil {
 		// Transient vs permanent split: any error here means the
 		// runner never received the body. schedd retries transient

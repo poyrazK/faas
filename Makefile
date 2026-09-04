@@ -13,6 +13,7 @@ export GOOS GOARCH
 PKGS    := ./...
 COVERAGE_DIR := coverage
 DAEMONS := apid gatewayd-public gatewayd-internal schedd vmmd vmmd-raw-bridge vmmd-stream-bridge builderd imaged meterd githubd hostage-gen
+GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
 # Both are built into ./bin by `make build`.
@@ -483,14 +484,21 @@ image-validate: ## ADR-111 Packer-builder syntax gate (skips when packer not on 
 	fi
 
 .PHONY: scan
-scan: ## Supply-chain scan: govulncheck (HIGH+) + Grype image scan + syft SBOM (issue #299)
-	@command -v govulncheck >/dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@latest
-	@command -v grype >/dev/null 2>&1 || { echo "grype required: https://github.com/anchore/grype/releases" >&2; exit 1; }
+scan: ## Supply-chain source scan: govulncheck (HIGH+) + syft SBOM (issue #299)
+	@command -v govulncheck >/dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@v$(GOVULNCHECK_VERSION)
 	@command -v syft >/dev/null 2>&1 || { echo "syft required: https://github.com/anchore/syft/releases" >&2; exit 1; }
 	govulncheck -mode=source ./...
 	@mkdir -p bin
-	grype dir:images/ -o json --file bin/grype-results.json
 	syft dir:. -o cyclonedx-json=bin/sbom.json --source-version "$$(git rev-parse --short HEAD)" --source-type directory
+
+.PHONY: scan-images
+scan-images: ## Scan concrete locally-loaded OCI refs (IMAGE_REFS="ref1 ref2 ...")
+	@test -n "$(IMAGE_REFS)" || { echo "IMAGE_REFS is required; use concrete docker image refs" >&2; exit 2; }
+	@command -v grype >/dev/null 2>&1 || { echo "grype required: https://github.com/anchore/grype/releases" >&2; exit 1; }
+	@for ref in $(IMAGE_REFS); do \
+	  echo "Scanning docker:$$ref"; \
+	  bash scripts/ci/scan-oci-image.sh docker "$$ref" linux/amd64; \
+	done
 
 .PHONY: public-endpoint-check
 public-endpoint-check: ## Validate the public HTTPS/Caddy endpoint (PUBLIC_ENDPOINT_URL required)
@@ -555,8 +563,10 @@ node-claim-check: ## Validate checked-in provider-neutral ComputeNodeClaim examp
 	@test -x ./bin/gregalectl || $(GO) build -o ./bin/gregalectl ./cmd/gregalectl
 	@for f in deploy/claims/*.yaml; do \
 	  test -f "$$f" || continue; \
-	  ./bin/gregalectl deploy claim validate --file "$$f"; \
+		./bin/gregalectl deploy claim validate --file "$$f"; \
 	done
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join_control_plane.yml --syntax-check
 
 .PHONY: tidy
 tidy: ## go mod tidy

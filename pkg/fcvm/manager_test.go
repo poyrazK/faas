@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -145,6 +146,9 @@ type fakeVMM struct {
 	// (e.g. memory.max WriteFile failing due to permissions) without
 	// depending on filesystem permissions that may be bypassed by root.
 	bootCgroupFail error
+	// postBootCgroupBlock makes the fake jailer scope's memory.max a directory
+	// so the Manager's post-boot cgroup fence write fails after bringUp.
+	postBootCgroupBlock bool
 	// M6 builder-VM path: DestroyWithExport returns this exit code, copies
 	// nothing. App VMs just see "destroyed" the same way Kill did.
 	destroyWithExportExit int
@@ -166,6 +170,11 @@ type fakeVMM struct {
 	// but per-call (one entry per workload, not aggregated).
 	stagedWorkloads  []stagedWorkload
 	stageWorkloadErr error
+	// Issue #463 / ADR-069: per-sidecar deployment env overrides staged on
+	// the writable main layer. Mirrors stagedWorkloads but records the JSON
+	// payload after Manager.Wake has unsealed it.
+	stagedWorkloadEnvs  []stagedWorkloadEnv
+	stageWorkloadEnvErr error
 	// Issue #463 / ADR-069 / PR-B: deployment-level roster at
 	// /etc/faas/workloads.json on drive1. Mirrors stagedWorkloads
 	// but the arg shape is (main, sidecars[]) — a single call
@@ -197,6 +206,24 @@ type fakeVMM struct {
 	// because Wake treats the report as best-effort).
 	characterizationReport api.CharacterizationReport
 	charReportErr          error
+	// signalAndKillCalls (M-2 / ADR-138 §Decision 1) records every
+	// (instance, signal, grace) the engine's StopInstance dispatch
+	// passed through VMM.SignalAndKill. Default behaviour is no-op
+	// — the actual destroy chain is delegated to DestroyWithExport
+	// once the grace timer fires. Tests assert that the engine's
+	// per-mode dispatch (commit 6) routes worker/job to this seam
+	// and request/service to the legacy snapshotAndPark path.
+	signalAndKillCalls []signalAndKillCall
+}
+
+// signalAndKillCall is the per-call record. signal is the POSIX
+// signal number the engine translated from manifest.StopSignal
+// (0 = use SIGTERM, the manifest default). grace is the
+// per-app StopGracePeriod capped at the per-plan tier (commit 10).
+type signalAndKillCall struct {
+	Instance string
+	Signal   int32
+	Grace    time.Duration
 }
 
 type stagedSecret struct {
@@ -226,6 +253,12 @@ type stagedWorkload struct {
 	spec     WorkloadSpec
 }
 
+type stagedWorkloadEnv struct {
+	instance     string
+	workloadName string
+	blob         []byte
+}
+
 func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig, _ string) error {
 	v.mu.Lock()
 	v.bootCount++
@@ -244,6 +277,11 @@ func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig, _ string) error {
 	// depending on filesystem permissions that root can bypass.
 	if v.bootCgroupFail != nil {
 		return v.bootCgroupFail
+	}
+	if v.postBootCgroupBlock {
+		if err := os.Mkdir(filepath.Join(scopePath, "memory.max"), 0o755); err != nil {
+			return err
+		}
 	}
 	return v.bootErr
 }
@@ -549,6 +587,20 @@ func (v *fakeVMM) DestroyWithExport(_ context.Context, l Lease, _ string) (int, 
 	return v.destroyWithExportExit, v.destroyWithExportErr
 }
 
+// SignalAndKill (M-2 / ADR-138 §Decision 1) records the
+// (signal, grace) the engine passed so tests can assert on the
+// mode-aware dispatch. Default behaviour is no-op: the
+// DestroyWithExport path is not invoked because the engine's
+// worker/job dispatch lives in pkg/sched/engine_stop_pgtest_test.go
+// (commit 6) — this fake only satisfies the VMM interface so
+// bringUp tests continue to compile.
+func (v *fakeVMM) SignalAndKill(_ context.Context, l Lease, signal syscall.Signal, grace time.Duration) (bool, int32, error) {
+	v.mu.Lock()
+	v.signalAndKillCalls = append(v.signalAndKillCalls, signalAndKillCall{Instance: l.Instance, Signal: int32(signal), Grace: grace})
+	v.mu.Unlock()
+	return false, 0, nil
+}
+
 // WaitCharacterizationReport (ADR-051 PR-D) is the host-side
 // mirror of the guest-init characterize probe. The fake returns
 // the configured characterizationReport (or zero if unset) and
@@ -588,6 +640,20 @@ func (v *fakeVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	})
 	v.mu.Unlock()
 	return v.stageAPIEnvErr
+}
+
+// StageWorkloadEnv is the fakeVMM stub for per-sidecar env staging. The
+// production VMM writes this JSON to the main workload's instance-scoped
+// upper; the fake records the already-unsealed payload for contract tests.
+func (v *fakeVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []byte) error {
+	v.mu.Lock()
+	v.stagedWorkloadEnvs = append(v.stagedWorkloadEnvs, stagedWorkloadEnv{
+		instance:     instance,
+		workloadName: workloadName,
+		blob:         append([]byte(nil), jsonBlob...),
+	})
+	v.mu.Unlock()
+	return v.stageWorkloadEnvErr
 }
 
 // StageWorkloadManifest is the fakeVMM stub for the per-workload
@@ -1052,31 +1118,56 @@ func TestConcurrentBootAndDestroyNoLeak(t *testing.T) {
 	m := newTestManager(run, vmm)
 	const n = 50 // M1: boot 50 VMs concurrently
 
-	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			if _, err := m.ColdBoot(context.Background(), req(fmt.Sprintf("i%d", i))); err != nil {
-				t.Errorf("boot i%d: %v", i, err)
-			}
-		}(i)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	type bootResult struct {
+		instance string
+		err      error
 	}
-	wg.Wait()
+	bootResults := make(chan bootResult, n)
+	for i := 0; i < n; i++ {
+		bootCtx, bootCancel := context.WithTimeout(ctx, time.Second)
+		go func(i int, bootCtx context.Context, bootCancel context.CancelFunc) {
+			defer bootCancel()
+			instance := fmt.Sprintf("i%d", i)
+			_, err := m.ColdBoot(bootCtx, req(instance))
+			bootResults <- bootResult{instance: instance, err: err}
+		}(i, bootCtx, bootCancel)
+	}
+	for i := 0; i < n; i++ {
+		select {
+		case result := <-bootResults:
+			if result.err != nil {
+				t.Errorf("boot %s: %v", result.instance, result.err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("concurrent boot batch exceeded deadline: %v", ctx.Err())
+		}
+	}
 	if m.LiveCount() != n || m.LeasedCount() != n {
 		t.Fatalf("after boot: live=%d leased=%d, want %d/%d", m.LiveCount(), m.LeasedCount(), n, n)
 	}
 
+	destroyResults := make(chan bootResult, n)
 	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			if err := m.Destroy(context.Background(), fmt.Sprintf("i%d", i)); err != nil {
-				t.Errorf("destroy i%d: %v", i, err)
-			}
-		}(i)
+		destroyCtx, destroyCancel := context.WithTimeout(ctx, time.Second)
+		go func(i int, destroyCtx context.Context, destroyCancel context.CancelFunc) {
+			defer destroyCancel()
+			instance := fmt.Sprintf("i%d", i)
+			err := m.Destroy(destroyCtx, instance)
+			destroyResults <- bootResult{instance: instance, err: err}
+		}(i, destroyCtx, destroyCancel)
 	}
-	wg.Wait()
+	for i := 0; i < n; i++ {
+		select {
+		case result := <-destroyResults:
+			if result.err != nil {
+				t.Errorf("destroy %s: %v", result.instance, result.err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("concurrent destroy batch exceeded deadline: %v", ctx.Err())
+		}
+	}
 	if m.LiveCount() != 0 || m.LeasedCount() != 0 {
 		t.Fatalf("after teardown: live=%d leased=%d, want 0/0 (LEAK)", m.LiveCount(), m.LeasedCount())
 	}
@@ -1881,6 +1972,30 @@ func TestWakeCgroupWriteFailureUnwindsNetns(t *testing.T) {
 	// so the cleanup defer must have torn it down.
 	if !run.ran("netns del fc-cgroup-fail") {
 		t.Error("cleanup did not delete netns on cgroup failure")
+	}
+}
+
+// TestWakePostBootCgroupFenceFailsClosed covers the production fence write
+// itself. fakeVMM.Boot creates the jailer scope but intentionally leaves the
+// memory.max/cpu.max files absent, so Manager.Wake reaches writePlanCgroup and
+// must reject the otherwise-ready VM instead of exposing it uncapped.
+func TestWakePostBootCgroupFenceFailsClosed(t *testing.T) {
+	withFakeCgroupRoot(t)
+	run, vmm := &fakeRunner{}, &fakeVMM{postBootCgroupBlock: true}
+	m := newTestManager(run, vmm)
+
+	_, err := m.ColdBoot(context.Background(), req("post-cgroup-fail"))
+	if err == nil {
+		t.Fatal("expected post-boot cgroup fence failure")
+	}
+	if m.LeasedCount() != 0 {
+		t.Errorf("lease leaked after post-boot cgroup failure: leased=%d", m.LeasedCount())
+	}
+	if m.LiveCount() != 0 {
+		t.Errorf("VM remained live after post-boot cgroup failure: live=%d", m.LiveCount())
+	}
+	if !run.ran("netns del fc-post-cgroup-fail") {
+		t.Error("cleanup did not delete netns after post-boot cgroup failure")
 	}
 }
 

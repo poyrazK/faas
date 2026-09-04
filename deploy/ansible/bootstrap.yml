@@ -97,6 +97,10 @@
   max_fail_percentage: 0
 
   roles:
+    # Cheap fail-closed admission checks must run before storage discovery or
+    # the Firecracker kernel build. node_join stages the env + manifest before
+    # importing this play; image-seed builds opt out explicitly.
+    - role: compute_admission
     # Shared host preconditions. Control-plane monitoring and notification
     # services stay on the control-plane role; a compute box must not require
     # production paging credentials or run a second Alertmanager instance.

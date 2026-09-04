@@ -7,19 +7,51 @@
 // caller relies on to keep workloads from escaping the
 // cgroup hierarchy via path manipulation.
 //
-// The partitionInto / placeIntoLeaf / mountCgroup2 tests
-// are omitted here because they require a real cgroup v2
-// mount and root permissions to write into memory.max /
-// cgroup.procs. Those tests run as part of the metal
+// The partitionInto test uses a temporary cgroupRoot so it can
+// verify the memory.max bytes without a real mount. The
+// placeIntoLeaf / mountCgroup2 tests still require a real cgroup
+// v2 mount and root permissions; those run as part of the metal
 // suite (TestMetalSidecarCgroupPartition in
 // pkg/fcvm/manager_metal_test.go).
 
 package main
 
 import (
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestPrepareWorkloadCgroupUsesRequestedMemory(t *testing.T) {
+	oldRoot := cgroupRoot
+	cgroupRoot = t.TempDir()
+	t.Cleanup(func() { cgroupRoot = oldRoot })
+
+	leaf, err := prepareWorkloadCgroup("main", "app", 256, slog.Default())
+	if err != nil {
+		t.Fatalf("prepareWorkloadCgroup: %v", err)
+	}
+	if leaf == "" {
+		t.Fatal("prepareWorkloadCgroup returned empty leaf for a configured workload")
+	}
+	body, err := os.ReadFile(filepath.Join(leaf, "memory.max"))
+	if err != nil {
+		t.Fatalf("read main memory.max: %v", err)
+	}
+	want := strconv.FormatInt(256<<20, 10) + "\n"
+	if string(body) != want {
+		t.Fatalf("main memory.max = %q, want %q", body, want)
+	}
+	if got, err := prepareWorkloadCgroup("main", "app", 0, slog.Default()); err != nil || got != "" {
+		t.Fatalf("zero RAM should skip the child cgroup, got %q", got)
+	}
+	if _, err := prepareWorkloadCgroup("sidecar", "bad/name", 64, slog.Default()); err == nil {
+		t.Fatal("invalid workload name should fail closed before exec")
+	}
+}
 
 // TestCgroupSafeName_ValidCombinations pins the happy path:
 // type + name joined with a single dash, used to derive the

@@ -26,10 +26,9 @@
 # the literal placeholder string. The grafana + prometheus roles
 # already fail closed on this; mirror the same assert here so a
 # future rebase that drops the real SHA cannot ship a "passing"
-# bootstrap on a fresh box. fc_kernel_sha256 is allowed to remain
-# the placeholder until the first `make fc-kernel` runs on the
-# target host (it's a build-output pin, not a release pin) — that's
-# asserted separately, where the kernel build task sets it.
+# bootstrap on a fresh box. The built kernel is a release artifact, so a
+# compute-only production host must compare it with the staged deployment
+# manifest instead of discovering and accepting a host-local value.
 - name: firecracker — assert fc_release_sha256 is set + valid hex
   ansible.builtin.assert:
     that:
@@ -52,6 +51,16 @@
     fail_msg: >-
       fc_kernel_tar_sha256 is missing, malformed, or still the
       placeholder. Same shape as fc_release_sha256 above.
+
+- name: firecracker — assert fc_kernel_config_sha256 is set + valid hex
+  ansible.builtin.assert:
+    that:
+      - fc_kernel_config_sha256 is defined
+      - fc_kernel_config_sha256 | length == 64
+      - not fc_kernel_config_sha256.startswith('REPLACE_WITH')
+    fail_msg: >-
+      fc_kernel_config_sha256 is missing, malformed, or still a placeholder.
+      Refusing to fetch an unpinned guest-kernel configuration.
 
 - name: firecracker — mkdir runtime binary and kernel roots
   ansible.builtin.file:
@@ -111,6 +120,39 @@
     - { dest: /usr/local/bin/firecracker, src: firecracker }
     - { dest: /usr/local/bin/jailer, src: jailer }
 
+- name: firecracker — detect the release-pinned guest kernel
+  ansible.builtin.stat:
+    path: /var/lib/faas/bootstrap/vmlinux
+  register: faas_release_kernel_stat
+  changed_when: false
+
+- name: firecracker — require the signed guest kernel on production compute nodes
+  ansible.builtin.assert:
+    that:
+      - faas_release_kernel_stat.stat.exists
+      - faas_release_kernel_stat.stat.isreg
+    fail_msg: >-
+      compute-only production bootstrap requires vmlinux extracted from the
+      signed release bundle at /var/lib/faas/bootstrap/vmlinux. Refusing to
+      rebuild a host-specific kernel whose digest cannot be shared by the
+      fleet.
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — select the kernel source
+  ansible.builtin.set_fact:
+    faas_kernel_release_staged: >-
+      {{ (faas_box_role | default('single-box')) == 'compute-only'
+         and not (faas_image_seed | default(false) | bool)
+         and (faas_release_kernel_stat.stat.exists | default(false) | bool) }}
+    faas_kernel_source_path: >-
+      {{ '/var/lib/faas/bootstrap/vmlinux'
+         if ((faas_box_role | default('single-box')) == 'compute-only'
+             and not (faas_image_seed | default(false) | bool))
+         else '/usr/src/linux-' ~ fc_kernel_version ~ '/vmlinux' }}
+    faas_kernel_rebuild_required: false
+
 - name: firecracker — ensure kernel build dependencies
   ansible.builtin.package:
     name:
@@ -131,6 +173,7 @@
       # case where the alpine placeholder ref is shipped to imaged.
       - e2fsprogs
     state: present
+  when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — download kernel source tarball
   ansible.builtin.get_url:
@@ -141,6 +184,7 @@
     group: root
     mode: "0644"
   register: kernel_tar
+  when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — extract kernel source
   # `creates` is a command-module parameter, not a task keyword. At task
@@ -150,29 +194,40 @@
   ansible.builtin.command:
     cmd: "tar -xJf /tmp/linux-{{ fc_kernel_version }}.tar.xz -C /usr/src"
     creates: "/usr/src/linux-{{ fc_kernel_version }}"
+  register: kernel_source_extract
+  when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — fetch FC kernel config
   ansible.builtin.get_url:
     url: "{{ fc_kernel_config_url }}"
     dest: "/tmp/config-{{ fc_kernel_version }}"
+    checksum: "sha256:{{ fc_kernel_config_sha256 }}"
     owner: root
     group: root
     mode: "0644"
   register: kernel_config
+  when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — apply FC kernel config
-  # Same task-level `creates` bug as the extract step above.
-  ansible.builtin.command:
-    cmd: "cp /tmp/config-{{ fc_kernel_version }} /usr/src/linux-{{ fc_kernel_version }}/.config"
-    creates: "/usr/src/linux-{{ fc_kernel_version }}/.config"
+  # Copy the pinned config every time its source changes; a stale .config
+  # must never survive a release/configuration update.
+  ansible.builtin.copy:
+    src: "/tmp/config-{{ fc_kernel_version }}"
+    dest: "/usr/src/linux-{{ fc_kernel_version }}/.config"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  register: kernel_config_copy
+  when: not (faas_kernel_release_staged | bool)
 
-- name: firecracker — ensure CONFIG_BLK_DEV_VIRTIO=y (built-in, not module)
+- name: firecracker — remove obsolete CONFIG_BLK_DEV_VIRTIO alias
   ansible.builtin.lineinfile:
     path: /usr/src/linux-{{ fc_kernel_version }}/.config
     regexp: "^CONFIG_BLK_DEV_VIRTIO=.*"
-    line: "CONFIG_BLK_DEV_VIRTIO=y"
-    state: present
-  register: virtio_config
+    state: absent
+  register: obsolete_virtio_config
+  when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — ensure CONFIG_VIRTIO_BLK=y (built-in, not module)
   ansible.builtin.lineinfile:
@@ -180,6 +235,8 @@
     regexp: "^CONFIG_VIRTIO_BLK=.*"
     line: "CONFIG_VIRTIO_BLK=y"
     state: present
+  register: virtio_blk_config
+  when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — ensure CONFIG_FUSE_FS=y for rootless BuildKit
   ansible.builtin.lineinfile:
@@ -187,6 +244,8 @@
     regexp: "^(# )?CONFIG_FUSE_FS(=.*| is not set)$"
     line: "CONFIG_FUSE_FS=y"
     state: present
+  register: fuse_config
+  when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — ensure CONFIG_IP_PNP=y for static guest networking
   ansible.builtin.lineinfile:
@@ -194,12 +253,41 @@
     regexp: "^(# )?CONFIG_IP_PNP(=.*| is not set)$"
     line: "CONFIG_IP_PNP=y"
     state: present
+  register: ip_pnp_config
+  when: not (faas_kernel_release_staged | bool)
+
+- name: firecracker — inspect existing kernel build output
+  ansible.builtin.stat:
+    path: "/usr/src/linux-{{ fc_kernel_version }}/vmlinux"
+  register: kernel_output_stat
+  changed_when: false
+  when: not (faas_kernel_release_staged | bool)
+
+- name: firecracker — determine whether kernel rebuild is required
+  ansible.builtin.set_fact:
+    faas_kernel_rebuild_required: >-
+      {{ (not kernel_output_stat.stat.exists)
+         or (kernel_tar.changed | default(false) | bool)
+         or (kernel_source_extract.changed | default(false) | bool)
+         or (kernel_config.changed | default(false) | bool)
+         or (kernel_config_copy.changed | default(false) | bool)
+         or (obsolete_virtio_config.changed | default(false) | bool)
+         or (virtio_blk_config.changed | default(false) | bool)
+         or (fuse_config.changed | default(false) | bool)
+         or (ip_pnp_config.changed | default(false) | bool) }}
+  when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — build kernel (vmlinux) with 4 jobs
   ansible.builtin.command: make -j4 ARCH=x86_64 CROSS_COMPILE= olddefconfig
   args:
     chdir: /usr/src/linux-{{ fc_kernel_version }}
-    creates: "/usr/src/linux-{{ fc_kernel_version }}/vmlinux"
+  environment:
+    SOURCE_DATE_EPOCH: "0"
+    KBUILD_BUILD_TIMESTAMP: "1970-01-01 00:00:00 UTC"
+    KBUILD_BUILD_USER: gregale
+    KBUILD_BUILD_HOST: release-builder
+    KBUILD_BUILD_VERSION: "1"
+  when: faas_kernel_rebuild_required | bool
 
 - name: firecracker — build vmlinux
   # Firecracker 1.7 expects the uncompressed x86 ELF kernel.  `bzImage`
@@ -208,12 +296,18 @@
   ansible.builtin.command: make -j4 ARCH=x86_64 CROSS_COMPILE= vmlinux
   args:
     chdir: /usr/src/linux-{{ fc_kernel_version }}
-    creates: "/usr/src/linux-{{ fc_kernel_version }}/vmlinux"
+  environment:
+    SOURCE_DATE_EPOCH: "0"
+    KBUILD_BUILD_TIMESTAMP: "1970-01-01 00:00:00 UTC"
+    KBUILD_BUILD_USER: gregale
+    KBUILD_BUILD_HOST: release-builder
+    KBUILD_BUILD_VERSION: "1"
   register: kernel_build
+  when: faas_kernel_rebuild_required | bool
 
 - name: firecracker — copy vmlinux to /srv/fc/base
   ansible.builtin.copy:
-    src: "/usr/src/linux-{{ fc_kernel_version }}/vmlinux"
+    src: "{{ faas_kernel_source_path }}"
     dest: "/srv/fc/base/vmlinux-{{ fc_kernel_version }}"
     remote_src: true
     owner: root
@@ -249,19 +343,128 @@
   register: vmlinux_sum
   changed_when: false
 
-- name: firecracker — warn about pinning kernel SHA-256
-  ansible.builtin.debug:
-    msg: |
-      Kernel built successfully. UPDATE defaults/main.yml with this SHA-256:
-      fc_kernel_sha256: "{{ vmlinux_sum.stdout.split()[0] }}"
-  when: fc_kernel_sha256.startswith("REPLACE")
+- name: firecracker — require the production release manifest before artifact checks
+  ansible.builtin.stat:
+    path: /etc/faas/manifest.yaml
+  register: faas_release_manifest_stat
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
 
-- name: firecracker — assert kernel checksum (if pinned)
+- name: firecracker — fail closed when compute node has no release manifest
   ansible.builtin.assert:
     that:
-      - "fc_kernel_sha256 == vmlinux_sum.stdout.split()[0]"
-    fail_msg: "Kernel SHA-256 mismatch. Run: sha256sum /srv/fc/base/vmlinux-{{ fc_kernel_version }}"
-  when: not fc_kernel_sha256.startswith("REPLACE")
+      - faas_release_manifest_stat.stat.exists
+      - faas_release_manifest_stat.stat.isreg
+    fail_msg: >-
+      compute-only production bootstrap requires /etc/faas/manifest.yaml
+      before Firecracker artifacts are accepted. Stage the signed deployment
+      manifest through node_join; refusing an unanchored host-local kernel.
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — load the production release manifest
+  ansible.builtin.slurp:
+    src: /etc/faas/manifest.yaml
+  register: faas_release_manifest_blob
+  no_log: true
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — decode release artifact identity
+  ansible.builtin.set_fact:
+    faas_release_artifact_identity: >-
+      {{ faas_release_manifest_blob.content | b64decode | from_yaml }}
+  no_log: true
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — require release artifact digests in manifest
+  ansible.builtin.assert:
+    that:
+      - faas_release_artifact_identity.release is defined
+      - faas_release_artifact_identity.release.firecracker_digest is match('^[0-9a-fA-F]{64}$')
+      - faas_release_artifact_identity.release.kernel_digest is match('^[0-9a-fA-F]{64}$')
+      - not (faas_release_artifact_identity.release.firecracker_digest | lower).startswith('replace')
+      - not (faas_release_artifact_identity.release.kernel_digest | lower).startswith('replace')
+    fail_msg: >-
+      /etc/faas/manifest.yaml must carry real 64-hex release.firecracker_digest
+      and release.kernel_digest values. Placeholders or missing digests cannot
+      anchor a compute node's executable artifacts.
+  no_log: true
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — choose the expected built-kernel digest
+  ansible.builtin.set_fact:
+    faas_expected_kernel_sha256: >-
+      {{ (fc_kernel_sha256 | default('') | trim)
+         if (fc_kernel_sha256 | default('') | trim | length > 0)
+         else faas_release_artifact_identity.release.kernel_digest }}
+  no_log: true
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — assert built kernel matches the release manifest
+  ansible.builtin.assert:
+    that:
+      - faas_expected_kernel_sha256 is match('^[0-9a-fA-F]{64}$')
+      - "faas_expected_kernel_sha256 | lower == vmlinux_sum.stdout.split()[0] | lower"
+    fail_msg: >-
+      Built kernel digest does not match the release anchor:
+      got={{ vmlinux_sum.stdout.split()[0] }},
+      want={{ faas_expected_kernel_sha256 | default('missing') }}.
+      Refusing a host-specific kernel that can invalidate snapshots.
+  no_log: true
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — verify version-keyed kernel matches the release manifest
+  ansible.builtin.command: sha256sum /srv/fc/kernel/{{ fc_release | regex_replace('^v', '') }}
+  register: published_kernel_sum
+  changed_when: false
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — assert published kernel was not altered after pinning
+  ansible.builtin.assert:
+    that:
+      - "faas_expected_kernel_sha256 | lower == published_kernel_sum.stdout.split()[0] | lower"
+    fail_msg: >-
+      Published kernel digest differs from the release anchor; refusing to
+      start a compute node with a kernel different from the one it built.
+  no_log: true
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — verify installed Firecracker binary matches the release manifest
+  ansible.builtin.command: sha256sum /usr/local/bin/firecracker-{{ fc_release }}-{{ fc_arch }}
+  register: firecracker_sum
+  changed_when: false
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+
+- name: firecracker — assert Firecracker binary is release anchored
+  ansible.builtin.assert:
+    that:
+      - "faas_release_artifact_identity.release.firecracker_digest | lower == firecracker_sum.stdout.split()[0] | lower"
+    fail_msg: >-
+      Installed Firecracker digest differs from the signed release manifest;
+      refusing to let this host create or restore snapshots with an unknown
+      VMM binary.
+  no_log: true
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
 
 - name: "firecracker — smoke test (version check)"
   ansible.builtin.command: "{{ item }}"

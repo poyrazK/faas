@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -41,6 +42,12 @@ import (
 // row. Deployment priming is intentionally separate and keeps its existing
 // build/snapshot budget.
 const reaperParkTimeout = 2 * time.Minute
+
+// lifecycleReconcileMaxPerTick bounds the durable deletion sweep. Deletion
+// cleanup is retryable and oldest-first at the store layer, so a bounded pass
+// gives every schedd tick a predictable cost without allowing one abandoned
+// account or app to monopolise the scheduler.
+const lifecycleReconcileMaxPerTick = 100
 
 // Loop subscribes to the pg_notify channels schedd cares about and reacts. It
 // runs the idle reaper on a 10 s tick and cron on a 60 s tick (spec §4.3). The
@@ -69,8 +76,16 @@ type Loop struct {
 	// NotifyTriggerChanged payload (commit #16). The Loop's run
 	// selects on it alongside the 1s ticker so an idle broker
 	// doesn't sit for a full 1s tick before the first batch.
-	triggerWakeup        chan struct{}
-	triggerWakeupOnce    sync.Once
+	triggerWakeup     chan struct{}
+	triggerWakeupOnce sync.Once
+	// primeSlots bounds how many snapshot_prime handlers run off the
+	// main select goroutine. Prime is the one notification handler that
+	// does VM work (cold boot + snapshot), so it is the only one that
+	// can stall the shared loop for tens of seconds; every other case
+	// in handleNotification is a cheap DB or cache operation and stays
+	// inline. See dispatchPrime.
+	primeSlots           chan struct{}
+	primeSlotsOnce       sync.Once
 	now                  func() time.Time
 	flowCounts           FlowCounter
 	ops                  *wire.OpsMetrics       // issue #171 shared registry; nil safe
@@ -85,6 +100,8 @@ type Loop struct {
 	deadNodeReconciler   *DeadNodeReconciler    // dead-node billing-leak self-healer; nil opts out (no ticker arm)
 	instStats            InstanceStatsPoller    // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
 	scaleup              *scaleup.Trigger       // issue #169 / #172 reactive scale-up trigger; nil opts out
+	scaleupMu            sync.Mutex             // serializes asynchronous scale-up ticks
+	scaleupRunning       bool                   // true while one scale-up tick is in flight
 	targets              *targets.Trigger       // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
 	floor                *floor.Trigger         // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
 	recentLoad           *recentload.RecentLoad // issue #171 aggressive-reaper signal mirror; nil opts out
@@ -1262,15 +1279,33 @@ func (l *Loop) runDeadNodeReconcile(ctx context.Context) {
 }
 
 // runScaleUp dispatches one tick of the per-app reactive scale-up
-// trigger (issue #169 / #172). Same shape as runHeartbeat —
-// exported as a method so tests drive a single tick without
-// spinning up Run. Tick errors are logged inside the trigger; Run
-// never returns them so a transient store / scraper blip can't
-// tear down the loop.
+// trigger (issue #169 / #172). The tick runs asynchronously because
+// its optional Prometheus scrape can otherwise hold the scheduler loop
+// for the HTTP client's timeout. At most one tick is in flight; a slow
+// scrape therefore causes the next cadence to be skipped rather than
+// creating concurrent ring-buffer writers or piling up goroutines.
 func (l *Loop) runScaleUp(ctx context.Context) {
-	if err := l.scaleup.Tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		l.log.Warn("scaleup tick error", "err", err)
+	if l == nil || l.scaleup == nil {
+		return
 	}
+	l.scaleupMu.Lock()
+	if l.scaleupRunning {
+		l.scaleupMu.Unlock()
+		return
+	}
+	l.scaleupRunning = true
+	trigger := l.scaleup
+	l.scaleupMu.Unlock()
+	go func() {
+		defer func() {
+			l.scaleupMu.Lock()
+			l.scaleupRunning = false
+			l.scaleupMu.Unlock()
+		}()
+		if err := trigger.Tick(ctx); err != nil && !errors.Is(err, context.Canceled) && l.log != nil {
+			l.log.Warn("scaleup tick error", "err", err)
+		}
+	}()
 }
 
 // runTargets (PR-C, issue #462) dispatches one tick of the
@@ -1319,15 +1354,112 @@ func (l *Loop) runRecentLoad(ctx context.Context) {
 	l.recentLoad.Touch(ctx, time.Now())
 }
 
+// maxConcurrentPrimes bounds dispatchPrime's off-loop workers. Prime
+// takes a per-app lock (Engine.Prime → lockApp), so concurrent primes
+// for one app serialize anyway; this bounds the fan-out across apps and
+// keeps goroutine growth from a notify burst bounded.
+const maxConcurrentPrimes = 4
+
+// dispatchPrime runs Engine.Prime off the loop's select goroutine.
+//
+// Prime does real VM work — cold boot then snapshot — so it can occupy
+// the goroutine for tens of seconds. That goroutine is shared: Loop.run
+// selects over the pg_notify channel AND the reaper, cron and watchdog
+// tickers. A slow Prime therefore stops the reaper, cron and watchdog
+// too, and a Prime that never returns stops them forever.
+//
+// That is not hypothetical. On 2026-09-03 a PauseAndSnapshot with no
+// deadline blocked in grpc waitOnHeader for 10+ minutes; schedd stayed
+// `active`, answered /metrics in 30ms, and did no work at all. The
+// SIGQUIT dump showed one goroutine in
+// handleNotification → Prime → snapshotAndPark → PauseAndSnapshot and
+// ZERO goroutines blocked on a mutex — the stall was head-of-line
+// blocking on this select, not lock contention.
+//
+// SnapshotTimeout now bounds that RPC, so the block is finite; running
+// off-loop additionally keeps a merely-slow prime from delaying the
+// reaper and watchdog behind it.
+//
+// When every slot is busy the call runs INLINE rather than being
+// dropped. A dropped snapshot_prime strands the deployment in
+// `snapshotting` with nothing to retry it (the notification is
+// consumed and gone), which is exactly the state this bug left
+// deployments in. Blocking the loop is the lesser harm, and it is
+// bounded by SnapshotTimeout + the cold-boot budget.
+func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
+	l.primeSlotsOnce.Do(func() {
+		l.primeSlots = make(chan struct{}, maxConcurrentPrimes)
+	})
+	run := func() {
+		if err := l.engine.Prime(ctx, appID, deploymentID); err != nil {
+			l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "err", err)
+			l.engine.markPrimeFailed(ctx, deploymentID, err)
+		}
+	}
+	select {
+	case l.primeSlots <- struct{}{}:
+		go func() {
+			defer func() { <-l.primeSlots }()
+			run()
+		}()
+	default:
+		l.log.Warn("sched: prime slots saturated; running inline",
+			"app", appID, "deployment", deploymentID, "slots", maxConcurrentPrimes)
+		run()
+	}
+}
+
+// waitPrimes blocks until every prime dispatched by dispatchPrime has
+// returned. It acquires all slots (so no worker can hold one) and then
+// releases them.
+//
+// Tests need this because dispatchPrime moved Prime off the caller's
+// goroutine: a test that calls handleNotification and asserts on the
+// resulting rows would otherwise race the worker. Production has no
+// caller — the loop is never "done" with primes.
+func (l *Loop) waitPrimes() {
+	l.primeSlotsOnce.Do(func() {
+		l.primeSlots = make(chan struct{}, maxConcurrentPrimes)
+	})
+	for i := 0; i < maxConcurrentPrimes; i++ {
+		l.primeSlots <- struct{}{}
+	}
+	for i := 0; i < maxConcurrentPrimes; i++ {
+		<-l.primeSlots
+	}
+}
+
 // handleNotification decodes the JSON payload and applies the policy.
 //
-//   - app_changed / deployment_changed: informational. Wake materialises an
+//   - app_changed: `kind=parked` is actionable and tears down the app's live
+//     instances; other app changes are informational. Wake materialises an
 //     instance on demand (first request), so no eager instance creation here.
+//   - deployment_changed: informational.
 //   - snapshot_prime: imaged finished building a deployment's layer; boot it
 //     once, snapshot it, and park it (spec §5 step 6, ADR-018).
 func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppChanged:
+		var p struct {
+			Kind  string `json:"kind"`
+			AppID string `json:"app_id"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			l.log.Warn("sched: bad app_changed payload", "err", err)
+			return
+		}
+		if p.Kind == "parked" {
+			if p.AppID == "" {
+				l.log.Warn("sched: parked app notification missing app_id")
+				return
+			}
+			if acted, err := l.engine.ParkApp(ctx, p.AppID); err != nil {
+				l.log.Warn("sched: park app failed", "app", p.AppID, "acted", acted, "err", err)
+			} else {
+				l.log.Info("sched: parked app reconciled", "app", p.AppID, "instances", acted)
+			}
+			return
+		}
 		l.log.Debug("app_changed", "payload", n.Payload)
 	case db.NotifyDeploymentChanged:
 		l.log.Debug("deployment_changed", "payload", n.Payload)
@@ -1344,9 +1476,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			l.log.Warn("sched: snapshot_prime missing ids", "payload", n.Payload)
 			return
 		}
-		if err := l.engine.Prime(ctx, p.AppID, p.DeploymentID); err != nil {
-			l.log.Warn("sched: prime failed", "app", p.AppID, "deployment", p.DeploymentID, "err", err)
-		}
+		l.dispatchPrime(ctx, p.AppID, p.DeploymentID)
 	case db.NotifyCronRunNow:
 		// PR-D / issue #791: fire-now wake. The notify payload is
 		// informational (the row in cron_fire_now_requests is the
@@ -1397,6 +1527,22 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 //   - SelectEvictions → Engine.Evict (destroy; next wake cold-boots, ADR-005).
 func (l *Loop) runReaper(ctx context.Context) {
 	store := l.engine.Store()
+	// pg_notify is a wakeup hint, not a durable queue. Reconcile deletion
+	// candidates directly from app/account status before the normal app list.
+	// The regular app list excludes soft-deleted apps, and the account-deletion
+	// state is intentionally outside the idle reaper's live set, so neither
+	// path can recover an orphaned VM on its own.
+	lifecycle, lifecycleErr := store.ListInstancesForLifecycleReconciliation(ctx, l.engine.OwnerNodeID(), lifecycleReconcileMaxPerTick)
+	if lifecycleErr != nil {
+		l.log.Warn("reaper: list lifecycle reconciliation candidates", "err", lifecycleErr)
+	} else {
+		for _, candidate := range lifecycle {
+			acted, err := l.engine.ReconcileLifecycleInstance(ctx, candidate.ID)
+			if err != nil {
+				l.log.Warn("reaper: lifecycle reconciliation", "instance", candidate.ID, "acted", acted, "err", err)
+			}
+		}
+	}
 	// Phase 2 / Gate A: scope the reaper to this schedd's owner
 	// apps/instances. Empty owner = legacy single-box posture
 	// (list everything). Non-empty = per-node slice via the
@@ -1412,6 +1558,19 @@ func (l *Loop) runReaper(ctx context.Context) {
 	if err != nil {
 		l.log.Warn("reaper: list apps", "err", err)
 		return
+	}
+	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps
+	// from the table source of truth on every reaper tick so a schedd restart,
+	// LISTEN reconnect, or transient notification loss cannot leave a VM live
+	// behind an evicted_cold app. This runs before the normal idle snapshot so
+	// successfully parked rows are excluded from the same tick's accounting.
+	for _, app := range apps {
+		if app.Status != state.AppEvictedCold {
+			continue
+		}
+		if acted, err := l.engine.ParkApp(ctx, app.ID); err != nil {
+			l.log.Warn("reaper: parked app reconcile", "app", app.ID, "acted", acted, "err", err)
+		}
 	}
 	// G7 conntrack warm (spec §17): if the FlowCounter is also a Warm-able
 	// reader (the production flowcount.Reader is), feed it every live
@@ -1645,7 +1804,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	idleParkByApp := map[string]struct{}{}
 	cooldownHeldByApp := map[string]struct{}{}
 	for _, id := range ReapIdle(now, snapshot, l.ops, cooldownHeldByApp) {
-		if err := l.parkFromReaper(ctx, id); err != nil {
+		if err := l.reaperShutdown(ctx, snapshot, id); err != nil {
 			l.log.Warn("reaper: idle park", "instance", id, "err", err)
 			continue
 		}
@@ -1744,6 +1903,77 @@ func (l *Loop) parkFromReaper(ctx context.Context, instanceID string) error {
 	parkCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
 	defer cancel()
 	return l.engine.Park(parkCtx, instanceID)
+}
+
+// reaperShutdown (M-2 / //code-review PR #1202 finding #8) is the
+// mode-aware dispatcher the cron-loop reaper uses to shut down
+// instances. Worker / job instances must go through
+// Engine.StopInstance (signal-and-grace, no snapshot) so the
+// guest-init Supervisor has a chance to run the customer's
+// StopSignal handler before the engine escalates to SIGKILL.
+// Request / service / mirror instances still go through
+// Engine.Park (snapshot-and-park) — the snapshot cache is what
+// makes the next wake cheap, and ADR-005 pins cold-boot as the
+// fallback, not the primary path.
+//
+// Today's reaper exemption (finding #5) means worker / job / service
+// IDs are not normally returned by ReapIdle / ReapAggressive —
+// but the dispatcher is still load-bearing for the cron-loop
+// paths the exemption does not cover: a future "max-worker-count"
+// reaper rule, an admin operator force_stop on a worker, or any
+// cron-loop shutdown primitive added in M-4 / M-5. Putting the
+// dispatch at the shared call site means the routing is correct
+// the first time, instead of being retro-fitted under each new
+// reaper rule.
+//
+// The mode lookup walks the snapshot the reaper built earlier in
+// the tick — a benign race exists if a different cron-loop tick
+// mutated the instance between ReapIdle returning and
+// reaperShutdown running, but the worst-case outcome is the
+// dispatcher parks instead of stops (or vice versa), and both
+// paths converge on STOPPED. ReaperParkTimeout bounds the
+// synchronous call regardless of which engine path runs.
+func (l *Loop) reaperShutdown(ctx context.Context, snapshot []InstanceInfo, instanceID string) error {
+	mode := l.modeForShutdown(snapshot, instanceID)
+	switch state.InstanceMode(mode) {
+	case state.InstanceModeWorker, state.InstanceModeJob:
+		return l.stopInstanceFromReaper(ctx, instanceID)
+	default:
+		return l.parkFromReaper(ctx, instanceID)
+	}
+}
+
+// modeForShutdown looks up the InstanceInfo for id in the reaper
+// snapshot and returns its Mode. Falls back to the empty string
+// (which InstanceMode treats as ModeNormal, so the dispatcher
+// parks) when the snapshot has no entry for id — a benign race
+// covered in reaperShutdown's doc comment.
+func (l *Loop) modeForShutdown(snapshot []InstanceInfo, instanceID string) string {
+	for _, info := range snapshot {
+		if info.Instance == instanceID {
+			return info.Mode
+		}
+	}
+	return ""
+}
+
+// stopInstanceFromReaper is the reaper-side wrapper around
+// Engine.StopInstance. Same reaperParkTimeout cap as
+// parkFromReaper so a wedged guest-init can't pin the cron loop
+// for longer than the idle-path budget. The StopOptions pick
+// SIGTERM (default per ADR-138 §Decision 1) and a 30 s grace
+// window — matches the per-plan DefaultStopGracePeriodS for the
+// Hobby tier; Pro / Scale get the same 30 s here because the
+// cron-loop shutdown is operator-driven and shouldn't out-grace
+// a customer's intentional force-stop.
+func (l *Loop) stopInstanceFromReaper(ctx context.Context, instanceID string) error {
+	stopCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
+	defer cancel()
+	_, err := l.engine.StopInstance(stopCtx, instanceID, StopOptions{
+		Signal:       int32(syscall.SIGTERM),
+		GraceSeconds: 30,
+	})
+	return err
 }
 
 // reaperInstanceState mirrors the SQL partial-index predicate used by
@@ -1923,7 +2153,7 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		// post-enrichment app-wide max floor.
 		aggressiveParkOK := false
 		for _, id := range ids {
-			if err := l.parkFromReaper(ctx, id); err != nil {
+			if err := l.reaperShutdown(ctx, snapshot, id); err != nil {
 				l.log.Warn("reaper: aggressive park", "instance", id, "err", err)
 				continue
 			}
@@ -2016,6 +2246,15 @@ func (l *Loop) emitFloorReleasedAudit(ctx context.Context, appID string, floor, 
 type GatewaySynth interface {
 	SynthesizeRequest(ctx context.Context, appID, method, path string) error
 	Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
+}
+
+// prewokenGatewaySynth is the optional fast path for the invocation drain.
+// Schedd already owns admission and has the live target after engine.Wake;
+// implementations can carry that target to gatewayd-internal instead of
+// waking the same app a second time. Legacy GatewaySynth implementations
+// continue to use Invoke and retain their existing behaviour.
+type prewokenGatewaySynth interface {
+	InvokeWithWake(ctx context.Context, appID string, inv state.Invocation, wake WakeResult) (state.Invocation, error)
 }
 
 // httpGatewaySynth is the production GatewaySynth: an HTTP client
@@ -2307,13 +2546,24 @@ func (h *httpGatewaySynth) SynthesizeRequest(ctx context.Context, appID, method,
 // state (dispatched/completed) so the drain can call Store.CompleteInvocation
 // with the result blob. Network errors bubble up so the drain can retry.
 func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	return h.invoke(ctx, appID, inv, nil)
+}
+
+// InvokeWithWake is the pre-woken variant used by the unified invocation
+// drain. The target is the result of schedd's engine.Wake call, so the
+// gateway-internal side can forward directly to the selected instance.
+func (h *httpGatewaySynth) InvokeWithWake(ctx context.Context, appID string, inv state.Invocation, wake WakeResult) (state.Invocation, error) {
+	return h.invoke(ctx, appID, inv, &wake)
+}
+
+func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, error) {
 	var headers map[string]string
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
 			return inv, fmt.Errorf("sched: invocation headers: %w", err)
 		}
 	}
-	body, err := json.Marshal(map[string]any{
+	dispatch := map[string]any{
 		"invocation_id": inv.ID,
 		"app_id":        appID,
 		"source":        string(inv.Source),
@@ -2321,7 +2571,15 @@ func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.I
 		"path":          inv.Path,
 		"headers":       headers,
 		"body_b64":      base64.StdEncoding.EncodeToString(inv.Payload),
-	})
+	}
+	if wake != nil {
+		dispatch["instance_id"] = wake.InstanceID
+		dispatch["node_id"] = wake.NodeID
+		dispatch["deployment_id"] = wake.DeploymentID
+		dispatch["wake_id"] = wake.WakeID
+		dispatch["port"] = wake.Port
+	}
+	body, err := json.Marshal(dispatch)
 	if err != nil {
 		return inv, fmt.Errorf("sched: invocation marshal: %w", err)
 	}

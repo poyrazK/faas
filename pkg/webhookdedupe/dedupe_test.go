@@ -62,6 +62,18 @@ func TestCheckReplay_SecondDeliveryWithinTTL_Rejected(t *testing.T) {
 	}
 }
 
+func TestReleaseReplay_AllowsRetryAfterFailedApplication(t *testing.T) {
+	resetStoreForTest(t)
+	ctx := context.Background()
+	if err := CheckReplay(ctx, ProviderStripe, "delivery-release"); err != nil {
+		t.Fatalf("first delivery: %v", err)
+	}
+	ReleaseReplay(ctx, ProviderStripe, "delivery-release")
+	if err := CheckReplay(ctx, ProviderStripe, "delivery-release"); err != nil {
+		t.Fatalf("delivery after rollback should be fresh: %v", err)
+	}
+}
+
 // TestCheckReplay_DeliveryAfterTTL_Fresh covers the TTL boundary:
 // a delivery whose stored expires_at is older than the cutoff
 // (computed as now-TTL inside CheckReplay) is treated as fresh.

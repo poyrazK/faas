@@ -23,20 +23,33 @@
 # Default: info
 # log_level = "info"
 
-# [billing] block — provider config (PR-P2 + ADR-032 v2). Every key
-# has a working default; missing block ⇒ runnable daemon on Paddle
-# (the production billing provider at v2) with all secrets empty.
+# [billing] block — provider config (PR-P2 + public-release billing). Every key
+# has a working default; missing block ⇒ Polar is selected and credentials
+# plus catalog IDs are required before the daemon starts
+# (the public-release billing provider) with all secrets empty.
 # Env wins over TOML: FAAS_BILLING_PROVIDER, STRIPE_API_KEY,
 # STRIPE_WEBHOOK_SECRET, FAAS_PADDLE_API_KEY, FAAS_PADDLE_WEBHOOK_SECRET,
-# FAAS_PADDLE_SANDBOX override the values below when set.
+# FAAS_PADDLE_SANDBOX, and FAAS_POLAR_* override the values below when set.
 #
 # [billing]
-# provider = "paddle"     # "" | "stripe" | "paddle"; default "" (v2 = Paddle)
+# provider = "polar"      # "" | "stripe" | "paddle" | "polar"; default "" (public release = Polar)
 #
-# [billing.paddle]            # active at v2 (ADR-032 v2)
+# [billing.paddle]            # explicit legacy provider
 # api_key        = ""     # pdl_live_… or pdl_sandbox_…; or FAAS_PADDLE_API_KEY env
 # webhook_secret = ""     # whk_…                  ; or FAAS_PADDLE_WEBHOOK_SECRET env
 # sandbox        = false  # true → api.sandbox.paddle.com; or FAAS_PADDLE_SANDBOX=1
+#
+# [billing.polar]             # public-release Polar MoR + usage billing
+# api_key                = "" # organization access token; or FAAS_POLAR_ACCESS_TOKEN env
+# webhook_secret         = "" # Standard Webhooks secret; or FAAS_POLAR_WEBHOOK_SECRET env
+# sandbox                = false # true → sandbox-api.polar.sh; or FAAS_POLAR_SANDBOX=1
+# meter_id               = "" # required Polar meter UUID; or FAAS_POLAR_METER_ID env
+# hobby_product_id       = "" # Polar recurring product UUID
+# pro_product_id         = "" # Polar recurring product UUID
+# scale_product_id       = "" # Polar recurring product UUID
+# usage_event_name       = "faas_ram_usage" # meter event filter name
+# success_url            = "" # optional hosted-checkout redirect
+# return_url             = "" # optional hosted-checkout back link
 #
 # [billing.stripe]            # legacy opt-in (FAAS_BILLING_PROVIDER=stripe)
 # api_key           = ""  # sk_test_… or sk_live_…; or STRIPE_API_KEY env

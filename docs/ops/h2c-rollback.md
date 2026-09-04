@@ -1,8 +1,14 @@
 # H2C bridge rollback
 
 Operator runbook for rolling back the bridge-side H2C terminator
-(ADR-126 / PR #1050, hardened ADR-127 / G19.1). Two switches, in
-order of escalation:
+(ADR-126 / PR #1050, hardened ADR-127 / G19.1). The v2 bridge now
+reuses one process and H2C transport per live instance. Three
+switches, in order of escalation:
+
+- **Switch 0 — lifecycle rollback.** `FAAS_STREAM_BRIDGE_PERSISTENT=0`
+  on vmmd. Keeps the v2 wire protocol but returns to process-per-RPC
+  bridge startup. Use for a suspected reuse, socket, or child-lifecycle
+  defect while preserving H2C framing.
 
 - **Switch 1 — per-vmmd surgical rollback.** `FAAS_BRIDGE_PROTOCOL=h1`
   on the bridge process. Per-stream fallback to H1+chunked. Use for:
@@ -12,8 +18,9 @@ order of escalation:
   v2 binary defect, a wire-shape regression, or a Go-stdlib H2C
   server bug.
 
-Both switches are env-var only; neither restarts an unrelated
-process. The mirror-image rollout runbook is at
+All switches are env-var only; changing one requires restarting vmmd
+so new bridge children receive the setting. The mirror-image rollout
+runbook is at
 `docs/ops/h2c-rollout.md`.
 
 ## When to roll back
@@ -27,12 +34,39 @@ process. The mirror-image rollout runbook is at
 | Region-wide H2C handshake failures | `bridge-protection` dashboard Panel 4 outlier | page | Switch 2 wholesale |
 | vmmd process restart loop after a vmmd-stream-bridge upgrade | systemd journal | page | Switch 2 wholesale |
 
-Default policy: **start with Switch 1**. Switch 1 is surgical,
+Use Switch 0 first when framing is correct but requests fail only after
+the first invocation, or when stale bridge sockets/child processes are
+observed. It does not change the customer-visible HTTP/1.1 vs H2C choice.
+
+Default policy: **start with Switch 0 for lifecycle symptoms, otherwise
+Switch 1**. Switch 0 is reversible and preserves the v2 wire shape;
+Switch 1 is surgical,
 takes ~10 s to roll out (per-vmmd `systemctl edit` + `daemon-reload`
 + `restart`), and is reversible in seconds. Switch 2 is wholesale
 and reverts the entire fleet to the pre-ADR-126 shell bridge;
 escalate to Switch 2 only if Switch 1 fails to resolve or if the
 failure is at the vmmd binary level rather than the bridge.
+
+## Switch 0 — lifecycle (`FAAS_STREAM_BRIDGE_PERSISTENT=0`)
+
+```sh
+sudo systemctl edit faas-vmmd
+# In the editor, add:
+#   [Service]
+#   Environment=FAAS_STREAM_BRIDGE_PERSISTENT=0
+sudo systemctl daemon-reload
+sudo systemctl restart faas-vmmd
+```
+
+Verify:
+
+```sh
+sudo systemctl show faas-vmmd --property=Environment
+# expect: ... FAAS_STREAM_BRIDGE_PERSISTENT=0 ...
+```
+
+Reverse it by removing the override and restarting vmmd. With no
+override, persistent reuse is enabled for the v2 path.
 
 ## Switch 1 — per-vmmd surgical (`FAAS_BRIDGE_PROTOCOL=h1`)
 

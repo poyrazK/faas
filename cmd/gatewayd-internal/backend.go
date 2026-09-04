@@ -488,6 +488,19 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// before the gateway's RUNNING emission from the wake
 		// path lands).
 		switch p.State {
+		case "running":
+			// RUNNING may have been produced by another gateway process
+			// or by a schedd-side wake producer. Do not assume this
+			// process admitted the instance: hydrate the local picker from
+			// the authoritative row before the next request mistakes the
+			// app for cold and starts a duplicate VM.
+			if reconciler, ok := inv.(interface {
+				ReconcileLiveTargets(context.Context, string) error
+			}); ok {
+				if err := reconciler.ReconcileLiveTargets(ctx, p.AppID); err != nil {
+					log.Warn("gatewayd: reconcile running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
+				}
+			}
 		case "stopped", "failed", "parked", "snapshotting", "migrating":
 			inv.EvictInstance(p.AppID, p.InstanceID)
 		}

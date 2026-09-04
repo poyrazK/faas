@@ -514,6 +514,12 @@ type Release struct {
 	// RuntimeBaseDigest is the runtime base image digest. The doctor
 	// asserts the runtime layer's root digest matches.
 	RuntimeBaseDigest string `yaml:"runtime_base_digest"`
+	// RuntimeBaseRefs is the immutable OCI reference for each supported
+	// function runtime. It is optional for backwards-compatible manifests,
+	// but production manifests that carry it must contain the complete set so
+	// the provider-neutral compute join can stage one identical contract for
+	// builderd and imaged.
+	RuntimeBaseRefs map[string]string `yaml:"runtime_base_refs,omitempty"`
 }
 
 // Storage is the per-host filesystem layout. The renderer creates
@@ -1099,6 +1105,40 @@ func (r *Release) validate() Errors {
 		if !validSHA256(x.val) {
 			errs = append(errs, Error{x.path,
 				fmt.Sprintf("%q must be a 64-char sha256 digest", x.val)})
+		}
+	}
+	if len(r.RuntimeBaseRefs) != 0 {
+		expected := []string{"minimal", "node22", "python312", "go124", "go124_alpine", "node24", "python313"}
+		seen := make(map[string]struct{}, len(r.RuntimeBaseRefs))
+		for key, ref := range r.RuntimeBaseRefs {
+			seen[key] = struct{}{}
+			if ref == "" {
+				errs = append(errs, Error{"release.runtime_base_refs." + key, "is required"})
+				continue
+			}
+			digestMarker := "@sha256:"
+			digestAt := strings.LastIndex(ref, digestMarker)
+			if digestAt <= 0 || !validSHA256(ref[digestAt+len(digestMarker):]) {
+				errs = append(errs, Error{"release.runtime_base_refs." + key,
+					fmt.Sprintf("%q must be an OCI reference pinned by @sha256:<64hex>", ref)})
+			}
+		}
+		for _, key := range expected {
+			if _, ok := seen[key]; !ok {
+				errs = append(errs, Error{"release.runtime_base_refs." + key, "is required"})
+			}
+		}
+		for key := range seen {
+			found := false
+			for _, expectedKey := range expected {
+				if key == expectedKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				errs = append(errs, Error{"release.runtime_base_refs." + key, "is not a supported runtime"})
+			}
 		}
 	}
 	return errs

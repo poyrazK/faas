@@ -361,14 +361,15 @@ const (
 	//   deploy without an imaged restart. The pg_notify payload is
 	//   informational — the on-disk dir is the source of truth.
 	NotifyTrustedSignerChanged = "trusted_signer_changed"
-	// NotifyAuditEvent {"kind":"app.signature_missing|...",
+	// NotifyAuditEvent {"outbox_id":N, "kind":"app.signature_missing|...",
 	//                    "app_id":uuid, "deployment_id":uuid,
 	//                    "ref":"...", "signer":"..."}
-	//   imaged → apid-side pkg/audit (issue #472 / ADR-054):
-	//   imaged-side audit emits (cosign signature verify failures)
-	//   travel over pg_notify so the audit write surface stays
-	//   single-sourced in apid. The Loop in pkg/loop subscribes;
-	//   the audit row lands in `events` like any other kind.
+	//   imaged → apid-side audit (issue #472 / ADR-054 / ADR-141):
+	//   the imaged-side signature audit path now persists a durable
+	//   audit_event_outbox row and uses pg_notify as the low-latency
+	//   wakeup. Apid's subscriber delivers the referenced row;
+	//   its replay worker recovers missed notifications. Legacy
+	//   producers without outbox_id retain the direct audit path.
 	NotifyAuditEvent = "audit_event"
 	// NotifyWarmHintPublished {"app_id":uuid, "node_id":uuid}
 	//   schedd → gatewayd-public + gatewayd-internal: the sticky-warm

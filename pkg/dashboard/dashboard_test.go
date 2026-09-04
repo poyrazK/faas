@@ -456,7 +456,7 @@ func TestRender_Billing_HidesPortalForFree(t *testing.T) {
 	body := rec.Body.String()
 	for _, banned := range []string{
 		"Manage billing",
-		"Open Stripe billing portal",
+		"Open billing portal",
 		"Last invoice",
 	} {
 		if strings.Contains(body, banned) {
@@ -511,7 +511,7 @@ func TestRender_Billing_PaidPlanShowsPortal(t *testing.T) {
 		"GB-hours used",
 		"Egress this month (GB)",
 		"Manage billing",
-		"Open Stripe billing portal",
+		"Open billing portal",
 		"Last invoice",
 		"2026-07-31",
 		"€12.40",
@@ -550,13 +550,13 @@ func TestRender_Billing_PaidPortalUnset(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Stripe portal is not configured") {
+	if !strings.Contains(body, "billing portal is not available") {
 		t.Errorf("body missing operator-misconfig fallback\n--- body ---\n%s", body)
 	}
 	if !strings.Contains(body, "faas billing portal") {
 		t.Errorf("body missing CLI hint\n--- body ---\n%s", body)
 	}
-	if strings.Contains(body, "Open Stripe billing portal") {
+	if strings.Contains(body, "Open billing portal") {
 		t.Errorf("body should NOT contain the portal link button when URL is empty\n--- body ---\n%s", body)
 	}
 }

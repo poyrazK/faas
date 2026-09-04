@@ -1039,6 +1039,10 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	}
 
 	hasPaidPlan := acct.StripeSubscriptionItem != "" || acct.Plan != api.PlanFree
+	portalURL := ""
+	if hasPaidPlan {
+		portalURL = s.billingPortalURLForProvider(ctx, acct)
+	}
 
 	// Issue #561 — spend cap (issue #279 storage, #561 enforcement).
 	// Read the cap (nullable) and the current-month overage cents so
@@ -1086,7 +1090,8 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		LastInvoiceTotalFormatted: lastInvTotal,
 		LastInvoiceCurrency:       lastInvCcy,
 		HasPaidPlan:               hasPaidPlan,
-		PortalURL:                 s.billingPortalURLFor(acct),
+		Provider:                  providerName(s.billingProvider),
+		PortalURL:                 portalURL,
 		OverageCapCents:           capPtr,
 		OverageUsedCents:          overageCents,
 		OverageUsedThisMBCap:      overageRatio,

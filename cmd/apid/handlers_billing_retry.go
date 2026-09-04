@@ -29,6 +29,9 @@ import (
 //     account is in good standing; the dunning email was stale).
 //   - billing.ErrNoAPIKey     → 502 "billing_retry_no_api_key"
 //     (operator hasn't set the API key; CLI prints hint).
+//   - billing.ErrNotImplemented → 501 "billing_retry_unsupported"
+//     (the provider exposes payment-method recovery through its customer
+//     portal instead; the response includes that portal URL when available).
 //   - any other error          → 502 "billing_retry_failed",
 //     with the SDK error wrapped in detail.
 func (s *server) postBillingRetry(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -51,6 +54,12 @@ func (s *server) postBillingRetry(w http.ResponseWriter, r *http.Request, acct s
 			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
 				"billing_retry_no_api_key", "billing provider mis-configured",
 				"the operator has not configured a billing API key; contact support"))
+		case errors.Is(err, billing.ErrNotImplemented):
+			prob := api.NewProblem(http.StatusNotImplemented,
+				"billing_retry_unsupported", "billing retry is not supported",
+				"update your payment method in the billing portal and retry the charge there")
+			prob.BillingPortalURL = s.billingPortalURLForProvider(r.Context(), acct)
+			api.WriteProblem(w, prob)
 		default:
 			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
 				"billing_retry_failed", "billing retry failed", err.Error()))

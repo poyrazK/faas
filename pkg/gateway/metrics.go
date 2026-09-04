@@ -120,6 +120,16 @@ type Metrics struct {
 	// the §12 panel surfaces zero on an idle gateway.
 	wakePhaseDuration *prometheus.HistogramVec
 	queueDepth        *prometheus.GaugeVec
+	// wakeAdmissionQueueDepth is the number of distinct app leaders
+	// waiting for a gateway-wide cold-wake slot, grouped by plan. The
+	// plan label is closed; app IDs intentionally do not appear here.
+	wakeAdmissionQueueDepth *prometheus.GaugeVec
+	// wakeAdmissionTotal records the bounded admission result. The
+	// outcome set is closed and pre-instantiated in NewMetrics.
+	wakeAdmissionTotal *prometheus.CounterVec
+	// wakeAdmissionWait measures only requests that actually waited for
+	// the cross-app admission queue.
+	wakeAdmissionWait *prometheus.HistogramVec
 	rateLimited       *prometheus.CounterVec
 	// leaderBootstrapAborts (ADR-098 C7): counter labelled by
 	// reason — closed set {queue_empty_no_instance, ttl_expired,
@@ -867,6 +877,19 @@ func NewMetrics() *Metrics {
 			Name: "gateway_queue_depth",
 			Help: "Current number of waiters per app's wake queue (sampled). account_id label is admitted via accountLabelSet (cap=10k, overflow=__other__) — see SetQueueDepth.",
 		}, []string{"app", "account_id"}),
+		wakeAdmissionQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_wake_admission_queue_depth",
+			Help: "Distinct app leaders waiting for a gateway-wide cold-wake admission slot, labelled by plan. This is intentionally not labelled by app ID to keep cardinality bounded.",
+		}, []string{"plan"}),
+		wakeAdmissionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_wake_admission_total",
+			Help: "Gateway cold-wake admission outcomes, labelled by plan and outcome (admitted|app_queue_full|gateway_queue_full|queue_timeout|canceled|error).",
+		}, []string{"plan", "outcome"}),
+		wakeAdmissionWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "gateway_wake_admission_wait_seconds",
+			Help:    "Time spent waiting for a gateway-wide cold-wake admission slot, labelled by plan.",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
+		}, []string{"plan"}),
 		// ADR-098 C7: closed-set reasons pre-instantiated so the
 		// §12 dashboard chip "leader bootstrap aborts" surfaces
 		// zero rows from boot. Adding a new reason is a code +
@@ -1154,6 +1177,16 @@ func NewMetrics() *Metrics {
 	for _, plan := range []string{"free", "hobby", "pro", "scale"} {
 		m.accountRateLimited.WithLabelValues("__other__", plan)
 	}
+	// Gateway-wide cold-wake admission is a bounded cross-app queue.
+	// Keep its plan/outcome series present from boot so operators can
+	// distinguish an idle zero from a missing instrumentation path.
+	for _, plan := range []string{"free", "hobby", "pro", "scale", "__other__"} {
+		m.wakeAdmissionQueueDepth.WithLabelValues(plan)
+		for _, outcome := range []string{"admitted", "app_queue_full", "gateway_queue_full", "queue_timeout", "canceled", "error"} {
+			m.wakeAdmissionTotal.WithLabelValues(plan, outcome)
+		}
+		m.wakeAdmissionWait.WithLabelValues(plan)
+	}
 	// PR scale-out readiness. Pre-instantiate the closed (outcome)
 	// set so the panel surfaces from boot. Mirrors the
 	// tlsOnDemandDenied / accountRateLimited pre-instantiation
@@ -1354,7 +1387,7 @@ func NewMetrics() *Metrics {
 	// surfaces from boot. The pre-instantiate loop above (where
 	// tenantSurfaceCert is stamped across the closed (result, kind)
 	// cartesian) is the same pattern as the rest of the family.
-	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1726,6 +1759,39 @@ func (m *Metrics) ObserveWakeQueueWait(d time.Duration) {
 	// ADR-098 C11: dual-write into the labelled phase histogram so
 	// dashboards querying the new name see the same series shape.
 	m.wakePhaseDuration.WithLabelValues("queue_wait").Observe(d.Seconds())
+}
+
+// SetWakeAdmissionQueueDepth updates the bounded cross-app admission queue
+// gauge. Unknown plan labels collapse to __other__ so a malformed app record
+// cannot create an unbounded metric family.
+func (m *Metrics) SetWakeAdmissionQueueDepth(plan string, depth int) {
+	if m == nil {
+		return
+	}
+	if plan != "free" && plan != "hobby" && plan != "pro" && plan != "scale" {
+		plan = "__other__"
+	}
+	if depth < 0 {
+		depth = 0
+	}
+	m.wakeAdmissionQueueDepth.WithLabelValues(plan).Set(float64(depth))
+}
+
+// ObserveWakeAdmission records one gateway-wide cold-wake admission result.
+// Queue wait is recorded only when an app leader actually waited for a slot;
+// immediate admissions and rejected requests do not distort the latency
+// histogram.
+func (m *Metrics) ObserveWakeAdmission(plan string, err error, queued bool, wait time.Duration) {
+	if m == nil {
+		return
+	}
+	if plan != "free" && plan != "hobby" && plan != "pro" && plan != "scale" {
+		plan = "__other__"
+	}
+	m.wakeAdmissionTotal.WithLabelValues(plan, wakeAdmissionOutcome(err)).Inc()
+	if queued && wait > 0 {
+		m.wakeAdmissionWait.WithLabelValues(plan).Observe(wait.Seconds())
+	}
 }
 
 // ObserveWakePhase records a single phase-decomposed wake boundary

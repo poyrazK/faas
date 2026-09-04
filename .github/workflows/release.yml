@@ -333,6 +333,128 @@ jobs:
           echo "BUILDER_BASE_DIGEST=$BUILDER_BASE_DIGEST" >> "$GITHUB_ENV"
           echo "resolved builder-base source=$BUILDER_SOURCE_SHA amd64_digest=$BUILDER_BASE_DIGEST"
 
+      - name: Resolve the immutable runtime-base contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_SHA: ${{ github.sha }}
+          IMAGE_WAIT_ATTEMPTS: "60"
+          IMAGE_WAIT_SECONDS: "30"
+          CONFIG_DIR: ${{ runner.temp }}/crane-config
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+          # The images workflow rebuilds all runtime bases when any runtime
+          # contract input changes. Releases may be cut by a later daemon-only
+          # commit, so select the newest first-parent commit in that same
+          # contract rather than resolving a moving :latest tag.
+          RUNTIME_SOURCE_SHA="$(git log --first-parent --format='%H' -n 1 "$GIT_SHA" -- \
+            images \
+            guest/init \
+            guest/runners \
+            pkg/builderd \
+            pkg/imaged \
+            pkg/oci \
+            pkg/rootfs \
+            pkg/api \
+            cmd/imaged \
+            cmd/apid/handlers_templates.go \
+            cmd/apid/handlers_templates_test.go \
+            cmd/gregale/templates \
+            cmd/gregale/cli_meta.go \
+            cmd/gregale/commands_init* \
+            migrations/*runtime*.sql \
+            docs/runtimes \
+            docs/faas_implementation_spec.md \
+            scripts/ci/validate-runtime-image.sh \
+            scripts/ci/smoke-runtime-image.sh \
+            scripts/ci/validate-runtime-docs.sh \
+            .github/workflows/images.yml)"
+          [[ "$RUNTIME_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::could not find a runtime-base source commit in release history" >&2
+            exit 1
+          }
+          IMAGE_RUN_URL=""
+          IMAGE_RUN_SUCCEEDED=false
+          for attempt in $(seq 1 "$IMAGE_WAIT_ATTEMPTS"); do
+            IMAGE_RUNS="$(gh run list \
+              --workflow images.yml \
+              --event push \
+              --branch main \
+              --limit 100 \
+              --json databaseId,headSha,status,conclusion,url)"
+            IMAGE_RUN_URL="$(jq -r --arg sha "$RUNTIME_SOURCE_SHA" '
+              [.[] | select(.headSha == $sha and .conclusion == "success")]
+              | sort_by(.databaseId) | last | .url // empty' <<< "$IMAGE_RUNS")"
+            if [[ -n "$IMAGE_RUN_URL" ]]; then
+              IMAGE_RUN_SUCCEEDED=true
+              echo "runtime-base publisher succeeded: $IMAGE_RUN_URL"
+              break
+            fi
+            LATEST_IMAGE_RUN="$(jq -c --arg sha "$RUNTIME_SOURCE_SHA" '
+              [.[] | select(.headSha == $sha)]
+              | sort_by(.databaseId) | last // empty' <<< "$IMAGE_RUNS")"
+            if [[ -n "$LATEST_IMAGE_RUN" ]]; then
+              IMAGE_RUN_STATUS="$(jq -r '.status' <<< "$LATEST_IMAGE_RUN")"
+              IMAGE_RUN_CONCLUSION="$(jq -r '.conclusion // empty' <<< "$LATEST_IMAGE_RUN")"
+              IMAGE_RUN_URL="$(jq -r '.url' <<< "$LATEST_IMAGE_RUN")"
+              if [[ "$IMAGE_RUN_STATUS" == completed ]]; then
+                echo "::error::runtime-base publisher for $RUNTIME_SOURCE_SHA finished with $IMAGE_RUN_CONCLUSION: $IMAGE_RUN_URL" >&2
+                exit 1
+              fi
+              echo "waiting for runtime-base publisher ($IMAGE_RUN_STATUS): $IMAGE_RUN_URL"
+            else
+              echo "waiting for images.yml publisher for runtime source $RUNTIME_SOURCE_SHA"
+            fi
+            if [[ "$attempt" -lt "$IMAGE_WAIT_ATTEMPTS" ]]; then
+              sleep "$IMAGE_WAIT_SECONDS"
+            fi
+          done
+          [[ "$IMAGE_RUN_SUCCEEDED" == true ]] || {
+            echo "::error::timed out waiting for images.yml to publish runtime source $RUNTIME_SOURCE_SHA" >&2
+            exit 1
+          }
+
+          declare -a RUNTIME_IMAGES=(
+            "MINIMAL base-minimal"
+            "NODE22 runner-node22"
+            "PYTHON312 runner-python312"
+            "GO124 runner-go124"
+            "GO124_ALPINE runner-go124-alpine"
+            "NODE24 runner-node24"
+            "PYTHON313 runner-python313"
+          )
+          : > "$OUT_DIR/runtime-bases.env"
+          for item in "${RUNTIME_IMAGES[@]}"; do
+            read -r key image <<< "$item"
+            ref="ghcr.io/poyrazk/${image}:sha-${RUNTIME_SOURCE_SHA}"
+            digest="$(DOCKER_CONFIG="$CONFIG_DIR" crane digest --platform linux/amd64 "$ref" 2>/dev/null || true)"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "::error::runtime image $ref has no immutable digest" >&2
+              exit 1
+            }
+            printf 'FAAS_DEPLOY_BASE_REF_%s=ghcr.io/poyrazk/%s@%s\n' "$key" "$image" "$digest" >> "$OUT_DIR/runtime-bases.env"
+          done
+          chmod 0644 "$OUT_DIR/runtime-bases.env"
+          echo "RUNTIME_SOURCE_SHA=$RUNTIME_SOURCE_SHA" >> "$GITHUB_ENV"
+          echo "materialized release runtime-base contract from source $RUNTIME_SOURCE_SHA"
+
+      - name: Build release-pinned Firecracker kernel
+        env:
+          KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+        run: |
+          set -euo pipefail
+          # The kernel is part of the signed release, so production compute
+          # hosts never rebuild it with provider-specific compiler, hostname,
+          # or timestamp metadata during node adoption.
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            bc bison build-essential cpio flex file kmod libelf-dev libssl-dev xz-utils
+          scripts/build-firecracker-kernel.sh --output "$KERNEL_FILE"
+          KERNEL_DIGEST="$(sha256sum "$KERNEL_FILE" | awk '{print $1}')"
+          echo "KERNEL_DIGEST=$KERNEL_DIGEST" >> "$GITHUB_ENV"
+          echo "release kernel digest=$KERNEL_DIGEST"
+
       - name: Build canonical daemon tarball and SPDX SBOM
         env:
           GIT_SHA: ${{ github.sha }}
@@ -343,6 +465,7 @@ jobs:
           # tag commit and the signed bundle always share one identity.
           OUT_DIR: ${{ runner.temp }}/gregale-release
           SYFT_BIN: syft
+          KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
         run: |
           set -euo pipefail
           MANIFEST_FILE="$OUT_DIR/production-manifest.yaml"
@@ -350,11 +473,14 @@ jobs:
             --template deploy/manifest/production/gcp-live.template.yaml \
             --git-sha "$GIT_SHA" \
             --builder-base-digest "$BUILDER_BASE_DIGEST" \
+            --kernel-digest "$KERNEL_DIGEST" \
+            --runtime-bases-env "$OUT_DIR/runtime-bases.env" \
             --output "$MANIFEST_FILE"
           go run ./cmd/gregalectl manifest validate --file "$MANIFEST_FILE"
           MANIFEST_FILE="$MANIFEST_FILE" \
             GIT_SHA="$GIT_SHA" \
             OUT_DIR="$OUT_DIR" \
+            KERNEL_FILE="$KERNEL_FILE" \
             SYFT_BIN="$SYFT_BIN" \
             scripts/build-canonical-tarball.sh
 
@@ -371,7 +497,7 @@ jobs:
             --certificate-identity-regexp '^https://github\.com/poyrazK/faas/\.github/workflows/release\.yml@refs/tags/.+$' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$OUT_DIR/release.tar.gz"
-          (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml > SHA256SUMS)
+          (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
 
       - name: Upload canonical release artifacts
         uses: actions/upload-artifact@v4
@@ -389,4 +515,5 @@ jobs:
             ${{ runner.temp }}/gregale-release/release.sbom.json
             ${{ runner.temp }}/gregale-release/release-manifest.json
             ${{ runner.temp }}/gregale-release/production-manifest.yaml
+            ${{ runner.temp }}/gregale-release/runtime-bases.env
             ${{ runner.temp }}/gregale-release/SHA256SUMS

@@ -48,6 +48,20 @@ type sinkCall struct {
 	reason   string
 }
 
+type livenessActivityStub struct {
+	inflight int64
+	lastAt   time.Time
+	seen     bool
+}
+
+func (a *livenessActivityStub) Inflight(string) (int64, bool) {
+	return a.inflight, a.seen
+}
+
+func (a *livenessActivityStub) LastAt(string) (time.Time, bool) {
+	return a.lastAt, a.seen
+}
+
 func (s *recordingSink) Record(_ context.Context, instance, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -232,6 +246,79 @@ func TestLivenessRecv_TimeoutCountedClassifies(t *testing.T) {
 	loop.runOne(context.Background(), 2000)
 	if sink.count() != 1 {
 		t.Errorf("sink.count = %d, want 1 (2 consecutive timeouts must fire)", sink.count())
+	}
+}
+
+// TestLivenessRecv_LoadCorrelatedTransportMissGetsBoundedGrace pins issue
+// #1267's production-load failure sequence. A transport miss while the vmmd
+// activity cache says the instance is serving requests must not immediately
+// advance the liveness streak or destroy the VM. After the finite grace is
+// consumed, recovery is still requested, but with an infrastructure reason
+// so schedd cannot permanently park the app on that evidence alone.
+func TestLivenessRecv_LoadCorrelatedTransportMissGetsBoundedGrace(t *testing.T) {
+	loop, sink, _ := newTestLoop(t, "inst-load", 1)
+	clock := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	activity := &livenessActivityStub{
+		inflight: 50,
+		lastAt:   clock,
+		seen:     true,
+	}
+	loop.activityReader = activity
+	loop.nowFn = func() time.Time { return clock }
+	loop.probeFn = func(_ context.Context, _ int) string {
+		return livenessOutcomeTimeout
+	}
+
+	loop.runOne(context.Background(), 2000)
+	if sink.count() != 0 || loop.count != 0 {
+		t.Fatalf("first load-correlated timeout: sink=%d count=%d, want 0/0", sink.count(), loop.count)
+	}
+
+	clock = clock.Add(livenessLoadGrace - time.Second)
+	loop.runOne(context.Background(), 2000)
+	if sink.count() != 0 || loop.count != 0 {
+		t.Fatalf("timeout inside load grace: sink=%d count=%d, want 0/0", sink.count(), loop.count)
+	}
+
+	clock = clock.Add(2 * time.Second)
+	loop.runOne(context.Background(), 2000)
+	if sink.count() != 1 {
+		t.Fatalf("timeout after load grace: sink=%d, want 1", sink.count())
+	}
+	if got := sink.calls[0].reason; got != fcvm.LivenessReasonInfrastructure {
+		t.Fatalf("reason=%q, want %q", got, fcvm.LivenessReasonInfrastructure)
+	}
+}
+
+// TestLivenessRecv_LoadCorrelatedProcessExitRemainsParkable pins the other
+// half of issue #1267: a request burst may hide a dead Firecracker process for
+// the bounded grace, but once corroborated the report must remain a confirmed
+// crash rather than being downgraded to infrastructure noise.
+func TestLivenessRecv_LoadCorrelatedProcessExitRemainsParkable(t *testing.T) {
+	loop, sink, _ := newTestLoop(t, "inst-exited", 1)
+	clock := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	loop.activityReader = &livenessActivityStub{
+		inflight: 1,
+		lastAt:   clock,
+		seen:     true,
+	}
+	loop.nowFn = func() time.Time { return clock }
+	loop.processAliveFn = func(string) bool { return false }
+	loop.probeFn = func(_ context.Context, _ int) string {
+		return livenessOutcomeConnRefused
+	}
+
+	loop.runOne(context.Background(), 2000)
+	if sink.count() != 0 {
+		t.Fatalf("timeout inside load grace: sink=%d, want 0", sink.count())
+	}
+	clock = clock.Add(livenessLoadGrace)
+	loop.runOne(context.Background(), 2000)
+	if sink.count() != 1 {
+		t.Fatalf("process exit after load grace: sink=%d, want 1", sink.count())
+	}
+	if got := sink.calls[0].reason; got != fcvm.LivenessReasonProcessExited {
+		t.Fatalf("reason=%q, want %q", got, fcvm.LivenessReasonProcessExited)
 	}
 }
 

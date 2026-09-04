@@ -323,7 +323,8 @@ unclaimed slot, but consumed slots need no fence.
 - [ ] `make spec-check` (yaml mirror in sync).
 - [ ] `make sdk-gen` (Go/Node/Python SDKs regenerate cleanly).
 - [ ] `make e2e` (cmd/e2e/env_diff_e2e_test runs across 4 shards).
-- [ ] `make image-scan` (no new vuln class).
+- [ ] `make scan` (no new Go vulnerability class) plus the exact OCI image
+      scans enforced by `.github/workflows/images.yml`.
 - [ ] `make load` (GET /env-diff p99 < 50ms at Hobby scale).
 - [ ] `/code-review medium` clean.
 

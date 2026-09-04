@@ -34,8 +34,8 @@ vmmd side via Go 1.24+ stdlib `srv.Protocols.SetUnencryptedHTTP2(true)`
 talking to the guest at `10.0.0.2:<port>`. The H1+chunked shape is the legacy
 from the v1 shell bridge (`pkg/vmmdgrpc/forward.go:1115::buildStreamingBridgeScript`)
 and was kept on purpose in PR #750 so guest snapshots stayed valid across the
-cutover. The v2 path deliberately opened a fresh guest TCP dial per H2C stream
-(`main.go:205-210` comment: "one H2C request = one guest dial") and wrote the
+cutover. The initial v2 path deliberately opened a fresh guest TCP dial per H2C
+stream (`main.go:205-210` comment: "one H2C request = one guest dial") and wrote the
 HTTP/1.1 request line + headers + `Transfer-Encoding: chunked` (`writeH1RequestHead`,
 `writeChunkedBody`). The bridge's framing decision is the load-bearing framing
 transition in the chain — not the gateway, not guest-init, not the runner.
@@ -140,14 +140,25 @@ request. We deliberately skip the HTTP/1.1 → H2 Upgrade dance:
    stack (Envoy, nginx 1.25.1+, hypercorn, caddy), the bridge's prior-knowledge
    framing just works.
 
-### 4. Stream multiplexing is one-bridge-stream-per-guest-conn
+### 4. Stream multiplexing is one request stream per pooled guest transport
 
-The bridge owns the guest TCP conn per H2C stream — same rationale as today's
-v2 path (`main.go:205-210`): a long-lived guest conn would have to serialize
-requests through it and would own HPACK state across many callers. A future
-optimization ("one guest conn multiplexed across N H2C streams") is out of
-scope for this ADR. If profiling shows dial latency is the dominant cost,
-that becomes a follow-on ADR (likely ADR-(N+1)).
+The initial cutover used one guest TCP connection per H2C stream to keep the
+wire-shape change small. The follow-up connection-pooling implementation
+supersedes that lifecycle choice for the persistent bridge: each per-instance
+bridge owns a bounded transport entry per guest port, and
+`golang.org/x/net/http2.Transport` multiplexes independent request streams on
+reusable guest connections. Request contexts and bodies remain per-stream, so
+cancellation cannot cancel a sibling request and HPACK state remains owned by
+the transport. HTTP/1.1 requests use the corresponding keep-alive transport;
+Upgrade traffic stays on the raw-bytes bridge.
+
+The pool closes idle connections on bridge shutdown and bounds distinct port
+entries to prevent future request metadata from retaining an unbounded number
+of transports. If production measurements show that a guest's HTTP/2 stream
+cap causes queueing, a later change can add an explicit bounded
+multi-connection policy; this follow-up keeps the existing
+`StrictMaxConcurrentStreams` contract and does not silently create unbounded
+guest sockets.
 
 ### 5. Trailer framing for `grpc` is HTTP/2 native
 

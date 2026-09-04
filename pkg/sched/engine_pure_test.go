@@ -9,6 +9,7 @@
 package sched
 
 import (
+	"context"
 	"net/netip"
 	"testing"
 	"time"
@@ -228,5 +229,34 @@ func TestCooldownSRemaining_ActiveCooldownReturnsSeconds(t *testing.T) {
 	// 60 - 10 = 50s (with sub-second floor, must be >= 49).
 	if got < 49 || got > 51 {
 		t.Errorf("active: got %d, want ~50", got)
+	}
+}
+
+func TestScaleOutBurstContinuationOnlyBypassesCooldown(t *testing.T) {
+	stamp := time.Now()
+	app := &state.App{
+		ID:             "app-1",
+		AccountID:      "acct-1",
+		MaxConcurrency: 4,
+		LastScaleOutAt: &stamp,
+		ScalingPolicy:  &state.ScalingPolicy{ScaleOutCooldownS: 60},
+	}
+	e := &Engine{ledger: NewNodeLedger()}
+	if err := e.ledger.Admit(Request{
+		Instance:       "instance-1",
+		AppID:          app.ID,
+		Plan:           api.PlanPro,
+		RAMMB:          128,
+		VCPU:           1,
+		MaxConcurrency: app.MaxConcurrency,
+	}); err != nil {
+		t.Fatalf("seed ledger: %v", err)
+	}
+	limits := api.MustLimitsFor(api.PlanPro)
+	if got, _, _, _, _ := e.admitGate(context.Background(), app, limits); got != wakeCooldownHeld {
+		t.Fatalf("ordinary admission outcome = %v, want cooldown held", got)
+	}
+	if got, _, _, _, _ := e.admitGate(withScaleOutBurstContinuation(context.Background()), app, limits); got != wakeAdmit {
+		t.Fatalf("burst continuation outcome = %v, want admit", got)
 	}
 }

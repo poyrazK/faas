@@ -1,12 +1,14 @@
 # Pin: upgrade both fc_release AND fc_release_sha256 together.
-# FC releases (v1.7.0+) do NOT bundle kernels - we BUILD from source using
-# the FC CI kernel config. This ensures virtio-blk is built-in (not a module),
-# which is required for the kernel to mount root during boot.
+# FC releases (v1.7.0+) do NOT bundle kernels. Release CI builds the pinned
+# kernel once from the FC CI config and ships it in the signed release bundle;
+# image-seed/dev bootstrap retains the deterministic source-build fallback.
+# This ensures virtio-blk is built-in (not a module), which is required for
+# the kernel to mount root during boot.
 #
 # Kernel source and config:
 # - kernel source: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.x.tar.xz
 # - FC kernel config: https://raw.githubusercontent.com/firecracker-microvm/firecracker/{{ fc_release }}/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config
-# - Required config change: CONFIG_BLK_DEV_VIRTIO=y (must be built-in, not module)
+# - Required config change: CONFIG_VIRTIO_BLK=y (must be built-in, not module)
 #
 # Build deps: make, gcc, flex, bison, libssl-dev, libelf-dev, bc, kmod, cpio, xz
 fc_release: "v1.7.0"
@@ -18,10 +20,14 @@ fc_kernel_version: "6.1.134"
 fc_kernel_tar_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{{ fc_kernel_version }}.tar.xz"
 # SHA-256 of linux-6.1.134.tar.xz from kernel.org
 fc_kernel_tar_sha256: "60c70cdd70ddee384c004242e67844e3dd1fe28f75b26b3586859fff0a07bd23"
-# fc_kernel_sha256 is the pinned checksum of the BUILT kernel; this is
-# only known after the first `make fc-kernel` runs on the target host.
-# Bootstrap writes it into host_vars or pass it via -e fc_kernel_sha256=<sha>
-# on subsequent runs. CI regenerates this and updates the role default
-# only when the FC kernel config source changes.
-fc_kernel_sha256: "REPLACE_WITH_SHA256_OF_BUILT_KERNEL"
+# SHA-256 of the Firecracker guest-kernel configuration at the pinned tag.
+# The URL is fetched over TLS, but the content is also pinned so a changed
+# upstream tag or mirror cannot silently alter the built kernel.
+fc_kernel_config_sha256: "9278a7cdecbf3371c3dee7209b0b586323c649af885b106e5edc35f4073fe225"
+# The built-kernel digest is a release property, not a per-host discovery
+# value. Production node_join stages /etc/faas/manifest.yaml and the task
+# below requires release.kernel_digest to match the bytes produced here.
+# Keep this override empty by default; an operator may set it for a canary,
+# but it must still agree with the staged release manifest.
+fc_kernel_sha256: ""
 fc_kernel_config_url: "https://raw.githubusercontent.com/firecracker-microvm/firecracker/{{ fc_release }}/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config"

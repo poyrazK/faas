@@ -183,3 +183,30 @@ func TestLivenessWindow_PerDeploymentIsolation(t *testing.T) {
 		t.Errorf("dep-2: shouldPark=%v count=%d, want false/1 (independent ring)", shouldPark2, count2)
 	}
 }
+
+// TestLivenessWindow_NodeScopedIsolation pins issue #1267's topology rule:
+// three confirmed failures on one node may trip that deployment's crash-loop
+// breaker, while failures split across nodes do not combine into an app-wide
+// permanent eviction decision.
+func TestLivenessWindow_NodeScopedIsolation(t *testing.T) {
+	w := NewLivenessWindow(5*time.Minute, 3)
+	base := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+
+	w.RecordRestartOnNode("dep-1", "node-a", base)
+	w.RecordRestartOnNode("dep-1", "node-a", base.Add(time.Second))
+	if shouldPark, count := w.RecordRestartOnNode("dep-1", "node-b", base.Add(2*time.Second)); shouldPark || count != 1 {
+		t.Fatalf("first node-b failure: shouldPark=%v count=%d, want false/1", shouldPark, count)
+	}
+	if shouldPark, count := w.RecordRestartOnNode("dep-1", "node-b", base.Add(3*time.Second)); shouldPark || count != 2 {
+		t.Fatalf("second node-b failure: shouldPark=%v count=%d, want false/2", shouldPark, count)
+	}
+	if shouldPark, count := w.RecordRestartOnNode("dep-1", "node-a", base.Add(4*time.Second)); !shouldPark || count != 3 {
+		t.Fatalf("third node-a failure: shouldPark=%v count=%d, want true/3", shouldPark, count)
+	}
+	if got := w.recentOnNode("dep-1", "node-a", base.Add(4*time.Second)); got != 3 {
+		t.Errorf("node-a recent count=%d, want 3", got)
+	}
+	if got := w.recentOnNode("dep-1", "node-b", base.Add(4*time.Second)); got != 2 {
+		t.Errorf("node-b recent count=%d, want 2", got)
+	}
+}

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PaddleHQ/paddle-go-sdk/v5"
+	paddle "github.com/PaddleHQ/paddle-go-sdk/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -190,15 +190,15 @@ func (p *Provider) claimedBy() string {
 // capability-set composition (e.g. adding CapRefund) localised to
 // this file.
 func PaddleCapabilities() billing.CapabilitySet {
-	return billing.CapabilitySet(billing.CapHostedCheckout | billing.CapUsageLineItem | billing.CapSandbox)
+	return billing.CapabilitySet(billing.CapHostedCheckout | billing.CapUsageLineItem | billing.CapRefund | billing.CapSandbox)
 }
 
 func NewProvider(apiKey, webhookSecret string, sandbox bool, log *slog.Logger) (*Provider, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	// ADR-032 v2: Paddle is the production default (FAAS_BILLING_PROVIDER=""
-	// → Paddle). Refuse to construct a *Provider with an empty apiKey —
+	// Explicit Paddle deployments must provide an API key. Refuse to construct a
+	// *Provider with an empty apiKey —
 	// the SDK accepts empty keys silently, EnsurePlanProducts then dials
 	// api.paddle.com (or api.sandbox.paddle.com) with no auth, and the
 	// whole boot-time catalog hydration degrades to a per-call 401 that
@@ -213,7 +213,7 @@ func NewProvider(apiKey, webhookSecret string, sandbox bool, log *slog.Logger) (
 	// like a missed unquoted space from a heredoc). The webhookSecret
 	// stays optional for the meterd path (no ingress).
 	if strings.TrimSpace(apiKey) == "" {
-		return nil, fmt.Errorf("paddle: %w (set FAAS_PADDLE_API_KEY=… in sealed.env; the loader will not default a missing key at v2)", ErrNoAPIKey)
+		return nil, fmt.Errorf("paddle: %w (set FAAS_PADDLE_API_KEY=… in sealed.env before selecting Paddle)", ErrNoAPIKey)
 	}
 	httpClient := &http.Client{Transport: NewIdempotencyRT(http.DefaultTransport)}
 	var client *paddle.SDK
@@ -365,15 +365,9 @@ func (p *Provider) SetDedupeForTest(d PaddleOverageDedupe) {
 // interface is a build error here — mirrors pkg/billing/stripe.
 var _ billing.Provider = (*Provider)(nil)
 
-// Capabilities returns the Paddle provider's supported optional
-// surfaces (see pkg/billing/provider.go CapabilitySet). The set is
-// derived from the implementation's actual behaviour — CapHostedCheckout
-// is set because CreateUpgradeTransaction returns a real txn + URL.
-// CapRefund and CapUsageReconcile are intentionally absent: both
-// methods return billing.ErrNotImplemented (Paddle Billing has no
-// operator-refund API and no usage-summary endpoint at the time of
-// writing). The reconciler + apid admin/refund route use Capabilities()
-// to skip the call entirely instead of round-tripping to the SDK.
+// Capabilities returns the Paddle provider's supported optional surfaces.
+// Paddle adjustments provide refunds; usage reconciliation remains absent
+// because Paddle does not expose a provider usage-summary endpoint.
 func (p *Provider) Capabilities() billing.CapabilitySet {
 	return PaddleCapabilities()
 }
@@ -499,23 +493,7 @@ func (p *Provider) VerifyWebhook(payload []byte, headers map[string]string, tole
 	if err := verifyPaddleSignature(payload, sigHeader, p.webhookSecret, tolerance); err != nil {
 		return billing.Event{}, err
 	}
-	return parsePaddleEvent(payload)
-}
-
-// Refund is the Paddle stub for the billing.Provider interface
-// (issue #279). Paddle's refund ceremony is intentionally out of
-// scope for this PR — the issue lists Paddle as future work and
-// ships this stub so the compile-time
-// `var _ billing.Provider = (*Provider)(nil)` assertion (line 224)
-// still passes. Returns billing.ErrNotImplemented so the apid
-// handler maps to a 501 Problem with a clear "Paddle refund is not
-// supported" message and a docs_url pointing at the spec.
-//
-// Operators who need refunds on a Paddle deployment use the
-// Paddle Dashboard directly; the operator-initiated CLI/API path
-// only works against the Stripe provider today.
-func (p *Provider) Refund(_ context.Context, _ string, _ int64) (*billing.RefundResult, error) {
-	return nil, billing.ErrNotImplemented
+	return parsePaddleEvent(payload, p)
 }
 
 // ReconcileUsage is the drift detector seam (ADR-049 §B.1). Paddle

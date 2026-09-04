@@ -17,18 +17,18 @@ T = TypeVar("T", bound="BillingPortalResponse")
 
 @_attrs_define
 class BillingPortalResponse:
-    """Operator-configured billing portal URL (issue #253) plus the
+    """Provider-authenticated or operator-configured billing portal URL (issue #253) plus the
     card-on-file summary (issue #242). The url field is omitted
-    when the box has FAAS_BILLING_PORTAL_URL unset — that is the
-    "absent" sentinel; the CLI branches on it to print a friendly
-    hint instead of opening the browser to "". The payment_method
+    when neither a provider session nor FAAS_BILLING_PORTAL_URL is
+    available — that is the "absent" sentinel; the CLI branches on it
+    to print a friendly hint instead of opening the browser to "". The payment_method
     field is omitted when the account has no card on file (Free
     plan, or post-checkout before the first paid cycle settles).
 
     """
 
     url: None | str | Unset = UNSET
-    """Substituted portal URL; absent when the box has no portal configured."""
+    """Short-lived provider session URL, or substituted operator URL when no provider session is available."""
     payment_method: PaymentMethodSummary | Unset = UNSET
     """Card-on-file summary (issue #242). Provider-agnostic shape —
     the same wire shape is returned whether the operator runs

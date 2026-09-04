@@ -1,0 +1,5 @@
+[Service]
+# Runtime bases contain guest/init as PID 1. Always use the binary from the
+# active signed release so a historical /usr/local/bin/faas-guest-init override
+# cannot cause imaged to embed stale guest code into a newly staged base.
+Environment=FAAS_GUEST_INIT=/opt/faas/current/bin/init

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AccountCreditResponse } from '../models/AccountCreditResponse.js';
+import type { AdminRefundResponse } from '../models/AdminRefundResponse.js';
 import type { AdminSetGithubWebhookSecretRequest } from '../models/AdminSetGithubWebhookSecretRequest.js';
 import type { AdminSetGithubWebhookSecretResponse } from '../models/AdminSetGithubWebhookSecretResponse.js';
 import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js';
@@ -59,6 +60,70 @@ export class AdminService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+      },
+    });
+  }
+  /**
+   * Refund a paid Polar invoice (admin-only).
+   * `invoice_id` must identify a local Gregale invoice belonging to the
+   * target account. The current public-release implementation supports
+   * Polar order IDs and integer EUR cents. `Idempotency-Key` is required
+   * and is sent to the provider unchanged (up to 255 characters).
+   *
+   * @returns AdminRefundResponse Refund accepted by the provider.
+   * @throws ApiError
+   */
+  public static refundAccountInvoice({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Account UUID whose paid invoice will be refunded.
+     */
+    id: string,
+    /**
+     * Stable key for this refund operation.
+     */
+    idempotencyKey: string,
+    requestBody: {
+      /**
+       * Local Gregale invoice UUID.
+       */
+      invoice_id: string;
+      /**
+       * Refund amount in EUR cents.
+       */
+      amount_cents: number;
+      /**
+       * Reason recorded with the money-moving operation.
+       */
+      reason: string;
+    },
+  }): CancelablePromise<AdminRefundResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/accounts/{id}/refunds',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required or mfa_required — operator scope, email allowlist, and MFA gates apply.`,
+        404: `code: not_found`,
+        409: `Invoice is not refundable or has no paid amount/provider identity.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        501: `The selected billing provider does not expose this refund surface.`,
+        502: `Provider rejected the refund or returned an incomplete response.`,
       },
     });
   }

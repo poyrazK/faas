@@ -38,6 +38,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 501:
+        response_501 = Problem.from_dict(response.json())
+
+        return response_501
+
     if response.status_code == 502:
         response_502 = Problem.from_dict(response.json())
 
@@ -66,15 +71,11 @@ def sync_detailed(
 ) -> Response[BillingRetryResponse | Problem]:
     """Retry the latest unpaid invoice / transaction for this account.
 
-     Stripe path: calls `Invoices.Pay` on the most recent open
-    invoice for the customer. The Idempotency-Key header (auto
-    UUIDv4 if absent) collapses retries on the same
-    `acct.ID / retry / invoice.ID` key.
-
-    Paddle path: creates a new `Transaction` against the
-    existing customer for the same plan + month-to-date overage.
-    The CLI forwards the merchant-dashboard URL via the
-    response's `provider_ref_id` extension.
+     The configured provider is asked to retry the most recent unpaid
+    charge. The Idempotency-Key header (auto UUIDv4 if absent) is
+    forwarded where the provider supports it. Providers without a
+    direct retry API return 501 and the response includes a portal URL
+    for payment-method recovery.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,15 +100,11 @@ def sync(
 ) -> BillingRetryResponse | Problem | None:
     """Retry the latest unpaid invoice / transaction for this account.
 
-     Stripe path: calls `Invoices.Pay` on the most recent open
-    invoice for the customer. The Idempotency-Key header (auto
-    UUIDv4 if absent) collapses retries on the same
-    `acct.ID / retry / invoice.ID` key.
-
-    Paddle path: creates a new `Transaction` against the
-    existing customer for the same plan + month-to-date overage.
-    The CLI forwards the merchant-dashboard URL via the
-    response's `provider_ref_id` extension.
+     The configured provider is asked to retry the most recent unpaid
+    charge. The Idempotency-Key header (auto UUIDv4 if absent) is
+    forwarded where the provider supports it. Providers without a
+    direct retry API return 501 and the response includes a portal URL
+    for payment-method recovery.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -128,15 +125,11 @@ async def asyncio_detailed(
 ) -> Response[BillingRetryResponse | Problem]:
     """Retry the latest unpaid invoice / transaction for this account.
 
-     Stripe path: calls `Invoices.Pay` on the most recent open
-    invoice for the customer. The Idempotency-Key header (auto
-    UUIDv4 if absent) collapses retries on the same
-    `acct.ID / retry / invoice.ID` key.
-
-    Paddle path: creates a new `Transaction` against the
-    existing customer for the same plan + month-to-date overage.
-    The CLI forwards the merchant-dashboard URL via the
-    response's `provider_ref_id` extension.
+     The configured provider is asked to retry the most recent unpaid
+    charge. The Idempotency-Key header (auto UUIDv4 if absent) is
+    forwarded where the provider supports it. Providers without a
+    direct retry API return 501 and the response includes a portal URL
+    for payment-method recovery.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,15 +152,11 @@ async def asyncio(
 ) -> BillingRetryResponse | Problem | None:
     """Retry the latest unpaid invoice / transaction for this account.
 
-     Stripe path: calls `Invoices.Pay` on the most recent open
-    invoice for the customer. The Idempotency-Key header (auto
-    UUIDv4 if absent) collapses retries on the same
-    `acct.ID / retry / invoice.ID` key.
-
-    Paddle path: creates a new `Transaction` against the
-    existing customer for the same plan + month-to-date overage.
-    The CLI forwards the merchant-dashboard URL via the
-    response's `provider_ref_id` extension.
+     The configured provider is asked to retry the most recent unpaid
+    charge. The Idempotency-Key header (auto UUIDv4 if absent) is
+    forwarded where the provider supports it. Providers without a
+    direct retry API return 501 and the response includes a portal URL
+    for payment-method recovery.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

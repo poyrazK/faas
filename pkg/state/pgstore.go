@@ -2347,12 +2347,51 @@ func (s *PgStore) ListAppsByNodeID(ctx context.Context, nodeID string) ([]App, e
 // deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at,
 // last_request_at, parked_at, node_id, wake_id).
 func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error) {
-	sel := `select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
 		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
 		   from instances i
 		   join apps a on a.id = i.app_id
 		  where a.node_id = $1`
 	rows, err := s.pool.Query(ctx, sel, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
+// ListInstancesForLifecycleReconciliation returns live instances belonging to
+// deleted apps or accounts in the deletion grace window. Unlike the normal
+// reaper lists, it intentionally includes soft-deleted apps and the
+// evicting_account_deleting state: those rows are exactly the durable cleanup
+// backlog that a missed pg_notify or a schedd restart must recover.
+func (s *PgStore) ListInstancesForLifecycleReconciliation(ctx context.Context, nodeID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	nodeClause := ""
+	args := make([]any, 0, 2)
+	limitArg := 1
+	if nodeID != "" {
+		nodeClause = " and a.node_id = $1"
+		args = append(args, nodeID)
+		limitArg = 2
+	}
+	args = append(args, limit)
+
+	sel := fmt.Sprintf(`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		   from instances i
+		   join apps a on a.id = i.app_id
+		   join accounts ac on ac.id = a.account_id
+		  where (
+		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','snapshotting','migrating'))
+		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','snapshotting','migrating','evicting_account_deleting'))
+		  )%s
+		  order by i.started_at asc, i.id asc
+		  limit $%d`, nodeClause, limitArg)
+	rows, err := s.pool.Query(ctx, sel, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2631,7 +2670,7 @@ func (s *PgStore) ListLiveInstancesOnNode(ctx context.Context, nodeID string, ma
 		                 where n.id = i.node_id and n.active = true)`
 		args = append(args, maxPerTick)
 	}
-	sel := `select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''),
+	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''),
 	               coalesce(i.guest_uid,0), coalesce(host(i.host_ip),''), i.ram_mb,
 	               i.started_at, i.last_request_at, i.parked_at,
 	               coalesce(i.node_id::text, ''), i.wake_id, i.framework_ready_at,
@@ -2833,7 +2872,7 @@ func (s *PgStore) ListExpiredMigrations(ctx context.Context, maxPerTick int) ([]
 	if maxPerTick < 1 {
 		return nil, nil
 	}
-	sel := `select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''),
+	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''),
 	               coalesce(i.guest_uid,0), coalesce(host(i.host_ip),''), i.ram_mb,
 	               i.started_at, i.last_request_at, i.parked_at,
 	               coalesce(i.node_id::text, ''), i.wake_id, i.framework_ready_at,
@@ -10649,11 +10688,10 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// path that left the column NULL — though migration 00028 enforces
 	// NOT NULL post-apply, the COALESCE keeps scanInstance round-tripping
 	// a non-empty string even on half-migrated test DBs.
-	// Cast $6 to text before the empty-string test — Postgres otherwise
-	// infers $6 as uuid from the column type and the untyped '' literal
-	// fails with "COALESCE types text and uuid cannot be matched"
-	// (SQLSTATE 42804). The CASE shape also keeps the gen_random_uuid()
-	// branch on the text path so the whole expression resolves to uuid.
+	// Keep every reference to $6 on the text path until after the
+	// empty-string test. A direct $6::uuid in the ELSE branch makes
+	// Postgres type the bind parameter as uuid before CASE evaluation,
+	// so an empty wakeID fails before the generated-UUID branch runs.
 	//
 	// Multi-host safety cluster PR-5 (audit F4): the partial unique
 	// index instances_wake_attempt_active_idx (migration 00384)
@@ -10675,10 +10713,18 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// the chain and lets the typed sentinel surface.
 	row := s.pool.QueryRow(ctx,
 		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
-		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now())
-		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		 values ($1, nullif($2::text, '')::uuid, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now())
+		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count`,
 		appID, deploymentID, state, ramMB, nodeID, wakeID)
+	return scanCreatedInstance(row, wakeID, appID)
+}
+
+// scanCreatedInstance is shared by both instance insert shapes. The partial
+// wake_id index is the same cluster-coordination boundary for normal and
+// mode-aware rows, so both methods must translate SQLSTATE 23505 into the
+// same typed error instead of leaking pgx-specific details to schedd.
+func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 	inst, err := scanInstanceCols(row.Scan)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -10707,16 +10753,41 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
-		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now(), $7)
-		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		 values ($1, nullif($2::text, '')::uuid, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now(), $7)
+		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count`,
 		appID, deploymentID, state, ramMB, nodeID, wakeID, mode)
-	return scanInstance(row)
+	return scanCreatedInstance(row, wakeID, appID)
+}
+
+// CreateJobInstance writes the job-task instance shape. Job definitions use
+// their image_ref directly, so unlike an app wake there is no deployment row
+// to reference; migration 00589 makes deployment_id nullable for this kind.
+// Keeping this separate from CreateInstanceWithMode prevents a job caller
+// from accidentally relying on the app/deployment pair CHECK and defaulting
+// the row to kind='wake'.
+func (s *PgStore) CreateJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`insert into instances (id, app_id, deployment_id, job_id, kind, state, ram_mb, node_id, wake_id, started_at, mode)
+		 values ($1::uuid, null, null, $2::uuid, 'job_task', $3, $4, $5::uuid,
+		         case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now(), 'job')
+		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count`,
+		instanceID, jobID, state, ramMB, nodeID, wakeID)
+	inst, err := scanInstanceCols(row.Scan)
+	if err != nil {
+		return Instance{}, fmt.Errorf("state: create job instance (instance=%s job=%s run=%s task=%d): %w", instanceID, jobID, runID, taskIndex, err)
+	}
+	inst.Kind = "job_task"
+	inst.JobID = jobID
+	inst.JobRunID = runID
+	inst.JobTaskIndex = taskIndex
+	return inst, nil
 }
 
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances where id = $1`, id)
 	return scanInstance(row)
@@ -10744,7 +10815,7 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 // defeating the loser-recovery path.
 func (s *PgStore) ReadActiveInstanceForWakeID(ctx context.Context, wakeID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances where wake_id = $1
 		   and state in ('waking','cold_booting','running')
@@ -10761,7 +10832,7 @@ func (s *PgStore) ReadActiveInstanceForWakeID(ctx context.Context, wakeID string
 
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances where app_id = $1 order by started_at desc`, appID)
 	if err != nil {
@@ -10785,7 +10856,7 @@ func (s *PgStore) ListLatestInstancesForApp(ctx context.Context, appID string, l
 		return nil, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances where app_id = $1 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
@@ -10803,7 +10874,7 @@ func (s *PgStore) ListLatestInstancesForApp(ctx context.Context, appID string, l
 // O(live instances) instead of O(all instances ever).
 func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances
 		 where state in ('running','waking','cold_booting','snapshotting')
@@ -10823,7 +10894,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 // semantics in Go makes the test surface match both stores.
 func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
-		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
 		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
 		 from instances i
 		 join apps a on a.id = i.app_id
@@ -10863,7 +10934,7 @@ func (s *PgStore) ListInstancesForAccountPaged(ctx context.Context, accountID st
 		limit = 25
 	}
 	rows, err := s.pool.Query(ctx,
-		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
 		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
 		 from instances i
 		 join apps a on a.id = i.app_id
@@ -11195,7 +11266,7 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 		stateStrs[i] = string(s)
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances
 		 where state = any($1)
@@ -11233,7 +11304,7 @@ func (s *PgStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold
 		return nil, fmt.Errorf("state: list running instances on dead nodes: limit must be > 0, got %d", limit)
 	}
 	rows, err := s.pool.Query(ctx,
-		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
 		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at,
 		        i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
 		 from instances i
@@ -11269,7 +11340,7 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 		stateStrs[i] = string(s)
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, terminal_at
 		 from instances
 		 where state = any($1)
@@ -11313,7 +11384,7 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances where app_id = $1 and state = 'running'
 		 order by started_at desc nulls last limit 1`, appID)
@@ -12493,6 +12564,18 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 // refusal would have already done the conflict-path UPDATE
 // (a no-op on cert_fingerprint under the COALESCE, but still
 // touches last_heartbeat_at indirectly). Pre-flight refuses cleanly.
+// VmmdReregisterStaleWindow is how stale a compute_node's heartbeat must
+// be before a re-registering vmmd is allowed to clear an inactive flag.
+//
+// Shorter than this and the row is assumed to have been drained
+// deliberately by an operator (a drain targets a live node, so its
+// heartbeat is fresh); longer and it was reaped by the watchdog for
+// going silent, which a restart legitimately resolves.
+//
+// Mirrors sched.DefaultHeartbeatStaleness. Duplicated rather than
+// imported because pkg/state must not depend on pkg/sched.
+const VmmdReregisterStaleWindow = 90 * time.Second
+
 func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNode) (ComputeNode, error) {
 	if node.Name != "" && node.CertFingerprint != nil && *node.CertFingerprint != "" {
 		existingFP, err := s.loadComputeNodeCertFingerprint(ctx, node.Name)
@@ -12532,7 +12615,33 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      active              = compute_nodes.active,
+		      -- A vmmd that is re-registering has just started: it is by
+		      -- definition alive. Preserving active=false unconditionally
+		      -- meant a node that CRASHED could never rejoin — the
+		      -- heartbeat only enumerates active nodes
+		      -- (ActiveComputeNodes filters on active = true), so it never
+		      -- re-probes a dead row, and this upsert was the only other
+		      -- writer. Every vmmd restart therefore dropped the node out
+		      -- of rotation permanently until an operator ran UPDATE by
+		      -- hand; on 2026-09-03/04 that happened on every single
+		      -- rollout.
+		      --
+		      -- Reactivate ONLY when the existing row looks reaped rather
+		      -- than drained. An operator drain targets a LIVE node, so
+		      -- its heartbeat is fresh; the watchdog only marks a node
+		      -- inactive after it stops heartbeating past the staleness
+		      -- window. Using that window as the discriminator keeps a
+		      -- deliberate drain sticky (the node keeps heartbeating, so
+		      -- a restart will not silently undo it) while letting a
+		      -- genuinely dead node come back on its own.
+		      --
+		      -- Interim: ADR-137 / issue #1184 replaces this boolean with
+		      -- a compute_node_lifecycle enum that states the distinction
+		      -- outright instead of inferring it. Delete this when that
+		      -- lands.
+		      active              = (compute_nodes.active
+		                             OR compute_nodes.last_heartbeat_at IS NULL
+		                             OR compute_nodes.last_heartbeat_at < now() - $20::interval),
 		      target_url          = coalesce(compute_nodes.target_url, excluded.target_url),
 		      region              = coalesce(compute_nodes.region, excluded.region),
 		      zone                = coalesce(compute_nodes.zone, excluded.zone),
@@ -12557,7 +12666,12 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
-		node.Role, node.Generation)
+		node.Role, node.Generation,
+		// $20 — the staleness window that separates "reaped because it
+		// stopped heartbeating" from "drained by an operator while
+		// alive". Matches sched.DefaultHeartbeatStaleness; kept as a
+		// literal here because pkg/state must not import pkg/sched.
+		VmmdReregisterStaleWindow.String())
 	n, err := scanComputeNode(row)
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node (vmmd) %q: %w", node.Name, err)
@@ -13813,6 +13927,49 @@ func (s *PgStore) GetInvoiceByID(ctx context.Context, id string) (Invoice, error
 	return inv, nil
 }
 
+// UpsertInvoice stores the provider projection used by invoice history. A
+// Polar order can arrive as pending and later as paid, so updates replace the
+// mutable invoice fields while preserving the original created_at timestamp.
+func (s *PgStore) UpsertInvoice(ctx context.Context, inv Invoice) error {
+	if inv.Provider == "" || inv.ProviderInvoiceID == "" || inv.AccountID == "" {
+		return errors.New("state: invoice account, provider, and provider_invoice_id are required")
+	}
+	if inv.PeriodStart.IsZero() {
+		inv.PeriodStart = time.Now().UTC()
+	}
+	if inv.PeriodEnd.IsZero() {
+		inv.PeriodEnd = inv.PeriodStart
+	}
+	if inv.Currency == "" {
+		inv.Currency = "eur"
+	}
+	if inv.Status == "" {
+		inv.Status = "open"
+	}
+	_, err := s.pool.Exec(ctx,
+		`insert into invoices (
+			account_id, provider, provider_invoice_id, number, status,
+			period_start, period_end, subtotal_cents, tax_cents, total_cents,
+			amount_paid_cents, currency, pdf_available, updated_at
+		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
+		on conflict (account_id, provider, provider_invoice_id) do update set
+			number = excluded.number,
+			status = excluded.status,
+			period_start = excluded.period_start,
+			period_end = excluded.period_end,
+			subtotal_cents = excluded.subtotal_cents,
+			tax_cents = excluded.tax_cents,
+			total_cents = excluded.total_cents,
+			amount_paid_cents = excluded.amount_paid_cents,
+			currency = excluded.currency,
+			pdf_available = excluded.pdf_available,
+			updated_at = now()`,
+		inv.AccountID, inv.Provider, inv.ProviderInvoiceID, inv.Number, inv.Status,
+		inv.PeriodStart.UTC(), inv.PeriodEnd.UTC(), inv.SubtotalCents, inv.TaxCents,
+		inv.TotalCents, inv.AmountPaidCents, strings.ToLower(inv.Currency), inv.PDFAvailable)
+	return err
+}
+
 // --- account credits (issue #279) -------------------------------------------
 
 // CreateAccountCredit inserts a new operator-issued credit. The DB
@@ -14357,10 +14514,9 @@ func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64,
 }
 
 // CurrentMonthOverageCents returns the account's derived overage in
-// integer cents for the current UTC month. 1 GB-h = 3600 GB-seconds;
-// at €0.01/GB-h → 1 GB-h = 100 cents. The overage-row SUM is
-// mb_seconds; we multiply by 100/3600_000 to get cents. Integer math
-// only — never float on money (CLAUDE.md).
+// integer cents for the current UTC month. It removes the account plan's
+// included calendar-month allowance before converting the remainder to
+// cents. Integer math only — never float on money (CLAUDE.md).
 //
 // Hand-written: the formula is meterd-internal and not on the read
 // surface. The migration on usage_minutes is unchanged; we SELECT
@@ -14377,17 +14533,17 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	var mbSeconds int64
+	var plan api.Plan
 	if err := s.pool.QueryRow(ctx,
-		`select COALESCE(SUM(mb_seconds), 0)::bigint
-		   from usage_minutes
-		  where account_id = $1
-		    and minute >= $2`,
-		accountID, monthStart).Scan(&mbSeconds); err != nil {
+		`select COALESCE(SUM(u.mb_seconds), 0)::bigint,
+		        COALESCE((select a.plan from accounts a where a.id = $1), 'free')
+		   from usage_minutes u
+		  where u.account_id = $1
+		    and u.minute >= $2`,
+		accountID, monthStart).Scan(&mbSeconds, &plan); err != nil {
 		return 0, err
 	}
-	// mb_seconds / 3600 = GB-h; GB-h * 100 = cents. Integer math.
-	cents := mbSeconds * 100 / 3600
-	return cents, nil
+	return api.OverageCentsForMBSeconds(plan, mbSeconds), nil
 }
 
 // UsageByHour returns per-app usage rolled up from the per-minute rows
@@ -14433,6 +14589,37 @@ func (s *PgStore) UsageByHour(ctx context.Context, accountID string, start, end 
 		}
 		u.Month = hour
 		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// UsageWindows returns the account-level, per-UTC-hour billable aggregates
+// used by meterd's retry/backfill pass. Keeping the aggregation in Postgres
+// means a meterd restart does not lose an hour merely because its tick was
+// missed; the provider-side dedupe tables make replays safe.
+func (s *PgStore) UsageWindows(ctx context.Context, start, end time.Time) ([]UsageWindow, error) {
+	rows, err := s.pool.Query(ctx,
+		`select account_id,
+		        date_trunc('hour', minute AT TIME ZONE 'UTC') as hour,
+		        sum(mb_seconds)::bigint as mb_seconds
+		   from usage_minutes
+		  where minute >= $1 and minute < $2
+		  group by account_id, hour
+		 having sum(mb_seconds) > 0
+		  order by hour, account_id`,
+		start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UsageWindow
+	for rows.Next() {
+		var w UsageWindow
+		if err := rows.Scan(&w.AccountID, &w.Hour, &w.MBSeconds); err != nil {
+			return nil, err
+		}
+		w.Hour = w.Hour.UTC()
+		out = append(out, w)
 	}
 	return out, rows.Err()
 }
@@ -14794,7 +14981,31 @@ func (s *PgStore) PaddleOverageDedupeSchema(ctx context.Context) (PaddleOverageD
 // a dedupe row received on or after cutoff. The PgStore implementation
 // translates a found-row into ErrReplay so callers can branch on a
 // single errors.Is(err, state.ErrReplay) check at the ingress layer.
-// Backing schema: webhook_deliveries (migration 00059).
+// Backing schema: webhook_deliveries (migration 00149, with provider
+// extensions in migration 00587).
+func (s *PgStore) ClaimWebhookDelivery(ctx context.Context, provider, deliveryID string, cutoff, expiresAt time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`insert into webhook_deliveries (provider, delivery_id, expires_at)
+		 values ($1, $2, $3)
+		 on conflict (provider, delivery_id) do update
+		 set received_at = now(), expires_at = excluded.expires_at
+		 where webhook_deliveries.received_at < $4`,
+		provider, deliveryID, expiresAt.UTC(), cutoff.UTC())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ReleaseWebhookDelivery removes a claim after business-state application
+// fails. The next provider retry can then claim and process the delivery.
+func (s *PgStore) ReleaseWebhookDelivery(ctx context.Context, provider, deliveryID string) error {
+	_, err := s.pool.Exec(ctx,
+		`delete from webhook_deliveries where provider = $1 and delivery_id = $2`,
+		provider, deliveryID)
+	return err
+}
+
 func (s *PgStore) CheckWebhookReplay(ctx context.Context, provider, deliveryID string, cutoff time.Time) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx,
@@ -14813,7 +15024,8 @@ func (s *PgStore) CheckWebhookReplay(ctx context.Context, provider, deliveryID s
 // redelivery arrives after the original expires_at but before the
 // sweep runs. The unique constraint is (provider, delivery_id);
 // the provider column is constrained by the
-// webhook_deliveries_provider_check CHECK (added in migration 00059).
+// webhook_deliveries_provider_check CHECK (initial providers in migration
+// 00149; Polar/Resend are added by migration 00587).
 func (s *PgStore) RecordWebhookDelivery(ctx context.Context, provider, deliveryID string, expiresAt time.Time) error {
 	_, err := s.pool.Exec(ctx,
 		`insert into webhook_deliveries (provider, delivery_id, expires_at)

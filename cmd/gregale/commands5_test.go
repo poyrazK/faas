@@ -1676,13 +1676,15 @@ func TestTemplates_ExistsAndTarGz(t *testing.T) {
 
 func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 	cases := map[string][]string{
-		"hello-node":      {"handler.js", "package.json", "README.md"},
-		"hello-python":    {"handler.py", "requirements.txt", "README.md"},
-		"hello-go":        {"main.go", "README.md"},
-		"cron-example":    {"handler.js", "package.json", "README.md"},
-		"function-node":   {"handler.js", "package.json", "README.md"},
-		"function-python": {"handler.py", "requirements.txt", "README.md"},
-		"function-go":     {"main.go", "README.md"},
+		"hello-node":         {"handler.js", "package.json", "README.md"},
+		"hello-python":       {"handler.py", "requirements.txt", "README.md"},
+		"hello-go":           {"main.go", "README.md"},
+		"cron-example":       {"handler.js", "package.json", "README.md"},
+		"function-node":      {"handler.js", "package.json", "README.md"},
+		"function-python":    {"handler.py", "requirements.txt", "README.md"},
+		"function-go":        {"main.go", "README.md"},
+		"function-node24":    {"handler.js", "package.json", "README.md"},
+		"function-python313": {"handler.py", "requirements.txt", "README.md"},
 	}
 	for name, want := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -198,6 +198,58 @@ func TestCacheStore_PreservesSource(t *testing.T) {
 	}
 }
 
+// TestCacheStore_PublishesGroupReadableArtifacts protects the split-box
+// handoff to imaged. os.CreateTemp creates 0600 files by default; publishing
+// that inode unchanged leaves imaged (faas-imaged:faas) unable to read the
+// layer produced by builderd (faas-builderd:faas).
+func TestCacheStore_PublishesGroupReadableArtifacts(t *testing.T) {
+	root := t.TempDir()
+	c := NewCache(root)
+	src := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(src, []byte("shared cache layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Store("mode-hash", FrameworkNode, api.PlanHobby, src, 18); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		c.entryPath("mode-hash", FrameworkNode, api.PlanHobby),
+		c.checksumPath("mode-hash", FrameworkNode, api.PlanHobby),
+	} {
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if got := st.Mode().Perm(); got != cacheArtifactMode.Perm() {
+			t.Errorf("%s mode = %o, want %o", path, got, cacheArtifactMode.Perm())
+		}
+	}
+	for _, path := range []string{
+		c.entryPath("mode-hash", FrameworkNode, api.PlanHobby),
+		c.checksumPath("mode-hash", FrameworkNode, api.PlanHobby),
+	} {
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatalf("chmod legacy %s: %v", path, err)
+		}
+	}
+	if err := c.Store("mode-hash", FrameworkNode, api.PlanHobby, src, 18); err != nil {
+		t.Fatalf("repair legacy cache: %v", err)
+	}
+	for _, path := range []string{
+		c.entryPath("mode-hash", FrameworkNode, api.PlanHobby),
+		c.checksumPath("mode-hash", FrameworkNode, api.PlanHobby),
+	} {
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat repaired %s: %v", path, err)
+		}
+		if got := st.Mode().Perm(); got != cacheArtifactMode.Perm() {
+			t.Errorf("repaired %s mode = %o, want %o", path, got, cacheArtifactMode.Perm())
+		}
+	}
+}
+
 // TestCacheStore_NoTempLeftover asserts the happy-path Store leaves
 // no temp file behind in the cache root. A persistent temp file would
 // (a) waste disk space and (b) confuse a future cleanup sweep that

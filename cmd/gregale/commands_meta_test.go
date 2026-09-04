@@ -4,7 +4,7 @@
 // fails CI before it ships.
 //
 // Issue #961 / Mega-B PR-2 — replaces the previous 'node22-http' /
-// 'python312-http' literals with the canonical 13-name catalog. This
+// 'python312-http' literals with the canonical 15-name catalog. This
 // test is the load-bearing safety net that locks the manifest in sync
 // with templates.Names going forward.
 //
@@ -46,7 +46,7 @@ func TestClosedSetTemplatesMatchEmbedFS(t *testing.T) {
 		embedSet[n] = struct{}{}
 	}
 	if len(closedSet) == 0 {
-		t.Fatalf("--template ClosedSet is empty in cli_meta.go (expected the 13-name catalog)")
+		t.Fatalf("--template ClosedSet is empty in cli_meta.go (expected the 15-name catalog)")
 	}
 	if len(closedSet) != len(embedSet) {
 		t.Errorf("ClosedSet size = %d, templates.Names size = %d", len(closedSet), len(embedSet))

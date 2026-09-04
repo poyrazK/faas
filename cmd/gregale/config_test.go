@@ -98,6 +98,14 @@ func withEntry(service, account, value string) func(*fakeKeyring) {
 	}
 }
 
+// testAPIKey returns a syntactically valid persisted API key without
+// embedding a real credential in the test suite. The production loader
+// intentionally validates keychain/file values, while FAAS_TOKEN fixtures
+// elsewhere may continue using short sentinel strings.
+func testAPIKey(ch byte) string {
+	return "fp_live_" + strings.Repeat(string(ch), 48)
+}
+
 // setupHermeticTokensEnv enforces the 3-knob CLI hermeticity rule
 // (memory: cmd-gregale-requireslogin-hermeticity): HOME + XDG_CONFIG_HOME
 // pointed at a temp dir, FAAS_TOKEN cleared. The temp dir doubles as
@@ -171,14 +179,15 @@ func writePreRenameKeychainEntry(t *testing.T, f *fakeKeyring, value string) {
 func TestSaveToken_WritesToKeychain(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	f := setFakeKeyring(t)
+	want := testAPIKey('a')
 
-	if err := saveToken("kc-token"); err != nil {
+	if err := saveToken(want); err != nil {
 		t.Fatalf("saveToken: %v", err)
 	}
 
 	// Keychain received the value.
-	if got, _ := f.Get(keyringService, keyringAccount); got != "kc-token" {
-		t.Errorf("keychain entry = %q, want kc-token", got)
+	if got, _ := f.Get(keyringService, keyringAccount); got != want {
+		t.Errorf("keychain entry = %q, want saved token", got)
 	}
 	// No file written.
 	if _, err := tokenPath(); err == nil {
@@ -195,8 +204,9 @@ func TestSaveToken_WritesToKeychain(t *testing.T) {
 func TestSaveToken_FallsBackToFile_WhenKeychainUnavailable(t *testing.T) {
 	tmp := setupHermeticTokensEnv(t)
 	setFakeKeyring(t, withSetErr(errors.New("no D-Bus")))
+	want := testAPIKey('b')
 
-	if err := saveToken("  fpn_test  "); err != nil {
+	if err := saveToken("  " + want + "  "); err != nil {
 		t.Fatalf("saveToken: %v", err)
 	}
 	p := mustTokenPath(t)
@@ -211,8 +221,8 @@ func TestSaveToken_FallsBackToFile_WhenKeychainUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	if got := strings.TrimSpace(string(body)); got != "fpn_test" {
-		t.Errorf("body trimmed = %q, want fpn_test", got)
+	if got := strings.TrimSpace(string(body)); got != want {
+		t.Errorf("body trimmed = %q, want saved token", got)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "should-not-exist")); err == nil {
 		t.Errorf("unexpected file in tempdir root")
@@ -226,15 +236,16 @@ func TestSaveToken_FallsBackToFile_WhenKeychainUnavailable(t *testing.T) {
 func TestSaveToken_TrimsAndAppendsNewline_OnFallback(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	setFakeKeyring(t, withSetErr(errors.New("no D-Bus")))
+	want := testAPIKey('c')
 
-	if err := saveToken("  trimmed-value  "); err != nil {
+	if err := saveToken("  " + want + "  "); err != nil {
 		t.Fatalf("saveToken: %v", err)
 	}
 	body, err := os.ReadFile(mustTokenPath(t))
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	if got := string(body); got != "trimmed-value\n" {
+	if got := string(body); got != want+"\n" {
 		t.Errorf("body = %q, want %q", got, "trimmed-value\n")
 	}
 }
@@ -247,15 +258,16 @@ func TestSaveToken_MigratesLegacyPlaintextFile(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	p := writeLegacyToken(t, "old-plaintext")
 	f := setFakeKeyring(t)
+	want := testAPIKey('d')
 
-	if err := saveToken("new-kc-value"); err != nil {
+	if err := saveToken(want); err != nil {
 		t.Fatalf("saveToken: %v", err)
 	}
 	if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("legacy file should be removed after keychain save; Stat err=%v", err)
 	}
-	if got, _ := f.Get(keyringService, keyringAccount); got != "new-kc-value" {
-		t.Errorf("keychain entry = %q, want new-kc-value", got)
+	if got, _ := f.Get(keyringService, keyringAccount); got != want {
+		t.Errorf("keychain entry = %q, want saved token", got)
 	}
 }
 
@@ -264,15 +276,33 @@ func TestSaveToken_MigratesLegacyPlaintextFile(t *testing.T) {
 func TestSaveToken_NoMigrationWhenFileAbsent(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	f := setFakeKeyring(t)
+	want := testAPIKey('e')
 
-	if err := saveToken("kc-only"); err != nil {
+	if err := saveToken(want); err != nil {
 		t.Fatalf("saveToken: %v", err)
 	}
 	if _, err := os.Stat(mustTokenPath(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("no file expected; Stat err=%v", err)
 	}
-	if got, _ := f.Get(keyringService, keyringAccount); got != "kc-only" {
-		t.Errorf("keychain entry = %q, want kc-only", got)
+	if got, _ := f.Get(keyringService, keyringAccount); got != want {
+		t.Errorf("keychain entry = %q, want saved token", got)
+	}
+}
+
+// TestSaveToken_RejectsInvalidAPIKey ensures a malformed auth response
+// cannot overwrite the current credential in either persistence store.
+func TestSaveToken_RejectsInvalidAPIKey(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	f := setFakeKeyring(t)
+
+	if err := saveToken("stale-session-value"); err == nil {
+		t.Fatal("saveToken accepted an invalid API key")
+	}
+	if got, err := f.Get(keyringService, keyringAccount); !errors.Is(err, keyring.ErrNotFound) || got != "" {
+		t.Errorf("invalid save changed keychain: value=%q err=%v", got, err)
+	}
+	if _, err := os.Stat(mustTokenPath(t)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("invalid save created token file: err=%v", err)
 	}
 }
 
@@ -296,11 +326,46 @@ func TestLoadToken_PrefersEnvOverKeychain(t *testing.T) {
 // priority over the plaintext-file fallback when env is unset.
 func TestLoadToken_PrefersKeychainOverFile(t *testing.T) {
 	setupHermeticTokensEnv(t)
-	writeLegacyToken(t, "file-token")
-	setFakeKeyring(t, withEntry(keyringService, keyringAccount, "kc-token"))
+	writeLegacyToken(t, testAPIKey('b'))
+	setFakeKeyring(t, withEntry(keyringService, keyringAccount, testAPIKey('a')))
 
-	if got := loadToken(); got != "kc-token" {
-		t.Errorf("loadToken = %q, want kc-token (keychain wins over file)", got)
+	if got := loadToken(); got != testAPIKey('a') {
+		t.Errorf("loadToken = %q, want keychain value (keychain wins over file)", got)
+	}
+}
+
+// TestLoadToken_InvalidKeychainFallsThroughToFile covers the production
+// failure mode where an older/foreign value remains under the canonical
+// Keychain service while a valid fallback file exists. The invalid entry
+// must not shadow the file credential or cause every command to send a
+// known-bad bearer token to the server.
+func TestLoadToken_InvalidKeychainFallsThroughToFile(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	want := testAPIKey('f')
+	writeLegacyToken(t, want)
+	setFakeKeyring(t, withEntry(keyringService, keyringAccount, "stale-session-value"))
+
+	stderr, restore := captureStderr(t)
+	defer restore()
+	if got := loadToken(); got != want {
+		t.Errorf("loadToken = %q, want valid file token after invalid keychain value", got)
+	}
+	if !strings.Contains(stderr.String(), "keychain contains an invalid Gregale API key") {
+		t.Errorf("expected invalid-keychain warning; got %q", stderr.String())
+	}
+}
+
+// TestLoadToken_InvalidCurrentFileFallsThroughToLegacy ensures a corrupt
+// current file cannot block a valid pre-#439 fallback during migration.
+func TestLoadToken_InvalidCurrentFileFallsThroughToLegacy(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	writeLegacyToken(t, "stale-file-value")
+	want := testAPIKey('d')
+	writePreRenamePlaintextToken(t, want)
+	setFakeKeyring(t)
+
+	if got := loadToken(); got != want {
+		t.Errorf("loadToken = %q, want valid legacy file token", got)
 	}
 }
 
@@ -310,13 +375,14 @@ func TestLoadToken_PrefersKeychainOverFile(t *testing.T) {
 // TestLoadToken_MissingFileAndMissingEnv below.
 func TestLoadToken_KeychainErrNotFound_FallsThroughToFile(t *testing.T) {
 	tmp := setupHermeticTokensEnv(t)
-	writeLegacyToken(t, "file-token")
+	want := testAPIKey('b')
+	writeLegacyToken(t, want)
 	// Default fakeKeyring returns keyring.ErrNotFound from Get on a
 	// missing entry — already the behaviour we want.
 
 	got := loadToken()
-	if got != "file-token" {
-		t.Errorf("loadToken = %q, want file-token", got)
+	if got != want {
+		t.Errorf("loadToken = %q, want valid file token", got)
 	}
 	// Nothing logged to stderr at WARN level — covered by the absence
 	// of any getter-error injection.
@@ -328,15 +394,16 @@ func TestLoadToken_KeychainErrNotFound_FallsThroughToFile(t *testing.T) {
 // through to the file and emits a WARN to stderr.
 func TestLoadToken_KeychainOtherError_FallsThroughToFileAndWarns(t *testing.T) {
 	setupHermeticTokensEnv(t)
-	writeLegacyToken(t, "file-token")
+	want := testAPIKey('b')
+	writeLegacyToken(t, want)
 	setFakeKeyring(t, withGetErr(errors.New("keychain broken")))
 
 	stderr, restore := captureStderr(t)
 	defer restore()
 	got := loadToken()
 
-	if got != "file-token" {
-		t.Errorf("loadToken = %q, want file-token", got)
+	if got != want {
+		t.Errorf("loadToken = %q, want valid file token", got)
 	}
 	if !strings.Contains(stderr.String(), "OS keychain lookup failed") {
 		t.Errorf("expected WARN to mention keychain failure; got %q", stderr.String())
@@ -441,10 +508,11 @@ func TestKeyringStub_IsWired(t *testing.T) {
 func TestLoadToken_PreRenameKeychain_LegacyServiceIsRead(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	f := setFakeKeyring(t)
-	writePreRenameKeychainEntry(t, f, "from-pre-rename-kc")
+	want := testAPIKey('c')
+	writePreRenameKeychainEntry(t, f, want)
 
-	if got := loadToken(); got != "from-pre-rename-kc" {
-		t.Errorf("loadToken = %q, want from-pre-rename-kc", got)
+	if got := loadToken(); got != want {
+		t.Errorf("loadToken = %q, want valid pre-rename keychain token", got)
 	}
 }
 
@@ -454,10 +522,11 @@ func TestLoadToken_PreRenameKeychain_LegacyServiceIsRead(t *testing.T) {
 func TestLoadToken_PreRenameFile_LegacyFileIsRead(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	setFakeKeyring(t) // empty
-	p := writePreRenamePlaintextToken(t, "from-pre-rename-file")
+	want := testAPIKey('d')
+	p := writePreRenamePlaintextToken(t, want)
 
-	if got := loadToken(); got != "from-pre-rename-file" {
-		t.Errorf("loadToken = %q, want from-pre-rename-file", got)
+	if got := loadToken(); got != want {
+		t.Errorf("loadToken = %q, want valid pre-rename file token", got)
 	}
 	// The legacy file is read but NOT removed on load — removal is
 	// saveToken's job (mirrors the existing #293 pattern: read
@@ -473,14 +542,15 @@ func TestLoadToken_PreRenameFile_LegacyFileIsRead(t *testing.T) {
 // value (e.g. an ex-coworker's account on the same machine).
 func TestLoadToken_PreRename_PreferNewOverLegacy(t *testing.T) {
 	setupHermeticTokensEnv(t)
+	want := testAPIKey('e')
 	setFakeKeyring(t,
-		withEntry(keyringService, keyringAccount, "new-kc"),
-		withEntry(legacyKeyringService, keyringAccount, "old-kc"),
+		withEntry(keyringService, keyringAccount, want),
+		withEntry(legacyKeyringService, keyringAccount, testAPIKey('c')),
 	)
-	writePreRenamePlaintextToken(t, "old-file")
+	writePreRenamePlaintextToken(t, testAPIKey('f'))
 
-	if got := loadToken(); got != "new-kc" {
-		t.Errorf("loadToken = %q, want new-kc (new keychain wins over legacy)", got)
+	if got := loadToken(); got != want {
+		t.Errorf("loadToken = %q, want new keychain value (new keychain wins over legacy)", got)
 	}
 }
 
@@ -493,8 +563,9 @@ func TestSaveToken_PreRename_MigratesKeychainAndFile(t *testing.T) {
 	f := setFakeKeyring(t)
 	writePreRenameKeychainEntry(t, f, "legacy-kc")
 	legacyFile := writePreRenamePlaintextToken(t, "legacy-file")
+	want := testAPIKey('f')
 
-	if err := saveToken("new-kc-value"); err != nil {
+	if err := saveToken(want); err != nil {
 		t.Fatalf("saveToken: %v", err)
 	}
 	if got, _ := f.Get(legacyKeyringService, keyringAccount); got != "" {
@@ -503,8 +574,8 @@ func TestSaveToken_PreRename_MigratesKeychainAndFile(t *testing.T) {
 	if _, err := os.Stat(legacyFile); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("legacy plaintext file should be removed; Stat err=%v", err)
 	}
-	if got, _ := f.Get(keyringService, keyringAccount); got != "new-kc-value" {
-		t.Errorf("new keychain entry = %q, want new-kc-value", got)
+	if got, _ := f.Get(keyringService, keyringAccount); got != want {
+		t.Errorf("new keychain entry = %q, want saved token", got)
 	}
 }
 
@@ -518,7 +589,7 @@ func TestDeleteToken_ClearsLegacyKeychainAndFile(t *testing.T) {
 	f := setFakeKeyring(t)
 	writePreRenameKeychainEntry(t, f, "legacy-kc")
 	legacyFile := writePreRenamePlaintextToken(t, "legacy-file")
-	if err := saveToken("new-kc-value"); err != nil {
+	if err := saveToken(testAPIKey('a')); err != nil {
 		t.Fatalf("saveToken: %v", err)
 	}
 	// After save, the new store is populated. Logout must clear

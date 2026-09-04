@@ -186,3 +186,28 @@ func TestDecide_Table(t *testing.T) {
 		})
 	}
 }
+
+func TestDecide_DesiredCapacityUsesInflightAndCap(t *testing.T) {
+	got := decide(Stats{
+		TargetValue:         10,
+		MaxConcurrency:      8,
+		Concurrency:         2,
+		PerInstanceInflight: 35,
+		HaveInflight:        true,
+	})
+	// 2 instances × 35 inflight / 10 target = 7 desired instances.
+	if got.Desired != 7 || got.Admissions != 5 {
+		t.Fatalf("desired=%d admissions=%d, want desired=7 admissions=5", got.Desired, got.Admissions)
+	}
+
+	got = decide(Stats{
+		TargetValue:         10,
+		MaxConcurrency:      4,
+		Concurrency:         2,
+		PerInstanceInflight: 35,
+		HaveInflight:        true,
+	})
+	if got.Desired != 4 || got.Admissions != 2 {
+		t.Fatalf("capped desired=%d admissions=%d, want desired=4 admissions=2", got.Desired, got.Admissions)
+	}
+}

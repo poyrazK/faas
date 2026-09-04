@@ -21,8 +21,9 @@ class WakeTimelineEvent:
     the producers write — see `pkg/events/wake.go`. The
     canonical `wake.*` vocabulary is documented in
     `docs/adr/064-wake-timeline-canonical-vocabulary.md`
-    (12 success-path kinds + 3 failure-path kinds: build,
-    deploy, boot).
+    (including `wake.restore_breakdown`, which exposes the
+    vmmd snapshot-restore phases in integer milliseconds, plus
+    the aggregate `total_ms`; and build/deploy/boot failure kinds).
 
     """
 

@@ -187,6 +187,12 @@ type ColdBootSpec struct {
 	// The base drive is always the first DriveID; Workloads do
 	// NOT replace it. Additive per ADR-016.
 	Workloads []WorkloadSpec
+	// SecretsEnvJSON and APIEnvJSON are prepared by Manager.Wake and staged
+	// into drive1 before Firecracker receives its config. Keeping the payload
+	// on the boot spec closes the race where guest-init starts the workload
+	// before a late host-side loopback write.
+	SecretsEnvJSON []byte
+	APIEnvJSON     []byte
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -556,12 +562,15 @@ func JailerCommand(s JailerSpec) []string {
 // FC Drive.DriveID vmmd mounts inside the jail chroot + the
 // workload's cgroup RAM ceiling.
 //
-// Name is the customer-chosen sidecar name (alpha-num +
-// dash + underscore, max 32 chars) — main is the literal "main".
+// Name is the customer-chosen sidecar name (lowercase alpha-num
+// plus dash, max 63 chars) — main is the literal "main".
 // Type is "init", "sidecar", or "main" (the closed enum from
-// api.SidecarType). Cmd/Env/Port are not on this struct —
-// guest-init reads them from /etc/faas/workloads/<name>/workload.json
-// at boot, not from the wire.
+// api.SidecarType). The effective sidecar command and image-default
+// environment are baked into /etc/faas/workloads/<name>/workload.json;
+// sealed env overrides are carried separately and staged into the
+// main workload's writable layer at wake. Cmd and Entrypoint below
+// are only a compatibility fallback for older sidecar layers. Port
+// remains on the wire because it is deployment scheduling metadata.
 //
 // RamMB is the per-workload cgroup memory.max. 0 = "absent /
 // inherit the plan RAM" (the common case for the main workload).
@@ -578,6 +587,7 @@ func JailerCommand(s JailerSpec) []string {
 type WorkloadSpec struct {
 	Name       string // "main" for the main workload; sidecar name for the rest
 	Type       string // "main", "init", "sidecar"
+	Image      string // digest-pinned sidecar image, retained for wire/audit parity
 	StorageKey string // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
 	DriveID    string // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
 	RamMB      int    // 0 = inherit plan RAM
@@ -585,4 +595,11 @@ type WorkloadSpec struct {
 	Essential  bool   // type=="init" + essential=true → fail deploy on non-zero exit
 	Cmd        []string
 	Entrypoint []string
+	// SealedEnv carries per-sidecar ciphertext from the deployment record. It is
+	// unsealed by Manager.Wake and never written into the shared sidecar image.
+	SealedEnv []SealedEnvEntry
+	// preparedEnvJSON is the per-instance plaintext env file produced by
+	// Manager.Wake. It is intentionally internal so plaintext cannot cross the
+	// scheduler/vmmd wire or be accidentally serialized as part of WorkloadSpec.
+	preparedEnvJSON []byte
 }

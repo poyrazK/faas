@@ -156,6 +156,11 @@ type RestoreSpec struct {
 	// before the FC snapshot-load. Empty = legacy single-
 	// workload path (LayerKey above). Additive per ADR-016.
 	Workloads []WorkloadSpec
+	// SecretsEnvJSON and APIEnvJSON are the already-prepared runtime env
+	// files. Restore stages them before /snapshot/load so the resumed guest
+	// sees the same container contract as a cold boot.
+	SecretsEnvJSON []byte
+	APIEnvJSON     []byte
 	// StorageKey is the prefix-matched key under which the mem blob lives
 	// (e.g. "snap/<deploymentID>/mem"). Restore resolves it via
 	// Storage.Get into a tmp file used as the FC restore source.

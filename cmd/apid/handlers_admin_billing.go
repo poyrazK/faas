@@ -1,12 +1,9 @@
 // PR-P3: Operator-facing admin surface for the billing Provider.
 //
-// The Stripe provider does not implement paddle.OpProvider, so the
-// type assertion in each handler fails and the handler returns 501
-// "Not Implemented" — a deliberate "this operation is provider-
-// scoped" surface rather than a panic or a silent no-op. The CLI
-// mirrors this with a non-zero exit code so an operator who runs
-// `faas billing price-catalog list` against a Stripe deployment
-// gets an actionable error rather than an empty table.
+// The catalog handlers use billing.CatalogProvider, so the same operator
+// surface works for the Polar public-release provider and the explicit
+// Paddle provider. Providers without a catalog implementation receive a
+// truthful 501 instead of an empty or misleading snapshot.
 //
 // Endpoints:
 //
@@ -40,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
+	"github.com/onebox-faas/faas/pkg/billing/polar"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -49,24 +47,18 @@ import (
 // Mirrors the meterd pusher's reconcile-window shape.
 const billingOpsTimeout = 30 * time.Second
 
-// billingOpsFor returns the paddle.OpProvider view of s.billingProvider
-// or (nil, false) if the active provider does not implement it. The
-// helper centralises the type-assertion so every handler renders the
-// same 501 Problem without each one re-deriving the "not implemented"
-// shape.
-//
-// Stripe returns (nil, false) today; future providers that want to
-// expose the catalog surface add their own type assertion here.
-func billingOpsFor(p billing.Provider) (paddle.OpProvider, bool) {
+// billingCatalogFor returns the provider-neutral catalog view or (nil,
+// false) when the selected provider has no operator catalog surface.
+func billingCatalogFor(p billing.Provider) (billing.CatalogProvider, bool) {
 	if p == nil {
 		return nil, false
 	}
-	ops, ok := p.(paddle.OpProvider)
+	ops, ok := p.(billing.CatalogProvider)
 	return ops, ok
 }
 
 // providerName is the dispatcher's name resolver. Today the catalog
-// surface is Paddle-specific; the loader already keeps the provider
+// surface is provider-specific; the loader already keeps the provider
 // type on s.billingProvider and the package name is the canonical
 // identity. A future PR-C that adds a third provider (LemonSqueezy
 // stub) will extend this to a registry lookup.
@@ -74,16 +66,17 @@ func providerName(p billing.Provider) string {
 	if p == nil {
 		return ""
 	}
-	// Package-name dispatch via type assertion to *paddle.Provider.
+	// Package-name dispatch via type assertion to the concrete providers.
 	// Adding a provider means adding an else-if here; the catalogue
 	// of provider names is small enough that a switch is overkill.
 	if _, ok := p.(*paddle.Provider); ok {
 		return "paddle"
 	}
-	// Stripe and any provider that does not satisfy paddle.OpProvider
-	// surface as "stripe" — the handler will 501 immediately after
-	// returning. The type assertion at billingOpsFor is the
-	// authoritative check; providerName is for the response body.
+	if _, ok := p.(*polar.Provider); ok {
+		return "polar"
+	}
+	// Stripe and any provider that does not satisfy the catalog surface
+	// as "stripe" — providerName is only for the response body.
 	// When a future provider (LemonSqueezy stub in PR-P5) joins, add
 	// its type assertion here.
 	return "stripe"
@@ -101,9 +94,9 @@ func nowUTC() time.Time {
 // so the response can carry provider metadata (last_sync_at,
 // provider name) without flattening into the entries slice.
 type paddleCatalogResponse struct {
-	Provider string                `json:"provider"`
-	SyncedAt string                `json:"synced_at"` // RFC 3339; "" when never synced
-	Entries  []paddle.CatalogEntry `json:"entries"`
+	Provider string                    `json:"provider"`
+	SyncedAt string                    `json:"synced_at"` // RFC 3339; "" when never synced
+	Entries  []api.BillingCatalogEntry `json:"entries"`
 }
 
 // listPaddleCatalog handles GET /v1/admin/billing-paddle-catalog.
@@ -118,12 +111,12 @@ func (s *server) listPaddleCatalog(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, prob)
 		return
 	}
-	ops, ok := billingOpsFor(s.billingProvider)
+	ops, ok := billingCatalogFor(s.billingProvider)
 	if !ok {
 		writeProviderNotImplemented(w, "list", s.billingProvider)
 		return
 	}
-	entries := ops.ListCatalog(r.Context())
+	entries := ops.ListBillingCatalog(r.Context())
 
 	// Surface SyncedAt as a top-level field too so the CLI can render
 	// "last synced at <ts>" without scanning every entry. Picks the
@@ -136,7 +129,7 @@ func (s *server) listPaddleCatalog(w http.ResponseWriter, r *http.Request, acct 
 		}
 	}
 	if entries == nil {
-		entries = []paddle.CatalogEntry{}
+		entries = []api.BillingCatalogEntry{}
 	}
 	writeJSON(w, http.StatusOK, paddleCatalogResponse{
 		Provider: providerName(s.billingProvider),
@@ -155,7 +148,7 @@ func (s *server) syncPaddleCatalog(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, prob)
 		return
 	}
-	ops, ok := billingOpsFor(s.billingProvider)
+	ops, ok := billingCatalogFor(s.billingProvider)
 	if !ok {
 		writeProviderNotImplemented(w, "sync", s.billingProvider)
 		return
@@ -166,7 +159,7 @@ func (s *server) syncPaddleCatalog(w http.ResponseWriter, r *http.Request, acct 
 	// upstream), the legacy 30 s WithTimeout ceiling is preserved.
 	ctx, cancel := budgetCtx(r.Context(), billingOpsTimeout)
 	defer cancel()
-	entries, err := ops.SyncCatalog(ctx)
+	entries, err := ops.SyncBillingCatalog(ctx)
 	if err != nil {
 		// Wrap with the operation so an operator hitting the CLI sees
 		// "paddle: sync catalog: <sdk-error>" rather than a bare string.
@@ -176,7 +169,7 @@ func (s *server) syncPaddleCatalog(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if entries == nil {
-		entries = []paddle.CatalogEntry{}
+		entries = []api.BillingCatalogEntry{}
 	}
 	writeJSON(w, http.StatusOK, paddleCatalogResponse{
 		Provider: providerName(s.billingProvider),
@@ -200,21 +193,25 @@ func (s *server) resetPaddleCatalog(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	ops, ok := billingOpsFor(s.billingProvider)
+	ops, ok := billingCatalogFor(s.billingProvider)
 	if !ok {
 		writeProviderNotImplemented(w, "reset", s.billingProvider)
 		return
 	}
-	if err := ops.ResetCatalog(r.Context()); err != nil {
+	if err := ops.ResetBillingCatalog(r.Context()); err != nil {
+		if errors.Is(err, billing.ErrNotImplemented) {
+			writeProviderNotImplemented(w, "reset", s.billingProvider)
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_reset_failed",
-			"Paddle catalog reset failed",
+			"Billing catalog reset failed",
 			err.Error()))
 		return
 	}
 	writeJSON(w, http.StatusOK, paddleCatalogResponse{
 		Provider: providerName(s.billingProvider),
 		SyncedAt: "",
-		Entries:  []paddle.CatalogEntry{},
+		Entries:  []api.BillingCatalogEntry{},
 	})
 }
 
@@ -350,7 +347,7 @@ func (s *server) reconcileAccount(w http.ResponseWriter, r *http.Request, acct s
 
 // writeProviderNotImplemented renders a uniform 501 Problem for
 // the case where the active provider does not implement the
-// paddle.OpProvider surface. Centralised so every handler renders
+// billing.CatalogProvider surface. Centralised so every handler renders
 // the same shape.
 func writeProviderNotImplemented(w http.ResponseWriter, op string, p billing.Provider) {
 	name := providerName(p)
@@ -359,5 +356,5 @@ func writeProviderNotImplemented(w http.ResponseWriter, op string, p billing.Pro
 	}
 	api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, "billing_op_unsupported",
 		"Billing provider does not support "+op+" catalog",
-		name+" does not implement the paddle.OpProvider surface; this operation is provider-scoped"))
+		name+" does not implement the billing catalog surface; this operation is provider-scoped"))
 }

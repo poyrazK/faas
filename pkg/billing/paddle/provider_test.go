@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
 )
@@ -194,7 +195,7 @@ func TestParsePaddleEvent_MapsAllSubscriptionTypes(t *testing.T) {
 		{"subscription_past_due", "subscription.past_due", billing.EventSubscriptionPastDue},
 		{"transaction_paid", "transaction.paid", billing.EventPaymentSucceeded},
 		{"transaction_payment_failed", "transaction.payment_failed", billing.EventPaymentFailed},
-		{"unknown", "transaction.completed", billing.EventUnknown},
+		{"transaction_completed", "transaction.completed", billing.EventPaymentSucceeded},
 		{"empty", "", billing.EventUnknown},
 	}
 	for _, tc := range cases {
@@ -234,6 +235,25 @@ func TestParsePaddleEvent_MapsAllSubscriptionTypes(t *testing.T) {
 	}
 }
 
+func TestVerifyWebhookUsesSubscriptionIDFromEventIDField(t *testing.T) {
+	p, err := paddle.NewProvider(testAPIKey, testWebhookKey, true, discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().UTC()
+	body := []byte(`{"event_id":"evt_subscription","event_type":"subscription.created","data":{"id":"sub-actual","customer_id":"ctm-1","custom_data":{"plan":"pro"},"items":[{"price":{"id":"pri-hobby"}}]}}`)
+	ev, err := p.VerifyWebhook(body, map[string]string{"Paddle-Signature": signPaddleBody(testWebhookKey, body, when)}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.SubscriptionID != "sub-actual" {
+		t.Fatalf("subscription id = %q, want sub-actual", ev.SubscriptionID)
+	}
+	if ev.PlanID != string(api.PlanPro) {
+		t.Fatalf("plan id = %q, want canonical %q", ev.PlanID, api.PlanPro)
+	}
+}
+
 func TestParsePaddleEvent_RejectsMalformedBody(t *testing.T) {
 	t.Parallel()
 
@@ -249,5 +269,43 @@ func TestParsePaddleEvent_RejectsMalformedBody(t *testing.T) {
 	_, err = p.VerifyWebhook(bad, map[string]string{"Paddle-Signature": header}, time.Minute)
 	if err == nil {
 		t.Fatal("VerifyWebhook accepted malformed JSON body")
+	}
+}
+
+func TestVerifyWebhookProjectsCompletedTransactionInvoice(t *testing.T) {
+	p, err := paddle.NewProvider(testAPIKey, testWebhookKey, true, discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().UTC()
+	body := []byte(`{"event_id":"evt_completed","event_type":"transaction.completed","data":{"id":"txn-1","invoice_id":"inv-1","customer_id":"ctm-1","subscription_id":"sub-1","status":"completed","invoice_number":"INV-1","currency_code":"EUR","billing_period":{"starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-09-01T00:00:00Z"},"details":{"totals":{"subtotal":"900","tax":"100","total":"1000"}}}}`)
+	ev, err := p.VerifyWebhook(body, map[string]string{"Paddle-Signature": signPaddleBody(testWebhookKey, body, when)}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Type != billing.EventPaymentSucceeded {
+		t.Fatalf("event type = %v, want payment_succeeded", ev.Type)
+	}
+	if ev.Invoice == nil {
+		t.Fatal("completed transaction did not produce an invoice projection")
+	}
+	if ev.Invoice.ProviderInvoiceID != "inv-1" || ev.Invoice.Number != "INV-1" || ev.Invoice.Status != "paid" || ev.Invoice.SubtotalCents != 900 || ev.Invoice.TaxCents != 100 || ev.Invoice.TotalCents != 1000 || ev.Invoice.AmountPaidCents != 1000 || !ev.Invoice.PDFAvailable {
+		t.Fatalf("invoice projection = %+v", ev.Invoice)
+	}
+}
+
+func TestVerifyWebhookMapsRefundAdjustment(t *testing.T) {
+	p, err := paddle.NewProvider(testAPIKey, testWebhookKey, true, discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().UTC()
+	body := []byte(`{"event_id":"evt_refund","event_type":"adjustment.updated","data":{"id":"adj-1","action":"refund","customer_id":"ctm-1","transaction_id":"txn-1","currency_code":"EUR","totals":{"total":"500"}}}`)
+	ev, err := p.VerifyWebhook(body, map[string]string{"Paddle-Signature": signPaddleBody(testWebhookKey, body, when)}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Type != billing.EventRefundProcessed || ev.ProviderRefundID != "adj-1" || ev.ChargeID != "txn-1" || ev.AmountCents != 500 || ev.Currency != "EUR" {
+		t.Fatalf("refund event = %+v", ev)
 	}
 }

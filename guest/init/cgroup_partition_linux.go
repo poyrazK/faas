@@ -22,10 +22,11 @@
 //      happens AFTER pivotInto so the mount lives on the
 //      new root).
 //
-//   2. Before each workload's exec.Command.Start, mkdir the
-//      per-workload leaf at /sys/fs/cgroup/<safe-name>,
-//      write memory.max = spec.RamMB << 20, and after Start
-//      write the child PID into the leaf's cgroup.procs.
+//   2. Before each configured workload's exec.Command.Start, mkdir
+//      the per-workload leaf at /sys/fs/cgroup/<safe-name>, write
+//      memory.max = spec.RamMB << 20, and after Start write the
+//      child PID into cgroup.procs. Legacy workloads without a
+//      per-workload RAM value remain under the parent scope.
 //
 //   3. Sidecar OOM stays scoped to that leaf (cgroup v2
 //      memory controller kills only the offending leaf's
@@ -60,7 +61,32 @@ import (
 // Linux userland agrees on the path and the alternative
 // (env-driven) would let a deployment redirect the partition
 // into a workload-controlled path.
-const cgroupRoot = "/sys/fs/cgroup"
+var cgroupRoot = "/sys/fs/cgroup"
+
+// prepareWorkloadCgroup creates the in-guest memory leaf for a workload and
+// returns its path for the subsequent cgroup.procs placement. A zero RAM value
+// means the workload has no per-workload override (the legacy single-workload
+// path); it must not be converted into the 1 MiB defensive floor used by the
+// low-level partitionInto helper. Configured workloads fail closed when the
+// leaf cannot be created or written.
+func prepareWorkloadCgroup(typ, name string, ramMB int, log *slog.Logger) (string, error) {
+	if ramMB < 1 {
+		return "", nil
+	}
+	leaf := leafDir(typ, name)
+	if leaf == "" {
+		return "", fmt.Errorf("invalid workload cgroup name %q/%q", typ, name)
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	if err := partitionInto(leaf, ramMB); err != nil {
+		log.Warn("cgroup partition into leaf failed",
+			"leaf", leaf, "name", name, "err", err)
+		return "", err
+	}
+	return leaf, nil
+}
 
 // cgroupSafeName (issue #463 / ADR-069 / PR-B AC #4) is
 // the leaf-name helper. Joins type + name with a single

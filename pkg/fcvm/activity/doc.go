@@ -1,8 +1,9 @@
-// Package activity is a per-instance in-flight request counter for
-// vmmd. It feeds the inflight_requests and last_request_at wire
-// fields on vmmdpb.InstanceStats, which schedd reads via
-// instancestats.Reader.MaxInflightForApp (PR-C adds the engine
-// consumer; PR-B ships only the vmmd-side producer).
+// Package activity is a per-instance request activity counter for
+// vmmd. It feeds the inflight_requests, last_request_at, and
+// request_count_total wire fields on vmmdpb.InstanceStats. Schedd
+// reads the in-flight gauge through instancestats.Reader.MaxInflightForApp
+// and derives a provider-independent RPS signal from request_count_total
+// for reactive scale-up.
 //
 // # Design
 //
@@ -58,7 +59,8 @@
 //
 // Inflight returns the current count and a "seen-ever" boolean;
 // LastAt returns the most recent Begin moment and a "seen-ever"
-// boolean. Stats gRPC emits:
+// boolean; Total returns the cumulative request count and a
+// "seen-ever" boolean. Stats gRPC emits:
 //
 //   - row.InflightRequests = inflight when seen, else zero
 //     (wrappers preserved for the schedd poller — the schedd
@@ -66,6 +68,10 @@
 //     already handles zero as a valid "idle" reading).
 //   - row.LastRequestAt = timestamppb.New(lastAt) when seen,
 //     else nil.
+//   - row.RequestCountTotal = wrapperspb.Int64(total) when seen,
+//     else nil. Schedd treats a counter decrease as a new baseline
+//     so vmmd restart or instance recreation cannot create a fake
+//     scale-out burst.
 //
 // A never-observed instance therefore looks identical on the
 // wire to today (pre-PR-B), which is the additive-merge the

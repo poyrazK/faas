@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/releasebundle"
+	"github.com/onebox-faas/faas/pkg/releaseretention"
 )
 
 type Runtime interface {
@@ -102,6 +103,9 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 	}
 	if err := c.runtime.Healthy(ctx, manifest); err != nil {
 		return c.rollback(ctx, releaseID, previous, err)
+	}
+	if _, err := releaseretention.Prune(c.config.ReleasesRoot, c.config.CurrentPath, releaseretention.DefaultKeepPrevious); err != nil {
+		return fmt.Errorf("deploycontroller: release %q is healthy but retention failed: %w", releaseID, err)
 	}
 	return nil
 }

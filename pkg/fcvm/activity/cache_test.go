@@ -34,6 +34,9 @@ func TestBeginEnd_Basic(t *testing.T) {
 	if got != 3 {
 		t.Errorf("Inflight after 3 Begins = %d, want 3", got)
 	}
+	if got, ok := c.Total("inst-a"); !ok || got != 3 {
+		t.Errorf("Total after 3 Begins = (%d, %v), want (3, true)", got, ok)
+	}
 
 	c.End("inst-a")
 	got, _ = c.Inflight("inst-a")
@@ -46,6 +49,9 @@ func TestBeginEnd_Basic(t *testing.T) {
 	got, _ = c.Inflight("inst-a")
 	if got != 0 {
 		t.Errorf("Inflight after fully matched Begin/End = %d, want 0", got)
+	}
+	if got, ok := c.Total("inst-a"); !ok || got != 3 {
+		t.Errorf("Total after End calls = (%d, %v), want (3, true)", got, ok)
 	}
 }
 

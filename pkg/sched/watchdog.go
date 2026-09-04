@@ -126,6 +126,24 @@ func (w *Watchdog) runOne(ctx context.Context, now time.Time, st state.State, bu
 				}
 			}
 		}
+		// SNAPSHOTTING rows get a memory-scaled reprieve. The sweep
+		// query uses one flat SnapshotSweepBudget (20s) so it stays a
+		// single cheap index scan, but the engine gives each capture
+		// SnapshotBudgetFor(ram) — 45s at Scale's 1024 MB. Without this
+		// exemption the watchdog would kill a Scale snapshot at 20s
+		// while it is legitimately still writing, turning a working
+		// park into a FAILED instance and losing the snapshot.
+		// Mirrors the WAKING exemption above.
+		// Anchored on ParkedAt, not StartedAt: for a SNAPSHOTTING row
+		// StartedAt is when the VM booted (possibly hours earlier),
+		// which would make the reprieve expire instantly on any
+		// long-lived instance. ParkedAt is when the capture began and
+		// is the same anchor the sweep query ages on.
+		if st == state.StateSnapshotting && !ins.ParkedAt.IsZero() {
+			if now.Sub(ins.ParkedAt) < SnapshotBudgetFor(ins.RAMMB) {
+				continue
+			}
+		}
 		if err := w.engine.KillStuck(ctx, ins.ID, ins.AppID, reason); err != nil {
 			w.log.Warn("watchdog: kill stuck", "instance", ins.ID, "state", st, "reason", reason, "err", err)
 		}

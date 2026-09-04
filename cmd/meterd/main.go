@@ -10,12 +10,9 @@
 //     per-plan ladder: Free at ≥100 % flips the account to suspended
 //     and parks every live instance; paid plans emit a one-shot
 //     quota_warning and accrue overage.
-//   - stripe tick: every 24 h, pushes the past day's billable
-//     mb_seconds to Stripe as a metered usage record with an
-//     integer-arithmetic wire quantity (spec §4.7, ADR-010). The
-//     per-day aggregate is the M7 §14 fix for the per-hour fractional
-//     truncation that accumulated to ~0.3 % of the customer's bill —
-//     above the spec's 0.1 % acceptance delta.
+//   - billing tick: every 1 h, replays completed billable UTC-hour windows
+//     from the durable lookback to the selected provider. Provider
+//     idempotency keys make restart and transient-outage recovery safe.
 //
 // meterd is the ONLY writer that triggers Free-tier hard stops — apid's
 // auth gate and schedd's ledger just observe the resulting status.
@@ -95,6 +92,7 @@ const scheddCPUAdapterTTL = 30 * time.Second
 const (
 	provStripe = "stripe"
 	provPaddle = "paddle"
+	provPolar  = "polar"
 )
 
 func (a *scheddCPUAdapter) CPUUsageUsec(instanceID string) (uint64, bool) {
@@ -734,7 +732,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		// Empty API key on a Stripe box is a soft-warn today
 		// (pushUsageRecordSDKSum returns an error per call, the loop
-		// logs and skips); with the Paddle provider, the API key must
+		// logs and skips); with Polar or Paddle, the API key must
 		// be set or the SDK refuses to initialize. Surface the provider
 		// name so an operator can match the warning to the right
 		// source.
@@ -747,7 +745,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		warnIfEmptyAPIKey(log, billingCfg, provName)
 		log.Info("meterd billing provider loaded", "provider", provName)
 	}
-
 	// Mailer: defaults to mail.SenderFromEnv so FAAS_MAIL_TRANSPORT
 	// selects the transport (resend/postmark/log/noop). The dunning
 	// timer needs this for its transition emails. Operator-selected
@@ -851,6 +848,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// of truth.
 	applyEnvTick("FAAS_CERT_EXPIRY_REFRESHER_INTERVAL", &mc.CertExpiryRefresherInterval, deps.getenv, log)
 	applyEnvTick("FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL", &mc.AccountSpendAggregatorInterval, deps.getenv, log)
+	// Validate after applying environment overrides. In production the
+	// provider is loaded before the timer overlay, so validating only the
+	// TOML value would let FAAS_STRIPE_INTERVAL=24h bypass Polar's hourly
+	// delivery contract.
+	if err := validateBillingPushInterval(provName, mc.StripeInterval); err != nil {
+		return err
+	}
 
 	// Dunning timer: drives the 7-day past_due → suspended and 21-day
 	// suspended → deleted_pending transitions (spec §4.7, §17). Wired
@@ -992,12 +996,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// alongside the existing gauges without coupling — the two
 	// registries are merged at the /metrics scrape below. We hand
 	// it the same billing.Provider the pusher uses (no second SDK
-	// client load). provName defaults to "stripe" for the historical
-	// loader that returns an empty string; cmd/meterd/main.go:613
+	// client load). provName defaults to Polar for injected test or
+	// compatibility pushers that do not carry a provider name; cmd/meterd/main.go:613
 	// guarantees the pusher is loaded before we get here.
 	recRegistry := prometheus.NewRegistry()
 	if provName == "" {
-		provName = "stripe"
+		provName = provPolar
 	}
 	rec := reconciler.New(provName, store, pusher, log, recRegistry)
 	go rec.Loop(ctx, mc.ReconcileInterval)
@@ -1549,7 +1553,7 @@ func (a mailStoreCheckerAdapter) IsMailSuppressed(ctx context.Context, email str
 // fallback) — means a TOML-only deploy doesn't trigger a false-positive
 // warn on every boot.
 //
-// Post-PR-#962 (Paddle is the v2 default): an empty Paddle key is now
+// Post-public-release (Polar is the default): an empty provider key is now
 // a constructor error (NewProvider returns ErrNoAPIKey on empty /
 // whitespace-only keys — CRIT-2 fix), so the daemon refuses to start
 // rather than booting and warn-logging per tick. The Stripe branch
@@ -1563,7 +1567,7 @@ func warnIfEmptyAPIKey(log *slog.Logger, billingCfg *billingloader.RootBillingCo
 		return
 	}
 	if provName == provStripe && billingCfg.Stripe != nil && billingCfg.Stripe.APIKey == "" {
-		log.Warn("Stripe API key is empty — daily Stripe push will no-op (pushUsageRecordSDKSum returns an error without a key)",
+		log.Warn("Stripe API key is empty — billing usage push will no-op (pushUsageRecordSDKSum returns an error without a key)",
 			"provider", provName)
 		return
 	}
@@ -1580,4 +1584,16 @@ func warnIfEmptyAPIKey(log *slog.Logger, billingCfg *billingloader.RootBillingCo
 			"provider", provName)
 		return
 	}
+}
+
+// validateBillingPushInterval keeps Polar delivery within the one-hour
+// settlement cadence. The pusher has a durable backfill, but a longer
+// interval increases receipt-time attribution skew and can exceed a
+// deployment's configured lookback during an outage. The historical field
+// name StripeInterval is retained for config/API compatibility.
+func validateBillingPushInterval(provName string, interval time.Duration) error {
+	if provName == provPolar && interval > time.Hour {
+		return fmt.Errorf("meterd: Polar usage push interval must be <= 1h (got %s); set [meter].stripe_interval = \"3600s\" or FAAS_STRIPE_INTERVAL=1h", interval)
+	}
+	return nil
 }

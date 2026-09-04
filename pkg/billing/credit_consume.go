@@ -12,34 +12,27 @@
 // mutates the invoice row itself; that's PR-B's job. The reducer
 // only writes to account_credits and credit_ledger.
 //
-// Money is integer cents end-to-end (CLAUDE.md). The overage math
-// mirrors pgstore.CurrentMonthOverageCents:
-//
-//	mb_seconds * 100 / 3600   (1 GB-h = 100 cents at €0.01/GB-h)
-//
-// Floor division — under-collect at most 0.9 cents per invoice,
-// matches the financial model's "credit the customer on rounding"
-// convention. The function never round-trips through float.
+// Money is integer cents end-to-end (CLAUDE.md). The overage math is shared
+// with state.CurrentMonthOverageCents: the plan's included calendar-month
+// allowance is removed first, then the remainder is priced at €0.01/GB-h.
+// Floor division is performed at the final sub-cent boundary; the function
+// never round-trips through float.
 package billing
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // ComputeInvoiceOverageCents converts the account's usage_minutes for
 // the invoice's billing period [PeriodStart, PeriodEnd) into integer
-// cents of overage, floored. 1 GB-h = 100 cents at €0.01/GB-h.
-//
-// Spec §4.7 keeps the per-minute enforcement math in meterd; the
-// reducer reads the same usage_minutes rows. The query is
-// `SUM(mb_seconds)` over [PeriodStart, PeriodEnd), and the formula
-// is the same `* 100 / 3600` integer-only conversion
-// pgstore.CurrentMonthOverageCents uses for the monthly view — the
-// reducer just narrows the window to the invoice's period.
+// cents of overage, floored. The plan allowance is applied once to the
+// account aggregate, never once per app.
 //
 // Returns 0 when the account had no usage in the period (Free /
 // Hobby under quota). The caller treats 0 as a no-op target: the
@@ -48,31 +41,36 @@ func ComputeInvoiceOverageCents(ctx context.Context, store state.Store, inv stat
 	if inv.PeriodEnd.Before(inv.PeriodStart) {
 		return 0, fmt.Errorf("billing: invoice %s has PeriodEnd %v before PeriodStart %v", inv.ID, inv.PeriodEnd, inv.PeriodStart)
 	}
-	usages, err := store.UsageByAccount(ctx, inv.AccountID, inv.PeriodStart)
+	acct, err := store.AccountByID(ctx, inv.AccountID)
+	if err != nil {
+		return 0, fmt.Errorf("billing: invoice account fetch: %w", err)
+	}
+	if inv.PeriodStart.IsZero() && inv.PeriodEnd.IsZero() {
+		// Older operator-created invoice fixtures omitted the period. Preserve
+		// that meaning as "all usage", but still apply the allowance once per
+		// calendar month instead of once across the entire history.
+		usages, err := store.UsageByAccount(ctx, inv.AccountID, time.Time{})
+		if err != nil {
+			return 0, fmt.Errorf("billing: invoice overage usage fetch: %w", err)
+		}
+		byMonth := make(map[string]int64)
+		for _, usage := range usages {
+			byMonth[usage.Month.UTC().Format("2006-01")] += usage.MBSeconds
+		}
+		var billableMBSeconds int64
+		for _, total := range byMonth {
+			billableMBSeconds += api.BillableMBSeconds(acct.Plan, total)
+		}
+		return api.OverageCentsForBillableMBSeconds(billableMBSeconds), nil
+	}
+	if inv.PeriodStart.IsZero() || inv.PeriodEnd.IsZero() {
+		return 0, fmt.Errorf("billing: invoice %s requires both PeriodStart and PeriodEnd", inv.ID)
+	}
+	billableMBSeconds, err := OverageMBSecondsForRange(ctx, store, acct, inv.PeriodStart, inv.PeriodEnd)
 	if err != nil {
 		return 0, fmt.Errorf("billing: invoice overage usage fetch: %w", err)
 	}
-	var mbSec int64
-	for _, u := range usages {
-		// usage_minutes.minute is per-minute; sum is the full
-		// [PeriodStart, PeriodEnd) window's billable mb-seconds.
-		// Per-plan subtraction of IncludedGBHours is intentionally
-		// NOT done here — the Invoice's subtotal_cents column is
-		// the post-included-quota number, but until PR-B's webhook
-		// writer lands we have no provider-stamped subtotal. The
-		// reducer reads the raw mb-seconds and treats any included
-		// quota as the account's plan concern (the dashboard
-		// surfaces overage-cents-applied-credits as a separate line
-		// in the invoice JSON once PR-B ships).
-		mbSec += u.MBSeconds
-	}
-	// mb_seconds * 100 / 3600 = cents. Integer math. Floor is
-	// implicit in integer division in Go.
-	cents := mbSec * 100 / 3600
-	if cents < 0 {
-		return 0, fmt.Errorf("billing: invoice overage went negative (mb_seconds=%d); rejecting", mbSec)
-	}
-	return cents, nil
+	return api.OverageCentsForBillableMBSeconds(billableMBSeconds), nil
 }
 
 // ConsumeCreditsForInvoice is the provider-neutral reducer. It looks

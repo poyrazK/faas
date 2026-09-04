@@ -30,18 +30,33 @@ import (
 type drainSynth struct {
 	mu        sync.Mutex
 	calls     atomic.Int64
+	active    atomic.Int64
+	maxActive atomic.Int64
 	permanent atomic.Bool // if true, return ErrPermanentInvoke
 	transient atomic.Bool // if true, return a transient error
+	hold      time.Duration
 }
 
 func (d *drainSynth) SynthesizeRequest(_ context.Context, _, _, _ string) error { return nil }
 
 func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
 	d.calls.Add(1)
+	active := d.active.Add(1)
+	defer d.active.Add(-1)
+	for {
+		max := d.maxActive.Load()
+		if active <= max || d.maxActive.CompareAndSwap(max, active) {
+			break
+		}
+	}
 	d.mu.Lock()
 	perm := d.permanent.Load()
 	trans := d.transient.Load()
+	hold := d.hold
 	d.mu.Unlock()
+	if hold > 0 {
+		time.Sleep(hold)
+	}
 	if perm {
 		return inv, ErrPermanentInvoke
 	}
@@ -52,6 +67,26 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 	inv.InstanceID = "inst-" + inv.ID
 	inv.Result = json.RawMessage(`{"ok":true}`)
 	return inv, nil
+}
+
+func TestDrain_DispatchesNonQueueRowsConcurrently(t *testing.T) {
+	t.Parallel()
+	d, store, _, _, ds := newDrainHarness(t, api.PlanPro, true)
+	d.dispatchConcurrency = 4
+	ds.mu.Lock()
+	ds.hold = 50 * time.Millisecond
+	ds.mu.Unlock()
+	for i := 0; i < 4; i++ {
+		seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
+	}
+
+	d.Tick(context.Background())
+	if got := ds.calls.Load(); got != 4 {
+		t.Fatalf("synth calls = %d, want 4", got)
+	}
+	if got := ds.maxActive.Load(); got < 2 {
+		t.Fatalf("maximum concurrent synth calls = %d, want at least 2", got)
+	}
 }
 
 func newDrainHarness(t *testing.T, plan api.Plan, withSynth bool) (*Drain, state.Store, *fakeVMM, *fakeNotifier, *drainSynth) {

@@ -105,6 +105,19 @@ func TestParseLocalPrefixes_TrailingSlashAuto(t *testing.T) {
 	}
 }
 
+// TestParseLocalPrefixes_RemoteOnly pins the explicit production spelling.
+// An empty value intentionally retains the legacy local-prefix defaults, so
+// "none" must remain a distinct opt-out rather than another empty-list form.
+func TestParseLocalPrefixes_RemoteOnly(t *testing.T) {
+	got, err := parseLocalPrefixes(" none ")
+	if err != nil {
+		t.Fatalf("parseLocalPrefixes(none): %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("parseLocalPrefixes(none) = %v, want no local prefixes", got)
+	}
+}
+
 // TestParseLocalPrefixes_AllEmpty: a list of only commas +
 // whitespace is rejected (the router would lose its fallback).
 func TestParseLocalPrefixes_AllEmpty(t *testing.T) {
@@ -270,6 +283,67 @@ func TestBackendFromEnv_OCIRequiresRegistry(t *testing.T) {
 	_, err := BackendFromEnv()
 	if err == nil {
 		t.Fatal("expected error for oci backend without registry")
+	}
+}
+
+func TestBackendFromEnv_SharedArtifactsRejectsLocalBackend(t *testing.T) {
+	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "1")
+	t.Setenv("FAAS_STORAGE_BACKEND", "local")
+	if _, err := BackendFromEnv(); err == nil || !strings.Contains(err.Error(), "requires FAAS_STORAGE_BACKEND=oci") {
+		t.Fatalf("BackendFromEnv(local, shared) err = %v, want explicit OCI requirement", err)
+	}
+}
+
+func TestBackendFromEnv_SharedArtifactsRejectsImplicitLocalPrefixes(t *testing.T) {
+	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "true")
+	t.Setenv("FAAS_STORAGE_BACKEND", "oci")
+	t.Setenv("FAAS_OCI_REGISTRY", "https://ghcr.io/onebox-faas")
+	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "snap/,base/")
+	t.Setenv("FAAS_STORAGE_CACHE_DIR", "")
+	if _, err := BackendFromEnv(); err == nil || !strings.Contains(err.Error(), "FAAS_STORAGE_LOCAL_PREFIXES=none") {
+		t.Fatalf("BackendFromEnv(implicit local prefixes) err = %v, want remote-only requirement", err)
+	}
+}
+
+func TestBackendFromEnv_SharedArtifactsRequiresHTTPSRegistry(t *testing.T) {
+	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "1")
+	t.Setenv("FAAS_STORAGE_BACKEND", "oci")
+	t.Setenv("FAAS_OCI_REGISTRY", "http://registry.internal/faas")
+	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "none")
+	t.Setenv("FAAS_STORAGE_CACHE_DIR", "")
+	if _, err := BackendFromEnv(); err == nil || !strings.Contains(err.Error(), "HTTPS URL") {
+		t.Fatalf("BackendFromEnv(http registry) err = %v, want HTTPS requirement", err)
+	}
+}
+
+func TestBackendFromEnv_SharedArtifactsRejectsStaleCache(t *testing.T) {
+	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "1")
+	t.Setenv("FAAS_STORAGE_BACKEND", "oci")
+	t.Setenv("FAAS_OCI_REGISTRY", "https://ghcr.io/onebox-faas")
+	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "none")
+	t.Setenv("FAAS_STORAGE_CACHE_DIR", "")
+	t.Setenv("FAAS_STORAGE_CACHE_SERVE_STALE", "true")
+	if _, err := BackendFromEnv(); err == nil || !strings.Contains(err.Error(), "forbids FAAS_STORAGE_CACHE_SERVE_STALE") {
+		t.Fatalf("BackendFromEnv(stale cache) err = %v, want stale-cache rejection", err)
+	}
+}
+
+func TestBackendFromEnv_SharedArtifactsAcceptsExplicitRemoteOnly(t *testing.T) {
+	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "1")
+	t.Setenv("FAAS_STORAGE_BACKEND", "oci")
+	t.Setenv("FAAS_OCI_REGISTRY", "https://ghcr.io/onebox-faas")
+	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "none")
+	t.Setenv("FAAS_STORAGE_CACHE_DIR", "")
+	be, err := BackendFromEnv()
+	if err != nil {
+		t.Fatalf("BackendFromEnv(remote-only): %v", err)
+	}
+	router, ok := be.(*PrefixRouter)
+	if !ok {
+		t.Fatalf("BackendFromEnv(remote-only) = %T, want *PrefixRouter", be)
+	}
+	if len(router.routes) != 0 {
+		t.Fatalf("remote-only routes = %v, want none", router.routes)
 	}
 }
 

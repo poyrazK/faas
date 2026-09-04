@@ -28,6 +28,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -120,6 +121,69 @@ func TestLiveness_RestartCounterIncrement(t *testing.T) {
 	after := readCounterValue(t, counter)
 	if after != before+1 {
 		t.Errorf("counter delta = %v, want 1 (AC #6: increment on every destroy)", after-before)
+	}
+}
+
+// TestLiveness_InfrastructureRecoveryDoesNotParkApp pins issue #1267's
+// failure-class boundary. Infrastructure-correlated replacements are valid
+// recovery actions, but three of them must not flip the parent app to
+// evicted_cold or advance the durable guest-failure counter.
+func TestLiveness_InfrastructureRecoveryDoesNotParkApp(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	window := NewLivenessWindow(5*time.Minute, 3)
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithLivenessWindow(window)
+
+	for i := 0; i < 3; i++ {
+		inst := runningInstance(t, store, app, dep, vmm, engine)
+		if err := engine.DestroyForLivenessFailure(context.Background(), inst.ID, fcvm.LivenessReasonInfrastructure); err != nil {
+			t.Fatalf("infrastructure destroy %d: %v", i+1, err)
+		}
+	}
+	if got := window.recent(dep.ID, time.Now()); got != 0 {
+		t.Fatalf("infrastructure restart window count=%d, want 0", got)
+	}
+	finalApp, err := store.AppByID(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if finalApp.Status == state.AppEvictedCold {
+		t.Fatalf("app status=%q, want active after infrastructure-only recoveries", finalApp.Status)
+	}
+	finalDep, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if finalDep.LivenessRestartCount != 0 {
+		t.Fatalf("durable restart count=%d, want 0 for infrastructure-only recoveries", finalDep.LivenessRestartCount)
+	}
+}
+
+// TestLiveness_DestroyTimeoutDoesNotAdvanceBudget pins the scheduler-side
+// half of issue #1267. A failed destroy is a control-plane/node observation,
+// not a confirmed restart, so it cannot consume the permanent-eviction
+// budget even though the state transition remains best-effort and idempotent.
+func TestLiveness_DestroyTimeoutDoesNotAdvanceBudget(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{destroyErr: context.DeadlineExceeded}
+	window := NewLivenessWindow(5*time.Minute, 1)
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithLivenessWindow(window)
+	inst := runningInstance(t, store, app, dep, vmm, engine)
+
+	if err := engine.DestroyForLivenessFailure(context.Background(), inst.ID, "liveness_timeout"); err != nil {
+		t.Fatalf("DestroyForLivenessFailure: %v", err)
+	}
+	if got := window.recent(dep.ID, time.Now()); got != 0 {
+		t.Fatalf("restart window count=%d after failed destroy, want 0", got)
+	}
+	finalDep, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if finalDep.LivenessRestartCount != 0 {
+		t.Fatalf("durable restart count=%d after failed destroy, want 0", finalDep.LivenessRestartCount)
 	}
 }
 

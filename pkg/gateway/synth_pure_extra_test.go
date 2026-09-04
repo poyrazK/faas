@@ -168,8 +168,9 @@ func TestBatchDispatchResponse_OmitEmpty(t *testing.T) {
 // --- fake dispatcher --------------------------------------------
 
 type fakeSynthDispatcher struct {
-	wakes []string
-	invs  []state.Invocation
+	wakes   []string
+	invs    []state.Invocation
+	targets []Target
 }
 
 func (f *fakeSynthDispatcher) Wake(_ context.Context, appID string) error {
@@ -182,6 +183,12 @@ func (f *fakeSynthDispatcher) Invoke(_ context.Context, _ string, inv state.Invo
 	// Cast to the canonical succeeded state the handler
 	// recognizes (the handler compares against
 	// batchDispatchStatusSucceeded below).
+	inv.State = state.InvocationState(batchDispatchStatusSucceeded)
+	return inv, nil
+}
+
+func (f *fakeSynthDispatcher) InvokeWithTarget(_ context.Context, _ string, inv state.Invocation, target Target) (state.Invocation, error) {
+	f.targets = append(f.targets, target)
 	inv.State = state.InvocationState(batchDispatchStatusSucceeded)
 	return inv, nil
 }
@@ -444,5 +451,38 @@ func TestHandleInvocationDispatchBatch_InvalidBatchPayload(t *testing.T) {
 	// Only the well-formed record was dispatched.
 	if len(d.invs) != 1 {
 		t.Errorf("invocations = %d, want 1 (the bad-b64 record was rejected)", len(d.invs))
+	}
+}
+
+func TestHandleInvocationDispatch_UsesPrewokenTarget(t *testing.T) {
+	srv, d := newSynthServer(t)
+	w := httptest.NewRecorder()
+	body := `{
+		"invocation_id":"inv-target",
+		"app_id":"app-1",
+		"method":"POST",
+		"path":"/e2e",
+		"instance_id":"inst-1",
+		"node_id":"node-1",
+		"deployment_id":"dep-1",
+		"wake_id":"wake-1",
+		"port":8081
+	}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	srv.handleInvocationDispatch(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if len(d.targets) != 1 {
+		t.Fatalf("target dispatches = %d, want 1", len(d.targets))
+	}
+	got := d.targets[0]
+	if got.InstanceID != "inst-1" || got.NodeID != "node-1" ||
+		got.DeploymentID != "dep-1" || got.WakeID != "wake-1" || got.Port != 8081 {
+		t.Fatalf("target = %#v", got)
+	}
+	if len(d.invs) != 0 {
+		t.Fatalf("legacy dispatches = %d, want 0", len(d.invs))
 	}
 }

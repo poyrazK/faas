@@ -23,7 +23,10 @@
 am_version: "0.27.0"
 # SHA-256 of alertmanager-0.27.0.linux-amd64.tar.gz from the upstream release.
 am_release_sha256: "23c3f5a3c73de91dbaec419f3c492bef636deb02680808e5d842e6553aa16074"
-am_listen_addr: "127.0.0.1:9093"
+# APID's split-box AppErrors/RequestTelemetry listener owns 9093. Keep
+# Alertmanager on its own loopback port so the two services cannot race for
+# the same socket during a control-plane rollout.
+am_listen_addr: "127.0.0.1:9094"
 am_data_dir: /var/lib/alertmanager
 am_config_path: /etc/alertmanager/alertmanager.yml
 am_rules_dir: /etc/prometheus
@@ -49,7 +52,7 @@ am_email_to_page: "ops-pager@{{ ansible_domain | default('onebox.local') }}"
 # URL embedded in Pushover notifications. Default points at the local
 # Prometheus alerts UI on the management bridge (10.0.0.1) or loopback;
 # operator overrides via -e am_alerts_url=... for a public dashboard.
-am_alerts_url: "http://127.0.0.1:9090/alerts"
+am_alerts_url: "http://127.0.0.1:9095/alerts"
 
 # When true, the role skips the receiver-secret permission asserts and
 # the systemd service start (the alertmanager unit is NOT enabled).

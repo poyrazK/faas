@@ -15,7 +15,12 @@
 # RPCs land here.
 socket_path = "/run/faas/builderd.sock"
 
-# Postgres DSN read from /etc/faas/sealed.env (DATABASE_URL). The TOML
+# Private Prometheus metrics listener. This matches cmd/builderd's default;
+# keep it loopback-only because split-node fleet aggregation is provided by
+# the control-plane discovery path, not by exposing builderd publicly.
+metrics_addr = "127.0.0.1:9105"
+
+# Postgres DSN read from /etc/faas/compute-db.env (DATABASE_URL). The TOML
 # override is the single-box dev path; production ships the env-var.
 # database_url = "postgres://faas@127.0.0.1:5432/faas?sslmode=disable"
 

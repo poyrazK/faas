@@ -142,11 +142,22 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	hasRootDockerfile, err := archiveHasRootDockerfile(sourcePath)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error()))
+		return
+	}
 
 	// Function rewrites (spec §4.2): source + runtime + handler becomes a
 	// function deploy using the runner scaffold (§4.9). The runtime must
 	// be present and the handler must point at a real export.
 	if app.Type == state.AppTypeFunction {
+		if dockerfile || hasRootDockerfile {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Dockerfile functions unsupported",
+				"function deploys use the platform runtime scaffold; remove the Dockerfile and dockerfile=true"))
+			return
+		}
 		kind = state.DeploymentKindTarball
 		if runtime != "" && runtime != app.Runtime {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -445,6 +456,40 @@ func scanForStatefulShape(path string, dockerfileFlag bool) *api.Problem {
 		}
 	}
 	return nil
+}
+
+// archiveHasRootDockerfile reports whether a source archive contains the
+// root-level Dockerfile that Railpack would use for a custom-image build. It
+// is deliberately separate from scanForStatefulShape: a clean Dockerfile is
+// valid for a container deploy but incompatible with a function deploy, which
+// must use the selected runtime's normalized handler scaffold.
+//
+//nolint:forbidigo // path is the spool file created and owned by apid.
+func archiveHasRootDockerfile(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		parts := strings.SplitN(hdr.Name, "/", 3)
+		if len(parts) == 2 && parts[1] == "Dockerfile" {
+			return true, nil
+		}
+	}
 }
 
 // dockerfileMaxBytes caps how much of a Dockerfile we'll read in-process.

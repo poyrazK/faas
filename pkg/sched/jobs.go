@@ -17,6 +17,7 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -157,7 +158,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		e.ledger.Release(instanceID)
 		return JobWakeResult{}, ErrJobLeaserNil
 	}
-	tok, _, err := e.jobLeaser.Acquire(ctx, formatLeaseKeyForJob(runID, taskIndex), LeasePolicy{TTL: ttl}, e.ownerNodeID)
+	tok, err := e.jobLeaser.Acquire(ctx, formatLeaseKeyForJob(runID, taskIndex), LeasePolicy{TTL: ttl}, e.ownerNodeID)
 	if err != nil {
 		e.ledger.Release(instanceID)
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob lease: %w", err)
@@ -173,41 +174,27 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	//    instances row, SampleJobsAndRoll finds 0 kind='job_task'
 	//    rows (meter customer never billed) and JobConcurrentByAccount
 	//    returns 0 (Hobby quota of 3 is never enforced; a Hobby
-	//    customer can run 100 concurrent tasks). Mirror the Wake
-	//    path's CreateInstanceWithMode call (engine.go:1627) at the
-	//    schedd layer so the row exists BEFORE the vmmd boot RPC.
-	//    app_id="" + deployment_id=runID is the same convention
-	//    00256_instances_kind_job codified for kind='job_task'
-	//    rows; mode=InstanceModeJob is observability for the
-	//    dashboard (the bill path keys on kind, not mode).
+	//    customer can run 100 concurrent tasks). CreateJobInstance
+	//    writes the job-specific shape: app_id and deployment_id are
+	//    NULL, job_id identifies the definition, and the pre-admitted
+	//    instance ID is persisted before the vmmd boot RPC. mode='job'
+	//    is observability for the dashboard (the bill path keys on kind).
 	//
 	//    On any create-instance failure, release the lease + ledger
 	//    slot and let the dispatch tick re-queue via JobTaskRequeue
 	//    (no attempt increment — the customer's code did not run).
-	if _, err := e.store.CreateInstanceWithMode(
-		ctx,
-		"",    // app_id (jobs have no appID)
-		runID, // deployment_id surrogate; the 00256 pair-check allows jobID here
-		string(state.StateColdBooting),
-		ramMB,
-		nodeID,
-		instanceID,
-		string(state.InstanceModeJob),
-	); err != nil {
-		_ = e.jobLeaser.Release(ctx, tok, e.ownerNodeID)
-		e.ledger.Release(instanceID)
+	if _, err := e.store.CreateJobInstance(ctx, instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID); err != nil {
+		e.rollbackJobClaim(ctx, runID, taskIndex, instanceID, tok)
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create instance: %w", err)
 	}
 
-	// 5. vmmd RPC. The full cold-boot call lands in M7; until then
-	// the WakeJob surface is wired but the Firecracker boot is a
-	// no-op stub that returns Method="cold_boot" + an empty NodeID
-	// for unit tests. The M7 commit flips this branch to the real
-	// vmmd gRPC call.
+	// 5. vmmd RPC. The engine validates that vmmd acknowledges the same
+	// instance and node selected during admission; a mismatched response is
+	// treated as a failed boot and all host-side resources are released.
 	if e.jobVmmClient == nil {
 		// No vmmd wired — treat as test path. The instance row
 		// has already been written (step 4), so the test path
-		// exercises the full CreateInstanceWithMode contract.
+		// exercises the full CreateJobInstance contract.
 		return JobWakeResult{
 			InstanceID: instanceID,
 			NodeID:     nodeID,
@@ -218,11 +205,93 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		}, nil
 	}
 
-	// M7: real cold-boot. Left as a TODO marker — the Firecracker
-	// boot path is the same shape as Engine.Wake's cold-boot phase
-	// but with VsockJobExitPort=1026 and ModeJobColdBoot. The
-	// post-M5 commit will replace this branch with the gRPC call.
-	return JobWakeResult{}, fmt.Errorf("sched: WakeJob: vmmd job cold-boot path is M7 (TODO)")
+	// M7: real cold-boot. Keep the job and run overrides together so the
+	// vmmd request cannot silently omit a per-run environment or timeout.
+	env, err := mergeJobEnvOverrides(job.EnvOverrides, run.EnvOverrides)
+	if err != nil {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_env_invalid")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob decode env overrides: %w", err)
+	}
+	taskTimeoutSec := job.TaskTimeoutS
+	if run.TaskTimeoutS != nil {
+		taskTimeoutSec = *run.TaskTimeoutS
+	}
+	out, err := e.jobVmmClient.JobColdBoot(ctx, JobVmmSpec{
+		AccountID:      accountID,
+		RunID:          runID,
+		TaskIndex:      taskIndex,
+		InstanceID:     instanceID,
+		ImageRef:       job.ImageRef,
+		Command:        append([]string(nil), job.Command...),
+		Env:            env,
+		RAMMB:          ramMB,
+		TaskTimeoutSec: taskTimeoutSec,
+		LeaseToken:     string(tok),
+		NodeID:         nodeID,
+	})
+	if err != nil {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_vmm_cold_boot_failed")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd cold boot: %w", err)
+	}
+	if out.InstanceID != instanceID {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_vmm_instance_mismatch")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned instance %q, want %q", out.InstanceID, instanceID)
+	}
+	if out.NodeID == "" {
+		out.NodeID = nodeID
+	}
+	if nodeID != "" && out.NodeID != nodeID {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_vmm_node_mismatch")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned node %q, want %q", out.NodeID, nodeID)
+	}
+	return JobWakeResult{
+		InstanceID: instanceID,
+		NodeID:     out.NodeID,
+		RunID:      runID,
+		TaskIndex:  taskIndex,
+		LeaseToken: tok,
+		Method:     "cold_boot",
+	}, nil
+}
+
+// rollbackJobAdmission makes every post-claim failure reversible. The
+// dispatcher may call WakeJob with a short-lived tick context, so cleanup is
+// detached and bounded; otherwise a cancelled request can leak the lease and
+// ledger reservation until the reaper notices it.
+func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken, reason string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	e.rollbackJobClaim(cleanupCtx, runID, taskIndex, instanceID, tok)
+	e.transitionWithKind(cleanupCtx, instanceID, "", state.StateFailed, "wake_boot_error", reason)
+}
+
+func (e *Engine) rollbackJobClaim(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken) {
+	if e.jobLeaser != nil {
+		if err := e.jobLeaser.Release(ctx, tok, e.ownerNodeID); err != nil && !errors.Is(err, ErrLeaseNotFound) {
+			e.log.Warn("sched: job cleanup: release lease", "run", runID, "task", taskIndex, "err", err)
+		}
+	}
+	e.ledger.Release(instanceID)
+	if err := e.store.JobTaskRequeue(ctx, runID, taskIndex, time.Now().UTC()); err != nil && !errors.Is(err, state.ErrNotFound) {
+		e.log.Warn("sched: job cleanup: requeue task", "run", runID, "task", taskIndex, "err", err)
+	}
+}
+
+func mergeJobEnvOverrides(jobRaw, runRaw json.RawMessage) (map[string]string, error) {
+	env := make(map[string]string)
+	for _, raw := range []json.RawMessage{jobRaw, runRaw} {
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		var values map[string]string
+		if err := json.Unmarshal(raw, &values); err != nil {
+			return nil, err
+		}
+		for key, value := range values {
+			env[key] = value
+		}
+	}
+	return env, nil
 }
 
 // CancelJob cancels a job run. For non-terminal tasks:
@@ -495,6 +564,7 @@ type JobVmmSpec struct {
 	AccountID      string
 	RunID          string
 	TaskIndex      int
+	InstanceID     string
 	ImageRef       string
 	Command        []string
 	Env            map[string]string
@@ -520,19 +590,16 @@ func (e *Engine) WithJobVmmClient(c jobVmmClient) *Engine {
 	return e
 }
 
-// WithJobLeaser wires the lease primitive into the engine.
-// Accepts Leaser[any] so production PgLeaser[pgLeaseRecord]
-// and test MemLeaser[memLeaseRecord] both slot in (Mega-1:
-// the engine only needs the LeaseToken, the record type
-// is dropped). The ADR-134 pkg/dispatch swap will tighten
-// this to a single concrete record type post-Mega-1.
-func (e *Engine) WithJobLeaser(l Leaser[any]) *Engine {
+// WithJobLeaser wires the token-only lease primitive into the engine. Use
+// AdaptJobLeaser with a concrete generic Leaser implementation; the engine
+// deliberately does not retain implementation-specific handles.
+func (e *Engine) WithJobLeaser(l JobLeaser) *Engine {
 	e.jobLeaser = l
 	return e
 }
 
 // Leaser accessor for the engine — used by tests + cmd/schedd/main.go.
-func (e *Engine) JobLeaser() Leaser[any] { return e.jobLeaser }
+func (e *Engine) JobLeaser() JobLeaser { return e.jobLeaser }
 
 // ----------------------------------------------------------------------------
 // helpers

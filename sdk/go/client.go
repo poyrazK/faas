@@ -116,7 +116,7 @@ type APIError = api.APIError
 // Problem is re-exported as a type alias. It carries the canonical
 // RFC 7807 fields (Type, Title, Status, Code, Detail) plus the
 // platform-specific extensions (Limit, Observed, DocsURL,
-// BillingPortalURL, PaddleCheckoutURL, TxID).
+// BillingPortalURL, CheckoutURL, PaddleCheckoutURL, TxID).
 type Problem = api.Problem
 
 // ErrNoBody is re-exported as a value alias so errors.Is(err,

@@ -15,5 +15,8 @@ export type AccountResponse = {
   usage_gb_hours: number;
   app_count: number;
   github_install_id?: string | null;
+  plan_change_status?: string;
+  requested_plan?: 'free' | 'hobby' | 'pro' | 'scale';
+  effective_at?: string;
 };
 

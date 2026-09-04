@@ -50,8 +50,16 @@ var residentPollInterval = 2 * time.Second
 
 // residentHTTPTimeout caps an individual scrape so a stuck schedd can never
 // stall DecideSlot for more than 750 ms. The cached "last value" is returned
-// on timeout/error.
+// on timeout/error until the staleness fence below trips.
 const residentHTTPTimeout = 750 * time.Millisecond
+
+// residentStaleAfter is the maximum age of a successful residency scrape
+// that may grant the opportunistic builder slot. A stale low-residency value
+// is unsafe: after schedd disappears, it can make builderd compete with
+// tenant wakes using capacity it can no longer observe.
+// Declared as a package var so tests can exercise the fence without waiting
+// through the production interval.
+var residentStaleAfter = 30 * time.Second
 
 // fixedResidentProbe is a ResidencyProbe that returns a constant MB value.
 // Used by unit tests and as the "no schedd available" fallback when the
@@ -90,10 +98,11 @@ const denyOpportunisticResidentMB = math.MaxInt / 2
 type metricsResidentProbe struct {
 	url string
 
-	// mu protects mb and healthy.
-	mu      sync.Mutex
-	mb      int
-	healthy bool // true once at least one successful scrape has set mb
+	// mu protects mb, healthy, and lastSuccess.
+	mu          sync.Mutex
+	mb          int
+	healthy     bool // true once at least one successful scrape has set mb
+	lastSuccess time.Time
 
 	client *http.Client
 }
@@ -142,19 +151,16 @@ func newMetricsResident(ctx context.Context, url string, startLoop bool) *metric
 func (p *metricsResidentProbe) ResidentMB() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !p.healthy {
+	if !p.healthy || time.Since(p.lastSuccess) > residentStaleAfter {
 		return denyOpportunisticResidentMB
 	}
 	return p.mb
 }
 
 // loop runs until ctx is done, polling every residentPollInterval. Errors
-// are swallowed: the cached mb stays put, which is preferable to "strip
-// the 2nd slot just because schedd hiccuped once". A future enhancement
-// could deny opportunistic after some staleness threshold (e.g. > 30s
-// since last good scrape); that requires threading time.Time through the
-// probe struct, which is intentionally deferred to keep the current
-// contract simple.
+// are swallowed: the cached mb stays put for a bounded period, which avoids
+// stripping the 2nd slot for a brief schedd hiccup without trusting an
+// indefinitely stale low-residency value.
 //
 // residentPollInterval is captured at loop start to avoid racing with
 // unit tests that swap the package var via t.Cleanup (see
@@ -204,6 +210,7 @@ func (p *metricsResidentProbe) scrape(ctx context.Context) error {
 	p.mu.Lock()
 	p.mb = mb
 	p.healthy = true
+	p.lastSuccess = time.Now()
 	p.mu.Unlock()
 	return nil
 }

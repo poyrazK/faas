@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/status"
@@ -70,6 +71,8 @@ func TestReportLivenessFailed_PropagatesReasonClosedSet(t *testing.T) {
 		"liveness_conn_err",
 		"liveness_non_200",
 		"liveness_n_consecutive",
+		fcvm.LivenessReasonInfrastructure,
+		fcvm.LivenessReasonProcessExited,
 	}
 	for _, reason := range reasons {
 		reason := reason

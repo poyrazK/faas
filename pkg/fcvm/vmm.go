@@ -123,6 +123,26 @@ type bindSourceMode struct {
 	refs int
 }
 
+// restoreTimingBreakdown is the vmmd-side breakdown of one successful
+// snapshot restore. The timestamps are converted to integer milliseconds
+// only when the wake-timeline event is emitted; keeping the struct in
+// durations avoids making the restore path depend on the event wire shape.
+type restoreTimingBreakdown struct {
+	ChrootMs             int64
+	MaterializeMemMs     int64
+	MaterializeVMStateMs int64
+	ResolveImagesMs      int64
+	StageDrivesMs        int64
+	StageSnapshotMs      int64
+	HelperMs             int64
+	StartJailerMs        int64
+	BindTunMs            int64
+	LoadSnapshotMs       int64
+	ResumeHookMs         int64
+	WaitReadyMs          int64
+	TotalMs              int64
+}
+
 // instanceRecord tracks one firecracker child + build-specific options so
 // DestroyWithExport can wait for exit, capture the code, and copy artifacts.
 // The exited/exitCode fields are written exactly once by the watchdog goroutine
@@ -332,6 +352,20 @@ func (v *JailerVMM) chrootRoot(instance string) string {
 	return filepath.Join(v.chrootBase, v.fcName, instance, "root")
 }
 
+// JailRoot is the version-scoped directory whose immediate children are
+// the per-instance chroots — the parent of every chrootRoot. Exported
+// for the startup orphan sweep (ReapOrphanedJails), which has to
+// enumerate instances that this process never created and therefore
+// cannot ask the live map about.
+//
+// The fcName segment is the jailer's own naming (it derives the
+// directory from the exec-file basename), so the path is only correct
+// for the Firecracker binary this VMM was resolved against — which is
+// exactly the set of chroots a restarted vmmd can still act on.
+func (v *JailerVMM) JailRoot() string {
+	return filepath.Join(v.chrootBase, v.fcName)
+}
+
 // resolveDriveImage finds the writable drive inside Jailer’s chroot. The
 // canonical layer name is used when present; builderd and older callers may
 // preserve the source basename, so accept a single ext4 fallback as well.
@@ -421,13 +455,13 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// (pre-PR-D default). Non-empty → waitReady does HTTP GET
 	// <HealthcheckPath> against <HostIP>:8080 and accepts 2xx as ready.
 	if spec.SkipReady {
-		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot))
+		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON)
 	}
-	return v.Boot(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.HealthcheckPath)
+	return v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON)
 }
 
-func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig) error {
-	return v.boot(ctx, l, cfg, true, "")
+func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) error {
+	return v.boot(ctx, l, cfg, true, "", workloads, secretsEnvJSON, apiEnvJSON)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -448,10 +482,10 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig) error
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, nil, nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) (err error) {
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
 		return err
@@ -466,6 +500,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	jailed, err := v.provision(root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
+	}
+	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON); err != nil {
+		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	cfgBytes, err := json.Marshal(jailed)
 	if err != nil {
@@ -490,6 +527,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 		return err
 	}
+	if l.IsBuilder || l.Plan.Valid() {
+		if err = v.applyPreBootCgroupFence(l, workloads); err != nil {
+			return fmt.Errorf("vmm: apply pre-boot cgroup fence: %w", err)
+		}
+	}
 	if err = writeConfigFIFO(ctx, cfgPath, cfgBytes); err != nil {
 		return fmt.Errorf("vmm: write config: %w", err)
 	}
@@ -500,6 +542,87 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if !skipReady {
 		if err = v.waitReady(ctx, l, healthcheckPath); err != nil {
 			return fmt.Errorf("vmm: readiness: %w", err)
+		}
+	}
+	return nil
+}
+
+// preparesWakeStateBeforeBoot is an internal marker used by Manager.Wake.
+// JailerVMM stages all runtime files while the Firecracker config FIFO is
+// still closed, so Manager must not repeat the writes after readiness. Test
+// VMMs do not implement this marker and retain the older observable staging
+// hooks.
+func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
+
+// stagePreBootFiles writes every file guest-init needs before the VM can run.
+// The main drive is available after provision; the Firecracker process has not
+// received its config yet, so this is the last safe point for secrets, API env,
+// per-sidecar env overrides, and the sidecar roster.
+func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) error {
+	if len(secretsEnvJSON) > 0 {
+		if err := v.StageSecretsEnv(instance, secretsEnvJSON); err != nil {
+			return fmt.Errorf("stage secrets.env: %w", err)
+		}
+	}
+	if len(apiEnvJSON) > 0 {
+		if err := v.StageAPIEnv(instance, apiEnvJSON); err != nil {
+			return fmt.Errorf("stage env.json: %w", err)
+		}
+	}
+	if len(workloads) > 1 {
+		// Sidecar drives are deliberately read-only. Image defaults and the
+		// effective command are baked into their immutable manifests, while
+		// deployment-specific env overrides are written to the instance's
+		// writable main upper before guest-init can execute them.
+		for _, workload := range workloads[1:] {
+			if len(workload.preparedEnvJSON) == 0 {
+				continue
+			}
+			if err := v.StageWorkloadEnv(instance, workload.Name, workload.preparedEnvJSON); err != nil {
+				return fmt.Errorf("stage workload %s env: %w", workload.Name, err)
+			}
+		}
+		if err := v.StageWorkloadManifest(instance, -1, workloads[0]); err != nil {
+			return fmt.Errorf("stage main workload manifest: %w", err)
+		}
+		if err := v.StageWorkloadRoster(instance, workloads[0], workloads[1:]); err != nil {
+			return fmt.Errorf("stage workload roster: %w", err)
+		}
+	}
+	return nil
+}
+
+// applyPreBootCgroupFence installs the host-side memory/CPU fence after
+// jailer has created the instance scope but before the config FIFO releases
+// Firecracker. A missing or unwritable fence is fatal: allowing an uncapped
+// VM to continue would turn a provisioning error into a resource-isolation
+// bypass.
+func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) error {
+	if l.IsBuilder {
+		if err := writeBuildCgroup(l.Instance, l.MemoryMaxMiB); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := writePlanCgroup(l.Instance, l.Plan, l.MemoryMaxMiB); err != nil {
+		return err
+	}
+	if len(workloads) <= 1 {
+		return nil
+	}
+	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	if err := writeWorkloadCgroup(parentScope, WorkloadNameMain, l.MemoryMaxMiB); err != nil {
+		return err
+	}
+	for _, workload := range workloads[1:] {
+		// RamMB=0 means inherit the parent plan cap; no child leaf is
+		// needed and treating zero as 1 MiB would make the workload
+		// unusable.
+		if workload.RamMB == 0 {
+			continue
+		}
+		if err := writeWorkloadCgroup(parentScope, workload.Name, workload.RamMB); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -524,6 +647,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err != nil {
 		return err
 	}
+	chrootReady := time.Now()
 	defer func() {
 		if err != nil {
 			_ = v.Kill(context.WithoutCancel(ctx), l)
@@ -545,6 +669,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if memSrc == "" {
 		return fmt.Errorf("vmm: restore spec missing mem source (storage_key=%q)", spec.StorageKey)
 	}
+	memReady := time.Now()
 
 	// #121 / ADR-025 axis 2 slice 4 — materialise the vmstate blob
 	// independently of mem. The branch selector is the new VMStateStorageKey
@@ -558,6 +683,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// authoritative carrier and spec.VMStatePath is logged-only metadata.
 	// When the key is empty we fall back to spec.VMStatePath byte-for-bit
 	// (the existing single-box behaviour).
+	vmstateStart := time.Now()
 	stateSrc := spec.VMStatePath
 	if spec.VMStateStorageKey != "" && v.storage != nil {
 		stateTmp, gerr := v.restoreSourceFromStorage(ctx, l.Instance, spec.VMStateStorageKey)
@@ -578,6 +704,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return fmt.Errorf("vmm: restore spec missing vmstate source (vmstate_storage_key=%q vmstate_path=%q)",
 			spec.VMStateStorageKey, spec.VMStatePath)
 	}
+	vmstateReady := time.Now()
 	tMemStateResolve := time.Now()
 
 	// Re-stage everything the snapshot's recorded VM state still references.
@@ -664,6 +791,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
+	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON); err != nil {
+		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
+	}
 
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
@@ -702,6 +832,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 		return err
 	}
+	if l.IsBuilder || l.Plan.Valid() {
+		if err = v.applyPreBootCgroupFence(l, spec.Workloads); err != nil {
+			return fmt.Errorf("vmm: apply pre-boot cgroup fence: %w", err)
+		}
+	}
 	tBindTun := time.Now()
 	body := map[string]any{
 		"snapshot_path": stateName,
@@ -724,20 +859,39 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return fmt.Errorf("vmm: readiness after restore: %w", err)
 	}
 	tReady := time.Now()
+	breakdown := restoreTimingBreakdown{
+		ChrootMs:             chrootReady.Sub(t0).Milliseconds(),
+		MaterializeMemMs:     memReady.Sub(chrootReady).Milliseconds(),
+		MaterializeVMStateMs: vmstateReady.Sub(vmstateStart).Milliseconds(),
+		ResolveImagesMs:      tResolve.Sub(vmstateReady).Milliseconds(),
+		StageDrivesMs:        tStageDrives.Sub(tResolve).Milliseconds(),
+		StageSnapshotMs:      tMemState.Sub(tStageDrives).Milliseconds(),
+		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
+		StartJailerMs:        tStartJailer.Sub(tHelper).Milliseconds(),
+		BindTunMs:            tBindTun.Sub(tStartJailer).Milliseconds(),
+		LoadSnapshotMs:       tLoad.Sub(tBindTun).Milliseconds(),
+		ResumeHookMs:         tResume.Sub(tLoad).Milliseconds(),
+		WaitReadyMs:          tReady.Sub(tResume).Milliseconds(),
+		TotalMs:              tReady.Sub(t0).Milliseconds(),
+	}
+	v.emitRestoreBreakdown(ctx, l, tReady, breakdown)
 	slog.Default().Info("restore timing breakdown",
 		"instance", l.Instance,
-		"resolve_ms", tResolve.Sub(t0).Milliseconds(),
+		"chroot_ms", breakdown.ChrootMs,
+		"materialize_mem_ms", breakdown.MaterializeMemMs,
+		"materialize_vmstate_ms", breakdown.MaterializeVMStateMs,
+		"resolve_images_ms", breakdown.ResolveImagesMs,
 		"mem_state_resolve_ms", tMemStateResolve.Sub(tMemStateResolveStart).Milliseconds(),
-		"stage_drives_ms", tStageDrives.Sub(tResolve).Milliseconds(),
+		"stage_drives_ms", breakdown.StageDrivesMs,
 		"stage_writable_ms", tStageWritable.Sub(tStageWritableStart).Milliseconds(),
-		"mem_state_ms", tMemState.Sub(tStageDrives).Milliseconds(),
-		"helper_ms", tHelper.Sub(tMemState).Milliseconds(),
-		"start_jailer_ms", tStartJailer.Sub(tHelper).Milliseconds(),
-		"bind_tun_ms", tBindTun.Sub(tStartJailer).Milliseconds(),
-		"load_snap_ms", tLoad.Sub(tBindTun).Milliseconds(),
-		"resume_hook_ms", tResume.Sub(tLoad).Milliseconds(),
-		"wait_ready_ms", tReady.Sub(tResume).Milliseconds(),
-		"total_ms", tReady.Sub(t0).Milliseconds(),
+		"stage_snapshot_ms", breakdown.StageSnapshotMs,
+		"helper_ms", breakdown.HelperMs,
+		"start_jailer_ms", breakdown.StartJailerMs,
+		"bind_tun_ms", breakdown.BindTunMs,
+		"load_snapshot_ms", breakdown.LoadSnapshotMs,
+		"resume_hook_ms", breakdown.ResumeHookMs,
+		"wait_ready_ms", breakdown.WaitReadyMs,
+		"total_ms", breakdown.TotalMs,
 	)
 	return nil
 }
@@ -1363,6 +1517,155 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	return nil
 }
 
+// SignalAndKill (M-2 / ADR-138 §Decision 1) is the graceful stop
+// sequence used by Engine.StopInstance for worker / job mode
+// instances: send `signal` to the guest's PID 1 (via vsock; today
+// the signal lands at guest-init's installSignalHandlers — commit
+// 7), wait up to `grace` for the workload to exit cleanly, and on
+// deadline fall through to a hard SIGKILL via cmd.Process.Kill().
+//
+// The cleanup half (chroot wipe, cgroup scope removal, ring
+// unregister, etc.) is identical to Kill's — reused via a tail call
+// to keep the destruction path in one place. killSignalSent is true
+// iff the deadline fired and SIGKILL was the actual exit cause; the
+// schedd records this on the audit row.
+//
+// Signal=0 with grace=0 is the legacy Destroy shape (immediate
+// SIGKILL, no graceful wait); in that case the function delegates
+// to Kill verbatim and reports killSignalSent=true.
+//
+// Reuses the process-wait watchdog pattern from Kill at lines
+// 1270-1284 (cmd.Wait() observed by the runtime even on signal-
+// induced exit). destroyWait bounds the watchdog; an additional
+// grace timer races against the watchdog to fire SIGKILL on the
+// customer-configured deadline.
+func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	// Legacy Destroy shape: signal=0, grace=0. Delegate to Kill and
+	// report killSignalSent=true (the SIGKILL is what killed it).
+	if signal == 0 && grace == 0 {
+		if kerr := v.Kill(ctx, l); kerr != nil {
+			return true, 0, kerr
+		}
+		return true, 0, nil
+	}
+
+	v.mu.Lock()
+	cmd, hasCmd := v.proc[l.Instance]
+	rec, hasRec := v.recs[l.Instance]
+	v.mu.Unlock()
+
+	// Default signal: SIGTERM. The schedd's Engine.StopInstance (commit 6)
+	// passes the manifest's StopSignal translated to syscall.Signal; an
+	// empty/zero value here means "use SIGTERM" — the same default
+	// Docker's `docker stop` ships.
+	if signal == 0 {
+		signal = syscall.SIGTERM
+	}
+
+	// Send the signal + race grace timer against the watchdog.
+	// Extracted to a free function so the portable test
+	// (pkg/fcvm/vmm_signal_kill_test.go) can exercise the
+	// signal-grace-SIGKILL sequence without booting firecracker.
+	var doneCh <-chan struct{}
+	if hasRec && rec != nil {
+		doneCh = rec.done
+	}
+	killSignalSent, exitCode, err = signalAndKillRace(cmd, doneCh, signal, grace, v.destroyWait)
+	if err != nil {
+		return false, 0, err
+	}
+
+	// Always run the destruction tail (chroot wipe, cgroup scope
+	// removal, ring unregister, etc.) — same invariant as Kill.
+	if killSignalSent {
+		if hasCmd && cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		if hasRec && rec != nil && rec.done != nil {
+			select {
+			case <-rec.done:
+			case <-time.After(v.destroyWait):
+			}
+		}
+		if kerr := v.Kill(ctx, l); kerr != nil {
+			return killSignalSent, exitCode, kerr
+		}
+	}
+	return killSignalSent, exitCode, nil
+}
+
+// signalAndKillRace is the inner signal-grace-SIGKILL sequence
+// shared by JailerVMM.SignalAndKill and the portable test.
+// cmd is the running jailer/firecracker child (or any *exec.Cmd
+// the test wants to race against); doneCh is the watchdog
+// channel that closes when the child has exited; signal is the
+// POSIX signal number to send (0 = default SIGTERM); grace is
+// the upper bound on clean-shutdown wait; destroyWait is the
+// cap on the post-SIGKILL watchdog (so a wedged child can't
+// pin the caller forever). Returns (killSignalSent, exitCode,
+// err): killSignalSent=true iff the grace timer fired and we
+// escalated to SIGKILL.
+//
+// Lives in production code (not in the test file) so the test
+// exercises the EXACT shape production ships — no risk of
+// drift between the test fixture and the production path.
+func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Signal, grace time.Duration, destroyWait time.Duration) (bool, int32, error) {
+	if cmd != nil && cmd.Process != nil {
+		if serr := cmd.Process.Signal(signal); serr != nil {
+			// ESRCH (Linux) / os.ErrProcessDone (macOS,
+			// Windows) — both mean "process already gone".
+			// Treated as benign: the workload exited
+			// before we got here. The race-watchdog
+			// below races against the watchdog channel
+			// which the spawn goroutine already closed.
+			if !errors.Is(serr, syscall.ESRCH) && !errors.Is(serr, os.ErrProcessDone) {
+				return false, 0, fmt.Errorf("vmm: signal %d: %w", signal, serr)
+			}
+		}
+	}
+
+	// Wait for clean exit up to grace. We race a timer against
+	// the watchdog. If grace fires first, escalate.
+	if grace > 0 && doneCh != nil {
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-doneCh:
+			// Clean exit within grace.
+			exitCode := int32(0)
+			if cmd != nil && cmd.ProcessState != nil {
+				if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
+					exitCode = int32(ws.ExitStatus())
+				}
+			}
+			return false, exitCode, nil
+		case <-timer.C:
+			// Grace expired — escalate to SIGKILL.
+			if cmd != nil && cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			if doneCh != nil {
+				select {
+				case <-doneCh:
+				case <-time.After(destroyWait):
+				}
+			}
+			return true, 0, nil
+		}
+	}
+	// No grace configured or no watchdog — escalate immediately.
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	if doneCh != nil {
+		select {
+		case <-doneCh:
+		case <-time.After(destroyWait):
+		}
+	}
+	return true, 0, nil
+}
+
 // DestroyWithExport is the build-VM teardown path (M6 / spec §4.5). It blocks
 // until the firecracker child exits (capped by v.destroyWait — default 10m,
 // comfortable above spec §1 BuildTimeoutSeconds), captures the exit code, and
@@ -1516,7 +1819,7 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 	cmd, ok := v.proc[instance]
 	rec := v.recs[instance]
 	v.mu.Unlock()
-	if !ok || rec == nil || rec.exited || cmd == nil || cmd.Process == nil {
+	if !ok || rec == nil || rec.exited || cmd == nil || cmd.Process == nil || cmd.ProcessState != nil {
 		return 0, false
 	}
 	return cmd.Process.Pid, true
@@ -1619,13 +1922,11 @@ func sidecarDriveImageName(idx int) string {
 // main workload's drive carries the same file at the same path so
 // guest-init can read all workloads uniformly; the main workload
 // invariant makes the manifest's type="main" / name="main" entries
-// redundant but stable. Image-side sealed env / plaintext env
-// continue to live at the older /etc/faas/secrets.env and
-// /etc/faas/env.json paths on drive1 (the main workload's drive)
-// — sidecar env is baked into the sidecar's ext4 at build time
-// by imaged (per PR-A's `app_secrets` + `app_envs` flow); the
-// wake-time env wire stays flat (no per-workload entries) so the
-// vmmd proto surface is unchanged.
+// redundant but stable. Main secrets/API env continue to live at the
+// older /etc/faas/secrets.env and /etc/faas/env.json paths on drive1.
+// Sidecar image defaults and command metadata are baked into each
+// immutable sidecar layer; deployment-specific overrides are staged by
+// vmmd under /etc/faas/workloads/<name>/env.json in the writable main upper.
 const workloadManifestPath = "upper/etc/faas/workload.json"
 
 // secretsEnvPath is the in-guest location guest-init reads after pivot_root
@@ -1724,15 +2025,68 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	return nil
 }
 
-// StageWorkloadManifest (issue #463 / ADR-069 / PR-B) writes the
-// per-workload manifest at /etc/faas/workload.json on a sidecar's
-// drive. The manifest is the contract guest-init's supervisor reads
-// to fork/exec the workload, so it MUST land on every workload's
-// drive before the VM cold-boots. The main workload's drive also
-// gets the manifest stamped — guest-init reads all workloads
-// uniformly — but the main workload's manifest is the trivial
-// convenience case (cmd/port are the customer's app spec; named
-// fields are the customer's pinned values from the apps row).
+// workloadEnvPath is the per-sidecar override file written to the main
+// workload's writable upper. The sidecar image's immutable workload.json
+// remains in its own read-only lower and supplies the image defaults.
+const workloadEnvPath = "upper/etc/faas/workloads"
+
+// StageWorkloadEnv writes one sidecar's already-unsealed env overrides to the
+// main workload's writable layer. The file is instance-scoped and is staged
+// before Firecracker receives its config, so plaintext never lands in the
+// shared sidecar image or reaches guest-init through the wake wire.
+func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []byte) error {
+	if len(jsonBlob) == 0 {
+		return nil
+	}
+	if !validWorkloadName(workloadName) {
+		return fmt.Errorf("invalid workload name %q", workloadName)
+	}
+	drive1, err := v.resolveDriveImage(instance)
+	if err != nil {
+		return err
+	}
+	mp, err := os.MkdirTemp("", "faas-vmm-workload-env-")
+	if err != nil {
+		return fmt.Errorf("mkdir mountpoint: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(mp) }()
+	if out, err := exec.Command("mount", "-o", "loop,rw", drive1, mp).CombinedOutput(); err != nil {
+		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
+	}
+	defer func() { _ = exec.Command("umount", mp).Run() }()
+
+	target := filepath.Join(mp, workloadEnvPath, workloadName, "env.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("mkdir workload env: %w", err)
+	}
+	if err := os.WriteFile(target, jsonBlob, 0o400); err != nil {
+		return fmt.Errorf("write workload env: %w", err)
+	}
+	return nil
+}
+
+func validWorkloadName(name string) bool {
+	if name == "" || len(name) > 63 || filepath.Base(name) != name {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+		if i == 0 && ((c < 'a' || c > 'z') && (c < '0' || c > '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// StageWorkloadManifest (issue #463 / ADR-069 / PR-B) is the
+// compatibility helper for writing /etc/faas/workload.json on a
+// workload drive. New sidecar layers carry their effective runtime
+// contract at /etc/faas/workloads/<name>/workload.json during the
+// image build; the wake-time helper remains for the main workload
+// and older sidecar layers.
 //
 // driveIdx is the 0-based sidecar index (0 for the first sidecar,
 // 1 for the second, etc.) — the same index BuildColdBootConfig
@@ -1742,7 +2096,7 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 //
 // The drive is loopback-mounted rw, the file is written with mode
 // 0o400 (read-only for the in-guest workloads), and umount runs in
-// a defer. We capture the manifest's command list and port verbatim
+// a defer. The compatibility manifest captures command and port
 // from the WorkloadSpec that schedd sent on the wake wire; vmmd
 // trusts the wire as it trusts every other wake-field (the gRPC
 // server runs on a unix socket reachable only by the faas group;
@@ -2002,11 +2356,13 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	}
 	for _, sc := range sidecars {
 		roster.Sidecars = append(roster.Sidecars, workloadManifest{
-			Name:      sc.Name,
-			Type:      sc.Type,
-			RamMB:     sc.RamMB,
-			Port:      sc.Port,
-			Essential: sc.Essential,
+			Name:       sc.Name,
+			Type:       sc.Type,
+			RamMB:      sc.RamMB,
+			Port:       sc.Port,
+			Essential:  sc.Essential,
+			Cmd:        sc.Cmd,
+			Entrypoint: sc.Entrypoint,
 		})
 	}
 	blob, err := json.Marshal(roster)
@@ -2788,6 +3144,39 @@ func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPa
 		HealthcheckPath: healthcheckPath,
 		ProbeCount:      probeCount,
 		ElapsedMs:       elapsed.Milliseconds(),
+	})
+}
+
+// emitRestoreBreakdown writes the vmmd-side restore phases to the same
+// wake-timeline stream as readiness_200. Restore is also used by focused
+// tests and a few operator paths without a wake envelope, so those calls
+// deliberately remain log-only rather than creating an unjoinable event.
+func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.Time, b restoreTimingBreakdown) {
+	if v.events == nil {
+		return
+	}
+	fields, ok := wire.FromContext(ctx)
+	if !ok || fields.WakeID == "" {
+		return
+	}
+	v.events.Emit(ctx, events.RestoreBreakdown{
+		EmitAt:               at.UTC(),
+		WakeID:               fields.WakeID,
+		AppID:                fields.AppID,
+		InstanceID:           l.Instance,
+		ChrootMs:             b.ChrootMs,
+		MaterializeMemMs:     b.MaterializeMemMs,
+		MaterializeVMStateMs: b.MaterializeVMStateMs,
+		ResolveImagesMs:      b.ResolveImagesMs,
+		StageDrivesMs:        b.StageDrivesMs,
+		StageSnapshotMs:      b.StageSnapshotMs,
+		HelperMs:             b.HelperMs,
+		StartJailerMs:        b.StartJailerMs,
+		BindTunMs:            b.BindTunMs,
+		LoadSnapshotMs:       b.LoadSnapshotMs,
+		ResumeHookMs:         b.ResumeHookMs,
+		WaitReadyMs:          b.WaitReadyMs,
+		TotalMs:              b.TotalMs,
 	})
 }
 

@@ -94,6 +94,7 @@ and we'll work with you to recover what we can from our backups.
 // after 7 days without payment. Distinct subject from the deletion
 // emails so the customer can tell what happened at a glance.
 func AccountSuspendedBody(email string, at time.Time) (subject, body string) {
+	email = safeRecipient(email)
 	atStr := at.UTC().Format("2006-01-02 15:04 UTC")
 	subject = "Your faas apps have been suspended"
 	body = fmt.Sprintf(`Hi,
@@ -102,12 +103,13 @@ Your faas account (%s) has not received a successful payment for 7
 days. As of %s, every running instance tied to your account has been
 parked and new deploys are blocked.
 
-To restore service, update your payment method and run:
+To restore service, update your payment method in the billing portal and
+retry the charge there:
 
-    faas billing retry
+    faas billing portal
 
-Once Stripe confirms the payment, meterd will resume your apps on the
-next quota tick (within 60 s). If the payment does not arrive within
+Once your billing provider confirms the payment, meterd will resume your
+apps on the next quota tick (within 60 s). If the payment does not arrive within
 21 days of the original failure (i.e. %s — 14 days from now), your
 account will be scheduled for permanent deletion.
 
@@ -118,8 +120,8 @@ If this charge is unexpected, contact support@gregale.dev.
 	return
 }
 
-// PaymentFailedBody is the entry-point email sent the moment a Stripe
-// `invoice.payment_failed` event flips an account from active to
+// PaymentFailedBody is the entry-point email sent when a provider's
+// payment-failed event flips an account from active to
 // past_due (spec §4.7, §17 dunning state machine, §171 "All transitions
 // emailed"). The 7-day grace clock starts at pastDueAt — telling the
 // customer the deadline here is the load-bearing piece; without this
@@ -147,10 +149,10 @@ deletion.
 To fix this:
 
   1. Update your payment method in the dashboard, or
-  2. Run:    faas billing retry
+  2. Run:    faas billing portal
 
-Once Stripe confirms the payment, meterd will resume your apps on the
-next quota tick (within 60 s) and send you a confirmation email.
+Once your billing provider confirms the payment, meterd will resume your
+apps on the next quota tick (within 60 s) and send you a confirmation email.
 
 If this charge is unexpected, contact support@gregale.dev.
 
@@ -159,8 +161,8 @@ If this charge is unexpected, contact support@gregale.dev.
 	return
 }
 
-// AccountRestoredBody is the recovery email sent on Stripe
-// `invoice.payment_succeeded` after a past_due → active flip. Light
+// AccountRestoredBody is the recovery email sent on a provider
+// payment-succeeded event after a past_due → active flip. Light
 // tone: it acknowledges the customer fixed the problem, tells them what
 // happened while they were gone (apps were parked at the 7-day mark),
 // and notes that the next quota tick resumes them. Distinct subject
@@ -172,7 +174,8 @@ func AccountRestoredBody(email string, restoredAt time.Time) (subject, body stri
 	subject = "Your faas account is back in good standing"
 	body = fmt.Sprintf(`Hi,
 
-Stripe confirmed a successful payment for your faas account (%s) at %s.
+Your billing provider confirmed a successful payment for your faas account
+(%s) at %s.
 Your account is now active again.
 
 If your apps had been parked during the grace period (after 7 days of
@@ -214,9 +217,9 @@ You're now accruing overage at the rates listed in the dashboard.
   Used:   %.2f GB-h
   Quota:  %d GB-h
 
-Overage is billed on the next invoice via Stripe's metered subscription
-item. To stop the overage, either upgrade your plan or reduce the
-running instances on your account.
+Overage is billed on the next invoice via your billing provider's metered
+subscription item. To stop the overage, either upgrade your plan or reduce
+the running instances on your account.
 
 This is the only quota warning you'll get today; the next one arrives
 tomorrow if usage is still over the quota.

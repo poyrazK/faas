@@ -82,28 +82,30 @@ image (no runner shim).
   via the two-drive scheme (drive0 = shared base, drive1 = per-app
   layer). Per-app cost is just the customer's `site-packages` + handler.
 
-### Operator staging
+### Operational configuration
 
-In Tier 1 PR 2, the runtime base is **auto-staged** by `imaged` at
-boot via `pkg/imaged/base_stage.go::EnsureBases`. Set
-`FAAS_DEPLOY_BASE_REF_PYTHON313=<digest>` in `sealed.env` to
-digest-pin the prod base; the default `:latest` is for dev only.
+The runtime base is **auto-staged** by `imaged` through
+`pkg/imaged/base_stage.go::EnsureRuntimeBase`. The deployment pipeline
+must write `FAAS_DEPLOY_BASE_REF_PYTHON313` as an immutable OCI digest in
+`/etc/faas/runtime-bases.env`; the default `:latest` is for unnamed
+development daemons only.
 
-The pre-PR-2 staging recipe remains valid for boxes that haven't
-upgraded imaged yet — see `images/runner-python313.Dockerfile` comments
-for `docker build` + `mkfs.ext4` argv.
-
-After PR 2 the operator workflow collapses to:
+The production workflow is:
 1. Publish the `images/runner-python313.Dockerfile` image to
-   `ghcr.io/onebox-faas/runner-python313:<digest>`.
-2. Set `FAAS_DEPLOY_BASE_REF_PYTHON313` to that digest in `sealed.env`.
-3. Restart imaged. The first boot pulls + stages the ext4; subsequent
-   boots short-circuit on the digest sidecar (Skipped=true).
+   `ghcr.io/onebox-faas/runner-python313` and record its config digest.
+2. Let the deployment pipeline render that digest into
+   `FAAS_DEPLOY_BASE_REF_PYTHON313`.
+3. Start or restart `imaged`. It pulls, validates, and stages the ext4
+   automatically; subsequent boots short-circuit on the digest sidecar.
+
+Operators must not build, copy, or manually place a runtime `.ext4` on a
+compute node. A missing or invalid base is a deployment error, not a reason
+to fall back to a hand-staged artifact.
 
 If a non-digest-pinned `FAAS_DEPLOY_BASE_REF_PYTHON313` is set
 (e.g. `:latest`), imaged aborts startup loud with a one-line error
-naming the offending env var — the same posture as
-`FAAS_DEPLOY_BASE_REF` (deploy-time override).
+naming the offending env var. The retired global `FAAS_DEPLOY_BASE_REF` is
+rejected.
 
 ## Detection priority
 
@@ -134,6 +136,5 @@ operator-controlled via `FAAS_DEPLOY_BASE_REF_PYTHON313`.
 - `images/runner-python313.Dockerfile` — base image
 - `migrations/00075_app_runtime_node24_python313.sql` — runtime enum widening
 
-<!-- CI status: PR 1 (Tier 1) — migration 00075 applied; imaged runtime
-matrix extended in pkg/imaged/base.go + handler.go. Base auto-stage
-follows in PR 2. -->
+<!-- CI status: runtime migration, handler matrix, OCI auto-staging, and
+runtime-image smoke coverage are implemented and enforced by CI. -->

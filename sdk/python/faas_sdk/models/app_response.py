@@ -46,7 +46,10 @@ class AppResponse:
     resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are
     NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`,
     `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per
-    JSON semantics, so the widen is wire-compatible."""
+    JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with
+    `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern
+    the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults
+    preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."""
     autoscale_target_rps: int
     """Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured
     per-instance RPS exceeds this value, schedd admits another instance (up to max_concurrency). See ADR-037."""

@@ -11,7 +11,13 @@ Restart=on-failure
 RestartSec=2s
 
 Slice=faas-cp.slice
-MemoryMax=256M
+# Aligned with pkg/daemonunitspec/vmmd.go (2026-09-04). vmmd's cgroup is
+# charged for the jail tmpfs it writes (~400 MB layer.ext4 per live
+# instance), so a tighter-than-slice cap is really a cap on jail
+# residency. MemoryHigh is deliberately absent: that shmem is
+# unreclaimable without swap, so MemoryHigh only spun the reclaim path
+# and made every vmmd child thrash on its own text pages.
+MemoryMax=3G
 
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 

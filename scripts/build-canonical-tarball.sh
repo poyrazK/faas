@@ -63,6 +63,21 @@ make -C "$repo_root" \
   BINDIR="$work_root/$git_sha/bin" \
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 VERSION="$git_sha" build
 
+if [[ -n "${KERNEL_FILE:-}" ]]; then
+  [[ -f "$KERNEL_FILE" ]] || {
+    echo "KERNEL_FILE does not exist: $KERNEL_FILE" >&2
+    exit 2
+  }
+  [[ -r "$KERNEL_FILE" ]] || {
+    echo "KERNEL_FILE is not readable: $KERNEL_FILE" >&2
+    exit 2
+  }
+  # vmlinux is a release support artifact, not a daemon. Copy it into the
+  # canonical bin tree so releaseinstall hashes it into tool_hashes and the
+  # signed tarball carries the exact kernel every compute node will use.
+  install -m 0644 "$KERNEL_FILE" "$work_root/$git_sha/bin/vmlinux"
+fi
+
 go -C "$repo_root" run ./cmd/release-artifact \
   --root "$work_root" \
   --git-sha "$git_sha" \

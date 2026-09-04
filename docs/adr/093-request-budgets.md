@@ -104,3 +104,71 @@ Three stacked PRs (mirrors `tier-a7 PR-cluster strategy` from memory):
 - ADR-091 — `kind=validate` / `kind=ip` / `kind=geo` edge-rule surface (the precedent for `kind=budget`)
 - spec §6.3 — wake latency budget (cold-boot, **not** this ADR's domain)
 - spec §4.1 — `WakeQueueCap=512`, `WakeQueueTTLSeconds=30`
+## Amendment (2026-09-03): gatewayd-public stamps a backstop, not a policy
+
+**The `kind=budget` edge rule could not widen a budget. It could only
+tighten one.** This amendment changes `gatewayd-public`'s configured
+budget from `api.RequestBudgetDefault` (3 s) to `api.RequestBudgetMax`
+(30 s), making it a liveness backstop rather than a policy decision.
+
+### What was wrong
+
+PR 2 wired the middleware at the public edge with `Default:
+api.RequestBudgetDefault` and this comment:
+
+> Budgets come from the edge-rule kind=budget match (resolved deeper
+> in the chain) or fall back to api.RequestBudgetDefault.
+
+The second clause is accurate; the first never took effect.
+`reqbudget` derives a **child** budget from whatever is already on the
+context (`WithCeiling` / `WithOverhead` both clamp against the
+parent's remaining time — by design, per the original Decision).
+`gatewayd-public` does not resolve the app, so it cannot see a
+`kind=budget` rule; it stamps the 3 s default first, and
+`applyEdgeRuleBudget` then runs one hop later in `gatewayd-internal`
+against an already-3 s parent.
+
+Measured on the europe-west3 deployment at 1000 requests /
+1000 concurrency, with a 25 s `kind=budget` rule confirmed applied
+(`budget_ms:25000, source:rule` on 713 of 1000 requests):
+
+```
+upstream latency  p50 2948  p90 3000  p99 3013  max 3121  (ms)
+```
+
+Nothing crossed ~3.1 s. In the same window `gatewayd-public` logged
+612 round-trip failures, all `context deadline exceeded`, matching the
+612 client-visible failures exactly. The compute layer had answered
+953 of 1001 requests with 200.
+
+### Decision
+
+`gatewayd-public` stamps `api.RequestBudgetMax`. Every request it
+forwards lands on a hop that stamps its own authoritative budget:
+
+- **App data plane** → `gatewayd-internal`, whose
+  `applyEdgeRuleBudget` *always* stamps (rule match, else the plan
+  default) and owns the 504 + `request_budget_exceeded` envelope.
+- **Control-plane API** → `apid`, which installs its own middleware at
+  `api.RequestBudgetApidDefault` (5 s).
+
+The edge therefore defers to whichever hop can actually see the
+customer's plan and rules, and keeps only the platform ceiling as a
+liveness guard. This subsumes the previous sync-invoke `DefaultFor`
+carve-out, which returned exactly this value for the same reason.
+
+### Trade-off
+
+A wedged `gatewayd-internal` can now pin a public connection for up to
+30 s instead of 3 s. Accepted: the failure mode it replaces is worse
+(silently capping every customer's configured budget), the ceiling is
+still bounded, and the transport's `ResponseHeaderTimeout` remains an
+independent guard. The per-plan 3 s default is unchanged — it simply
+now applies where it can be overridden.
+
+### Not changed
+
+The platform default stays `RequestBudgetDefault = 3 s` and the
+ceiling stays `RequestBudgetMax = 30 s`. This amendment moves *where*
+the default is enforced, not its value. A customer who sets no
+`kind=budget` rule still gets 3 s, stamped by `gatewayd-internal`.

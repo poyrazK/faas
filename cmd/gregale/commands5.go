@@ -799,6 +799,16 @@ func cmdPlan(args []string) int {
 	if err != nil {
 		return printErr("Plan change failed", err)
 	}
+	if updated.PlanChangeStatus == "pending_provider_confirmation" {
+		if updated.EffectiveAt != nil {
+			PrintOK(osStdout, "Plan change to %s scheduled for %s; current plan remains %s",
+				updated.RequestedPlan, updated.EffectiveAt.Format(time.RFC3339), updated.Plan)
+		} else {
+			PrintOK(osStdout, "Plan change to %s scheduled; current plan remains %s",
+				updated.RequestedPlan, updated.Plan)
+		}
+		return 0
+	}
 	PrintOK(osStdout, "Plan changed to %s", updated.Plan)
 	return 0
 }

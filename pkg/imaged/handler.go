@@ -237,6 +237,11 @@ type Handler struct {
 	// in-memory handler constructors used by unit tests intentionally keep
 	// the build pipeline hermetic and do not need shared ext4 staging.
 	runtimeBaseStagingEnabled bool
+	// baseArtifactValidator checks the contents of an ext4 artifact before
+	// imaged trusts a digest sidecar or publishes a freshly built base. It is
+	// injected so tests remain hermetic; cmd/imaged wires the debugfs-backed
+	// production validator.
+	baseArtifactValidator func(context.Context, string, []string) error
 	// secretboxIdentity (issue #461 / ADR-062) is the host age
 	// identity used to TRANSIENTLY unseal per-app private-registry
 	// Basic Auth passwords during the pull path. The plaintext
@@ -403,15 +408,72 @@ func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep s
 // + data.ref + data.signer). signer is empty on missing/invalid.
 //
 // imaged-side audit events travel via pg_notify('audit_event') —
-// pkg/audit (apid-side) subscribes and writes the rows. This keeps
-// the audit write surface single-sourced (apid) while letting imaged
-// surface operator-visible events.
+// pkg/audit (apid-side) subscribes and writes the rows. The durable
+// outbox is the recovery path when that notification is missed; the
+// notification remains the low-latency fast path.
+type signatureAuditPayload struct {
+	OutboxID     int64  `json:"outbox_id,omitempty"`
+	Kind         string `json:"kind"`
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	Ref          string `json:"ref"`
+	Signer       string `json:"signer"`
+}
+
+type signatureAuditData struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	Ref          string `json:"ref"`
+	Signer       string `json:"signer"`
+}
+
 func (h *Handler) emitSignatureAudit(ctx context.Context, kind string, app state.App, dep state.Deployment, ref, signer string) {
 	h.log.Warn(kind, "app", app.Slug, "deployment", dep.ID, "ref", ref, "signer", signer)
+	base := signatureAuditPayload{
+		Kind:         kind,
+		AppID:        app.ID,
+		DeploymentID: dep.ID,
+		Ref:          ref,
+		Signer:       signer,
+	}
+	data, err := json.Marshal(signatureAuditData{
+		AppID:        app.ID,
+		DeploymentID: dep.ID,
+		Ref:          ref,
+		Signer:       signer,
+	})
+	if err != nil {
+		h.log.Error("imaged: marshal signature audit", "kind", kind, "deployment", dep.ID, "err", err)
+		return
+	}
+	if outbox, ok := h.store.(state.AuditEventOutboxStore); ok {
+		dedupeKey := "imaged.signature." + kind + "." + dep.ID
+		if dep.ID == "" {
+			dedupeKey = "imaged.signature." + kind + "." + app.ID + "." + ref
+		}
+		// "apid" preserves the existing events.actor attribution: apid
+		// remains the audit writer even though imaged owns the observation.
+		outboxID, enqueueErr := outbox.EnqueueAuditEvent(ctx, "apid", kind, &app.ID, data, dedupeKey)
+		if enqueueErr == nil {
+			base.OutboxID = outboxID
+			payload, marshalErr := json.Marshal(base)
+			if marshalErr != nil {
+				// base only contains scalar fields, so this is a
+				// programmer error; the durable row is still safe
+				// for the apid replay loop.
+				h.log.Error("imaged: marshal signature audit notification", "kind", kind, "deployment", dep.ID, "err", marshalErr)
+				return
+			}
+			if h.notif != nil {
+				_ = h.notif.Notify(ctx, "audit_event", string(payload))
+			}
+			return
+		}
+		h.log.Warn("imaged: enqueue durable signature audit failed; using notification fallback",
+			"kind", kind, "deployment", dep.ID, "err", enqueueErr)
+	}
 	if h.notif != nil {
-		payload := fmt.Sprintf(`{"kind":%q,"app_id":%q,"deployment_id":%q,"ref":%q,"signer":%q}`,
-			kind, app.ID, dep.ID, ref, signer)
-		_ = h.notif.Notify(ctx, "audit_event", payload)
+		_ = h.notif.Notify(ctx, "audit_event", string(data))
 	}
 }
 
@@ -539,6 +601,13 @@ func (h *Handler) WithStorage(s storage.StorageBackend) *Handler {
 // backend do not unexpectedly invoke mkfs or registry pulls.
 func (h *Handler) WithRuntimeBaseStaging() *Handler {
 	h.runtimeBaseStagingEnabled = true
+	return h
+}
+
+// WithBaseArtifactValidator installs the production base-rootfs contract
+// check. A nil validator preserves the lightweight unit-test path.
+func (h *Handler) WithBaseArtifactValidator(fn func(context.Context, string, []string) error) *Handler {
+	h.baseArtifactValidator = fn
 	return h
 }
 
@@ -1226,11 +1295,11 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 			h.log.Warn("imaged: trusted_signer_changed refresh failed", "err", err)
 		}
 	case "audit_event":
-		// imaged-side audit emits (app.signature_missing /
-		// app.signature_invalid) are routed via pg_notify and
-		// eventually written by apid-side pkg/audit. The Loop in
-		// pkg/loop subscribes; this arm is a no-op so the typed
-		// payload reaches pkg/audit unchanged.
+		// audit_event is an imaged → apid handoff. New producers
+		// persist it in audit_event_outbox and apid consumes the
+		// notification; this imaged-side subscription is retained
+		// for channel compatibility and intentionally does not
+		// re-process the event.
 	}
 }
 
@@ -1292,11 +1361,12 @@ type snapshotWrittenPayload struct {
 
 // snapshotBootPayload is the JSON shape builderd emits on `snapshot_boot`
 // after a build VM has produced an OCI image tarball and stamped it on
-// deployments.rootfs_path (see pkg/builderd/builderd.go::ProcessOne). imaged
-// is the sole subscriber: it converts the OCI tarball into a per-app ext4
-// (drive1) and then re-emits NotifySnapshotPrime so schedd can cold-boot
-// + snapshot (F4). The payload is intentionally minimal so the channel
-// stays narrow.
+// deployments.rootfs_path (see pkg/builderd/builderd.go::ProcessOne). Every
+// compute imaged daemon receives the fleet-wide notification, but only the
+// daemon whose node_id matches the builder converts the local OCI tarball
+// into a per-app ext4 (drive1) and re-emits NotifySnapshotPrime so schedd can
+// cold-boot + snapshot (F4). The payload is intentionally minimal so the
+// channel stays narrow.
 type snapshotBootPayload struct {
 	AppID        string `json:"app_id"`
 	DeploymentID string `json:"deployment_id"`
@@ -1925,25 +1995,25 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "sidecar storage init: "+err.Error())
 			return findings, fmt.Errorf("imaged: sidecar storage init: %w", err)
 		}
-		// rootfs.Builder.Build input. The sidecar's
-		// `ram_mb` is the memory.max the sidecar cgroup gets
-		// carved (PR-B step 6 wires that on the host side via
-		// writeWorkloadCgroup). The Manifest's entrypoint is a
-		// placeholder — guest-init reads the per-workload
-		// workload.json (issue #463 / ADR-069 §Sidecar staging)
-		// for the sidecar's argv/env/port at boot time, not
-		// the rootfs-baked app.json. The placeholder exists
-		// because pkg/api.AppManifest.Validate rejects an
-		// empty entrypoint; using a constant argv keeps the
-		// build happy without baking a customer-visible Cmd
-		// into the ext4.
+		// Build the sidecar's effective runtime contract into its
+		// immutable layer. The wake wire carries scheduling metadata
+		// only; command and per-sidecar env must be available before
+		// guest-init starts, including on a cold boot where there is
+		// no opportunity for a late host-side write.
+		workloadManifest, err := h.sidecarWorkloadManifest(sc, pulled.Config)
+		if err != nil {
+			_ = h.transition(ctx, dep.ID, state.DeployFailed, fmt.Sprintf("sidecar %q manifest: %s", sc.Name, err.Error()))
+			return findings, fmt.Errorf("imaged: sidecar %q manifest: %w", sc.Name, err)
+		}
 		result, err := h.builder.Build(ctx, rootfs.BuildInput{
-			Layers:        layersAsReaders(pulled.Layers),
-			Manifest:      api.SidecarBuildManifest(),
-			GuestInitPath: h.guestInitPath,
-			Plan:          acct.Plan,
-			Storage:       be,
-			StorageKey:    layerKey,
+			Layers:           layersAsReaders(pulled.Layers),
+			Manifest:         api.SidecarBuildManifest(),
+			WorkloadName:     sc.Name,
+			WorkloadManifest: &workloadManifest,
+			GuestInitPath:    h.guestInitPath,
+			Plan:             acct.Plan,
+			Storage:          be,
+			StorageKey:       layerKey,
 		})
 		if err != nil {
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, fmt.Sprintf("sidecar %q build: %s", sc.Name, err.Error()))
@@ -1985,6 +2055,47 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			"layers", len(pulled.Layers))
 	}
 	return findings, nil
+}
+
+// sidecarWorkloadManifest projects the OCI image config plus the deployment's
+// command/port overrides into the contract guest-init consumes. Entrypoint
+// follows OCI semantics: a supplied sidecar Cmd replaces the image Cmd while
+// retaining the image Entrypoint. Sidecar env remains sealed in the deployment
+// record and is opened by vmmd only for the per-instance writable layer at
+// wake; it is never persisted in the shared immutable sidecar image.
+func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (api.AppManifest, error) {
+	entrypoint := append([]string(nil), cfg.Entrypoint...)
+	cmd := append([]string(nil), cfg.Cmd...)
+	if len(sc.Cmd) > 0 {
+		cmd = append([]string(nil), sc.Cmd...)
+	}
+	if len(entrypoint) == 0 {
+		entrypoint = cmd
+		cmd = nil
+	}
+	if len(entrypoint) == 0 && len(cmd) == 0 {
+		// Preserve the established sidecar image convention for old
+		// images that rely on the injected start.sh. New images should
+		// declare an OCI Entrypoint/Cmd; the fallback remains useful for
+		// the existing sidecar fixtures and operator-built images.
+		entrypoint = []string{"/usr/local/bin/start.sh"}
+	}
+
+	manifest, err := oci.ManifestFromConfig(oci.Config{
+		Env:              cloneEnvMap(cfg.Env),
+		Entrypoint:       entrypoint,
+		Cmd:              cmd,
+		WorkingDir:       cfg.WorkingDir,
+		User:             cfg.User,
+		Healthcheck:      cfg.Healthcheck,
+		StopSignal:       cfg.StopSignal,
+		StopGracePeriodS: cfg.StopGracePeriodS,
+	})
+	if err != nil {
+		return api.AppManifest{}, err
+	}
+	manifest.Port = sc.Port
+	return manifest, nil
 }
 
 // buildFunctionLayer assembles a function deploy's app-layer ext4:
@@ -2150,33 +2261,40 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "storageFor: "+err.Error())
 		return fmt.Errorf("imaged: storageFor: %w", err)
 	}
-	result, err := h.builder.Build(ctx, rootfs.BuildInput{
-		Layers:        builtLayers,
-		Manifest:      manifest,
-		GuestInitPath: h.guestInitPath,
-		Plan:          acct.Plan,
-		Storage:       be,
-		StorageKey:    appsKey,
-		// TarballPath lets the rootfs.Builder stream the customer's
-		// source tarball into /app during layer assembly. For source builds,
-		// builtLayers above are applied first so Go's compiled /app/server
-		// can be normalized to /app/handler.
-		TarballPath: dep.SourcePath,
-		// The customer-facing Node convention is handler.js while the
-		// versioned runner executes /app/node22.js or /app/node24.js.
-		// rootfs creates that runtime alias during assembly.
+	buildInput := rootfs.BuildInput{
+		Layers:              builtLayers,
+		Manifest:            manifest,
+		GuestInitPath:       h.guestInitPath,
+		Plan:                acct.Plan,
+		Storage:             be,
+		StorageKey:          appsKey,
 		FunctionHandlerPath: manifest.Entrypoint[len(manifest.Entrypoint)-1],
-		// FunctionRunnerPath is the static guest/runners/<rt>/faas-runner
-		// binary that lives at /usr/local/bin/faas-runner in the layer.
-		FunctionRunnerPath: runnerPath,
+		FunctionRunnerPath:  runnerPath,
 		// Issue #299 / ADR-038 Phase 3: SBOM emission runs inside
-		// Builder.Build on the staging dir (which holds the customer's
-		// source tarball + the runner binary + guest-init — exactly
-		// what the SBOM should enumerate). SBOMKey is stamped onto
-		// the build_provenance row immediately below.
+		// Builder.Build on the final staging tree.
 		SBOMRun:        h.syftRun,
 		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
-	})
+	}
+	if h.runtimeBaseStagingEnabled {
+		// Production source builds consume builderd's dependency-complete
+		// OCI export. Re-applying dep.SourcePath here would silently throw
+		// away Railpack's installed dependencies and, for Go, leave the
+		// runner looking for /app/handler while Railpack emits /app/server.
+		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifact(ctx, runtime, dep.RootfsPath)
+		if artifactErr != nil {
+			_ = h.transition(ctx, dep.ID, state.DeployFailed, "select function build artifact: "+artifactErr.Error())
+			return fmt.Errorf("imaged: select function build artifact: %w", artifactErr)
+		}
+		defer cleanup()
+		buildInput.Layers = layers
+		buildInput.FunctionHandlerSourcePath = sourcePath
+	} else {
+		// Keep the hermetic legacy/test seam. Production handlers always
+		// enable runtime-base staging and therefore take the artifact path.
+		buildInput.Layers = builtLayers
+		buildInput.TarballPath = dep.SourcePath
+	}
+	result, err := h.builder.Build(ctx, buildInput)
 	if err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build function layer: "+err.Error())
 		return fmt.Errorf("imaged: build function layer: %w", err)
@@ -2560,7 +2678,13 @@ func (h *Handler) ensureDeploymentRuntimeBase(ctx context.Context, app state.App
 	// Unit-test handlers without the production routed StorageBackend keep
 	// the historical in-memory build seam; production cmd/imaged always
 	// wires storage before accepting notifications.
-	if app.Runtime == "" || !h.runtimeBaseStagingEnabled {
+	if !h.runtimeBaseStagingEnabled {
+		return nil
+	}
+	if app.Runtime == "" {
+		if _, err := h.EnsureMinimalBase(ctx, runtime.GOARCH, os.Getenv); err != nil {
+			return fmt.Errorf("imaged: ensure minimal base: %w", err)
+		}
 		return nil
 	}
 	if _, err := h.EnsureRuntimeBase(ctx, app.Runtime, runtime.GOARCH, os.Getenv); err != nil {
@@ -2804,12 +2928,11 @@ func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
 	}
 	baseRef := h.deployBaseRefOverride
 	if baseRef == "" {
-		// Per-runtime env var (FAAS_DEPLOY_BASE_REF_<RUNTIME>) takes
-		// precedence over the legacy single-string global
-		// FAAS_DEPLOY_BASE_REF (wired at cmd/imaged/main.go:255).
-		// Matches the posture of EnsureBases (startup auto-stage):
-		// per-runtime is the canonical operator surface, the single
-		// global is the test-harness / legacy knob. Unknown runtimes
+		// Per-runtime env var (FAAS_DEPLOY_BASE_REF_<RUNTIME>) is the
+		// production contract. The retired single-string global
+		// FAAS_DEPLOY_BASE_REF is rejected by cmd/imaged/main.go.
+		// Matches the posture of EnsureBases (startup auto-stage).
+		// Unknown runtimes
 		// fall through to baseRefFor's default (BaseRefMinimal for
 		// the "" / customer-uploaded-image case). Same
 		// digest-pin validation as the row-level override gate.

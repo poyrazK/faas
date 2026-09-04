@@ -85,6 +85,16 @@ func validateManifestBytes(b []byte, acctPlan api.Plan) (*gregalemanifest.Manife
 		// shipping a blank blob. Treat as absent, not error.
 		return nil, nil
 	}
+	// Structural validation (kind/slug/etc). Per-plan tier
+	// gating is delegated to validateManifestAgainstPlan below —
+	// the gregalemanifest package is per-machine (CLI-side) and
+	// doesn't carry plan context. The earlier ValidatePlan
+	// call here (//code-review PR #1202 finding #4) referred to
+	// a method that doesn't exist on this struct (only
+	// gregalemanifest.Manifest.Validate exists); reverted to
+	// Validate + the explicit plan-tier gate already running
+	// below. The plan-tier check is the one the customer's RFC
+	// 7807 response carries the cap for.
 	if err := m.Validate(); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 			"Invalid manifest", err.Error())

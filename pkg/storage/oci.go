@@ -398,11 +398,20 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 	// we don't hold 150 MB in memory. The LocalStorageBackend's
 	// copyContext polls ctx.Done() every 256 KiB; we reuse the same
 	// helper to keep cancellation behaviour consistent.
-	tmpPath, digestHex, err := o.bufferAndHash(ctx, key, r)
+	//
+	// ownsTmp is false when the caller already handed us a file and we
+	// hashed it where it lay — deleting that file would destroy the
+	// caller's data (the read-through cache's spool, or a snapshot blob
+	// on the capture path).
+	tmpPath, digestHex, ownsTmp, err := o.bufferAndHash(ctx, key, r)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = removeTmp(tmpPath) }()
+	defer func() {
+		if ownsTmp {
+			_ = removeTmp(tmpPath)
+		}
+	}()
 
 	// Push the config stub blob (single byte; the manifest references
 	// it). Doing the config blob first means the manifest push below
@@ -755,10 +764,54 @@ func buildImageManifest(configDigest, layerDigest string, size int64) ([]byte, e
 // The copy is ctx-aware via copyContext (256 KiB chunks, ctx.Done()
 // polled each chunk). On any error the tmp file is removed before
 // returning so a half-written file doesn't accumulate under /tmp.
-func (o *OCIRegistryStorageBackend) bufferAndHash(ctx context.Context, key string, r io.Reader) (path, hexDigest string, err error) {
+// hashInPlace computes the digest of a blob the caller already has on
+// disk, without copying it. Returns ok=false if the file cannot be
+// rewound or read, in which case the caller falls back to spooling.
+//
+// The offset is restored to the start on the way out so the caller can
+// hand the same file to the uploader.
+func hashInPlace(ctx context.Context, f interface {
+	io.Reader
+	io.Seeker
+	Name() string
+}) (path, hexDigest string, ok bool) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", "", false
+	}
+	h := sha256.New()
+	if _, err := copyContext(ctx, h, f); err != nil {
+		return "", "", false
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", "", false
+	}
+	return f.Name(), hex.EncodeToString(h.Sum(nil)), true
+}
+
+// bufferAndHash returns a path to the blob on disk plus its sha256, so
+// the monolithic-PUT endpoint can be given ?digest=sha256:... up front.
+//
+// owned reports whether the returned path is ours to delete. When the
+// caller already handed us a file, we hash it where it lies and return
+// owned=false — that avoids writing the whole blob to disk a second
+// time. On a production node a 1 GiB snapshot spent ~52 s of its ~100 s
+// in exactly that redundant copy (~20 MB/s on pd-standard) against a
+// 75 s budget, so parks failed on work that never needed doing.
+func (o *OCIRegistryStorageBackend) bufferAndHash(ctx context.Context, key string, r io.Reader) (path, hexDigest string, owned bool, err error) {
+	if fr, isFile := r.(interface {
+		io.Reader
+		io.Seeker
+		Name() string
+	}); isFile {
+		if p, d, ok := hashInPlace(ctx, fr); ok {
+			return p, d, false, nil
+		}
+		// Fall through and spool: a reader that cannot seek (a pipe
+		// dressed up with a Name, a closed fd) still has to work.
+	}
 	f, err := osCreateTemp("", "faas-oci-*.blob")
 	if err != nil {
-		return "", "", fmt.Errorf("storage: oci put %q: create tmp: %w", key, err)
+		return "", "", false, fmt.Errorf("storage: oci put %q: create tmp: %w", key, err)
 	}
 	tmpPath := f.Name()
 	closed := false
@@ -770,16 +823,16 @@ func (o *OCIRegistryStorageBackend) bufferAndHash(ctx context.Context, key strin
 	}()
 	h := sha256.New()
 	if _, err := copyContextHash(ctx, f, r, h); err != nil {
-		return "", "", fmt.Errorf("storage: oci put %q: %w", key, err)
+		return "", "", false, fmt.Errorf("storage: oci put %q: %w", key, err)
 	}
 	if err := f.Sync(); err != nil {
-		return "", "", fmt.Errorf("storage: oci put %q: fsync: %w", key, err)
+		return "", "", false, fmt.Errorf("storage: oci put %q: fsync: %w", key, err)
 	}
 	if err := f.Close(); err != nil {
-		return "", "", fmt.Errorf("storage: oci put %q: close: %w", key, err)
+		return "", "", false, fmt.Errorf("storage: oci put %q: close: %w", key, err)
 	}
 	closed = true
-	return tmpPath, hex.EncodeToString(h.Sum(nil)), nil
+	return tmpPath, hex.EncodeToString(h.Sum(nil)), true, nil
 }
 
 // tmpPathSize returns the on-disk size of the buffered blob. Used by

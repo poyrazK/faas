@@ -18,7 +18,12 @@ egress_tls_key_path = "{{ faas_meterd_egress_tls_key_path }}"
 egress_tls_ca_path = "{{ faas_meterd_egress_tls_ca_path }}"
 {% endif %}
 
+[meter]
+# Usage pushes run hourly; the pusher also backfills the configured lookback
+# window, so a restart or provider outage does not lose billable hours.
+stripe_interval = "1h"
+
 [billing]
-# Production defaults to Paddle. Operators may explicitly select the
-# documented Stripe rollback through FAAS_BILLING_PROVIDER in sealed.env.
-provider = "paddle"
+# Production defaults to Polar. Operators may explicitly select the
+# legacy Stripe or Paddle provider through FAAS_BILLING_PROVIDER in sealed.env.
+provider = "polar"

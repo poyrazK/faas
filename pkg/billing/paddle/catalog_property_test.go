@@ -41,7 +41,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PaddleHQ/paddle-go-sdk/v5"
+	paddle "github.com/PaddleHQ/paddle-go-sdk/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 

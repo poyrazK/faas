@@ -34,7 +34,9 @@ type Config struct {
 	// CacheDir is the on-disk root for content-addressed build cache.
 	// Defaults to /var/cache/faas/builds.
 	CacheDir string `toml:"cache_dir"`
-	// MetricsAddr is the optional bind address for /metrics. Empty disables it.
+	// MetricsAddr is the bind address for /metrics. The loopback default keeps
+	// the listener private while making the daemon's metrics port canonical for
+	// single-box Prometheus; an explicit empty TOML value still disables it.
 	MetricsAddr string `toml:"metrics_addr"`
 	// Metrics listener timeouts (ADR-122). Each knob falls back to
 	// the corresponding api.Metrics*SecondsDefault when zero.
@@ -217,6 +219,7 @@ func LoadConfig(path string) (*Config, error) {
 		BuilderBase:      "/srv/fc/base/runner-builder-" + runtime.GOARCH + ".ext4",
 		BuildDriveDir:    "/srv/fc/builder/drive",
 		BuildExportDir:   "/srv/fc/builder/out",
+		MetricsAddr:      "127.0.0.1:9105",
 		ScheddMetricsURL: "http://127.0.0.1:9090/metrics/fcvm",
 		PollInterval:     2 * time.Second,
 		// B2.2 (issue #196): 30s fairness window — wide enough to

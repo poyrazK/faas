@@ -9,7 +9,12 @@ import (
 // by Postgres LISTEN app_routes_changed; a miss is one indexed PG lookup). It is
 // safe for concurrent use on the hot request path.
 type RouteCache struct {
-	mu   sync.Mutex
+	// Reads use RLock through Peek. The request path does not need to
+	// promote a route on every hit: app routes are invalidated by the
+	// notifier and the cache is a bounded lookup accelerator, not an
+	// eviction-policy API. Get keeps the exact LRU-promoting contract for
+	// callers that need it (and for backwards-compatible tests/tools).
+	mu   sync.RWMutex
 	cap  int
 	ll   *list.List               // front = most recently used
 	byID map[string]*list.Element // host -> element
@@ -34,6 +39,23 @@ func (c *RouteCache) Get(host string) (string, bool) {
 	defer c.mu.Unlock()
 	if el, ok := c.byID[host]; ok {
 		c.ll.MoveToFront(el)
+		return el.Value.(*routeEntry).appID, true
+	}
+	return "", false
+}
+
+// Peek returns the app_id for host without updating the LRU order. It is the
+// read-mostly request-path operation: concurrent route hits can proceed under
+// a shared lock instead of serializing behind the LRU promotion in Get.
+//
+// The cache remains bounded by Put, and route invalidation remains authoritative
+// through Invalidate/Reset. A hot route may therefore be evicted sooner than it
+// would be with strict per-hit promotion, which is acceptable because the next
+// request simply rehydrates it from the authoritative Router.
+func (c *RouteCache) Peek(host string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if el, ok := c.byID[host]; ok {
 		return el.Value.(*routeEntry).appID, true
 	}
 	return "", false
@@ -79,8 +101,8 @@ func (c *RouteCache) Reset() {
 
 // Len returns the number of cached routes.
 func (c *RouteCache) Len() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.ll.Len()
 }
 

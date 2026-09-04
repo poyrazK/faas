@@ -8,7 +8,7 @@ import "github.com/onebox-faas/faas/pkg/api"
 //
 // The two enums deliberately carry different vocabulary so the host side
 // can name "what we saw in the tarball" (a Dockerfile) while the guest side
-// names "what to run" (buildctl --frontend dockerfile). Adding a language
+// names "what to run" (buildctl --frontend dockerfile.v0). Adding a language
 // profile adds a row here AND a marker in the detector AND a plan in
 // guest-init's switch — this table is the one place the mapping between
 // "what we saw" and "what to run" lives.

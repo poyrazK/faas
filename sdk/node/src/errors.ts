@@ -14,8 +14,8 @@
 
 /**
  * Problem wire shape — RFC 7807 with platform extensions
- * (`limit`, `observed`, `docs_url`, `billing_portal_url`,
- * `paddle_checkout_url`, `tx_id`). Mirrors
+ * (`limit`, `observed`, `docs_url`, `checkout_url`,
+ * `billing_portal_url`, `paddle_checkout_url`, `tx_id`). Mirrors
  * `sdk/go/internal/api/errors.go::Problem` and
  * `pkg/api/errors.go::Problem` byte-for-byte on field names.
  *
@@ -40,9 +40,11 @@ export interface Problem {
   observed?: number;
   /** Docs URL pointing at the error code's reference page. */
   docs_url?: string;
-  /** Stripe billing portal URL (billing errors). */
+  /** Provider-neutral hosted checkout URL (billing errors). */
+  checkout_url?: string;
+  /** Provider billing portal URL (billing errors). */
   billing_portal_url?: string;
-  /** Paddle checkout URL (plan-upgrade errors). */
+  /** Legacy Paddle checkout URL (plan-upgrade errors). */
   paddle_checkout_url?: string;
 }
 

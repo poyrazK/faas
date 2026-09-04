@@ -131,6 +131,18 @@ type VmmdAPI interface {
 	// (the engine's captureWarmSnapshotLocked decides whether
 	// to Destroy the VM on failure).
 	WarmSnapshot(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
+	// SignalAndKill (M-2 / ADR-138 §Decision 1) is the
+	// graceful signal-then-grace-then-SIGKILL stop sequence.
+	// signal is the POSIX signal number to send (0 = use
+	// manifest StopSignal, defaulting to SIGTERM). grace is
+	// the upper bound on clean-shutdown wait. Returns
+	// (killSignalSent, exitCode, err); killSignalSent=true
+	// means the grace window expired and vmmd escalated to
+	// SIGKILL. The gRPC handler lifts these into the
+	// StopInstanceResponse envelope. Unknown instances
+	// return (false, 0, nil) so the gRPC surface is
+	// idempotent — same shape as Destroy.
+	SignalAndKill(ctx context.Context, instance string, signal int32, graceSeconds int32) (killSignalSent bool, exitCode int32, err error)
 }
 
 // flowCounter is the compute-side conntrack seam. Keeping it local to the
@@ -193,6 +205,10 @@ type Server struct {
 	// codes.Unavailable, except for the idempotent
 	// Phase 4 / 5 ack paths which succeed.
 	migrations *migrationTracker
+	// streamBridges owns the reusable v2 bridge process and H2C transport for
+	// each live instance. It is lazy so tests and legacy/v1 traffic pay no
+	// startup cost until the optimized path is actually used.
+	streamBridges *streamBridgeManager
 }
 
 // New wires the server. ops may be nil (noop metrics), log may be nil
@@ -239,7 +255,7 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 		// never exported. Tests that don't assert metrics use this path.
 		ops = wire.NewOpsMetrics("vmmd_test")
 	}
-	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker()}
+	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
 }
 
 // WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
@@ -379,6 +395,16 @@ func (s *Server) incWakeFailure(_ context.Context, reason string) {
 // Register binds s to a gRPC server.
 func (s *Server) Register(g *grpc.Server) {
 	vmmdpb.RegisterVmmdServer(g, s)
+}
+
+// Close releases reusable bridge processes and their unix-socket transports.
+// vmmd calls this during graceful shutdown; keeping it explicit also makes
+// the child lifecycle testable without relying on parent-death signals.
+func (s *Server) Close(ctx context.Context) error {
+	if s == nil || s.streamBridges == nil {
+		return nil
+	}
+	return s.streamBridges.close(ctx)
 }
 
 // CreateFromSnapshot wires the snapshot-restore path. Falls back to cold
@@ -645,6 +671,40 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code)}, nil
 }
 
+// StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
+// signal-then-grace-then-SIGKILL stop sequence. Distinct from
+// Destroy (a hard SIGKILL). Engine.StopInstance (commit 6)
+// dispatches per Instance.ExecutionMode: worker/job → StopInstance
+// with the manifest's StopSignal + StopGracePeriod; request/service
+// → existing snapshotAndPark/Destroy path.
+//
+// signal is the POSIX signal number to send (0 = use manifest
+// StopSignal, defaulting to SIGTERM). graceSeconds is the upper
+// bound on clean-shutdown wait (0 = immediate SIGKILL, the legacy
+// Destroy shape). The response carries the captured exit code and
+// killSignalSent=true iff the grace window expired and vmmd had to
+// escalate. The CPU cache baseline is dropped on every successful
+// stop (and on not-found, idempotent) so the cache does not grow
+// unbounded — same shape as Destroy.
+func (s *Server) StopInstance(ctx context.Context, req *vmmdpb.StopInstanceRequest) (*vmmdpb.StopInstanceResponse, error) {
+	const op = "StopInstance"
+	start := time.Now()
+	killSignalSent, exitCode, err := s.vmm.SignalAndKill(ctx, req.GetInstance(), req.GetSignal(), req.GetGracePeriodS())
+	if err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	s.ForgetCPU(req.GetInstance())
+	s.ForgetNet(req.GetInstance())
+	s.ForgetActivity(req.GetInstance())
+	s.ops.Observe(op, time.Since(start), nil)
+	return &vmmdpb.StopInstanceResponse{
+		Instance:       req.GetInstance(),
+		ExitCode:       exitCode,
+		KillSignalSent: killSignalSent,
+	}, nil
+}
+
 // exportDirFor asks the Manager whether the instance was registered as a
 // builder VM at cold-boot. App VMs return "" (so the gRPC Destroy stays
 // backwards-compatible — same teardown behaviour as before M6).
@@ -856,6 +916,13 @@ func buildInstanceStatsRow(
 		}
 		if lastAt, ok := activityCache.LastAt(instance); ok {
 			row.LastRequestAt = timestamppb.New(lastAt)
+		}
+		if total, ok := activityCache.Total(instance); ok {
+			// The activity tracker is the source of truth for the
+			// topology-independent scale signal. Keep it optional so
+			// older/non-production test constructors retain the
+			// pre-tracker wire shape.
+			row.RequestCountTotal = wrapperspb.Int64(int64(total))
 		}
 	}
 	return row

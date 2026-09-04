@@ -105,3 +105,60 @@ func TestRenderContextSuffix_TriggerOnly(t *testing.T) {
 		t.Errorf("renderContextSuffix = %q, want %q", got, "trigger=cron.schedule")
 	}
 }
+
+func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
+	ev := api.WakeTimelineEvent{
+		Kind: "wake.restore_breakdown",
+		Data: map[string]any{
+			"total_ms":           float64(596),
+			"load_snapshot_ms":   float64(400),
+			"wait_ready_ms":      float64(131),
+			"materialize_mem_ms": float64(3),
+		},
+	}
+	got := renderRestoreBreakdown(ev)
+	for _, want := range []string{
+		"restore total=596ms",
+		"materialize_mem=3ms",
+		"load_snapshot=400ms",
+		"wait_ready=131ms",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("renderRestoreBreakdown missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestRenderWakeTimelinePage_DefaultSummaryHidesInternalPhases(t *testing.T) {
+	resp := api.WakeTimelineResponse{
+		WakeID: "wake-restore", AppID: "app-restore", Limit: 50,
+		Events: []api.WakeTimelineEvent{
+			{At: "2026-08-31T12:13:57.696394Z", Kind: "wake.queue_accepted", Actor: "schedd"},
+			{At: "2026-08-31T12:13:57.699179Z", Kind: "wake.admitted", Actor: "schedd",
+				Data: map[string]any{"admitted_at": "2026-08-31T12:13:57.699179Z"}},
+			{At: "2026-08-31T12:13:58.302741Z", Kind: "wake.restore_breakdown", Actor: "vmmd",
+				Data: map[string]any{"total_ms": float64(596), "materialize_mem_ms": float64(3)}},
+			{At: "2026-08-31T12:13:58.302741Z", Kind: "wake.readiness_200", Actor: "vmmd",
+				Data: map[string]any{"elapsed_ms": float64(131)}},
+			{At: "2026-08-31T12:13:58.302741Z", Kind: "wake.boot_completed", Actor: "schedd",
+				Data: map[string]any{
+					"started_at": "2026-08-31T12:13:57.696394Z", "completed_at": "2026-08-31T12:13:58.302741Z",
+				}},
+		},
+	}
+	var buf bytes.Buffer
+	renderWakeTimelinePage(&buf, resp)
+	out := buf.String()
+	if !strings.Contains(out, "cold start: queue_to_admit=2ms restore=596ms readiness=131ms wake_to_running=606ms") {
+		t.Errorf("default output missing compact summary:\n%s", out)
+	}
+	if strings.Contains(out, "materialize_mem=3ms") {
+		t.Errorf("default output exposed internal restore phase:\n%s", out)
+	}
+
+	buf.Reset()
+	renderWakeTimelinePageWithOptions(&buf, resp, true)
+	if !strings.Contains(buf.String(), "materialize_mem=3ms") {
+		t.Errorf("verbose output missing internal restore phase:\n%s", buf.String())
+	}
+}

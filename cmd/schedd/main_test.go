@@ -340,6 +340,16 @@ func (stubVMM) UpdateStaticEgressIP(context.Context, string, string, string) err
 	return nil
 }
 
+// StopInstance (M-2 / ADR-138 §Decision 1) satisfies the
+// sched.VMM contract. Wiring tests don't drive the per-mode
+// dispatch path (Engine.StopInstance is exercised in pkg/sched/
+// test_table); the stub returns a zero-value outcome so the
+// interface stays compile-clean while the real wire goes
+// through vmmdgrpc.
+func (stubVMM) StopInstance(context.Context, string, int32, int32) (*sched.StopInstanceOutcome, error) {
+	return &sched.StopInstanceOutcome{}, nil
+}
+
 // Logs (issue #254 / Move 4, issue #517 / PR-B) — wiring tests
 // don't drive the log stream path; the scheddgrpc handler tests
 // do. Returns nil + io.EOF so any accidental caller exits cleanly.

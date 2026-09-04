@@ -142,6 +142,12 @@ func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handl
 // is expensive). The dispatch-order invariant is pinned by
 // TestApidProxy_LogsCarveOutPrecedesAPIDRouting in proxy_test.go.
 func (a *apidProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// This endpoint is consumed only by control-plane Prometheus over apid's
+	// loopback listener. It must never enter the generic public /v1 proxy.
+	if isApidMetricsDiscoveryPath(r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
 	if isApidLogsPath(r.URL.Path) && a.logsHandler != nil {
 		a.logsHandler.ServeHTTP(w, r)
 		return
@@ -163,6 +169,10 @@ func (a *apidProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.next.ServeHTTP(w, r)
+}
+
+func isApidMetricsDiscoveryPath(p string) bool {
+	return p == "/v1/internal/metrics/targets"
 }
 
 // isApidLogsPath matches the `GET /v1/apps/{slug}/logs` family

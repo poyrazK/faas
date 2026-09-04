@@ -175,6 +175,9 @@ func TestBuildInstanceStatsRow_ActivityPopulatesInflightAndLastAt(t *testing.T) 
 	if got := row.GetInflightRequests(); got != 5 {
 		t.Errorf("InflightRequests = %d, want 5 (5 unmatched Begins)", got)
 	}
+	if got := row.GetRequestCountTotal().Value; got != 5 {
+		t.Errorf("RequestCountTotal = %d, want 5", got)
+	}
 	gotTime := row.GetLastRequestAt().AsTime()
 	if !gotTime.Equal(time.Unix(1_700_000_000, 0)) {
 		t.Errorf("LastRequestAt = %v, want %v (the injected clock at Begin time)", gotTime, time.Unix(1_700_000_000, 0))

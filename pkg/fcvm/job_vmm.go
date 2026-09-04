@@ -254,7 +254,7 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 	// bootNoWait = skipReady=true. HealthcheckPath is "" — the
 	// supervisor doesn't bind :8080; the exit envelope over vsock
 	// is the readiness signal.
-	return v.bootNoWait(ctx, l, BuildJobColdBootConfig(spec, l.Slot))
+	return v.bootNoWait(ctx, l, BuildJobColdBootConfig(spec, l.Slot), nil, nil, nil)
 }
 
 // stageJobManifest writes the JSON-encoded JobManifest to drive1

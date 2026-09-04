@@ -44,6 +44,7 @@ alerting:
 
 scrape_configs:
 {% for tgt in prom_targets %}
+{% if tgt.box_roles is not defined or (faas_box_role | default('single-box')) in tgt.box_roles %}
   - job_name: "{{ tgt.job }}"
     static_configs:
       - targets: ["{{ tgt.host }}:{{ tgt.port }}"]
@@ -52,4 +53,16 @@ scrape_configs:
 {% if tgt.metrics_path is defined %}
     metrics_path: "{{ tgt.metrics_path }}"
 {% endif %}
+{% endif %}
 {% endfor %}
+{% if (faas_box_role | default('')) == 'control-plane' %}
+  # Compute gateway metrics are served on each compute node's private
+  # data-plane listener. HTTP-SD reads the active compute_nodes registry from
+  # apid, so adding, draining, or replacing a node changes this target set on
+  # the next refresh without editing inventory or re-rendering this file.
+  - job_name: "gatewayd-internal"
+    http_sd_configs:
+      - url: "{{ prom_compute_metrics_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    metrics_path: "/metrics"
+{% endif %}

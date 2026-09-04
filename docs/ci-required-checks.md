@@ -36,7 +36,7 @@ was red on `unit tests (pg shard 2)`).
 | `unit tests (pure Go shard 1 — sched/fcvm/gateway)`        | sched + fcvm + gateway (-race)             | `ci.yml:~350`     |
 | `unit tests (pure Go shard 2 — light packages)`            | the rest of the race-enabled tree         | `ci.yml:~380`     |
 | `CodeQL`                                                    | CodeQL SARIF (security gate)              | `codeql.yml`      |
-| `image-scan (Grype + govulncheck high+)`                    | Vulnerability scan (Grype + govulncheck)   | `ci.yml:~900`     |
+| `supply-chain-scan (govulncheck high+)`                     | Go vulnerability scan (HIGH+)             | `ci.yml:~900`     |
 | `migrations (contiguity + apply)`                           | Migration slot races (issue #493+#496)    | `ci.yml:~160`     |
 | `daemonunit-check (generated drift)`                        | `pkg/daemonunitspec/*.go` drift           | `ci.yml:~600`     |
 | `sqlc-check (generated drift)`                              | sqlc query drift                          | `ci.yml:~440`     |
@@ -46,6 +46,11 @@ was red on `unit tests (pg shard 2)`).
 | `proto-check`                                               | checked-in `*.pb.go` matches protoc       | `ci.yml:200-208`  |
 | `load (1k rps hot-path)`                                    | p50 regression under load (issue #266)    | `ci.yml:~700`     |
 | `workflow-lint (actionlint)`                                | Workflow YAML semantic lint               | `ci.yml:~1175`    |
+| `runtime-contract-gate`                                     | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml:runtime-contract-gate` |
+
+Runtime OCI vulnerability scanning is enforced by the `images.yml` builder and
+runtime matrix jobs. Those jobs scan the exact locally-built or published
+artifacts; Dockerfile source text is not treated as an image scan.
 
 `metal (KVM + root, manual)` is intentionally **not** a required
 check — it is manual-only via `workflow_dispatch`.

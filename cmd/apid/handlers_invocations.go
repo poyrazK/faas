@@ -165,21 +165,27 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("enqueue sync invoke"))
 		return
 	}
-	payload, err := s.notif.WaitFor(r.Context(), db.NotifyInvocationDone,
-		func(p string) bool {
-			// Canonical match — parse the JSON and compare by id, not
-			// by substring. A 32-char id suffix can otherwise match
-			// the tail of an unrelated id (review finding on PR #191).
-			got, _ := extractNotifyFields(p)
-			return got == inv.ID
-		},
-		timeout)
-	_ = payload // payload is the pg_notify JSON; we re-read by id below
-	if errors.Is(err, db.ErrWaitTimeout) {
+	var waitErr error
+	if s.invocationCompletion != nil {
+		waitErr = s.invocationCompletion.Wait(r.Context(), inv.ID, timeout)
+	} else {
+		var payload string
+		payload, waitErr = s.notif.WaitFor(r.Context(), db.NotifyInvocationDone,
+			func(p string) bool {
+				// Canonical match — parse the JSON and compare by id, not
+				// by substring. A 32-char id suffix can otherwise match
+				// the tail of an unrelated id (review finding on PR #191).
+				got, _ := extractNotifyFields(p)
+				return got == inv.ID
+			},
+			timeout)
+		_ = payload // payload is the pg_notify JSON; we re-read by id below
+	}
+	if errors.Is(waitErr, db.ErrWaitTimeout) {
 		api.WriteProblem(w, api.ErrLongPollTimeout())
 		return
 	}
-	if err != nil {
+	if waitErr != nil {
 		api.WriteProblem(w, api.ErrCapacity("long-poll"))
 		return
 	}

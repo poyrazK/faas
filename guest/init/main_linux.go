@@ -270,7 +270,35 @@ func boot() error {
 	// fails the deploy — that's worse than today's opaque "guest
 	// not ready after 30s" path).
 	go runCharacterizationForSup(supRef, manifest)
-	return supRef.Run()
+	// M-2 / //code-review PR #1202 finding #7: a single boot-scoped
+	// cancellable context is shared between the HEALTHCHECK poll
+	// goroutine and the PID 1 signal-handler loop so both observe
+	// the same shutdown boundary. The previous shape passed
+	// context.Background() to both — the poll goroutine's DGRAM
+	// socket stayed open after the supervisor exited and the
+	// signal-handler loop returned, leaking fd + goroutine + a
+	// stuck ring-buffer drain across guest-init restarts. The
+	// cancel() is wired into the runSignalHandlers return path so
+	// when the supervisor finishes (clean exit, crash-loop, or
+	// graceful stop), both subsystems unwind together.
+	bootCtx, bootCancel := context.WithCancel(context.Background())
+	defer bootCancel()
+	// M-2 / ADR-139 §Decision 1: HEALTHCHECK poll goroutine.
+	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
+	// the engine's existing :8080 TCP-accept probe continues to
+	// gate readiness, so the customer doesn't lose the boot.
+	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default()); err != nil {
+		slog.Default().Warn("healthcheck poll unavailable", "err", err)
+	}
+	// M-2 / ADR-138 §Decision 1 / issue #474 — install the PID 1
+	// signal handler before invoking the supervisor. The handler
+	// multiplexes (a) the customer's STOPSIGNAL forwarded to the
+	// supervisor for graceful stop, (b) the SIGCHLD reaper loop
+	// so every forked child is reaped (no zombies), and (c)
+	// forwarding of guest-init-received signals to the tracked
+	// workload. Returns when the supervisor exits (clean, crash-
+	// loop exhausted, or graceful-stop completed).
+	return runSignalHandlers(bootCtx, manifest, supRef, slog.Default())
 }
 
 func guestStage(stage string) {
@@ -283,6 +311,13 @@ func guestStage(stage string) {
 // BuildEnv path; nil in one of them short-circuits to the other layer's
 // 3-arg shape via BuildEnvWithSecrets's nil-tolerant map reads.
 func runAppWithEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor) error {
+	return runAppWithRAM(m, secrets, apiEnv, sup, 0)
+}
+
+// runAppWithRAM is the workload-aware variant of runAppWithEnv. ramMB is
+// supplied by the workload roster when present; zero preserves the legacy
+// single-workload path, whose host-side cgroup is the authoritative cap.
+func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int) error {
 	argv := m.Entrypoint
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = m.EffectiveWorkingDir()
@@ -337,25 +372,22 @@ func runAppWithEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 	// in-guest cgroup v2 partition for the main workload.
 	// mkdir + write memory.max BEFORE Start. The main
 	// workload gets a "main-app" leaf so its OOM is
-	// scoped separately from any sidecar's. ram_mb = 0
-	// (legacy single-workload wakes) floors at 1 MiB in
-	// partitionInto. The customer-facing API gate already
-	// enforces plan RAM bounds upstream; this leaf is
-	// defense-in-depth (host-side writePlanCgroup is the
-	// primary cap).
-	mainLeaf := leafDir("main", "app")
-	if mainLeaf != "" {
-		if perr := partitionInto(mainLeaf, 0); perr != nil {
-			slog.Default().Warn("cgroup partition into main leaf failed",
-				"leaf", mainLeaf, "err", perr)
-		}
+	// scoped separately from any sidecar's. Legacy
+	// single-workload wakes have no per-workload RAM value
+	// and therefore skip this child leaf; the host-side
+	// writePlanCgroup remains their authoritative cap.
+	mainLeaf, cgroupErr := prepareWorkloadCgroup("main", "app", ramMB, slog.Default())
+	if cgroupErr != nil {
+		return fmt.Errorf("prepare main workload cgroup: %w", cgroupErr)
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
 	// Place the forked child into the leaf. Same race
 	// posture as runSidecar — see placeIntoLeaf's doc.
-	placeIntoLeaf(mainLeaf, cmd.Process.Pid, slog.Default())
+	if mainLeaf != "" {
+		placeIntoLeaf(mainLeaf, cmd.Process.Pid, slog.Default())
+	}
 	// Cluster C / ADR-121: spawn the per-workload cgroup.events
 	// oom_kill listener (guest/init/cgroup_partition_linux.go::
 	// WatchOOM) for the duration of the main workload's lifetime.
@@ -366,20 +398,11 @@ func runAppWithEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 	// classification surface (classify(exitCode=137) →
 	// FailureOOM) and does not need this listener.
 	//
-	// planMB: we can't read the customer's deployment row from
-	// guest-init (the manifest doesn't carry the plan cap and
-	// vmmd doesn't currently inject one). The listener
-	// re-reads the leaf's memory.max on the kill event and
-	// falls back to 0 if the env is missing — the whycopy
-	// Observed closure degrades to the static prose when
-	// planMB=0, which is still a stamp (just less actionable
-	// than the templated text). A future PR wires a VMM cmd-
-	// line / env injection that surfaces the plan cap.
 	if mainLeaf != "" {
 		oomCtx, oomCancel := context.WithCancel(context.Background())
 		go func() {
 			defer oomCancel()
-			werr := WatchOOM(oomCtx, mainLeaf, 0, /* planMB — re-read on kill */
+			werr := WatchOOM(oomCtx, mainLeaf, ramMB,
 				func(peakMB, pMB int) {
 					if eerr := EmitWorkloadOOM(oomCtx, peakMB, pMB); eerr != nil {
 						slog.Default().Warn("EmitWorkloadOOM failed",
@@ -504,18 +527,44 @@ func ensureRailpackMise() error {
 	return stageExecutable(railpackMiseSource, railpackMiseTarget)
 }
 
-// ensureBuilderShell ensures /bin/bash and /usr/bin/bash point to a valid shell
-// so python-build / mise scripts with #!/usr/bin/env bash can execute cleanly.
+// builderShellCandidates follows builderPATH's lookup order. A real bash
+// binary is required here: mise's python-build plugin invokes scripts with a
+// #!/usr/bin/env bash shebang, and BusyBox sh is not a compatible substitute.
+var builderShellCandidates = []string{
+	"/usr/local/bin/bash",
+	"/usr/sbin/bash",
+	"/usr/bin/bash",
+	"/sbin/bash",
+	"/bin/bash",
+}
+
+// ensureBuilderShell verifies that the builder image provides a functioning
+// bash executable. Do not synthesize /bin/bash -> /bin/sh: when /bin/sh is
+// BusyBox, invoking it through the name "bash" makes BusyBox look for a bash
+// applet and fail with the misleading "bash: applet not found" error.
 func ensureBuilderShell() error {
-	for _, target := range []string{"/bin/bash", "/usr/bin/bash"} {
-		if _, err := os.Stat(target); os.IsNotExist(err) {
-			_ = os.MkdirAll(filepath.Dir(target), 0o755)
-			if _, shErr := os.Stat("/bin/sh"); shErr == nil {
-				_ = os.Symlink("/bin/sh", target)
+	return validateBuilderShell(builderShellCandidates, builderEnv())
+}
+
+func validateBuilderShell(candidates, env []string) error {
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err != nil {
+			if os.IsNotExist(err) {
+				continue
 			}
+			return fmt.Errorf("stat %s: %w", candidate, err)
 		}
+		// BASH_VERSION is a Bash-only variable. A BusyBox shell reached through
+		// a bash-named symlink may accept `-c` but is not a valid interpreter
+		// for mise's Bash scripts.
+		cmd := exec.Command(candidate, "-c", `test -n "${BASH_VERSION:-}"`)
+		cmd.Env = env
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("builder shell %s is not a functional bash: %w (%s)", candidate, err, strings.TrimSpace(string(output)))
+		}
+		return nil
 	}
-	return nil
+	return errors.New("builder image does not contain a functional bash executable; install the bash package")
 }
 
 func stageExecutable(source, target string) error {
@@ -832,6 +881,18 @@ func runBuild(m api.BuildManifest) error {
 	}
 	guestStage("buildkit-ready")
 
+	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
+		return writeAndPoweroff(m, fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
+	}
+	var restoreRailpackConfig func() error
+	if m.Framework != api.FrameworkDockerfile {
+		var err error
+		restoreRailpackConfig, err = prepareRailpackConfig(m)
+		if err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("prepare Railpack runtime base: %w", err), "")
+		}
+	}
+
 	// 3. Pick the build command.
 	argv := buildArgv(m)
 
@@ -872,6 +933,9 @@ func runBuild(m api.BuildManifest) error {
 	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
 	if err := cmd.Start(); err != nil {
+		if restoreRailpackConfig != nil {
+			_ = restoreRailpackConfig()
+		}
 		return writeAndPoweroff(m, fmt.Errorf("start build command: %w", err), "")
 	}
 	waitCh := make(chan error, 1)
@@ -901,6 +965,15 @@ func runBuild(m api.BuildManifest) error {
 	if err != nil && buildkitLog.Len() > 0 {
 		combined.WriteString("\n[buildkitd]\n")
 		combined.WriteString(tailOf(buildkitLog.Bytes(), m.LogTailBytes/2))
+	}
+	if restoreRailpackConfig != nil {
+		if restoreErr := restoreRailpackConfig(); restoreErr != nil {
+			if err == nil {
+				err = fmt.Errorf("restore Railpack config: %w", restoreErr)
+			} else {
+				err = errors.Join(err, fmt.Errorf("restore Railpack config: %w", restoreErr))
+			}
+		}
 	}
 	return writeAndPoweroff(m, err, combined.String())
 }
@@ -1023,6 +1096,103 @@ func flattenSingleSourceDir(workdir string) error {
 	return nil
 }
 
+// prepareRailpackConfig injects the platform-selected runtime base into the
+// source project for the duration of `railpack prepare`. Railpack's prepare
+// command only reads railpack.json from the project root; without this small
+// transactional overlay it silently generates a plan FROM railpack-runtime,
+// while imaged later expects the pinned Gregale runner base.
+//
+// Customer configuration is preserved byte-for-byte and restored before the
+// BuildKit solve starts, so the generated platform-only setting cannot leak
+// into the OCI context or alter a later retry. A symlink at this path is
+// rejected to keep the generated write inside the extracted source tree.
+func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
+	path := filepath.Join(m.Workdir, "railpack.json")
+	info, err := os.Lstat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s must not be a symlink", path)
+	}
+
+	existed := err == nil
+	originalMode := os.FileMode(0o644)
+	var original []byte
+	if existed {
+		originalMode = info.Mode().Perm()
+		original, err = os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+	}
+
+	config := map[string]any{}
+	if existed && len(strings.TrimSpace(string(original))) > 0 {
+		if err := json.Unmarshal(original, &config); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+	}
+	deploy, err := nestedObject(config, "deploy")
+	if err != nil {
+		return nil, fmt.Errorf("parse %s deploy: %w", path, err)
+	}
+	base, err := nestedObject(deploy, "base")
+	if err != nil {
+		return nil, fmt.Errorf("parse %s deploy.base: %w", path, err)
+	}
+	base["image"] = m.RuntimeBaseRef
+	// Alpine runner bases and base-minimal cannot execute Railpack's default
+	// apt install phase. Preserve an explicit customer list, but make the
+	// platform default empty for musl runtimes and minimal scratch bases.
+	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
+		if _, ok := deploy["aptPackages"]; !ok {
+			deploy["aptPackages"] = []any{}
+		}
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode %s: %w", path, err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, originalMode); err != nil {
+		return nil, fmt.Errorf("write %s: %w", path, err)
+	}
+	if existed {
+		if err := os.Chmod(path, originalMode); err != nil {
+			return nil, fmt.Errorf("restore mode %s: %w", path, err)
+		}
+	}
+
+	return func() error {
+		if existed {
+			if err := os.WriteFile(path, original, originalMode); err != nil {
+				return err
+			}
+			return os.Chmod(path, originalMode)
+		}
+		return os.Remove(path)
+	}, nil
+}
+
+func nestedObject(parent map[string]any, key string) (map[string]any, error) {
+	if value, ok := parent[key]; ok {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an object", key)
+		}
+		return object, nil
+	}
+	object := map[string]any{}
+	parent[key] = object
+	return object, nil
+}
+
+func isAlpineRuntime(runtime string) bool {
+	return runtime == "node22" || runtime == "go124-alpine"
+}
+
 // seedBuildEntropy injects a fresh seed staged by builderd into the guest
 // kernel's entropy pool before BuildKit starts. BuildKit generates an RSA
 // proxy CA during startup; without this step a cold Firecracker guest can
@@ -1056,7 +1226,7 @@ func buildArgv(m api.BuildManifest) []string {
 	case api.FrameworkDockerfile:
 		return []string{
 			"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
-			"--frontend", "dockerfile",
+			"--frontend", "dockerfile.v0",
 			"--local", "context=" + m.Workdir,
 			"--local", "dockerfile=" + m.Workdir,
 			"--output", "type=oci,dest=" + m.OutDir + "/image.tar",
@@ -1431,9 +1601,10 @@ func mountBasics() error {
 // (vdc), drive3 (vdd), ... are sidecar drives mounted read-only as
 // additional overlay lowers. The single writable upper stays on drive1
 // (ADR-069 §"no shared writable layer between workloads"). The merged
-// root's precedence is base → main → sidecar-0 → sidecar-1 → … so a
-// workload's /etc/faas/workload.json (per-drive stamp) is visible from
-// the merged root even though the base ships none.
+// root's precedence is base → main → sidecar-0 → sidecar-1 → … so the
+// deployment roster on the main upper and each sidecar's name-scoped
+// runtime manifest are visible from the merged root even though the
+// base ships none.
 //
 // The legacy 2-drive path (no sidecars) is preserved as the default
 // branch: assembleOverlay does NOT touch /proc/partitions or the

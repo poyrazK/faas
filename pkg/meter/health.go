@@ -22,6 +22,7 @@ const StaleAfterMultiplier = 3
 type HealthStatus struct {
 	Healthy bool              `json:"healthy"`
 	Stale   []string          `json:"stale,omitempty"`
+	Failed  map[string]string `json:"failed,omitempty"`
 	Ticks   map[string]string `json:"ticks"`
 }
 
@@ -59,10 +60,16 @@ func (l *Loop) Health(now time.Time) HealthStatus {
 	if l.partitionCreate == nil {
 		delete(intervals, "upstream_part")
 	}
-	s := HealthStatus{Ticks: make(map[string]string, len(intervals))}
+	s := HealthStatus{Failed: make(map[string]string), Ticks: make(map[string]string, len(intervals))}
 	for name, interval := range intervals {
 		threshold := StaleAfterMultiplier * interval
-		last, ok := l.LastTick(name)
+		l.lastTickMu.RLock()
+		last, ok := l.lastTick[name]
+		errText := l.lastTickErr[name]
+		l.lastTickMu.RUnlock()
+		if errText != "" {
+			s.Failed[name] = errText
+		}
 		if !ok {
 			s.Ticks[name] = "never"
 			s.Stale = append(s.Stale, name)
@@ -73,6 +80,9 @@ func (l *Loop) Health(now time.Time) HealthStatus {
 			s.Stale = append(s.Stale, name)
 		}
 	}
-	s.Healthy = len(s.Stale) == 0
+	// A failure is reported independently from staleness. The ticker is still
+	// alive and may retry on the next interval, but the current result is not
+	// healthy until one successful tick clears the error.
+	s.Healthy = len(s.Stale) == 0 && len(s.Failed) == 0
 	return s
 }

@@ -6,12 +6,9 @@
 //     the existing customer for the same monthly price + month-to-
 //     date overage. Idempotency-Key + CustomData tag distinguish
 //     it from a fresh plan_upgrade CreateTransaction (upgrade.go).
-//   - CancelAtPeriodEnd: stamps the cancel intent onto the Paddle
-//     Customer object's CustomData.scheduled_change field. The
-//     next CreateTransaction-derived rebill reads the flag and
-//     skips posting; the account downgrades to Free on the next
-//     meterd dunning tick. Paddle Billing has no separate
-//     "scheduled cancellation" primitive (issue #242 design note).
+//   - CancelAtPeriodEnd: calls Paddle's subscription cancellation
+//     endpoint with EffectiveFromNextBillingPeriod and returns the
+//     provider-confirmed effective timestamp.
 //   - PaymentMethodSummary: paddle.Client.ListCustomerPaymentMethods
 //     reduces the wire shape to (brand, last4, exp_month,
 //     exp_year). Falls back to the zero PaymentMethod when the
@@ -26,10 +23,12 @@ package paddle
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
-	"github.com/PaddleHQ/paddle-go-sdk/v5"
+	paddle "github.com/PaddleHQ/paddle-go-sdk/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -110,49 +109,189 @@ func (p *Provider) RetryLatestCharge(ctx context.Context, acct state.Account) (s
 // CancelAtPeriodEnd implements billing.Provider.CancelAtPeriodEnd
 // on Paddle (issue #242).
 //
-// Paddle Billing v2 has no separate "scheduled cancellation"
-// primitive (no API for cancel_at_period_end). The cancel intent
-// is stamped onto the Customer.CustomData.scheduled_change field
-// via paddle.Client.UpdateCustomer. The next monthly-rollover
-// flush reads the flag and skips posting the rebill transaction;
-// the account downgrades to Free on the next meterd dunning tick.
-//
-// Returns the next month-rollover instant as the effective
-// timestamp. Paddle doesn't expose current_period_end on the
-// Customer object — we compute the start-of-next-month in UTC and
-// return that as the best-available estimate. The CLI renders
-// this as "your apps will stop on <date>"; the dashboard reads
-// the same field via the existing account-row fetch path.
+// Paddle Billing v2 exposes this as a subscription cancellation
+// with EffectiveFromNextBillingPeriod. The method returns the
+// effective date from Paddle's scheduled-change/current-period
+// response so the CLI shows a provider-confirmed timestamp.
 //
 // Returns ErrAlreadyCancelled when acct has no ProviderCustomerID
 // (Free / never-checked-out / post-cancel).
 func (p *Provider) CancelAtPeriodEnd(ctx context.Context, acct state.Account) (time.Time, error) {
 	// Defensive: see Provider.EnsurePlanProducts. Hand-built
-	// *Provider values would otherwise nil-panic on p.client.UpdateCustomer.
+	// *Provider values would otherwise nil-panic on p.client.CancelSubscription.
 	if p.client == nil {
 		return time.Time{}, fmt.Errorf("paddle: SDK not initialized")
 	}
-	if acct.ProviderCustomerID == "" {
-		return time.Time{}, fmt.Errorf("%w (account %s, no customer)",
+	if acct.StripeSubscriptionItem == "" {
+		return time.Time{}, fmt.Errorf("%w (account %s, no subscription)",
 			billing.ErrAlreadyCancelled, acct.ID)
 	}
-	customerID := acct.ProviderCustomerID
-	scheduled := "cancel_at_period_end"
-	_, err := p.client.UpdateCustomer(ctx, &paddle.UpdateCustomerRequest{
-		CustomerID: customerID,
-		CustomData: paddle.NewPatchField(paddle.CustomData{
-			"scheduled_change":    scheduled,
-			"faas_cancel_stamped": time.Now().UTC().Format(time.RFC3339),
-		}),
+	effectiveFrom := paddle.EffectiveFromNextBillingPeriod
+	sub, err := p.client.CancelSubscription(ctx, &paddle.CancelSubscriptionRequest{
+		SubscriptionID: acct.StripeSubscriptionItem,
+		EffectiveFrom:  &effectiveFrom,
 	})
 	if err != nil {
-		return time.Time{}, fmt.Errorf("paddle: UpdateCustomer(cancel) account=%s: %w",
+		return time.Time{}, fmt.Errorf("paddle: CancelSubscription account=%s: %w",
 			acct.ID, err)
 	}
-	// Best-available effective_at: start of next UTC month.
-	now := p.now()
-	effective := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
-	return effective, nil
+	if sub == nil {
+		return time.Time{}, fmt.Errorf("paddle: CancelSubscription account=%s returned nil subscription", acct.ID)
+	}
+	if sub.ScheduledChange != nil {
+		if effective, parseErr := time.Parse(time.RFC3339, sub.ScheduledChange.EffectiveAt); parseErr == nil {
+			return effective.UTC(), nil
+		}
+	}
+	if sub.CurrentBillingPeriod != nil {
+		if effective, parseErr := time.Parse(time.RFC3339, sub.CurrentBillingPeriod.EndsAt); parseErr == nil {
+			return effective.UTC(), nil
+		}
+	}
+	if sub.NextBilledAt != nil {
+		if effective, parseErr := time.Parse(time.RFC3339, *sub.NextBilledAt); parseErr == nil {
+			return effective.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("paddle: CancelSubscription account=%s returned no effective date", acct.ID)
+}
+
+// CreateCustomerPortalSession creates a short-lived authenticated Paddle
+// portal session. Paddle does not accept a return URL for this endpoint; the
+// caller's returnURL is intentionally ignored.
+func (p *Provider) CreateCustomerPortalSession(ctx context.Context, acct state.Account, _ string) (string, error) {
+	if p.client == nil {
+		return "", fmt.Errorf("paddle: SDK not initialized")
+	}
+	if acct.ProviderCustomerID == "" {
+		return "", fmt.Errorf("paddle: customer portal requires customer id for account=%s", acct.ID)
+	}
+	request := &paddle.CreateCustomerPortalSessionRequest{CustomerID: acct.ProviderCustomerID}
+	if acct.StripeSubscriptionItem != "" {
+		request.SubscriptionIDs = []string{acct.StripeSubscriptionItem}
+	}
+	session, err := p.client.CreateCustomerPortalSession(ctx, request)
+	if err != nil {
+		return "", fmt.Errorf("paddle: create customer portal session account=%s: %w", acct.ID, err)
+	}
+	if session == nil {
+		return "", fmt.Errorf("paddle: create customer portal session account=%s returned nil session", acct.ID)
+	}
+	if session.URLs.General.Overview != "" {
+		return session.URLs.General.Overview, nil
+	}
+	if len(session.URLs.Subscriptions) > 0 {
+		if session.URLs.Subscriptions[0].UpdateSubscriptionPaymentMethod != "" {
+			return session.URLs.Subscriptions[0].UpdateSubscriptionPaymentMethod, nil
+		}
+		if session.URLs.Subscriptions[0].CancelSubscription != "" {
+			return session.URLs.Subscriptions[0].CancelSubscription, nil
+		}
+	}
+	return "", fmt.Errorf("paddle: create customer portal session account=%s returned no URL", acct.ID)
+}
+
+// Refund creates a full or partial Paddle refund adjustment. Partial refunds
+// are distributed across the calculated transaction line items because Paddle
+// requires txnitm_* IDs for partial adjustments.
+func (p *Provider) Refund(ctx context.Context, transactionID string, amountCents int64) (*billing.RefundResult, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("paddle: SDK not initialized")
+	}
+	if transactionID == "" {
+		return nil, errors.New("paddle: refund requires transaction ID")
+	}
+	if amountCents <= 0 {
+		return nil, errors.New("paddle: refund amount must be positive cents")
+	}
+	idem := fmt.Sprintf("faas-refund-%s-%d", transactionID, amountCents)
+	if key, ok := billing.IdempotencyKeyFromContext(ctx); ok {
+		idem = key
+	}
+	ctx = paddle.ContextWithTransitID(ctx, idem)
+	txn, err := p.client.GetTransaction(ctx, &paddle.GetTransactionRequest{TransactionID: transactionID})
+	if err != nil {
+		return nil, fmt.Errorf("paddle: get transaction for refund %s: %w", transactionID, err)
+	}
+	if txn == nil {
+		return nil, fmt.Errorf("paddle: get transaction for refund %s returned nil transaction", transactionID)
+	}
+	// adjusted_totals is the remaining transaction total after any
+	// prior adjustments. Prefer it so a second partial refund cannot
+	// be validated against the original, already-refunded amount.
+	total := paddleAmount(txn.Details.AdjustedTotals.Total)
+	if total <= 0 {
+		total = paddleAmount(txn.Details.Totals.Total)
+	}
+	if total <= 0 || amountCents > total {
+		return nil, fmt.Errorf("paddle: refund amount %d exceeds refundable transaction total %d", amountCents, total)
+	}
+	request := &paddle.CreateAdjustmentRequest{
+		Action:        paddle.AdjustmentActionRefund,
+		Reason:        "customer_request",
+		TransactionID: transactionID,
+	}
+	if amountCents == total {
+		kind := paddle.AdjustmentTypeFull
+		request.Type = &kind
+	} else {
+		kind := paddle.AdjustmentTypePartial
+		request.Type = &kind
+		remaining := amountCents
+		for _, item := range txn.Details.LineItems {
+			if item.ID == "" || remaining <= 0 {
+				continue
+			}
+			lineTotal := paddleAmount(item.Totals.Total)
+			if lineTotal <= 0 {
+				continue
+			}
+			part := lineTotal
+			if part > remaining {
+				part = remaining
+			}
+			amount := strconv.FormatInt(part, 10)
+			request.Items = append(request.Items, paddle.AdjustmentItemCreate{
+				ItemID: item.ID,
+				Type:   paddle.AdjustmentItemCreateTypePartial,
+				Amount: &amount,
+			})
+			remaining -= part
+		}
+		if remaining != 0 {
+			return nil, fmt.Errorf("paddle: refund amount %d cannot be allocated across transaction items", amountCents)
+		}
+	}
+	adjustment, err := p.client.CreateAdjustment(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("paddle: create refund adjustment transaction=%s amount=%d: %w", transactionID, amountCents, err)
+	}
+	if adjustment == nil || adjustment.ID == "" {
+		return nil, fmt.Errorf("paddle: create refund adjustment transaction=%s returned empty ID", transactionID)
+	}
+	actual := paddleAmount(adjustment.Totals.Total)
+	if actual <= 0 {
+		actual = amountCents
+	}
+	currency := string(adjustment.CurrencyCode)
+	if currency == "" {
+		currency = string(txn.CurrencyCode)
+	}
+	return &billing.RefundResult{
+		ProviderRefundID: adjustment.ID,
+		ChargeID:         transactionID,
+		AmountCents:      actual,
+		Currency:         currency,
+		Status:           string(adjustment.Status),
+	}, nil
+}
+
+func paddleAmount(value string) int64 {
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // PaymentMethodSummary implements billing.Provider.PaymentMethodSummary

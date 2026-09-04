@@ -37,6 +37,25 @@ func newAppWithSlug(t *testing.T, ctx context.Context, s *state.MemStore, accoun
 	return a
 }
 
+func makeBillableAccount(t *testing.T, ctx context.Context, s *state.MemStore, plan api.Plan) state.Account {
+	t.Helper()
+	acct := makeAccount(t, ctx, s, plan)
+	if plan == api.PlanFree {
+		return acct
+	}
+	customerID := "customer-" + acct.ID
+	subscriptionID := "subscription-" + acct.ID
+	if err := s.UpdateAccountProviderCustomerID(ctx, acct.ID, customerID); err != nil {
+		t.Fatalf("stamp provider customer: %v", err)
+	}
+	if err := s.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, subscriptionID); err != nil {
+		t.Fatalf("stamp subscription: %v", err)
+	}
+	acct.ProviderCustomerID = customerID
+	acct.StripeSubscriptionItem = subscriptionID
+	return acct
+}
+
 // --- §14 M7 acceptance (push-side) ---
 //
 // TestInvoiceShadow24h (meter_test.go:232) is the meter-side half of
@@ -70,6 +89,14 @@ type recordingStripe struct {
 	mu    sync.Mutex
 	calls []recordedCall
 	err   error
+}
+
+type recordingOverage struct {
+	recordingStripe
+}
+
+func (*recordingOverage) UsageMode() billing.UsageMode {
+	return billing.UsageModeOverage
 }
 
 type recordedCall struct {
@@ -267,7 +294,7 @@ func TestPushHour_Shadow24h(t *testing.T) {
 	// Hobby plan: free-tier hard-stop is gated behind 5 GB-h on the
 	// Free plan, so Hobby is the canonical "real customer" account
 	// for the acceptance scenario. Status defaults to AccountActive.
-	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	acct := makeBillableAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
 	makeLiveInstance(t, ctx, s, app.ID, acct.ID, 256)
 
@@ -384,7 +411,7 @@ func TestPushHour_SkipsFreeAndSuspended(t *testing.T) {
 	freeApp := newAppWithSlug(t, ctx, s, freeAcct.ID, "free-app")
 	makeLiveInstance(t, ctx, s, freeApp.ID, freeAcct.ID, 128)
 
-	suspendedAcct := makeAccount(t, ctx, s, api.PlanHobby)
+	suspendedAcct := makeBillableAccount(t, ctx, s, api.PlanHobby)
 	suspendedApp := newAppWithSlug(t, ctx, s, suspendedAcct.ID, "suspended-app")
 	makeLiveInstance(t, ctx, s, suspendedApp.ID, suspendedAcct.ID, 256)
 	if err := s.UpdateAccountStatus(ctx, suspendedAcct.ID, state.AccountSuspended); err != nil {
@@ -442,7 +469,7 @@ func TestPushHour_RecordsStripeError(t *testing.T) {
 	now := t0
 	clock := func() time.Time { return now }
 
-	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	acct := makeBillableAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
 	makeLiveInstance(t, ctx, s, app.ID, acct.ID, 256)
 
@@ -560,7 +587,7 @@ func TestPushHour_PaddleDispatchHitsPaddleHistogram(t *testing.T) {
 	now := t0
 	clock := func() time.Time { return now }
 
-	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	acct := makeBillableAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
 	makeLiveInstance(t, ctx, s, app.ID, acct.ID, 256)
 
@@ -656,7 +683,7 @@ func TestPushHour_Shadow24h_StripeFake(t *testing.T) {
 	now := t0
 	clock := func() time.Time { return now }
 
-	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	acct := makeBillableAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
 	makeLiveInstance(t, ctx, s, app.ID, acct.ID, 256)
 
@@ -731,7 +758,7 @@ func TestPushHour_Shadow24h_Paddle(t *testing.T) {
 	now := t0
 	clock := func() time.Time { return now }
 
-	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	acct := makeBillableAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
 	makeLiveInstance(t, ctx, s, app.ID, acct.ID, 256)
 
@@ -891,7 +918,7 @@ func TestPushHour_ExcludesTailSeconds(t *testing.T) {
 	now := t0
 	clock := func() time.Time { return now }
 
-	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	acct := makeBillableAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
 	ins := makeLiveInstance(t, ctx, s, app.ID, acct.ID, 256)
 

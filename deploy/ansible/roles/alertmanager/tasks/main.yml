@@ -21,7 +21,7 @@
 #      systemd enable; otherwise the role fails loud.
 #   3. Alertmanager runs on loopback only; the only caller is
 #      Prometheus on the same host. Bind addr defaults to
-#      127.0.0.1:9093.
+#      127.0.0.1:9094.
 
 - name: alertmanager — assert SHA-256 pin was supplied
   ansible.builtin.assert:

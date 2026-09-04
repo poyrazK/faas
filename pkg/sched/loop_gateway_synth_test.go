@@ -59,3 +59,43 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 		t.Fatalf("result = %s, want {\"ok\":true}", got.Result)
 	}
 }
+
+func TestHTTPGatewaySynthInvokeWithWakeCarriesTarget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got struct {
+			InstanceID   string `json:"instance_id"`
+			NodeID       string `json:"node_id"`
+			DeploymentID string `json:"deployment_id"`
+			WakeID       string `json:"wake_id"`
+			Port         int    `json:"port"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got.InstanceID != "inst-1" || got.NodeID != "node-1" ||
+			got.DeploymentID != "dep-1" || got.WakeID != "wake-1" || got.Port != 8081 {
+			t.Fatalf("target = %#v", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"state":"dispatching"}`))
+	}))
+	defer srv.Close()
+
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
+	_, err := h.InvokeWithWake(context.Background(), "app-1", state.Invocation{
+		ID:     "inv-1",
+		AppID:  "app-1",
+		Source: state.InvocationAsyncInvoke,
+		Method: http.MethodPost,
+		Path:   "/e2e",
+	}, WakeResult{
+		InstanceID:   "inst-1",
+		NodeID:       "node-1",
+		DeploymentID: "dep-1",
+		WakeID:       "wake-1",
+		Port:         8081,
+	})
+	if err != nil {
+		t.Fatalf("InvokeWithWake: %v", err)
+	}
+}

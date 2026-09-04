@@ -47,6 +47,14 @@ const (
 	// Wake. Payload: {wake_id, app_id, instance_id, node_id,
 	// method, requested_at}.
 	WakeBootStarted = "wake.boot_started"
+	// WakeRestoreBreakdown — vmmd's detailed snapshot-restore phases.
+	// Payload: {wake_id, app_id, instance_id, chroot_ms,
+	// materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms,
+	// stage_drives_ms, stage_snapshot_ms, helper_ms, start_jailer_ms,
+	// bind_tun_ms, load_snapshot_ms, resume_hook_ms, wait_ready_ms,
+	// total_ms}. Emitted after a successful restore so operators can
+	// identify which part of the vmmd restore window exceeded budget.
+	WakeRestoreBreakdown = "wake.restore_breakdown"
 	// WakeBootCompleted — schedd post-RecordRuntime; the instance
 	// is now RUNNING. Sibling of the existing `app.characterized`
 	// audit row (different timings — `app.characterized` follows
@@ -314,6 +322,55 @@ type BootStarted struct {
 	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
 	ConcurrencyAtAdmit int    // ADR-123 — same reading; 0 is cold start
 	AtCapacity         bool   // PR-A — true when post-admit ledger == plan MaxConcurrency
+}
+
+// RestoreBreakdown — vmmd's detailed snapshot-restore timings. The
+// measurements cover the complete JailerVMM.Restore call, from chroot
+// creation through the first successful readiness probe. Values are integer
+// milliseconds and are deliberately emitted as one typed event so the
+// wake-timeline endpoint can expose the breakdown without a node-log lookup.
+type RestoreBreakdown struct {
+	EmitAt               time.Time
+	WakeID               string
+	AppID                string
+	InstanceID           string
+	ChrootMs             int64
+	MaterializeMemMs     int64
+	MaterializeVMStateMs int64
+	ResolveImagesMs      int64
+	StageDrivesMs        int64
+	StageSnapshotMs      int64
+	HelperMs             int64
+	StartJailerMs        int64
+	BindTunMs            int64
+	LoadSnapshotMs       int64
+	ResumeHookMs         int64
+	WaitReadyMs          int64
+	TotalMs              int64
+}
+
+func (e RestoreBreakdown) Kind() string     { return WakeRestoreBreakdown }
+func (e RestoreBreakdown) At() time.Time    { return e.EmitAt }
+func (e RestoreBreakdown) Subject() *string { return nil }
+func (e RestoreBreakdown) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":                e.WakeID,
+		"app_id":                 e.AppID,
+		"instance_id":            e.InstanceID,
+		"chroot_ms":              e.ChrootMs,
+		"materialize_mem_ms":     e.MaterializeMemMs,
+		"materialize_vmstate_ms": e.MaterializeVMStateMs,
+		"resolve_images_ms":      e.ResolveImagesMs,
+		"stage_drives_ms":        e.StageDrivesMs,
+		"stage_snapshot_ms":      e.StageSnapshotMs,
+		"helper_ms":              e.HelperMs,
+		"start_jailer_ms":        e.StartJailerMs,
+		"bind_tun_ms":            e.BindTunMs,
+		"load_snapshot_ms":       e.LoadSnapshotMs,
+		"resume_hook_ms":         e.ResumeHookMs,
+		"wait_ready_ms":          e.WaitReadyMs,
+		"total_ms":               e.TotalMs,
+	}
 }
 
 func (e BootStarted) Kind() string     { return WakeBootStarted }

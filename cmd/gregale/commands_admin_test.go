@@ -239,21 +239,9 @@ func TestAdminCredit_IdempotentOnRetry(t *testing.T) {
 	}
 }
 
-// TestAdminUsage_DoesNotAdvertiseRefund pins the fix for the
-// "advertised but not dispatched" bug filed in PR #449's "Out of
-// scope" list. The server has no refund endpoint — cmd/apid/server.go
-// only mounts POST /v1/admin/accounts/{id}/credits. Help text that
-// advertises `refund` is a customer-facing broken promise: running
-// `gregale admin refund ...` exits 2 with "unknown admin
-// subcommand". The test asserts the no-arg usage line neither lists
-// nor implies `refund`. Pin the contract so a future PR that lands
-// Provider.Refund re-adds the dispatcher and the help line together
-// — not just the help line, which is the silent regression.
-//
-// Uses the captureStderr helper from commands5_test.go — same
-// package, same redirect-to-tempfile pattern as the env/symlink
-// tests at lines 563-590.
-func TestAdminUsage_DoesNotAdvertiseRefund(t *testing.T) {
+// TestAdminUsageAdvertisesRefund pins the operator surface and keeps the
+// dispatcher/help contract together with the server-side refund endpoint.
+func TestAdminUsageAdvertisesRefund(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
@@ -265,10 +253,76 @@ func TestAdminUsage_DoesNotAdvertiseRefund(t *testing.T) {
 		t.Errorf("cmdAdmin([]) exit = %d, want 2 (operator error)", code)
 	}
 	out := stderr.String()
-	if strings.Contains(out, "refund") {
-		t.Fatalf("cmdAdmin usage advertises `refund` but no /v1/admin/accounts/.../refunds endpoint exists — remove the word from the usage line and re-add it in the PR that lands Provider.Refund:\n  %s", out)
+	if !strings.Contains(out, "refund") {
+		t.Fatalf("cmdAdmin usage missing refund subcommand: %s", out)
 	}
 	if !strings.Contains(out, "credit") {
 		t.Fatalf("cmdAdmin usage missing `credit` entry — sanity check, the only known subcommand:\n  %s", out)
+	}
+}
+
+func TestAdminRefund_BadInvoiceExitsTwo(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Errorf("no network call expected on bad invoice UUID")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+
+	code := cmdAdmin([]string{"refund", "--reason", "customer request", uuid.NewString(), "not-a-uuid", "500"})
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+}
+
+func TestAdminRefund_HappyPathHitsAPID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test")
+	targetID := uuid.NewString()
+	invoiceID := uuid.NewString()
+	var gotPath, gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/refunds") {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		gotPath = r.URL.Path
+		gotKey = r.Header.Get("Idempotency-Key")
+		var body struct {
+			InvoiceID   string `json:"invoice_id"`
+			AmountCents int64  `json:"amount_cents"`
+			Reason      string `json:"reason"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if body.InvoiceID != invoiceID || body.AmountCents != 500 || body.Reason != "customer request" {
+			t.Errorf("request body = %+v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.AdminRefundResponse{
+			AccountID: targetID, InvoiceID: invoiceID, Provider: "polar",
+			ProviderRefundID: "refund-1", ChargeID: "order-1", AmountCents: 500,
+			Currency: "EUR", Status: "succeeded",
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+
+	if code := cmdAdmin([]string{"refund", "--reason", "customer request", targetID, invoiceID, "500"}); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if gotPath != "/v1/admin/accounts/"+targetID+"/refunds" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !strings.HasPrefix(gotKey, "cli-admin-refund-") {
+		t.Errorf("Idempotency-Key = %q, want cli-admin-refund-*", gotKey)
 	}
 }

@@ -79,7 +79,13 @@ func TestAcquireMigrationLock_BlocksSecondHolder(t *testing.T) {
 func TestAcquireMigrationLock_DoubleReleaseReturnsErr(t *testing.T) {
 	pool := pgtest.Open(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// MigrationLockKey is intentionally process- and schema-global. CI runs
+	// several Postgres-backed package shards against the same service, so a
+	// concurrent MigrateUp in another shard may briefly own this lock before
+	// this focused release test starts. Give that legitimate contention room
+	// to drain; the test is about release idempotency, not lock acquisition
+	// latency.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	release, err := AcquireMigrationLock(ctx, pool)

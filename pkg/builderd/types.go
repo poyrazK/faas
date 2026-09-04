@@ -31,14 +31,16 @@ type VM interface {
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
-	BuildID      string
-	TenantID     string
-	DeploymentID string
-	SourcePath   string // tarball or dockerfile source on disk
-	Framework    Framework
-	LogPath      string // build log appended by the VM
-	RAMMB        int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
-	TimeoutSec   int    // wall-clock build budget (0 ⇒ pkg/api/limits.go default)
+	BuildID        string
+	TenantID       string
+	DeploymentID   string
+	SourcePath     string // tarball or dockerfile source on disk
+	Framework      Framework
+	Runtime        string // app runtime id (node22, python312, go124-alpine, ...)
+	RuntimeBaseRef string // resolved OCI ref used by Railpack for this build
+	LogPath        string // build log appended by the VM
+	RAMMB          int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
+	TimeoutSec     int    // wall-clock build budget (0 ⇒ pkg/api/limits.go default)
 	// Plan is the owning account's plan tier. vmmd validates it on
 	// CreateColdBoot (issue #301 / ADR-043) and routes the builder VM
 	// into the per-plan cgroup sub-slice. Empty = legacy path that

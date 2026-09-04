@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
+	"github.com/onebox-faas/faas/pkg/billing/polar"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 )
 
@@ -29,6 +30,9 @@ func TestLoadBillingConfig_NilBodyReturnsDefaults(t *testing.T) {
 	}
 	if cfg.Paddle == nil {
 		t.Fatal("cfg.Paddle is nil after LoadBillingConfig")
+	}
+	if cfg.Polar == nil {
+		t.Fatal("cfg.Polar is nil after LoadBillingConfig")
 	}
 	// Stripe Defaults() applies the 5-minute tolerance.
 	if cfg.Stripe.ToleranceSeconds != 300 {
@@ -50,7 +54,7 @@ func TestLoadBillingConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadBillingConfigFromPath missing file: %v", err)
 	}
-	if cfg == nil || cfg.Stripe == nil || cfg.Paddle == nil {
+	if cfg == nil || cfg.Stripe == nil || cfg.Paddle == nil || cfg.Polar == nil {
 		t.Fatalf("expected non-nil cfg with both sub-configs, got %+v", cfg)
 	}
 	if cfg.Stripe.ToleranceSeconds != 300 {
@@ -144,6 +148,35 @@ sandbox = true
 	}
 	if !cfg.Paddle.Sandbox {
 		t.Error("cfg.Paddle.Sandbox = false, want true")
+	}
+}
+
+func TestLoadBillingConfig_ParsesPolarBlock(t *testing.T) {
+	body := []byte(`
+[billing]
+provider = "polar"
+
+[billing.polar]
+api_key = "polar_token"
+webhook_secret = "whsec_secret"
+sandbox = true
+hobby_product_id = "hobby-product"
+pro_product_id = "pro-product"
+scale_product_id = "scale-product"
+usage_event_name = "ram_usage"
+`)
+	cfg, err := LoadBillingConfig(body)
+	if err != nil {
+		t.Fatalf("LoadBillingConfig: %v", err)
+	}
+	if cfg.Provider != "polar" || cfg.Polar == nil {
+		t.Fatalf("polar config not loaded: provider=%q cfg=%+v", cfg.Provider, cfg.Polar)
+	}
+	if cfg.Polar.APIKey != "polar_token" || cfg.Polar.WebhookSecret != "whsec_secret" {
+		t.Fatalf("polar credentials not loaded: %+v", cfg.Polar)
+	}
+	if !cfg.Polar.Sandbox || cfg.Polar.UsageEventName != "ram_usage" {
+		t.Fatalf("polar settings not loaded: %+v", cfg.Polar)
 	}
 }
 
@@ -266,6 +299,7 @@ func TestApplyBillingEnvOverlay_FAAS_PADDLE_SANDBOX_AcceptsTrueVariants(t *testi
 		cfg := &RootBillingConfig{
 			Stripe: &stripe.Config{},
 			Paddle: &paddle.Config{},
+			Polar:  &polar.Config{},
 		}
 		cfg = ApplyBillingEnvOverlay(cfg, env)
 		if cfg.Paddle.Sandbox != c.want {
@@ -304,6 +338,7 @@ func TestApplyBillingEnvOverlay_FAAS_PADDLE_WEBHOOK_TOLERANCE_SECONDS(t *testing
 			cfg := &RootBillingConfig{
 				Stripe: &stripe.Config{},
 				Paddle: &paddle.Config{ToleranceSeconds: c.tomlVal},
+				Polar:  &polar.Config{},
 			}
 			cfg = ApplyBillingEnvOverlay(cfg, env)
 			if cfg.Paddle.ToleranceSeconds != c.want {
@@ -327,6 +362,7 @@ func TestApplyBillingEnvOverlay_FAAS_BILLING_PROVIDER_OverridesTOML(t *testing.T
 		Provider: "stripe",
 		Stripe:   &stripe.Config{},
 		Paddle:   &paddle.Config{},
+		Polar:    &polar.Config{},
 	}
 	cfg = ApplyBillingEnvOverlay(cfg, env)
 	if cfg.Provider != "paddle" {

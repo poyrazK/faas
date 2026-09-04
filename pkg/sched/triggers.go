@@ -51,4 +51,7 @@ const (
 	// with the engine.go:1050 comment ("legacy fast path used by
 	// meterd's per-minute sampler + cron firings").
 	TriggerMeterd = "meterd"
+
+	// TriggerMirror — best-effort asynchronous preview/mirror admission.
+	TriggerMirror = "mirror"
 )

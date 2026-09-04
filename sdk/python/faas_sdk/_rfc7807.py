@@ -15,8 +15,9 @@ extensions:
 * `instance` - request URI (optional).
 * `tx_id` - server-side trace id (optional).
 * `limit`, `observed`, `docs_url` - capacity errors carry these.
-* `billing_portal_url`, `paddle_checkout_url` - payment-required
-  errors.
+* `checkout_url`, `billing_portal_url`, `paddle_checkout_url` -
+  payment-required errors. `paddle_checkout_url` is retained for
+  backwards compatibility; new clients should use `checkout_url`.
 
 The four sentinels mirror `pkg/api/errors.go` +
 `internal/api/apierror.go::Unwrap` and the Node SDK's
@@ -45,6 +46,7 @@ class Problem:
     limit: int | None = None
     observed: int | None = None
     docs_url: str | None = None
+    checkout_url: str | None = None
     billing_portal_url: str | None = None
     paddle_checkout_url: str | None = None
 
@@ -134,6 +136,7 @@ def parse_problem(body: bytes, content_type: str, status: int) -> Problem | None
         limit=data.get("limit"),
         observed=data.get("observed"),
         docs_url=data.get("docs_url"),
+        checkout_url=data.get("checkout_url"),
         billing_portal_url=data.get("billing_portal_url"),
         paddle_checkout_url=data.get("paddle_checkout_url"),
     )

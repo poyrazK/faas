@@ -12,7 +12,10 @@ FROM node:22-alpine@sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac3044
 # Guest runtime user (uid 1000, spec §4.8). The official Alpine image
 # already reserves uid 1000 for `node`; reuse that identity under the
 # platform's canonical `app` name instead of attempting a duplicate uid.
-RUN if id app >/dev/null 2>&1; then :; \
+RUN apk upgrade --no-cache && \
+    rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack && \
+    rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack && \
+    if id app >/dev/null 2>&1; then :; \
     elif id node >/dev/null 2>&1; then sed -i 's/^node:/app:/' /etc/passwd; \
     else adduser -D -u 1000 app; fi
 # The function runner shim (guest/runners/node22) is layered in for `type:

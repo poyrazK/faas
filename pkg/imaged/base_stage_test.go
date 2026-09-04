@@ -681,6 +681,31 @@ func TestEnsureBases_OperatorOverride_TagOnlyFailsLoud(t *testing.T) {
 	}
 }
 
+func TestEnsureBases_TestRedirectAppliesToEveryRuntime(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	hs := newBaseHarness(t, mp, &callCountingBuilder{})
+	ref := "127.0.0.1:5000/onebox/deploy-base:latest"
+	lookup := func(key string) string {
+		if key == testDeployBaseRefEnv {
+			return ref
+		}
+		return ""
+	}
+	refs := []RuntimeBaseRef{
+		{Runtime: RuntimeNode22, Ref: BaseRefNode22, EnvOverride: "FAAS_DEPLOY_BASE_REF_NODE22"},
+		{Runtime: RuntimePython312, Ref: BaseRefPython312, EnvOverride: "FAAS_DEPLOY_BASE_REF_PYTHON312"},
+	}
+	results, err := hs.h.EnsureBases(context.Background(), "amd64", refs, lookup)
+	if err != nil {
+		t.Fatalf("EnsureBases: %v", err)
+	}
+	for _, result := range results {
+		if result.Ref != ref {
+			t.Errorf("runtime %s ref = %q, want test redirect %q", result.Runtime, result.Ref, ref)
+		}
+	}
+}
+
 // TestEnsureBases_SkipsOnDigestMatch — second call returns Skipped=true
 // for every row when the digest sidecar matches. Inherits the same
 // idempotency contract as EnsureBaseExt4's skip path.
@@ -1256,7 +1281,12 @@ func TestResolveParentRef_HonorsEnvOverride(t *testing.T) {
 		}
 	})
 	t.Run("env override tag-only ref fails loud", func(t *testing.T) {
-		tagOnly := func(string) string { return "mirror.gcr.io/library/debian:12-slim" }
+		tagOnly := func(key string) string {
+			if key == "FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT" {
+				return "mirror.gcr.io/library/debian:12-slim"
+			}
+			return ""
+		}
 		_, err := resolveParentRef(parentRef, envOverrideByRef, tagOnly)
 		if err == nil {
 			t.Fatal("expected error for tag-only env override, got nil")

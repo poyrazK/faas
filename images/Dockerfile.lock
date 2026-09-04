@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": 1,
   "comment": "Tier 3 (issue #197 B3.5 + B3.6). The FROM line in each Dockerfile below this lock is digest-pinned; this lock is the source of truth. `make images-lock-update` resolves the current registry digest and updates BOTH the lock and the FROM line. CI runs `make images-lock-check` to fail any PR that drifts (either a Dockerfile with a non-digest-pinned FROM, or a Dockerfile whose FROM line doesn't match the lock's `pinned_in_dockerfile` field). The PLACEHOLDER digests below fail the check by design \u2014 the operator runs `make images-lock-update` once at PR-merge time, before this file is squashed into main. `scratch` is the canonical empty image and is exempt from the lock (audit_dockerfile_froms.py whitelists it).",
-  "generated_at": "2026-08-20T21:07:40Z",
+  "generated_at": "2026-09-01T15:01:12Z",
   "generated_by": "make images-lock-update",
   "pinned": [
     {
@@ -19,24 +19,35 @@
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.25.9",
+      "alias": "golang:1.26.6",
       "resolved_repo": "docker.io/library/golang",
-      "resolved_tag": "1.25.9",
+      "resolved_tag": "1.26.6",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:8a7adc288b77e9b787cd2695029eb54d10ae80571b21d44fed68d067ad0a9c96",
-      "pinned_in_dockerfile": "FROM golang:1.25.9@sha256:8a7adc288b77e9b787cd2695029eb54d10ae80571b21d44fed68d067ad0a9c96 AS guest-init-build"
+      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS guest-init-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.25.9",
+      "alias": "golang:1.26.6",
       "resolved_repo": "docker.io/library/golang",
-      "resolved_tag": "1.25.9",
+      "resolved_tag": "1.26.6",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:8a7adc288b77e9b787cd2695029eb54d10ae80571b21d44fed68d067ad0a9c96",
-      "pinned_in_dockerfile": "FROM golang:1.25.9@sha256:8a7adc288b77e9b787cd2695029eb54d10ae80571b21d44fed68d067ad0a9c96 AS buildkit-client-build"
+      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS buildkit-client-build"
+    },
+    {
+      "dockerfile": "images/builder-base.Dockerfile",
+      "instruction": "FROM",
+      "alias": "golang:1.26.6",
+      "resolved_repo": "docker.io/library/golang",
+      "resolved_tag": "1.26.6",
+      "platform": "linux/amd64",
+      "multi_arch": true,
+      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
+      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS runc-build"
     },
     {
       "dockerfile": "images/base-debian-parent.Dockerfile",
@@ -45,8 +56,8 @@
       "resolved_repo": "docker.io/library/debian",
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143",
-      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143"
+      "digest": "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
+      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",
@@ -55,8 +66,8 @@
       "resolved_repo": "docker.io/library/debian",
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143",
-      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143 AS build"
+      "digest": "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
+      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867 AS build"
     },
     {
       "dockerfile": "images/runner-node22.Dockerfile",
@@ -75,8 +86,8 @@
       "resolved_repo": "docker.io/library/python",
       "resolved_tag": "3.12-slim-bookworm",
       "platform": "linux/amd64",
-      "digest": "sha256:356b0d18f9385f4bdcc673af60e1e64c9d1504952e4ec36ee32044c722a6bc4e",
-      "pinned_in_dockerfile": "FROM python:3.12-slim-bookworm@sha256:356b0d18f9385f4bdcc673af60e1e64c9d1504952e4ec36ee32044c722a6bc4e"
+      "digest": "sha256:9c47360a2a0355e2da18516d0b1c2126ec22c195d2185e97347c9d98398c5bef",
+      "pinned_in_dockerfile": "FROM python:3.12-slim-bookworm@sha256:9c47360a2a0355e2da18516d0b1c2126ec22c195d2185e97347c9d98398c5bef"
     },
     {
       "dockerfile": "images/runner-go124.Dockerfile",
@@ -105,8 +116,8 @@
       "resolved_repo": "docker.io/library/node",
       "resolved_tag": "24-bookworm-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:65932751ed4073ed02f5c04e494e4b2572a891b7dbea0568a863dc80341bf848",
-      "pinned_in_dockerfile": "FROM node:24-bookworm-slim@sha256:65932751ed4073ed02f5c04e494e4b2572a891b7dbea0568a863dc80341bf848"
+      "digest": "sha256:6642ef280aebc09c4541bee0b15c9f89f0f3f3c247ddee79ae1d37eddfdcbbaa",
+      "pinned_in_dockerfile": "FROM node:24-bookworm-slim@sha256:6642ef280aebc09c4541bee0b15c9f89f0f3f3c247ddee79ae1d37eddfdcbbaa"
     },
     {
       "dockerfile": "images/runner-python313.Dockerfile",
@@ -115,8 +126,8 @@
       "resolved_repo": "docker.io/library/python",
       "resolved_tag": "3.13-slim-bookworm",
       "platform": "linux/amd64",
-      "digest": "sha256:0f16c5d35fe6464ee471792ab3bb9116f911b65b3fbf10120c98d2bdc6332f48",
-      "pinned_in_dockerfile": "FROM python:3.13-slim-bookworm@sha256:0f16c5d35fe6464ee471792ab3bb9116f911b65b3fbf10120c98d2bdc6332f48"
+      "digest": "sha256:2f2e5a876c71a6757f55ec57f2add0225ddaf01c802a33fcc29073943f94d907",
+      "pinned_in_dockerfile": "FROM python:3.13-slim-bookworm@sha256:2f2e5a876c71a6757f55ec57f2add0225ddaf01c802a33fcc29073943f94d907"
     }
   ]
 }

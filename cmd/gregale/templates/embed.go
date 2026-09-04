@@ -1,4 +1,4 @@
-// Package templates ships the thirteen `gregale deploy --template <name>`
+// Package templates ships the fifteen `gregale deploy --template <name>`
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -33,7 +33,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat
 var FS embed.FS
 
 // Names is the canonical template list, kept here so the CLI can
@@ -52,6 +52,8 @@ var Names = []string{
 	"function-node",
 	"function-python",
 	"function-go",
+	"function-node24",
+	"function-python313",
 	"s3-uploader",
 	"slack-bot",
 	"rest-api-postgres",
@@ -236,7 +238,7 @@ func CategoryFor(name string) string {
 	switch name {
 	case "hello-node", "hello-python", "hello-go":
 		return "hello"
-	case "function-node", "function-python", "function-go", "cron-example":
+	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example":
 		return "function"
 	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver":
 		return "stateless-contract"

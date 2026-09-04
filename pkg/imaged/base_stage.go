@@ -125,13 +125,18 @@ func (h *Handler) EnsureBaseExt4(
 		if rc, getErr := be.Get(ctx, baseKey); getErr == nil {
 			_ = rc.Close()
 			if baseSidecarGuestInitCurrent(ctx, be, digestKey, guestInitDigest) {
-				h.log.Warn("imaged: base manifest pull failed; using existing on-disk base image",
-					"ref", ref, "key", baseKey, "err", err)
-				return BaseStageResult{
-					OutImage:   outImage,
-					StorageKey: baseKey,
-					Skipped:    true,
-				}, nil
+				if validationErr := h.validateBaseArtifact(ctx, be, baseKey); validationErr == nil {
+					h.log.Warn("imaged: base manifest pull failed; using existing on-disk base image",
+						"ref", ref, "key", baseKey, "err", err)
+					return BaseStageResult{
+						OutImage:   outImage,
+						StorageKey: baseKey,
+						Skipped:    true,
+					}, nil
+				} else {
+					h.log.Warn("imaged: existing base failed content validation; refusing fallback",
+						"ref", ref, "key", baseKey, "err", validationErr)
+				}
 			}
 		}
 		return BaseStageResult{}, fmt.Errorf("imaged: pull base manifest %s: %w", ref, err)
@@ -155,22 +160,27 @@ func (h *Handler) EnsureBaseExt4(
 		if rerr == nil && baseDigestSidecarMatches(string(haveBytes), wantDigest, guestInitDigest) {
 			if rc, err := be.Get(ctx, baseKey); err == nil {
 				_ = rc.Close()
-				// A digest match proves the ext4 bytes are current, but
-				// older imaged versions could have written the scan sidecar
-				// from the legacy compatibility path. Refresh a sidecar that
-				// does not record the canonical scan source; once refreshed,
-				// subsequent restarts keep the cheap idempotent path.
-				if !h.scanSidecarSourceCurrent(ctx, be, baseKey, outImage) {
-					if scanErr := h.writeScanSidecar(ctx, baseKey, ref, outImage); scanErr != nil {
-						h.log.Warn("imaged: refresh grype scan sidecar", "key", wire.ScanKeyForBaseKey(baseKey), "err", scanErr)
+				if validationErr := h.validateBaseArtifact(ctx, be, baseKey); validationErr != nil {
+					h.log.Warn("imaged: digest sidecar matched but base failed content validation; rebuilding",
+						"key", baseKey, "err", validationErr)
+				} else {
+					// A digest match proves the ext4 bytes are current, but
+					// older imaged versions could have written the scan sidecar
+					// from the legacy compatibility path. Refresh a sidecar that
+					// does not record the canonical scan source; once refreshed,
+					// subsequent restarts keep the cheap idempotent path.
+					if !h.scanSidecarSourceCurrent(ctx, be, baseKey, outImage) {
+						if scanErr := h.writeScanSidecar(ctx, baseKey, ref, outImage); scanErr != nil {
+							h.log.Warn("imaged: refresh grype scan sidecar", "key", wire.ScanKeyForBaseKey(baseKey), "err", scanErr)
+						}
 					}
+					return BaseStageResult{
+						OutImage:     outImage,
+						StorageKey:   baseKey,
+						ConfigDigest: wantDigest,
+						Skipped:      true,
+					}, nil
 				}
-				return BaseStageResult{
-					OutImage:     outImage,
-					StorageKey:   baseKey,
-					ConfigDigest: wantDigest,
-					Skipped:      true,
-				}, nil
 			}
 		}
 	}
@@ -229,6 +239,9 @@ func (h *Handler) EnsureBaseExt4(
 	})
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: build base ext4: %w", err)
+	}
+	if err := h.validateBaseArtifact(ctx, be, baseKey); err != nil {
+		return BaseStageResult{}, fmt.Errorf("imaged: validate base ext4 %q: %w", baseKey, err)
 	}
 
 	if err := h.writeBaseDigestSidecar(ctx, be, digestKey, wantDigest, guestInitDigest); err != nil {
@@ -481,6 +494,9 @@ func (h *Handler) ensureBaseExt4ParentRef(
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: parent-ref build base ext4: %w", err)
 	}
+	if err := h.validateBaseArtifact(ctx, be, baseKey); err != nil {
+		return BaseStageResult{}, fmt.Errorf("imaged: validate parent-ref base ext4 %q: %w", baseKey, err)
+	}
 
 	if err := h.writeBaseDigestSidecar(ctx, be, digestKey, wantDigest, guestInitDigest); err != nil {
 		h.log.Warn("imaged: write base digest sidecar", "err", err)
@@ -500,6 +516,27 @@ func (h *Handler) ensureBaseExt4ParentRef(
 		StorageKey:   res.ImageKey,
 		ConfigDigest: wantDigest,
 	}, nil
+}
+
+func (h *Handler) validateBaseArtifact(ctx context.Context, be storage.StorageBackend, baseKey string) error {
+	if h.baseArtifactValidator == nil {
+		return nil
+	}
+	resolver, ok := be.(storage.LocalPathResolver)
+	if !ok {
+		// Remote backends do not expose a host path. Their content-addressed
+		// Get operation and publisher integrity checks remain authoritative;
+		// local ext4 inspection is only meaningful on a node filesystem.
+		return nil
+	}
+	path, exists, err := resolver.LocalPath(baseKey)
+	if err != nil {
+		return fmt.Errorf("resolve local path: %w", err)
+	}
+	if !exists || path == "" {
+		return fmt.Errorf("base artifact %q has no local path", baseKey)
+	}
+	return h.baseArtifactValidator(ctx, path, requiredBaseArtifactPaths(baseKey))
 }
 
 // mountOverlayFn / umountOverlayFn (the package-level test seams)
@@ -806,7 +843,16 @@ func (h *Handler) EnsureBases(ctx context.Context, arch string, refs []RuntimeBa
 	}
 	for _, row := range refs {
 		ref := row.Ref
-		if v := strings.TrimSpace(envLookup(row.EnvOverride)); v != "" {
+		if testRef := strings.TrimSpace(envLookup(testDeployBaseRefEnv)); testRef != "" {
+			if node := strings.TrimSpace(envLookup("FAAS_NODE_NAME")); node != "" {
+				return nil, fmt.Errorf("imaged: %s is test-only and cannot be set on named node %q", testDeployBaseRefEnv, node)
+			}
+			// The e2e-only override intentionally applies to the whole
+			// runtime matrix: the fake registry publishes one fixture ref
+			// for every runtime-shaped request. Production never receives
+			// this variable and therefore remains per-runtime and pinned.
+			ref = testRef
+		} else if v := strings.TrimSpace(envLookup(row.EnvOverride)); v != "" {
 			// Operator wants this runtime pinned. Reject tag-only
 			// overrides before any byte is pulled — a deploy keyed
 			// to a today-stable digest would silently resolve to
@@ -820,6 +866,11 @@ func (h *Handler) EnsureBases(ctx context.Context, arch string, refs []RuntimeBa
 				return nil, fmt.Errorf("imaged: %s=%q must be a digest-pinned reference (e.g. registry.gregale.dev/img@sha256:...)", row.EnvOverride, v)
 			}
 			ref = v
+		}
+		if row.EnvOverride != "" {
+			if err := requireProductionBaseDigest(row.EnvOverride, ref, envLookup); err != nil {
+				return nil, err
+			}
 		}
 		baseKey := sched.BaseKeyForArch(row.Runtime, arch)
 		digestKey := sched.BaseDigestKeyForArch(row.Runtime, arch)
@@ -859,6 +910,41 @@ func (h *Handler) EnsureBases(ctx context.Context, arch string, refs []RuntimeBa
 		})
 	}
 	return out, nil
+}
+
+// EnsureMinimalBase stages the generic base used by plain OCI apps. It is
+// intentionally outside DefaultRuntimeBaseRefs because the runtime matrix
+// describes function runtimes and existing callers/tests iterate that matrix.
+// The first plain-app deployment therefore gets the same idempotent,
+// digest-pinned staging behavior as language runtimes.
+func (h *Handler) EnsureMinimalBase(ctx context.Context, arch string, envLookup func(string) string) (BaseStageResult, error) {
+	if arch == "" {
+		return BaseStageResult{}, errors.New("imaged: EnsureMinimalBase: empty arch")
+	}
+	if envLookup == nil {
+		envLookup = os.Getenv
+	}
+	ref, err := resolveDeployBaseRef("", envLookup)
+	if err != nil {
+		return BaseStageResult{}, err
+	}
+	if err := requireProductionBaseDigest("FAAS_DEPLOY_BASE_REF_MINIMAL", ref, envLookup); err != nil {
+		return BaseStageResult{}, err
+	}
+	results, err := h.EnsureBases(ctx, arch, []RuntimeBaseRef{{Runtime: "", Ref: ref}}, envLookup)
+	if err != nil {
+		return BaseStageResult{}, err
+	}
+	if len(results) != 1 {
+		return BaseStageResult{}, errors.New("imaged: EnsureMinimalBase: staging returned no result")
+	}
+	result := results[0]
+	return BaseStageResult{
+		OutImage:     sched.BaseKeyForArch("", arch),
+		StorageKey:   sched.BaseKeyForArch("", arch),
+		ConfigDigest: result.ConfigDigest,
+		Skipped:      result.Skipped,
+	}, nil
 }
 
 // EnsureRuntimeBase stages one runtime (and its shared parent, when the
@@ -943,6 +1029,12 @@ func (h *Handler) EnsureRuntimeBase(ctx context.Context, runtime, arch string, e
 func resolveParentRef(parentRef string, envOverrideByRef map[string]string, envLookup func(string) string) (string, error) {
 	if parentRef == "" {
 		return "", nil
+	}
+	if testRef := strings.TrimSpace(envLookup(testDeployBaseRefEnv)); testRef != "" {
+		if node := strings.TrimSpace(envLookup("FAAS_NODE_NAME")); node != "" {
+			return "", fmt.Errorf("imaged: %s is test-only and cannot be set on named node %q", testDeployBaseRefEnv, node)
+		}
+		return testRef, nil
 	}
 	parentEnv, ok := envOverrideByRef[parentRef]
 	if !ok {
