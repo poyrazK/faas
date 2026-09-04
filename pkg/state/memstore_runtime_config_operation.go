@@ -102,7 +102,7 @@ func (m *MemStore) finishRuntimeConfigOperation(id string, status RuntimeConfigO
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op, ok := m.runtimeConfigOperations[id]
-	if !ok || (op.Status != RuntimeConfigOperationRunning && !(allowPending && op.Status == RuntimeConfigOperationPending)) {
+	if !ok || (op.Status != RuntimeConfigOperationRunning && (!allowPending || op.Status != RuntimeConfigOperationPending)) {
 		return ErrRuntimeConfigNotFound
 	}
 	if len(message) > 1024 {
