@@ -38,6 +38,8 @@ func TestRoundTrip_StableCodes(t *testing.T) {
 		{api.CodeNotFound, codes.NotFound, "Not found"},
 		{api.CodeUnauthorized, codes.PermissionDenied, "Unauthorized"},
 		{api.CodeCapacity, codes.ResourceExhausted, "No capacity"},
+		{api.CodeSnapshotBackoff, codes.ResourceExhausted, "Snapshot backoff"},
+		{api.CodeNotImplemented, codes.Unimplemented, "Not implemented"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
@@ -205,6 +207,7 @@ func TestFromStatus_RecoversHTTPStatusFromCode(t *testing.T) {
 		wantStatus int
 	}{
 		{api.ErrCapacity("no headroom"), 503},
+		{api.ErrSnapshotBackoff(5), 503},
 		{api.ErrPlanLimitConcurrency(proLimits, 5), 429},
 		{api.ErrPlanLimitRAM(freeLimits, 512), 403},
 	}

@@ -99,10 +99,11 @@ func TestScheddRouter_WatchNodeChanges_LiveNotify(t *testing.T) {
 	// CI box we've measured.
 	time.Sleep(100 * time.Millisecond)
 
-	// Flip active=false on the compute_node row. The existing
-	// trigger emits `{node_id, active}` on compute_node_changed.
+	// Flip lifecycle to unavailable. The compatibility generated
+	// active column becomes false and the trigger emits
+	// `{node_id, active}` on compute_node_changed.
 	if _, err := pool.Exec(ctx,
-		`update compute_nodes set active = false where id = $1`, nodeID); err != nil {
+		`update compute_nodes set lifecycle = 'unavailable'::compute_node_lifecycle where id = $1`, nodeID); err != nil {
 		t.Fatalf("update compute_nodes: %v", err)
 	}
 
@@ -136,14 +137,14 @@ func TestScheddRouter_WatchNodeChanges_LiveNotify(t *testing.T) {
 // seedComputeNode inserts a minimal compute_node row that the
 // router can resolve. Returns the generated UUID. The router
 // only reads .ID + .ScheddTargetURL + .Active; we set the rest
-// to schema defaults (active=true via the schema's seed trigger).
+// to schema defaults (lifecycle=active).
 func seedComputeNode(t *testing.T, pool *pgxpool.Pool, targetURL string) string {
 	t.Helper()
 	ctx := context.Background()
 	var id string
 	err := pool.QueryRow(ctx,
-		`insert into compute_nodes (name, schedd_target_url, active)
-		 values ($1, $2, true) returning id`, "fsn-live-test", targetURL).Scan(&id)
+		`insert into compute_nodes (name, schedd_target_url, lifecycle)
+		 values ($1, $2, 'active'::compute_node_lifecycle) returning id`, "fsn-live-test", targetURL).Scan(&id)
 	if err != nil {
 		t.Fatalf("seed compute_node: %v", err)
 	}

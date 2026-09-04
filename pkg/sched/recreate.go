@@ -24,16 +24,16 @@
 //     recreate alongside any sibling InstanceMigrated events.
 //
 // Race contract: the arbiter is the only caller. Per-instance
-// race-safety comes from UpdateInstanceState's CAS at the store
-// layer (state = $from AND id = $1). If a peer already parked
-// or migrated the row, the UPDATE lands 0 rows, we count it as
-// a peer-wins no-op, and the dedup with the deadnode_reconciler
-// stays clean (Task #62 source-ledger backstop closes the
-// billing side of the same race).
+// race-safety comes from UpdateInstanceStateIf's conditional UPDATE
+// at the store layer (state = $from AND id = $1). If a peer already
+// parked or migrated the row, the UPDATE lands 0 rows, we count it
+// as a peer-wins no-op, and the dedup with the deadnode_reconciler
+// stays clean (Task #62 source-ledger backstop closes the billing
+// side of the same race).
 //
-// The method is synchronous on the store side: ledger release is
-// idempotent and a no-op on unknown instances, so a re-entry
-// after the row has already been parked by a peer is harmless.
+// The method is synchronous on the store side. The admission reservation
+// is released only after this call wins its conditional state transition;
+// a peer that already moved the row keeps ownership of its reservation.
 package sched
 
 import (
@@ -72,9 +72,6 @@ const (
 //     (RUNNING / COLD_BOOTING / WAKING). Anything else returns
 //     nil with a debug log so the tick loop isn't noisy on a
 //     healthy fleet.
-//   - Releases the ledger (idempotent) — Task #62 source-ledger
-//     backstop makes this the same call path as the deadnode
-//     reconcile path.
 //   - Transitions the row to PARKED with kind="recovery_recreate"
 //     and emits the InstanceRecreatedEvent envelope.
 //
@@ -128,17 +125,6 @@ func (e *Engine) RecreateInstance(ctx context.Context, instanceID string) error 
 			"instance_id", ins.ID, "state", ins.State)
 		return nil
 	}
-	// Release the admission reservation so a replacement
-	// instance can be admitted immediately. Release is idempotent
-	// and a no-op on unknown instances (admission.go), so this
-	// is safe even when the reservation was already freed by
-	// another path (the Task #62 source-ledger backstop makes
-	// this the same call path the deadnode reconciler uses).
-	// Guard the nil-ledger bootstrap window explicitly so a
-	// unit-test fixture without a wired ledger doesn't panic.
-	if e.ledger != nil {
-		e.ledger.Release(ins.ID)
-	}
 	// Transition with kind="recovery_recreate" so the audit row
 	// distinguishes the arbiter's recreate landing from a normal
 	// idle-timeout Park (which uses kind="state_transition").
@@ -147,10 +133,19 @@ func (e *Engine) RecreateInstance(ctx context.Context, instanceID string) error 
 	// duplicate Timeline rows.
 	ok, terr := e.transitionWithKindCAS(ctx, ins.ID, ins.AppID, state.StateParked, "recovery_recreate", recreateReasonArbiter)
 	if terr != nil {
+		if errors.Is(terr, state.ErrConflict) {
+			// The conditional UPDATE lost to a peer. Do not release
+			// its reservation: the peer may have migrated the still-live
+			// instance and now owns the accounting transition.
+			e.log.Debug("sched: recreate: peer-wins (CAS lost)",
+				"instance_id", ins.ID, "app_id", ins.AppID, "node_id", ins.NodeID,
+				"previous_state", ins.State)
+			return nil
+		}
 		// Store-level failure (PG round-trip error). Treat like
-		// the race-loser path — count as a non-win so the
-		// metric stays accurate, but bubble the error so the
-		// arbiter can decide whether to retry on the next tick.
+		// the race-loser path — count as a non-win so the metric
+		// stays accurate, but bubble the error so the arbiter can
+		// decide whether to retry on the next tick.
 		if e.ops != nil {
 			e.ops.RecreateDecisions("not_found").Inc()
 		}
@@ -159,13 +154,20 @@ func (e *Engine) RecreateInstance(ctx context.Context, instanceID string) error 
 	if !ok {
 		// Peer-wins: the deadnode reconciler (or a sibling
 		// arbiter tick) already parked/failed this row. The
-		// ledger release above is idempotent and harmless; the
 		// metric + envelope stay suppressed so the dashboard's
 		// recreate rate matches the audit-row count.
 		e.log.Debug("sched: recreate: peer-wins (CAS lost)",
 			"instance_id", ins.ID, "app_id", ins.AppID, "node_id", ins.NodeID,
 			"previous_state", ins.State)
 		return nil
+	}
+	// Release the admission reservation only after the conditional state
+	// transition wins. Releasing before the CAS could undercount RAM while
+	// a concurrent migration still owns the row after this path loses.
+	// Guard the nil-ledger bootstrap window explicitly so a unit-test fixture
+	// without a wired ledger does not panic.
+	if e.ledger != nil {
+		e.ledger.Release(ins.ID)
 	}
 	if e.ops != nil {
 		e.ops.RecreateDecisions("succeeded").Inc()

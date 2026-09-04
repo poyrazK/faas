@@ -11,7 +11,7 @@
 // Wire shape: every subcommand takes --node=<fqdn>; the state package
 // owns the canonical SQL UPDATE (pkg/state.MarkComputeNodeInactive for
 // drain, pkg/state.SetComputeNodeActive(ctx, id, true) for activate).
-// drain-status queries pkg/state.ListInstancesByNodeID and counts rows
+// drain-status queries pkg/state.ListInstancesOnNodeID and counts rows
 // in {WAKING, COLD_BOOTING, RUNNING}; > 0 means the upgrade orchestrator
 // blocks until the operator runs force-drain.
 
@@ -155,10 +155,10 @@ func cmdComputeNodesDrain(args []string) int {
 // instances still pinned (upgrade orchestrator surfaces this as
 // "instances still on node" and the operator runs force-drain).
 //
-// Per CLAUDE.md invariants, an instance is "live" iff it's in
-// {WAKING, COLD_BOOTING, RUNNING}. The state package exposes
-// ListInstancesByNodeID; we filter to the live subset here so the
-// caller doesn't have to walk the instance lifecycle.
+// Per the state-machine RAM invariant, an instance is "live" iff its
+// state counts resident RAM (WAKING, COLD_BOOTING, RUNNING,
+// SNAPSHOTTING, or MIGRATING). The state package exposes
+// ListInstancesOnNodeID; we filter to that live subset here.
 func cmdComputeNodesDrainStatus(args []string) int {
 	fs := flag.NewFlagSet("drain-status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -183,15 +183,14 @@ func cmdComputeNodesDrainStatus(args []string) int {
 		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes drain-status:", err)
 		return 1
 	}
-	insts, err := st.ListInstancesByNodeID(ctx, computeNode.ID)
+	insts, err := st.ListInstancesOnNodeID(ctx, computeNode.ID)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes drain-status:", err)
 		return 1
 	}
 	live := 0
 	for _, inst := range insts {
-		switch inst.State {
-		case "WAKING", "COLD_BOOTING", "RUNNING":
+		if state.IsLive(strings.ToLower(inst.State)) {
 			live++
 		}
 	}
@@ -449,19 +448,18 @@ func cmdComputeNodesShow(args []string) int {
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes show: %v\n", err)
 		return 1
 	}
-	insts, err := st.ListInstancesByNodeID(ctx, row.ID)
+	insts, err := st.ListInstancesOnNodeID(ctx, row.ID)
 	if err != nil {
 		// Live-instance count is informational (drives the
 		// drain-status UX); a query failure must NOT hide the
 		// row data. Emit a WARN to stderr and continue with
 		// live=0 so the operator still sees the node.
-		fmt.Fprintf(os.Stderr, "warn: ListInstancesByNodeID(%q): %v (live_instance_count reported as 0)\n", row.ID, err)
+		fmt.Fprintf(os.Stderr, "warn: ListInstancesOnNodeID(%q): %v (live_instance_count reported as 0)\n", row.ID, err)
 		insts = nil
 	}
 	live := 0
 	for _, inst := range insts {
-		switch inst.State {
-		case "WAKING", "COLD_BOOTING", "RUNNING":
+		if state.IsLive(strings.ToLower(inst.State)) {
 			live++
 		}
 	}

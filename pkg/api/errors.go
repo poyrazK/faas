@@ -424,6 +424,10 @@ const (
 	// bounds it at 1 second so the wire always emits a non-zero
 	// hint.
 	CodeWaitForWarm = "wait_for_warm"
+	// CodeSnapshotBackoff marks a deployment whose snapshot cache has
+	// repeatedly missed. The wake is temporarily rejected so retries do not
+	// create an unbounded cold-boot/capacity loop; Retry-After is authoritative.
+	CodeSnapshotBackoff = "snapshot_backoff"
 	// CodeMirrorSlotAtCapacity (issue #72 / ADR-125 PR-A3) is the
 	// per-rule mirror VM concurrency cap reached. Wire shape
 	// mirrors CodeWaitForWarm (gRPC ResourceExhausted, HTTP 503):
@@ -494,6 +498,10 @@ const (
 	// than "we deliberately refused". Use this for any 500 where the
 	// handler can't recover; pair with api.ErrInternal for a one-liner.
 	CodeInternal = "internal_error"
+	// CodeNotImplemented identifies a deliberately unavailable capability.
+	// It maps to HTTP 501 and gRPC Unimplemented so clients can distinguish
+	// an unsupported deployment seam from an unexpected server failure.
+	CodeNotImplemented = "not_implemented"
 	// CodeBadRequest is returned by handlers for a 400 on a
 	// malformed inbound body that isn't covered by a more specific
 	// code (e.g. the validate rule's body-read failure). Distinct
@@ -1517,7 +1525,7 @@ func StatusForCode(code string) int {
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist:
 		return http.StatusBadRequest
-	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm,
+	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeMirrorSlotAtCapacity:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
@@ -1542,6 +1550,8 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound:
 		return http.StatusNotFound
+	case CodeNotImplemented:
+		return http.StatusNotImplemented
 	// ADR-124 deployment queue controls. Cancel-of-live +
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
@@ -2004,6 +2014,20 @@ func ErrWaitForWarm(cooldownS int, l Limits, observed int) *Problem {
 		WithLimit(int64(cooldownS), int64(observed)).
 		WithDocs(docsBase+"/scaling-policy#cooldown").
 		WithHeader("Retry-After", strconv.Itoa(cooldownS))
+}
+
+// ErrSnapshotBackoff tells the caller to retry after the deployment's
+// snapshot-miss cooldown. This is platform back-pressure, not a customer
+// quota failure, so it uses 503 and carries a positive Retry-After value.
+func ErrSnapshotBackoff(retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusServiceUnavailable, CodeSnapshotBackoff,
+		"Snapshot temporarily unavailable",
+		"The deployment snapshot is temporarily unavailable; retry after the indicated delay.").
+		WithDocs("https://gregale.dev/status").
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS))
 }
 
 // ErrEdgeRuleMaintenance is returned by the gatewayd hot-path

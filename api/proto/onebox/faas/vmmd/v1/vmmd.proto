@@ -1394,6 +1394,10 @@ message PrepareLiveMigrationResponse {
   // dying vmmd mints it so the lease's window is tied to the
   // dying vmmd's lease clock, not the new owner's.
   string lease_token = 3;
+  // Firecracker version used to create the snapshot. The destination
+  // passes this through the normal restore compatibility gate and falls
+  // back to a cold boot when the versions differ.
+  string fc_version = 4;
 }
 
 // AdoptMigratedInstanceRequest (Tier A5 / ADR-065) is the input
@@ -1422,6 +1426,13 @@ message AdoptMigratedInstanceRequest {
   // Phase 3 + Phase 4 (the wire shape is the same — the column
   // is the predicate on the conditional UPDATE).
   string lease_token = 5;
+  // Request-level restore context mirrored from CreateFromSnapshotRequest.
+  // These fields are additive so older callers can continue using the
+  // original AppSpec-only envelope.
+  string plan = 6;
+  string account_id = 7;
+  string deployment_id = 8;
+  string fc_version = 9;
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers

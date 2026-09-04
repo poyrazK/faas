@@ -325,7 +325,7 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			)
 			// Phase 4: tell the dying vmmd to abort the
 			// pause and resume the VM. Best-effort.
-			_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+			h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 			return state.ErrConflict
 		}
 		if errors.Is(err, state.ErrNotFound) {
@@ -333,7 +333,7 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			h.log.Warn("sched: migrate one: Phase 2 instance gone",
 				"instance_id", instanceID,
 			)
-			_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+			h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 			return state.ErrNotFound
 		}
 		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
@@ -342,7 +342,7 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			"from_node_id", fromNodeID,
 			"err", err,
 		)
-		_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+		h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 		return fmt.Errorf("sched: migrate one: phase 2 mark migrating: %w", err)
 	}
 
@@ -371,10 +371,14 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			"instance_id", instanceID,
 			"err", err,
 		)
-		_ = h.store.CancelInstanceMigration(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
-		_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+		h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
+		h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 		return fmt.Errorf("sched: migrate one: load app spec: %w", err)
 	}
+	// The snapshot's FC version is part of the restore compatibility
+	// decision. Preserve it through the typed scheduler value so the
+	// destination can use the same restore-or-cold-boot gate as a normal wake.
+	appSpec.FCVersion = prepared.FCVersion
 	// Phase 3 reservation: reserve destination-side RAM + vCPU BEFORE
 	// the wire call so a flood of inbound migrations cannot over-admit
 	// a destination node (invariant §6.2-2 re-stated per-node).
@@ -417,8 +421,8 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			"new_owner_node_id", h.newOwnerNodeID,
 			"err", err,
 		)
-		_ = h.store.CancelInstanceMigration(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
-		_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+		h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
+		h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 		return fmt.Errorf("sched: migrate one: phase 3 ledger: %w", err)
 	}
 	adopted, err := h.vmm.AdoptMigratedInstance(leaseCtx, h.newOwnerNodeID, instanceID, appSpec,
@@ -426,12 +430,13 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	if err != nil {
 		// Phase 3 wire failure (new owner dial / restore
 		// failed). Roll back Phase 2 + Phase 4 + ledger
-		// reservation. The Release must run BEFORE
-		// CancelInstanceMigration so a transient store error
-		// can't leave the destination ledger over-counted
-		// (the gateway's pg_notify path doesn't fire on this
-		// branch — we never committed state='migrating' to
-		// the row from the destination's perspective).
+		// reservation. Destination cleanup and ledger release happen
+		// before the durable/source rollback so a transient store or
+		// peer error cannot leave the destination over-counted.
+		// Adopt may have registered a destination VM before returning an
+		// error. Destroy is idempotent and prevents a partial destination
+		// from leaking RAM/netns resources while the source is resumed.
+		h.cleanupAdopted(leaseCtx, instanceID)
 		h.ledger.Release(instanceID)
 		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
 		h.log.Warn("sched: migrate one: Phase 3 adopt failed",
@@ -439,8 +444,8 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			"new_owner_node_id", h.newOwnerNodeID,
 			"err", err,
 		)
-		_ = h.store.CancelInstanceMigration(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
-		_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+		h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
+		h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 		return fmt.Errorf("sched: migrate one: phase 3 adopt: %w", err)
 	}
 	_ = adopted // network identifiers are surfaced on the wire but
@@ -468,13 +473,15 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			// migration. No source-side ledger entry to
 			// release (the source's ledger lives on the
 			// source schedd process).
+			h.cleanupAdopted(leaseCtx, instanceID)
 			h.ledger.Release(instanceID)
 			h.metrics.LiveMigrationDecisions("conflict").Inc()
 			h.log.Debug("sched: migrate one: Phase 4 peer conflict",
 				"instance_id", instanceID,
 				"from_node_id", fromNodeID,
 			)
-			_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+			h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
+			h.rollbackSourceAfterCommitFailure(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 			return state.ErrConflict
 		}
 		if errors.Is(err, state.ErrNotFound) {
@@ -487,20 +494,23 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			// MigrateLiveInstances tick will see the
 			// destination's RAM headroom artificially
 			// depressed.
+			h.cleanupAdopted(leaseCtx, instanceID)
 			h.ledger.Release(instanceID)
 			h.log.Warn("sched: migrate one: Phase 4 instance gone",
 				"instance_id", instanceID,
 			)
-			_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+			h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
+			h.rollbackSourceAfterCommitFailure(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 			return state.ErrNotFound
 		}
 		// Anything else: lease expiry (ctx.DeadlineExceeded)
 		// or a transient DB error. Bump lease_expired on the
 		// context error; bump peer_failure on anything else
-		// (the operator can disambiguate via slog). Release
-		// runs first regardless — same invariant as the
+		// (the operator can disambiguate via slog). Destination cleanup
+		// and Release run before the rollback attempts, as in the
 		// ErrConflict / ErrNotFound branches.
 		if errors.Is(err, leaseCtx.Err()) || errors.Is(err, context.DeadlineExceeded) {
+			h.cleanupAdopted(leaseCtx, instanceID)
 			h.ledger.Release(instanceID)
 			h.metrics.LiveMigrationDecisions("lease_expired").Inc()
 			h.log.Warn("sched: migrate one: Phase 4 lease expired",
@@ -508,9 +518,11 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 				"from_node_id", fromNodeID,
 				"lease_seconds", h.leaseSeconds,
 			)
-			_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+			h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
+			h.rollbackSourceAfterCommitFailure(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 			return fmt.Errorf("sched: migrate one: phase 4 lease expired: %w", err)
 		}
+		h.cleanupAdopted(leaseCtx, instanceID)
 		h.ledger.Release(instanceID)
 		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
 		h.log.Warn("sched: migrate one: Phase 4 commit failed",
@@ -518,7 +530,8 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			"from_node_id", fromNodeID,
 			"err", err,
 		)
-		_ = h.vmm.CancelLiveMigration(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+		h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
+		h.rollbackSourceAfterCommitFailure(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 		return fmt.Errorf("sched: migrate one: phase 4 commit: %w", err)
 	}
 
@@ -575,4 +588,107 @@ func (h *MigrationHarness) loadAppSpecForInstance(ctx context.Context, instanceI
 		return AppSpec{}, fmt.Errorf("sched: load app spec: harness has no spec builder (wiring bug)")
 	}
 	return h.specBuilder(ctx, instanceID)
+}
+
+// cleanupAdopted destroys a destination VM after adoption succeeded or may
+// have partially succeeded but the ownership CAS failed. The source-side
+// cancel is not enough: without this cleanup the destination can keep a live
+// Firecracker process and a ledger reservation for an instance that remains
+// owned by the source.
+func (h *MigrationHarness) cleanupAdopted(ctx context.Context, instanceID string) {
+	if h == nil || h.vmm == nil || h.newOwnerNodeID == "" {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := h.vmm.Destroy(cleanupCtx, h.newOwnerNodeID, instanceID); err != nil && h.log != nil {
+		h.log.Warn("sched: migrate one: destination cleanup failed",
+			"instance_id", instanceID,
+			"node_id", h.newOwnerNodeID,
+			"err", err,
+		)
+	}
+}
+
+func (h *MigrationHarness) rollbackStore(ctx context.Context, instanceID, fromNodeID, leaseToken string) {
+	if h == nil || h.store == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := h.store.CancelInstanceMigration(cleanupCtx, instanceID, fromNodeID, leaseToken); err != nil && h.log != nil {
+		h.log.Debug("sched: migrate one: durable rollback did not apply",
+			"instance_id", instanceID,
+			"from_node_id", fromNodeID,
+			"err", err,
+		)
+	}
+}
+
+// rollbackSourceAfterCommitFailure reconciles the source VM with the durable
+// row after the destination was adopted but the ownership commit lost a race.
+// A plain CancelLiveMigration is only correct while the row still belongs to
+// the source. If a peer already committed the instance elsewhere (or the row
+// was deleted), resuming the paused source would create a second serving VM;
+// destroy it instead. If the database cannot be read, leave the source lease
+// intact so the vmmd's expiry/recovery loop can retry with authoritative state.
+func (h *MigrationHarness) rollbackSourceAfterCommitFailure(ctx context.Context, dyingNodeID, instanceID, leaseToken string) {
+	if h == nil || h.store == nil {
+		h.cancelSource(ctx, dyingNodeID, instanceID, leaseToken)
+		return
+	}
+
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	ins, err := h.store.InstanceByID(cleanupCtx, instanceID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			h.destroySource(cleanupCtx, dyingNodeID, instanceID)
+			return
+		}
+		if h.log != nil {
+			h.log.Debug("sched: migrate one: source rollback state read failed; retaining lease",
+				"instance_id", instanceID,
+				"from_node_id", dyingNodeID,
+				"err", err,
+			)
+		}
+		return
+	}
+	if ins.NodeID != "" && ins.NodeID != dyingNodeID {
+		h.destroySource(cleanupCtx, dyingNodeID, instanceID)
+		return
+	}
+	h.cancelSource(cleanupCtx, dyingNodeID, instanceID, leaseToken)
+}
+
+// destroySource tears down a source VM that can no longer safely be resumed.
+// The detached cleanup context is intentional: this is called after a failed
+// ownership commit, where the request context may already be at its deadline.
+func (h *MigrationHarness) destroySource(ctx context.Context, dyingNodeID, instanceID string) {
+	if h == nil || h.vmm == nil {
+		return
+	}
+	if err := h.vmm.Destroy(ctx, dyingNodeID, instanceID); err != nil && h.log != nil {
+		h.log.Warn("sched: migrate one: source cleanup failed",
+			"instance_id", instanceID,
+			"from_node_id", dyingNodeID,
+			"err", err,
+		)
+	}
+}
+
+func (h *MigrationHarness) cancelSource(ctx context.Context, dyingNodeID, instanceID, leaseToken string) {
+	if h == nil || h.vmm == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := h.vmm.CancelLiveMigration(cleanupCtx, dyingNodeID, instanceID, leaseToken); err != nil && h.log != nil {
+		h.log.Debug("sched: migrate one: source rollback did not apply",
+			"instance_id", instanceID,
+			"from_node_id", dyingNodeID,
+			"err", err,
+		)
+	}
 }

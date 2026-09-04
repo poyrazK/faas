@@ -3401,7 +3401,7 @@ func (l NodeLifecycle) IsAdmitting() bool {
 // doesn't pay for it here.
 type RecoveryInstance struct {
 	ID           string
-	State        string // 'RUNNING' | 'COLD_BOOTING' | 'WAKING'
+	State        string // 'running' | 'cold_booting' | 'waking' | ...
 	AppID        string
 	DeploymentID string
 }

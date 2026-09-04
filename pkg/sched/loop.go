@@ -667,6 +667,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		}
 		heartbeatT = time.NewTicker(interval)
 		defer heartbeatT.Stop()
+		// Establish a fresh liveness baseline before the first interval
+		// elapses. This is also important for recovery: a just-started
+		// schedd must be able to notice a node that is already back without
+		// waiting for the full heartbeat cadence.
+		l.runHeartbeat(ctx)
 	}
 	// Disk-drift sweep ticker (PR scale-out readiness #3). Hourly
 	// cadence (api.DefaultDiskDriftInterval = 1h) aligns with the

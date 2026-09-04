@@ -1,4 +1,4 @@
--- filename: 00582_compute_nodes_recovery_audit.sql
+-- filename: 20260904205349285_compute_nodes_recovery_audit.sql
 -- Workstream B (issue #1184): add the recovery-tracking columns to
 -- compute_nodes so the operator runbook, audit dashboard, and
 -- `node.draining` / `node.drained` / `node.failed` / `node.recovered`

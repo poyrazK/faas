@@ -1584,6 +1584,13 @@ type Store interface {
 	// both want "instances I'm responsible for" rather than the
 	// fleet-wide ListAllInstances.
 	ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
+	// ListInstancesOnNodeID returns every instance whose physical
+	// instances.node_id matches nodeID, regardless of the owning app's
+	// scheduler owner. This is the safety/observability view for drains:
+	// live migration updates instances.node_id before apps.node_id, so an
+	// ownership-scoped query can otherwise miss a still-running VM on the
+	// node being drained.
+	ListInstancesOnNodeID(ctx context.Context, nodeID string) ([]Instance, error)
 	// ListInstancesForLifecycleReconciliation returns live instances whose
 	// parent app or account is in a deletion state. It is the durable fallback
 	// for pg_notify: schedd uses it to destroy VMs after a missed notification
@@ -3675,6 +3682,13 @@ type Store interface {
 	// before this call so the SQL stays narrow.
 	ListInstancesForAccountPaged(ctx context.Context, accountID string, limit int, before string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
+	// UpdateInstanceStateIf atomically changes an instance state only when
+	// its current state equals expectedState. It returns ErrConflict when
+	// the row is missing or another writer changed the state first. Recovery
+	// paths use this to make load → validate → write transitions race-safe.
+	// A transition to parked also stamps parked_at, preserving the retention
+	// and watchdog invariant for direct recovery recreates.
+	UpdateInstanceStateIf(ctx context.Context, id, expectedState, nextState string) error
 	// UpdateInstanceStateWithTimestamp is the same write but stamps
 	// parked_at to the supplied time on the same statement. Used by
 	// schedd's snapshotAndPark (commit 3) when transitioning into
@@ -4085,12 +4099,11 @@ type Store interface {
 	// sweep restores the destination's snapshot set, OR by the wake
 	// flow on a successful cold boot.
 	DeploymentClearSnapshotBackoff(ctx context.Context, deploymentID string) error
-	// DeploymentSnapshotBackoffActive returns the backoff row iff
-	// a Retry-After is currently in effect (snapshot_miss_backoff_until
-	// > now()). Returns (Deployment{}, false, nil) on no-backoff —
-	// the wake flow short-circuits with HTTP 429 + Retry-After on a
-	// hit and proceeds normally otherwise. The partial index
-	// `deployments_snapshot_backoff_idx` makes this an index-only scan.
+	// DeploymentSnapshotBackoffActive returns the stored backoff row when
+	// snapshot_miss_backoff_until is non-null. The bool reports whether the
+	// timestamp is still in effect; expired rows are returned so the wake
+	// flow can preserve the miss count when computing the next backoff.
+	// The partial index `deployments_snapshot_backoff_idx` covers the lookup.
 	DeploymentSnapshotBackoffActive(ctx context.Context, deploymentID string) (Deployment, bool, error)
 	// SetComputeNodeRole overwrites the role column on a row by id
 	// (ADR-112 PR-B). PR-A's first-boot path populates the column via

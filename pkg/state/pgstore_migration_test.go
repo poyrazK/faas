@@ -219,6 +219,9 @@ func TestPgStore_MigrateInstanceOwner(t *testing.T) {
 	if err := s.MarkInstanceMigrating(ctx, insID, peer.ID, "lease-commit"); err != nil {
 		t.Fatalf("MarkInstanceMigrating: %v", err)
 	}
+	if err := s.MigrateInstanceOwner(ctx, insID, peer.ID, other.ID, "stale-lease"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("MigrateInstanceOwner stale lease: %v; want ErrConflict", err)
+	}
 
 	// Happy path: state='migrating' + node_id=peer matches.
 	if err := s.MigrateInstanceOwner(ctx, insID, peer.ID, other.ID, "lease-commit"); err != nil {

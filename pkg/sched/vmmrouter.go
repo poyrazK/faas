@@ -178,6 +178,7 @@ type LiveMigrationPrepare struct {
 	MemStorageKey     string
 	VMStateStorageKey string
 	LeaseToken        string
+	FCVersion         string
 }
 
 // LiveMigrationAdopt is the typed return for RoutedVMM::

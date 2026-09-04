@@ -1,4 +1,4 @@
--- filename: 00579_compute_nodes_lifecycle.sql
+-- filename: 20260904205348784_compute_nodes_lifecycle.sql
 -- Workstream B (issue #1184): replace `active bool` on compute_nodes with a
 -- 4-state lifecycle enum (`active` / `draining` / `unavailable` / `recovering`).
 -- The boolean `active` is preserved as a STORED GENERATED column so every
@@ -12,7 +12,7 @@
 --    healing" — modelling it as a state of its own (not a bool flag) lets the
 --    recovery arbiter distinguish "freshly back" from "fully healthy" and emit
 --    distinct metrics per phase.
---  - ENUM + CHECK on `last_recovery_outcome` (00582) gives runtime + migration-
+--  - ENUM + CHECK on `last_recovery_outcome` (the recovery-audit migration) gives runtime + migration-
 --    time validation; no separate "is this string valid?" code path.
 --
 -- ADR-137 §"Lifecycle shape" records the deviation from issue #1184's text.
@@ -32,6 +32,13 @@ END$$;
 
 ALTER TABLE compute_nodes
     ADD COLUMN IF NOT EXISTS lifecycle compute_node_lifecycle NOT NULL DEFAULT 'active';
+
+-- Preserve the pre-migration boolean decision before replacing it with the
+-- generated compatibility column. Without this backfill every row that was
+-- inactive/drained before the lifecycle migration would silently come back as lifecycle=active.
+UPDATE compute_nodes
+   SET lifecycle = 'unavailable'::compute_node_lifecycle
+ WHERE NOT active;
 
 -- Redefine the pg_notify trigger function so it no longer references the
 -- `active` column. Postgres refuses to drop a column if any trigger
@@ -99,10 +106,31 @@ CREATE INDEX IF NOT EXISTS compute_nodes_region_zone_idx
 -- +goose Down
 -- +goose StatementBegin
 DROP INDEX IF EXISTS compute_nodes_lifecycle_idx;
-CREATE INDEX IF NOT EXISTS compute_nodes_active_idx
-    ON compute_nodes (name) WHERE active = true;
+DROP INDEX IF EXISTS compute_nodes_active_unique_idx;
+DROP INDEX IF EXISTS compute_nodes_region_zone_idx;
 ALTER TABLE compute_nodes DROP COLUMN IF EXISTS active;
 ALTER TABLE compute_nodes ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
+UPDATE compute_nodes
+   SET active = lifecycle IN ('active','recovering');
 ALTER TABLE compute_nodes DROP COLUMN IF EXISTS lifecycle;
 DROP TYPE IF EXISTS compute_node_lifecycle;
+-- Restore the pre-lifecycle trigger function before any subsequent write. The
+-- Up migration's function reads NEW.lifecycle, which no longer exists after
+-- this down path; leaving it installed would make every compute_nodes write
+-- fail at trigger execution time.
+CREATE OR REPLACE FUNCTION compute_node_notify() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    payload jsonb;
+BEGIN
+    payload := jsonb_build_object(
+        'node_id', new.id::text,
+        'active',  new.active
+    );
+    PERFORM pg_notify('compute_node_changed', payload::text);
+    RETURN new;
+END;
+$$;
+CREATE INDEX IF NOT EXISTS compute_nodes_active_idx
+    ON compute_nodes (name) WHERE active = true;
 -- +goose StatementEnd

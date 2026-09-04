@@ -1531,7 +1531,6 @@ SELECT snapshot_miss_count, snapshot_miss_backoff_until
 FROM deployments
 WHERE id = $1
   AND snapshot_miss_backoff_until IS NOT NULL
-  AND snapshot_miss_backoff_until > now()
 `
 
 type DeploymentSnapshotBackoffActiveRow struct {
@@ -1539,11 +1538,10 @@ type DeploymentSnapshotBackoffActiveRow struct {
 	SnapshotMissBackoffUntil pgtype.Timestamptz
 }
 
-// The wake-side gate. Returns the row iff a backoff is currently in
-// effect (snapshot_miss_backoff_until > now()). The wake flow
-// short-circuits with HTTP 429 + Retry-After on a hit. The partial
-// index `deployments_snapshot_backoff_idx` makes this an index-only
-// scan.
+// The wake-side gate. Returns the row while a backoff timestamp is
+// present; the store computes whether it is still active. Returning
+// expired rows preserves the miss count for the next backoff stamp.
+// The partial index `deployments_snapshot_backoff_idx` covers this lookup.
 func (q *Queries) DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error) {
 	row := db.QueryRow(ctx, deploymentSnapshotBackoffActive, id)
 	var i DeploymentSnapshotBackoffActiveRow
@@ -2407,7 +2405,7 @@ const instanceListByNodeForRecovery = `-- name: InstanceListByNodeForRecovery :m
 SELECT id, state, app_id, deployment_id
 FROM instances
 WHERE node_id = $1
-  AND state IN ('RUNNING', 'COLD_BOOTING', 'WAKING')
+  AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
 ORDER BY started_at
 `
 
@@ -2420,9 +2418,9 @@ type InstanceListByNodeForRecoveryRow struct {
 
 // Live instances on a specific node — input to the arbiter's
 // per-instance decision. Limited to states the arbiter can act on:
-// 'RUNNING' (live-migrate or recreate), 'COLD_BOOTING' (recreate,
-// the snapshot may not have made it to the destination yet),
-// 'WAKING' (recreate — same reason). The arbiter only needs the
+// 'running' (live-migrate), 'cold_booting' (recreate, the snapshot
+// may not have made it to the destination yet), 'waking' (recreate —
+// same reason). The arbiter only needs the
 // (app_id, deployment_id, state, id) tuple — account_id is reachable
 // via the existing app/deployment joins if needed by downstream
 // code, but the per-tick hot loop doesn't pay for it here.
@@ -4775,7 +4773,7 @@ WHERE lifecycle = 'active'
   AND NOT EXISTS (
       SELECT 1 FROM instances
       WHERE instances.node_id = compute_nodes.id
-        AND instances.state IN ('RUNNING', 'COLD_BOOTING', 'WAKING')
+        AND instances.state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
   )
 ORDER BY name
 `

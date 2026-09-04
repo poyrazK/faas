@@ -2065,6 +2065,22 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	wakeID := wakeUUID.String()
 
+	// Consult the per-deployment snapshot-miss backoff before touching the
+	// snapshot cache. Repeated cache misses must be visible as bounded 503s;
+	// silently forcing another cold boot defeats the backoff and can exhaust
+	// the node's RAM/capacity under a hot request loop.
+	backoff, backoffActive, backoffErr := e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID)
+	if backoffErr != nil {
+		e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", backoffErr)
+	} else if backoffActive && !bypassGates {
+		if e.ops != nil {
+			e.ops.WakeSnapshotTier("cold_boot_fallback").Inc()
+			e.ops.SnapshotBackoffGateOutcome("gated").Inc()
+		}
+		release()
+		return WakeResult{}, api.ErrSnapshotBackoff(snapshotBackoffRetryAfter(backoff.SnapshotMissBackoffUntil))
+	}
+
 	// Restore iff a fresh, version-matched snapshot exists; else cold boot
 	// (ADR-005: cold boot always works, snapshot is cache). The plan
 	// gate (issue #470 / PR A / ADR-055) is consulted here: a
@@ -2078,34 +2094,20 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
 	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan))
-
-	// ADR-137 / Workstream B / fix #4: consult the per-deployment
-	// snapshot-miss backoff gate BEFORE honoring a warm-tier restore.
-	// Under sustained misses (FC upgrade in flight, image registry
-	// unreachable, deployment misconfigured) the snapshot-cache-miss
-	// branch was burning RAM + capacity on every wake. The gate is
-	// a stamp on `deployments.snapshot_miss_backoff_until` (migration
-	// 00585) — when set and in the future, force the cold-boot tier
-	// so the wake still completes (ADR-005: cold boot always works),
-	// and emit the dedicated backoff counter so the dashboard can
-	// distinguish "gated by 00585" from "natural cold-boot". The
-	// wake is NOT blocked; the customer's bill is the same. MemStore
-	// returns (Deployment{}, false, nil) so tests that don't seed a
-	// backoff row are unaffected.
-	var backoffActive bool
-	if _, active, err := e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID); err != nil {
-		e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", err)
-	} else if active {
-		backoffActive = true
-		haveSnap = false
-		chosenTier = "cold_boot_backoff_gate"
+	if !haveSnap {
+		// Only a deployment that has had a snapshot can be said to have
+		// missed one. This avoids starting the exponential backoff on a
+		// brand-new cold deployment that never had a cache entry.
+		if hasHistory, historyErr := e.store.HasSnapshotHistory(ctx, dep.ID); historyErr != nil {
+			e.log.Warn("wake: snapshot history lookup failed", "deployment_id", dep.ID, "err", historyErr)
+		} else if hasHistory {
+			_, _, _ = e.RecordSnapshotMiss(ctx, dep.ID, backoff.SnapshotMissCount)
+		}
 	}
 	if e.ops != nil {
 		e.ops.WakeSnapshotTier(chosenTier).Inc()
 		if backoffActive {
-			if c := e.ops.SnapshotBackoffGateOutcome("gated"); c != nil {
-				c.Inc()
-			}
+			e.ops.SnapshotBackoffGateOutcome("miss").Inc()
 		}
 	}
 
@@ -2354,6 +2356,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		Plan:       acct.Plan, AccountID: acct.ID,
+		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv,
 		Sidecars:  sidecars,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
@@ -2819,6 +2822,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	e.transition(ctx, bootInput.insID, bootInput.appID, state.StateRunning)
+	// A completed wake proves that the deployment can boot again. Clear any
+	// expired snapshot-miss backoff so a later miss starts a fresh sequence;
+	// this is idempotent for deployments that never had a backoff row.
+	if err := e.ClearSnapshotBackoff(ctx, bootInput.depID); err != nil {
+		e.log.Warn("wake: clear snapshot backoff after successful boot", "deployment_id", bootInput.depID, "err", err)
+	}
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
 	//   - admit_to_rpc = rpcStartedAt - bootInput.startedAt.
@@ -3905,15 +3914,17 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
 	}
 	return AppSpec{
-		BaseKey:    baseKey(app.Runtime),
-		LayerKey:   layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:  int32(limits.VCPU),
-		MemSizeMiB: int32(app.RAMMB),
-		EgressMbit: int32(limits.EgressMbit),
-		Plan:       acct.Plan,
-		AccountID:  acct.ID,
-		SealedEnv:  sealedEnv,
-		Sidecars:   sidecars,
+		BaseKey:      baseKey(app.Runtime),
+		LayerKey:     layerKey(dep.RootfsKey, dep.ID),
+		VCPUCount:    int32(limits.VCPU),
+		MemSizeMiB:   int32(app.RAMMB),
+		EgressMbit:   int32(limits.EgressMbit),
+		Plan:         acct.Plan,
+		AccountID:    acct.ID,
+		AppID:        app.ID,
+		DeploymentID: dep.ID,
+		SealedEnv:    sealedEnv,
+		Sidecars:     sidecars,
 		// ADR-045: api_env plaintext layer; the loadAPIEnv
 		// helper already fail-softs on a lookup error and logs
 		// Warn (engine.go:2382-2396). A hiccup here ships an
@@ -4084,6 +4095,58 @@ func (e *Engine) MigrateLiveInstances(ctx context.Context, deadNodeID string) (i
 		"attempted", attempted, "migrated", migrated,
 		"to_node", e.ownerNodeID)
 	return attempted, nil
+}
+
+// MigrateRecoveryInstance dispatches one arbiter-approved RUNNING instance
+// to this schedd's owner node. Keeping the single-instance adapter on Engine
+// lets the recovery runner use the same four-phase handoff as the legacy
+// notify path, while the arbiter remains the sole migrate-vs-recreate policy.
+func (e *Engine) MigrateRecoveryInstance(ctx context.Context, instanceID string) error {
+	if e == nil || e.store == nil {
+		return nil
+	}
+	if e.ownerNodeID == "" {
+		return nil
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("sched: recovery migration: load instance %s: %w", instanceID, err)
+	}
+	if ins.NodeID == "" || ins.NodeID == e.ownerNodeID {
+		// A schedd must never hand an instance back to its current owner.
+		// In particular, the source node's own recovery runner can observe
+		// the row while a peer is racing to adopt it.
+		return nil
+	}
+	if ins.State != string(state.StateRunning) {
+		return fmt.Errorf("sched: recovery migration: instance %s is %q, want running", instanceID, ins.State)
+	}
+	if e.vmm == nil {
+		return fmt.Errorf("sched: recovery migration: vmmd router is not configured")
+	}
+	if e.ledger == nil {
+		return fmt.Errorf("sched: recovery migration: node ledger is not configured")
+	}
+	metrics := e.ops
+	if metrics == nil {
+		metrics = wire.NewOpsMetrics("schedd")
+	}
+	harness := NewMigrationHarness(ctx, e.store, e.vmm, metrics, e.log,
+		e.ownerNodeID, e.BuildAppSpecForMigration, e.ledger,
+		e.resolveNodeCeiling)
+	harness.SetMaxPerTick(1)
+	leaseSeconds := api.MigrateLiveLeaseSeconds
+	if e.migrateLiveLeaseSeconds > 0 {
+		leaseSeconds = e.migrateLiveLeaseSeconds
+	}
+	harness.SetLeaseSeconds(leaseSeconds)
+	if e.events != nil {
+		harness.WithEvents(e.events)
+	}
+	return harness.MigrateOne(ctx, instanceID, ins.NodeID)
 }
 
 // ReconcileExpiredMigrations (Tier A6 / ADR-067 migrating-
@@ -4488,6 +4551,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		Plan:       acct.Plan, AccountID: acct.ID,
+		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv,
 		Sidecars:  sidecars,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
@@ -7018,7 +7082,7 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 		if err := e.store.UpdateInstanceStateToTerminal(ctx, instanceID, string(to), time.Now().UTC()); err != nil {
 			return false, err
 		}
-	} else if err := e.store.UpdateInstanceState(ctx, instanceID, string(to)); err != nil {
+	} else if err := updateInstanceStateCAS(ctx, e.store, instanceID, string(from), string(to)); err != nil {
 		return false, err
 	}
 	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
@@ -7033,6 +7097,15 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 		}
 	}
 	return true, nil
+}
+
+// updateInstanceStateCAS is kept behind the state.Store interface so the
+// recovery primitive cannot silently fall back to an unconditional write.
+// Both production stores implement this method; the explicit assertion also
+// makes a partially wired test/store fail closed instead of reintroducing the
+// load-then-write race this helper exists to close.
+func updateInstanceStateCAS(ctx context.Context, store state.Store, instanceID, expectedState, nextState string) error {
+	return store.UpdateInstanceStateIf(ctx, instanceID, expectedState, nextState)
 }
 
 func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID string, to state.State, kind, reason string) {
@@ -7135,6 +7208,10 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 	})
 	if err := e.notif.Notify(ctx, db.NotifySnapshotWritten, string(payload)); err != nil {
 		e.log.Warn("emit snapshot_written", "deployment", deploymentID, "tier", tier, "err", err)
+		return
+	}
+	if err := e.ClearSnapshotBackoff(ctx, deploymentID); err != nil {
+		e.log.Warn("emit snapshot_written: clear snapshot backoff", "deployment", deploymentID, "err", err)
 	}
 }
 

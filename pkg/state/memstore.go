@@ -2940,6 +2940,28 @@ func (m *MemStore) ListInstancesByNodeID(_ context.Context, nodeID string) ([]In
 	return out, nil
 }
 
+// ListInstancesOnNodeID mirrors PgStore.ListInstancesOnNodeID. This is the
+// physical-placement view used by drain safety and node observability; it
+// intentionally does not consult the app's scheduler-owner NodeID because a
+// live migration moves the instance row first.
+func (m *MemStore) ListInstancesOnNodeID(_ context.Context, nodeID string) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Instance, 0)
+	for _, ins := range m.instances {
+		if ins.NodeID == nodeID {
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
+	return out, nil
+}
+
 // ListInstancesForLifecycleReconciliation mirrors the PgStore join used by
 // schedd's durable deletion sweep. The in-memory implementation deliberately
 // evaluates the same app/account status and instance-state predicates so
@@ -3223,8 +3245,8 @@ func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentN
 // MigrateInstanceOwner mirrors pkg/state/pgstore.go::
 // MigrateInstanceOwner. Two-step in-memory transaction: flip
 // the instance row (conditional on state='migrating' +
-// node_id=fromNodeID), then stamp apps.migrated_at. Returns
-// ErrConflict on a lost race / row gone.
+// node_id=fromNodeID + lease_token=leaseToken), then stamp
+// apps.migrated_at. Returns ErrConflict on a lost race / row gone.
 func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeID, toNodeID, leaseToken string) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: migrate instance owner: empty instanceID")
@@ -3238,7 +3260,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	if !ok {
 		return ErrNotFound
 	}
-	if ins.State != "migrating" || ins.NodeID != fromNodeID {
+	if ins.State != "migrating" || ins.NodeID != fromNodeID || ins.LeaseToken != leaseToken {
 		return ErrConflict
 	}
 	now := time.Now()
@@ -8263,6 +8285,13 @@ func (m *MemStore) InstanceByID(_ context.Context, id string) (Instance, error) 
 	return ins, nil
 }
 
+// MigrationInstanceByID is the migration-aware counterpart to InstanceByID.
+// MemStore already keeps the complete Instance value, so the method simply
+// exposes the same copy through the optional vmmd migration seam.
+func (m *MemStore) MigrationInstanceByID(ctx context.Context, id string) (Instance, error) {
+	return m.InstanceByID(ctx, id)
+}
+
 // ReadActiveInstanceForWakeID mirrors PgStore.ReadActiveInstanceForWakeID
 // for in-memory tests. Returns the most-recently-started instance
 // row whose state is in the in-flight set AND whose wake_id matches.
@@ -8533,6 +8562,25 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 		return ErrNotFound
 	}
 	ins.State = state
+	m.instances[id] = ins
+	return nil
+}
+
+// UpdateInstanceStateIf is the in-memory equivalent of the PostgreSQL
+// conditional UPDATE used by recovery races. A missing row and a stale
+// expected state both mean another writer won; ErrConflict keeps that path
+// benign for callers that are retrying a reconciliation sweep.
+func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, nextState string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok || ins.State != expectedState {
+		return ErrConflict
+	}
+	ins.State = nextState
+	if State(nextState) == StateParked {
+		ins.ParkedAt = time.Now().UTC()
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -9284,6 +9332,7 @@ func (m *MemStore) seedDefaultLocalNodeLocked() {
 		// pre-migration box-wide gate.
 		VCPUBudget:      api.VCPUSlots,
 		Active:          true,
+		Lifecycle:       NodeLifecycleActive,
 		LastHeartbeatAt: now,
 		CreatedAt:       now,
 		// Phase 2 / Gate A: per-node schedd dial target. The
@@ -9408,6 +9457,7 @@ func (m *MemStore) MarkComputeNodeInactive(_ context.Context, nodeID string) err
 	if !ok {
 		return ErrNotFound
 	}
+	n.Lifecycle = NodeLifecycleUnavailable
 	n.Active = false
 	m.computeNodes[nodeID] = n
 	return nil
@@ -9469,11 +9519,14 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 	// without touching lifecycle keeps Active=false — the
 	// derived column is advisory, not authoritative, when only
 	// one of the two fields is set.
-	if n.Lifecycle != "" {
-		n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	} else {
-		n.Lifecycle = NodeLifecycleActive
+	if n.Lifecycle == "" {
+		if n.Active {
+			n.Lifecycle = NodeLifecycleActive
+		} else {
+			n.Lifecycle = NodeLifecycleUnavailable
+		}
 	}
+	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
 	m.computeNodes[n.ID] = n
 	return n, nil
 }
@@ -9517,7 +9570,6 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	if n.LastHeartbeatAt.IsZero() {
 		n.LastHeartbeatAt = n.CreatedAt
 	}
-	n.Active = true
 	// Mirror migration 00579 DEFAULT 'active' (the SQL
 	// DEFAULT clause on lifecycle is server-side; this is the
 	// in-memory equivalent). UpsertComputeNode is the
@@ -9617,10 +9669,14 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 		n.LastHeartbeatAt = n.CreatedAt
 	}
 	if existing == nil || !preserveTargetURLOnConflict {
-		n.Active = true
+		n.Lifecycle = NodeLifecycleActive
 	} else {
-		n.Active = existing.Active
+		// vmmd registration refreshes capacity but must not undo an
+		// operator drain or a heartbeat failure. Heartbeat probes
+		// unavailable rows and owns their recovery transition.
+		n.Lifecycle = existing.Lifecycle
 	}
+	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
 	m.computeNodes[n.ID] = n
 	return n, nil
 }
@@ -9675,6 +9731,11 @@ func (m *MemStore) SetComputeNodeActive(_ context.Context, id string, active boo
 	n, ok := m.computeNodes[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if active {
+		n.Lifecycle = NodeLifecycleActive
+	} else {
+		n.Lifecycle = NodeLifecycleUnavailable
 	}
 	n.Active = active
 	m.computeNodes[id] = n
@@ -9777,17 +9838,26 @@ func (m *MemStore) NodeListRecoverable(_ context.Context) ([]ComputeNode, error)
 }
 
 // NodeListDrainable returns every 'active' node with zero live
-// instances. The memstore has no instances map yet, so the
-// "zero live instances" check is always true — every active node is
-// considered drainable. The schedd unit tests don't need the
-// admission gate; the pgtest / metal tests verify it against the
-// real schema.
+// instances. Keep the in-memory predicate aligned with the SQL
+// implementation so tests cannot accidentally admit a node that is
+// still holding RAM for a waking, running, snapshotting, or migrating
+// instance.
 func (m *MemStore) NodeListDrainable(_ context.Context) ([]ComputeNode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]ComputeNode, 0, len(m.computeNodes))
 	for _, n := range m.computeNodes {
-		if n.Lifecycle == NodeLifecycleActive {
+		if n.Lifecycle != NodeLifecycleActive {
+			continue
+		}
+		drainable := true
+		for _, ins := range m.instances {
+			if ins.NodeID == n.ID && State(strings.ToLower(ins.State)).CountsForRAM() {
+				drainable = false
+				break
+			}
+		}
+		if drainable {
 			out = append(out, n)
 		}
 	}
@@ -9808,6 +9878,7 @@ func (m *MemStore) NodeMarkDrainCompleted(_ context.Context, id string, complete
 		return ErrConflict
 	}
 	n.Lifecycle = NodeLifecycleActive
+	n.Active = true
 	n.DrainCompletedAt = &completedAt
 	m.computeNodes[id] = n
 	return nil
@@ -9826,17 +9897,36 @@ func (m *MemStore) NodeMarkRecovered(_ context.Context, id string) error {
 		return ErrConflict
 	}
 	n.Lifecycle = NodeLifecycleActive
+	n.Active = true
 	outcome := "succeeded"
 	n.LastRecoveryOutcome = &outcome
 	m.computeNodes[id] = n
 	return nil
 }
 
-// InstanceListByNodeForRecovery returns the live instances on a node.
-// The memstore does not track instances; return an empty slice so the
-// arbiter's per-tick decision sees no work to do.
-func (m *MemStore) InstanceListByNodeForRecovery(_ context.Context, _ string) ([]RecoveryInstance, error) {
-	return nil, nil
+// InstanceListByNodeForRecovery returns the live and in-flight instances on
+// a node. Keep this predicate in lock-step with the PostgreSQL query so the
+// recovery runner is testable against the same state-machine surface.
+func (m *MemStore) InstanceListByNodeForRecovery(_ context.Context, nodeID string) ([]RecoveryInstance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]RecoveryInstance, 0)
+	for _, ins := range m.instances {
+		if ins.NodeID != nodeID {
+			continue
+		}
+		switch State(strings.ToLower(ins.State)) {
+		case StateRunning, StateColdBooting, StateWaking, StateSnapshotting, StateMigrating:
+			out = append(out, RecoveryInstance{
+				ID:           ins.ID,
+				State:        ins.State,
+				AppID:        ins.AppID,
+				DeploymentID: ins.DeploymentID,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 // DeploymentRecordSnapshotMiss is the wake-side backoff stamp. The

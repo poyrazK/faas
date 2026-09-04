@@ -87,6 +87,20 @@ func ComputeSnapshotBackoff(consecutiveMisses int) (time.Duration, int) {
 	return d, retryAfter
 }
 
+// snapshotBackoffRetryAfter returns the remaining whole seconds for an
+// already-recorded cooldown. The wire contract never emits zero, even when a
+// row expires between the database read and response construction.
+func snapshotBackoffRetryAfter(until *time.Time) int {
+	if until == nil {
+		return 1
+	}
+	seconds := int(math.Ceil(time.Until(until.UTC()).Seconds()))
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
 // RecordSnapshotMiss stamps the per-deployment backoff row and
 // returns the new backoff duration + retry-after seconds for
 // the caller to surface to the gateway. The store stamp is

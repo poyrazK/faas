@@ -693,6 +693,9 @@ func TestMemStore_MigrateInstanceOwner_SweepExtra_Happy(t *testing.T) {
 	if err := store.MarkInstanceMigrating(ctx, inst.ID, "node-1", "lease-tok-1"); err != nil {
 		t.Fatalf("mark migrating: %v", err)
 	}
+	if err := store.MigrateInstanceOwner(ctx, inst.ID, "node-1", "node-2", "stale-lease"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale migrate lease: %v, want ErrConflict", err)
+	}
 	if err := store.MigrateInstanceOwner(ctx, inst.ID, "node-1", "node-2", "lease-tok-1"); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -242,6 +242,38 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 			return err
 		}
 	}
+	// NodeRegistry intentionally contains only admitting nodes, so an
+	// unavailable or draining row would otherwise disappear forever. Always
+	// merge the durable recovery and drain sets into the active snapshot,
+	// de-duplicated by node id.
+	recoverable, err := h.store.NodeListRecoverable(ctx)
+	if err != nil {
+		h.log.Warn("heartbeat: list recoverable compute_nodes failed", "err", err)
+		return err
+	}
+	draining, err := h.store.NodeList(ctx, state.NodeLifecycleDraining)
+	if err != nil {
+		h.log.Warn("heartbeat: list draining compute_nodes failed", "err", err)
+		return err
+	}
+	seen := make(map[string]struct{}, len(nodes)+len(recoverable)+len(draining))
+	for _, n := range nodes {
+		seen[n.ID] = struct{}{}
+	}
+	for _, n := range recoverable {
+		if _, ok := seen[n.ID]; ok {
+			continue
+		}
+		nodes = append(nodes, n)
+		seen[n.ID] = struct{}{}
+	}
+	for _, n := range draining {
+		if _, ok := seen[n.ID]; ok {
+			continue
+		}
+		nodes = append(nodes, n)
+		seen[n.ID] = struct{}{}
+	}
 	// Phase 2 / Gate A: scope the sweep to this schedd's owner
 	// node. Multi-node schedd → single-node ping; single-box
 	// (empty owner) → legacy fleet-wide sweep unchanged.
@@ -299,7 +331,7 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	// pg_notify consumers continue to work unchanged. Helper
 	// markLifecycle keeps the CAS shape consistent across the
 	// three failure / recovery call sites below.
-	markLifecycle := func(expected, next state.NodeLifecycle) {
+	markLifecycle := func(expected, next state.NodeLifecycle) bool {
 		if err := h.store.NodeSetLifecycle(ctx, n.ID, expected, next); err != nil {
 			// ErrConflict means another writer (drain handler,
 			// recovery arbiter) raced us; that's fine — they own
@@ -307,12 +339,14 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 			// removed the row between the ActiveComputeNodes scan
 			// and this CAS — also fine.
 			if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
-				return
+				return false
 			}
 			h.log.Warn("heartbeat: lifecycle CAS failed",
 				"node_id", n.ID, "expected", expected,
 				"next", next, "err", err)
+			return false
 		}
+		return true
 	}
 
 	// markUnavailableIfEligible is the CAS-or path (fix #7):
@@ -339,7 +373,7 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	// (3 attempts) and the per-call latency stays well below
 	// the heartbeat tick budget; the heartbeat is not on the
 	// hot path of any customer request.
-	markUnavailableIfEligible := func() {
+	markUnavailableIfEligible := func() bool {
 		for _, expected := range []state.NodeLifecycle{
 			n.Lifecycle,               // first: whatever we observed at scan time (the cheap happy-path)
 			state.NodeLifecycleActive, // then: union over the remaining admit-states
@@ -356,37 +390,33 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 					"next", state.NodeLifecycleUnavailable, "err", err)
 				continue
 			}
-			return // CAS landed; we're done
+			return true // CAS landed; we're done
 		}
+		return false
 	}
 
 	// Staleness gate (issue #98): even if Ping below succeeds,
 	// a node whose last_heartbeat_at is older than the
-	// threshold is stale and gets flipped unavailable. The ping
-	// then continues on the next tick, post-deactivation. The
+	// threshold is stale and gets flipped unavailable. The
 	// CAS-or union {active, recovering, draining} → unavailable
 	// covers all three lifecycle sources (clean node, post-
-	// recovery node, operator-drained node); the
-	// unavailable → unavailable case is filtered by the
-	// n.Lifecycle pre-check.
-	if n.Lifecycle == state.NodeLifecycleUnavailable {
-		// Already unavailable; nothing to do here. The recovery
-		// arbiter (Task #66) is the only component that flips
-		// unavailable → recovering / active.
-		return
-	}
+	// recovery node, operator-drained node). Unavailable rows
+	// are exempt: their old timestamp is expected, and the probe
+	// below is the only path that can discover recovery.
+	wasUnavailable := n.Lifecycle == state.NodeLifecycleUnavailable
 	// Legacy row whose lifecycle enum hasn't been read yet
 	// (pre-fix-#1 pgstore deploys, MemStore seeds with no enum
 	// yet) falls through to the staleness gate + CAS-or loop
 	// below; the union includes "" as a valid expected state.
-	if !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness {
+	if !wasUnavailable && !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness {
 		h.log.Info("heartbeat: node stale, marking unavailable",
 			"node_id", n.ID, "node_name", n.Name,
 			"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
 			"prior_lifecycle", string(n.Lifecycle),
 			"staleness", staleness.String())
-		markUnavailableIfEligible()
-		h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
+		if markUnavailableIfEligible() && !wasUnavailable {
+			h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
+		}
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
 		}
@@ -400,8 +430,9 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		h.log.Warn("heartbeat: ping failed; marking unavailable",
 			"node_id", n.ID, "node_name", n.Name,
 			"prior_lifecycle", string(n.Lifecycle), "err", err)
-		markUnavailableIfEligible()
-		h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
+		if markUnavailableIfEligible() && !wasUnavailable {
+			h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
+		}
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
 		}
@@ -418,8 +449,13 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	if n.Lifecycle == state.NodeLifecycleUnavailable {
 		h.log.Info("heartbeat: node recovered to recovering",
 			"node_id", n.ID, "node_name", n.Name)
-		markLifecycle(state.NodeLifecycleUnavailable, state.NodeLifecycleRecovering)
-		h.emitNodeRecovered(ctx, n)
+		if markLifecycle(state.NodeLifecycleUnavailable, state.NodeLifecycleRecovering) {
+			n.Lifecycle = state.NodeLifecycleRecovering
+			n.Active = true
+			if h.nodeRegistry != nil {
+				h.nodeRegistry.Refresh(n)
+			}
+		}
 	}
 	if err := h.store.HeartbeatComputeNode(ctx, n.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -444,14 +480,11 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	// continues — observability must never abort the stamp
 	// loop.
 	receivedAt := tickNow
-	// source='heartbeat_tick' is the only value the routine
-	// stamp path writes today. The migration 00065 CHECK also
-	// permits 'deactivation' and 'reactivation' for the future
-	// watchdog integration (the last contact attempt before a
-	// deactivation + the recovery stamp); no code writes them
-	// yet. Widening the CHECK when those writes land is the
-	// expected evolution; do NOT add them here speculatively.
-	if err := h.store.AppendComputeNodeHeartbeat(ctx, n.ID, receivedAt, receivedAt, "heartbeat_tick"); err != nil {
+	source := "heartbeat_tick"
+	if wasUnavailable {
+		source = "reactivation"
+	}
+	if err := h.store.AppendComputeNodeHeartbeat(ctx, n.ID, receivedAt, receivedAt, source); err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			h.log.Warn("heartbeat: history append duplicate",
 				"node_id", n.ID, "received_at", receivedAt.Format(time.RFC3339Nano))
@@ -498,11 +531,13 @@ func (h *Heartbeat) Run(ctx context.Context) error {
 	if interval <= 0 {
 		interval = DefaultHeartbeatInterval
 	}
+	if err := h.Tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		h.log.Warn("heartbeat: initial tick failed", "err", err)
+	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
-	// First tick fires immediately per time.NewTicker's contract,
-	// so a freshly-started schedd stamps the synthetic default-local
-	// row's heartbeat right away (no 30s gap on cold start).
+	// The initial tick above establishes the baseline; subsequent ticks
+	// follow the configured cadence.
 	for {
 		select {
 		case <-ctx.Done():
@@ -528,24 +563,5 @@ func (h *Heartbeat) emitNodeFailed(ctx context.Context, n state.ComputeNode, las
 		NodeID:          n.ID,
 		NodeName:        n.Name,
 		LastHeartbeatAt: lastSeen,
-	})
-}
-
-// emitNodeRecovered stamps the recovery timeline when the
-// heartbeat flips a previously-unavailable node back to
-// recovering. The actual transition to `active` is the
-// recovery arbiter's job (it has the migration/recreate
-// outcome); this event fires on the first successful
-// post-failure ping so the dashboard can correlate with the
-// NodeFailed that preceded it.
-func (h *Heartbeat) emitNodeRecovered(ctx context.Context, n state.ComputeNode) {
-	if h.events == nil {
-		return
-	}
-	h.events.EmitRecovery(ctx, events.NodeRecoveredEvent{
-		EmitAt:              time.Now().UTC(),
-		NodeID:              n.ID,
-		NodeName:            n.Name,
-		RecoveryInitiatedAt: time.Now().UTC(),
 	})
 }

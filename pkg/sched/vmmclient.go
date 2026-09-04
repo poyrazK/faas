@@ -339,8 +339,17 @@ type AppSpec struct {
 	// Plan and AccountID are request-level admission context. Keeping them
 	// with the flat spec makes deploy prime and ordinary wakes carry the same
 	// cgroup and metrics identity to vmmd.
-	Plan            api.Plan
-	AccountID       string
+	Plan      api.Plan
+	AccountID string
+	// AppID and DeploymentID are carried separately from the boot shape so
+	// vmmd can retain the same instance identity and deployment correlation
+	// during migration adoption.
+	AppID        string
+	DeploymentID string
+	// FCVersion is the version that produced a migration snapshot. It is
+	// carried at the migration envelope as well as the typed scheduler value;
+	// ordinary wakes leave it empty.
+	FCVersion       string
 	SealedEnv       []fcvm.SealedEnvEntry
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
@@ -794,6 +803,7 @@ func (c *VMMClient) PrepareLiveMigration(ctx context.Context, _, instanceID, sna
 		MemStorageKey:     resp.GetMemStorageKey(),
 		VMStateStorageKey: resp.GetVmstateStorageKey(),
 		LeaseToken:        resp.GetLeaseToken(),
+		FCVersion:         resp.GetFcVersion(),
 	}, nil
 }
 
@@ -809,6 +819,10 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 		MemStorageKey:     memKey,
 		VmstateStorageKey: vmstateKey,
 		LeaseToken:        leaseToken,
+		Plan:              string(app.Plan),
+		AccountId:         app.AccountID,
+		DeploymentId:      app.DeploymentID,
+		FcVersion:         app.FCVersion,
 	})
 	if err != nil {
 		return LiveMigrationAdopt{}, liftErr(err)
@@ -980,6 +994,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		VcpuCount:       a.VCPUCount,
 		MemSizeMib:      a.MemSizeMiB,
 		EgressMbit:      a.EgressMbit,
+		AppId:           a.AppID,
 		SealedEnv:       sealed,
 		ApiEnv:          apiEnv,
 		Sidecars:        sidecars,

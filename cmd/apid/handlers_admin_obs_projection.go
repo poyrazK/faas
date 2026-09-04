@@ -69,10 +69,10 @@ func summariseAccounts(rows []state.Account) api.ObsOverviewTotals {
 // reflect the schedd state at the moment of the SELECT.
 func summariseInstances(rows []state.Instance) (live, waking int) {
 	for _, i := range rows {
-		switch i.State {
-		case "RUNNING":
+		switch instanceState := state.State(strings.ToLower(i.State)); instanceState {
+		case state.StateRunning:
 			live++
-		case "WAKING", "COLD_BOOTING":
+		case state.StateWaking, state.StateColdBooting:
 			waking++
 		}
 	}

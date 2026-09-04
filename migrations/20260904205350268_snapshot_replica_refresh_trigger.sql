@@ -1,8 +1,10 @@
+-- filename: 20260904205350268_snapshot_replica_refresh_trigger.sql
+
 -- +goose Up
 -- +goose StatementBegin
 -- Workstream B / ADR-137 follow-up (post-review).
 --
--- Migration 00579's `DROP COLUMN active CASCADE` removed the
+-- The lifecycle migration's `DROP COLUMN active CASCADE` removed the
 -- snapshot_replica_refresh_after_compute_node trigger (defined in
 -- 00480) because the trigger was bound to `UPDATE OF active, region`.
 -- The function body was preserved; only the trigger was dropped. With

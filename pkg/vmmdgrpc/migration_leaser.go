@@ -87,14 +87,12 @@ func (l *migrationLeaser) Acquire(ctx context.Context, key string, policy sched.
 func (l *migrationLeaser) Renew(ctx context.Context, token sched.LeaseToken, ownerID string, ttl time.Duration) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lt := string(token)
-	for _, m := range l.tracker.state {
-		if m.leaseToken == lt {
-			if time.Now().UTC().After(m.leaseExpiresAt) {
-				return sched.ErrLeaseExpired
-			}
-			return nil
+	m, ok := l.tracker.findByLeaseToken(string(token))
+	if ok {
+		if time.Now().UTC().After(m.leaseExpiresAt) {
+			return sched.ErrLeaseExpired
 		}
+		return nil
 	}
 	return sched.ErrLeaseNotFound
 }
@@ -105,12 +103,8 @@ func (l *migrationLeaser) Renew(ctx context.Context, token sched.LeaseToken, own
 func (l *migrationLeaser) Release(ctx context.Context, token sched.LeaseToken, ownerID string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lt := string(token)
-	for instanceID, m := range l.tracker.state {
-		if m.leaseToken == lt {
-			l.tracker.delete(instanceID)
-			return nil
-		}
+	if l.tracker.deleteByLeaseToken(string(token)) {
+		return nil
 	}
 	return sched.ErrLeaseNotFound
 }
@@ -121,14 +115,12 @@ func (l *migrationLeaser) Release(ctx context.Context, token sched.LeaseToken, o
 func (l *migrationLeaser) Lookup(ctx context.Context, token sched.LeaseToken) (key string, expiresAt time.Time, ownerID string, ok bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lt := string(token)
-	for instanceID, m := range l.tracker.state {
-		if m.leaseToken == lt {
-			if time.Now().UTC().After(m.leaseExpiresAt) {
-				return instanceID, m.leaseExpiresAt, "", false, nil
-			}
-			return instanceID, m.leaseExpiresAt, "vmmd-local", true, nil
+	m, found := l.tracker.findByLeaseToken(string(token))
+	if found {
+		if time.Now().UTC().After(m.leaseExpiresAt) {
+			return m.instanceID, m.leaseExpiresAt, "", false, nil
 		}
+		return m.instanceID, m.leaseExpiresAt, "vmmd-local", true, nil
 	}
 	return "", time.Time{}, "", false, nil
 }

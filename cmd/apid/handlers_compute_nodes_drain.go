@@ -45,6 +45,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -232,18 +233,7 @@ func (s *server) getComputeNodeDrainProgress(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "No drain in progress", "node has never been drained; lifecycle="+string(node.Lifecycle)))
 		return
 	}
-	count := 0
-	if s.store != nil {
-		instances, ierr := s.store.ListInstancesByNodeID(r.Context(), node.ID)
-		if ierr == nil {
-			for _, ins := range instances {
-				if isLiveInstance(ins) {
-					continue
-				}
-				count++
-			}
-		}
-	}
+	count := s.countDrainedInstances(r.Context(), node.ID)
 	writeDrainJSON(w, http.StatusOK, node, count, "ok")
 }
 
@@ -264,16 +254,33 @@ func (s *server) waitForDrainComplete(w http.ResponseWriter, r *http.Request, no
 			continue
 		}
 		if fresh.Lifecycle != state.NodeLifecycleDraining {
-			writeDrainJSON(w, http.StatusOK, fresh, 0, "ok")
+			writeDrainJSON(w, http.StatusOK, fresh, s.countDrainedInstances(r.Context(), fresh.ID), "ok")
 			return
 		}
 	}
 	fresh, ferr := s.store.ComputeNodeByName(r.Context(), nodeName)
 	if ferr == nil {
-		writeDrainJSON(w, http.StatusOK, fresh, 0, "wait-timeout")
+		writeDrainJSON(w, http.StatusOK, fresh, s.countDrainedInstances(r.Context(), fresh.ID), "wait-timeout")
 		return
 	}
 	api.WriteProblem(w, api.NewProblem(http.StatusGatewayTimeout, api.CodeCapacity, "drain wait timed out", "please poll GET"))
+}
+
+func (s *server) countDrainedInstances(ctx context.Context, nodeID string) int {
+	if s == nil || s.store == nil {
+		return 0
+	}
+	instances, err := s.store.ListInstancesOnNodeID(ctx, nodeID)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, ins := range instances {
+		if !isLiveInstance(ins) {
+			count++
+		}
+	}
+	return count
 }
 
 // writeDrainJSON is the canonical POST/GET 200 (and 202) response.
@@ -295,27 +302,19 @@ func writeDrainJSON(w http.ResponseWriter, status int, n state.ComputeNode, drai
 }
 
 // isLiveInstance is the dashboard-friendly predicate. We treat
-// only the four non-terminal states (RUNNING, WAKING,
-// COLD_BOOTING, PARKED) as live; everything else counts toward
-// drained. The exact predicate is the same one
-// countObsLiveInstances uses (handlers_admin_operator_ops.go) so
-// the two endpoints don't disagree on the per-node totals.
+// the RAM-resident states (running, waking, cold_booting,
+// snapshotting, migrating) plus parked rows as live; everything else
+// counts toward drained. The lower-case normalization tolerates old
+// MemStore fixtures while production rows follow the SQL state CHECK.
 //
 // Fix #8 / consolidation: the drain-progress endpoint counts
 // "non-live" instances (already drained) so the operator UI can
 // render a "N of M drained" badge. The /admin/ops endpoint
-// counts "live" instances (RUNNING/WAKING/COLD_BOOTING, excluding
-// PARKED — PARKED is held memory but not serving). They used to
-// be two near-identical but disagreeing functions; both now
-// delegate to this canonical helper, with PARKED explicitly
-// classified as "live" for the drain-progress response (a
-// PARKED row is still consuming the per-node RAM budget until
-// the reaper sweeps it, so the drain UI wants to keep showing
-// it as live).
+// counts "live" instances using state.IsLive (which includes
+// snapshotting/migrating but excludes parked). The drain response
+// additionally treats parked rows as live until their reaper removes
+// the node association.
 func isLiveInstance(ins state.Instance) bool {
-	switch ins.State {
-	case "RUNNING", "WAKING", "COLD_BOOTING", "PARKED":
-		return true
-	}
-	return false
+	instanceState := state.State(strings.ToLower(ins.State))
+	return instanceState == state.StateParked || instanceState.CountsForRAM()
 }

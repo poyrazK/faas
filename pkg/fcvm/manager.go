@@ -419,6 +419,11 @@ type Instance struct {
 	// the dispatch path is tolerant of "" and skips the flip.
 	DeploymentID string
 
+	// LivenessProbe preserves the per-deployment probe override across a
+	// migration pause/resume cycle. It is copied from WakeRequest so ResumeVM
+	// can restart the monitor with the same configuration.
+	LivenessProbe json.RawMessage
+
 	// AllowlistHandleV4 / V6 are the nft handles of the
 	// per-netns allowlist accept rules captured at Wake time (or
 	// at the previous successful UpdateEgressAllowlist). Used by
@@ -3445,7 +3450,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: method, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
+	inst := &Instance{Lease: lease, Net: nc, Method: method, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -3855,6 +3860,66 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	}
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
+}
+
+// SnapshotKeepAlive pauses and snapshots a live instance without destroying
+// its VM, for the cross-node migration prepare phase. Unlike WarmSnapshot,
+// this method deliberately leaves the VM paused until ResumeVM or Destroy is
+// called by the migration lease owner. Liveness is stopped while the guest is
+// paused so the monitor cannot turn a successful handoff into a false failure.
+// On a snapshot error the VM is resumed best-effort because no migration lease
+// has been returned to the caller yet.
+func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
+	if m == nil {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil manager", instance)
+	}
+	m.mu.Lock()
+	inst, ok := m.live[instance]
+	m.mu.Unlock()
+	if !ok {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: not live", instance)
+	}
+	if m.vmm == nil {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil vmm", instance)
+	}
+	m.DeleteLivenessConsecutiveFailures(instance)
+	m.cancelLivenessLoop(instance)
+	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
+	if err == nil {
+		return info, nil
+	}
+	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease)
+	cancel()
+	if resumeErr != nil {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance,
+			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
+	}
+	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
+	return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: snapshot: %w", instance, err)
+}
+
+// ResumeVM resumes a migration-prepared instance and restarts its liveness
+// monitor. It is idempotent at the VMM layer, which lets cancel and lease
+// expiry safely race with a late acknowledgement.
+func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
+	if m == nil {
+		return fmt.Errorf("resume_vm %s: nil manager", instance)
+	}
+	m.mu.Lock()
+	inst, ok := m.live[instance]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("resume_vm %s: not live", instance)
+	}
+	if m.vmm == nil {
+		return fmt.Errorf("resume_vm %s: nil vmm", instance)
+	}
+	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+		return fmt.Errorf("resume_vm %s: %w", instance, err)
+	}
+	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
+	return nil
 }
 
 // Destroy stops an instance and releases all its resources. Idempotent: an

@@ -16,9 +16,8 @@
 //   - For each, list live instances on the node
 //     (InstanceListByNodeForRecovery).
 //   - For each instance, call Decide(node, instance) → LiveMigrate
-//     or Recreate or None; dispatch via the LiveMigrator
-//     (Task #61 wires live_migrator to be a consumer) and the
-//     Engine.RecreateInstance primitive (Task #60).
+//     or Recreate or None; dispatch through the migration and
+//     recreate primitives wired by the schedd bootstrap.
 //
 // The arbiter is a pure function over (node, instance) — no
 // goroutines, no DB access. The tick loop (cmd/schedd main.go)
@@ -72,12 +71,18 @@ func (d Decision) String() string {
 }
 
 // MigrationDispatcher is the minimum surface the arbiter needs
-// to dispatch a live-migration verdict. The existing
-// LiveMigrator (live_migrator.go) implements this once Task #61
-// wires the Enqueue method; the interface keeps the test seam
-// tight.
+// to dispatch a live-migration verdict. The interface keeps the
+// test seam tight and lets the schedd reuse its migration harness.
 type MigrationDispatcher interface {
 	Enqueue(ctx context.Context, instanceID string) error
+}
+
+// MigrationDispatcherFunc adapts an engine method or closure to the
+// MigrationDispatcher contract used by the arbiter.
+type MigrationDispatcherFunc func(ctx context.Context, instanceID string) error
+
+func (f MigrationDispatcherFunc) Enqueue(ctx context.Context, instanceID string) error {
+	return f(ctx, instanceID)
 }
 
 // RecreateDispatcher is the minimum surface the arbiter needs
@@ -112,15 +117,15 @@ func NewArbiter(lm MigrationDispatcher, rp RecreateDispatcher) *Arbiter {
 //
 //	node.Lifecycle    instance.State   → Decision
 //	───────────────────────────────────────────────
-//	draining          *                → LiveMigrate
-//	                                  (drain is operator-initiated;
-//	                                  never recreate)
+//	draining          running         → LiveMigrate
+//	                  cold_booting|waking → None
+//	                                  (a healthy node still owns the boot)
+//	                  other           → None
 //	recovering        parked           → None
-//	recovering        running|waking   → LiveMigrate
-//	                                  (peer is back; rebuild via
-//	                                  migration is faster than
-//	                                  cold boot)
-//	recovering        cold_booting     → LiveMigrate
+//	recovering        running         → LiveMigrate
+//	                  cold_booting|waking → None
+//	                                  (a recovered node still owns the boot)
+//	                  other           → None
 //	unavailable       parked           → None
 //	unavailable       running|waking   → LiveMigrate
 //	unavailable       cold_booting     → Recreate
@@ -138,7 +143,8 @@ func NewArbiter(lm MigrationDispatcher, rp RecreateDispatcher) *Arbiter {
 // SnapshotReplication column lands in Task #64's
 // snapshot_backoff companion migration.
 func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance) Decision {
-	switch instance.State {
+	instanceState := strings.ToLower(instance.State)
+	switch instanceState {
 	case "parked", "failed", "terminated":
 		return DecisionNone
 	case "migrating", "snapshotting":
@@ -154,7 +160,7 @@ func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance
 		// node) and resumes normal decision-making.
 		return DecisionNone
 	}
-	if strings.HasPrefix(instance.State, "evicting") {
+	if strings.HasPrefix(instanceState, "evicting") {
 		// Eviction sweep (rebalancer is mid-flight removing it)
 		// owns this row — recreating here would re-allocate the
 		// row the eviction is trying to free.
@@ -162,12 +168,20 @@ func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance
 	}
 	switch node.Lifecycle {
 	case state.NodeLifecycleDraining:
-		return DecisionLiveMigrate
+		switch instanceState {
+		case string(state.StateRunning):
+			return DecisionLiveMigrate
+		}
+		return DecisionNone
 	case state.NodeLifecycleRecovering:
-		return DecisionLiveMigrate
+		switch instanceState {
+		case string(state.StateRunning):
+			return DecisionLiveMigrate
+		}
+		return DecisionNone
 	case state.NodeLifecycleUnavailable:
-		switch instance.State {
-		case "cold_booting":
+		switch instanceState {
+		case string(state.StateColdBooting), string(state.StateWaking):
 			return DecisionRecreate
 		}
 		return DecisionLiveMigrate

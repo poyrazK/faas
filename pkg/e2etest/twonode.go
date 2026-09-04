@@ -124,10 +124,10 @@ func StartTwoNode(t *testing.T, pool *pgxpool.Pool) *TwoNodeHarness {
 func upsertComputeNode(t *testing.T, pool *pgxpool.Pool, name, host string) (string, error) {
 	t.Helper()
 	const q = `INSERT INTO compute_nodes
-		(name, target_url, schedd_target_url, gateway_target_url, active,
+		(name, target_url, schedd_target_url, gateway_target_url, lifecycle,
 		 mem_mb, max_concurrency, admission_ceiling_mb, vcpus, vcpu_budget,
 		 plan_host, overlay_ip, gateway_port)
-		VALUES ($1, $2, $3, $4, true,
+		VALUES ($1, $2, $3, $4, 'active'::compute_node_lifecycle,
 			8192, 16, 256, 4, 160,
 			$5, '10.99.0.2', 8080)
 		ON CONFLICT (name) DO UPDATE SET

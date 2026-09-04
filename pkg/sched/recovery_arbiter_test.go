@@ -3,7 +3,7 @@
 // / issue #1184 / ADR-137).
 //
 // The arbiter is a pure function: same inputs → same output.
-// The 8 cases below pin the closed decision matrix documented
+// The table below pins the closed decision matrix documented
 // in recovery_arbiter.go's Decide doc-comment. A future
 // SnapshotReplication column (Task #64) will add a 9th row
 // (running on unavailable with no usable snapshot → Recreate);
@@ -36,8 +36,8 @@ func (n *noopDispatcher) RecreateInstance(_ context.Context, id string) error {
 	return nil
 }
 
-// TestArbiter_Decide_Table pins the 11-case decision matrix from
-// ADR-137 (8 original + 3 in-flight guards added by fix #6).
+// TestArbiter_Decide_Table pins the decision matrix from ADR-137,
+// including healthy boot states and the in-flight guards added by fix #6.
 // Each row is a (node.lifecycle, instance.state) pair → expected
 // verdict. The in-flight rows (`migrating`, `snapshotting`,
 // `evicting_*`) pin the deny-list introduced so the arbiter
@@ -59,10 +59,16 @@ func TestArbiter_Decide_Table(t *testing.T) {
 			want:     DecisionLiveMigrate,
 		},
 		{
-			name:     "draining_waking → LiveMigrate",
+			name:     "draining_waking → None (healthy boot stays local)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
 			instance: state.RecoveryInstance{State: "waking"},
-			want:     DecisionLiveMigrate,
+			want:     DecisionNone,
+		},
+		{
+			name:     "draining_cold_booting → None (healthy boot stays local)",
+			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
+			instance: state.RecoveryInstance{State: "cold_booting"},
+			want:     DecisionNone,
 		},
 		{
 			name:     "draining_parked → None",
@@ -80,6 +86,18 @@ func TestArbiter_Decide_Table(t *testing.T) {
 			name:     "recovering_parked → None",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleRecovering},
 			instance: state.RecoveryInstance{State: "parked"},
+			want:     DecisionNone,
+		},
+		{
+			name:     "recovering_waking → None (healthy boot stays local)",
+			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleRecovering},
+			instance: state.RecoveryInstance{State: "waking"},
+			want:     DecisionNone,
+		},
+		{
+			name:     "recovering_cold_booting → None (healthy boot stays local)",
+			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleRecovering},
+			instance: state.RecoveryInstance{State: "cold_booting"},
 			want:     DecisionNone,
 		},
 		{

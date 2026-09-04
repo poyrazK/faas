@@ -166,11 +166,10 @@ type Querier interface {
 	// $1 = deployment id
 	// $2 = backoff_until timestamp
 	DeploymentRecordSnapshotMiss(ctx context.Context, db DBTX, arg DeploymentRecordSnapshotMissParams) error
-	// The wake-side gate. Returns the row iff a backoff is currently in
-	// effect (snapshot_miss_backoff_until > now()). The wake flow
-	// short-circuits with HTTP 429 + Retry-After on a hit. The partial
-	// index `deployments_snapshot_backoff_idx` makes this an index-only
-	// scan.
+	// The wake-side gate. Returns the row while a backoff timestamp is
+	// present; the store computes whether it is still active. Returning
+	// expired rows preserves the miss count for the next backoff stamp.
+	// The partial index `deployments_snapshot_backoff_idx` covers this lookup.
 	DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error)
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
@@ -361,9 +360,9 @@ type Querier interface {
 	InstanceByID(ctx context.Context, db DBTX, id pgtype.UUID) (InstanceByIDRow, error)
 	// Live instances on a specific node — input to the arbiter's
 	// per-instance decision. Limited to states the arbiter can act on:
-	// 'RUNNING' (live-migrate or recreate), 'COLD_BOOTING' (recreate,
-	// the snapshot may not have made it to the destination yet),
-	// 'WAKING' (recreate — same reason). The arbiter only needs the
+	// 'running' (live-migrate), 'cold_booting' (recreate, the snapshot
+	// may not have made it to the destination yet), 'waking' (recreate —
+	// same reason). The arbiter only needs the
 	// (app_id, deployment_id, state, id) tuple — account_id is reachable
 	// via the existing app/deployment joins if needed by downstream
 	// code, but the per-tick hot loop doesn't pay for it here.
