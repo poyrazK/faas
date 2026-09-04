@@ -12437,7 +12437,12 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		node.Region, node.Zone, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
-		node.Role, node.Generation)
+		node.Role, node.Generation,
+		// $20 — the staleness window that separates "reaped because it
+		// stopped heartbeating" from "drained by an operator while
+		// alive". Matches sched.DefaultHeartbeatStaleness; kept as a
+		// literal here because pkg/state must not import pkg/sched.
+		VmmdReregisterStaleWindow.String())
 	n, err := scanComputeNode(row)
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node %q: %w", node.Name, err)
@@ -12544,6 +12549,18 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 // refusal would have already done the conflict-path UPDATE
 // (a no-op on cert_fingerprint under the COALESCE, but still
 // touches last_heartbeat_at indirectly). Pre-flight refuses cleanly.
+// VmmdReregisterStaleWindow is how stale a compute_node's heartbeat must
+// be before a re-registering vmmd is allowed to clear an inactive flag.
+//
+// Shorter than this and the row is assumed to have been drained
+// deliberately by an operator (a drain targets a live node, so its
+// heartbeat is fresh); longer and it was reaped by the watchdog for
+// going silent, which a restart legitimately resolves.
+//
+// Mirrors sched.DefaultHeartbeatStaleness. Duplicated rather than
+// imported because pkg/state must not depend on pkg/sched.
+const VmmdReregisterStaleWindow = 90 * time.Second
+
 func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNode) (ComputeNode, error) {
 	if node.Name != "" && node.CertFingerprint != nil && *node.CertFingerprint != "" {
 		existingFP, err := s.loadComputeNodeCertFingerprint(ctx, node.Name)
@@ -12583,7 +12600,33 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      active              = compute_nodes.active,
+		      -- A vmmd that is re-registering has just started: it is by
+		      -- definition alive. Preserving active=false unconditionally
+		      -- meant a node that CRASHED could never rejoin — the
+		      -- heartbeat only enumerates active nodes
+		      -- (ActiveComputeNodes filters on active = true), so it never
+		      -- re-probes a dead row, and this upsert was the only other
+		      -- writer. Every vmmd restart therefore dropped the node out
+		      -- of rotation permanently until an operator ran UPDATE by
+		      -- hand; on 2026-09-03/04 that happened on every single
+		      -- rollout.
+		      --
+		      -- Reactivate ONLY when the existing row looks reaped rather
+		      -- than drained. An operator drain targets a LIVE node, so
+		      -- its heartbeat is fresh; the watchdog only marks a node
+		      -- inactive after it stops heartbeating past the staleness
+		      -- window. Using that window as the discriminator keeps a
+		      -- deliberate drain sticky (the node keeps heartbeating, so
+		      -- a restart will not silently undo it) while letting a
+		      -- genuinely dead node come back on its own.
+		      --
+		      -- Interim: ADR-137 / issue #1184 replaces this boolean with
+		      -- a compute_node_lifecycle enum that states the distinction
+		      -- outright instead of inferring it. Delete this when that
+		      -- lands.
+		      active              = (compute_nodes.active
+		                             OR compute_nodes.last_heartbeat_at IS NULL
+		                             OR compute_nodes.last_heartbeat_at < now() - $20::interval),
 		      target_url          = coalesce(compute_nodes.target_url, excluded.target_url),
 		      region              = coalesce(compute_nodes.region, excluded.region),
 		      zone                = coalesce(compute_nodes.zone, excluded.zone),
