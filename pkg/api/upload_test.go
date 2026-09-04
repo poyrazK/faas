@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,7 +104,7 @@ func TestStartUpload_404MeansUnsupported(t *testing.T) {
 	defer srv.Close()
 
 	_, err := NewClient(srv.URL, "").StartUpload(context.Background(), "demo", 1, "")
-	if err != ErrResumableUploadUnsupported {
+	if !errors.Is(err, ErrResumableUploadUnsupported) {
 		t.Fatalf("StartUpload error = %v, want ErrResumableUploadUnsupported", err)
 	}
 }

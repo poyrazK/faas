@@ -89,17 +89,17 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			return api.DeploymentResponse{}, "", true, err
 		}
 		if session.TotalSize != info.Size() {
-			cancelUploadBestEffort(c, session.UploadID)
+			cancelUploadBestEffort(ctx, c, session.UploadID)
 			return api.DeploymentResponse{}, "", true, fmt.Errorf("upload session size mismatch: server=%d local=%d", session.TotalSize, info.Size())
 		}
 		if session.ChunkSize <= 0 || session.ChunkSize > resumableUploadMaxChunkSize {
-			cancelUploadBestEffort(c, session.UploadID)
+			cancelUploadBestEffort(ctx, c, session.UploadID)
 			return api.DeploymentResponse{}, "", true, fmt.Errorf("upload session returned invalid chunk size %d", session.ChunkSize)
 		}
 
 		digest, err := uploadSessionChunks(ctx, c, session, f, progress)
 		if err != nil {
-			cancelUploadBestEffort(c, session.UploadID)
+			cancelUploadBestEffort(ctx, c, session.UploadID)
 			if ctx.Err() != nil {
 				return api.DeploymentResponse{}, "", true, ctx.Err()
 			}
@@ -117,7 +117,7 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			return api.DeploymentResponse{}, "", true, ctx.Err()
 		}
 		if isUploadSessionRestart(err) && restart < resumableUploadMaxRestarts {
-			cancelUploadBestEffort(c, session.UploadID)
+			cancelUploadBestEffort(ctx, c, session.UploadID)
 			continue
 		}
 		return api.DeploymentResponse{}, "", true, err
@@ -284,11 +284,11 @@ func waitForUploadRetry(ctx context.Context, err error, attempt int) error {
 	}
 }
 
-func cancelUploadBestEffort(c *Client, uploadID string) {
+func cancelUploadBestEffort(ctx context.Context, c *Client, uploadID string) {
 	if uploadID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), resumableUploadCancelWait)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resumableUploadCancelWait)
 	defer cancel()
 	_ = c.CancelUpload(ctx, uploadID)
 }

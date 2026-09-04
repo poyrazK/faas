@@ -64,12 +64,7 @@ func (c *Client) StartUpload(ctx context.Context, appSlug string, totalSize int6
 	if err != nil {
 		return ResumableUploadSession{}, err
 	}
-	return ResumableUploadSession{
-		UploadID:  out.UploadID,
-		ChunkSize: out.ChunkSize,
-		TotalSize: out.TotalSize,
-		ExpiresAt: out.ExpiresAt,
-	}, nil
+	return ResumableUploadSession(out), nil
 }
 
 // AppendUpload appends one chunk at the absolute offset supplied by the
@@ -156,10 +151,10 @@ func (c *Client) doResumableUpload(ctx context.Context, method, path string, bod
 	}
 
 	cli := c.uploadHTTP()
-	if b, ok := reqbudget.FromContext(req.Context()); ok {
-		newCtx, cancel, _ := b.WithCeiling(req.Context(), cli.Timeout)
+	if b, ok := reqbudget.FromContext(ctx); ok {
+		newCtx, cancel, _ := b.WithCeiling(ctx, cli.Timeout)
 		defer cancel()
-		req = req.Clone(newCtx)
+		req = req.WithContext(newCtx)
 	}
 	resp, err := cli.Do(req)
 	if err != nil {
