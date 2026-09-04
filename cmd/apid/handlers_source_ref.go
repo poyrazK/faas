@@ -4,8 +4,8 @@
 //	POST /v1/apps/{slug}/deployments/source-ref
 //
 // accepting JSON {repo, ref, format}. Server resolves the durable
-// install row, mints an installation token via the githubd gRPC
-// bridge, fetches the upstream tarball through the same bridge,
+// install row, asks the githubd gRPC bridge to mint/cache the
+// installation token and fetch the upstream tarball,
 // spools it under FAAS_SPOOL_ROOT, validates its tarball shape,
 // creates the deployment row (Kind=DeploymentKindGitHub), and
 // emits the `deploy.source_ref` audit row.
@@ -22,14 +22,10 @@
 // gates here would silently double-run; the source-ref path is a
 // narrow, well-defined seam.
 //
-// Tokens: the install token (Step `resolveInstallToken`) is
-// scoped to a single MintInstallationToken RPC response. It is
-// NOT persisted to the deployment row, NOT logged, and NOT
-// returned in the wire response. The handler discards the raw
-// token right after githubd returns the streaming tarball — the
-// apid-side cache (TokenCache.ExpiresAt stamped on the gRPC side)
-// knows the expiry, the raw value never crosses the file system
-// or the audit sink.
+// Tokens: the install token is minted and scoped inside githubd's
+// streaming call. It is NOT persisted to the deployment row, NOT
+// logged, and NOT returned in the wire response. The raw value
+// never crosses the file system or the audit sink.
 package main
 
 import (
@@ -38,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -56,11 +53,10 @@ import (
 // Extracted helpers in this file stay ≤ 50 lines each per the
 // CLAUDE.md handler cap:
 //
-//   - resolveInstallToken     — gRPC, 404 on missing durable install
-//   - resolveCommitSHA        — branch/tag → 40-char SHA via api.github.com
+//   - resolveInstallToken     — durable install lookup, 404 on missing row
 //   - streamSourceTarball     — gRPC streaming + cap-bound + spool
 //   - auditSourceRefDeploy    — emits deploy.source_ref {…} + log
-//   - isValidRef              — ref-shape guard before resolveCommitSHA
+//   - isValidRef              — ref-shape guard before the gRPC fetch
 func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
@@ -92,17 +88,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	installID, installToken, p := s.resolveInstallToken(r.Context(), acct)
-	if p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
-	// The token is scoped to the streaming call below; do NOT
-	// bind it past this scope. Storing it on the deployment row
-	// would create a fresh supply-chain surface (ADR-020 token-at-rest).
-	_ = installToken
-
-	resolvedSHA, p := resolveCommitSHA(r.Context(), req.Repo, req.Ref)
+	installID, p := s.resolveInstallToken(r.Context(), acct)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -118,13 +104,67 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 
 	spoolPath, spoolBytes, p := validateAndSpool(stream.Body, limits)
 	if p != nil {
+		// A gRPC stream can fail after delivering some bytes. In that
+		// case validateAndSpool only sees the pipe's read error; close
+		// the stream first so the terminal *api.Problem is available
+		// and the caller gets 503/source_ref_unavailable rather than a
+		// misleading 400/bad-source response.
+		_ = stream.Body.Close()
+		if stream.Stats != nil && stream.Stats.Err != nil {
+			if problem := api.AsProblem(stream.Stats.Err); problem != nil {
+				api.WriteProblem(w, problem)
+			} else {
+				api.WriteProblem(w, api.ErrSourceRefUnavailable("source stream ended with an error"))
+			}
+			return
+		}
 		api.WriteProblem(w, p)
+		return
+	}
+	// Close immediately after the reader reaches EOF so the gRPC client
+	// publishes terminal stream metadata (including the resolved SHA and
+	// any transport error) before the handler makes acceptance decisions.
+	if closeErr := stream.Body.Close(); closeErr != nil {
+		if problem := api.AsProblem(closeErr); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrSourceRefUnavailable("source stream ended with an error"))
+		}
 		return
 	}
 	// Truncated means the codeload archive exceeded
 	// SourceTarballMaxMB mid-stream; map that to RFC 7807 413.
-	if stream.Stats.Truncated {
+	if stream.Stats != nil && stream.Stats.Truncated {
 		api.WriteProblem(w, api.ErrSourceTooLarge(limits, spoolBytes))
+		return
+	}
+	if stream.Stats != nil && stream.Stats.Err != nil {
+		if problem := api.AsProblem(stream.Stats.Err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrSourceRefUnavailable("source stream ended with an error"))
+		}
+		return
+	}
+	resolvedSHA := ""
+	if stream.Stats != nil {
+		resolvedSHA = stream.Stats.ResolvedCommitSHA
+	}
+	if resolvedSHA == "" && isCanonicalCommitSHA(req.Ref) {
+		resolvedSHA = req.Ref
+	}
+	if !isCanonicalCommitSHA(resolvedSHA) {
+		api.WriteProblem(w, api.ErrSourceRefUnavailable("githubd did not return an immutable commit SHA"))
+		return
+	}
+	sourceAccepted := false
+	defer func() {
+		if !sourceAccepted {
+			_ = os.Remove(spoolPath)
+		}
+	}()
+	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 
@@ -174,6 +214,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 		return
 	}
+	sourceAccepted = true
 	s.auditSourceRefDeploy(r.Context(), acct, app, res, prev, req, resolvedSHA, installID, ann)
 	// Reload the deployment row so the response carries the
 	// canonical wire shape (mirrors createDeployment's
@@ -187,41 +228,22 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 }
 
 // resolveInstallToken reads the durable install row from
-// state.Store (state.ErrNotFound → 404 code=github_install_not_found),
-// then asks githubd to mint a fresh installation token over
-// the existing apid↔githubd gRPC bridge.
-// MintInstallationToken → codes.NotFound when the install has
-// been removed out from under us; lifted via liftErr into the
-// platform's *api.Problem so we can branch on Code.
-//
-// The token is returned to the caller for direct use in the
-// streaming call below. HandleSourceRefDeploy wipes it from
-// scope as soon as the streaming finishes — it MUST NOT be
-// persisted or logged.
-func (s *server) resolveInstallToken(ctx context.Context, acct state.Account) (int64, string, *api.Problem) {
+// state.Store (state.ErrNotFound → 404 code=github_install_not_found).
+// githubd repeats the account/install binding check and owns token
+// minting inside StreamSourceRef, so the raw token never crosses
+// the apid process boundary.
+func (s *server) resolveInstallToken(ctx context.Context, acct state.Account) (int64, *api.Problem) {
 	inst, err := s.store.GitHubInstallForAccount(ctx, acct.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return 0, "", api.ErrGitHubInstallNotFound()
+			return 0, api.ErrGitHubInstallNotFound()
 		}
-		return 0, "", api.ErrCapacity("could not load install")
+		return 0, api.ErrCapacity("could not load install")
 	}
 	if inst.InstallationID == 0 {
-		return 0, "", api.ErrGitHubInstallNotFound()
+		return 0, api.ErrGitHubInstallNotFound()
 	}
-	tok, _, err := s.githubd.MintInstallationToken(ctx, acct.ID, inst.InstallationID)
-	if err != nil {
-		if p := api.AsProblem(err); p != nil {
-			if p.Code == api.CodeGitHubInstallNotFound {
-				return 0, "", p
-			}
-			if p.Code == api.CodeSourceRefUnavailable {
-				return 0, "", p
-			}
-		}
-		return 0, "", api.ErrSourceRefUnavailable("mint installation token failed")
-	}
-	return inst.InstallationID, tok, nil
+	return inst.InstallationID, nil
 }
 
 // streamSourceTarball opens a server-streaming gRPC to githubd.
@@ -317,12 +339,10 @@ func (s *server) auditSourceRefDeploy(ctx context.Context, acct state.Account, a
 }
 
 // isValidRef is the cheap pre-flight ref-shape guard. Anything
-// rejected here never reaches resolveCommitSHA, which is the
-// expensive api.github.com round-trip. Branch / tag / short-SHA /
-// 40-char SHA all clear the shape predicate; the actual resolve
-// still happens in resolveCommitSHA so a ref that LOOKS like
-// 'main' but resolves to nothing on GitHub still maps to a
-// clean 400 invalid_ref.
+// rejected here never reaches the githubd bridge. Branch / tag /
+// short-SHA / 40-char SHA all clear the shape predicate; githubd
+// resolves non-SHA refs and the handler accepts only its canonical
+// 40-character result.
 //
 // Mirrors the predicate githubd uses for codeload paths
 // (cmd/githubd/source_ref_streamer.go::isValidSourceRefRef).
@@ -330,75 +350,56 @@ func (s *server) auditSourceRefDeploy(ctx context.Context, acct state.Account, a
 // githubd only communicate over the gRPC seam (CLAUDE.md component
 // ownership).
 func isValidRef(ref string) bool {
-	if len(ref) < 1 || len(ref) > 200 {
+	if len(ref) < 1 || len(ref) > 200 || ref == "@" || strings.HasPrefix(ref, "/") ||
+		strings.HasSuffix(ref, "/") || strings.Contains(ref, "//") ||
+		strings.Contains(ref, "..") || strings.Contains(ref, "@{") ||
+		strings.HasSuffix(ref, ".") {
 		return false
 	}
-	// Reject path-traversal and URL-encoded payload — ref is
-	// interpolated into a path.Join on the codeload URL, not
-	// quoted as a query parameter.
-	if strings.ContainsAny(ref, "/\\?#%[]{}<>\"'`\x00") {
+	if len(ref) < 7 && isLowerHexRef(ref) {
 		return false
 	}
-	// Allow letters, digits, dot, underscore, dash, slash (for
-	// nested refs like `release/2026-q3`), `^` (git's
-	// "previous tag" syntax), and `~` (for `~N` ancestry).
+	if strings.ContainsRune(ref, 92) || strings.ContainsRune(ref, 0) ||
+		strings.ContainsRune(ref, 96) || strings.ContainsRune(ref, 63) ||
+		strings.ContainsRune(ref, 37) || strings.ContainsRune(ref, 91) ||
+		strings.ContainsRune(ref, 93) || strings.ContainsRune(ref, 123) ||
+		strings.ContainsRune(ref, 125) || strings.ContainsRune(ref, 60) ||
+		strings.ContainsRune(ref, 62) || strings.ContainsRune(ref, 34) ||
+		strings.ContainsRune(ref, 39) || strings.ContainsRune(ref, '*') {
+		return false
+	}
 	for _, r := range ref {
-		isAllowedPunct := r == '/' || r == '-' || r == '_' || r == '.' || r == '^' || r == '~'
-		isDigit := r >= '0' && r <= '9'
-		isLower := r >= 'a' && r <= 'z'
-		isUpper := r >= 'A' && r <= 'Z'
-		if !isAllowedPunct && !isDigit && !isLower && !isUpper {
+		if r <= 0x20 || r == 0x7f || r == 58 || r == 94 || r == 126 {
+			return false
+		}
+	}
+	for _, part := range strings.Split(ref, "/") {
+		if part == "" || strings.HasPrefix(part, ".") ||
+			strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
 			return false
 		}
 	}
 	return true
 }
 
-// resolveCommitSHA normalises a branch / tag / short-SHA / 40-char
-// SHA into the canonical 40-char git SHA. The codeload archive
-// URL is SHA-pinned downstream, so a branch input ("main") would
-// otherwise let a sha256-different ref bypass the immutable-
-// ref gate. Today's wire shape goes straight through to githubd's
-// StreamSourceRef when `len(ref) == 40 && isAllHex`, but the
-// branch / tag inputs MUST be resolved before the
-// source_url:="github://<repo>@<sha>" stamp is finalised.
-//
-// Returns 400 + code=invalid_ref on resolve failure (api.github.com
-// 404, malformed body, rate limit). The caller surfaces the
-// problem verbatim. Empty ref is rejected by isValidRef above.
-//
-// This is a tightly-scoped utility: a single GET to
-// https://api.github.com/repos/<repo>/commits/<ref>. It MUST NOT
-// do anything else; the streaming bridge is the canonical
-// tarball fetch.
-//
-// TODO(PR-B post-launch): when the install-token cache has a
-// true pre-warm (slice 8), thread the fresh-mint token through
-// here as well — api.github.com's Contents/Commits APIs take
-// the same installation token the codeload fetch uses. PR-A
-// accepts the unauthenticated 60-req/h shape because headless
-// CI deploys run on the customer's runner, not apid's egress.
-func resolveCommitSHA(ctx context.Context, repo, ref string) (string, *api.Problem) {
-	// For 40-char hex SHAs the wire shape pins it directly;
-	// api.github.com would only round-trip without changing
-	// the value. The validation runs first so a malformed
-	// SHA returns 400 (fast) instead of 404 (slow).
-	if len(ref) == 40 && isAllHexLower(ref) {
-		return ref, nil
+func isLowerHexRef(s string) bool {
+	if s == "" {
+		return false
 	}
-	return "", api.ErrInvalidRef(ref)
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
-// isAllHexLower is the bytes-only SHA validity check (compare
-// against the path library's O(n) tolerance for hex). Used by
-// resolveCommitSHA's short-circuit so a forged 40-char "sha"
-// with disallowed bytes is still rejected.
-func isAllHexLower(s string) bool {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		isDigit := c >= '0' && c <= '9'
-		isHex := c >= 'a' && c <= 'f'
-		if !isDigit && !isHex {
+func isCanonicalCommitSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return false
 		}
 	}

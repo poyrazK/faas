@@ -6472,6 +6472,15 @@ func (m *MemStore) SweepStuckRunningBuilds(_ context.Context, threshold time.Tim
 		b.FailureClass = FailureTimeout
 		b.FinishedAt = now
 		m.builds[id] = b
+		if d, ok := m.deployments[b.DeploymentID]; ok {
+			switch d.Status {
+			case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
+				d.Status = DeployFailed
+				d.Error = "build timed out"
+				d.ErrorCode = api.CodeBuildTimeout
+				m.deployments[b.DeploymentID] = d
+			}
+		}
 		n++
 	}
 	return n, nil

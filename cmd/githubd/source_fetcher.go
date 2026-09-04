@@ -113,7 +113,7 @@ func (s *installationSourceFetcher) Fetch(ctx context.Context, accountID string,
 		}
 		return nil, fmt.Errorf("githubd: source fetcher: resolve install: %w", err)
 	}
-	if inst.AccountID == "" || inst.InstallationID == 0 {
+	if inst.AccountID == "" || inst.AccountID != accountID || inst.InstallationID == 0 {
 		// Defensive: the install row exists but is incomplete.
 		// The OAuth handshake should never write a partial row,
 		// but a manual SQL edit could.

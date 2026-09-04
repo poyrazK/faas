@@ -7478,20 +7478,56 @@ func (s *PgStore) UpdateBuildProvenanceSBOM(ctx context.Context, buildID, sbomKe
 }
 
 // SweepStuckRunningBuilds is the reaper sweep (issue #195 B1.4).
-// Returns the number of rows flipped. A partial index on
-// builds(status='running') keeps this O(matches) instead of O(table).
+// Returns the number of build rows flipped. The owning in-flight
+// deployment is failed in the same transaction so a crashed builder
+// cannot leave the deployment permanently stuck in building.
+// A partial index on builds(status='running') keeps this O(matches)
+// instead of O(table).
 func (s *PgStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Time) (int, error) {
-	tag, err := s.pool.Exec(ctx,
-		`update builds set
-		   status        = 'failed',
-		   failure_class = 'timeout',
-		   finished_at   = now()
-		 where status = 'running' and started_at < $1`,
-		threshold)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return int(tag.RowsAffected()), nil
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var buildsFlipped, deploymentsFailed int
+	err = tx.QueryRow(ctx, `
+		with stuck as (
+			select id, deployment_id
+			  from builds
+			 where status = 'running' and started_at < $1
+			 for update skip locked
+		),
+		flipped as (
+			update builds b
+			   set status = 'failed',
+			       failure_class = 'timeout',
+			       finished_at = now()
+			  from stuck s
+			 where b.id = s.id
+			returning s.deployment_id
+		),
+		failed_deployments as (
+			update deployments d
+			   set status = 'failed',
+			       error = 'build timed out',
+			       error_code = $2
+			  from flipped f
+			 where d.id = f.deployment_id
+			   and d.status in ('pending', 'building', 'imaging', 'snapshotting')
+			returning d.id
+		)
+		select
+			(select count(*) from flipped),
+			(select count(*) from failed_deployments)
+	`, threshold, api.CodeBuildTimeout).Scan(&buildsFlipped, &deploymentsFailed)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return buildsFlipped, nil
 }
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7

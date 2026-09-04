@@ -30,6 +30,7 @@ type testEnv struct {
 
 func setup(t *testing.T, plan api.Plan) testEnv {
 	t.Helper()
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(context.Background(), fmt.Sprintf("%s@example.com", plan), plan)
 	if err != nil {

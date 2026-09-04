@@ -970,13 +970,12 @@ func (s *server) scanService(
 	// Server-side secret-scan (closes v1 gap A). Runs on BOTH
 	// apply=true and apply=false — the preview contract is "we ran
 	// the scan and found redactions needed", so a 422 is honest even
-	// when the customer wasn't going to apply. The scan is non-fatal
-	// to reposcan: a walk error is logged via the envelope's detail
-	// but findings drive the 422. The walk is bounded by
-	// serverSecretScanMaxBytes (1 MiB per file) +
-	// serverSecretScanExcludeDirs (.git, node_modules, vendor, …)
-	// so a 10k-file customer tree completes in p95 ≤ 250 ms (target
-	// envelope; not pinned by spec).
+	// when the customer wasn't going to apply. A walk error with no
+	// findings fails closed with a 500; findings drive the 422. The
+	// walk is bounded by
+	// serverSecretScanMaxBytes (1 MiB per file); it intentionally walks
+	// excluded/build/VCS directories too because a direct tarball upload
+	// must not be able to hide a secret by choosing a directory name.
 	secretFindings, ssErr := scanExtractedTreeSecrets(req.ScanDir)
 	if ssErr != nil && len(secretFindings) == 0 {
 		// Walk-level failure with no partial findings: surface as a

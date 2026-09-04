@@ -6,11 +6,17 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // TestScanExtractedTreeSecrets_CleanTree pins the no-findings fast
@@ -99,6 +105,78 @@ func TestScanExtractedTreeSecrets_PNGSkipped(t *testing.T) {
 	}
 	if len(findings) != 0 {
 		t.Errorf("PNG produced findings (text-file gate broken): %+v", findings)
+	}
+}
+
+// TestScanSourceTarballSecrets_RejectsEnvSecret pins the direct deploy
+// ingress. A caller that uploads a hand-built tarball (or disables the CLI
+// scanner) must still hit the same server-side rejection before enqueue.
+func TestScanSourceTarballSecrets_RejectsEnvSecret(t *testing.T) {
+	scanRoot := t.TempDir()
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", scanRoot)
+	sourcePath := filepath.Join(t.TempDir(), "source.tar.gz")
+	writeSecretScanTarGz(t, sourcePath, ".env", "STRIPE_SECRET_KEY="+fakeStripeLiveKey+"\n")
+
+	prob := scanSourceTarballSecrets(sourcePath, api.MustLimitsFor(api.PlanFree))
+	if prob == nil {
+		t.Fatal("secret-bearing tarball was accepted")
+	}
+	if prob.Status != 422 || prob.Code != api.CodeSecretScanStrict {
+		t.Fatalf("problem = %#v, want 422/%s", prob, api.CodeSecretScanStrict)
+	}
+	entries, err := os.ReadDir(scanRoot)
+	if err != nil {
+		t.Fatalf("ReadDir scan root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("scan extraction leaked %d directory entries", len(entries))
+	}
+}
+
+// TestScanExtractedTreeSecrets_ScansBuildDirectory prevents a directory-name
+// shortcut from becoming a secret-scan bypass. The client packer may omit
+// build artifacts, but a direct upload must be scanned for what it actually
+// contains.
+func TestScanExtractedTreeSecrets_ScansBuildDirectory(t *testing.T) {
+	dir := t.TempDir()
+	buildDir := filepath.Join(dir, "build")
+	if err := os.MkdirAll(buildDir, 0o700); err != nil {
+		t.Fatalf("mkdir build: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, ".env"), []byte("STRIPE_SECRET_KEY="+fakeStripeLiveKey+"\n"), 0o600); err != nil {
+		t.Fatalf("seed build secret: %v", err)
+	}
+	findings, err := scanExtractedTreeSecrets(dir)
+	if err != nil {
+		t.Fatalf("scanExtractedTreeSecrets: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1: %+v", len(findings), findings)
+	}
+}
+
+func writeSecretScanTarGz(t *testing.T, path, name, body string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create tarball: %v", err)
+	}
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(body))}); err != nil {
+		t.Fatalf("tar header: %v", err)
+	}
+	if _, err := io.Copy(tw, bytes.NewBufferString(body)); err != nil {
+		t.Fatalf("tar body: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("file close: %v", err)
 	}
 }
 

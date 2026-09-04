@@ -2612,7 +2612,7 @@ paths:
                 example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","image_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","kind":"github","status":"pending","created_at":"2026-08-29T11:25:00Z"}
         '400':
           description: |
-            code: invalid_ref | validation_failed. ref must be a 40-char
+            code: invalid_ref | validation_failed. ref must be a valid 40-char
             SHA, branch, or tag.
           content:
             application/problem+json:
@@ -15496,7 +15496,7 @@ components:
           example: onebox-faas/hello
         ref:
           type: string
-          minLength: 7
+          minLength: 1
           maxLength: 200
           description: |
             Commit ref — 40-char SHA, branch, or tag. api.github.com

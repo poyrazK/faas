@@ -135,6 +135,16 @@ func TestSweepStuckRunningBuilds_PgStore(t *testing.T) {
 	if got.FinishedAt.IsZero() {
 		t.Error("post-sweep finished_at was not stamped")
 	}
+	dep, err := d.store.DeploymentByID(d.ctx, got.DeploymentID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if dep.Status != state.DeployFailed {
+		t.Errorf("post-sweep deployment status = %q, want %q", dep.Status, state.DeployFailed)
+	}
+	if dep.ErrorCode != api.CodeBuildTimeout {
+		t.Errorf("post-sweep deployment error_code = %q, want %q", dep.ErrorCode, api.CodeBuildTimeout)
+	}
 
 	// Idempotency: a second sweep matches 0 rows.
 	n, err = d.store.SweepStuckRunningBuilds(d.ctx, time.Now().Add(-5*time.Minute))
