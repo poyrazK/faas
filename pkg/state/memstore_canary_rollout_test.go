@@ -149,6 +149,12 @@ func TestMemStore_RecoverRolloutActionsAndGuards(t *testing.T) {
 	if aborted.RolloutState != "aborted" || aborted.RolloutAbortedAt == nil || aborted.RolloutAbortedReason != "manual stop" || auditID != 3 {
 		t.Fatalf("aborted deployment = %#v, auditID=%d; want aborted with reason and audit 3", aborted, auditID)
 	}
+	if aborted.TrafficPercent != 0 {
+		t.Errorf("aborted traffic = %d, want 0", aborted.TrafficPercent)
+	}
+	if got, err := m.DeploymentByID(ctx, sibling.ID); err != nil || got.TrafficPercent != 100 {
+		t.Fatalf("sibling after abort = %#v, %v; want traffic 100", got, err)
+	}
 
 	audits, err := m.ListDeploymentAudit(ctx, uuid.MustParse(dep.ID).String(), 0)
 	if err != nil {

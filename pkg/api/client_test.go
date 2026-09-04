@@ -270,6 +270,40 @@ func TestDo_ExplicitIdempotencyKeyWins(t *testing.T) {
 	_ = srv // kept for clarity; the assertion below is the test.
 }
 
+func TestClient_SafeReleaseActionsUseExplicitIdempotencyKey(t *testing.T) {
+	const wantKey = "safedeploy/deployment-1/promote"
+	var seenPath, seenKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		seenKey = r.Header.Get("Idempotency-Key")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{}"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.RecoverRolloutAndIdempotencyKey(context.Background(), "my-app", "promote", "alert fired", wantKey); err != nil {
+		t.Fatalf("RecoverRolloutAndIdempotencyKey: %v", err)
+	}
+	if seenPath != "/v1/apps/my-app/rollouts/recover" {
+		t.Errorf("path = %q; want /v1/apps/my-app/rollouts/recover", seenPath)
+	}
+	if seenKey != wantKey {
+		t.Errorf("Idempotency-Key = %q; want %q", seenKey, wantKey)
+	}
+
+	const rollbackKey = "safedeploy/deployment-1/rollback"
+	if _, err := c.RollbackToWithRuleAndIdempotencyKey(context.Background(), "my-app", "", "rule-1", rollbackKey); err != nil {
+		t.Fatalf("RollbackToWithRuleAndIdempotencyKey: %v", err)
+	}
+	if seenPath != "/v1/apps/my-app/rollback" {
+		t.Errorf("rollback path = %q; want /v1/apps/my-app/rollback", seenPath)
+	}
+	if seenKey != rollbackKey {
+		t.Errorf("rollback Idempotency-Key = %q; want %q", seenKey, rollbackKey)
+	}
+}
+
 // TestDo_BearerAuthHeader pins the auth contract: tokenless clients
 // skip the header; token clients send "Bearer <token>".
 func TestDo_BearerAuthHeader(t *testing.T) {

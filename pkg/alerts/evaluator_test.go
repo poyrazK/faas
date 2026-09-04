@@ -828,6 +828,41 @@ func TestEvaluator_ActionExecutor_Rollback(t *testing.T) {
 	}
 }
 
+func TestEvaluator_ActionExecutor_DuplicateFireIsIdempotent(t *testing.T) {
+	store := state.NewMemStore()
+	_, ident := seedRuleWithAction(t, store, state.AlertActionRollback)
+	dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
+	actionExec := &recordingActionExecutor{}
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	newEvaluator := func() *alerts.Evaluator {
+		return alerts.NewEvaluator(alerts.EvaluatorOptions{
+			Store:      store,
+			PromQL:     &stubPromQL{value: 10},
+			Audit:      audit.New(store, discardLog(), nil, "meterd"),
+			Identity:   func() *age.X25519Identity { return ident },
+			Dispatcher: dispatch,
+			ActionExec: actionExec,
+			Now:        func() time.Time { return now },
+			Log:        discardLog(),
+		})
+	}
+
+	first, err := newEvaluator().RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("first RunOnce: %v", err)
+	}
+	second, err := newEvaluator().RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("second RunOnce: %v", err)
+	}
+	if first.ActionExecuted != 1 || actionExec.calls != 1 {
+		t.Fatalf("first action execution = stats %d, calls %d; want 1/1", first.ActionExecuted, actionExec.calls)
+	}
+	if second.Fired != 0 || second.ActionExecuted != 0 {
+		t.Errorf("duplicate fire stats = fired %d, executed %d; want 0/0", second.Fired, second.ActionExecuted)
+	}
+}
+
 // TestEvaluator_ActionExecutor_WebhookSkipsExecutor — rule with the
 // default action='webhook' never invokes the in-process executor.
 // Stats.ActionExecuted is 0; executor.calls is 0; ops counter is 0.

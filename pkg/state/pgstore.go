@@ -5795,11 +5795,51 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 		if _, err := tx.Exec(ctx,
 			`update deployments set
 				rollout_state = 'aborted',
+				traffic_percent = 0,
 				rollout_aborted_at = $2,
 				rollout_aborted_reason = $3
 			 where id = $1`,
 			dep.ID, now, reason); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp abort: %w", err)
+		}
+		// An aborted canary must not retain its old traffic weight. Rebuild
+		// the sibling weights in the same transaction so abort/demote cannot
+		// leave the app below or above the Σ=100 invariant.
+		siblingRows, err := tx.Query(ctx,
+			`select id, traffic_percent
+			   from deployments
+			  where app_id = $1 and status = 'live' and id != $2
+			  order by id`,
+			appID, dep.ID)
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: recover_rollout read abort siblings: %w", err)
+		}
+		var siblings []struct {
+			ID    string
+			Prior int
+		}
+		for siblingRows.Next() {
+			var sibling struct {
+				ID    string
+				Prior int
+			}
+			if err := siblingRows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+				siblingRows.Close()
+				return Deployment{}, 0, fmt.Errorf("state: recover_rollout scan abort sibling: %w", err)
+			}
+			siblings = append(siblings, sibling)
+		}
+		siblingRows.Close()
+		if err := siblingRows.Err(); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: recover_rollout iterate abort siblings: %w", err)
+		}
+		newWeights := RedistributeTraffic(siblings, 100)
+		for i, sibling := range siblings {
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = $2 where id = $1`,
+				sibling.ID, newWeights[i]); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp abort sibling %s: %w", sibling.ID, err)
+			}
 		}
 		auditKind = DeployRolledBack
 		auditData = []byte(fmt.Sprintf(`{"action":"abort","reason":%q}`, reason))
