@@ -122,6 +122,31 @@ const (
 	// locally, then push asynchronously — which is a design change, not
 	// a constant.
 	//
+	// CORRECTION. Raising this was the wrong lever and the evidence said
+	// so all along: at 25s, 45s, 195s and 615s the capture consumed the
+	// budget EXACTLY (snapshot_ms 615001 vs budget_ms 615000 on the last
+	// one). A slow upload would have completed at some size. Something
+	// that always burns exactly what it is given is not slow — it never
+	// finishes.
+	//
+	// Corroborating: three SIGQUIT dumps caught vmmd with ZERO in-flight
+	// gRPC handlers while schedd blocked in waitOnHeader, i.e. schedd
+	// never received response headers and vmmd was not running the
+	// handler. #1294's router-refresh cancellation was a real and
+	// separate bug that muddied earlier readings, but removing it did
+	// not make the capture complete.
+	//
+	// So this is back to a modest value. 600s/GB left every park pinning
+	// an instance for ten minutes before failing — strictly worse than
+	// the original. 60s/GB covers a plausible local capture plus
+	// overhead without holding a slot for minutes on a call that is not
+	// going to return.
+	//
+	// The open bug is tracked separately: PauseAndSnapshot does not
+	// reach or does not return from vmmd's handler. That is where the
+	// next investigation belongs, NOT here.
+	//
+	// Superseded rationale kept for the trail:
 	// 180s/GB was still short. Re-measured on a QUIET fleet after #1294
 	// removed the router-refresh cancellation that had been confounding
 	// every earlier reading: snapshot_ms 195000 against budget_ms
@@ -145,7 +170,7 @@ const (
 	// local capture. Until that lands, snapshot_ms on a SUCCESSFUL park
 	// is the number to tighten against.
 	SnapshotBudgetBase  = 15 * time.Second
-	SnapshotBudgetPerGB = 600 * time.Second
+	SnapshotBudgetPerGB = 60 * time.Second
 )
 
 // SnapshotBudgetFor returns the wall-clock budget for one instance's
