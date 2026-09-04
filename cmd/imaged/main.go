@@ -123,7 +123,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("imaged: init tracing: %w", traceErr)
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := traceShutdown(shutdownCtx); err != nil {
 			log.Warn("imaged: trace shutdown failed", "err", err)

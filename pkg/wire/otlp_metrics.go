@@ -51,7 +51,7 @@ func StartOTLPMetrics(
 		return nil, errors.New("otlp metrics: nil prometheus gatherer")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("otlp metrics: nil context")
 	}
 	target, err := normalizeOTLPMetricsEndpoint(endpoint)
 	if err != nil {
@@ -95,7 +95,7 @@ func StartOTLPMetrics(
 		if doErr != nil {
 			return fmt.Errorf("send OTLP metrics: %w", doErr)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			message, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 			return fmt.Errorf("OTLP metrics endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(message)))
@@ -115,7 +115,7 @@ func StartOTLPMetrics(
 			case <-stop:
 				return
 			case <-ticker.C:
-				exportCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				exportCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				if exportErr := export(exportCtx); exportErr != nil {
 					log.Warn("otlp metrics export failed", "err", exportErr)
 				}

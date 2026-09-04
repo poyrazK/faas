@@ -154,7 +154,7 @@ func startOTLPMetrics(ctx context.Context, serviceName string, ops *OpsMetrics) 
 	}
 	go func() {
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if shutdownErr := shutdown(shutdownCtx); shutdownErr != nil {
 			slog.Default().Warn("otlp metrics final export failed", "service", serviceName, "err", shutdownErr)

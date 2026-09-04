@@ -129,7 +129,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("builderd: init tracing: %w", traceErr)
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := traceShutdown(shutdownCtx); err != nil {
 			log.Warn("builderd: trace shutdown failed", "err", err)
