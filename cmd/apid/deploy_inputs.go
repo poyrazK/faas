@@ -91,7 +91,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		handler        string
 		kind           state.DeploymentKind
 		sourceAccepted bool
-		workflows   []api.WorkflowSpec
+		workflows      []api.WorkflowSpec
 	)
 	defer func() {
 		if sourcePath != "" && !sourceAccepted {
