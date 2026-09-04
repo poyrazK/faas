@@ -1,0 +1,22 @@
+---
+# geoip (ADR-143) — stage the GeoIP country database gatewayd-internal reads
+# for `kind=geo` edge rules (ADR-091 D21). Before this role existed the
+# daemon defaulted to a path nothing provisioned, and applyEdgeRuleGeo
+# silently skipped every geo rule (fail-open) — a customer who blocked a
+# country got no error and no block.
+#
+# Source: DB-IP IP-to-Country Lite, CC BY 4.0 (attribution shipped next to
+# the file). The monthly release is pinned by name AND SHA-256; bumping the
+# month is a deliberate PR that re-pins both checksums (same pattern as the
+# firecracker / prometheus roles). FAAS_GEOIP_AUTO_REFRESH stays 0 in code
+# so the daemon never fetches on its own: refresh = re-run bootstrap.
+faas_geoip_enabled: true
+faas_geoip_release: "2026-09"
+faas_geoip_url: "https://download.db-ip.com/free/dbip-country-lite-{{ faas_geoip_release }}.mmdb.gz"
+# sha256 of the .mmdb.gz as downloaded
+faas_geoip_gz_sha256: "cb0578ce59f569f2c933bb40feb820804a334855a60739011b0a89cab1d6e4ed"
+# sha256 of the decompressed .mmdb (what the daemon opens)
+faas_geoip_sha256: "d284ae2e7427fe33d83465e1506b2b21aae47eb8a9b099f8f4dac6a98c99f041"
+# Must equal the cmd/gatewayd-internal default for FAAS_GEOIP_DB_PATH.
+faas_geoip_dir: /var/lib/faas/geoip
+faas_geoip_db_path: "{{ faas_geoip_dir }}/dbip-country-lite.mmdb"
