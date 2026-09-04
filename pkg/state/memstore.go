@@ -4287,6 +4287,9 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if d.RolloutState == "" {
 		d.RolloutState = "pending"
 	}
+	if d.Scope == "" {
+		d.Scope = DefaultEnvScope
+	}
 	serviceRollout := IsServiceRollout(d)
 	if serviceRollout && d.RolloutStartedAt == nil {
 		now := time.Now().UTC()
@@ -4465,10 +4468,11 @@ func (m *MemStore) LiveDeployment(_ context.Context, appID string) (Deployment, 
 func (m *MemStore) LiveDeploymentForScope(_ context.Context, appID, scope string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	scope = normalizedDeploymentScope(scope)
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
-		if d.AppID != appID || d.Scope != scope || d.Status != DeployLive {
+		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != scope || d.Status != DeployLive {
 			continue
 		}
 		if !found || deploymentPreferredForWake(d, latest) {

@@ -33,7 +33,9 @@ func (m *MemStore) serviceRolloutTargetLocked(id string) (Deployment, []memServi
 	}
 	rows := make([]memServiceRolloutLiveRow, 0)
 	for otherID, other := range m.deployments {
-		if other.AppID != target.AppID || other.Scope != target.Scope || other.Status != DeployLive {
+		if other.AppID != target.AppID ||
+			normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) ||
+			other.Status != DeployLive {
 			continue
 		}
 		rows = append(rows, memServiceRolloutLiveRow{

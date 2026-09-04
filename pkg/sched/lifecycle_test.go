@@ -302,6 +302,59 @@ func TestReconcileServiceApp_ReadinessTimeoutRestoresPrevious(t *testing.T) {
 	}
 }
 
+func TestReconcileServiceApp_ExactFitRolloutReleasesPredecessorSlot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanPro, 128, 1)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 1, Desired: 1},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	old, err := store.CreateInstanceWithMode(context.Background(), app.ID, stable.ID,
+		string(state.StateRunning), app.RAMMB, "node-1", "stable-exact-fit", string(state.InstanceModeService))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	limits := api.MustLimitsFor(api.PlanPro)
+	if err := e.ledger.Admit(Request{
+		Instance: old.ID, AppID: app.ID, DeploymentID: stable.ID, Plan: api.PlanPro,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		NodeID: "node-1",
+	}); err != nil {
+		t.Fatalf("seed predecessor ledger reservation: %v", err)
+	}
+
+	rollout, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:service-exact-fit",
+		Status: state.DeployPending, Scope: stable.Scope, TrafficPercent: 0,
+		RolloutState: "rolling_out",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(context.Background(), rollout.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	e.ReconcileServiceApp(context.Background(), app.ID)
+	got, err := store.DeploymentByID(context.Background(), rollout.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.DeployLive || got.TrafficPercent != 100 || got.RolloutState != "complete" {
+		t.Fatalf("exact-fit rollout = status:%q traffic:%d state:%q; want live/100/complete", got.Status, got.TrafficPercent, got.RolloutState)
+	}
+	if got, err := store.InstanceByID(context.Background(), old.ID); err != nil {
+		t.Fatal(err)
+	} else if got.State != string(state.StateParked) {
+		t.Fatalf("predecessor after exact-fit promotion = %q; want parked", got.State)
+	}
+}
+
 func TestConvergeServiceReplicas_AdmitsDeficit(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)

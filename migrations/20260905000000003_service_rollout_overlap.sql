@@ -24,7 +24,6 @@ DROP INDEX IF EXISTS deployments_app_scope_live_uniq;
 
 CREATE UNIQUE INDEX deployments_app_scope_live_uniq
     ON deployments (app_id, scope)
-    WHERE status = 'live'
-      AND (canary_total_steps = 0 OR rollout_state = 'complete');
+    WHERE status = 'live';
 
 -- +goose StatementEnd

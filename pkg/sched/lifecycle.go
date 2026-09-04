@@ -475,6 +475,21 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 		}
 		e.convergeServiceReplicasToTarget(ctx, previous.ID, oldTarget, false)
 		e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true)
+		// max_concurrency is also the service app's replica ceiling. A
+		// rollout normally uses one bounded surge slot, but the API permits
+		// the common exact-fit shape (max_concurrency == desired). If the
+		// first replacement admission hit that ceiling, release one ready
+		// predecessor replica and retry. This keeps exact-fit services from
+		// hanging forever while retaining the predecessor's snapshot for a
+		// rollback if the replacement later fails.
+		if app.MaxConcurrency > 0 && e.ledger.Concurrency(app.ID) >= app.MaxConcurrency {
+			ready, readErr := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)
+			if readErr == nil && classifyServiceReplicas(ready).managed() < newTarget {
+				if e.parkOneServiceReplica(ctx, app.ID, previous.ID) {
+					e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true)
+				}
+			}
+		}
 	}
 	// Admission may synchronously reach RUNNING. Re-read so a fast boot can
 	// complete the rollout without waiting for a second notification.
@@ -779,4 +794,28 @@ func (e *Engine) parkSurplusServiceReplicas(ctx context.Context, replicas []stat
 		parked++
 	}
 	return parked
+}
+
+// parkOneServiceReplica releases one per-app concurrency slot for an
+// exact-fit rolling replacement. The caller has already confirmed that a
+// replacement admission could not fit under max_concurrency; only a RUNNING
+// predecessor is eligible because parking an in-flight wake would require a
+// different destroy path and would make the rollout's capacity accounting
+// ambiguous.
+func (e *Engine) parkOneServiceReplica(ctx context.Context, appID, deploymentID string) bool {
+	replicas, err := listServiceReplicas(ctx, e.store, appID, deploymentID)
+	if err != nil {
+		return false
+	}
+	for _, replica := range replicas {
+		if state.State(replica.State) != state.StateRunning {
+			continue
+		}
+		if err := e.Park(ctx, replica.ID); err != nil {
+			e.log.Warn("sched: park predecessor for exact-fit service rollout", "instance", replica.ID, "deployment", deploymentID, "err", err)
+			continue
+		}
+		return true
+	}
+	return false
 }
