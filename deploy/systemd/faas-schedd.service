@@ -19,6 +19,7 @@ EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/schedd/schedd.env
 EnvironmentFile=-/etc/faas/storage.env
 Environment=TMPDIR=/var/lib/faas/oci-tmp
+Environment=FAAS_JOBS_DISPATCH=0
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
