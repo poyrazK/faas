@@ -129,3 +129,29 @@ func TestWakePhases_NilSafe(t *testing.T) {
 		t.Errorf("nil wakePhases attrs = %v, want nil", got)
 	}
 }
+
+// TestCleanup_ReportsSurvivingNetnsAsLeak pins the visibility fix for
+// the leak that broke cold boot on 2026-09-04.
+//
+// Teardown commands run unconditionally, so a failure is ambiguous: the
+// resource may never have been created (benign) or may have refused to
+// go away (a real leak). Both landed on the same Debug line, and
+// production runs at INFO, so every leak was silent. 21 netns and 14
+// veth accumulated on one node; netns operations slow as the count
+// grows, and a `tc qdisc add` inside setupNetwork eventually consumed
+// the whole 35s cold-boot budget.
+func TestCleanup_ReportsSurvivingNetnsAsLeak(t *testing.T) {
+	// A namespace name that does NOT exist under /run/netns must stay
+	// quiet — this is the benign "never created" path that fires on
+	// every clean teardown, and warning on it would be pure noise.
+	var buf bytes.Buffer
+	m := newPhaseLogManager(t, &fakeRunner{}, &fakeVMM{}, &buf)
+	lease := Lease{Instance: "leak-probe", Netns: "fc-does-not-exist-probe"}
+	nc := netnsConfigForTest(lease)
+
+	m.cleanup(context.Background(), lease, nc, nil)
+
+	if strings.Contains(buf.String(), "survived teardown") {
+		t.Errorf("clean teardown reported a leak; the benign path must stay quiet\ngot: %s", buf.String())
+	}
+}

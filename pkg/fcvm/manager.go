@@ -5106,6 +5106,36 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			m.log.Debug("cleanup: teardown cmd", "cmd", argv, "err", err)
 		}
 	}
+
+	// A teardown command failing is genuinely ambiguous: the resource may
+	// never have been created (benign — the loop runs unconditionally), or
+	// it may exist and have refused to go away (a real leak). Both used to
+	// land on the same Debug line, so in production, which runs at INFO,
+	// every leak was invisible.
+	//
+	// That is how 21 netns and 14 veth accumulated on one compute node by
+	// 2026-09-04. The cost is not cosmetic: netns operations slow as the
+	// namespace count grows, and a `tc qdisc add` inside setupNetwork
+	// eventually consumed the entire 35s cold-boot budget, so no
+	// deployment could reach `live`. §6.2-4/5 and `make leakcheck` both
+	// require zero leaked netns/TAPs; nothing enforced that at runtime.
+	//
+	// Checking the marker after the fact separates the two cases. Only a
+	// namespace that still exists is reported, so the benign path stays
+	// quiet and a real leak is greppable and countable.
+	if nc.Netns != "" {
+		if _, statErr := os.Lstat(filepath.Join("/run/netns", nc.Netns)); statErr == nil {
+			// Log only. Deliberately NOT counted on
+			// vmmd_wake_failure_total{reason=netns_fail}: that series
+			// means "a wake failed because netns setup failed", and a
+			// leak during cleanup is a different event. Folding them
+			// together would corrupt the §12 panel legend that the
+			// setupNetwork call site documents as load-bearing. A
+			// dedicated counter belongs with the leak reaper.
+			m.log.Warn("cleanup: netns survived teardown (leak)",
+				"instance", lease.Instance, "netns", nc.Netns)
+		}
+	}
 	// cleanup runs exactly once per lease (failed boot OR Destroy, never both),
 	// so Release should succeed; a failure here is a real leak signal, not noise.
 	if err := m.alloc.Release(lease.Instance); err != nil {
