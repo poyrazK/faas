@@ -81,6 +81,87 @@ func TestSupervisorRecoversBeforeBudget(t *testing.T) {
 	}
 }
 
+func TestSupervisorRestartPolicyNoDoesNotRestart(t *testing.T) {
+	starts := 0
+	s := Supervisor{
+		Max:    3,
+		Policy: api.RestartPolicyNo,
+		Start: func() error {
+			starts++
+			return fmt.Errorf("boom")
+		},
+	}
+	if err := s.Run(); err == nil {
+		t.Fatal("restart policy no should return the workload error")
+	}
+	if starts != 1 {
+		t.Fatalf("restart policy no started %d times, want 1", starts)
+	}
+	if got := s.lastErr(); got == nil {
+		t.Fatal("terminal workload error was not retained")
+	}
+}
+
+func TestSupervisorRestartPolicyAlwaysRestartsCleanExit(t *testing.T) {
+	starts := 0
+	s := Supervisor{
+		Max:    2,
+		Policy: api.RestartPolicyAlways,
+		Start: func() error {
+			starts++
+			return nil
+		},
+	}
+	if err := s.Run(); err == nil {
+		t.Fatal("always policy should report exhausted restart budget")
+	}
+	if starts != 3 {
+		t.Fatalf("always policy started %d times, want 3", starts)
+	}
+}
+
+func TestSupervisorExplicitStopWinsOverAlwaysPolicy(t *testing.T) {
+	starts := 0
+	s := Supervisor{
+		Max:    3,
+		Policy: api.RestartPolicyAlways,
+	}
+	s.Start = func() error {
+		starts++
+		s.RequestStop()
+		return fmt.Errorf("terminated")
+	}
+	if err := s.Run(); err != nil {
+		t.Fatalf("explicit stop should be clean, got %v", err)
+	}
+	if starts != 1 {
+		t.Fatalf("explicit stop restarted %d times, want 1", starts)
+	}
+}
+
+func TestSupervisorPolicyFromManifestUsesConfiguredRetryBudget(t *testing.T) {
+	policy, max := supervisorPolicyFromManifest(api.AppManifest{
+		ExecutionMode: api.ExecutionModeService,
+		MaxRetries:    7,
+	})
+	if policy != api.RestartPolicyAlways {
+		t.Fatalf("policy = %q, want %q", policy, api.RestartPolicyAlways)
+	}
+	if max != 7 {
+		t.Fatalf("max retries = %d, want 7", max)
+	}
+}
+
+func TestSupervisorPolicyFromManifestPreservesLegacyDefault(t *testing.T) {
+	policy, max := supervisorPolicyFromManifest(api.AppManifest{})
+	if policy != api.RestartPolicyOnFailure {
+		t.Fatalf("policy = %q, want %q", policy, api.RestartPolicyOnFailure)
+	}
+	if max != MaxRestarts {
+		t.Fatalf("max retries = %d, want %d", max, MaxRestarts)
+	}
+}
+
 // cut splits "KEY=VALUE". It must:
 //   - return ("", "", false) for the empty string
 //   - return (key, "", true) for entries without '=' (treated as KEY="")

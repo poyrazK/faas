@@ -57,6 +57,35 @@ func TestDestroyWaitForUsesConfiguredBuilderTimeout(t *testing.T) {
 	}
 }
 
+func TestReadyTimeoutForUsesPerAppOverride(t *testing.T) {
+	defaultTimeout := 30 * time.Second
+	tests := []struct {
+		name     string
+		deadline []int
+		want     time.Duration
+	}{
+		{name: "legacy default", want: defaultTimeout},
+		{name: "zero preserves default", deadline: []int{0}, want: defaultTimeout},
+		{name: "negative preserves default", deadline: []int{-1}, want: defaultTimeout},
+		{name: "override", deadline: []int{45}, want: 45 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := readyTimeoutFor(defaultTimeout, tt.deadline...); got != tt.want {
+				t.Fatalf("ready timeout = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNotReadyProblemUsesPerAppTimeout(t *testing.T) {
+	v := &JailerVMM{readyTimeout: 30 * time.Second}
+	p := v.notReadyProblem(Lease{Instance: "inst-1"}, "", 1, 45*time.Second)
+	if !strings.Contains(p.Detail, "deadline=45s") {
+		t.Fatalf("detail = %q, want per-app deadline", p.Detail)
+	}
+}
+
 func TestProvisionRewritesPathsIntoChroot(t *testing.T) {
 	// provision hardlinks images into the chroot and rewrites config paths to
 	// their in-chroot basenames — the jailed firecracker sees only these.

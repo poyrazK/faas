@@ -256,10 +256,11 @@ func boot() error {
 	// `supRef` — referencing `&sup` from inside its own struct
 	// literal would trip Go's "undefined: sup" before the
 	// assignment. The wiring below is the canonical fix.
-	supRef := &Supervisor{Max: MaxRestarts}
+	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
+	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
 	supRef.Start = func() error { return runAppWithEnv(manifest, secrets, apiEnv, supRef) }
 	supRef.OnCrash = func(attempt int, err error) {
-		fmt.Fprintf(os.Stderr, "guest-init: app crashed (restart %d/%d): %v\n", attempt, MaxRestarts, err)
+		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
 	// ADR-051 Phase 4: characterize the workload by observing the
 	// first cold boot. Runs in parallel with sup.Run() so the

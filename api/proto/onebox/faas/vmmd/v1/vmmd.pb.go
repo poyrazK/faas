@@ -215,8 +215,11 @@ type AppSpec struct {
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	// Additive per ADR-016.
 	StaticEgressIp string `protobuf:"bytes,14,opt,name=static_egress_ip,json=staticEgressIp,proto3" json:"static_egress_ip,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Per-app readiness budget. 0 preserves the vmmd default for legacy
+	// callers; schedd sends the plan-resolved value for production wakes.
+	StartupDeadlineS int32 `protobuf:"varint,15,opt,name=startup_deadline_s,json=startupDeadlineS,proto3" json:"startup_deadline_s,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -345,6 +348,13 @@ func (x *AppSpec) GetStaticEgressIp() string {
 		return x.StaticEgressIp
 	}
 	return ""
+}
+
+func (x *AppSpec) GetStartupDeadlineS() int32 {
+	if x != nil {
+		return x.StartupDeadlineS
+	}
+	return 0
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -4540,7 +4550,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xa3\x04\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xd1\x04\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -4560,7 +4570,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x10healthcheck_path\x18\v \x01(\tR\x0fhealthcheckPath\x12\x18\n" +
 	"\aruntime\x18\f \x01(\tR\aruntime\x12<\n" +
 	"\bsidecars\x18\r \x03(\v2 .onebox.faas.vmmd.v1.SidecarSpecR\bsidecars\x12(\n" +
-	"\x10static_egress_ip\x18\x0e \x01(\tR\x0estaticEgressIp\"\x96\x02\n" +
+	"\x10static_egress_ip\x18\x0e \x01(\tR\x0estaticEgressIp\x12,\n" +
+	"\x12startup_deadline_s\x18\x0f \x01(\x05R\x10startupDeadlineS\"\x96\x02\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
