@@ -18,7 +18,7 @@ import (
 // (Postgres restart, transport hiccup between INSERT and the LISTEN
 // session). Five seconds is short enough that an operator watching
 // `migrate -wait-for-migrations` sees progress in human time, long
-// enough that the steady-state cost is one indexed ledger-set query per
+// enough that the steady-state cost is one bounded ledger-set query per
 // daemon per interval.
 //
 // The cost is per-daemon and constant; at fleet sizes we plan to run
