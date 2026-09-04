@@ -28,7 +28,7 @@ is the offender, look at the per-app consumers in that plan:
 
 ```bash
 curl -fsS http://127.0.0.1:9106/metrics | grep -E '^meterd_resident_gb_per_customer{'
-curl -fsS -G http://127.0.0.1:9090/api/v1/query \
+curl -fsS -G http://127.0.0.1:9095/api/v1/query \
   --data-urlencode 'query=topk(10, sum by (app_id) (usage_minutes{mb_seconds>0}))' \
   | jq '.data.result[] | {app: .metric.app_id, gb: .value[1]}'
 ```

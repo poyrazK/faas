@@ -29,7 +29,7 @@ bad upstreams.
 
 ```bash
 # Confirm the alert expression is the one firing.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum by (kind, region) (rate(meterd_data_upstream_probes_total{outcome="ok"}[30m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum by (kind, region) (rate(meterd_data_upstream_probes_total{outcome="ok"}[30m]))'
 
 # Direct underlying metric — see if probes are being attempted at all.
 curl -fsS http://127.0.0.1:9091/metrics | grep 'meterd_data_upstream_probes_total'
@@ -40,7 +40,7 @@ curl -fsS http://127.0.0.1:9091/metrics | grep 'meterd_data_upstream_probes_tota
 ```bash
 # Is the poller producing ANY probes? Non-ok rate alone shows
 # whether the poller is alive.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum by (kind, region) (rate(meterd_data_upstream_probes_total[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum by (kind, region) (rate(meterd_data_upstream_probes_total[5m]))'
 
 # meterd poller state.
 systemctl status meterd

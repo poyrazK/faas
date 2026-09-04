@@ -133,7 +133,7 @@ to `deploy/grafana/faas-fleet.json` (enforced by `make grafana-mirror-check`).
 Confirm the `GatewayWildcardRoute` rule loaded on Prometheus:
 
 ```sh
-curl -fsS http://127.0.0.1:9090/api/v1/rules \
+curl -fsS http://127.0.0.1:9095/api/v1/rules \
   | jq '.data.groups[].rules[] | select(.name=="GatewayWildcardRoute") | {name, state, expr, duration}'
 # expect: one line, state="inactive" (no Hobby-tier apps saturating yet),
 # expr keyed off gateway_requests_by_route_total{route="__route_other__"},

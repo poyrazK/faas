@@ -100,22 +100,22 @@ panel 4 (worst-kind stat backed by the recording rule).
 ```bash
 # Per-kind completeness (worst first)
 curl -fsS --data-urlencode 'query=topk(10, schedd_operator_action_trace_completeness_ratio)' \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 # Per-kind completeness over time (for the failing kind)
 curl -fsS --data-urlencode \
   'query=schedd_operator_action_trace_completeness_ratio{kind="force_park"}' \
-  'http://127.0.0.1:9090/api/v1/query_range' \
+  'http://127.0.0.1:9095/api/v1/query_range' \
   -G --data-urlencode 'start=' --data-urlencode 'end=now' --data-urlencode 'step=15s'
 
 # Companion: per-kind audit-write rate (denominator)
 curl -fsS --data-urlencode \
   'query=topk(8, sum by (kind) (rate({__name__=~".*_audit_log_write_total"}[5m])))' \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 # Recording rule value (what the Page + Warn alerts evaluate)
 curl -fsS --data-urlencode 'query=obs:operator_action_trace_completeness_ratio' \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 ```
 
 A kind missing from the second query while present in the third is
@@ -174,12 +174,12 @@ before widening (CLAUDE.md §17 G7).
 # Stalest kind (max() picks the worst, not an arbitrary one)
 curl -fsS --data-urlencode \
   'query=max(time() - timestamp(schedd_operator_action_trace_completeness_ratio))' \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 # Per-kind freshness if a single kind is suspect
 curl -fsS --data-urlencode \
   'query=time() - timestamp(schedd_operator_action_trace_completeness_ratio)' \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 journalctl -u schedd --since '-15m' --no-pager \
   | grep -E 'observability|trace_completeness|operator_intent_completeness'
@@ -205,7 +205,7 @@ instance-oriented, this is the suspect.
 ```bash
 curl -fsS --data-urlencode \
   'query={__name__=~".*_operator_action_trace_completeness_ratio"}' \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 ```
 
 Filter for non-`schedd_` series: those are
@@ -234,7 +234,7 @@ while the page is firing anyway, so silencing all three is safe.
    gap): `systemctl restart schedd`. The driver's first pass after
    restart is immediate.
 2. **Confirm** the recording rule value rebounded:
-   `curl -fsS --data-urlencode 'query=obs:operator_action_trace_completeness_ratio' http://127.0.0.1:9090/api/v1/query`.
+   `curl -fsS --data-urlencode 'query=obs:operator_action_trace_completeness_ratio' http://127.0.0.1:9095/api/v1/query`.
 3. If the bounce did not help, the audit emit site is dropping
    `trace_id` — that is a code change; file an `obs-meta` issue.
 

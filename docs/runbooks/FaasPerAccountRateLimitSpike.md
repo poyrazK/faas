@@ -32,9 +32,9 @@ single-tenant spike.
 # Confirm the counter is incrementing on this box.
 curl -fsS http://127.0.0.1:9090/metrics | grep gateway_per_account_rate_limited_total
 # Fleet sum — the same expression the alert evaluates.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum(rate(gateway_per_account_rate_limited_total[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(gateway_per_account_rate_limited_total[5m]))'
 # Plan breakdown — cross-check whether one plan row dominates.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum by (plan) (rate(gateway_per_account_rate_limited_total[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum by (plan) (rate(gateway_per_account_rate_limited_total[5m]))'
 journalctl -u faas-gatewayd-internal --since '-15m' --no-pager | grep -i 'rate limit'
 ```
 

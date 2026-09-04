@@ -371,13 +371,14 @@ func (b *syncBuffer) String() string {
 }
 
 // TestBootStamps_RecordsAllGauges asserts that BootStamps records
-// restart count, build info, deploy version, and the ready gauge
-// when invoked on a fresh *OpsMetrics. This is the test that
+// restart count, build info, deploy version, and the pre-instantiated
+// ready gauge when invoked on a fresh *OpsMetrics. This is the test that
 // proves the boot-order bug fix: under the prior wiring, these
 // stamps were called from wire.Daemon() via defaultOps before
 // the daemon's run() had registered its ops, so every stamp was
 // a silent no-op. After the fix, the stamps fire when
-// wire.BootStamps runs inside run().
+// wire.BootStamps runs inside run(). Readiness remains 0 until the
+// daemon's actual readiness probe reports ready.
 func TestBootStamps_RecordsAllGauges(t *testing.T) {
 	t.Setenv("SYSTEMD_RESTARTS_ON_FAILURE", "7")
 	ops := wire.NewOpsMetrics("vmmd")
@@ -409,7 +410,7 @@ func TestBootStamps_RecordsAllGauges(t *testing.T) {
 		// contract): build_time, daemon, git_sha, version.
 		`vmmd_daemon_build_info{build_time="",daemon="vmmd",git_sha="unknown",version="dev"} 1`,
 		`vmmd_faas_deploy_version{version="dev"} 1`,
-		`vmmd_daemon_ready{daemon="vmmd"} 1`,
+		`vmmd_daemon_ready{daemon="vmmd"} 0`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in:\n%s", want, body)

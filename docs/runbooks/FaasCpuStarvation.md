@@ -67,23 +67,23 @@ For ad-hoc Prometheus API queries:
 
 ```bash
 # Top-20 by current 5m throttle-seconds (the panel-1 expression)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=topk(20,rate(vmmd_cpu_throttle_seconds_total[5m]))' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=topk(20,rate(vmmd_cpu_throttle_seconds_total[5m]))' | jq .
 
 # Per-slice throttle ratio (the alert's source expression)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=vmmd_cpu_throttle_ratio' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=vmmd_cpu_throttle_ratio' | jq .
 
 # Single-app drill-down — replace $ACCOUNT_ID + $APP_ID
 ACCOUNT_ID=<uuid>; APP_ID=<uuid>
 curl -fsS --data-urlencode "query=rate(vmmd_cpu_throttle_seconds_total{account_id=\"${ACCOUNT_ID}\",app_id=\"${APP_ID}\"}[5m])" \
-  'http://127.0.0.1:9090/api/v1/query' | jq .
+  'http://127.0.0.1:9095/api/v1/query' | jq .
 
 # Cross-check cgroupstate at the kernel level — confirms the
 # cpu.max write landed. Replace $SLICE with the offending plan.
 SLICE=tenant-hobby
-curl -fsS "http://127.0.0.1:9090/api/v1/query?query=node_cpu_cgroup_throttled_seconds_total{cgroup=\"${SLICE}\"}" | jq .
+curl -fsS "http://127.0.0.1:9095/api/v1/query?query=node_cpu_cgroup_throttled_seconds_total{cgroup=\"${SLICE}\"}" | jq .
 
 # Is the top-100 cap saturated?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=vmmd_cpu_throttle_seconds_total{account_id="other",app_id="other"}' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=vmmd_cpu_throttle_seconds_total{account_id="other",app_id="other"}' | jq .
 ```
 
 ## Check
@@ -106,7 +106,7 @@ journalctl -u vmmd --since '-15m' --no-pager | grep -i "throttle\|cpu.max"
 # Cross-check the per-VM CPU rate — a slice throttled at 80% with
 # one VM running at 0% means the cpu.max write didn't reach the
 # kernel for that VM (the legacy 2-level path is still active)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=topk(5,sum by (instance)(vmmd_cpu_seconds_total))' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=topk(5,sum by (instance)(vmmd_cpu_seconds_total))' | jq .
 ```
 
 A spike paired with a low `vmmd_cpu_seconds_total` per-instance is a
@@ -193,7 +193,7 @@ Recovery verification:
 # should drop below 0.8 within 1 sample window (~250ms in vmmd,
 # 5m on the alert). The for:5m debounce means the alert clears
 # ~5m after the ratio stabilizes.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=vmmd_cpu_throttle_ratio{slice="'"${SLICE}"'"}' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=vmmd_cpu_throttle_ratio{slice="'"${SLICE}"'"}' | jq .
 
 # After notify: customer should self-correct within 30m; if not,
 # proceed to step 3 (raise the slice's CPUQuota).

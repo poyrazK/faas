@@ -39,10 +39,10 @@ admission set. For per-app queue alert mechanics, see
 
 ```bash
 # Which accounts have any preset firing?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=FaasAlertPresetAnyFiringAccount'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=FaasAlertPresetAnyFiringAccount'
 
 # For a specific account, list which per-preset alerts are ALSO firing:
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=ALERTS{alertstate%3D%22firing%22%2C+account_id%3D%22<acct>%22%2C+family%3D%22alert_preset_signals%22}'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=ALERTS{alertstate%3D%22firing%22%2C+account_id%3D%22<acct>%22%2C+family%3D%22alert_preset_signals%22}'
 ```
 
 The `count by (account_id) (...) >= 1` reduces to a `1` or higher

@@ -6,6 +6,7 @@ Metrics: `apid_log_archive_files_uploaded_total{status}`,
 `apid_log_archive_bytes_uploaded_total`,
 `apid_log_archive_failures_total{reason}`,
 `apid_log_archive_local_bytes`,
+`apid_log_archive_local_bytes_max`,
 `apid_log_archive_flush_duration_seconds`,
 `apid_log_archive_upload_duration_seconds` (apid `/metrics`).
 Issue: #562.
@@ -35,28 +36,27 @@ Three failure shapes show up first:
    and new per-instance rings will spill to the local
    filesystem (`reason="spool_full"`).
 
-A fourth shape is observable but not alertable yet:
-`apid_log_archive_files_uploaded_total{status="err"}`
-climbing with `reason="throttle"` — the vendor is rate-
-limiting the bucket. See *Recover #3* below.
+A fourth shape is observable through the `FaasLogArchiveShipperDegraded`
+alert: `reason="throttle"` means the vendor is rate-limiting the
+bucket. See *Recover #3* below.
 
 ## Verify
 
 ```bash
 # (a) Did anything upload in the last 5m?
 curl -fsS --data-urlencode "query=sum(rate(apid_log_archive_files_uploaded_total{status=\"ok\"}[5m]))" \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 # (b) What's the current spool size?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=apid_log_archive_local_bytes'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=apid_log_archive_local_bytes'
 
 # (c) Failure breakdown by reason (the {reason} label set is
 #     bounded — see pkg/logarchive/metrics.go:114).
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum+by+%28reason%29+%28rate%28apid_log_archive_failures_total%5B5m%5D%29%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum+by+%28reason%29+%28rate%28apid_log_archive_failures_total%5B5m%5D%29%29'
 
 # (d) Read apid's loopback metrics endpoint directly to bypass
 #     Prometheus (handy when the alertmanager is also down).
-curl -fsS 'http://127.0.0.1:9100/metrics' | grep -E '^apid_log_archive_'
+curl -fsS 'http://127.0.0.1:9101/metrics' | grep -E '^apid_log_archive_'
 
 # (e) Bucket-side: are objects from the last hour present?
 aws s3 ls --recursive s3://<bucket>/faas-logs/ \

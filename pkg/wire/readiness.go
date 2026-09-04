@@ -76,12 +76,12 @@ type readyState struct {
 //
 // Mirrors pkg/gateway/readiness.go::ReadySignal — see the ADR-129
 // footnote in docs/adr/0129-deploy-observability.md on daemon-level
-// /readyz for the rationale on duplication. pkg/gateway still has
-// the pre-Finding-6 split shape (atomic.Bool + sync.RWMutex); PR
-// #1091 review Finding 8 tracks the follow-up that lifts the
-// atomic.Pointer refactor into pkg/gateway once this lands.
+// /readyz for the rationale on duplication. Both packages use the
+// atomic.Pointer shape so the readiness metric observer sees the same
+// consistent (ready, reason) snapshot as the HTTP handler.
 type ReadySignal struct {
-	state atomic.Pointer[readyState]
+	state    atomic.Pointer[readyState]
+	onChange atomic.Pointer[func()]
 }
 
 // newReadySignal constructs a ReadySignal pre-set to (ready,
@@ -112,6 +112,20 @@ func NewReadySignalForTest(ready bool, reason string) *ReadySignal {
 // see either the old state or the new state — never a torn pair.
 func (s *ReadySignal) Set(ready bool, reason string) {
 	s.state.Store(&readyState{ready: ready, reason: reason})
+	if onChange := s.onChange.Load(); onChange != nil {
+		(*onChange)()
+	}
+}
+
+// setOnChange attaches the probe-level observer without racing a helper
+// goroutine that may be publishing a signal while it is being registered.
+func (s *ReadySignal) setOnChange(onChange func()) {
+	if onChange == nil {
+		s.onChange.Store(nil)
+		return
+	}
+	fn := onChange
+	s.onChange.Store(&fn)
 }
 
 // Report returns the current (ready, reason) snapshot. The pair
@@ -151,9 +165,10 @@ func (s *ReadySignal) Report() (ready bool, reason string) {
 //
 // Mirrors pkg/gateway/readiness.go::ReadyzProbe.
 type ReadyzProbe struct {
-	mu       sync.RWMutex
-	signals  []*ReadySignal
-	stoppers []func()
+	mu            sync.RWMutex
+	signals       []*ReadySignal
+	stoppers      []func()
+	readyObserver func(bool, string)
 }
 
 // Register adds a new ReadySignal to the probe and returns it so
@@ -170,7 +185,9 @@ func (p *ReadyzProbe) Register() *ReadySignal {
 	s := newReadySignal(false, "not yet ready")
 	p.mu.Lock()
 	p.signals = append(p.signals, s)
+	s.setOnChange(p.notifyObserver)
 	p.mu.Unlock()
+	p.notifyObserver()
 	return s
 }
 
@@ -196,10 +213,47 @@ func (p *ReadyzProbe) RegisterSignal(s *ReadySignal, stopper func()) {
 	}
 	p.mu.Lock()
 	p.signals = append(p.signals, s)
+	s.setOnChange(p.notifyObserver)
 	if stopper != nil {
 		p.stoppers = append(p.stoppers, stopper)
 	}
 	p.mu.Unlock()
+	// The helper may have changed the signal before registration completed;
+	// publish the current aggregate once so the metric cannot miss that
+	// initial transition.
+	p.notifyObserver()
+}
+
+// SetReadyObserver mirrors the aggregate /readyz result onto a metric (or
+// another operator-facing sink). The observer is called after every signal
+// transition and once immediately with the current aggregate state. The
+// callback runs without the probe lock held and must therefore be safe for
+// concurrent use.
+func (p *ReadyzProbe) SetReadyObserver(observer func(bool, string)) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.readyObserver = observer
+	for _, s := range p.signals {
+		s.setOnChange(p.notifyObserver)
+	}
+	p.mu.Unlock()
+	p.notifyObserver()
+}
+
+func (p *ReadyzProbe) notifyObserver() {
+	if p == nil {
+		return
+	}
+	p.mu.RLock()
+	observer := p.readyObserver
+	p.mu.RUnlock()
+	if observer == nil {
+		return
+	}
+	ready, reason := p.All()
+	observer(ready, reason)
 }
 
 // All returns true iff every registered signal is ready. The

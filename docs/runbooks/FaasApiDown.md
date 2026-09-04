@@ -27,13 +27,13 @@ init race) clear within one window and never fire.
 
 ```bash
 # Which (account, app) is unreachable?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_api_reachable%20%3C%201'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_api_reachable%20%3C%201'
 
 # What's the customer's spend? (cross-check for runaway billing)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_account_spend_eur{account_id%3D%22<acct>%22}'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_account_spend_eur{account_id%3D%22<acct>%22}'
 
 # Is gatewayd-internal queue saturated for the same app?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=gateway_queue_depth{app%3D%22<app>%22}'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=gateway_queue_depth{app%3D%22<app>%22}'
 ```
 
 Common causes:

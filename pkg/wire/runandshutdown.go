@@ -104,14 +104,6 @@ func RunAndShutdown(ctx context.Context, log *slog.Logger, probe *ReadyzProbe, n
 	} else {
 		close(drained)
 	}
-	// Mirror the boot path: MarkReady(true, "") on entry so the
-	// gauge is at 1 for the serving lifetime (issue #586 /
-	// ADR-129 review-fix from PR #1082). The Daemon() envelope
-	// already does this at the very top of its body; we
-	// duplicate it here for the case where a daemon calls
-	// RunAndShutdown directly (e.g. a test that wants the
-	// drain helper without the Daemon() envelope).
-	defaultOps.MarkReady(name, true, "")
 	err := fn(ctx, log)
 	// Tell the watcher (if any) that fn is done so it can
 	// trigger the drain even if ctx hasn't been cancelled

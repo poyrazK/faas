@@ -47,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -117,6 +118,17 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
+	traceShutdown, traceErr := trace.InitTracer(ctx, "imaged", wire.Version, log)
+	if traceErr != nil {
+		return fmt.Errorf("imaged: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("imaged: trace shutdown failed", "err", err)
+		}
+	}()
 
 	// ADR-122 / follow-on to imaged env-only config (issue #995
 	// post-merge audit): load /etc/faas/imaged.toml with defaults.
@@ -553,6 +565,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// stop so the SIGTERM drain window surfaces in
 		// daemon_ready as 0.
 		imagedProbe := BuildReadinessProbe(envOr("FAAS_STORAGE_ROOT", defaultStorageRoot))
+		imagedProbe.SetReadyObserver(func(ready bool, reason string) {
+			ops.MarkReady("imaged", ready, reason)
+		})
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", ops.Handler())
 		wire.ControlMuxLite(mux, imagedProbe.ReadyFunc(), imagedProbe.ReasonFunc())

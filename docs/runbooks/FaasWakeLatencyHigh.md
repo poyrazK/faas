@@ -19,7 +19,7 @@ upgrades, snapshots go stale and wakes fall back to cold-boot. Cross-check
 
 ```bash
 curl -fsS http://127.0.0.1:9090/metrics | grep gateway_wake_latency_seconds
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=histogram_quantile(0.95,sum(rate(gateway_wake_latency_seconds_bucket[5m]))by(le))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=histogram_quantile(0.95,sum(rate(gateway_wake_latency_seconds_bucket[5m]))by(le))'
 ```
 
 ## Check

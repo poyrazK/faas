@@ -281,25 +281,28 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// instead of a hard wall-clock.
 	drainTracker := drain.NewTracker()
 	proxy.WithInFlightTracker(drainTracker)
-	// gatewayMetrics is a gateway.Metrics bundle local to the
-	// public daemon; the public doesn't expose wire.OpsMetrics
-	// (the wire.Daemon harness owns those), so the drain
-	// histogram + inflight gauge live here and surface via
-	// /metrics on the control mux (ControlMux mounts
-	// metrics.Handler() automatically).
+	// gatewayMetrics is the gateway.Metrics bundle local to the
+	// public daemon. The public daemon also owns wire.OpsMetrics;
+	// both registries are mounted on the control mux below so the
+	// drain histogram, in-flight gauge, and daemon-level telemetry
+	// are available from the same /metrics endpoint.
 	gatewayMetrics := gateway.NewMetrics()
-	// ADR-127 PR-D: gatewayd-public adopts wire.OpsMetrics for
-	// the first time — previously the public daemon exposed
-	// only gateway.Metrics on /metrics. PR-D adds three new
-	// series (gatewayd_public_otel_spans_ingested_total,
+	// ADR-127 PR-D: gatewayd-public keeps wire.OpsMetrics in a
+	// separate registry from gateway.Metrics. The OTel span series
+	// (gatewayd_public_otel_spans_ingested_total,
 	// _otel_spans_truncated_total, _otel_auth_failures_total)
 	// that need a separate registry so the §12 OTel spans
 	// panel can scrape them. The OpsMetrics is mounted on the
 	// control mux via ControlMuxWithExtra's extraGatherer
 	// alongside the request-budget registry (PR-D code-review
-	// #9 — both regsitries are combined into a
+	// #9 — both registries are combined into a
 	// prometheus.Gatherers below).
 	opsMetrics := wire.NewOpsMetrics("gatewayd_public")
+	wire.BootStamps(ctx, "gatewayd-public", opsMetrics)
+	wire.RegisterDefaultOps(opsMetrics)
+	probe.SetReadyObserver(func(ready bool, reason string) {
+		opsMetrics.MarkReady("gatewayd-public", ready, reason)
+	})
 	// Issue #555 PR-3: mount otelhttp.NewTransport so the outbound
 	// request to gatewayd-internal carries the same trace context
 	// (gateway.route span). The wrapper sits UNDER the proxy's
@@ -507,7 +510,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// gated on the FAAS_DNS_PROVIDER and FAAS_STANDBY_WARMUP_ENABLED
 	// knobs and both return nil on ctx cancellation. The DNSHandoff
 	// is skipped when no store is wired (the dev single-box path).
-	if err := startHAComponents(ctx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr)); err != nil {
+	if err := startHAComponents(ctx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr), opsMetrics); err != nil {
 		return err
 	}
 
