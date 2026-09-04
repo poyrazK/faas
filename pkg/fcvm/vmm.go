@@ -352,6 +352,20 @@ func (v *JailerVMM) chrootRoot(instance string) string {
 	return filepath.Join(v.chrootBase, v.fcName, instance, "root")
 }
 
+// JailRoot is the version-scoped directory whose immediate children are
+// the per-instance chroots — the parent of every chrootRoot. Exported
+// for the startup orphan sweep (ReapOrphanedJails), which has to
+// enumerate instances that this process never created and therefore
+// cannot ask the live map about.
+//
+// The fcName segment is the jailer's own naming (it derives the
+// directory from the exec-file basename), so the path is only correct
+// for the Firecracker binary this VMM was resolved against — which is
+// exactly the set of chroots a restarted vmmd can still act on.
+func (v *JailerVMM) JailRoot() string {
+	return filepath.Join(v.chrootBase, v.fcName)
+}
+
 // resolveDriveImage finds the writable drive inside Jailer’s chroot. The
 // canonical layer name is used when present; builderd and older callers may
 // preserve the source basename, so accept a single ext4 fallback as well.

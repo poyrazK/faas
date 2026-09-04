@@ -858,6 +858,52 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"max_age", cfg.ParentMountMaxAge.String(),
 		"sweep_interval", cfg.ParentSweepInterval.String())
 
+	// Reap microVMs orphaned by a previous vmmd. Firecracker children
+	// do not die with vmmd (they are jailed into faas-tenant.slice, a
+	// sibling cgroup), but the live-instance map that makes them
+	// reachable is in-memory — so after a restart they burn tenant RAM
+	// while nothing can route to them. Measured on a production node
+	// on 2026-09-04: 23 such VMs, oldest 3.7 days, 5.3 GB.
+	//
+	// Gated on durable state, never on "vmmd restarted". On that same
+	// node 2 of the 25 running VMs were instances schedd still
+	// considered live (one RUNNING and serving, one mid-SNAPSHOTTING);
+	// an ungated sweep would have killed a customer's VM. A nil store
+	// (default-local / tests) means there is no durable view to gate
+	// on, so the sweep is skipped entirely rather than run blind.
+	if store != nil {
+		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
+			JailRoot: jailer.JailRoot(),
+			Runner:   wire.ExecRunner{},
+			Log:      log,
+			IsLive: func(ctx context.Context, instanceID string) (bool, error) {
+				ins, err := store.InstanceByID(ctx, instanceID)
+				if err != nil {
+					// A row that is genuinely gone is not live;
+					// anything else is unknown and must not
+					// authorise a kill.
+					if errors.Is(err, state.ErrNotFound) {
+						return false, nil
+					}
+					return false, err
+				}
+				// state.IsLive is the documented single source of
+				// truth for the live set, so a future state added
+				// there is honoured here without a second edit.
+				return state.IsLive(ins.State), nil
+			},
+		})
+		if err != nil {
+			log.Warn("vmmd: orphan reap failed", "err", err)
+		} else if rep.Scanned > 0 {
+			log.Info("vmmd: orphan reap complete",
+				"scanned", rep.Scanned, "reaped", rep.Reaped,
+				"skipped_live", rep.SkippedLive,
+				"skipped_young", rep.SkippedYoung,
+				"skipped_unknown", rep.SkippedUnknown)
+		}
+	}
+
 	// Orphan sweep — schedule via a context-bound goroutine that
 	// exits cleanly on ctx.Done. Mirrors the schedd watchdog tick
 	// pattern (1s tick + KillStuck), adapted to the configurable
