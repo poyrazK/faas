@@ -11,12 +11,13 @@ func TestPg_RecoverRolloutAbortRedistributesTraffic(t *testing.T) {
 	_, appID, priorID := seedLiveDeploy(t, s, ctx, "recover-abort")
 
 	canary, err := s.CreateDeployment(ctx, state.Deployment{
-		AppID:          appID,
-		Kind:           state.DeploymentKindImage,
-		ImageDigest:    "sha256:recover-abort",
-		Status:         state.DeployPending,
-		Scope:          "canary",
-		TrafficPercent: 25,
+		AppID:            appID,
+		Kind:             state.DeploymentKindImage,
+		ImageDigest:      "sha256:recover-abort",
+		Status:           state.DeployPending,
+		Scope:            "canary",
+		CanaryTotalSteps: 4,
+		TrafficPercent:   25,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(canary): %v", err)
