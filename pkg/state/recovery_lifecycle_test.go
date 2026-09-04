@@ -78,6 +78,13 @@ func TestMemStoreUpdateInstanceStateIfStampsParkedAt(t *testing.T) {
 	if parked.State != string(state.StateParked) || parked.ParkedAt.IsZero() {
 		t.Fatalf("parked instance = %+v, want parked state and timestamp", parked)
 	}
+	migrated, err := store.MigrationInstanceByID(ctx, instance.ID)
+	if err != nil || migrated.ID != instance.ID {
+		t.Fatalf("MigrationInstanceByID = %+v, %v; want instance %q", migrated, err, instance.ID)
+	}
+	if _, err := store.MigrationInstanceByID(ctx, "missing-instance"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("missing MigrationInstanceByID error = %v, want ErrNotFound", err)
+	}
 	parkedAt := parked.ParkedAt
 
 	if err := store.UpdateInstanceStateIf(ctx, instance.ID, string(state.StateRunning), string(state.StateFailed)); !errors.Is(err, state.ErrConflict) {
@@ -273,5 +280,96 @@ func TestMemStoreLifecycleRecoverySurface(t *testing.T) {
 	}
 	if deployment, active, err := store.DeploymentSnapshotBackoffActive(ctx, "deployment"); err != nil || active || deployment.ID != "" {
 		t.Fatalf("DeploymentSnapshotBackoffActive = %+v, %t, %v; want empty, false, nil", deployment, active, err)
+	}
+}
+
+func TestMemStoreRecentInvocationObservations(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "observations@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{ID: "observed-app", AccountID: account.ID, Slug: "observed-app"})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	otherApp, err := store.CreateApp(ctx, state.App{ID: "other-observed-app", AccountID: account.ID, Slug: "other-observed-app"})
+	if err != nil {
+		t.Fatalf("create other app: %v", err)
+	}
+	singleApp, err := store.CreateApp(ctx, state.App{ID: "single-latency-app", AccountID: account.ID, Slug: "single-latency-app"})
+	if err != nil {
+		t.Fatalf("create single-latency app: %v", err)
+	}
+
+	base := time.Date(2026, 9, 4, 22, 0, 0, 0, time.UTC)
+	add := func(id, appID string, invocationState state.InvocationState, createdAt time.Time, completedAt *time.Time) {
+		t.Helper()
+		if _, err := store.EnqueueInvocation(ctx, state.Invocation{
+			ID: id, AppID: appID, AccountID: account.ID, State: invocationState,
+			CreatedAt: createdAt, DueAt: createdAt, CompletedAt: completedAt,
+		}); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+	completedAt := func(createdAt time.Time, latency time.Duration) *time.Time {
+		at := createdAt.Add(latency)
+		return &at
+	}
+
+	add("observed-success-1", app.ID, state.InvocationCompleted, base.Add(time.Minute), completedAt(base.Add(time.Minute), 100*time.Millisecond))
+	add("observed-failed", app.ID, state.InvocationFailed, base.Add(2*time.Minute), nil)
+	add("observed-dead-letter", app.ID, state.InvocationDeadLetter, base.Add(3*time.Minute), nil)
+	add("observed-pending", app.ID, state.InvocationPending, base.Add(4*time.Minute), nil)
+	add("observed-old", app.ID, state.InvocationCompleted, base.Add(-time.Minute), completedAt(base.Add(-time.Minute), 50*time.Millisecond))
+	add("other-app", otherApp.ID, state.InvocationCompleted, base.Add(5*time.Minute), completedAt(base.Add(5*time.Minute), time.Second))
+
+	recent, err := store.RecentInvocations(ctx, app.ID, base, 2)
+	if err != nil {
+		t.Fatalf("RecentInvocations(limit=2): %v", err)
+	}
+	if len(recent) != 2 || recent[0].ID != "observed-pending" || recent[1].ID != "observed-dead-letter" {
+		t.Fatalf("RecentInvocations(limit=2) = %+v, want newest two target rows", recent)
+	}
+	allRecent, err := store.RecentInvocations(ctx, app.ID, base, 0)
+	if err != nil || len(allRecent) != 4 {
+		t.Fatalf("RecentInvocations(unbounded) = %d, %v; want 4", len(allRecent), err)
+	}
+
+	rate, err := store.RecentErrorRate(ctx, app.ID, base)
+	if err != nil {
+		t.Fatalf("RecentErrorRate: %v", err)
+	}
+	if rate != 0.5 {
+		t.Fatalf("RecentErrorRate = %v, want 0.5", rate)
+	}
+	if rate, err := store.RecentErrorRate(ctx, app.ID, base.Add(10*time.Minute)); err != nil || rate != 0 {
+		t.Fatalf("RecentErrorRate(empty) = %v, %v; want 0", rate, err)
+	}
+
+	add("latency-success-2", app.ID, state.InvocationCompleted, base.Add(6*time.Minute), completedAt(base.Add(6*time.Minute), 200*time.Millisecond))
+	add("latency-success-3", app.ID, state.InvocationCompleted, base.Add(7*time.Minute), completedAt(base.Add(7*time.Minute), 300*time.Millisecond))
+	add("latency-pending", app.ID, state.InvocationPending, base.Add(8*time.Minute), completedAt(base.Add(8*time.Minute), time.Second))
+	add("latency-no-completion", app.ID, state.InvocationCompleted, base.Add(9*time.Minute), nil)
+	negativeCompleted := base.Add(10 * time.Minute)
+	add("latency-negative", app.ID, state.InvocationCompleted, base.Add(11*time.Minute), &negativeCompleted)
+	oldCompleted := base.Add(-time.Second)
+	add("latency-old", app.ID, state.InvocationCompleted, base.Add(-2*time.Minute), &oldCompleted)
+
+	p95, err := store.RecentP95LatencyMs(ctx, app.ID, base)
+	if err != nil {
+		t.Fatalf("RecentP95LatencyMs: %v", err)
+	}
+	if p95 != 290 {
+		t.Fatalf("RecentP95LatencyMs = %v, want 290", p95)
+	}
+	if p95, err := store.RecentP95LatencyMs(ctx, app.ID, base.Add(20*time.Minute)); err != nil || p95 != 0 {
+		t.Fatalf("RecentP95LatencyMs(empty) = %v, %v; want 0", p95, err)
+	}
+	oneCreated := base.Add(30 * time.Minute)
+	add("single-latency", singleApp.ID, state.InvocationCompleted, oneCreated, completedAt(oneCreated, 425*time.Millisecond))
+	if p95, err := store.RecentP95LatencyMs(ctx, singleApp.ID, base); err != nil || p95 != 425 {
+		t.Fatalf("RecentP95LatencyMs(single) = %v, %v; want 425", p95, err)
 	}
 }
