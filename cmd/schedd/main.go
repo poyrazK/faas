@@ -253,6 +253,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	// All startup goroutines share a context owned by this run. Cancel it
+	// before releasing the database pool so notification subscribers can
+	// relinquish their connections on every startup or serve error path.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// DEPLOY-1 / ADR-075 capdecl gate. schedd's capsDecl is
 	// the empty declaration (no Allow, no Deny) — schedd is
 	// unprivileged. The capCheck seam (review finding M2)
@@ -289,7 +295,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+	defer func() {
+		cancel()
+		pool.Close()
+	}()
 	if err := deps.migrate(ctx, pool); err != nil {
 		return err
 	}
