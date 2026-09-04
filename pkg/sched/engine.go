@@ -98,13 +98,36 @@ const (
 	// so no deployment could reach `live`. Base covers the fixed
 	// pause/serialise/fsync overhead; PerGB covers the memory write.
 	//
-	// These are provisional. The park path still has no phase
-	// instrumentation — the same gap the wake path had before
-	// wakePhases — so the split between overhead and write throughput
-	// is inferred from the failure boundary, not measured. Tighten
-	// once snapshot_ms lands.
+	// PerGB is sized for a REMOTE upload, not a local write. vmmd runs
+	// with FAAS_STORAGE_BACKEND=oci and FAAS_OCI_REGISTRY=https://ghcr.io,
+	// so a park pushes a RAM-sized blob to a public registry: the
+	// snapshots table holds 47 rows averaging 474 MB with a 1024 MB max.
+	// The first cut (30s/GB) assumed local disk and failed every Scale
+	// park at exactly its budget — snapshot_ms 45001 against budget_ms
+	// 45000 — which blocked every deployment from reaching `live`.
+	//
+	// Those 47 rows are the evidence this is survivable rather than
+	// wedged: 1 GB snapshots DID complete here, before #1288 added the
+	// first deadline. Until then PauseAndSnapshot had none at all, so
+	// they were free to take as long as the upload needed. The bug
+	// #1288 fixed was real — an unbounded RPC wedged the whole
+	// scheduler — but the budget it introduced was sized for the wrong
+	// storage backend.
+	//
+	// A 195s park at Scale is tolerable because parking is background
+	// work: no customer request waits on it, and ADR-005 makes the
+	// snapshot a cache rather than truth, so a park that loses its race
+	// costs a cold boot on the next wake, not an outage. The real fix
+	// is to stop holding the instance through the upload — capture
+	// locally, then push asynchronously — which is a design change, not
+	// a constant.
+	//
+	// Still not measured end-to-end: the park path has no phase
+	// instrumentation, so the split between pause, local write and
+	// upload is unknown. snapshot_ms/budget_ms logging (added alongside
+	// this) is the hook for tightening it with data.
 	SnapshotBudgetBase  = 15 * time.Second
-	SnapshotBudgetPerGB = 30 * time.Second
+	SnapshotBudgetPerGB = 180 * time.Second
 )
 
 // SnapshotBudgetFor returns the wall-clock budget for one instance's

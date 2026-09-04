@@ -37,8 +37,13 @@ func TestSnapshotAndPark_PauseAndSnapshotCarriesDeadline(t *testing.T) {
 	if !has {
 		t.Fatal("PauseAndSnapshot got a context with NO deadline — a hung vmmd wedges the scheduler forever (see SnapshotTimeout)")
 	}
-	if budget := time.Until(dl); budget <= 0 || budget > SnapshotTimeout+time.Second {
-		t.Errorf("deadline budget = %s, want (0, %s]", budget, SnapshotTimeout+time.Second)
+	// Bound against the instance's own budget, not the flat
+	// SnapshotTimeout: the budget scales with RAM (SnapshotBudgetFor),
+	// so a fixed ceiling here would break every time the constants move.
+	// The seeded app is 256 MB.
+	want := SnapshotBudgetFor(256)
+	if budget := time.Until(dl); budget <= 0 || budget > want+time.Second {
+		t.Errorf("deadline budget = %s, want (0, %s]", budget, want+time.Second)
 	}
 }
 
