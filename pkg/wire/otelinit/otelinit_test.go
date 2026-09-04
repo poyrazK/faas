@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -49,7 +50,13 @@ func TestInit_NoEndpointIsNoOp(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 
 	var buf bytes.Buffer
-	h, err := otelinit.Init(context.Background(), otelinit.Config{Name: "test-daemon", Version: "1.0.0"}, captureLogs(&buf))
+	registry := prometheus.NewRegistry()
+	h, err := otelinit.Init(context.Background(), otelinit.Config{
+		Name:              "test-daemon",
+		Version:           "1.0.0",
+		MetricsRegisterer: registry,
+		MetricPrefix:      "test_daemon",
+	}, captureLogs(&buf))
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -73,6 +80,18 @@ func TestInit_NoEndpointIsNoOp(t *testing.T) {
 	logs := buf.String()
 	if !strings.Contains(logs, "no-op") {
 		t.Errorf("expected no-op boot line in logs, got: %s", logs)
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("gather trace health metrics: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != "test_daemon_otel_trace_exporter_enabled" && family.GetName() != "test_daemon_otel_trace_exporter_up" {
+			continue
+		}
+		if len(family.GetMetric()) != 1 || family.GetMetric()[0].GetGauge().GetValue() != 0 {
+			t.Errorf("%s should be registered at 0 on noop path: %+v", family.GetName(), family)
+		}
 	}
 }
 

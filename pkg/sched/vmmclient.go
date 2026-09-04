@@ -336,6 +336,9 @@ type AppSpec struct {
 	VCPUCount  int32  // 2, or 4 for Scale
 	MemSizeMiB int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	EgressMbit int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
+	// vmmd default for legacy callers.
+	StartupDeadlineS int32
 	// Plan and AccountID are request-level admission context. Keeping them
 	// with the flat spec makes deploy prime and ordinary wakes carry the same
 	// cgroup and metrics identity to vmmd.
@@ -1022,7 +1025,8 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// so the per-netns renderer emits a sibling
 		// SNAT rule in the postrouting chain AFTER
 		// the default MASQUERADE.
-		StaticEgressIp: a.StaticEgressIP,
+		StaticEgressIp:   a.StaticEgressIP,
+		StartupDeadlineS: a.StartupDeadlineS,
 	}
 }
 

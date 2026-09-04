@@ -930,7 +930,8 @@ func dpaPathFromEnv(getenv func(string) string) string {
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
-	traceShutdown, traceErr := trace.InitTracer(ctx, "apid", wire.Version, log)
+	ops := wire.NewOpsMetrics("apid")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "apid", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("apid: init tracing: %w", traceErr)
 	}
@@ -1305,7 +1306,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Prometheus registry + ops observer middleware (this PR).
 	// Built unconditionally so /metrics works even with FAAS_APID_METRICS_ADDR
 	// unset (the daemon stays up; only the listener is skipped below).
-	ops := wire.NewOpsMetrics("apid")
 	wire.BootStamps(ctx, "apid", ops)
 	wire.RegisterDefaultOps(ops)
 	srv.WithOpsMetrics(ctx, ops)

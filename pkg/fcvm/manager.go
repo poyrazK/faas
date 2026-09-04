@@ -465,6 +465,9 @@ type Instance struct {
 	// can resolve Instance.HealthcheckPath without a second request
 	// lookup (PR-C mirror).
 	HealthcheckPath string
+	// StartupDeadlineS is the per-app readiness budget from the lifecycle
+	// contract. 0 preserves the vmmd default for legacy callers.
+	StartupDeadlineS int
 
 	// WorkloadNames (issue #463 / ADR-069 / PR-B) is the set of
 	// workload names whose cgroup child scopes vmmd wrote under
@@ -2589,6 +2592,9 @@ type WakeRequest struct {
 	// readers can resolve LiveFor(instance).HealthcheckPath without a
 	// second request lookup.
 	HealthcheckPath string
+	// StartupDeadlineS is the per-app readiness budget. 0 preserves the
+	// vmmd default for legacy callers.
+	StartupDeadlineS int
 	// LivenessProbe (issue #554 / ADR-078) is the per-deployment
 	// override JSON (api.DeploymentLivenessProbe). The engine resolves
 	// this from deployments.override_liveness_probe at Wake time and
@@ -2763,6 +2769,9 @@ type ColdBootRequest struct {
 	// that wants to invoke ColdBoot without going through WakeRequest
 	// shouldn't have to drop a field.
 	HealthcheckPath string
+	// StartupDeadlineS is the per-app readiness budget forwarded to
+	// WakeRequest. 0 preserves the vmmd default for legacy callers.
+	StartupDeadlineS int
 	// Runtime (issue #470 / PR #470-FU-B) — the runtime id forwarded
 	// verbatim to WakeRequest.Runtime. Mirrors the WakeRequest
 	// field's contract: empty = legacy wake (the framework-ready
@@ -2801,7 +2810,8 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		// ADR-057 / PR-D: forward the per-deployment override
 		// readiness probe path so Wake stamps it onto the live
 		// Instance. Empty = legacy TCP-accept on :8080.
-		HealthcheckPath: req.HealthcheckPath,
+		HealthcheckPath:  req.HealthcheckPath,
+		StartupDeadlineS: req.StartupDeadlineS,
 		// PR #470-FU-B: forward the runtime id so the framework-ready
 		// receipt handler can label the warmup histogram. See
 		// WakeRequest.Runtime for the contract.
@@ -3450,7 +3460,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: method, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
+	inst := &Instance{Lease: lease, Net: nc, Method: method, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -3594,7 +3604,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// TCP-accept on :8080 (pre-PR-D default). Non-empty →
 			// waitReady does HTTP GET <HealthcheckPath> against
 			// <HostIP>:8080 and accepts 2xx as ready.
-			HealthcheckPath: req.HealthcheckPath,
+			HealthcheckPath:  req.HealthcheckPath,
+			StartupDeadlineS: req.StartupDeadlineS,
 			// Issue #463 / ADR-069 / PR-B: per-workload drives
 			// (main + sidecars). Empty = legacy single-workload
 			// path. Non-empty → Restore stages one extra drive
@@ -3678,8 +3689,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// TCP-accept on :8080 (pre-PR-D default). Non-empty →
 		// waitReady does HTTP GET <HealthcheckPath> against
 		// <HostIP>:8080 and accepts 2xx as ready.
-		HealthcheckPath: req.HealthcheckPath,
-		SkipReady:       req.ExportDir != "",
+		HealthcheckPath:  req.HealthcheckPath,
+		StartupDeadlineS: req.StartupDeadlineS,
+		SkipReady:        req.ExportDir != "",
 		// Issue #463 / ADR-069 / PR-B: per-workload drives
 		// (main + sidecars). buildWorkloadsForColdBoot emits an
 		// empty slice on the legacy single-workload path so

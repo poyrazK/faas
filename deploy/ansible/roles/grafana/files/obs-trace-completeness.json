@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Obs-meta trace completeness (PR #1111 / Obs-Meta + Trace-IDs Mega-PR, 5ead9b7cd). Four panels surface the schedd gauge `schedd_operator_action_trace_completeness_ratio{kind}` (set by `pkg/sched/operator_intent_completeness.go::observeOperatorIntentCompleteness` on a 60s tick). CRITICAL: every query filters on `schedd_…` because the gauge IS registered on every daemon (gauge constructor at pkg/wire/metrics.go:3211, pre-instantiation at 3232-3233) but ONLY schedd's driver calls Set — cross-daemon queries mix real values with never-set/zero defaults on other daemons. Pre-instantiation grid (5 verb-oriented kinds): force_park / force_cold_boot / force_restart / park_instance / restart_instance (pkg/wire/metrics.go::operatorIntentKindClosedSet at line 3196). Runtime driver also writes the .outcome variants and instance aliases — 10 entries total (pkg/sched/operator_intent_completeness.go:160-171). Companion alerts: FaasOperatorActionTraceCompletenessLowPage (page, < 0.50 10m), FaasOperatorActionTraceCompletenessLowWarn (warn, < 0.95 30m), FaasOperatorActionTraceCompletenessLoopStalled (info, gauge stale > 180s). All three share family=obs_trace, component=schedd so the alertmanager inhibit rule auto-pairs page+warn. Runbook: docs/runbooks/FaasOperatorActionTraceCompletenessLow.md. Worst-kind stat panel (id 4) consumes the recording rule `obs:operator_action_trace_completeness_ratio` shipped alongside the alerts (`min(...)` + `clamp_min(0.001)`).",
+  "description": "Obs-meta trace completeness (PR #1111 plus the first-tick freshness follow-on). Four panels surface the schedd gauge `schedd_operator_action_trace_completeness_ratio{kind}` and the producer-written `schedd_operator_action_trace_completeness_last_success_timestamp_seconds`. The explicit `schedd_operator_action_trace_completeness_first_tick_completed_total` counter distinguishes cold start from a broken driver. CRITICAL: every query filters on `schedd_…` because the gauge is registered on every daemon but only schedd's driver calls Set. Companion alerts: FaasOperatorActionTraceCompletenessLowPage, FaasOperatorActionTraceCompletenessLowWarn, FaasOperatorActionTraceCompletenessLoopStalled, and FaasOperatorActionTraceCompletenessFirstTickStalled. Runbook: docs/runbooks/FaasOperatorActionTraceCompletenessLow.md. Worst-kind stat panel (id 4) consumes the recording rule `obs:operator_action_trace_completeness_ratio`.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -149,7 +149,7 @@
     {
       "type": "stat",
       "title": "Driver loop freshness (s, healthy <180)",
-      "description": "time() - timestamp(schedd_operator_action_trace_completeness_ratio), wrapped in max(...) so the panel surfaces the stalest kind rather than an arbitrary one. A wedged driver that stops updating only one kind would otherwise mask behind a healthy sibling in lastNotNull reduction. Green < 180s (3x the 60s tick), yellow 180-360s, red >= 360s. Same logic as FaasAuditRetentionLoopStalled (26h vs 24h cadence slack — faas.rules.yml:421). Companion alert: FaasOperatorActionTraceCompletenessLoopStalled (info-tier).",
+      "description": "time() - schedd_operator_action_trace_completeness_last_success_timestamp_seconds. The producer writes this timestamp only after a successful completeness query, so scrape freshness cannot mask a wedged driver. Green < 180s (3x the 60s tick), yellow 180-360s, red >= 360s. Companion alert: FaasOperatorActionTraceCompletenessLoopStalled (info-tier).",
       "id": 3,
       "gridPos": {
         "h": 8,
@@ -163,7 +163,7 @@
       },
       "targets": [
         {
-          "expr": "max(time() - timestamp(schedd_operator_action_trace_completeness_ratio))",
+          "expr": "time() - schedd_operator_action_trace_completeness_last_success_timestamp_seconds",
           "refId": "A"
         }
       ],

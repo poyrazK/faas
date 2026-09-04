@@ -124,7 +124,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
-	traceShutdown, traceErr := trace.InitTracer(ctx, "builderd", wire.Version, log)
+	ops := wire.NewOpsMetrics("builderd")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "builderd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("builderd: init tracing: %w", traceErr)
 	}
@@ -199,7 +200,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// telemetry on it (ObserveBuild*) and serves it at /metrics. Building
 	// it once (not inline in the /metrics block) is what makes the build
 	// series real rather than a throwaway (ADR-030).
-	ops := wire.NewOpsMetrics("builderd")
 	wire.BootStamps(ctx, "builderd", ops)
 	wire.RegisterDefaultOps(ops)
 	builderdProbe.SetReadyObserver(func(ready bool, reason string) {

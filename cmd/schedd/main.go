@@ -537,8 +537,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Broadcaster into NewPlatform below (replacing the prior
 	// `nil` arg).
 	otelHandle, err := otelinit.Init(ctx, otelinit.Config{
-		Name:    "schedd",
-		Version: wire.Version,
+		Name:              "schedd",
+		Version:           wire.Version,
+		MetricsRegisterer: ops.Registry(),
+		MetricPrefix:      ops.MetricPrefix(),
 	}, log)
 	if err != nil {
 		return fmt.Errorf("schedd: otelinit: %w", err)
