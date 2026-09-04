@@ -19,12 +19,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 )
 
@@ -244,5 +249,104 @@ func TestCmdOpenapi_Dispatcher(t *testing.T) {
 	}
 	if code := cmdOpenapi([]string{"bogus"}); code != 1 {
 		t.Errorf("cmdOpenapi bogus sub = %d, want 1", code)
+	}
+}
+
+func TestCmdOpenapiGet_RawDocumentAndSource(t *testing.T) {
+	const wantDoc = `{"openapi":"3.1.0","paths":{}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/openapi" {
+			t.Errorf("request = %s %s, want GET /v1/apps/demo/openapi", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("source"); got != "auto" {
+			t.Errorf("source = %q, want auto", got)
+		}
+		_, _ = w.Write([]byte(wantDoc))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
+
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdOpenapiGet([]string{"demo", "--source", "auto"}); code != 0 {
+		t.Fatalf("cmdOpenapiGet = %d, want 0", code)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != wantDoc {
+		t.Errorf("document = %q, want %q", got, wantDoc)
+	}
+}
+
+func TestCmdOpenapiImportAndDryRun(t *testing.T) {
+	docPath := filepath.Join(t.TempDir(), "openapi.json")
+	doc := `{"openapi":"3.1.0","info":{"title":"demo","version":"1"},"paths":{}}`
+	if err := os.WriteFile(docPath, []byte(doc), 0o600); err != nil {
+		t.Fatalf("write doc: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if !bytes.Contains(body, []byte(`"openapi":"3.1.0"`)) {
+			t.Errorf("request body missing OpenAPI document: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/dry-run") {
+			_, _ = w.Write([]byte(`{"suggestions":[{"path":"/users","methods":["GET"],"kind":"validate","action":{"type":"validate"}}],"openapi_version":"3.1.0","endpoint_count":1}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"app_id":"app-1","source":"manual_import","openapi_version":"3.1.0","endpoint_count":1,"byte_size":128,"updated_at":"2026-09-04T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
+
+	stdout, restore := swapStdout(t)
+	defer restore()
+	resetJSONOutput()
+	if code := cmdOpenapiImport([]string{"demo", docPath}); code != 0 {
+		t.Fatalf("cmdOpenapiImport = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "OpenAPI document imported") || !strings.Contains(stdout.String(), "3.1.0") {
+		t.Errorf("import output = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	jsonOutput = true
+	defer resetJSONOutput()
+	if code := cmdOpenapiDryRun([]string{"demo", docPath}); code != 0 {
+		t.Fatalf("cmdOpenapiDryRun = %d, want 0", code)
+	}
+	var got api.AppOpenAPIImportDryRunResponse
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("dry-run output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if len(got.Suggestions) != 1 || got.Suggestions[0].Path != "/users" {
+		t.Fatalf("dry-run suggestions = %+v", got.Suggestions)
+	}
+}
+
+func TestCmdOpenapiRemove_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/demo/openapi" {
+			t.Errorf("request = %s %s, want DELETE /v1/apps/demo/openapi", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
+	stdout, restore := swapStdout(t)
+	defer restore()
+	jsonOutput = true
+	defer resetJSONOutput()
+
+	if code := cmdOpenapiRemove([]string{"demo"}); code != 0 {
+		t.Fatalf("cmdOpenapiRemove = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("remove output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got["app"] != "demo" || got["deleted"] != true {
+		t.Fatalf("remove output = %#v", got)
 	}
 }
