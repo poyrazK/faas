@@ -38,6 +38,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -64,6 +65,12 @@ type Ops interface {
 	// Buckets sized for the wake envelope (queue→admit <100ms; boot
 	// <30s; readiness <60s; proxy <5s).
 	WakePhaseDuration(phase, result string) prometheus.Observer
+	// RecoveryEventEmitted increments the per-(daemon, kind, result)
+	// counter for the recovery timeline (Workstream B, issue #1184).
+	// kind is the substring after `node.` / `instance.` (e.g.
+	// "draining", "recovered", "migrated"); result is "ok" or
+	// "failed".
+	RecoveryEventEmitted(kind, result string) prometheus.Counter
 }
 
 // BroadcasterIf is the in-process pub/sub surface Platform
@@ -191,6 +198,80 @@ func (p *Platform) Emit(ctx context.Context, ev WakeEvent) {
 	// automatically without re-stamping.
 	p.log.Info("events: emit",
 		"actor", p.actor, "kind", kind, "subject", subject)
+}
+
+// EmitRecovery writes one recovery-timeline row. Mirrors Emit's
+// shape: best-effort AppendEvent + counter + SSE publish + slog line,
+// guarded step-by-step. The recovery arbiter is the source of truth;
+// the audit row + counter + publish are observation.
+//
+// The recovery timeline uses a separate SSE topic (TopicRecovery) so
+// dashboard subscribers can filter the two streams independently —
+// the wake timeline's TopicWake subscriber shouldn't see node.drained
+// rows and vice versa.
+func (p *Platform) EmitRecovery(ctx context.Context, ev RecoveryEvent) {
+	if ev == nil {
+		return
+	}
+	kind := ev.Kind()
+	at := ev.At()
+	subject := ev.Subject()
+	payload := ev.Payload()
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	recoveryKind := recoveryKindFromKind(kind)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		p.log.Error("events: marshal recovery payload",
+			"actor", p.actor, "kind", kind, "err", err)
+		if p.ops != nil {
+			p.ops.RecoveryEventEmitted(recoveryKind, "failed").Inc()
+		}
+		return
+	}
+	start := time.Now()
+	err = p.store.AppendEvent(ctx, p.actor, kind, subject, body)
+	dur := time.Since(start)
+	result := "ok"
+	if err != nil {
+		result = "failed"
+	}
+	if p.ops != nil {
+		p.ops.RecoveryEventEmitted(recoveryKind, result).Inc()
+	}
+	if err != nil {
+		p.log.Warn("events: append recovery event",
+			"actor", p.actor, "kind", kind, "subject", subject, "err", err)
+		return
+	}
+	if p.broadcaster != nil {
+		envelope := map[string]any{
+			"at":      at.UTC(),
+			"kind":    kind,
+			"actor":   p.actor,
+			"subject": subject,
+			"data":    payload,
+		}
+		if envBody, marshalErr := json.Marshal(envelope); marshalErr == nil {
+			p.broadcaster.PublishTopic(TopicRecovery, envBody)
+		}
+	}
+	p.log.Info("events: emit recovery",
+		"actor", p.actor, "kind", kind, "subject", subject, "dur_ms", dur.Milliseconds())
+}
+
+// recoveryKindFromKind strips the `node.` / `instance.` prefix off
+// a recovery-timeline kind so the metric label is short. Returns the
+// full kind if no prefix matches (future-proof — a kind added by a
+// follow-on PR still produces a stable label).
+func recoveryKindFromKind(kind string) string {
+	for _, prefix := range []string{"node.", "instance."} {
+		if strings.HasPrefix(kind, prefix) {
+			return strings.TrimPrefix(kind, prefix)
+		}
+	}
+	return kind
 }
 
 // wakePhaseFromKind strips the `wake.` prefix and returns the

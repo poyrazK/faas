@@ -283,6 +283,44 @@ func TestMigrateOne_Phase4FailureReleasesPhase3Reservation(t *testing.T) {
 	}
 }
 
+// TestMigrateOne_Phase4PeerOwnerDestroysPausedSource covers the dangerous
+// ownership-loss variant of the Phase 4 rollback. If a peer commits the row
+// after this destination has adopted the snapshot, resuming the source would
+// leave two serving VMs. The destination and the now-obsolete source must both
+// be destroyed, while the peer-owned durable row remains untouched.
+func TestMigrateOne_Phase4PeerOwnerDestroysPausedSource(t *testing.T) {
+	store := state.NewMemStore()
+	vmm := &fakeVMM{}
+	insID := seedInstanceForMigration(t, store, "dying")
+	vmm.adoptHook = func(_ string) {
+		// The peer presents the same Phase-1 lease token that Phase 2
+		// stamped on the row; only the owner changes in this simulated
+		// race.
+		if err := store.MigrateInstanceOwner(context.Background(), insID, "dying", "peer-owner", "lease-"+insID); err != nil {
+			t.Fatalf("peer ownership commit: %v", err)
+		}
+	}
+	h := newHarnessForTest(t, store, vmm, "new-owner")
+
+	err := h.MigrateOne(context.Background(), insID, "dying")
+	if !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("MigrateOne: err = %v, want errors.Is(err, ErrConflict)", err)
+	}
+	if vmm.cancels != 0 {
+		t.Errorf("cancels = %d, want 0 (source must not resume after peer ownership commit)", vmm.cancels)
+	}
+	if vmm.destroys != 2 {
+		t.Errorf("destroys = %d, want 2 (destination and obsolete source cleanup)", vmm.destroys)
+	}
+	ins, err := store.InstanceByID(context.Background(), insID)
+	if err != nil {
+		t.Fatalf("reload instance: %v", err)
+	}
+	if ins.NodeID != "peer-owner" || ins.State != string(state.StateRunning) {
+		t.Fatalf("durable row after peer commit = node=%q state=%q, want peer-owner/running", ins.NodeID, ins.State)
+	}
+}
+
 // TestNewMigrationHarness_ThreadsDestinationCeiling pins the
 // Gap 2 fix: the destination's per-node ceiling + vCPU budget
 // must be threaded into the Phase 3 ledger reservation. Without

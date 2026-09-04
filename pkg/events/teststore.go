@@ -79,12 +79,14 @@ type stubOps struct {
 	emittedCalls  []string // "<phase>:<result>"
 	durationCalls []string
 	durationSecs  []float64
+	recoveryCalls []string // "<kind>:<result>" — recovery-timeline
 
 	// backbone is a private registry so the WakePhaseEmitted
 	// stub returns a real Counter that satisfies .Inc(). The
 	// call is recorded in emittedCalls; the counter itself is a
 	// no-op for assertion purposes.
-	backbone *prometheus.CounterVec
+	backbone         *prometheus.CounterVec
+	recoveryBackbone *prometheus.CounterVec
 }
 
 func newStubOps() *stubOps {
@@ -93,6 +95,10 @@ func newStubOps() *stubOps {
 			Name: "events_platform_test_wake_phase_emitted",
 			Help: "test",
 		}, []string{"phase", "result"}),
+		recoveryBackbone: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "events_platform_test_recovery_event_emitted",
+			Help: "test",
+		}, []string{"kind", "result"}),
 	}
 }
 
@@ -110,6 +116,13 @@ func (o *stubOps) WakePhaseDuration(phase, result string) prometheus.Observer {
 	defer o.mu.Unlock()
 	o.durationCalls = append(o.durationCalls, phase+":"+result)
 	return &fakeObserver{parent: o}
+}
+
+func (o *stubOps) RecoveryEventEmitted(kind, result string) prometheus.Counter {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.recoveryCalls = append(o.recoveryCalls, kind+":"+result)
+	return o.recoveryBackbone.WithLabelValues(kind, result)
 }
 
 // fakeObserver captures the observe-sec value for the

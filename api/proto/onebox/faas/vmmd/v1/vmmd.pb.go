@@ -3810,7 +3810,11 @@ type PrepareLiveMigrationResponse struct {
 	// the new owner can mint its own UUIDv4 deterministically; the
 	// dying vmmd mints it so the lease's window is tied to the
 	// dying vmmd's lease clock, not the new owner's.
-	LeaseToken    string `protobuf:"bytes,3,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
+	LeaseToken string `protobuf:"bytes,3,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
+	// Firecracker version used to create the snapshot. The destination
+	// passes this through the normal restore compatibility gate and falls
+	// back to a cold boot when the versions differ.
+	FcVersion     string `protobuf:"bytes,4,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3866,6 +3870,13 @@ func (x *PrepareLiveMigrationResponse) GetLeaseToken() string {
 	return ""
 }
 
+func (x *PrepareLiveMigrationResponse) GetFcVersion() string {
+	if x != nil {
+		return x.FcVersion
+	}
+	return ""
+}
+
 // AdoptMigratedInstanceRequest (Tier A5 / ADR-065) is the input
 // for Vmmd.AdoptMigratedInstance. The new owner vmmd's schedd
 // fills this with the snapshot metadata + the lease_token from
@@ -3892,7 +3903,14 @@ type AdoptMigratedInstanceRequest struct {
 	// the instance row's lease_token column can be updated at
 	// Phase 3 + Phase 4 (the wire shape is the same — the column
 	// is the predicate on the conditional UPDATE).
-	LeaseToken    string `protobuf:"bytes,5,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
+	LeaseToken string `protobuf:"bytes,5,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
+	// Request-level restore context mirrored from CreateFromSnapshotRequest.
+	// These fields are additive so older callers can continue using the
+	// original AppSpec-only envelope.
+	Plan          string `protobuf:"bytes,6,opt,name=plan,proto3" json:"plan,omitempty"`
+	AccountId     string `protobuf:"bytes,7,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	DeploymentId  string `protobuf:"bytes,8,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	FcVersion     string `protobuf:"bytes,9,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3958,6 +3976,34 @@ func (x *AdoptMigratedInstanceRequest) GetVmstateStorageKey() string {
 func (x *AdoptMigratedInstanceRequest) GetLeaseToken() string {
 	if x != nil {
 		return x.LeaseToken
+	}
+	return ""
+}
+
+func (x *AdoptMigratedInstanceRequest) GetPlan() string {
+	if x != nil {
+		return x.Plan
+	}
+	return ""
+}
+
+func (x *AdoptMigratedInstanceRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *AdoptMigratedInstanceRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *AdoptMigratedInstanceRequest) GetFcVersion() string {
+	if x != nil {
+		return x.FcVersion
 	}
 	return ""
 }
@@ -4791,12 +4837,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1bPrepareLiveMigrationRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x120\n" +
-	"\x14snapshot_storage_key\x18\x02 \x01(\tR\x12snapshotStorageKey\"\x97\x01\n" +
+	"\x14snapshot_storage_key\x18\x02 \x01(\tR\x12snapshotStorageKey\"\xb6\x01\n" +
 	"\x1cPrepareLiveMigrationResponse\x12&\n" +
 	"\x0fmem_storage_key\x18\x01 \x01(\tR\rmemStorageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x02 \x01(\tR\x11vmstateStorageKey\x12\x1f\n" +
 	"\vlease_token\x18\x03 \x01(\tR\n" +
-	"leaseToken\"\xf1\x01\n" +
+	"leaseToken\x12\x1d\n" +
+	"\n" +
+	"fc_version\x18\x04 \x01(\tR\tfcVersion\"\xe8\x02\n" +
 	"\x1cAdoptMigratedInstanceRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x127\n" +
@@ -4804,7 +4852,13 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0fmem_storage_key\x18\x03 \x01(\tR\rmemStorageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x04 \x01(\tR\x11vmstateStorageKey\x12\x1f\n" +
 	"\vlease_token\x18\x05 \x01(\tR\n" +
-	"leaseToken\"k\n" +
+	"leaseToken\x12\x12\n" +
+	"\x04plan\x18\x06 \x01(\tR\x04plan\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\a \x01(\tR\taccountId\x12#\n" +
+	"\rdeployment_id\x18\b \x01(\tR\fdeploymentId\x12\x1d\n" +
+	"\n" +
+	"fc_version\x18\t \x01(\tR\tfcVersion\"k\n" +
 	"\x1dAdoptMigratedInstanceResponse\x12\x17\n" +
 	"\ahost_ip\x18\x01 \x01(\tR\x06hostIp\x12\x14\n" +
 	"\x05netns\x18\x02 \x01(\tR\x05netns\x12\x1b\n" +

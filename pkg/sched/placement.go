@@ -119,6 +119,21 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 	)
 	for i := range nodes {
 		n := nodes[i]
+		// Workstream B (issue #1184 / ADR-137): placement
+		// rejects nodes whose lifecycle is not in
+		// {active, recovering}. The legacy bool `active` is a
+		// STORED GENERATED column derived from `lifecycle` in
+		// Postgres (migration 00579) and a parallel-update in
+		// the in-memory store (pkg/state/memstore.go
+		// NodeSetLifecycle). The two checks below are belt-
+		// and-suspenders: the explicit lifecycle assertion is
+		// the source of truth for rows that explicitly set
+		// lifecycle; legacy callers that haven't migrated yet
+		// (Lifecycle=="") fall through to the bool check
+		// rather than getting silently rejected.
+		if n.Lifecycle != "" && !n.Lifecycle.IsAdmitting() {
+			continue
+		}
 		if !n.Active {
 			continue
 		}

@@ -1612,6 +1612,13 @@ type Store interface {
 	// both want "instances I'm responsible for" rather than the
 	// fleet-wide ListAllInstances.
 	ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
+	// ListInstancesOnNodeID returns every instance whose physical
+	// instances.node_id matches nodeID, regardless of the owning app's
+	// scheduler owner. This is the safety/observability view for drains:
+	// live migration updates instances.node_id before apps.node_id, so an
+	// ownership-scoped query can otherwise miss a still-running VM on the
+	// node being drained.
+	ListInstancesOnNodeID(ctx context.Context, nodeID string) ([]Instance, error)
 	// ListInstancesForLifecycleReconciliation returns live instances whose
 	// parent app or account is in a deletion state. It is the durable fallback
 	// for pg_notify: schedd uses it to destroy VMs after a missed notification
@@ -3702,6 +3709,13 @@ type Store interface {
 	// before this call so the SQL stays narrow.
 	ListInstancesForAccountPaged(ctx context.Context, accountID string, limit int, before string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
+	// UpdateInstanceStateIf atomically changes an instance state only when
+	// its current state equals expectedState. It returns ErrConflict when
+	// the row is missing or another writer changed the state first. Recovery
+	// paths use this to make load → validate → write transitions race-safe.
+	// A transition to parked also stamps parked_at, preserving the retention
+	// and watchdog invariant for direct recovery recreates.
+	UpdateInstanceStateIf(ctx context.Context, id, expectedState, nextState string) error
 	// UpdateInstanceStateWithTimestamp is the same write but stamps
 	// parked_at to the supplied time on the same statement. Used by
 	// schedd's snapshotAndPark (commit 3) when transitioning into
@@ -4056,6 +4070,68 @@ type Store interface {
 	// gatewayd-internal can add or drop its per-node client without a
 	// restart. ErrNotFound when the id has no row.
 	SetComputeNodeActive(ctx context.Context, id string, active bool) error
+	// NodeGet returns a single ComputeNode by id with all lifecycle
+	// fields populated. Workstream B (issue #1184) replaces the
+	// legacy active-bool reads with this richer projection so the
+	// recovery arbiter + drain handler can branch on the enum.
+	// ErrNotFound when the id has no row.
+	NodeGet(ctx context.Context, id string) (ComputeNode, error)
+	// NodeGetByName mirrors NodeGet keyed by the human-stable name.
+	// The apid drain handler (POST /v1/compute-nodes/{name}/drain)
+	// is the only routine caller.
+	NodeGetByName(ctx context.Context, name string) (ComputeNode, error)
+	// NodeList returns every compute_node in name order, optionally
+	// filtered by lifecycle (empty string = any). The recovery
+	// arbiter uses the unfiltered form for cold-start reconciliation.
+	NodeList(ctx context.Context, lifecycle NodeLifecycle) ([]ComputeNode, error)
+	// NodeSetLifecycle is the CAS lifecycle transition added by
+	// 00579. The CAS predicate (lifecycle::text = $expected) blocks
+	// the two-writer race that the boolean toggle had — a node in
+	// 'active' can't flip to 'draining' AND 'unavailable'
+	// concurrently, because only one CAS will land. Returns
+	// ErrNotFound when the id is unknown, ErrConflict when the
+	// CAS didn't land (the caller is expected to re-read via
+	// NodeGet and decide whether to retry).
+	NodeSetLifecycle(ctx context.Context, id string, expected, next NodeLifecycle) error
+	// NodeListRecoverable returns every node in
+	// ('unavailable','recovering') — the recovery arbiter's input
+	// set. Cold-start sweep + the 1s tick both consume this.
+	NodeListRecoverable(ctx context.Context) ([]ComputeNode, error)
+	// NodeListDrainable returns every 'active' node with zero live
+	// instances — the set the drain handler is allowed to flip to
+	// 'draining' without operator override. A non-empty live set
+	// means the handler must surface RFC 7807 `node_draining_refused`
+	// instead.
+	NodeListDrainable(ctx context.Context) ([]ComputeNode, error)
+	// NodeMarkDrainCompleted stamps drain_completed_at + flips
+	// lifecycle back to 'active' (CAS on 'draining'). The recovery
+	// arbiter calls this once the migrate-or-recreate sweep
+	// confirms zero live instances remain.
+	NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error
+	// NodeMarkRecovered stamps last_recovery_outcome='succeeded' +
+	// flips lifecycle to 'active' (CAS on 'recovering'). Called
+	// after the recovery sweep clears stranded instances.
+	NodeMarkRecovered(ctx context.Context, id string) error
+	// InstanceListByNodeForRecovery returns the live instances on a
+	// specific node — input to the arbiter's per-instance decision
+	// matrix. Only states the arbiter can act on are included.
+	InstanceListByNodeForRecovery(ctx context.Context, nodeID string) ([]RecoveryInstance, error)
+	// DeploymentRecordSnapshotMiss stamps the per-deployment
+	// backoff state added by 00585. Called by the wake flow on every
+	// snapshot-fetch miss. The retry-after math lives in
+	// pkg/sched/snapshot_backoff.go; this is the state write only.
+	DeploymentRecordSnapshotMiss(ctx context.Context, deploymentID string, backoffUntil time.Time) error
+	// DeploymentClearSnapshotBackoff resets the counter + clears
+	// the backoff. Called by the recovery arbiter after a successful
+	// sweep restores the destination's snapshot set, OR by the wake
+	// flow on a successful cold boot.
+	DeploymentClearSnapshotBackoff(ctx context.Context, deploymentID string) error
+	// DeploymentSnapshotBackoffActive returns the stored backoff row when
+	// snapshot_miss_backoff_until is non-null. The bool reports whether the
+	// timestamp is still in effect; expired rows are returned so the wake
+	// flow can preserve the miss count when computing the next backoff.
+	// The partial index `deployments_snapshot_backoff_idx` covers the lookup.
+	DeploymentSnapshotBackoffActive(ctx context.Context, deploymentID string) (Deployment, bool, error)
 	// SetComputeNodeRole overwrites the role column on a row by id
 	// (ADR-112 PR-B). PR-A's first-boot path populates the column via
 	// UpsertComputeNodeFromOperator (keyed by name); PR-B's in-place

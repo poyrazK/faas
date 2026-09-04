@@ -81,6 +81,32 @@ func TestNodeLedger_HeadroomMB_NonEmptySumsNodeHeadroom(t *testing.T) {
 	}
 }
 
+// TestNodeLedger_ResidentFor pins the Task #62 source-ledger
+// backstop surface: ResidentFor returns true after Admit, false
+// after Release, and false on a nil receiver. The dead-node
+// reconciler consults this to close the billing-leak race where
+// a peer's failure path freed the row but not the ledger slot.
+func TestNodeLedger_ResidentFor(t *testing.T) {
+	l := newTestLedger()
+	if l.ResidentFor("i-x") {
+		t.Errorf("empty ledger: ResidentFor(i-x) = true; want false")
+	}
+	if err := l.Admit(Request{AppID: "app-1", DeploymentID: "dep-1", Instance: "i-x", RAMMB: 128, NodeID: "node-a", Plan: api.PlanHobby}); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+	if !l.ResidentFor("i-x") {
+		t.Errorf("post-Admit: ResidentFor(i-x) = false; want true")
+	}
+	l.Release("i-x")
+	if l.ResidentFor("i-x") {
+		t.Errorf("post-Release: ResidentFor(i-x) = true; want false")
+	}
+	var nilL *NodeLedger
+	if nilL.ResidentFor("any") {
+		t.Errorf("nil receiver: ResidentFor = true; want false (bootstrap safety)")
+	}
+}
+
 func TestNodeLedger_HeadroomMB_ClampsNegativeToZero(t *testing.T) {
 	// Pin the defensive clamp at zero: the per-node view can go
 	// negative if a Release races ahead of the resident accounting.

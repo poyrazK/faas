@@ -2361,6 +2361,25 @@ func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]I
 	return scanInstances(rows)
 }
 
+// ListInstancesOnNodeID returns every instance physically resident on the
+// given compute node. It deliberately filters instances.node_id rather than
+// joining through apps.node_id: live migration commits the physical move
+// first, while the app's scheduler ownership remains on the original node.
+// Drain safety and node observability must not miss that interval.
+func (s *PgStore) ListInstancesOnNodeID(ctx context.Context, nodeID string) ([]Instance, error) {
+	rows, err := s.pool.Query(ctx, `
+		select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		       coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		  from instances i
+		 where i.node_id = $1
+		 order by i.started_at desc nulls last, i.id::text desc`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 // ListInstancesForLifecycleReconciliation returns live instances belonging to
 // deleted apps or accounts in the deletion grace window. Unlike the normal
 // reaper lists, it intentionally includes soft-deleted apps and the
@@ -2759,6 +2778,8 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 //     'parked' already)
 //  2. node_id = fromNodeID (peer re-owner would have flipped
 //     this already)
+//  3. lease_token = leaseToken (a stale lease can never commit the
+//     handoff after a newer migration has claimed the row)
 //
 // Returns ErrConflict on RowsAffected()==0 — peer rollback, peer
 // re-owner, or row gone.
@@ -2789,9 +2810,10 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 		        migrated_at = now(),
 		        lease_token = $4,
 		        state = 'running'
-		  where id = $1
+		where id = $1
 		    and state = 'migrating'
 		    and node_id = $2
+		    and lease_token = $4
 		returning app_id`,
 		instanceID, fromNodeID, toNodeID, leaseToken).Scan(&appID)
 	if err != nil {
@@ -11094,6 +11116,24 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 	return scanInstance(row)
 }
 
+// MigrationInstanceByID is the migration-aware instance lookup used by
+// vmmd's destination adoption and lease-expiry cleanup paths. The ordinary
+// InstanceByID shape intentionally remains narrow for legacy callers; this
+// method includes the migration lineage and lease token columns.
+func (s *PgStore) MigrationInstanceByID(ctx context.Context, id string) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at,
+		        coalesce(node_id::text, ''), wake_id, framework_ready_at,
+		        migrated_from_node_id::text, migrated_at, coalesce(lease_token, ''), tail_count
+		 from instances where id = $1`, id)
+	inst, err := scanInstanceColsWithMigration(row.Scan)
+	if err != nil {
+		return Instance{}, mapErr(err)
+	}
+	return inst, nil
+}
+
 // ReadActiveInstanceForWakeID returns the in-flight instance row
 // for the given wake_id (state IN ('waking', 'cold_booting',
 // 'running')) — the winner of the cluster-coord race that
@@ -11296,6 +11336,28 @@ func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateInstanceStateIf atomically changes an instance state only when the
+// caller's read is still current. Recovery's recreate path uses this
+// conditional UPDATE to prevent a stale read from parking a row that a
+// concurrent migration, watchdog, or deletion reconciler already claimed.
+// A missing row and a predicate miss intentionally share ErrConflict: both
+// are benign race losers to a reconciliation caller.
+func (s *PgStore) UpdateInstanceStateIf(ctx context.Context, id, expectedState, nextState string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances
+		    set state = $3,
+		        parked_at = case when $3 = 'parked' then now() else parked_at end
+		  where id = $1
+		    and state = $2`, id, expectedState, nextState)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
 	}
 	return nil
 }
@@ -12086,10 +12148,11 @@ type SnapshotSize struct {
 // is safe: pkg/api has no outbound dependency on pkg/state, so no cycle.
 
 // scanComputeNode reads a single compute_nodes row, projecting the
-// canonical 23-column layout (matches the SELECT / RETURNING lists
+// canonical 24-column layout (matches the SELECT / RETURNING lists
 // in ActiveComputeNodes, ListAllComputeNodes, ComputeNodeByID,
-// ComputeNodeByName, CreateComputeNode, UpsertComputeNode,
-// UpsertComputeNodeFromOperator, UpsertComputeNodeFromVmmd).
+// ComputeNodeByName, ListComputeNodes, CreateComputeNode,
+// UpsertComputeNode, UpsertComputeNodeFromOperator,
+// UpsertComputeNodeFromVmmd).
 //
 // Column order (must stay locked against the SQL projections):
 //
@@ -12097,21 +12160,29 @@ type SnapshotSize struct {
 //	admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 //	region, zone, schedd_target_url, gateway_target_url,
 //	public_ip, public_ip_set_at,
-//	release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+//	release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+//	lifecycle
+//
+// `active` is STORED GENERATED from `lifecycle` (migration 00579,
+// ADR-137), so every SELECT still projects both — legacy callers
+// read `active`, Workstream B callers read `lifecycle`. The
+// generated `active` predates the enum; the additional column is
+// appended last so the wire-order contract is preserved.
 //
 // A mismatch between this Scan arg list and any of the SQL projections
 // fails at runtime with pgx's column count error — the wire-level
 // contract every helper above enforces.
 //
 // PR-3a (issue #911 / ADR-110) widened the projection from 14 to 22;
-// migration 00468 adds gateway_target_url for a 23-column projection.
-// The earlier 22-column additions were public_ip / public_ip_set_at
+// migration 00468 adds gateway_target_url for a 23-column projection;
+// migration 00579 adds lifecycle for a 24-column projection. The
+// earlier 22-column additions were public_ip / public_ip_set_at
 // (migration 00174 closure) + release_id / manifest_hash /
 // host_certificate / cert_fingerprint /
 // role / generation (migration 00266). Pre-PR-3a callers that hand-rolled
 // SQL against the 14-column layout must be updated together; the only
-// readers of the wider shape are the 8 helpers listed in the comment
-// above (4 SELECTs + 4 INSERT/UPSERTs).
+// readers of the wider shape are the 9 helpers listed in the comment
+// above (5 SELECTs + 4 INSERT/UPSERTs).
 func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 	var n ComputeNode
 	if err := row.Scan(&n.ID, &n.Name, &n.TargetURL, &n.VPCPUs, &n.MemMB,
@@ -12119,7 +12190,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.LastHeartbeatAt, &n.CreatedAt, &n.Region, &n.Zone,
 		&n.ScheddTargetURL, &n.GatewayTargetURL, &n.PublicIp, &n.PublicIpSetAt,
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
-		&n.Role, &n.Generation); err != nil {
+		&n.Role, &n.Generation, &n.Lifecycle); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -12131,7 +12202,8 @@ func (s *PgStore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error)
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -12162,7 +12234,8 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 		 order by name
 	`)
@@ -12187,7 +12260,8 @@ func (s *PgStore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, 
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -12204,7 +12278,8 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -12614,16 +12689,20 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 	return out, nil
 }
 
-// MarkComputeNodeInactive flips active=false on the row (PR #114,
-// schedd heartbeat path). Idempotent: the UPDATE matches regardless
-// of current value, so re-flipping an inactive row is a no-op. We
-// preserve the row rather than DELETE so an operator can re-enable
-// it without re-provisioning the target_url / cert.
+// MarkComputeNodeInactive flips the row's lifecycle to `unavailable`
+// (Workstream B, ADR-137). The legacy pre-00579 implementation wrote
+// the (now STORED GENERATED) `active` column directly; PG rejects
+// `UPDATE compute_nodes SET active = $X` with SQLSTATE 428C9 because
+// generated columns are derived from `lifecycle`. Idempotent at the
+// PG level: the UPDATE matches regardless of current lifecycle, so
+// re-flipping an unavailable row is a no-op. We preserve the row
+// rather than DELETE so an operator can re-enable it without
+// re-provisioning the target_url / cert.
 func (s *PgStore) MarkComputeNodeInactive(ctx context.Context, nodeID string) error {
 	tag, err := s.pool.Exec(ctx,
-		`update compute_nodes set active = false where id = $1`, nodeID)
+		`update compute_nodes set lifecycle = 'unavailable'::compute_node_lifecycle where id = $1`, nodeID)
 	if err != nil {
-		return fmt.Errorf("state: mark compute_node %s inactive: %w", nodeID, err)
+		return fmt.Errorf("state: mark compute_node %s unavailable: %w", nodeID, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -12645,9 +12724,17 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 	// role, generation) are also nullable on INSERT — operator-added
 	// pre-PR-3a rows accept the schema without a backfill. RETURNING
 	// projects all 23 columns to match scanComputeNode's scan width.
+	lifecycle := node.Lifecycle
+	if lifecycle == "" {
+		if node.Active {
+			lifecycle = NodeLifecycleActive
+		} else {
+			lifecycle = NodeLifecycleUnavailable
+		}
+	}
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
-		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, active,
+		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
@@ -12659,9 +12746,10 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
-		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
-		node.AdmissionCeilingMB, node.VCPUBudget, node.Active,
+		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
@@ -12702,11 +12790,11 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 	// counter). RETURNING projects all 23 columns.
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
-		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, active,
+		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
-		values ($1, $2, $3, $4, $5, $6, $7, true,
+		values ($1, $2, $3, $4, $5, $6, $7, 'active'::compute_node_lifecycle,
 		        $8, $9, $10,
 		        $11, $12,
 		        $13, $14, $15, $16, $17, $18)
@@ -12717,7 +12805,7 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      active              = true,
+		      lifecycle           = 'active'::compute_node_lifecycle,
 		      region              = excluded.region,
 		      zone                = excluded.zone,
 		      schedd_target_url   = excluded.schedd_target_url,
@@ -12732,7 +12820,8 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
-		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -12765,11 +12854,11 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 	// must be monotonic — a subsequent operator POST must not lower it.
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
-		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, active,
+		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
-		values ($1, $2, $3, $4, $5, $6, $7, true,
+		values ($1, $2, $3, $4, $5, $6, $7, 'active'::compute_node_lifecycle,
 		        $8, $9, $10,
 		        $11, $12,
 		        $13, $14, $15, $16, $17, $18)
@@ -12780,7 +12869,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      active              = true,
+		      lifecycle           = 'active'::compute_node_lifecycle,
 		      region              = excluded.region,
 		      zone                = excluded.zone,
 		      schedd_target_url   = excluded.schedd_target_url,
@@ -12795,7 +12884,8 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
-		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -12882,11 +12972,11 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 	// COALESCE so the doctor's monotonic counter survives.
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
-		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, active,
+		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, schedd_target_url, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
-		values ($1, $2, $3, $4, $5, $6, $7, true,
+		values ($1, $2, $3, $4, $5, $6, $7, 'active'::compute_node_lifecycle,
 		        $8, $9, $10,
 		        $11, $12,
 		        $13, $14, $15, $16, $17, $18, $19)
@@ -12896,33 +12986,6 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      -- A vmmd that is re-registering has just started: it is by
-		      -- definition alive. Preserving active=false unconditionally
-		      -- meant a node that CRASHED could never rejoin — the
-		      -- heartbeat only enumerates active nodes
-		      -- (ActiveComputeNodes filters on active = true), so it never
-		      -- re-probes a dead row, and this upsert was the only other
-		      -- writer. Every vmmd restart therefore dropped the node out
-		      -- of rotation permanently until an operator ran UPDATE by
-		      -- hand; on 2026-09-03/04 that happened on every single
-		      -- rollout.
-		      --
-		      -- Reactivate ONLY when the existing row looks reaped rather
-		      -- than drained. An operator drain targets a LIVE node, so
-		      -- its heartbeat is fresh; the watchdog only marks a node
-		      -- inactive after it stops heartbeating past the staleness
-		      -- window. Using that window as the discriminator keeps a
-		      -- deliberate drain sticky (the node keeps heartbeating, so
-		      -- a restart will not silently undo it) while letting a
-		      -- genuinely dead node come back on its own.
-		      --
-		      -- Interim: ADR-137 / issue #1184 replaces this boolean with
-		      -- a compute_node_lifecycle enum that states the distinction
-		      -- outright instead of inferring it. Delete this when that
-		      -- lands.
-		      active              = (compute_nodes.active
-		                             OR compute_nodes.last_heartbeat_at IS NULL
-		                             OR compute_nodes.last_heartbeat_at < now() - $20::interval),
 		      target_url          = coalesce(compute_nodes.target_url, excluded.target_url),
 		      region              = coalesce(compute_nodes.region, excluded.region),
 		      zone                = coalesce(compute_nodes.zone, excluded.zone),
@@ -12940,18 +13003,14 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
-		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
-		node.Role, node.Generation,
-		// $20 — the staleness window that separates "reaped because it
-		// stopped heartbeating" from "drained by an operator while
-		// alive". Matches sched.DefaultHeartbeatStaleness; kept as a
-		// literal here because pkg/state must not import pkg/sched.
-		VmmdReregisterStaleWindow.String())
+		node.Role, node.Generation)
 	n, err := scanComputeNode(row)
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node (vmmd) %q: %w", node.Name, err)
@@ -13014,19 +13073,34 @@ func (s *PgStore) UpsertNodeKey(ctx context.Context, nodeID string, keyID string
 	return nil
 }
 
-// SetComputeNodeActive flips active on a row by id (issue #98 /
-// ADR-028). The watchdog uses this to mark a row drained when
-// last_heartbeat_at ages past 90s, and the heartbeat goroutine uses it
-// again to reactivate a drained row on the next successful dial. The
+// SetComputeNodeActive flips the row's lifecycle (Workstream B,
+// ADR-137). Legacy pre-00599 implementation wrote the (now STORED
+// GENERATED) `active` column directly; PG rejects that with SQLSTATE
+// 428C9, so the rewrite maps the boolean onto lifecycle semantics:
+//
+//	true  → lifecycle='active'     (heartbeat reactivation; row admits wakes)
+//	false → lifecycle='unavailable' (watchdog drain-on-stale; row rejects wakes)
+//
+// The watchdog uses `false` to mark a row drained when
+// last_heartbeat_at ages past 90s, and the heartbeat goroutine uses
+// `true` to reactivate a drained row on the next successful dial. The
 // pg_notify trigger on compute_nodes (operator-visible via
 // pkg/db/notify.NotifyComputeNodeChanged) fires on the UPDATE so
-// gatewayd-internal's per-node client cache can drop/add entries without
-// restart.
+// gatewayd-internal's per-node client cache can drop/add entries
+// without restart. Note: this method does NOT distinguish between
+// operator-initiated drains (which the drain API records as
+// `draining` lifecycle for audit) and watchdog-initiated drains —
+// it always lands on `unavailable`. Use NodeSetLifecycle directly
+// for the operator-initiated `draining` path.
 func (s *PgStore) SetComputeNodeActive(ctx context.Context, id string, active bool) error {
+	target := NodeLifecycleUnavailable
+	if active {
+		target = NodeLifecycleActive
+	}
 	tag, err := s.pool.Exec(ctx,
-		`update compute_nodes set active = $2 where id = $1`, id, active)
+		`update compute_nodes set lifecycle = $2::compute_node_lifecycle where id = $1`, id, string(target))
 	if err != nil {
-		return fmt.Errorf("state: set active compute_node %s = %v: %w", id, active, err)
+		return fmt.Errorf("state: set lifecycle compute_node %s = %v: %w", id, target, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -13139,7 +13213,8 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
-		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -13160,6 +13235,354 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// nodeRowToComputeNode converts a sqlc.NodeGetByNameRow / NodeGetRow
+// (the field set is identical for the lifecycle-projection queries in
+// queries.sql) back to the legacy ComputeNode model. The legacy
+// fields are the first 22; the lifecycle fields follow.
+func nodeRowToComputeNode(r sqlc.NodeGetRow) ComputeNode {
+	n := ComputeNode{
+		ID:                 uuidString(r.ID),
+		Name:               r.Name,
+		TargetURL:          r.TargetUrl,
+		VPCPUs:             int(r.Vpcpus),
+		MemMB:              int(r.MemMb),
+		MaxConcurrency:     int(r.MaxConcurrency),
+		AdmissionCeilingMB: int(r.AdmissionCeilingMb),
+		Active:             r.Active.Bool,
+		LastHeartbeatAt:    timestamptzToTime(r.LastHeartbeatAt),
+		CreatedAt:          timestamptzToTime(r.CreatedAt),
+	}
+	if r.Region.Valid {
+		v := r.Region.String
+		n.Region = &v
+	}
+	if r.Zone.Valid {
+		v := r.Zone.String
+		n.Zone = &v
+	}
+	if r.ScheddTargetUrl.Valid {
+		v := r.ScheddTargetUrl.String
+		n.ScheddTargetURL = &v
+	}
+	if r.VcpuBudget != 0 {
+		n.VCPUBudget = int(r.VcpuBudget)
+	}
+	if r.PublicIp != nil {
+		ip := *r.PublicIp
+		n.PublicIp = &ip
+	}
+	n.PublicIpSetAt = timestamptzToTimePtr(r.PublicIpSetAt)
+	if r.ReleaseID.Valid {
+		v := r.ReleaseID.String
+		n.ReleaseID = &v
+	}
+	if r.ManifestHash.Valid {
+		v := r.ManifestHash.String
+		n.ManifestHash = &v
+	}
+	if r.HostCertificate.Valid {
+		v := r.HostCertificate.String
+		n.HostCertificate = &v
+	}
+	if r.CertFingerprint.Valid {
+		v := r.CertFingerprint.String
+		n.CertFingerprint = &v
+	}
+	if r.Role.Valid {
+		v := r.Role.String
+		n.Role = &v
+	}
+	if r.Generation.Valid {
+		v := int(r.Generation.Int32)
+		n.Generation = &v
+	}
+	if r.GatewayTargetUrl.Valid {
+		v := r.GatewayTargetUrl.String
+		n.GatewayTargetURL = &v
+	}
+	// Lifecycle fields (Workstream B, 00579 + 00582).
+	n.Lifecycle = NodeLifecycle(r.Lifecycle)
+	n.DrainInitiatedAt = timestamptzToTimePtr(r.DrainInitiatedAt)
+	n.DrainCompletedAt = timestamptzToTimePtr(r.DrainCompletedAt)
+	n.RecoveryInitiatedAt = timestamptzToTimePtr(r.RecoveryInitiatedAt)
+	if r.LastRecoveryOutcome.Valid {
+		v := r.LastRecoveryOutcome.String
+		n.LastRecoveryOutcome = &v
+	}
+	return n
+}
+
+// uuidString returns the canonical hyphenated form for a pgtype.UUID.
+func uuidString(u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		u.Bytes[0:4], u.Bytes[4:6], u.Bytes[6:8], u.Bytes[8:10], u.Bytes[10:16])
+}
+
+// timestamptzToTime converts a pgtype.Timestamptz to time.Time, treating
+// the zero/invalid value as the zero time.
+func timestamptzToTime(t pgtype.Timestamptz) time.Time {
+	if !t.Valid {
+		return time.Time{}
+	}
+	return t.Time
+}
+
+// timestamptzToTimePtr is the *time.Time variant of timestamptzToTime.
+func timestamptzToTimePtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := t.Time
+	return &v
+}
+
+// NodeGet returns one ComputeNode by id with all lifecycle fields
+// populated. Wraps the sqlc NodeGet query.
+func (s *PgStore) NodeGet(ctx context.Context, id string) (ComputeNode, error) {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return ComputeNode{}, fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	row, err := s.triggerQueries().NodeGet(ctx, s.pool, p)
+	if err != nil {
+		return ComputeNode{}, mapErr(err)
+	}
+	return nodeRowToComputeNode(row), nil
+}
+
+// NodeGetByName mirrors NodeGet keyed by name.
+func (s *PgStore) NodeGetByName(ctx context.Context, name string) (ComputeNode, error) {
+	row, err := s.triggerQueries().NodeGetByName(ctx, s.pool, name)
+	if err != nil {
+		return ComputeNode{}, mapErr(err)
+	}
+	return nodeRowToComputeNodeFromNamed(row), nil
+}
+
+// nodeRowToComputeNodeFromNamed mirrors nodeRowToComputeNode for the
+// NodeGetByName query (sqlc emits a separate Row struct per :one query).
+func nodeRowToComputeNodeFromNamed(r sqlc.NodeGetByNameRow) ComputeNode {
+	// Both Row types share the same field set; the helper above
+	// expects a NodeGetRow, so copy through.
+	return nodeRowToComputeNode(sqlc.NodeGetRow(r))
+}
+
+// NodeList returns every compute_node in name order, optionally
+// filtered by lifecycle. Empty string = any lifecycle.
+func (s *PgStore) NodeList(ctx context.Context, lifecycle NodeLifecycle) ([]ComputeNode, error) {
+	rows, err := s.triggerQueries().NodeList(ctx, s.pool, string(lifecycle))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ComputeNode, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, nodeRowToComputeNode(sqlc.NodeGetRow(r)))
+	}
+	return out, nil
+}
+
+// NodeSetLifecycle is the CAS transition added by 00579. The expected
+// predicate (lifecycle::text = $expected) blocks two-writer races
+// from 'active' to 'draining' vs 'unavailable' concurrently. Returns
+// ErrNotFound when the id has no row, ErrConflict when the CAS didn't
+// land (the caller re-reads via NodeGet and decides whether to retry).
+func (s *PgStore) NodeSetLifecycle(ctx context.Context, id string, expected, next NodeLifecycle) error {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	rows, err := s.triggerQueries().NodeSetLifecycle(ctx, s.pool, sqlc.NodeSetLifecycleParams{
+		ID:               p,
+		Lifecycle:        sqlc.ComputeNodeLifecycle(string(expected)),
+		Column3:          sqlc.ComputeNodeLifecycle(string(next)),
+		DrainInitiatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if rows == 0 {
+		// A zero row count is ambiguous: either another writer won the
+		// CAS, or the row was deleted after the caller's read. Re-read
+		// by id so the Store contract can distinguish ErrNotFound from
+		// an ordinary lifecycle race.
+		if _, getErr := s.NodeGet(ctx, id); getErr != nil {
+			if errors.Is(getErr, ErrNotFound) {
+				return ErrNotFound
+			}
+			return getErr
+		}
+		return ErrConflict
+	}
+	return nil
+}
+
+// NodeListRecoverable returns every node in ('unavailable','recovering') —
+// the recovery arbiter's input set.
+func (s *PgStore) NodeListRecoverable(ctx context.Context) ([]ComputeNode, error) {
+	rows, err := s.triggerQueries().NodeListRecoverable(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ComputeNode, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, nodeRowToComputeNode(sqlc.NodeGetRow(r)))
+	}
+	return out, nil
+}
+
+// NodeListDrainable returns every 'active' node with zero live
+// instances — the set the drain handler is allowed to flip to
+// 'draining' without operator override.
+func (s *PgStore) NodeListDrainable(ctx context.Context) ([]ComputeNode, error) {
+	rows, err := s.triggerQueries().NodeListDrainable(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ComputeNode, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, nodeRowToComputeNode(sqlc.NodeGetRow(r)))
+	}
+	return out, nil
+}
+
+// NodeMarkDrainCompleted stamps drain_completed_at + flips lifecycle
+// to 'active' (CAS on 'draining').
+func (s *PgStore) NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	rows, err := s.triggerQueries().NodeMarkDrainCompleted(ctx, s.pool, sqlc.NodeMarkDrainCompletedParams{
+		ID:               p,
+		DrainCompletedAt: pgtype.Timestamptz{Time: completedAt, Valid: true},
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if rows == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// NodeMarkRecovered stamps last_recovery_outcome='succeeded' + flips
+// lifecycle to 'active' (CAS on 'recovering').
+func (s *PgStore) NodeMarkRecovered(ctx context.Context, id string) error {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	rows, err := s.triggerQueries().NodeMarkRecovered(ctx, s.pool, p)
+	if err != nil {
+		return mapErr(err)
+	}
+	if rows == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// InstanceListByNodeForRecovery returns the live instances on a node
+// the recovery arbiter can act on.
+func (s *PgStore) InstanceListByNodeForRecovery(ctx context.Context, nodeID string) ([]RecoveryInstance, error) {
+	uid, err := uuid.Parse(nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("state: invalid uuid %q: %w", nodeID, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	rows, err := s.triggerQueries().InstanceListByNodeForRecovery(ctx, s.pool, p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RecoveryInstance, len(rows))
+	for i, r := range rows {
+		out[i] = RecoveryInstance{
+			ID:           uuidString(r.ID),
+			State:        r.State,
+			AppID:        uuidString(r.AppID),
+			DeploymentID: uuidString(r.DeploymentID),
+		}
+	}
+	return out, nil
+}
+
+// DeploymentRecordSnapshotMiss stamps per-deployment backoff state.
+// The retry-after math lives in pkg/sched/snapshot_backoff.go; this
+// is the state write only.
+func (s *PgStore) DeploymentRecordSnapshotMiss(ctx context.Context, deploymentID string, backoffUntil time.Time) error {
+	uid, err := uuid.Parse(deploymentID)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", deploymentID, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	return s.triggerQueries().DeploymentRecordSnapshotMiss(ctx, s.pool, sqlc.DeploymentRecordSnapshotMissParams{
+		ID:                       p,
+		SnapshotMissBackoffUntil: pgtype.Timestamptz{Time: backoffUntil, Valid: true},
+	})
+}
+
+// DeploymentClearSnapshotBackoff resets the counter + clears the
+// backoff. Called by the recovery arbiter after a successful sweep.
+func (s *PgStore) DeploymentClearSnapshotBackoff(ctx context.Context, deploymentID string) error {
+	uid, err := uuid.Parse(deploymentID)
+	if err != nil {
+		return fmt.Errorf("state: invalid uuid %q: %w", deploymentID, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	return s.triggerQueries().DeploymentClearSnapshotBackoff(ctx, s.pool, p)
+}
+
+// DeploymentSnapshotBackoffActive returns the stored row whenever a
+// backoff timestamp is present. The bool reports whether that timestamp
+// is still active; expired rows are retained so the caller can preserve
+// the miss count when computing the next backoff.
+func (s *PgStore) DeploymentSnapshotBackoffActive(ctx context.Context, deploymentID string) (Deployment, bool, error) {
+	uid, err := uuid.Parse(deploymentID)
+	if err != nil {
+		return Deployment{}, false, fmt.Errorf("state: invalid uuid %q: %w", deploymentID, err)
+	}
+	var p pgtype.UUID
+	copy(p.Bytes[:], uid[:])
+	p.Valid = true
+	row, err := s.triggerQueries().DeploymentSnapshotBackoffActive(ctx, s.pool, p)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Deployment{}, false, nil
+		}
+		return Deployment{}, false, mapErr(err)
+	}
+	if !row.SnapshotMissBackoffUntil.Valid {
+		return Deployment{}, false, nil
+	}
+	d := Deployment{
+		ID:                       uuidString(p),
+		SnapshotMissCount:        int(row.SnapshotMissCount),
+		SnapshotMissBackoffUntil: timestamptzToTimePtr(row.SnapshotMissBackoffUntil),
+	}
+	return d, row.SnapshotMissBackoffUntil.Time.After(time.Now().UTC()), nil
 }
 
 // DeleteComputeNode hard-deletes a compute_nodes row by id (issue #98 /
@@ -20782,7 +21205,11 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 // TriggerByID returns the trigger with the given ID. Returns
 // ErrNotFound when the row is gone.
 func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, error) {
-	return s.triggerQueries().TriggerByID(ctx, s.pool, mustPgUUID(id))
+	row, err := s.triggerQueries().TriggerByID(ctx, s.pool, mustPgUUID(id))
+	if err != nil {
+		return sqlc.Trigger{}, err
+	}
+	return triggerRowToTrigger(row), nil
 }
 
 // UpdateTrigger patches the mutable fields (enabled, config,
@@ -20880,14 +21307,30 @@ func (s *PgStore) DeleteTrigger(ctx context.Context, id, appID string) error {
 
 // ListTriggersForApp is the dashboard read-back (GET /v1/triggers).
 func (s *PgStore) ListTriggersForApp(ctx context.Context, appID string) ([]sqlc.Trigger, error) {
-	return s.triggerQueries().ListTriggersForApp(ctx, s.pool, mustPgUUID(appID))
+	rows, err := s.triggerQueries().ListTriggersForApp(ctx, s.pool, mustPgUUID(appID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlc.Trigger, len(rows))
+	for i, r := range rows {
+		out[i] = triggerListRowToTrigger(r)
+	}
+	return out, nil
 }
 
 // ListEnabledTriggers is the schedd-side read on each 1-second
 // cadence. Returns the full enabled-triggers set; the dispatch
 // tick filters by kind to pick the per-kind poller.
 func (s *PgStore) ListEnabledTriggers(ctx context.Context) ([]sqlc.Trigger, error) {
-	return s.triggerQueries().ListEnabledTriggers(ctx, s.pool)
+	rows, err := s.triggerQueries().ListEnabledTriggers(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlc.Trigger, len(rows))
+	for i, r := range rows {
+		out[i] = triggerEnabledRowToTrigger(r)
+	}
+	return out, nil
 }
 
 // ClaimTriggerRecords is the schedd-side pull from the per-trigger
@@ -20895,7 +21338,15 @@ func (s *PgStore) ListEnabledTriggers(ctx context.Context) ([]sqlc.Trigger, erro
 // lets concurrent schedd replicas each claim disjoint row sets —
 // ADR-099 PR-C precedent for claim_job_tasks.
 func (s *PgStore) ClaimTriggerRecords(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error) {
-	return s.triggerQueries().ClaimTriggerRecords(ctx, s.pool, sqlc.ClaimTriggerRecordsParams{TriggerID: mustPgUUID(triggerID), Limit: limit})
+	rows, err := s.triggerQueries().ClaimTriggerRecords(ctx, s.pool, sqlc.ClaimTriggerRecordsParams{TriggerID: mustPgUUID(triggerID), Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlc.TriggerRecord, len(rows))
+	for i, r := range rows {
+		out[i] = claimTriggerRecordRowToTriggerRecord(r)
+	}
+	return out, nil
 }
 
 // InsertTriggerRecord persists a single broker-delivered record
@@ -21065,7 +21516,15 @@ func (s *PgStore) TriggerRecordIDByItemIdentifier(ctx context.Context, triggerID
 // ListTriggerRecordsForTrigger reads the records for a trigger in
 // dispatch-time order. Used by GET /v1/triggers/{id}/records.
 func (s *PgStore) ListTriggerRecordsForTrigger(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error) {
-	return s.triggerQueries().ListTriggerRecordsForTrigger(ctx, s.pool, sqlc.ListTriggerRecordsForTriggerParams{TriggerID: mustPgUUID(triggerID), Limit: limit})
+	rows, err := s.triggerQueries().ListTriggerRecordsForTrigger(ctx, s.pool, sqlc.ListTriggerRecordsForTriggerParams{TriggerID: mustPgUUID(triggerID), Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlc.TriggerRecord, len(rows))
+	for i, r := range rows {
+		out[i] = listTriggerRecordRowToTriggerRecord(r)
+	}
+	return out, nil
 }
 
 // triggerQueries returns a fresh sqlc.Queries for the trigger table.
@@ -21075,6 +21534,122 @@ func (s *PgStore) ListTriggerRecordsForTrigger(ctx context.Context, triggerID st
 // hazard if PgStore ever pools across multiple DB connections in a
 // future scale-out.
 func (s *PgStore) triggerQueries() *sqlc.Queries { return sqlc.New() }
+
+// triggerRowToTrigger converts a sqlc-generated TriggerByIDRow back to
+// the model type. sqlc v1.31 emits a dedicated Row struct per query
+// even when the column set matches the underlying model; the
+// conversion is mechanical and cheap (struct copy). Pre-v1.31 deduped
+// Row → Model automatically.
+func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
+	return sqlc.Trigger{
+		ID:                   r.ID,
+		AccountID:            r.AccountID,
+		AppID:                r.AppID,
+		Kind:                 r.Kind,
+		Slug:                 r.Slug,
+		Enabled:              r.Enabled,
+		Config:               r.Config,
+		BatchSizeMax:         r.BatchSizeMax,
+		BatchWindowMs:        r.BatchWindowMs,
+		MaxAttempts:          r.MaxAttempts,
+		CronID:               r.CronID,
+		Source:               r.Source,
+		CreatedAt:            r.CreatedAt,
+		UpdatedAt:            r.UpdatedAt,
+		PayloadMaxBytes:      r.PayloadMaxBytes,
+		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
+		FilterCriteria:       r.FilterCriteria,
+	}
+}
+
+// triggerListRowToTrigger mirrors triggerRowToTrigger for the
+// ListTriggersForApp query. Field set is identical (the queries.sql
+// comments explicitly call this out); the helper exists because sqlc
+// emits one Row struct per :many query.
+func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
+	return sqlc.Trigger{
+		ID:                   r.ID,
+		AccountID:            r.AccountID,
+		AppID:                r.AppID,
+		Kind:                 r.Kind,
+		Slug:                 r.Slug,
+		Enabled:              r.Enabled,
+		Config:               r.Config,
+		BatchSizeMax:         r.BatchSizeMax,
+		BatchWindowMs:        r.BatchWindowMs,
+		MaxAttempts:          r.MaxAttempts,
+		CronID:               r.CronID,
+		Source:               r.Source,
+		CreatedAt:            r.CreatedAt,
+		UpdatedAt:            r.UpdatedAt,
+		PayloadMaxBytes:      r.PayloadMaxBytes,
+		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
+		FilterCriteria:       r.FilterCriteria,
+	}
+}
+
+// triggerEnabledRowToTrigger mirrors triggerRowToTrigger for the
+// ListEnabledTriggers query.
+func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
+	return sqlc.Trigger{
+		ID:                   r.ID,
+		AccountID:            r.AccountID,
+		AppID:                r.AppID,
+		Kind:                 r.Kind,
+		Slug:                 r.Slug,
+		Enabled:              r.Enabled,
+		Config:               r.Config,
+		BatchSizeMax:         r.BatchSizeMax,
+		BatchWindowMs:        r.BatchWindowMs,
+		MaxAttempts:          r.MaxAttempts,
+		CronID:               r.CronID,
+		Source:               r.Source,
+		CreatedAt:            r.CreatedAt,
+		UpdatedAt:            r.UpdatedAt,
+		PayloadMaxBytes:      r.PayloadMaxBytes,
+		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
+		FilterCriteria:       r.FilterCriteria,
+	}
+}
+
+// claimTriggerRecordRowToTriggerRecord converts a ClaimTriggerRecordsRow
+// back to the model type. Same sqlc v1.31 dedicated-Row pattern as the
+// trigger row helpers above.
+func claimTriggerRecordRowToTriggerRecord(r sqlc.ClaimTriggerRecordsRow) sqlc.TriggerRecord {
+	return sqlc.TriggerRecord{
+		ID:               r.ID,
+		TriggerID:        r.TriggerID,
+		ItemIdentifier:   r.ItemIdentifier,
+		Payload:          r.Payload,
+		Headers:          r.Headers,
+		Metadata:         r.Metadata,
+		State:            r.State,
+		Attempts:         r.Attempts,
+		NextFireAt:       r.NextFireAt,
+		ReceivedAt:       r.ReceivedAt,
+		LastError:        r.LastError,
+		LastDispatchedAt: r.LastDispatchedAt,
+	}
+}
+
+// listTriggerRecordRowToTriggerRecord converts a ListTriggerRecordsForTriggerRow
+// back to the model type.
+func listTriggerRecordRowToTriggerRecord(r sqlc.ListTriggerRecordsForTriggerRow) sqlc.TriggerRecord {
+	return sqlc.TriggerRecord{
+		ID:               r.ID,
+		TriggerID:        r.TriggerID,
+		ItemIdentifier:   r.ItemIdentifier,
+		Payload:          r.Payload,
+		Headers:          r.Headers,
+		Metadata:         r.Metadata,
+		State:            r.State,
+		Attempts:         r.Attempts,
+		NextFireAt:       r.NextFireAt,
+		ReceivedAt:       r.ReceivedAt,
+		LastError:        r.LastError,
+		LastDispatchedAt: r.LastDispatchedAt,
+	}
+}
 
 // parsePgUUID decodes a hyphenated hex string UUID into pgtype.UUID.
 // Used at the seam between the Store interface (string-typed) and

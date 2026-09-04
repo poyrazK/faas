@@ -1758,6 +1758,21 @@ type Deployment struct {
 	// deployments_last_auto_rollback_reason_check.
 	LastAutoRollbackAt     *time.Time `json:"last_auto_rollback_at,omitempty"`
 	LastAutoRollbackReason string     `json:"last_auto_rollback_reason,omitempty"`
+	// SnapshotMissCount is the running tally of snapshot-fetch
+	// failures on this deployment (Workstream B, issue #1184, 00585).
+	// The wake flow (pkg/sched/snapshot_backoff.go) increments on
+	// every miss; the recovery arbiter resets to 0 after a
+	// successful migrate-or-recreate sweep restores the
+	// destination's snapshot set.
+	SnapshotMissCount int `json:"snapshot_miss_count,omitempty"`
+	// SnapshotMissLastAt is the wall-clock of the most recent miss.
+	// nil if no miss has been recorded yet.
+	SnapshotMissLastAt *time.Time `json:"snapshot_miss_last_at,omitempty"`
+	// SnapshotMissBackoffUntil is the Retry-After ceiling: while
+	// > now(), the wake flow short-circuits with HTTP 429 + the
+	// RFC 7231 Retry-After header set to the remaining seconds.
+	// Capped exponential: 5s base, 300s max.
+	SnapshotMissBackoffUntil *time.Time `json:"snapshot_miss_backoff_until,omitempty"`
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot
@@ -3375,6 +3390,65 @@ type ComputeNode struct {
 	// per-node inconsistency detection (PR-3a, ADR-110). nil on
 	// pre-PR-3a rows (treated as 0); never decreases.
 	Generation *int
+	// Lifecycle is the 4-state enum added by 00579 (Workstream B,
+	// issue #1184): 'active' | 'draining' | 'unavailable' |
+	// 'recovering'. The legacy Active bool is a STORED GENERATED
+	// column derived from this; readers can still use Active and
+	// get the same answer. Writers must go through SetNodeLifecycle
+	// (CAS) so the arbiter and the drain handler can't race.
+	Lifecycle NodeLifecycle
+	// DrainInitiatedAt is stamped when lifecycle flips to 'draining'.
+	// nil until the first drain request lands; nil after a successful
+	// reactivate (the column is reused on the next drain).
+	DrainInitiatedAt *time.Time
+	// DrainCompletedAt is stamped when the recovery arbiter confirms
+	// zero live instances remain and flips lifecycle back to 'active'.
+	// nil between drains and on first-time-only nodes.
+	DrainCompletedAt *time.Time
+	// RecoveryInitiatedAt is stamped when lifecycle flips to
+	// 'recovering'. nil until the first heartbeat succeeds on a node
+	// that was previously 'unavailable'.
+	RecoveryInitiatedAt *time.Time
+	// LastRecoveryOutcome is the arbiter's verdict on the most recent
+	// migrate-or-recreate sweep — 'succeeded' | 'failed' | 'partial'.
+	// nil on a never-recovered node. The DB CHECK constraint
+	// (00582) rejects values outside this closed set.
+	LastRecoveryOutcome *string
+}
+
+// NodeLifecycle is the 4-state enum from 00579. Constants mirror the
+// SQL values so the schedd-side switch statements can use named
+// identifiers without re-typing strings. Order matters for sort
+// predicates in the recovery arbiter's listings — keep 'active' first
+// so the chooser's preferred state is the zero value.
+type NodeLifecycle string
+
+const (
+	NodeLifecycleActive      NodeLifecycle = "active"
+	NodeLifecycleDraining    NodeLifecycle = "draining"
+	NodeLifecycleUnavailable NodeLifecycle = "unavailable"
+	NodeLifecycleRecovering  NodeLifecycle = "recovering"
+)
+
+// IsAdmitting returns true for lifecycle states that the placement
+// chooser should consider when assigning new wakes. 'draining' is
+// intentionally excluded: a node in operator-initiated drain must
+// not receive new traffic until the operator explicitly reactives it.
+func (l NodeLifecycle) IsAdmitting() bool {
+	return l == NodeLifecycleActive || l == NodeLifecycleRecovering
+}
+
+// RecoveryInstance is the per-instance view returned by
+// InstanceListByNodeForRecovery — the minimum tuple the arbiter
+// needs to make a live-migrate-vs-recreate decision. Wider context
+// (account_id, app metadata) is reachable via the existing app /
+// deployment joins in the handler layer; the per-tick hot loop
+// doesn't pay for it here.
+type RecoveryInstance struct {
+	ID           string
+	State        string // 'running' | 'cold_booting' | 'waking' | ...
+	AppID        string
+	DeploymentID string
 }
 
 // ComputeNodeHeartbeat is one row in the append-only

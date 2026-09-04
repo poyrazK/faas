@@ -424,6 +424,10 @@ const (
 	// bounds it at 1 second so the wire always emits a non-zero
 	// hint.
 	CodeWaitForWarm = "wait_for_warm"
+	// CodeSnapshotBackoff marks a deployment whose snapshot cache has
+	// repeatedly missed. The wake is temporarily rejected so retries do not
+	// create an unbounded cold-boot/capacity loop; Retry-After is authoritative.
+	CodeSnapshotBackoff = "snapshot_backoff"
 	// CodeMirrorSlotAtCapacity (issue #72 / ADR-125 PR-A3) is the
 	// per-rule mirror VM concurrency cap reached. Wire shape
 	// mirrors CodeWaitForWarm (gRPC ResourceExhausted, HTTP 503):
@@ -494,6 +498,10 @@ const (
 	// than "we deliberately refused". Use this for any 500 where the
 	// handler can't recover; pair with api.ErrInternal for a one-liner.
 	CodeInternal = "internal_error"
+	// CodeNotImplemented identifies a deliberately unavailable capability.
+	// It maps to HTTP 501 and gRPC Unimplemented so clients can distinguish
+	// an unsupported deployment seam from an unexpected server failure.
+	CodeNotImplemented = "not_implemented"
 	// CodeBadRequest is returned by handlers for a 400 on a
 	// malformed inbound body that isn't covered by a more specific
 	// code (e.g. the validate rule's body-read failure). Distinct
@@ -1535,7 +1543,7 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
-	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm,
+	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeMirrorSlotAtCapacity:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
@@ -1560,6 +1568,8 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound:
 		return http.StatusNotFound
+	case CodeNotImplemented:
+		return http.StatusNotImplemented
 	// ADR-124 deployment queue controls. Cancel-of-live +
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
@@ -2022,6 +2032,20 @@ func ErrWaitForWarm(cooldownS int, l Limits, observed int) *Problem {
 		WithLimit(int64(cooldownS), int64(observed)).
 		WithDocs(docsBase+"/scaling-policy#cooldown").
 		WithHeader("Retry-After", strconv.Itoa(cooldownS))
+}
+
+// ErrSnapshotBackoff tells the caller to retry after the deployment's
+// snapshot-miss cooldown. This is platform back-pressure, not a customer
+// quota failure, so it uses 503 and carries a positive Retry-After value.
+func ErrSnapshotBackoff(retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusServiceUnavailable, CodeSnapshotBackoff,
+		"Snapshot temporarily unavailable",
+		"The deployment snapshot is temporarily unavailable; retry after the indicated delay.").
+		WithDocs("https://gregale.dev/status").
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS))
 }
 
 // ErrEdgeRuleMaintenance is returned by the gatewayd hot-path
@@ -2851,6 +2875,43 @@ const (
 	// cannot proceed. Distinct from CodeRolloutNotStuck because
 	// the failure mode is "already done" vs "not stuck yet".
 	CodeRolloutStateInvalid = "rollout_state_invalid"
+
+	// Workstream B / issue #1184 / ADR-137: compute-node
+	// lifecycle error codes. The four codes below back the new
+	// POST /v1/compute-nodes/{name}/drain handler and the
+	// recovery arbiter's status responses. Kept distinct from
+	// each other so the dashboard's recovery timeline can render
+	// the precise failure mode without parsing the human-readable
+	// `detail` field.
+	//
+	// CodeNodeDraining — 409 emitted when a placement / migration
+	// / rebalance request targets a node whose lifecycle is
+	// already 'draining' (the request is a no-op or duplicates an
+	// in-flight drain). Distinct from CodeNodeLifecycleInvalid
+	// because the lifecycle is valid; the operator just asked for
+	// the same drain twice.
+	CodeNodeDraining = "node_draining"
+	// CodeNodeNotRecoverable — 422 emitted when the recovery
+	// arbiter cannot restore a node because no healthy peer
+	// exists with sufficient headroom for live-migration and the
+	// node's instances have no usable snapshots to recreate from.
+	// The dashboard renders this as a hard-failure badge on the
+	// operator's fleet view (the recovery sweep will not retry
+	// until the operator intervenes).
+	CodeNodeNotRecoverable = "node_not_recoverable"
+	// CodeNodeRecoveryInProgress — 409 emitted when a drain or
+	// reactivate request targets a node whose lifecycle is
+	// 'recovering'. The recovery arbiter owns this node until
+	// last_recovery_outcome lands; concurrent operator actions
+	// are rejected so the sweep is not perturbed mid-tick.
+	CodeNodeRecoveryInProgress = "node_recovery_in_progress"
+	// CodeNodeLifecycleInvalid — 422 emitted when the requested
+	// lifecycle transition is not in the closed state-machine
+	// (e.g. 'draining' → 'unavailable' directly). The drain
+	// handler emits this for malformed operator inputs; the
+	// apid-validate pipeline uses it for any future surface that
+	// accepts a lifecycle payload from the operator UI.
+	CodeNodeLifecycleInvalid = "node_lifecycle_invalid"
 )
 
 // ErrPlanCronsNotAllowed is returned by apid's createCron handler
@@ -4997,4 +5058,52 @@ func ErrRolloutStateInvalid(state string) *Problem {
 		"Rollout state does not permit recovery",
 		fmt.Sprintf("rollout_state=%q; recovery requires rollout_state in {pending, rolling_out}.", state)).
 		WithDocs(docsBase + "/deploys#recover-rollout")
+}
+
+// ErrNodeDraining (Workstream B / issue #1184 / ADR-137) is the
+// 409 the drain handler + recovery arbiter emit when an operator
+// request targets a node whose lifecycle is already 'draining'.
+// The detail names the lifecycle state so the operator UI can
+// render the conflict without re-querying state.
+func ErrNodeDraining(nodeName, currentLifecycle string) *Problem {
+	return NewProblem(http.StatusConflict, CodeNodeDraining,
+		"Compute node is already draining",
+		fmt.Sprintf("node=%q lifecycle=%q; drain is already in progress.", nodeName, currentLifecycle)).
+		WithDocs(docsBase + "/admin/compute-nodes#drain")
+}
+
+// ErrNodeNotRecoverable (Workstream B / issue #1184) is the 422
+// the recovery arbiter emits when no healthy peer has headroom
+// AND the node's instances have no usable snapshot to recreate
+// from. The operator UI renders this as a hard-failure badge —
+// recovery will not retry until the operator intervenes.
+func ErrNodeNotRecoverable(nodeName, lastOutcome string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeNodeNotRecoverable,
+		"Compute node cannot be recovered",
+		fmt.Sprintf("node=%q last_recovery_outcome=%q; no peer with headroom and no snapshot to recreate from.", nodeName, lastOutcome)).
+		WithDocs(docsBase + "/admin/compute-nodes#recovery")
+}
+
+// ErrNodeRecoveryInProgress (Workstream B / issue #1184) is the
+// 409 the drain / reactivate handler emits when the requested
+// transition would race the recovery arbiter's sweep. Operators
+// retry once the sweep lands; the dashboard renders the in-flight
+// recovery as a spinner rather than an error.
+func ErrNodeRecoveryInProgress(nodeName string) *Problem {
+	return NewProblem(http.StatusConflict, CodeNodeRecoveryInProgress,
+		"Compute node recovery in progress",
+		fmt.Sprintf("node=%q; the recovery arbiter owns this node until last_recovery_outcome lands.", nodeName)).
+		WithDocs(docsBase + "/admin/compute-nodes#recovery")
+}
+
+// ErrNodeLifecycleInvalid (Workstream B / issue #1184) is the 422
+// the drain handler emits when the requested lifecycle transition
+// is not in the closed state-machine (e.g. 'draining' →
+// 'unavailable' directly). The detail names the transition so
+// the operator UI can surface a precise failure.
+func ErrNodeLifecycleInvalid(from, to string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeNodeLifecycleInvalid,
+		"Compute node lifecycle transition invalid",
+		fmt.Sprintf("cannot transition lifecycle from %q to %q.", from, to)).
+		WithDocs(docsBase + "/admin/compute-nodes#lifecycle")
 }

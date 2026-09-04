@@ -205,6 +205,19 @@ type Server struct {
 	// codes.Unavailable, except for the idempotent
 	// Phase 4 / 5 ack paths which succeed.
 	migrations *migrationTracker
+	// migrationStore is the durable instance-row view used by the
+	// destination Adopt handler and by lease expiry reconciliation.
+	// The source tracker is intentionally still authoritative for
+	// Ack/Cancel: after a successful commit the database row no
+	// longer has state='migrating', but the source still owns the
+	// paused VM until Ack destroys it.
+	migrationStore state.Store
+	// nodeID is this vmmd's registered compute-node identity. Lease
+	// expiry uses it to distinguish a source VM that still belongs
+	// here from a row already committed to a peer; without that
+	// distinction it could either strand a paused source or resume
+	// a VM after ownership moved away.
+	nodeID string
 	// streamBridges owns the reusable v2 bridge process and H2C transport for
 	// each live instance. It is lazy so tests and legacy/v1 traffic pay no
 	// startup cost until the optimized path is actually used.
@@ -268,6 +281,38 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 func (s *Server) WithEvents(p *events.Platform) *Server {
 	s.events = p
 	return s
+}
+
+// WithMigrationStore wires the durable instance-row view required by
+// cross-node migration adoption and lease-expiry cleanup. It is optional so
+// legacy/unit-test server fixtures can continue to exercise token tracking
+// without a database.
+func (s *Server) WithMigrationStore(store state.Store) *Server {
+	if s != nil {
+		s.migrationStore = store
+	}
+	return s
+}
+
+// WithNodeID wires the local compute-node identity used by migration
+// lease-expiry reconciliation. It is optional for legacy single-box and
+// unit-test fixtures that do not have a compute_nodes row.
+func (s *Server) WithNodeID(nodeID string) *Server {
+	if s != nil {
+		s.nodeID = strings.TrimSpace(nodeID)
+	}
+	return s
+}
+
+// MigrationLeaser exposes the server's migration tracker through the common
+// lease interface. The returned adapter shares the exact tracker used by the
+// Phase 1/3/4/5 handlers, so callers cannot accidentally create a second
+// lease namespace for this vmmd.
+func (s *Server) MigrationLeaser() sched.Leaser[any] {
+	if s == nil || s.migrations == nil {
+		return nil
+	}
+	return NewMigrationLeaser(s.migrations)
 }
 
 // WithFlowCounter wires the compute-side conntrack reader used by Stats.

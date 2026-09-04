@@ -157,6 +157,37 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 	return wr, nil
 }
 
+// toMigrationWakeRequest adapts the migration-specific envelope into the
+// normal snapshot wake path. Keeping one adapter means adoption receives the
+// same environment, cgroup, network, and restore/fallback behavior as an
+// ordinary CreateFromSnapshot call.
+func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstanceRequest) (fcvm.WakeRequest, error) {
+	if req == nil {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Missing request", "request is required").
+			WithDocs("https://" + wire.DocsHost + "/vmmd#adopt")
+	}
+	wr, err := toWakeRequest(ctx, &vmmdpb.CreateFromSnapshotRequest{
+		Instance:  req.GetInstanceId(),
+		App:       req.GetAppSpec(),
+		Plan:      req.GetPlan(),
+		AccountId: req.GetAccountId(),
+		Snapshot: &vmmdpb.SnapshotRef{
+			DeploymentId:      req.GetDeploymentId(),
+			StorageKey:        req.GetMemStorageKey(),
+			VmstateStorageKey: req.GetVmstateStorageKey(),
+			FcVersion:         req.GetFcVersion(),
+		},
+	})
+	if err != nil {
+		return fcvm.WakeRequest{}, err
+	}
+	// A migration caller may not have propagated correlation metadata. The
+	// explicit request field is authoritative for the Instance record.
+	wr.DeploymentID = req.GetDeploymentId()
+	return wr, nil
+}
+
 // toColdBootRequest flattens CreateColdBootRequest into an fcvm.WakeRequest
 // with no snapshot. Same validations as toWakeRequest minus snapshot.
 func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, error) {

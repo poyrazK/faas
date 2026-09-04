@@ -1596,11 +1596,11 @@ func TestPg_ComputeNodes_RegionZone_ProjectedByAllReads(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		insert into compute_nodes
 		    (name, target_url, vpcpus, mem_mb, max_concurrency,
-		     admission_ceiling_mb, active, region, zone)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		     admission_ceiling_mb, lifecycle, region, zone)
+		values ($1, $2, $3, $4, $5, $6, 'active'::compute_node_lifecycle, $7, $8)
 		returning id
 	`, "rgz-with-vals", "unix:///run/faas/vmmd.sock",
-		80, 28000, 100, 23800, true, "eu-fra", "eu-fra-1").Scan(&idWithVals); err != nil {
+		80, 28000, 100, 23800, "eu-fra", "eu-fra-1").Scan(&idWithVals); err != nil {
 		t.Fatalf("insert with region/zone: %v", err)
 	}
 
@@ -1611,11 +1611,11 @@ func TestPg_ComputeNodes_RegionZone_ProjectedByAllReads(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		insert into compute_nodes
 		    (name, target_url, vpcpus, mem_mb, max_concurrency,
-		     admission_ceiling_mb, active)
-		values ($1, $2, $3, $4, $5, $6, $7)
+		     admission_ceiling_mb)
+		values ($1, $2, $3, $4, $5, $6)
 		returning id
 	`, "rgz-null-cols", "unix:///run/faas/vmmd.sock",
-		80, 28000, 100, 23800, true).Scan(&idNullCols); err != nil {
+		80, 28000, 100, 23800).Scan(&idNullCols); err != nil {
 		t.Fatalf("insert with null region/zone: %v", err)
 	}
 
@@ -3553,11 +3553,11 @@ func TestPg_UpsertComputeNodeFromOperator_RoundTripsAllNewColumns(t *testing.T) 
 	if err := pool.QueryRow(ctx, `
 		insert into compute_nodes
 		    (name, target_url, vpcpus, mem_mb, max_concurrency,
-		     admission_ceiling_mb, active)
-		values ($1, $2, $3, $4, $5, $6, $7)
+		     admission_ceiling_mb)
+		values ($1, $2, $3, $4, $5, $6)
 		returning id
 	`, "pr3a-null-cols", "unix:///run/faas/vmmd.sock",
-		2, 1024, 1, 1024, true).Scan(&idNullCols); err != nil {
+		2, 1024, 1, 1024).Scan(&idNullCols); err != nil {
 		t.Fatalf("insert with null PR-3a columns: %v", err)
 	}
 	nullRow, err := s.ComputeNodeByID(ctx, idNullCols)

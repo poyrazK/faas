@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -403,9 +404,22 @@ select id, deployment_id, kind, source_bytes, status, failure_class, log_path, s
 from builds where deployment_id = $1 order by started_at desc nulls last limit 1
 `
 
-func (q *Queries) BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (Build, error) {
+type BuildByDeploymentRow struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	Kind         string
+	SourceBytes  int64
+	Status       string
+	FailureClass pgtype.Text
+	LogPath      pgtype.Text
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+	EnqueuedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error) {
 	row := db.QueryRow(ctx, buildByDeployment, deploymentID)
-	var i Build
+	var i BuildByDeploymentRow
 	err := row.Scan(
 		&i.ID,
 		&i.DeploymentID,
@@ -426,9 +440,22 @@ select id, deployment_id, kind, source_bytes, status, failure_class, log_path, s
 from builds where id = $1
 `
 
-func (q *Queries) BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (Build, error) {
+type BuildByIDRow struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	Kind         string
+	SourceBytes  int64
+	Status       string
+	FailureClass pgtype.Text
+	LogPath      pgtype.Text
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+	EnqueuedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error) {
 	row := db.QueryRow(ctx, buildByID, id)
-	var i Build
+	var i BuildByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.DeploymentID,
@@ -490,20 +517,35 @@ type ClaimTriggerRecordsParams struct {
 	Limit     int32
 }
 
+type ClaimTriggerRecordsRow struct {
+	ID               pgtype.UUID
+	TriggerID        pgtype.UUID
+	ItemIdentifier   string
+	Payload          []byte
+	Headers          []byte
+	Metadata         []byte
+	State            string
+	Attempts         int32
+	NextFireAt       pgtype.Timestamptz
+	ReceivedAt       pgtype.Timestamptz
+	LastError        pgtype.Text
+	LastDispatchedAt pgtype.Timestamptz
+}
+
 // FOR UPDATE SKIP LOCKED is the ADR-099 PR-C claim_job_tasks
 // precedent: concurrent schedd replicas each claim disjoint row
 // sets. Returns at most $1 records in (pending, retry) state whose
 // next_fire_at <= now(). The trigger_id constraint scopes the
 // claim so the poller drains one trigger at a time.
-func (q *Queries) ClaimTriggerRecords(ctx context.Context, db DBTX, arg ClaimTriggerRecordsParams) ([]TriggerRecord, error) {
+func (q *Queries) ClaimTriggerRecords(ctx context.Context, db DBTX, arg ClaimTriggerRecordsParams) ([]ClaimTriggerRecordsRow, error) {
 	rows, err := db.Query(ctx, claimTriggerRecords, arg.TriggerID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []TriggerRecord{}
+	items := []ClaimTriggerRecordsRow{}
 	for rows.Next() {
-		var i TriggerRecord
+		var i ClaimTriggerRecordsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.TriggerID,
@@ -716,14 +758,27 @@ type CreateBuildParams struct {
 	LogPath      pgtype.Text
 }
 
-func (q *Queries) CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParams) (Build, error) {
+type CreateBuildRow struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	Kind         string
+	SourceBytes  int64
+	Status       string
+	FailureClass pgtype.Text
+	LogPath      pgtype.Text
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+	EnqueuedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParams) (CreateBuildRow, error) {
 	row := db.QueryRow(ctx, createBuild,
 		arg.DeploymentID,
 		arg.Kind,
 		arg.SourceBytes,
 		arg.LogPath,
 	)
-	var i Build
+	var i CreateBuildRow
 	err := row.Scan(
 		&i.ID,
 		&i.DeploymentID,
@@ -1425,6 +1480,72 @@ func (q *Queries) DeploymentByID(ctx context.Context, db DBTX, id pgtype.UUID) (
 		&i.Error,
 		&i.CreatedAt,
 	)
+	return i, err
+}
+
+const deploymentClearSnapshotBackoff = `-- name: DeploymentClearSnapshotBackoff :exec
+UPDATE deployments
+SET snapshot_miss_count         = 0,
+    snapshot_miss_last_at       = NULL,
+    snapshot_miss_backoff_until = NULL
+WHERE id = $1
+`
+
+// Called by the recovery arbiter after a successful migrate-or-
+// recreate sweep has restored the destination's snapshot set, OR by
+// the wake flow on a successful cold boot. Resets the counter and
+// clears the backoff_until so future wakes don't short-circuit.
+func (q *Queries) DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, deploymentClearSnapshotBackoff, id)
+	return err
+}
+
+const deploymentRecordSnapshotMiss = `-- name: DeploymentRecordSnapshotMiss :exec
+UPDATE deployments
+SET snapshot_miss_count          = snapshot_miss_count + 1,
+    snapshot_miss_last_at        = now(),
+    snapshot_miss_backoff_until  = $2
+WHERE id = $1
+`
+
+type DeploymentRecordSnapshotMissParams struct {
+	ID                       pgtype.UUID
+	SnapshotMissBackoffUntil pgtype.Timestamptz
+}
+
+// Bump snapshot_miss_count + stamp Retry-After until. Called by the
+// wake flow when the snapshot-fetch path fails (stale cache, missing
+// replica on the destination, etc.). Capped-exponential backoff math
+// lives in pkg/sched/snapshot_backoff.go; this query is the state
+// write only.
+//
+// $1 = deployment id
+// $2 = backoff_until timestamp
+func (q *Queries) DeploymentRecordSnapshotMiss(ctx context.Context, db DBTX, arg DeploymentRecordSnapshotMissParams) error {
+	_, err := db.Exec(ctx, deploymentRecordSnapshotMiss, arg.ID, arg.SnapshotMissBackoffUntil)
+	return err
+}
+
+const deploymentSnapshotBackoffActive = `-- name: DeploymentSnapshotBackoffActive :one
+SELECT snapshot_miss_count, snapshot_miss_backoff_until
+FROM deployments
+WHERE id = $1
+  AND snapshot_miss_backoff_until IS NOT NULL
+`
+
+type DeploymentSnapshotBackoffActiveRow struct {
+	SnapshotMissCount        int32
+	SnapshotMissBackoffUntil pgtype.Timestamptz
+}
+
+// The wake-side gate. Returns the row while a backoff timestamp is
+// present; the store computes whether it is still active. Returning
+// expired rows preserves the miss count for the next backoff stamp.
+// The partial index `deployments_snapshot_backoff_idx` covers this lookup.
+func (q *Queries) DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error) {
+	row := db.QueryRow(ctx, deploymentSnapshotBackoffActive, id)
+	var i DeploymentSnapshotBackoffActiveRow
+	err := row.Scan(&i.SnapshotMissCount, &i.SnapshotMissBackoffUntil)
 	return i, err
 }
 
@@ -2278,6 +2399,54 @@ func (q *Queries) InstanceByID(ctx context.Context, db DBTX, id pgtype.UUID) (In
 		&i.ParkedAt,
 	)
 	return i, err
+}
+
+const instanceListByNodeForRecovery = `-- name: InstanceListByNodeForRecovery :many
+SELECT id, state, app_id, deployment_id
+FROM instances
+WHERE node_id = $1
+  AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
+ORDER BY started_at
+`
+
+type InstanceListByNodeForRecoveryRow struct {
+	ID           pgtype.UUID
+	State        string
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+// Live instances on a specific node — input to the arbiter's
+// per-instance decision. Limited to states the arbiter can act on:
+// 'running' (live-migrate), 'cold_booting' (recreate, the snapshot
+// may not have made it to the destination yet), 'waking' (recreate —
+// same reason). The arbiter only needs the
+// (app_id, deployment_id, state, id) tuple — account_id is reachable
+// via the existing app/deployment joins if needed by downstream
+// code, but the per-tick hot loop doesn't pay for it here.
+func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, nodeID pgtype.UUID) ([]InstanceListByNodeForRecoveryRow, error) {
+	rows, err := db.Query(ctx, instanceListByNodeForRecovery, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InstanceListByNodeForRecoveryRow{}
+	for rows.Next() {
+		var i InstanceListByNodeForRecoveryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.State,
+			&i.AppID,
+			&i.DeploymentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const isMailSuppressed = `-- name: IsMailSuppressed :one
@@ -3408,6 +3577,26 @@ select id, account_id, app_id, kind, slug, enabled, config,
 from triggers where enabled = true
 `
 
+type ListEnabledTriggersRow struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Kind                 string
+	Slug                 string
+	Enabled              bool
+	Config               []byte
+	BatchSizeMax         int32
+	BatchWindowMs        int32
+	MaxAttempts          int32
+	CronID               pgtype.UUID
+	Source               pgtype.Text
+	PayloadMaxBytes      int32
+	BrokerPoisonStrategy string
+	FilterCriteria       []byte
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 // Pulled by schedd's runTriggerTick on each 1-second cadence. The
 // query is unfiltered by kind because the dispatch tick reads
 // triggers.enabled = true regardless of kind and dispatches via the
@@ -3416,15 +3605,15 @@ from triggers where enabled = true
 // ADR-118 / issue #757: filter_criteria is included so the dispatch
 // tick can evaluate per-record predicates without a second round-trip
 // (the column is JSONB; empty/null means "no filter").
-func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]Trigger, error) {
+func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error) {
 	rows, err := db.Query(ctx, listEnabledTriggers)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Trigger{}
+	items := []ListEnabledTriggersRow{}
 	for rows.Next() {
-		var i Trigger
+		var i ListEnabledTriggersRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.AccountID,
@@ -4084,17 +4273,32 @@ type ListTriggerRecordsForTriggerParams struct {
 	Limit     int32
 }
 
+type ListTriggerRecordsForTriggerRow struct {
+	ID               pgtype.UUID
+	TriggerID        pgtype.UUID
+	ItemIdentifier   string
+	Payload          []byte
+	Headers          []byte
+	Metadata         []byte
+	State            string
+	Attempts         int32
+	NextFireAt       pgtype.Timestamptz
+	ReceivedAt       pgtype.Timestamptz
+	LastError        pgtype.Text
+	LastDispatchedAt pgtype.Timestamptz
+}
+
 // Used by GET /v1/triggers/{id}/records (dashboard + apid handler).
 // Returns records in dispatch-time order with the standard projection.
-func (q *Queries) ListTriggerRecordsForTrigger(ctx context.Context, db DBTX, arg ListTriggerRecordsForTriggerParams) ([]TriggerRecord, error) {
+func (q *Queries) ListTriggerRecordsForTrigger(ctx context.Context, db DBTX, arg ListTriggerRecordsForTriggerParams) ([]ListTriggerRecordsForTriggerRow, error) {
 	rows, err := db.Query(ctx, listTriggerRecordsForTrigger, arg.TriggerID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []TriggerRecord{}
+	items := []ListTriggerRecordsForTriggerRow{}
 	for rows.Next() {
-		var i TriggerRecord
+		var i ListTriggerRecordsForTriggerRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.TriggerID,
@@ -4128,18 +4332,38 @@ select id, account_id, app_id, kind, slug, enabled, config,
 from triggers where app_id = $1 order by created_at desc
 `
 
+type ListTriggersForAppRow struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Kind                 string
+	Slug                 string
+	Enabled              bool
+	Config               []byte
+	BatchSizeMax         int32
+	BatchWindowMs        int32
+	MaxAttempts          int32
+	CronID               pgtype.UUID
+	Source               pgtype.Text
+	PayloadMaxBytes      int32
+	BrokerPoisonStrategy string
+	FilterCriteria       []byte
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 // Same rationale as TriggerByID — full Trigger projection so
 // sqlc's generated Row type matches the existing pgstore return
 // type. (commit 6 of the issue #757 mega-PR.)
-func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]Trigger, error) {
+func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error) {
 	rows, err := db.Query(ctx, listTriggersForApp, appID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Trigger{}
+	items := []ListTriggersForAppRow{}
 	for rows.Next() {
-		var i Trigger
+		var i ListTriggersForAppRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.AccountID,
@@ -4246,6 +4470,592 @@ update trigger_records
 func (q *Queries) MarkTriggerRecordSucceeded(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, markTriggerRecordSucceeded, id)
 	return err
+}
+
+const nodeGet = `-- name: NodeGet :one
+
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE id = $1
+`
+
+type NodeGetRow struct {
+	ID                  pgtype.UUID
+	Name                string
+	TargetUrl           string
+	Vpcpus              int32
+	MemMb               int32
+	MaxConcurrency      int32
+	AdmissionCeilingMb  int32
+	Lifecycle           string
+	Active              pgtype.Bool
+	LastHeartbeatAt     pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	Region              pgtype.Text
+	Zone                pgtype.Text
+	ScheddTargetUrl     pgtype.Text
+	VcpuBudget          int32
+	PublicIp            *netip.Addr
+	PublicIpSetAt       pgtype.Timestamptz
+	ReleaseID           pgtype.Text
+	ManifestHash        pgtype.Text
+	HostCertificate     pgtype.Text
+	CertFingerprint     pgtype.Text
+	Role                pgtype.Text
+	Generation          pgtype.Int4
+	GatewayTargetUrl    pgtype.Text
+	DrainInitiatedAt    pgtype.Timestamptz
+	DrainCompletedAt    pgtype.Timestamptz
+	RecoveryInitiatedAt pgtype.Timestamptz
+	LastRecoveryOutcome pgtype.Text
+}
+
+// ----------------------------------------------------------------------
+// NodeLifecycleStore (Workstream B, issue #1184)
+//
+// 12 queries wrap the recovery arbiter's DB I/O. The arbiter reads via
+// NodeGet/NodeList/NodeListRecoverable/NodeListDrainable and writes via
+// NodeSetLifecycle (CAS on the prior lifecycle, so two competing writers
+// can't race from 'active'→'draining' vs 'active'→'unavailable'). Drain
+// initiation stamps `drain_initiated_at`; the drain-complete sweep marks
+// `drain_completed_at` once the last live instance migrates or recreates.
+//
+// DeploymentRecordSnapshotMiss / DeploymentClearSnapshotBackoff are the
+// per-deployment backoff state added by 00585 — wake flow records a
+// miss and stamps a `Retry-After` until, the recovery arbiter clears
+// it after a successful migrate-or-recreate sweep. Partial index
+// `deployments_snapshot_backoff_idx` makes the wake-side check an
+// index-only scan.
+// ----------------------------------------------------------------------
+// Resolve a single compute_nodes row by its UUID. Used by the recovery
+// arbiter's per-tick decision and by the apid drain handler.
+func (q *Queries) NodeGet(ctx context.Context, db DBTX, id pgtype.UUID) (NodeGetRow, error) {
+	row := db.QueryRow(ctx, nodeGet, id)
+	var i NodeGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.TargetUrl,
+		&i.Vpcpus,
+		&i.MemMb,
+		&i.MaxConcurrency,
+		&i.AdmissionCeilingMb,
+		&i.Lifecycle,
+		&i.Active,
+		&i.LastHeartbeatAt,
+		&i.CreatedAt,
+		&i.Region,
+		&i.Zone,
+		&i.ScheddTargetUrl,
+		&i.VcpuBudget,
+		&i.PublicIp,
+		&i.PublicIpSetAt,
+		&i.ReleaseID,
+		&i.ManifestHash,
+		&i.HostCertificate,
+		&i.CertFingerprint,
+		&i.Role,
+		&i.Generation,
+		&i.GatewayTargetUrl,
+		&i.DrainInitiatedAt,
+		&i.DrainCompletedAt,
+		&i.RecoveryInitiatedAt,
+		&i.LastRecoveryOutcome,
+	)
+	return i, err
+}
+
+const nodeGetByName = `-- name: NodeGetByName :one
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE name = $1
+`
+
+type NodeGetByNameRow struct {
+	ID                  pgtype.UUID
+	Name                string
+	TargetUrl           string
+	Vpcpus              int32
+	MemMb               int32
+	MaxConcurrency      int32
+	AdmissionCeilingMb  int32
+	Lifecycle           string
+	Active              pgtype.Bool
+	LastHeartbeatAt     pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	Region              pgtype.Text
+	Zone                pgtype.Text
+	ScheddTargetUrl     pgtype.Text
+	VcpuBudget          int32
+	PublicIp            *netip.Addr
+	PublicIpSetAt       pgtype.Timestamptz
+	ReleaseID           pgtype.Text
+	ManifestHash        pgtype.Text
+	HostCertificate     pgtype.Text
+	CertFingerprint     pgtype.Text
+	Role                pgtype.Text
+	Generation          pgtype.Int4
+	GatewayTargetUrl    pgtype.Text
+	DrainInitiatedAt    pgtype.Timestamptz
+	DrainCompletedAt    pgtype.Timestamptz
+	RecoveryInitiatedAt pgtype.Timestamptz
+	LastRecoveryOutcome pgtype.Text
+}
+
+// Same as NodeGet but by the human-stable name. The apid handler
+// (POST /v1/compute-nodes/{name}/drain) and the recovery arbiter's
+// cold-start reconciliation path both key by name because operator
+// input is name-based.
+func (q *Queries) NodeGetByName(ctx context.Context, db DBTX, name string) (NodeGetByNameRow, error) {
+	row := db.QueryRow(ctx, nodeGetByName, name)
+	var i NodeGetByNameRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.TargetUrl,
+		&i.Vpcpus,
+		&i.MemMb,
+		&i.MaxConcurrency,
+		&i.AdmissionCeilingMb,
+		&i.Lifecycle,
+		&i.Active,
+		&i.LastHeartbeatAt,
+		&i.CreatedAt,
+		&i.Region,
+		&i.Zone,
+		&i.ScheddTargetUrl,
+		&i.VcpuBudget,
+		&i.PublicIp,
+		&i.PublicIpSetAt,
+		&i.ReleaseID,
+		&i.ManifestHash,
+		&i.HostCertificate,
+		&i.CertFingerprint,
+		&i.Role,
+		&i.Generation,
+		&i.GatewayTargetUrl,
+		&i.DrainInitiatedAt,
+		&i.DrainCompletedAt,
+		&i.RecoveryInitiatedAt,
+		&i.LastRecoveryOutcome,
+	)
+	return i, err
+}
+
+const nodeList = `-- name: NodeList :many
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE ($1 = '' OR lifecycle::text = $1)
+ORDER BY name
+`
+
+type NodeListRow struct {
+	ID                  pgtype.UUID
+	Name                string
+	TargetUrl           string
+	Vpcpus              int32
+	MemMb               int32
+	MaxConcurrency      int32
+	AdmissionCeilingMb  int32
+	Lifecycle           string
+	Active              pgtype.Bool
+	LastHeartbeatAt     pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	Region              pgtype.Text
+	Zone                pgtype.Text
+	ScheddTargetUrl     pgtype.Text
+	VcpuBudget          int32
+	PublicIp            *netip.Addr
+	PublicIpSetAt       pgtype.Timestamptz
+	ReleaseID           pgtype.Text
+	ManifestHash        pgtype.Text
+	HostCertificate     pgtype.Text
+	CertFingerprint     pgtype.Text
+	Role                pgtype.Text
+	Generation          pgtype.Int4
+	GatewayTargetUrl    pgtype.Text
+	DrainInitiatedAt    pgtype.Timestamptz
+	DrainCompletedAt    pgtype.Timestamptz
+	RecoveryInitiatedAt pgtype.Timestamptz
+	LastRecoveryOutcome pgtype.Text
+}
+
+// All nodes, optionally filtered by lifecycle. The recovery arbiter
+// passes NULL to enumerate every row on cold-start reconciliation;
+// the placement filter passes lifecycle='active' (via the existing
+// `WHERE active = true` partial-index path — unchanged). $1 is the
+// lifecycle filter; pass the empty string for "any".
+func (q *Queries) NodeList(ctx context.Context, db DBTX, dollar_1 interface{}) ([]NodeListRow, error) {
+	rows, err := db.Query(ctx, nodeList, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NodeListRow{}
+	for rows.Next() {
+		var i NodeListRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.TargetUrl,
+			&i.Vpcpus,
+			&i.MemMb,
+			&i.MaxConcurrency,
+			&i.AdmissionCeilingMb,
+			&i.Lifecycle,
+			&i.Active,
+			&i.LastHeartbeatAt,
+			&i.CreatedAt,
+			&i.Region,
+			&i.Zone,
+			&i.ScheddTargetUrl,
+			&i.VcpuBudget,
+			&i.PublicIp,
+			&i.PublicIpSetAt,
+			&i.ReleaseID,
+			&i.ManifestHash,
+			&i.HostCertificate,
+			&i.CertFingerprint,
+			&i.Role,
+			&i.Generation,
+			&i.GatewayTargetUrl,
+			&i.DrainInitiatedAt,
+			&i.DrainCompletedAt,
+			&i.RecoveryInitiatedAt,
+			&i.LastRecoveryOutcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const nodeListDrainable = `-- name: NodeListDrainable :many
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE lifecycle = 'active'
+  AND NOT EXISTS (
+      SELECT 1 FROM instances
+      WHERE instances.node_id = compute_nodes.id
+        AND instances.state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
+  )
+ORDER BY name
+`
+
+type NodeListDrainableRow struct {
+	ID                  pgtype.UUID
+	Name                string
+	TargetUrl           string
+	Vpcpus              int32
+	MemMb               int32
+	MaxConcurrency      int32
+	AdmissionCeilingMb  int32
+	Lifecycle           string
+	Active              pgtype.Bool
+	LastHeartbeatAt     pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	Region              pgtype.Text
+	Zone                pgtype.Text
+	ScheddTargetUrl     pgtype.Text
+	VcpuBudget          int32
+	PublicIp            *netip.Addr
+	PublicIpSetAt       pgtype.Timestamptz
+	ReleaseID           pgtype.Text
+	ManifestHash        pgtype.Text
+	HostCertificate     pgtype.Text
+	CertFingerprint     pgtype.Text
+	Role                pgtype.Text
+	Generation          pgtype.Int4
+	GatewayTargetUrl    pgtype.Text
+	DrainInitiatedAt    pgtype.Timestamptz
+	DrainCompletedAt    pgtype.Timestamptz
+	RecoveryInitiatedAt pgtype.Timestamptz
+	LastRecoveryOutcome pgtype.Text
+}
+
+// Drainable candidates: lifecycle='active' AND zero live instances.
+// The drain handler refuses to flip lifecycle='draining' for nodes
+// with active traffic (it surfaces RFC 7807 `node_draining_refused`
+// instead) and waits for the operator to clear the load first; this
+// query is the "safe to drain right now" enumeration.
+func (q *Queries) NodeListDrainable(ctx context.Context, db DBTX) ([]NodeListDrainableRow, error) {
+	rows, err := db.Query(ctx, nodeListDrainable)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NodeListDrainableRow{}
+	for rows.Next() {
+		var i NodeListDrainableRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.TargetUrl,
+			&i.Vpcpus,
+			&i.MemMb,
+			&i.MaxConcurrency,
+			&i.AdmissionCeilingMb,
+			&i.Lifecycle,
+			&i.Active,
+			&i.LastHeartbeatAt,
+			&i.CreatedAt,
+			&i.Region,
+			&i.Zone,
+			&i.ScheddTargetUrl,
+			&i.VcpuBudget,
+			&i.PublicIp,
+			&i.PublicIpSetAt,
+			&i.ReleaseID,
+			&i.ManifestHash,
+			&i.HostCertificate,
+			&i.CertFingerprint,
+			&i.Role,
+			&i.Generation,
+			&i.GatewayTargetUrl,
+			&i.DrainInitiatedAt,
+			&i.DrainCompletedAt,
+			&i.RecoveryInitiatedAt,
+			&i.LastRecoveryOutcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const nodeListRecoverable = `-- name: NodeListRecoverable :many
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE lifecycle IN ('unavailable', 'recovering')
+ORDER BY name
+`
+
+type NodeListRecoverableRow struct {
+	ID                  pgtype.UUID
+	Name                string
+	TargetUrl           string
+	Vpcpus              int32
+	MemMb               int32
+	MaxConcurrency      int32
+	AdmissionCeilingMb  int32
+	Lifecycle           string
+	Active              pgtype.Bool
+	LastHeartbeatAt     pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	Region              pgtype.Text
+	Zone                pgtype.Text
+	ScheddTargetUrl     pgtype.Text
+	VcpuBudget          int32
+	PublicIp            *netip.Addr
+	PublicIpSetAt       pgtype.Timestamptz
+	ReleaseID           pgtype.Text
+	ManifestHash        pgtype.Text
+	HostCertificate     pgtype.Text
+	CertFingerprint     pgtype.Text
+	Role                pgtype.Text
+	Generation          pgtype.Int4
+	GatewayTargetUrl    pgtype.Text
+	DrainInitiatedAt    pgtype.Timestamptz
+	DrainCompletedAt    pgtype.Timestamptz
+	RecoveryInitiatedAt pgtype.Timestamptz
+	LastRecoveryOutcome pgtype.Text
+}
+
+// Nodes that need the recovery arbiter's attention. Two lifecycle
+// states qualify:
+//
+//	'unavailable'  → heartbeat gap detected; instances stranded.
+//	'recovering'   → first post-failure ping succeeded; sweep to
+//	                 confirm zero stranded instances.
+//
+// Caller is the recovery arbiter; one tick enumerates both classes
+// and applies the same decision matrix.
+func (q *Queries) NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListRecoverableRow, error) {
+	rows, err := db.Query(ctx, nodeListRecoverable)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NodeListRecoverableRow{}
+	for rows.Next() {
+		var i NodeListRecoverableRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.TargetUrl,
+			&i.Vpcpus,
+			&i.MemMb,
+			&i.MaxConcurrency,
+			&i.AdmissionCeilingMb,
+			&i.Lifecycle,
+			&i.Active,
+			&i.LastHeartbeatAt,
+			&i.CreatedAt,
+			&i.Region,
+			&i.Zone,
+			&i.ScheddTargetUrl,
+			&i.VcpuBudget,
+			&i.PublicIp,
+			&i.PublicIpSetAt,
+			&i.ReleaseID,
+			&i.ManifestHash,
+			&i.HostCertificate,
+			&i.CertFingerprint,
+			&i.Role,
+			&i.Generation,
+			&i.GatewayTargetUrl,
+			&i.DrainInitiatedAt,
+			&i.DrainCompletedAt,
+			&i.RecoveryInitiatedAt,
+			&i.LastRecoveryOutcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const nodeMarkDrainCompleted = `-- name: NodeMarkDrainCompleted :execrows
+UPDATE compute_nodes
+SET lifecycle         = 'active',
+    drain_completed_at = $2
+WHERE id = $1
+  AND lifecycle = 'draining'
+`
+
+type NodeMarkDrainCompletedParams struct {
+	ID               pgtype.UUID
+	DrainCompletedAt pgtype.Timestamptz
+}
+
+// Stamps drain_completed_at + flips lifecycle='active'. Called once
+// the drain arbiter confirms zero live instances remain on the node.
+// CAS on lifecycle='draining' so a concurrent reactivate can't race.
+func (q *Queries) NodeMarkDrainCompleted(ctx context.Context, db DBTX, arg NodeMarkDrainCompletedParams) (int64, error) {
+	result, err := db.Exec(ctx, nodeMarkDrainCompleted, arg.ID, arg.DrainCompletedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const nodeMarkRecovered = `-- name: NodeMarkRecovered :execrows
+UPDATE compute_nodes
+SET lifecycle            = 'active',
+    last_recovery_outcome = 'succeeded'
+WHERE id = $1
+  AND lifecycle = 'recovering'
+`
+
+// Stamps last_recovery_outcome='succeeded' and flips lifecycle='active'.
+// Called by the recovery arbiter after the migrate-or-recreate sweep
+// has cleared all stranded instances on a 'recovering' node. CAS on
+// 'recovering' so a fresh heartbeat-driven reactivate wins cleanly.
+func (q *Queries) NodeMarkRecovered(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, nodeMarkRecovered, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const nodeSetLifecycle = `-- name: NodeSetLifecycle :execrows
+UPDATE compute_nodes
+SET lifecycle = $3::compute_node_lifecycle,
+    drain_initiated_at    = CASE WHEN $3::compute_node_lifecycle = 'draining'  THEN $4 ELSE drain_initiated_at    END,
+    recovery_initiated_at = CASE WHEN $3::compute_node_lifecycle = 'recovering' THEN $4 ELSE recovery_initiated_at END,
+    drain_completed_at    = CASE WHEN $3::compute_node_lifecycle = 'active'     THEN $4 ELSE drain_completed_at    END
+WHERE id = $1
+  AND lifecycle::text = $2
+`
+
+type NodeSetLifecycleParams struct {
+	ID               pgtype.UUID
+	Lifecycle        ComputeNodeLifecycle
+	Column3          ComputeNodeLifecycle
+	DrainInitiatedAt pgtype.Timestamptz
+}
+
+// CAS lifecycle transition. Returns 0 if the prior state didn't match
+// $2 (i.e. another writer raced us) — the caller treats that as a
+// soft no-op and re-reads via NodeGet. Returns 1 on success.
+//
+// Args:
+//
+//	$1 = node id (UUID)
+//	$2 = expected prior lifecycle text
+//	$3 = new lifecycle text
+//	$4 = wall-clock timestamp to stamp on the relevant audit column:
+//	     'draining'        → drain_initiated_at
+//	     'unavailable'     → NULL (heartbeat gap is the writer; this
+//	                          path is for the rare explicit flip)
+//	     'recovering'      → recovery_initiated_at
+//	     'active'          → drain_completed_at (last step of a
+//	                          successful drain) OR NULL when called
+//	                          from the heartbeat reactivator
+func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLifecycleParams) (int64, error) {
+	result, err := db.Exec(ctx, nodeSetLifecycle,
+		arg.ID,
+		arg.Lifecycle,
+		arg.Column3,
+		arg.DrainInitiatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const orgByID = `-- name: OrgByID :one
@@ -5220,15 +6030,35 @@ select id, account_id, app_id, kind, slug, enabled, config,
 from triggers where id = $1
 `
 
+type TriggerByIDRow struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Kind                 string
+	Slug                 string
+	Enabled              bool
+	Config               []byte
+	BatchSizeMax         int32
+	BatchWindowMs        int32
+	MaxAttempts          int32
+	CronID               pgtype.UUID
+	Source               pgtype.Text
+	PayloadMaxBytes      int32
+	BrokerPoisonStrategy string
+	FilterCriteria       []byte
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 // ADR-118 / commit 6 of the issue #757 mega-PR: filter_criteria
 // is projected so pgstore.TriggerByID returns the same shape as
 // ListEnabledTriggers (sqlc generates identical column sets as
 // the same Go struct; projections that omit a column produce a
 // distinct Row type that breaks the existing pgstore return
 // type).
-func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Trigger, error) {
+func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (TriggerByIDRow, error) {
 	row := db.QueryRow(ctx, triggerByID, id)
-	var i Trigger
+	var i TriggerByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.AccountID,
@@ -5579,6 +6409,26 @@ type UpdateTriggerParams struct {
 	Column9              []byte
 }
 
+type UpdateTriggerRow struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Kind                 string
+	Slug                 string
+	Enabled              bool
+	Config               []byte
+	BatchSizeMax         int32
+	BatchWindowMs        int32
+	MaxAttempts          int32
+	CronID               pgtype.UUID
+	Source               pgtype.Text
+	PayloadMaxBytes      int32
+	BrokerPoisonStrategy string
+	FilterCriteria       []byte
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 // Review finding MED-1 (PR #993): the inline SQL at
 // pkg/state/pgstore.go::UpdateTrigger is the source of truth
 // (sqlc-generated UpdateTrigger stub is bypassed because sqlc
@@ -5586,7 +6436,7 @@ type UpdateTriggerParams struct {
 // shape is preserved by mirroring the same column list that
 // ListEnabledTriggers uses (filter_criteria is part of the
 // Trigger struct since commit 6 of issue #757 mega-PR).
-func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerParams) (Trigger, error) {
+func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerParams) (UpdateTriggerRow, error) {
 	row := db.QueryRow(ctx, updateTrigger,
 		arg.ID,
 		arg.Enabled,
@@ -5598,7 +6448,7 @@ func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerP
 		arg.BrokerPoisonStrategy,
 		arg.Column9,
 	)
-	var i Trigger
+	var i UpdateTriggerRow
 	err := row.Scan(
 		&i.ID,
 		&i.AccountID,

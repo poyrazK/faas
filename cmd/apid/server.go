@@ -2127,6 +2127,20 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/compute-nodes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listComputeNodes))))
 	mux.HandleFunc("POST /v1/compute-nodes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.createOrUpdateComputeNode)))))
 	mux.HandleFunc("DELETE /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteComputeNode))))
+	// Workstream B (issue #1184 / ADR-137): drain handler.
+	// POST /drain CAS-transitions the node's lifecycle to
+	// 'draining' (the recovery arbiter owns the actual
+	// instance migration / recreation); GET /drain returns
+	// progress (lifecycle + timestamps + drained count).
+	// ?wait=1 on POST blocks up to 50s for completion. Auth
+	// chain mirrors the rest of /v1/compute-nodes (admin +
+	// MFA). The handler lives in handlers_compute_nodes_drain.go
+	// — keeping it next to listComputeNodes et al. is the
+	// §4 ownership invariant (the apid customer-facing admin
+	// CRUD plane, not the legacy /v1/admin/ops/* operator-tools
+	// plane).
+	mux.HandleFunc("POST /v1/compute-nodes/{name}/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postComputeNodeDrain))))
+	mux.HandleFunc("GET /v1/compute-nodes/{name}/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getComputeNodeDrainProgress))))
 	// CP-1: heartbeat history (schedd Heartbeat.Tick writes; the
 	// endpoint reads from the append-only compute_node_heartbeats
 	// table). Auth chain mirrors the rest of /v1/compute-nodes.
