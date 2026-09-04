@@ -122,12 +122,30 @@ const (
 	// locally, then push asynchronously — which is a design change, not
 	// a constant.
 	//
-	// Still not measured end-to-end: the park path has no phase
-	// instrumentation, so the split between pause, local write and
-	// upload is unknown. snapshot_ms/budget_ms logging (added alongside
-	// this) is the hook for tightening it with data.
+	// 180s/GB was still short. Re-measured on a QUIET fleet after #1294
+	// removed the router-refresh cancellation that had been confounding
+	// every earlier reading: snapshot_ms 195000 against budget_ms
+	// 195000, DeadlineExceeded, no cancellation error. So a 1 GB park
+	// genuinely needs more than 3.25 minutes here — under 5.4 MB/s to
+	// ghcr.io, which is plausible for a registry push that also has to
+	// digest and commit the blob.
+	//
+	// 600s/GB puts Scale at ~10 minutes. Deliberately generous: the
+	// cost of overshooting is that a genuinely wedged park holds one
+	// instance longer, while the cost of undershooting is that NO
+	// deployment ever reaches `live`, which is where this fleet has
+	// been. The watchdog exemption tracks SnapshotBudgetFor, so the
+	// sweep still will not kill a capture that is legitimately running.
+	//
+	// The true duration is still unmeasured: schedd's deadline
+	// propagates to vmmd and aborts the upload, so no run has been
+	// allowed to finish. The right answer is to stop holding the
+	// instance through the upload at all — capture locally, push
+	// asynchronously — and then this constant only has to cover the
+	// local capture. Until that lands, snapshot_ms on a SUCCESSFUL park
+	// is the number to tighten against.
 	SnapshotBudgetBase  = 15 * time.Second
-	SnapshotBudgetPerGB = 180 * time.Second
+	SnapshotBudgetPerGB = 600 * time.Second
 )
 
 // SnapshotBudgetFor returns the wall-clock budget for one instance's
