@@ -1,4 +1,4 @@
--- filename: 00532_deployment_audit_alert_rule_id.sql
+-- filename: 20260905000000002_deployment_audit_alert_rule_id.sql
 -- +goose Up
 -- +goose StatementBegin
 

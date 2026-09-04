@@ -19566,7 +19566,7 @@ func (s *PgStore) ListDeploymentAudit(ctx context.Context, deploymentID string, 
 // ListDeploymentAuditByAlertRule (SAFE-RELEASES-OBS PR-D) returns
 // deployment_audit rows whose alert_rule_id matches, newest first.
 // Backs the /dashboard/alerts/{id} reverse-lookup query. The
-// partial index deployment_audit_alert_rule_idx (migrations/00532)
+// partial index deployment_audit_alert_rule_idx (migrations/20260905000000002)
 // keeps the lookup sub-millisecond; only rows with non-null
 // alert_rule_id participate so the index stays tiny.
 func (s *PgStore) ListDeploymentAuditByAlertRule(ctx context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error) {

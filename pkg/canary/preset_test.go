@@ -177,7 +177,6 @@ func TestProgressionOnce_AdvancedTotalLabeledPerPreset(t *testing.T) {
 			{
 				ID:                "00000000-0000-0000-0000-000000000001",
 				AppID:             "00000000-0000-0000-0000-000000000002",
-				AccountID:         "00000000-0000-0000-0000-000000000003",
 				CanaryPreset:      "balanced",
 				CanaryStep:        0,
 				CanaryTotalSteps:  3,
@@ -188,7 +187,7 @@ func TestProgressionOnce_AdvancedTotalLabeledPerPreset(t *testing.T) {
 	}
 	apid := &stubAPID{}
 	ops := wire.NewOpsMetrics("canary_test_obs_pr_a_balanced")
-	prog := NewProgression(store, apid, ops, slog.Default(), "test:actor", "acct-uuid")
+	prog := NewProgression(store, apid, ops, slog.Default())
 	prog.Now = func() time.Time { return now }
 
 	stats, err := prog.Once(context.Background())

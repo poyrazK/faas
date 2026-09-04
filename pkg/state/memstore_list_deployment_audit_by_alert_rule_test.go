@@ -21,7 +21,7 @@ import (
 //	(a) only rows whose AlertRuleID matches the query id are
 //	    returned,
 //	(b) rows are returned newest-first (matches the partial
-//	    index ordering from migrations/00532),
+//	    index ordering from migrations/20260905000000002),
 //	(c) an explicit limit caps the result,
 //	(d) rows without an AlertRuleID are excluded.
 func TestListDeploymentAuditByAlertRule_FiltersAndCaps(t *testing.T) {

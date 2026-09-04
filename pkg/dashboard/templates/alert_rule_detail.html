@@ -10,7 +10,7 @@
        sections: (1) the rule row (name, expr, severity, action);
        (2) every deployment_audit row the rule triggered
        (joins on deployment_audit.alert_rule_id, the partial
-       index from migrations/00532 keeps this cheap); (3) the
+       index from migrations/20260905000000002 keeps this cheap); (3) the
        rule's recent webhook deliveries. -->
   <title>{{.Title}} — onebox faas</title>
   <style nonce="{{.Nonce}}">
@@ -70,7 +70,7 @@
 
     <section>
       <h2>Audit rows triggered by this rule ({{len .Data.AuditRows}})</h2>
-      <p>Every <code>deployment_audit</code> row stamped with <code>alert_rule_id = {{.Data.Rule.ID}}</code>. Backed by the partial index from migrations/00532.</p>
+      <p>Every <code>deployment_audit</code> row stamped with <code>alert_rule_id = {{.Data.Rule.ID}}</code>. Backed by the partial index from migrations/20260905000000002.</p>
       {{if .Data.AuditRows}}
       <table>
         <thead>

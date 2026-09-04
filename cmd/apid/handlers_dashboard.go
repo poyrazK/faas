@@ -159,7 +159,7 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// row (name, expr, severity, action), (b) every
 			// deployment_audit row the rule triggered (joined
 			// via deployment_audit.alert_rule_id, partial index
-			// from migrations/00532), and (c) the rule's
+			// from migrations/20260905000000002), and (c) the rule's
 			// recent deliveries (alert_deliveries).
 			rid := strings.TrimPrefix(path, "/dashboard/alerts/")
 			if rid == "" || strings.ContainsRune(rid, '/') {
@@ -1753,8 +1753,8 @@ func (s *server) renderSafeReleasesDashboard(w http.ResponseWriter, r *http.Requ
 
 // safeReleasesAuditKind returns true iff k is one of the 5 audit
 // kinds PR-A widened into deployment_audit_kind_chk
-// (migrations/00530). Closed-set; any future kind added to
-// 00530 must also be appended here.
+// (migrations/20260905000000000). Closed-set; any future kind added to
+// that migration must also be appended here.
 func safeReleasesAuditKind(k state.DeploymentAuditKind) bool {
 	switch k {
 	case state.DeployRolloutStarted,
@@ -1769,7 +1769,7 @@ func safeReleasesAuditKind(k state.DeploymentAuditKind) bool {
 
 // safeReleasesAlertMetric returns true iff m is one of the 4 PR-B
 // alert metric kinds. Closed-set; the catalog seed in
-// migrations/00531 inserts these as the only safe-releases metric
+// migrations/20260905000000001 inserts these as the only safe-releases metric
 // values. A future PR adding a new safe-releases metric must also
 // append the metric here AND add an alert_presets row AND extend
 // pkg/state.AlertMetric* AND pkg/api.AllowedAlertRuleMetrics.
@@ -1790,7 +1790,7 @@ func safeReleasesAlertMetric(m string) bool {
 //  1. state.AlertRule via AlertRuleByID (single-row read).
 //  2. state.ListDeploymentAuditByAlertRule — every audit row the
 //     rule triggered (joins on deployment_audit.alert_rule_id, the
-//     partial index from migrations/00532 keeps this cheap even at
+//     partial index from migrations/20260905000000002 keeps this cheap even at
 //     90-day retention). The store accepts a UUID string; pass
 //     rule.ID directly.
 //  3. state.ListAlertDeliveriesForRule — the rule's recent webhook
@@ -1829,7 +1829,7 @@ func (s *server) renderAlertRuleDetail(w http.ResponseWriter, r *http.Request, l
 			"rule", ruleID, "err", err.Error())
 		auditRows = nil
 	}
-	deliveries, err := s.store.ListAlertDeliveriesForRule(ctx, ruleID, 50)
+	deliveries, err := s.store.ListAlertDeliveriesForRule(ctx, ruleID, 50, false)
 	if err != nil {
 		log.Warn("dashboard renderAlertRuleDetail: list alert deliveries",
 			"rule", ruleID, "err", err.Error())

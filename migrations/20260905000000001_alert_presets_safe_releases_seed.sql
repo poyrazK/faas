@@ -1,4 +1,4 @@
--- filename: 00531_alert_presets_safe_releases_seed.sql
+-- filename: 20260905000000001_alert_presets_safe_releases_seed.sql
 -- +goose Up
 -- +goose StatementBegin
 
@@ -6,8 +6,9 @@
 -- rules for the canary + safedeploy lifecycle. Mirrors the
 -- migration 00419_alert_rules_extend_metrics_chk.sql widening
 -- pattern + the migration 00418_alert_presets_seed.sql catalog
--- seed pattern. Slot 531 chosen to clear sibling PRs that claim
--- 520-529; PR-A occupies 530 (see pr-1197-safe-releases-obs-pr-a).
+-- seed pattern. This migration uses the first timestamp slot after
+-- the repository's 20260904 cutover; its predecessor is the PR-A
+-- migration 20260905000000000_deployment_audit_kinds_widen.sql.
 --
 -- Three parts:
 --   1. Widen alert_rules_metric_chk to admit the 4 new metric

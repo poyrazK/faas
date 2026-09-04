@@ -11,7 +11,7 @@
 //	deployment_audit_gc_failing    → deployment_audit_gc_failed_total rate
 //	canary_fleet_in_flight_high    → safedeploy_in_flight_rollouts gauge
 //
-// The catalog seed in migrations/00531_alert_presets_safe_releases_seed.sql
+// The catalog seed in migrations/20260905000000001_alert_presets_safe_releases_seed.sql
 // inserts matching alert_presets rows so the /dashboard/alerts
 // grid surfaces them; the AlertMetric* constants in pkg/state/types.go
 // admit the metric strings; pkg/api.AllowedAlertRuleMetrics validates
@@ -41,7 +41,7 @@ type SafeReleasesPreset struct {
 }
 
 // SafeReleasesPresets is the ordered catalog. Order matches the
-// migrations/00531 INSERT VALUES for documentation consistency.
+// migrations/20260905000000001 INSERT VALUES for documentation consistency.
 var SafeReleasesPresets = []SafeReleasesPreset{
 	{
 		Name:        "canary_stuck_step",

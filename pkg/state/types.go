@@ -3617,7 +3617,7 @@ const (
 	DeployHealthRecovered   DeploymentAuditKind = "deploy.health_recovered"
 	DeployRolledBack        DeploymentAuditKind = "deploy.rolled_back"
 	DeployRemoved           DeploymentAuditKind = "deploy.removed"
-	// SAFE-RELEASES-OBS PR-A (migrations/00530_deployment_audit_kinds_widen.sql):
+	// SAFE-RELEASES-OBS PR-A (migrations/20260905000000000_deployment_audit_kinds_widen.sql):
 	// orchestrator emit surface. Closed-set widening that
 	// migration 00477 promised-but-never-shipped when Mega PR #2
 	// added the orchestrator goroutine. Without this widening the
@@ -3664,7 +3664,7 @@ type DeploymentAudit struct {
 	// fires, AND by pkg/alerts/evaluator when the canary preset
 	// advances. nil for non-rule-triggered rows (the orchestrator's
 	// own deploy.rollout_* lifecycle emits). The DB column
-	// (migrations/00532) is UUID NULL + partial index
+	// (migrations/20260905000000002) is UUID NULL + partial index
 	// (alert_rule_id, at DESC) WHERE alert_rule_id IS NOT NULL so
 	// the /dashboard/alerts/{id} reverse-lookup query stays cheap.
 	AlertRuleID *uuid.UUID

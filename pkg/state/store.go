@@ -4304,7 +4304,7 @@ type Store interface {
 	// the reverse-lookup query behind /dashboard/alerts/{id} — every
 	// deployment_audit row whose alert_rule_id matches the supplied
 	// rule, newest first. Backs the partial index
-	// deployment_audit_alert_rule_idx created in migrations/00532 so
+	// deployment_audit_alert_rule_idx created in migrations/20260905000000002 so
 	// the query stays sub-millisecond. limit > 0 caps the page;
 	// <= 0 means "no row cap" (caller is responsible for bounding).
 	ListDeploymentAuditByAlertRule(ctx context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error)

@@ -121,7 +121,7 @@ var AllowedAlertRuleMetrics = []string{
 	// the wire.OpsMetrics counters; the catalog entry exists so
 	// customers see the presets in /dashboard/alerts and the
 	// handler validates the rule.metric. Operators only — gated
-	// by minimum_plan = 'scale' in migrations/00531.
+	// by minimum_plan = 'scale' in migrations/20260905000000001.
 	"canary_stuck_step",
 	"safedeploy_audit_emit_failing",
 	"deployment_audit_gc_failing",

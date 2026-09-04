@@ -15,7 +15,7 @@ import (
 // TestSafeReleasesAuditKind_PinsPRAKinds pins that the
 // /dashboard/safe-releases recent-audit table renders exactly the 5
 // audit kinds PR-A widened into deployment_audit_kind_chk
-// (migrations/00530). A new kind added to the migration that this
+// (migrations/20260905000000000). A new kind added to the migration that this
 // helper forgets to admit would render as "missing" — this test
 // fails so the operator's view is never silently incomplete.
 func TestSafeReleasesAuditKind_PinsPRAKinds(t *testing.T) {
@@ -57,7 +57,7 @@ func TestSafeReleasesAuditKind_PinsPRAKinds(t *testing.T) {
 // /dashboard/safe-releases active-alerts table renders exactly the
 // 4 alert metric kinds PR-B introduced. Drift between this
 // admission gate and pkg/state.AlertMetric* / pkg/api.AllowedAlertRuleMetrics
-// / the catalog seed migrations/00531 fails here rather than at
+// / the catalog seed migrations/20260905000000001 fails here rather than at
 // the dashboard smoke-test.
 func TestSafeReleasesAlertMetric_PinsPRBMetrics(t *testing.T) {
 	admit := []string{
