@@ -62,7 +62,7 @@ func newReconcileEnv(t *testing.T, scopes []string, adminEmail, callerEmail stri
 	}
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
 	srv.WithAdminAllowlist(adminEmail)
-	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct, ops: ops}
+	return testEnv{h: srv.handler(), s: srv, store: store, key: pt, acct: acct, ops: ops}
 }
 
 // stripeShapedProvider has a Capabilities bitmask that matches Stripe
@@ -118,10 +118,12 @@ func TestReconcileAccount_StripeIsUnsupported(t *testing.T) {
 	srv := newServer(e.store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), wire.NewOpsMetrics("apid_reconcile_stripe_test"))
 	srv.WithAdminAllowlist("ops@example.com")
 	srv.WithBillingProvider(stripeFake)
+	e.s = srv
 
 	body := strings.NewReader("")
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/billing-reconcile/"+target.ID, body)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	e.addAdminSession(t, req)
+	req.Header.Set("Idempotency-Key", "test-reconcile-stripe")
 	rec := httptest.NewRecorder()
 	srv.handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotImplemented {
@@ -158,10 +160,12 @@ func TestReconcileAccount_PaddleWithCapabilityCallsProvider(t *testing.T) {
 	srv := newServer(e.store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), wire.NewOpsMetrics("apid_reconcile_paddle_test"))
 	srv.WithAdminAllowlist("ops@example.com")
 	srv.WithBillingProvider(paddle)
+	e.s = srv
 
 	body := strings.NewReader("")
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/billing-reconcile/"+target.ID, body)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	e.addAdminSession(t, req)
+	req.Header.Set("Idempotency-Key", "test-reconcile-paddle")
 	rec := httptest.NewRecorder()
 	srv.handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

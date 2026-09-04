@@ -1725,13 +1725,13 @@ func (s *server) handler() http.Handler {
 	// middleware — a leaked admin key from a non-operator account
 	// would otherwise be able to issue credits.
 	mux.HandleFunc("POST /v1/admin/accounts/{id}/credits",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.issueCredit))))
-	// Operator refund surface. Refunds move money, so unlike credit issuance
-	// this route also requires the standard MFA gate. The handler applies the
+		s.authLimited(s.requireAdminMutation(s.issueCredit)))
+	// Operator refund surface. Refunds move money, so this route uses the
+	// strict operator-session + recent step-up policy. The handler applies the
 	// FAAS_ADMIN_EMAILS allowlist and binds the Polar order to the target
 	// account through the local invoice projection before calling the provider.
 	mux.HandleFunc("POST /v1/admin/accounts/{id}/refunds",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.refundAccount))))
+		s.authLimited(s.requireAdminMutation(s.refundAccount)))
 
 	// PR-D / ADR-012 §7 amendment: per-tenant GitHub App webhook
 	// secret rotation. Same two-layer gate as issueCredit (scope +
@@ -1739,7 +1739,7 @@ func (s *server) handler() http.Handler {
 	// from a non-operator account cannot rotate another tenant's
 	// webhook secret.
 	mux.HandleFunc("POST /v1/admin/github-webhook-secrets",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.handleSetGithubWebhookSecret)))
+		s.authLimited(s.requireAdminMutation(s.handleSetGithubWebhookSecret)))
 
 	// PR-P3: operator-facing billing surface. Same two-layer gate as
 	// issueCredit above (scope + email allowlist inside the handler).
@@ -1751,11 +1751,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/billing-paddle-catalog",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.listPaddleCatalog)))
 	mux.HandleFunc("POST /v1/admin/billing-paddle-catalog/sync",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.syncPaddleCatalog))))
+		s.authLimited(s.requireAdminMutation(s.syncPaddleCatalog)))
 	mux.HandleFunc("DELETE /v1/admin/billing-paddle-catalog",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.resetPaddleCatalog)))
+		s.authLimited(s.requireAdminMutation(s.resetPaddleCatalog)))
 	mux.HandleFunc("POST /v1/admin/billing-reconcile/{id}",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.reconcileAccount)))
+		s.authLimited(s.requireAdminMutation(s.reconcileAccount)))
 	mux.HandleFunc("GET /v1/admin/billing-paddle-overage/preflight",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.paddleOveragePreflight)))
 
@@ -1840,9 +1840,9 @@ func (s *server) handler() http.Handler {
 	// fat-fingering (matches the force-drain --yes ack at
 	// commands_compute_nodes.go:249).
 	mux.Handle("POST /v1/admin/instances/{id}/force-park",
-		middleware.TraceID(s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postForcePark)))))
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postForcePark))))
 	mux.Handle("POST /v1/admin/apps/{slug}/force-cold-boot",
-		middleware.TraceID(s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postForceColdBoot)))))
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postForceColdBoot))))
 	// P2d — operator recovery primitive: force-restart kills a
 	// wedged live instance + flips the deployment's latest warm +
 	// init snapshots stale so the next Wake takes the cold-boot
@@ -1852,7 +1852,7 @@ func (s *server) handler() http.Handler {
 	// wraps the chain on the same axis as the two above so every
 	// inbound force-action carries the same observability trace_id.
 	mux.Handle("POST /v1/admin/instances/{id}/force-restart",
-		middleware.TraceID(s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postForceRestart)))))
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postForceRestart))))
 	// PR #1099 P2 redesign: polling endpoint for the
 	// operator_intents rows. NO MFA — mirrors getFireCronRequest
 	// at cmd/apid/handlers_fire_cron_request.go:38-83 because the
@@ -1870,23 +1870,24 @@ func (s *server) handler() http.Handler {
 	// clamped to [1m, 60m] so a fat-fingered "1ns" cannot sweep
 	// in-flight builds.
 	mux.HandleFunc("POST /v1/admin/builds/sweep-stuck",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postSweepStuckBuilds))))
+		s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds)))
 	// Compute-node lifecycle controls. They are deliberately separate from
 	// the read-only /obs namespace and require both MFA and confirm=true.
 	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/suspend",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postObsAccountSuspend))))
+		s.authLimited(s.requireAdminMutation(s.postObsAccountSuspend)))
 	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/restore",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postObsAccountRestore))))
+		s.authLimited(s.requireAdminMutation(s.postObsAccountRestore)))
 	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postObsAccountRevokeSessions))))
+		s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions)))
 	mux.HandleFunc("POST /v1/admin/ops/nodes/{name}/drain",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postObsNodeDrain))))
+		s.authLimited(s.requireAdminMutation(s.postObsNodeDrain)))
 	mux.HandleFunc("POST /v1/admin/ops/nodes/{name}/force-drain",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postObsNodeForceDrain))))
+		s.authLimited(s.requireAdminMutation(s.postObsNodeForceDrain)))
 	mux.HandleFunc("POST /v1/admin/ops/nodes/{name}/activate",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postObsNodeActivate))))
+		s.authLimited(s.requireAdminMutation(s.postObsNodeActivate)))
 
-	// ADR-132 — typed runtime configuration. GET and PATCH are MFA-gated
+	// ADR-132 — typed runtime configuration. GET is MFA-gated; PATCH and
+	// rollback use the strict operator-session policy
 	// because the catalog includes security-adjacent deployment posture. Hot
 	// values apply in the request; graceful values become durable operations.
 	// Filesystem/bootstrap settings remain visible as deployment-managed
@@ -1894,9 +1895,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/config",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigList))))
 	mux.HandleFunc("PATCH /v1/admin/config/{key}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigPatch))))
+		s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigPatch)))
 	mux.HandleFunc("POST /v1/admin/config/{key}/rollback",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigRollback))))
+		s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigRollback)))
 	mux.HandleFunc("GET /v1/admin/config-operations/{id}",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigOperationGet)))
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",
@@ -2814,6 +2815,23 @@ func (s *server) idempotent(next accountHandler) accountHandler {
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
 		_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
+	}
+}
+
+// requireIdempotency is the stricter companion used by provider-admin
+// mutations. A missing key is rejected instead of silently allowing a retry
+// to repeat a money or fleet-state operation; the existing idempotent wrapper
+// then provides the replay cache for valid keys.
+func (s *server) requireIdempotency(next accountHandler) accountHandler {
+	idempotent := s.idempotent(next)
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if key == "" || len(key) > 255 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Idempotency-Key required", "provider-admin mutations require an Idempotency-Key of 1..255 characters"))
+			return
+		}
+		idempotent(w, r, acct)
 	}
 }
 

@@ -73,7 +73,7 @@ func TestAdminRefund_HappyPathForwardsIdempotencyAndAudits(t *testing.T) {
 	e.s.WithBillingProvider(provider)
 
 	key := "operator-refund-1"
-	rec := e.do(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
+	rec := e.doAdmin(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
 		"invoice_id": invoice.ID, "amount_cents": 500, "reason": "customer request",
 	}, map[string]string{"Idempotency-Key": key})
 	if rec.Code != http.StatusOK {
@@ -117,9 +117,10 @@ func TestAdminRefund_RejectsMissingIdempotencyKey(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})))
 
-	rec := e.do(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
-		"invoice_id": "00000000-0000-0000-0000-000000000123", "amount_cents": 500, "reason": "customer request",
-	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", strings.NewReader(`{"invoice_id":"00000000-0000-0000-0000-000000000123","amount_cents":500,"reason":"customer request"}`))
+	e.addAdminSession(t, req)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
 	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
@@ -137,7 +138,7 @@ func TestAdminRefund_BindsInvoiceToAccountAndPaidState(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})))
 
-	rec := e.do(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
+	rec := e.doAdmin(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
 		"invoice_id": invoice.ID, "amount_cents": 500, "reason": "customer request",
 	}, map[string]string{"Idempotency-Key": "operator-refund-2"})
 	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
@@ -148,7 +149,7 @@ func TestAdminRefund_BindsInvoiceToAccountAndPaidState(t *testing.T) {
 	invoice.AccountID = e.acct.ID
 	invoice.Status = "open"
 	e.store.SeedInvoiceForTest(invoice)
-	rec = e.do(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
+	rec = e.doAdmin(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
 		"invoice_id": invoice.ID, "amount_cents": 500, "reason": "customer request",
 	}, map[string]string{"Idempotency-Key": "operator-refund-3"})
 	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
@@ -164,7 +165,7 @@ func TestAdminRefund_ProviderFailureIsBadGateway(t *testing.T) {
 		_, _ = io.WriteString(w, `{"detail":"refund rejected"}`)
 	})))
 
-	rec := e.do(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
+	rec := e.doAdmin(t, http.MethodPost, "/v1/admin/accounts/"+e.acct.ID+"/refunds", map[string]any{
 		"invoice_id": invoice.ID, "amount_cents": 500, "reason": "customer request",
 	}, map[string]string{"Idempotency-Key": "operator-refund-4"})
 	assertProblem(t, rec, http.StatusBadGateway, "billing_refund_failed")

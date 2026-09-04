@@ -107,11 +107,12 @@ func TestParseSweepReason_TableDriven(t *testing.T) {
 
 func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	t.Run("non_allowlisted_admin_is_denied", func(t *testing.T) {
-		srv, _, key := newForceHarness(t, nil)
+		srv, _, cookie := newForceHarness(t, nil)
 		srv.adminAllowlist.emails = map[string]struct{}{"another-operator@example.com": {}}
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -121,10 +122,11 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("missing_confirm_returns_400", func(t *testing.T) {
-		srv, _, key := newForceHarness(t, nil)
+		srv, _, cookie := newForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -141,10 +143,11 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("older_than_too_small_returns_400", func(t *testing.T) {
-		srv, _, key := newForceHarness(t, nil)
+		srv, _, cookie := newForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=500ms", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -161,10 +164,11 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("older_than_too_large_returns_400", func(t *testing.T) {
-		srv, _, key := newForceHarness(t, nil)
+		srv, _, cookie := newForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=2h", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -181,10 +185,11 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("invalid_reason_returns_400", func(t *testing.T) {
-		srv, _, key := newForceHarness(t, nil)
+		srv, _, cookie := newForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m&reason=incident-123", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -201,10 +206,11 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("happy_path_returns_swept_count", func(t *testing.T) {
-		srv, _, key := newForceHarness(t, nil)
+		srv, _, cookie := newForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 

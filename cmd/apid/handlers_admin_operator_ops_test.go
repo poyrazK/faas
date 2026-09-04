@@ -91,7 +91,7 @@ func TestObsNodeDetail_UnknownNode(t *testing.T) {
 
 func TestObsNodeMutation_RequiresConfirmation(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "POST", "/v1/admin/ops/nodes/missing-node/drain", nil, nil)
+	rec := e.doAdmin(t, "POST", "/v1/admin/ops/nodes/missing-node/drain", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("node drain without confirmation: got status %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -103,7 +103,7 @@ func TestObsAccountMutation_RequiresConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create target account: %v", err)
 	}
-	rec := e.do(t, "POST", "/v1/admin/ops/accounts/"+target.ID+"/suspend", nil, nil)
+	rec := e.doAdmin(t, "POST", "/v1/admin/ops/accounts/"+target.ID+"/suspend", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("account suspend without confirmation: got status %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -118,7 +118,7 @@ func TestObsAccountMutation_RequiresConfirmation(t *testing.T) {
 
 func TestObsAccountMutation_RejectsSelf(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "POST", "/v1/admin/ops/accounts/"+e.acct.ID+"/suspend?confirm=true", nil, nil)
+	rec := e.doAdmin(t, "POST", "/v1/admin/ops/accounts/"+e.acct.ID+"/suspend?confirm=true", nil, nil)
 	if rec.Code != 409 {
 		t.Fatalf("self account suspend: got status %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
@@ -137,7 +137,7 @@ func TestObsAccountSuspend_UpdatesStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create target account: %v", err)
 	}
-	rec := e.do(t, "POST", "/v1/admin/ops/accounts/"+target.ID+"/suspend?confirm=true&reason=customer_request", nil, nil)
+	rec := e.doAdmin(t, "POST", "/v1/admin/ops/accounts/"+target.ID+"/suspend?confirm=true&reason=customer_request", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("account suspend: got status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}

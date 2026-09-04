@@ -45,12 +45,13 @@ const fixedTraceIDForHandlerTests = "4bf92f3577b34da6a3ce929d0e0e4736"
 // propagation.
 func runForceParkHandler(t *testing.T, fake *fakeStoreForIntent, setHeader bool) ([]intentInsertCall, int) {
 	t.Helper()
-	srv, store, key := newForceHarness(t, fake)
+	srv, store, cookie := newForceHarness(t, fake)
 	insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/instances/"+insID+"/force-park?confirm=true&reason=trace_id_wiring_test", nil)
-	req.Header.Set("Authorization", "Bearer "+key)
+	req.AddCookie(cookie)
+	req.Header.Set("Idempotency-Key", "test-admin-mutation")
 	if setHeader {
 		req.Header.Set("X-Trace-Id", fixedTraceIDForHandlerTests)
 	}
@@ -63,12 +64,13 @@ func runForceParkHandler(t *testing.T, fake *fakeStoreForIntent, setHeader bool)
 // POST /v1/admin/apps/{slug}/force-cold-boot.
 func runForceColdBootHandler(t *testing.T, fake *fakeStoreForIntent, setHeader bool) ([]intentInsertCall, int) {
 	t.Helper()
-	srv, store, key := newForceHarness(t, fake)
+	srv, store, cookie := newForceHarness(t, fake)
 	_, _, _ = seedAppAndDeployment(t, store)
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/apps/tenant-app/force-cold-boot?confirm=true&reason=trace_id_wiring_test", nil)
-	req.Header.Set("Authorization", "Bearer "+key)
+	req.AddCookie(cookie)
+	req.Header.Set("Idempotency-Key", "test-admin-mutation")
 	if setHeader {
 		req.Header.Set("X-Trace-Id", fixedTraceIDForHandlerTests)
 	}
@@ -81,12 +83,13 @@ func runForceColdBootHandler(t *testing.T, fake *fakeStoreForIntent, setHeader b
 // invokes POST /v1/admin/instances/{id}/force-restart.
 func runForceRestartHandler(t *testing.T, fake *fakeStoreForIntent, setHeader bool) ([]intentInsertCall, int) {
 	t.Helper()
-	srv, store, key := newForceHarness(t, fake)
+	srv, store, cookie := newForceHarness(t, fake)
 	insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/instances/"+insID+"/force-restart?confirm=true&reason=trace_id_wiring_test", nil)
-	req.Header.Set("Authorization", "Bearer "+key)
+	req.AddCookie(cookie)
+	req.Header.Set("Idempotency-Key", "test-admin-mutation")
 	if setHeader {
 		req.Header.Set("X-Trace-Id", fixedTraceIDForHandlerTests)
 	}
