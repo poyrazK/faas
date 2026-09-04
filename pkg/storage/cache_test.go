@@ -29,6 +29,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -877,4 +878,154 @@ func equalSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// streamingBackend is a StorageBackend that drains its reader
+// without retaining it. fakeBackend uses io.ReadAll and therefore
+// allocates the whole blob itself, which would swamp the allocation
+// measurement in TestLocalCacheBackend_Put_DoesNotBufferBlobInMemory.
+type streamingBackend struct {
+	puts atomic.Int64
+	n    int64
+}
+
+func (s *streamingBackend) Put(_ context.Context, _ string, r io.Reader) error {
+	s.puts.Add(1)
+	n, err := io.Copy(io.Discard, r)
+	s.n = n
+	return err
+}
+
+func (s *streamingBackend) Get(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, storage.ErrNotFound
+}
+
+func (s *streamingBackend) Delete(_ context.Context, _ string) error { return nil }
+
+// TestLocalCacheBackend_Put_DoesNotBufferBlobInMemory is the
+// regression test for the defect that blocked every deployment on
+// 2026-09-04.
+//
+// Put used to tee into a bytes.Buffer, so a capture's resident cost
+// scaled with the blob — and bytes.Buffer's doubling growth made the
+// peak roughly 2x. Measured in production: a 1 GiB snapshot drove
+// vmmd's anon memory from 25 MB to 2.17 GB in 24 s, which is the
+// "vmmd RSS 2.1 GB" growth that OOM-killed it on 2026-09-03 and was
+// misfiled as an undiagnosed leak.
+//
+// The assertion is on TOTAL bytes allocated across the Put, not on
+// live heap, so it is insensitive to GC timing. The bound is
+// deliberately loose (blob/4): the streaming path allocates only
+// copy buffers regardless of blob size, while any buffering
+// implementation must allocate at least the blob itself.
+func TestLocalCacheBackend_Put_DoesNotBufferBlobInMemory(t *testing.T) {
+	const blobSize = 32 << 20 // 32 MiB
+
+	tmp := t.TempDir()
+	parent := &streamingBackend{}
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(tmp, "cache"), 0)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+
+	// zeroReader synthesises the blob so the SOURCE is not an
+	// in-memory slice; otherwise the test would measure the
+	// fixture rather than the implementation.
+	src := io.LimitReader(zeroReader{}, blobSize)
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	if err := cache.Put(context.Background(), "snap/big", src); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	runtime.ReadMemStats(&after)
+
+	allocated := after.TotalAlloc - before.TotalAlloc
+	if allocated > blobSize/4 {
+		t.Errorf("Put allocated %d bytes for a %d-byte blob; want < %d. "+
+			"A buffering implementation allocates at least the blob (and ~2x with "+
+			"bytes.Buffer doubling); the streaming path allocates only copy buffers.",
+			allocated, blobSize, blobSize/4)
+	}
+	if parent.n != blobSize {
+		t.Errorf("parent received %d bytes, want %d", parent.n, blobSize)
+	}
+}
+
+// zeroReader is an infinite source of zero bytes that allocates
+// nothing. Callers bound it with io.LimitReader.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) { return len(p), nil }
+
+// TestLocalCacheBackend_Put_CachesStreamedBytes pins that the
+// spool-then-rename path installs a cache entry whose CONTENT
+// matches what the parent received. A rename that lands the wrong
+// file, or a spool that is renamed before the parent has drained
+// it, would serve corrupt bytes on the next restore — worse than a
+// cache miss.
+func TestLocalCacheBackend_Put_CachesStreamedBytes(t *testing.T) {
+	tmp := t.TempDir()
+	parent := newFakeBackend()
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(tmp, "cache"), 0)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	ctx := context.Background()
+	payload := strings.Repeat("snapshot-page-", 4096)
+	if err := cache.Put(ctx, "snap/xyz", noSizeReader{Reader: strings.NewReader(payload)}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := readAll(ctx, cache, "snap/xyz")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != payload {
+		t.Errorf("cached blob is %d bytes, want %d (content mismatch)", len(got), len(payload))
+	}
+	if parent.gets.Load() != 0 {
+		t.Errorf("parent.gets = %d, want 0 (the Put should have populated the cache)", parent.gets.Load())
+	}
+	if string(parent.blobs["snap/xyz"]) != payload {
+		t.Errorf("parent received %d bytes, want %d", len(parent.blobs["snap/xyz"]), len(payload))
+	}
+}
+
+// TestLocalCacheBackend_Put_UnwritableCacheStillWritesThrough pins
+// the best-effort contract at the point the streaming rewrite made
+// it reachable earlier: the spool file is now created BEFORE the
+// parent Put, so a broken cache directory must degrade this backend
+// to a pass-through rather than failing a write the parent would
+// have accepted. Cache population is an optimisation; a full or
+// read-only cache disk must never cost a snapshot.
+func TestLocalCacheBackend_Put_UnwritableCacheStillWritesThrough(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "cache")
+	parent := newFakeBackend()
+	cache, err := storage.NewLocalCacheBackend(parent, root, 0)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	// Make the cache root unwritable so the bucket mkdir / spool
+	// create fails. Skip when running as root, which ignores the
+	// mode bits.
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: mode bits do not deny access")
+	}
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o770) })
+
+	payload := "blob-that-must-reach-the-parent"
+	if err := cache.Put(context.Background(), "snap/abc", strings.NewReader(payload)); err != nil {
+		t.Fatalf("Put with unwritable cache = %v, want nil (cache is best-effort)", err)
+	}
+	if parent.puts.Load() != 1 {
+		t.Errorf("parent.puts = %d, want 1", parent.puts.Load())
+	}
+	if string(parent.blobs["snap/abc"]) != payload {
+		t.Errorf("parent got %q, want %q", parent.blobs["snap/abc"], payload)
+	}
 }
