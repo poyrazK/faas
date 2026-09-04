@@ -169,6 +169,22 @@ rather than counter-rate.
 
 Runbook: `docs/runbooks/FaasOperatorActionTraceCompletenessLow.md`.
 
+## `telemetry-pipeline.json` (OTLP exporter health)
+
+Four-panel dashboard for the daemon-owned Prometheus-to-OTLP metrics bridge.
+It shows the number of configured exporters, the number currently up, export
+failure rate by scrape target, and age since the last successful export. The
+bridge remains best-effort: local Prometheus scraping and daemon serving are
+not gated on collector availability.
+
+UID `faas-telemetry-pipeline`. Mirror at
+`deploy/ansible/roles/grafana/files/telemetry-pipeline.json` (byte-identical —
+`make grafana-mirror-check` enforces the contract). Companion alerts are
+`FaasOTLPMetricsExporterDown` and `FaasOTLPMetricsExporterErrors` in
+`deploy/ansible/roles/prometheus/files/faas.rules.yml`.
+
+Runbook: `docs/runbooks/FaasOTLPMetricsExporterDown.md`.
+
 ## Provisioning (PR #141, ADR-031)
 
 The canonical install path is `deploy/ansible/roles/grafana/`, which

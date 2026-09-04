@@ -1392,6 +1392,46 @@ groups:
           summary: "gatewayd-public OTel spans writer ingest stalled >15m"
           description: "No OTel spans summary has been written through gatewayd-public POST /v1/otel/v1/traces for 15m. The OTLP writer ships customer spans into request_telemetry.spans_summary (ADR-127 PR-D); a stall means the debugger's per-request span view is going dark. Check gatewayd-public logs for `otel_spans: apid RPC failed` (auth.sock unreachable), `otel_spans: rate_limited` (customer's per-account token bucket exhausted), or `otel_spans: shape_invalid` (malformed OTLP body). Drill-down: `rate(gatewayd_public_otel_spans_ingested_total[5m]) by (outcome)` distinguishes the four outcomes (inserted/rate_limited/db_error/shape_invalid)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDebugTelemetryIngestStalled.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Observability pipeline health. These metrics describe the optional
+      # daemon-owned Prometheus → OTLP bridge itself, not customer span
+      # ingestion. A configured bridge must not be treated as healthy merely
+      # because the daemon's local /metrics endpoint is still scrapeable.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasOTLPMetricsExporterDown
+        expr: |
+          ({__name__=~".*_otel_metrics_exporter_enabled"} == 1)
+          and on (job, instance)
+          ({__name__=~".*_otel_metrics_exporter_up"} == 0)
+        for: 10m
+        labels:
+          severity: warn
+          component: platform
+          family: telemetry_pipeline
+        annotations:
+          summary: "OTLP metrics exporter is configured but down"
+          description: "A daemon's Prometheus-to-OTLP metrics bridge has failed its most recent export for 10m. Local Prometheus scraping remains available, but the remote observability backend is stale. Check the exporter error counter and the OTLP collector endpoint before treating this as a daemon outage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOTLPMetricsExporterDown.md"
+
+      - alert: FaasOTLPMetricsExporterErrors
+        expr: |
+          sum by (job, instance) (
+            rate({__name__=~".*_otel_metrics_export_total", outcome="error"}[10m])
+          ) > 0
+          and on (job, instance)
+          sum by (job, instance) (
+            {__name__=~".*_otel_metrics_exporter_enabled"}
+          ) > 0
+        for: 10m
+        labels:
+          severity: info
+          component: platform
+          family: telemetry_pipeline
+        annotations:
+          summary: "OTLP metrics exporter has recorded errors"
+          description: "A configured daemon has recorded one or more OTLP metrics export failures during the last 10m. The exporter may have recovered; inspect the error rate, duration, and last-success timestamp before escalating."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOTLPMetricsExporterDown.md"
       # Issue #573 / ADR-128 — restart-loop detection (cluster B commit 7
       # of the platform-observability mega-PR). The three alerts below
       # answer the three operator questions from the issue body:

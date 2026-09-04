@@ -33,10 +33,122 @@ import (
 
 const defaultOTLPMetricsInterval = time.Minute
 
+const (
+	otlpMetricsExportTriggerPeriodic = "periodic"
+	otlpMetricsExportTriggerShutdown = "shutdown"
+	otlpMetricsExportOutcomeSuccess  = "success"
+	otlpMetricsExportOutcomeError    = "error"
+)
+
+// otlpMetricsHealth is deliberately registered on the daemon's local
+// Prometheus registry. The bridge is best-effort, so operators need a signal
+// that distinguishes "no data was exported" from "the collector is down".
+// All labels are closed sets; service identity is carried by the metric name
+// and the scrape target rather than a free-form label.
+type otlpMetricsHealth struct {
+	enabled     prometheus.Gauge
+	up          prometheus.Gauge
+	exports     *prometheus.CounterVec
+	duration    prometheus.Histogram
+	lastSuccess prometheus.Gauge
+	lastAttempt prometheus.Gauge
+}
+
+func newOTLPMetricsHealth(registry prometheus.Registerer, prefix string) (*otlpMetricsHealth, error) {
+	if prefix == "" {
+		prefix = "faas"
+	}
+	health := &otlpMetricsHealth{
+		enabled: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_otel_metrics_exporter_enabled",
+			Help: "Whether the daemon's Prometheus-to-OTLP metrics exporter is configured and running.",
+		}),
+		up: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_otel_metrics_exporter_up",
+			Help: "Whether the daemon's most recent Prometheus-to-OTLP metrics export succeeded.",
+		}),
+		exports: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_otel_metrics_export_total",
+			Help: "Prometheus-to-OTLP metrics export attempts, labelled by trigger and outcome.",
+		}, []string{"trigger", "outcome"}),
+		duration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    prefix + "_otel_metrics_export_duration_seconds",
+			Help:    "Duration of Prometheus-to-OTLP metrics export attempts in seconds.",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		}),
+		lastSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_otel_metrics_last_success_timestamp_seconds",
+			Help: "Unix timestamp of the daemon's most recent successful Prometheus-to-OTLP metrics export; zero means none has succeeded.",
+		}),
+		lastAttempt: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_otel_metrics_last_attempt_timestamp_seconds",
+			Help: "Unix timestamp of the daemon's most recent Prometheus-to-OTLP metrics export attempt.",
+		}),
+	}
+	for _, trigger := range []string{otlpMetricsExportTriggerPeriodic, otlpMetricsExportTriggerShutdown} {
+		for _, outcome := range []string{otlpMetricsExportOutcomeSuccess, otlpMetricsExportOutcomeError} {
+			health.exports.WithLabelValues(trigger, outcome)
+		}
+	}
+	for _, collector := range []prometheus.Collector{
+		health.enabled,
+		health.up,
+		health.exports,
+		health.duration,
+		health.lastSuccess,
+		health.lastAttempt,
+	} {
+		if err := registry.Register(collector); err != nil {
+			return nil, fmt.Errorf("register OTLP metrics health collector: %w", err)
+		}
+	}
+	return health, nil
+}
+
+func (h *otlpMetricsHealth) observe(trigger string, started time.Time, exportErr error) {
+	if h == nil {
+		return
+	}
+	h.duration.Observe(time.Since(started).Seconds())
+	if exportErr != nil {
+		h.exports.WithLabelValues(trigger, otlpMetricsExportOutcomeError).Inc()
+		h.up.Set(0)
+		return
+	}
+	h.exports.WithLabelValues(trigger, otlpMetricsExportOutcomeSuccess).Inc()
+	h.up.Set(1)
+	h.lastSuccess.Set(unixSeconds(time.Now()))
+}
+
+func unixSeconds(t time.Time) float64 {
+	return float64(t.UnixNano()) / float64(time.Second)
+}
+
+func otlpMetricsMetricPrefix(serviceName string) string {
+	serviceName = strings.ToLower(strings.TrimSpace(serviceName))
+	var b strings.Builder
+	for _, r := range serviceName {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	prefix := strings.Trim(b.String(), "_")
+	if prefix == "" {
+		return "faas"
+	}
+	return prefix
+}
+
 // StartOTLPMetrics starts a best-effort Prometheus-to-OTLP/HTTP exporter.
 // The returned shutdown function stops the periodic loop and performs one
 // bounded final export. Collector availability never gates daemon startup;
-// export failures are logged while local Prometheus scraping continues.
+// export failures are logged while local Prometheus scraping continues. When
+// gatherer is a *prometheus.Registry, exporter health metrics are registered
+// even when endpoint is empty so an operator can distinguish disabled export
+// from an exporter that is configured but down.
 func StartOTLPMetrics(
 	ctx context.Context,
 	gatherer prometheus.Gatherer,
@@ -44,14 +156,34 @@ func StartOTLPMetrics(
 	serviceName string,
 	log *slog.Logger,
 ) (func(context.Context) error, error) {
-	if endpoint == "" {
-		return func(context.Context) error { return nil }, nil
-	}
+	return startOTLPMetricsWithPrefix(ctx, gatherer, endpoint, serviceName, otlpMetricsMetricPrefix(serviceName), log)
+}
+
+func startOTLPMetricsWithPrefix(
+	ctx context.Context,
+	gatherer prometheus.Gatherer,
+	endpoint string,
+	serviceName string,
+	metricPrefix string,
+	log *slog.Logger,
+) (func(context.Context) error, error) {
 	if gatherer == nil {
 		return nil, errors.New("otlp metrics: nil prometheus gatherer")
 	}
 	if ctx == nil {
 		return nil, errors.New("otlp metrics: nil context")
+	}
+	registerer, registerable := gatherer.(prometheus.Registerer)
+	var health *otlpMetricsHealth
+	if registerable {
+		var healthErr error
+		health, healthErr = newOTLPMetricsHealth(registerer, metricPrefix)
+		if healthErr != nil {
+			return nil, healthErr
+		}
+	}
+	if endpoint == "" {
+		return func(context.Context) error { return nil }, nil
 	}
 	target, err := normalizeOTLPMetricsEndpoint(endpoint)
 	if err != nil {
@@ -63,6 +195,9 @@ func StartOTLPMetrics(
 	if log == nil {
 		log = slog.Default()
 	}
+	if health != nil {
+		health.enabled.Set(1)
+	}
 	interval := otlpMetricsInterval()
 	client := &http.Client{Timeout: 5 * time.Second}
 	headers := otlpHeaders()
@@ -70,7 +205,12 @@ func StartOTLPMetrics(
 	stop := make(chan struct{})
 	done := make(chan struct{})
 
-	export := func(exportCtx context.Context) error {
+	export := func(exportCtx context.Context, trigger string) (exportErr error) {
+		started := time.Now()
+		if health != nil {
+			health.lastAttempt.Set(unixSeconds(started))
+			defer func() { health.observe(trigger, started, exportErr) }()
+		}
 		families, gatherErr := gatherer.Gather()
 		if gatherErr != nil {
 			return fmt.Errorf("gather prometheus metrics: %w", gatherErr)
@@ -116,7 +256,7 @@ func StartOTLPMetrics(
 				return
 			case <-ticker.C:
 				exportCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-				if exportErr := export(exportCtx); exportErr != nil {
+				if exportErr := export(exportCtx, otlpMetricsExportTriggerPeriodic); exportErr != nil {
 					log.Warn("otlp metrics export failed", "err", exportErr)
 				}
 				cancel()
@@ -133,7 +273,7 @@ func StartOTLPMetrics(
 			if shutdownCtx == nil {
 				shutdownCtx = context.Background()
 			}
-			shutdownErr = export(shutdownCtx)
+			shutdownErr = export(shutdownCtx, otlpMetricsExportTriggerShutdown)
 		})
 		return shutdownErr
 	}
