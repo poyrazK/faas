@@ -31,6 +31,26 @@ func TestInstanceModeForApp(t *testing.T) {
 	}
 }
 
+func TestClassifyServiceReplicasSeparatesReadiness(t *testing.T) {
+	replicas := []state.Instance{
+		{Mode: string(state.InstanceModeService), State: string(state.StateRunning)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateWaking)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateColdBooting)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateSnapshotting)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateMigrating)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateParked)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateFailed)},
+	}
+
+	got := classifyServiceReplicas(replicas)
+	if got.ready != 1 || got.starting != 2 || got.draining != 2 || got.unavailable != 2 {
+		t.Fatalf("service replica status = %+v, want ready:1 starting:2 draining:2 unavailable:2", got)
+	}
+	if got.inFlight() != 4 || got.managed() != 5 {
+		t.Fatalf("service replica capacity = in_flight:%d managed:%d, want in_flight:4 managed:5", got.inFlight(), got.managed())
+	}
+}
+
 func TestConvergeServiceReplicas_AdmitsDeficit(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
@@ -105,6 +125,41 @@ func TestConvergeServiceReplicas_IgnoresNonServiceInstances(t *testing.T) {
 	}
 }
 
+func TestConvergeServiceReplicas_StopsInFlightNonServiceWakeAfterModeSwitch(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
+	requestWake, err := store.CreateInstance(context.Background(), app.ID, dep.ID,
+		string(state.StateColdBooting), app.RAMMB, "node-1", "wake-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 2, Desired: 1},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.convergeServiceReplicas(context.Background(), dep.ID)
+
+	gotRequest, err := store.InstanceByID(context.Background(), requestWake.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRequest.State != string(state.StateStopped) {
+		t.Fatalf("in-flight request wake state = %q, want STOPPED after mode switch", gotRequest.State)
+	}
+	count, err := store.CountLiveInstancesByDeployment(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("live instances after mode switch = %d, want one service replica", count)
+	}
+}
+
 func TestConvergeServiceReplicas_NoOpForNonService(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
@@ -163,6 +218,77 @@ func TestConvergeServiceReplicas_ParksSurplus(t *testing.T) {
 	}
 	if running != 1 || parked != 1 {
 		t.Fatalf("service states = running:%d parked:%d, want running:1 parked:1", running, parked)
+	}
+}
+
+func TestConvergeServiceReplicas_PreservesReadyWhileReplacementStarts(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 2, Desired: 1},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateRunning), app.RAMMB, "node-1", "wake-ready", string(state.InstanceModeService))
+	if err != nil {
+		t.Fatal(err)
+	}
+	starting, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateColdBooting), app.RAMMB, "node-1", "wake-starting", string(state.InstanceModeService))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.convergeServiceReplicas(context.Background(), dep.ID)
+
+	gotReady, err := store.InstanceByID(context.Background(), ready.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotReady.State != string(state.StateRunning) {
+		t.Fatalf("ready replica state = %q, want RUNNING", gotReady.State)
+	}
+	gotStarting, err := store.InstanceByID(context.Background(), starting.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotStarting.State != string(state.StateColdBooting) {
+		t.Fatalf("starting replica state = %q, want COLD_BOOTING", gotStarting.State)
+	}
+}
+
+func TestConvergeServiceReplicas_ReplacesTerminalReplica(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 2, Desired: 2},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateFailed), app.RAMMB, "node-1", "wake-failed", string(state.InstanceModeService)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateRunning), app.RAMMB, "node-1", "wake-ready", string(state.InstanceModeService)); err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.convergeServiceReplicas(context.Background(), dep.ID)
+
+	count, err := store.CountLiveInstancesByDeployment(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("live service replicas = %d, want 2 after terminal replacement", count)
 	}
 }
 
