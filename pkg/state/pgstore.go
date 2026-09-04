@@ -4421,6 +4421,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		return Deployment{}, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	if d.RolloutState == "" {
+		d.RolloutState = "pending"
+	}
+	serviceRollout := IsServiceRollout(d)
+	if serviceRollout && d.RolloutStartedAt == nil {
+		now := time.Now().UTC()
+		d.RolloutStartedAt = &now
+	}
 
 	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps lock
 	//    acquisition in one round-trip; apps.status flips are blocked
@@ -4435,7 +4443,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		}
 		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
-	if d.CanaryTotalSteps <= 0 {
+	if d.CanaryTotalSteps <= 0 && !serviceRollout {
 		// Stable creation may end an active canary, so lock the whole
 		// live set in deterministic id order before the prior-row
 		// lookup. This preserves the lock ordering used by traffic
@@ -4506,7 +4514,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 			return Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
 		}
 		// pgx.ErrNoRows → no prior; that's fine. Move on.
-	} else if d.CanaryTotalSteps <= 0 {
+	} else if d.CanaryTotalSteps <= 0 && !serviceRollout {
 		// Issue #556 PR-A: zero the prior row's traffic_percent in
 		// the same tx so Σ over live rows remains 100 by construction
 		// (the new INSERT defaults traffic_percent to 100 below).
@@ -4523,7 +4531,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 			return Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
 		}
 	}
-	if d.CanaryTotalSteps <= 0 {
+	if d.CanaryTotalSteps <= 0 && !serviceRollout {
 		// A stable deployment terminates any active canary overlap as
 		// well as the newest prior row. The app-level partial unique
 		// index requires every other live revision to be gone before
@@ -4570,7 +4578,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	// stage, and the APID handler has already copied that stage onto the
 	// row. Mirrors memstore.CreateDeployment while preserving the schema
 	// NOT NULL DEFAULT 100 contract for non-canary rows.
-	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 {
+	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
 	row := tx.QueryRow(ctx,
@@ -4581,12 +4589,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 			                          status,
 		                          min_instances,
 		                          traffic_percent,
+		                          rollout_state,
+		                          rollout_started_at,
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'pending', $18, $19, coalesce(nullif($20, ''), 'default'),
-		         nullif($21, '')::uuid, coalesce(nullif($22, ''), 'api'), nullif($23, '')::inet, nullif($24, ''),
-		         $25, $26, $27, nullif($28, 0), $29)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'pending', $18, $19, $20, $21, coalesce(nullif($22, ''), 'default'),
+		         nullif($23, '')::uuid, coalesce(nullif($24, ''), 'api'), nullif($25, '')::inet, nullif($26, ''),
+		         $27, $28, $29, nullif($30, 0), $31)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), d.SourceBytes,
 		nullString(d.Handler), nullString(d.LogPath),
@@ -4598,6 +4608,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		notNullEmptyJSONRaw(d.Sidecars),
 		d.MinInstances,
 		d.TrafficPercent,
+		d.RolloutState,
+		d.RolloutStartedAt,
 		// ADR-091 / PR-D: empty caller Scope collapses to the
 		// literal 'default' (matches the schema DEFAULT). A non-empty
 		// Scope is passed through verbatim. Mirrors the handler's
@@ -4683,7 +4695,8 @@ func (s *PgStore) DeploymentOrdinal(ctx context.Context, appID, deploymentID str
 func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment, error) {
 	row := s.pool.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
-		 from deployments where app_id = $1 and status = 'live' order by created_at desc limit 1`, appID)
+		 from deployments where app_id = $1 and status = 'live'
+		 order by (traffic_percent > 0) desc, created_at desc, id desc limit 1`, appID)
 	return scanDeploymentWithRootfs(row)
 }
 
@@ -4699,7 +4712,7 @@ func (s *PgStore) LiveDeploymentForScope(ctx context.Context, appID, scope strin
 	row := s.pool.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		 from deployments where app_id = $1 and scope = $2 and status = 'live'
-		 order by created_at desc limit 1`, appID, scope)
+		 order by (traffic_percent > 0) desc, created_at desc, id desc limit 1`, appID, scope)
 	return scanDeploymentWithRootfs(row)
 }
 
@@ -4786,6 +4799,7 @@ func (s *PgStore) SafedeployListPendingRollouts(ctx context.Context) ([]Deployme
 		 from deployments
 		 where rollout_state in ('pending','rolling_out')
 		   and status = 'live'
+		   and not (canary_total_steps = 0 and rollout_state = 'rolling_out')
 		 order by rollout_started_at asc nulls first, created_at asc`)
 	if err != nil {
 		return nil, fmt.Errorf("state: safedeploy list pending rollouts: %w", err)

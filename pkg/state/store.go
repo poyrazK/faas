@@ -2153,6 +2153,16 @@ type Store interface {
 	// row carries the orchestrator's actor sentinel, not a
 	// generic state.Stamp.
 	SafedeployStampRollout(ctx context.Context, id string, state string, startedAt, completedAt, abortedAt *time.Time, abortedReason string) (Deployment, error)
+	// FinalizeServiceRollout atomically promotes a readiness-gated service
+	// deployment to 100% traffic and supersedes every older live deployment in
+	// the same app/scope. The target must be a live zero-step row marked
+	// rollout_state='rolling_out'.
+	FinalizeServiceRollout(ctx context.Context, id string) (Deployment, error)
+	// AbortServiceRollout atomically removes a failed service rollout and
+	// restores the newest older live deployment in the same app/scope to 100%
+	// traffic. The target must be a live zero-step row marked
+	// rollout_state='rolling_out'.
+	AbortServiceRollout(ctx context.Context, id, reason string) (Deployment, error)
 	// LiveDeploymentForScope (ADR-091 / PR-D) returns the unique
 	// newest live deployment for (appID, scope). Stable rows remain
 	// unique, while an active canary temporarily overlaps its predecessor

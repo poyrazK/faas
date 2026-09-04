@@ -2,13 +2,18 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+const serviceRolloutTimeout = 10 * time.Minute
 
 func instanceModeForApp(app state.App) string {
 	switch app.Manifest.ExecutionMode {
@@ -297,6 +302,188 @@ func (e *Engine) serviceReplicaTargets(ctx context.Context, app state.App, deplo
 	return targets, nil
 }
 
+func serviceRolloutScope(dep state.Deployment) string {
+	return normalizedDeploymentScope(dep.Scope)
+}
+
+func activeServiceRollouts(deployments []state.Deployment) map[string]state.Deployment {
+	rollouts := make(map[string]state.Deployment)
+	for _, dep := range deployments {
+		if dep.Status != state.DeployLive || !state.IsServiceRollout(dep) {
+			continue
+		}
+		scope := serviceRolloutScope(dep)
+		current, ok := rollouts[scope]
+		if !ok || dep.CreatedAt.After(current.CreatedAt) ||
+			(dep.CreatedAt.Equal(current.CreatedAt) && dep.ID > current.ID) {
+			rollouts[scope] = dep
+		}
+	}
+	return rollouts
+}
+
+func previousServiceDeployment(rollout state.Deployment, deployments []state.Deployment) state.Deployment {
+	var previous state.Deployment
+	for _, dep := range deployments {
+		if dep.ID == rollout.ID || dep.Status != state.DeployLive ||
+			serviceRolloutScope(dep) != serviceRolloutScope(rollout) ||
+			state.IsServiceRollout(dep) {
+			continue
+		}
+		if !rollout.CreatedAt.IsZero() && dep.CreatedAt.After(rollout.CreatedAt) {
+			continue
+		}
+		if previous.ID == "" || dep.CreatedAt.After(previous.CreatedAt) ||
+			(dep.CreatedAt.Equal(previous.CreatedAt) && dep.ID > previous.ID) {
+			previous = dep
+		}
+	}
+	return previous
+}
+
+func serviceRolloutStartedAt(dep state.Deployment) time.Time {
+	if dep.RolloutStartedAt != nil {
+		return *dep.RolloutStartedAt
+	}
+	return dep.CreatedAt
+}
+
+func serviceRolloutTimedOut(dep state.Deployment, now time.Time) bool {
+	started := serviceRolloutStartedAt(dep)
+	return !started.IsZero() && now.Sub(started) >= serviceRolloutTimeout
+}
+
+func (e *Engine) emitServiceRolloutChange(ctx context.Context, appID, deploymentID string, status state.DeploymentStatus) {
+	payload, _ := json.Marshal(map[string]any{
+		"kind":          "service_rollout",
+		"status":        string(status),
+		"app_id":        appID,
+		"deployment_id": deploymentID,
+	})
+	if err := e.Notifier().Notify(ctx, db.NotifyDeploymentChanged, string(payload)); err != nil {
+		e.log.Warn("sched: notify service rollout change", "app", appID, "deployment", deploymentID, "status", status, "err", err)
+	}
+}
+
+// drainServiceDeploymentInstances releases a generation after the traffic
+// handoff. A successful generation is parked so its snapshot remains a useful
+// rollback cache; an aborted, never-serving generation is hard-stopped.
+func (e *Engine) drainServiceDeploymentInstances(ctx context.Context, deploymentID string, preserveSnapshot bool) {
+	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: load service rollout drain", "deployment", deploymentID, "err", err)
+		}
+		return
+	}
+	replicas, err := listServiceReplicas(ctx, e.store, dep.AppID, deploymentID)
+	if err != nil {
+		e.log.Warn("sched: list service rollout drain", "deployment", deploymentID, "err", err)
+		return
+	}
+	for _, replica := range replicas {
+		fresh, err := e.store.InstanceByID(ctx, replica.ID)
+		if err != nil {
+			continue
+		}
+		switch state.State(fresh.State) {
+		case state.StateRunning:
+			if preserveSnapshot {
+				if err := e.Park(ctx, fresh.ID); err != nil {
+					e.log.Warn("sched: park old service rollout replica", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+				}
+				continue
+			}
+			if err := e.Evict(ctx, fresh.ID); err != nil {
+				e.log.Warn("sched: stop aborted service rollout replica", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+			}
+		case state.StateWaking, state.StateColdBooting:
+			destroyCtx := context.WithoutCancel(ctx)
+			if err := e.timedDestroy(destroyCtx, fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
+				e.log.Warn("sched: destroy service rollout wake", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+				continue
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		}
+	}
+}
+
+func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollout, previous state.Deployment) bool {
+	updated, err := e.store.FinalizeServiceRollout(ctx, rollout.ID)
+	if err != nil {
+		if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: finalize service rollout", "app", app.ID, "deployment", rollout.ID, "err", err)
+		}
+		return false
+	}
+	if previous.ID != "" {
+		e.drainServiceDeploymentInstances(ctx, previous.ID, true)
+	}
+	e.emitServiceRolloutChange(ctx, app.ID, updated.ID, updated.Status)
+	return true
+}
+
+func (e *Engine) abortServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, reason string) bool {
+	updated, err := e.store.AbortServiceRollout(ctx, rollout.ID, reason)
+	if err != nil {
+		if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: abort service rollout", "app", app.ID, "deployment", rollout.ID, "err", err)
+		}
+		return false
+	}
+	e.drainServiceDeploymentInstances(ctx, rollout.ID, false)
+	live, listErr := e.store.LiveDeployments(ctx, app.ID)
+	if listErr == nil && len(live) > 0 {
+		e.emitServiceRolloutChange(ctx, app.ID, live[0].ID, live[0].Status)
+	} else {
+		e.emitServiceRolloutChange(ctx, app.ID, updated.ID, updated.Status)
+	}
+	return true
+}
+
+// reconcileServiceRollout advances one scope by at most one ready replica per
+// pass. The old generation keeps the remainder of the desired capacity until
+// the new generation proves readiness; the total temporary surge is one.
+func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, deployments []state.Deployment) {
+	desired := desiredServiceReplicas(app.Manifest)
+	previous := previousServiceDeployment(rollout, deployments)
+	replicas, err := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)
+	if err != nil {
+		e.log.Warn("sched: list new service rollout replicas", "app", app.ID, "deployment", rollout.ID, "err", err)
+		return
+	}
+	status := classifyServiceReplicas(replicas)
+	if status.ready >= desired {
+		e.finishServiceRollout(ctx, app, rollout, previous)
+		return
+	}
+	if serviceRolloutTimedOut(rollout, time.Now().UTC()) {
+		e.abortServiceRollout(ctx, app, rollout, "readiness timeout")
+		return
+	}
+	if previous.ID == "" {
+		e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true)
+	} else {
+		newTarget := status.ready + 1
+		if newTarget > desired {
+			newTarget = desired
+		}
+		oldTarget := desired - status.ready
+		if oldTarget < 0 {
+			oldTarget = 0
+		}
+		e.convergeServiceReplicasToTarget(ctx, previous.ID, oldTarget, false)
+		e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true)
+	}
+	// Admission may synchronously reach RUNNING. Re-read so a fast boot can
+	// complete the rollout without waiting for a second notification.
+	ready, readErr := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)
+	if readErr == nil && classifyServiceReplicas(ready).ready >= desired {
+		e.finishServiceRollout(ctx, app, rollout, previous)
+	}
+}
+
 // ReconcileServiceDeployment restores the app's service allocation after a
 // deployment or instance notification. The allocation is app-scoped because
 // a canary and its predecessor are both live during a rollout.
@@ -337,6 +524,19 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		e.log.Warn("sched: list live service deployments", "app", appID, "err", err)
 		return
 	}
+	handledScopes := make(map[string]struct{})
+	if instanceModeForApp(app) == string(state.InstanceModeService) {
+		rollouts := activeServiceRollouts(deployments)
+		scopes := make([]string, 0, len(rollouts))
+		for scope := range rollouts {
+			scopes = append(scopes, scope)
+		}
+		sort.Strings(scopes)
+		for _, scope := range scopes {
+			handledScopes[scope] = struct{}{}
+			e.reconcileServiceRollout(ctx, app, rollouts[scope], deployments)
+		}
+	}
 	targets := make(map[string]int, len(deployments))
 	if instanceModeForApp(app) == string(state.InstanceModeService) {
 		var targetErr error
@@ -344,6 +544,11 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		if targetErr != nil {
 			e.log.Warn("sched: allocate service replicas", "app", appID, "err", targetErr)
 			return
+		}
+		for _, dep := range deployments {
+			if _, handled := handledScopes[serviceRolloutScope(dep)]; handled {
+				delete(targets, dep.ID)
+			}
 		}
 	} else {
 		// A mode switch away from service still needs to drain the old

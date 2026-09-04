@@ -3,6 +3,7 @@ package sched
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -185,6 +186,119 @@ func TestReconcileServiceApp_AllocatesAcrossLiveGenerations(t *testing.T) {
 	}
 	if parkedByDeployment[stable.ID] != 1 {
 		t.Fatalf("parked stable replicas = %d, want 1; all=%+v", parkedByDeployment[stable.ID], parkedByDeployment)
+	}
+}
+
+func TestReconcileServiceApp_ReadinessGatedRolloutPromotesAfterBoot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanPro, 128, 5)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 3, Desired: 3},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, stable.ID,
+			string(state.StateRunning), app.RAMMB, "node-1", "stable-rollout-"+string(rune('1'+i)), string(state.InstanceModeService)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rollout, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:service-next",
+		Status: state.DeployPending, Scope: stable.Scope, TrafficPercent: 0,
+		RolloutState: "rolling_out",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(context.Background(), rollout.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A zero-weight rollout must not become the request wake target while the
+	// predecessor is still serving.
+	if got, err := store.LiveDeployment(context.Background(), app.ID); err != nil || got.ID != stable.ID {
+		t.Fatalf("LiveDeployment before readiness = %q, %v; want stable %q", got.ID, err, stable.ID)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		e.ReconcileServiceApp(context.Background(), app.ID)
+		got, readErr := store.DeploymentByID(context.Background(), rollout.ID)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if got.RolloutState == "complete" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("service rollout did not complete: %+v", got)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	got, err := store.DeploymentByID(context.Background(), rollout.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.DeployLive || got.TrafficPercent != 100 || got.RolloutState != "complete" {
+		t.Fatalf("promoted rollout = status:%q traffic:%d state:%q; want live/100/complete", got.Status, got.TrafficPercent, got.RolloutState)
+	}
+	old, err := store.DeploymentByID(context.Background(), stable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.Status != state.DeploySuperseded || old.TrafficPercent != 0 {
+		t.Fatalf("old rollout = status:%q traffic:%d; want superseded/0", old.Status, old.TrafficPercent)
+	}
+}
+
+func TestReconcileServiceApp_ReadinessTimeoutRestoresPrevious(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanPro, 128, 5)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 2, Desired: 1},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, stable.ID,
+		string(state.StateRunning), app.RAMMB, "node-1", "stable-timeout", string(state.InstanceModeService)); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC().Add(-serviceRolloutTimeout - time.Minute)
+	rollout, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:service-bad",
+		Status: state.DeployPending, Scope: stable.Scope, TrafficPercent: 0,
+		RolloutState: "rolling_out", RolloutStartedAt: &started,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(context.Background(), rollout.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.ReconcileServiceApp(context.Background(), app.ID)
+
+	failed, err := store.DeploymentByID(context.Background(), rollout.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != state.DeploySuperseded || failed.RolloutState != "aborted" || failed.RolloutAbortedReason != "readiness timeout" {
+		t.Fatalf("timed-out rollout = status:%q state:%q reason:%q; want superseded/aborted/readiness timeout", failed.Status, failed.RolloutState, failed.RolloutAbortedReason)
+	}
+	restored, err := store.DeploymentByID(context.Background(), stable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status != state.DeployLive || restored.TrafficPercent != 100 {
+		t.Fatalf("restored deployment = status:%q traffic:%d; want live/100", restored.Status, restored.TrafficPercent)
 	}
 }
 

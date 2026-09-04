@@ -4287,6 +4287,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if d.RolloutState == "" {
 		d.RolloutState = "pending"
 	}
+	serviceRollout := IsServiceRollout(d)
 
 	// Find the most-recent non-terminal deployment row for this app.
 	// O(N) over the map is fine at one-box scale; spec §6 keeps the
@@ -4318,7 +4319,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 			hasPrior = true
 		}
 	}
-	if hasPrior {
+	if hasPrior && !serviceRollout {
 		// Match PgStore exactly: mutate the stored prior in-place so
 		// subsequent LatestDeployment / DeploymentByID readers see
 		// the supersede immediately, under m.mu.
@@ -4328,14 +4329,14 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		// is stamped at d.TrafficPercent below (handler defaults to
 		// 100 when the caller omits the optional pointer). Mirrors
 		// the pgstore's two-field SET in CreateDeployment.
-		if d.CanaryTotalSteps <= 0 {
+		if d.CanaryTotalSteps <= 0 && !serviceRollout {
 			prior := m.deployments[priorID]
 			prior.Status = DeploySuperseded
 			prior.TrafficPercent = 0
 			m.deployments[priorID] = prior
 		}
 	}
-	if d.CanaryTotalSteps <= 0 {
+	if d.CanaryTotalSteps <= 0 && !serviceRollout {
 		// A stable deployment terminates any active canary overlap as
 		// well as the newest prior row. Without this sweep, a stable
 		// deploy made during a canary would leave the residual stable
@@ -4368,7 +4369,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	// deployment when the caller supplies zero. A canary's zero is
 	// meaningful (a valid custom first stage), and the APID handler
 	// has already copied the selected first stage onto the row.
-	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 {
+	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
 	m.deployments[d.ID] = d
@@ -4438,7 +4439,10 @@ func (m *MemStore) LiveDeployment(_ context.Context, appID string) (Deployment, 
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
-		if d.AppID == appID && d.Status == DeployLive && (!found || d.CreatedAt.After(latest.CreatedAt)) {
+		if d.AppID != appID || d.Status != DeployLive {
+			continue
+		}
+		if !found || deploymentPreferredForWake(d, latest) {
 			latest, found = d, true
 		}
 	}
@@ -4460,7 +4464,10 @@ func (m *MemStore) LiveDeploymentForScope(_ context.Context, appID, scope string
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
-		if d.AppID == appID && d.Scope == scope && d.Status == DeployLive && (!found || d.CreatedAt.After(latest.CreatedAt)) {
+		if d.AppID != appID || d.Scope != scope || d.Status != DeployLive {
+			continue
+		}
+		if !found || deploymentPreferredForWake(d, latest) {
 			latest, found = d, true
 		}
 	}
@@ -4515,6 +4522,9 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
 			continue
 		}
+		if IsServiceRollout(d) {
+			continue
+		}
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -4540,6 +4550,9 @@ func (m *MemStore) SafedeployListPendingRollouts(_ context.Context) ([]Deploymen
 			continue
 		}
 		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+			continue
+		}
+		if IsServiceRollout(d) {
 			continue
 		}
 		out = append(out, d)

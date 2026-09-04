@@ -383,6 +383,17 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 		now := time.Now().UTC()
 		dep.CanaryStepStartedAt = &now
 	}
+	// Service deployments without an explicit canary or traffic split use the
+	// scheduler's readiness-gated rollout. Keep the previous generation live
+	// at 100% while the new generation warms, then let schedd atomically
+	// promote it once the desired RUNNING replica count is ready.
+	if app.Manifest.ExecutionMode == api.ExecutionModeService &&
+		req.Canary == nil && req.TrafficPercent == nil {
+		dep.RolloutState = "rolling_out"
+		dep.TrafficPercent = 0
+		now := time.Now().UTC()
+		dep.RolloutStartedAt = &now
+	}
 	// ADR-091 / PR-D: per-deployment env scope. The handler ran
 	// api.ValidateScope above — non-empty here means well-formed
 	// (passes EnvScopePattern, is not __all__). Empty → default
@@ -484,7 +495,7 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 	// existed (first deploy on this app), skip the second notify. A
 	// canary deliberately keeps its prior live revision as the
 	// residual traffic bucket, so it must not emit this cleanup signal.
-	if prev.ID != "" && d.CanaryTotalSteps <= 0 {
+	if prev.ID != "" && d.CanaryTotalSteps <= 0 && !state.IsServiceRollout(d) {
 		_ = s.notif.Notify(ctxr, db.NotifyDeploymentChanged,
 			fmt.Sprintf(`{"kind":"image","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, prev.ID, prev.ID))
 	}
@@ -520,7 +531,7 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 	// the PR #984 annotation-merge helper.
 	resolvedActor := resolvedActorString(d.DeployedVia, d.DeployedByUserID, d.PusherLogin)
 	supersedes := prev.ID
-	if d.CanaryTotalSteps > 0 {
+	if d.CanaryTotalSteps > 0 || state.IsServiceRollout(d) {
 		// The prior revision remains live until the terminal canary
 		// transition; it is not superseded at deployment creation.
 		supersedes = ""
