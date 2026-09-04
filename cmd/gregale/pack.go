@@ -119,10 +119,12 @@ var defaultExcludeDirs = map[string]bool{
 	".cache":   true, // pip / pytest / generic
 }
 
-// defaultExcludeFiles are basenames dropped anywhere in the tree (OS junk).
+// defaultExcludeFiles are basenames dropped anywhere in the tree (OS/VCS
+// metadata that should never become application source).
 var defaultExcludeFiles = map[string]bool{
 	".DS_Store": true,
 	"Thumbs.db": true,
+	".git":      true, // linked worktrees use a .git file instead of a directory
 }
 
 // appMarker is the closed set of filenames whose presence at the project

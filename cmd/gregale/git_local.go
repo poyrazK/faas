@@ -359,6 +359,105 @@ func gitArchiveHEAD(gitDir, outPath string) error {
 	return nil
 }
 
+// gitArchiveHEADPath archives a tracked directory from the committed HEAD
+// tree. Unlike `git archive HEAD -- path`, the tree-ish form
+// (`HEAD:path/to/app`) makes the selected directory the archive root. That is
+// the source-root contract the normal deploy builder expects: a package.json,
+// go.mod, or Dockerfile in the selected project is visible at the top level
+// after upload.
+//
+// relPath is slash-separated and relative to gitDir. The root path is
+// represented by "." and delegates to gitArchiveHEAD so the existing full
+// repository behavior stays byte-for-byte compatible.
+func gitArchiveHEADPath(gitDir, relPath, outPath string) error {
+	clean := filepath.ToSlash(filepath.Clean(relPath))
+	if clean == "." {
+		return gitArchiveHEAD(gitDir, outPath)
+	}
+	if clean == "" || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "\\") {
+		return fmt.Errorf("gitArchiveHEADPath: invalid repository path %q", relPath)
+	}
+
+	// Keep the stable empty-repository error from gitArchiveHEAD before
+	// checking the requested tree. A path lookup on an empty repo otherwise
+	// produces a less useful "unknown revision" message.
+	if _, err := runGitCmd(gitDir, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+		return fmt.Errorf("gitArchiveHEADPath: %w", err)
+	}
+	treeish := "HEAD:" + clean
+	// `rev-parse HEAD:path^{tree}` is not consistently parsed by the
+	// Git versions supported by the CLI when the path contains a slash.
+	// ls-tree gives us the same tracked-directory check while keeping
+	// the path after `--` as a pathspec rather than a revision suffix.
+	entries, err := runGitCmd(gitDir, "ls-tree", "-d", "HEAD", "--", clean)
+	if err != nil {
+		return fmt.Errorf("gitArchiveHEADPath: source root %q is not a tracked directory: %w", relPath, err)
+	}
+	if strings.TrimSpace(entries) == "" {
+		return fmt.Errorf("gitArchiveHEADPath: source root %q is not a tracked directory", relPath)
+	}
+	if _, err := runGitCmd(gitDir, "archive", treeish, "--format=tar.gz", "-o", outPath); err != nil {
+		return fmt.Errorf("gitArchiveHEADPath: archive %q failed: %w", relPath, err)
+	}
+	return nil
+}
+
+// resolveDeploySourceDir resolves a user-selected deploy directory. Relative
+// paths are interpreted from cwd, matching the other CLI path flags. The
+// final component may not be a symlink: source packing rejects symlink entries
+// and accepting a symlinked root would make the selected build context behave
+// differently from every file below it.
+func resolveDeploySourceDir(cwd, requested string) (string, error) {
+	if requested == "" {
+		return cwd, nil
+	}
+	if cwd == "" {
+		return "", errors.New("cannot resolve --path without a current directory")
+	}
+	path := requested
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cwd, path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve --path %q: %w", requested, err)
+	}
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return "", fmt.Errorf("could not inspect --path %q: %w", requested, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("refusing symlink deploy source %q", requested)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("--path %q is not a directory", requested)
+	}
+	return filepath.Clean(abs), nil
+}
+
+// gitRelativePath returns sourceDir relative to repoRoot, using the slash
+// form Git accepts. It fails closed when the selected source is outside the
+// repository; callers must not turn an arbitrary filesystem path into a Git
+// tree-ish by accident.
+func gitRelativePath(repoRoot, sourceDir string) (string, error) {
+	root, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	source, err := filepath.Abs(sourceDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, source)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("source directory %q is outside git repository %q", sourceDir, repoRoot)
+	}
+	return filepath.ToSlash(filepath.Clean(rel)), nil
+}
+
 // tarballSHA256 returns the lower-case hex sha256 of the file at
 // path. Called by the receipt wire-up at commands2.go:1638 after
 // gitArchiveHEAD returns (or after a user-supplied --tarball is

@@ -24,7 +24,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
 | [`deployment`](#deployment) | Get one deployment (&lt;id&gt; \| set-min-instances &lt;id&gt; --min N) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete) |
-| [`deploy`](#deploy) | Deploy (--image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
+| [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`tenant-surfaces`](#tenant-surfaces) | Manage tenant surfaces (multi-hostname SAN bundle per app) |
@@ -649,14 +649,16 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 ## deploy
 
-Deploy (--image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
+Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--secret-scan <on|off>] [--diff] [--strict] [--lenient] [--server-diff] [--doctor-strict]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--secret-scan <on|off>] [--diff] [--strict] [--lenient] [--server-diff] [--doctor-strict]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--image <REF>` | deploy from a container image reference |  |
 | `--tarball <PATH>` | deploy from a source tarball |  |
+| `--path <DIR>` | deploy a selected local source directory (relative to the current directory) |  |
+| `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
 | `--repo <OWNER/NAME>` | deploy from a GitHub repo |  |
 | `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
@@ -664,7 +666,7 @@ Deploy (--image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | 
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
-| `--name <SLUG>` | app name (default: current directory) |  |
+| `--name <SLUG>` | app name (default: selected source directory, or current directory) |  |
 | `--function` | deploy as a function; skip shape auto-detection |  |
 | `--app` | deploy as an app; skip shape auto-detection |  |
 | `--yes` | skip the apply confirmation prompt |  |

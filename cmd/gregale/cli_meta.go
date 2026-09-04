@@ -460,10 +460,12 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "deploy",
 		DocSlug: "deploy",
-		Short:   "Deploy (--image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
+		Short:   "Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
 		Flags: []cliFlag{
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
+			{Name: "path", Short: "deploy a selected local source directory (relative to the current directory)", Value: "DIR"},
+			{Name: "worktree", Short: "deploy the selected source directory from the working tree, including local changes"},
 			{Name: "repo", Short: "deploy from a GitHub repo", Value: "OWNER/NAME"},
 			// Issue #739 / ADR-092: --ref pairs with --repo to
 			// drive the headless source-ref deploy (CI-friendly,
@@ -477,7 +479,7 @@ var cliCommands = []cliCommand{
 			{Name: "dockerfile", Short: "build with the supplied Dockerfile inside --tarball"},
 			{Name: "runtime", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313"}},
 			{Name: "handler", Short: "function handler", Value: "HANDLER"},
-			{Name: "name", Short: "app name (default: current directory)", Value: "SLUG"},
+			{Name: "name", Short: "app name (default: selected source directory, or current directory)", Value: "SLUG"},
 			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
