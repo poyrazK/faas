@@ -23,9 +23,10 @@ import (
 //     dead build indefinitely, and the slot is held in the queue
 //     until manual intervention.
 //   - The reaper flips stuck rows to status='failed' with
-//     failure_class='timeout'. The owning deployment row is NOT touched
-//     here (issue #195 B1.5 covers the defer-flip path on imaged's
-//     side; ADR-031 covers the requeue-vs-fail reconciliation question).
+//     failure_class='timeout' and fails the owning in-flight deployment in
+//     the same store operation. This keeps the customer-visible deployment
+//     state consistent with the build after a worker disappears (issue #195
+//     B1.5 / ADR-031).
 //
 // The threshold is wider than the 10-minute VM build timeout (default
 // 15 minutes) so a slow-but-finishing build isn't swept out from under

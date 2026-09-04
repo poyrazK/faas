@@ -1,4 +1,5 @@
-// commands_openapi.go — `gregale openapi diff <baseline> <proposed>`.
+// commands_openapi.go — `gregale openapi diff <baseline> <proposed>` and
+// the app OpenAPI lifecycle commands.
 //
 // Issue #976 / ADR-122 / SAFE-RELEASES-D:
 //
@@ -78,18 +79,29 @@ var breakingKinds = map[openapidiff.SchemaKind]struct{}{
 }
 
 func cmdOpenapi(args []string) int {
+	parent, _ := lookupCliCommand("openapi")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr,
-			"usage: gregale openapi diff <baseline.yaml> <proposed.yaml>",
+			"usage: gregale openapi <diff|get|import|dry-run|rm> ...",
 			"openapi")
 		return 1
 	}
 	switch args[0] {
 	case "diff":
 		return cmdOpenapiDiff(args[1:])
+	case "get":
+		return cmdOpenapiGet(args[1:])
+	case "import":
+		return cmdOpenapiImport(args[1:])
+	case "dry-run":
+		return cmdOpenapiDryRun(args[1:])
+	case "rm":
+		return cmdOpenapiRemove(args[1:])
 	}
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	PrintUsage(os.Stderr,
-		"usage: gregale openapi <subcommand>   (subcommands: diff)",
+		"usage: gregale openapi <subcommand>   (subcommands: diff|get|import|dry-run|rm)",
 		"openapi")
 	return 1
 }

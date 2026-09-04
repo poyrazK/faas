@@ -33,6 +33,7 @@
     mode: "0640"
 
 - name: vmmd_service — install systemd unit
+  notify: restart faas-vmmd
   ansible.builtin.copy:
     src: faas-vmmd.service
     dest: /etc/systemd/system/faas-vmmd.service
@@ -41,7 +42,7 @@
     mode: "0644"
   register: vmmd_unit
 
-- name: vmmd_service — systemctl daemon-reload (idempotent, after new unit file)
+- name: vmmd_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: vmmd_unit.changed
@@ -60,6 +61,7 @@
 # deploy/ansible/roles/control_plane_service/templates/
 # 99-faas-node-name.conf.j2 — body is identical across roles.
 - name: vmmd_service — install FAAS_NODE_NAME drop-in (Mega-PR-A)
+  notify: restart faas-vmmd
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-node-name.conf.j2
     dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-node-name.conf
@@ -74,6 +76,7 @@
 # for the full rationale (single-box fallback, drop-in wins,
 # idempotent).
 - name: vmmd_service — install FAAS_VMMD_ROLE drop-in (Mega-PR-C)
+  notify: restart faas-vmmd
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
     dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-role.conf
@@ -107,6 +110,7 @@
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
 - name: vmmd_service — install canonical routing drop-in
+  notify: restart faas-vmmd
   ansible.builtin.template:
     src: 99-faas-routing.conf.j2
     dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-routing.conf
@@ -232,5 +236,5 @@
 # host.age.pub; the rest are checked here as defense in depth).
 # Each assert is a no-op when the file is absent (operator-
 # provisioned via `gregalectl secrets init`).
-- name: vmmd_service — sealed.env split perm-asserts (issue #585 / ADR-127)
+- name: vmmd_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml

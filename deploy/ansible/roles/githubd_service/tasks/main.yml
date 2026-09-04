@@ -25,6 +25,7 @@
     mode: "0640"
 
 - name: githubd_service — install systemd unit
+  notify: restart faas-githubd
   ansible.builtin.copy:
     src: faas-githubd.service
     dest: /etc/systemd/system/faas-githubd.service
@@ -33,7 +34,7 @@
     mode: "0644"
   register: githubd_unit
 
-- name: githubd_service — systemctl daemon-reload (idempotent, after new unit file)
+- name: githubd_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: githubd_unit.changed
@@ -51,6 +52,7 @@
 # roles/control_plane_service/templates/99-faas-node-name.conf.j2
 # — body is identical across roles.
 - name: githubd_service — install FAAS_NODE_NAME drop-in (Mega-PR-A)
+  notify: restart faas-githubd
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-node-name.conf.j2
     dest: /etc/systemd/system/faas-githubd.service.d/99-faas-node-name.conf
@@ -64,6 +66,7 @@
 # See roles/githubd_service/templates/99-faas-role.conf.j2 for
 # the full rationale.
 - name: githubd_service — install FAAS_GITHUBD_ROLE drop-in (Mega-PR-C)
+  notify: restart faas-githubd
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
     dest: /etc/systemd/system/faas-githubd.service.d/99-faas-role.conf
@@ -74,7 +77,7 @@
 # shared block covers ALL new per-daemon secret files (githubd
 # owns githubd.env + app.pem; the rest are checked here as defense
 # in depth). Each assert is a no-op when the file is absent.
-- name: githubd_service — sealed.env split perm-asserts (issue #585 / ADR-127)
+- name: githubd_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
 
 # Issue #603 — soft assert on the GitHub App private key. The file is
@@ -106,7 +109,7 @@
 # faas-githubd.service, so a root-owned 0400 file would be unreadable.
 # A follow-up PR can split a NON_ROOT_DAEMON bucket in the shared
 # perm-asserts file; this rebase does not amend ADR-127.
-- name: githubd_service — soft assert github-app.pem mode + owner (issue #603)
+- name: githubd_service — soft assert github-app.pem mode + owner (issue # 603)
   ansible.builtin.stat:
     path: /etc/faas/secrets/githubd/app.pem
   register: faas_github_app_pem_stat

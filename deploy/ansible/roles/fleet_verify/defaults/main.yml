@@ -1,0 +1,15 @@
+---
+# fleet_verify (ADR-143) — prove the host converged, don't assume it.
+#
+# Roles ship units but do not enable/start them (the operator runs
+# `gregalectl secrets init` + `systemctl enable --now` once). So on the
+# FIRST bootstrap every unit is disabled and there is nothing to verify;
+# on every later run the units are enabled and a daemon that did not come
+# back after a config change is exactly the failure this role catches.
+#
+# faas_verify_strict=true (the standalone verify.yml playbook) turns a
+# disabled-but-allowed unit into a failure too — use it after activation.
+faas_verify_strict: false
+faas_verify_probe_timeout_s: 15
+faas_verify_run_doctor: true
+faas_verify_gregalectl: /usr/local/bin/gregalectl

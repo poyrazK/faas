@@ -56,3 +56,5 @@ vmlinux-*
 
 # coverage_floor.py bytecode
 .claude/ci/__pycache__/
+# ansible fact cache (deploy/ansible/ansible.cfg) + make ansible-scale-check render
+/.cache/

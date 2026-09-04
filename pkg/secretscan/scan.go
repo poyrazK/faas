@@ -1,26 +1,22 @@
-// Package gregalesecretscan is the client-side secret-pattern scanner for the
-// `gregale` CLI. It is invoked in two places — inside packDirToTarGz before a
-// source tree is sealed into the upload tarball, and inside envPush after a
-// .env file is parsed but before its KEY=VALUE pairs leave the workstation —
-// and emits a Finding for every line whose value matches a well-known provider
-// pattern (Stripe live/test, GitHub PAT, AWS access key, OpenAI, Anthropic,
-// Google API key, PEM private key block) OR a Shannon-entropy floor designed
-// to catch the long tail of unknown credential formats.
+// Package gregalesecretscan is the shared secret-pattern scanner for the
+// `gregale` CLI and apid ingress. It is invoked inside packDirToTarGz before a
+// source tree is sealed into the upload tarball, inside envPush after a .env
+// file is parsed, and by apid after source archives are extracted. It emits a
+// Finding for every line whose value matches a well-known provider pattern
+// (Stripe live/test, GitHub PAT, AWS access key, OpenAI, Anthropic, Google API
+// key, PEM private key block) OR a Shannon-entropy floor designed to catch the
+// long tail of unknown credential formats.
 //
 // The package is deliberately pure: no I/O, no goroutines, no global state,
-// no logging. Callers (cmd/gregale/pack.go and commands5.go) own the side
-// effects (drop the line from the upload, print a PrintWarn to stderr, exit
-// non-zero if every pair was a secret). This shape mirrors pkg/reposcan so
-// the same test idiom — table-driven Go tests with verbatim expected outputs
-// — extends naturally.
+// no logging. Callers own the side effects (drop the line from the upload,
+// print a warning, or reject the request). This shape mirrors pkg/reposcan
+// so the same test idiom — table-driven Go tests with verbatim expected
+// outputs — extends naturally.
 //
-// Threat model & non-goals: this is a defense-in-depth client-side check, not
-// a server-side trust-boundary enforcement. A customer who passes
-// `--secret-scan=off` (the documented escape hatch for local dev sandboxes
-// that legitimately need to ship a Stripe test key) bypasses the scan and the
-// server receives the value as-is. Adding server-side scanning in
-// cmd/apid/extract.go is a separate ADR (touches the trust boundary; out of
-// scope here).
+// Threat model & non-goals: this is a heuristic defense-in-depth check, not a
+// complete credential detector. The CLI's `--secret-scan=off` escape hatch
+// remains useful for local sandboxes, while apid independently scans uploaded
+// source archives at the deployment trust boundary.
 //
 // Snippet policy: Findings carry a Snippet field with the first 6 + last 4
 // chars of the matched value, separated by an ellipsis. The raw value is

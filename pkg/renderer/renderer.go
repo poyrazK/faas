@@ -202,17 +202,11 @@ func render(opts RenderOptions) (RenderReport, error) {
 	// those VMs.
 	daemons := daemonunitspec.ActivationOrder()
 	switch host.Role {
-	case "compute-only":
-		// Compute-only boxes run vmmd, imaged, gatewayd-internal, and
-		// builderd.
-		// They do NOT run apid, schedd, meterd, githubd, or
-		// gatewayd-public.
-		daemons = filterDaemons(daemons, "vmmd", "imaged", "gatewayd-internal", "builderd")
-	case "control-plane":
-		// Control-plane boxes run apid, schedd, meterd, githubd,
-		// gatewayd-public. They do NOT run vmmd, imaged, or
-		// gatewayd-internal.
-		daemons = filterDaemons(daemons, "apid", "schedd", "meterd", "githubd", "gatewayd-public")
+	case "compute-only", "control-plane":
+		// The partition lives on daemonunitspec.Entry.Role (ADR-143) so
+		// the renderer, the ansible topology file and deployctl cannot
+		// disagree about which box runs which daemon.
+		daemons = filterDaemons(daemons, daemonunitspec.DaemonsForRole(daemonunitspec.Role(host.Role))...)
 	}
 	// single-box (and ""): all 8 (Registry already includes imaged).
 

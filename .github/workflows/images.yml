@@ -70,8 +70,23 @@ on:
   pull_request:
   workflow_dispatch:
 
+# On a branch, only the newest push is interesting, so runs cancel each
+# other. On main they must NOT: every main commit publishes an immutable
+# `sha-<commit>` image, and release.yml pins a tag to the builder-base
+# source commit and then waits for THAT commit's publisher run to have
+# succeeded (see release.yml, "Resolve the immutable builder-base child
+# digest"). A shared main group means each merge cancels the previous
+# commit's publisher, so a commit that happens to be the builder-base
+# source can end up with no successful run and no image — permanently
+# unreleasable, because re-running it just loses to the next merge.
+#
+# Not hypothetical: on 2026-09-04 the publisher for e69a9281 was
+# cancelled four times in a row (once after 7 minutes of building) while
+# main merged roughly every 10 minutes, and v0.1.18-rc.62 could not be
+# built at all. Keying the group by commit on main gives each publisher
+# its own lane; branches keep the cheap cancel-the-stale-run behaviour.
 concurrency:
-  group: images-${{ github.ref }}
+  group: images-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 permissions:

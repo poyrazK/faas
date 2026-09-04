@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- SAFE-RELEASES-OBS PR-C (issue #976 / ADR-122): operator's
+       in-flight safe-releases surface. Mirrors the same nav header
+       + table style as audit_events.html. The page is
+       server-rendered on the handler side; a future PR can layer
+       htmx SSE for live updates without a template rewrite. -->
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    section { padding: 1rem 0; }
+    section h2 { margin: 0 0 0.5rem 0; font-size: 1.1rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    .empty { padding: 1rem 0; color: #888; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.85rem; font-weight: 500; }
+    .badge.pending { background: #fef3c7; color: #92400e; }
+    .badge.rolling { background: #dbeafe; color: #1e40af; }
+    .badge.complete { background: #d1fae5; color: #065f46; }
+    .badge.aborted { background: #fee2e2; color: #991b1b; }
+    .badge.warning { background: #fef3c7; color: #92400e; }
+    .badge.critical { background: #fee2e2; color: #991b1b; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/dashboard/">Home</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/audit-events">Audit</a>
+      <strong>Safe-releases</strong>
+    </nav>
+    <span><code>{{.Account.ID}}</code></span>
+  </header>
+
+  <main>
+    <h1>{{.Title}}</h1>
+    <p>Operator view of every in-flight canary, recent safe-releases audit rows, and the alert rules currently firing on this fleet. Bounded by the <code>safedeploy_in_flight_rollouts</code> gauge (PR-B alert <code>canary_fleet_in_flight_high</code> tripwires at 50).</p>
+
+    <section>
+      <h2>In-flight rollouts ({{len .Data.InFlight}})</h2>
+      {{if .Data.InFlight}}
+      <table>
+        <thead>
+          <tr>
+            <th>Deployment</th>
+            <th>Status</th>
+            <th>Rollout state</th>
+            <th>Created</th>
+            <th>Kind</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Data.InFlight}}
+          <tr>
+            <td><code>{{.ID}}</code></td>
+            <td>{{.Status}}</td>
+            <td>{{.Kind}}</td>
+            <td>{{.CreatedAt}}</td>
+            <td>{{.Kind}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="empty">No rollouts currently in pending or rolling_out. Fleet is at rest.</p>
+      {{end}}
+    </section>
+
+    <section>
+      <h2>Recent safe-releases audit ({{len .Data.RecentAudit}})</h2>
+      <p>Filtered to the 5 audit kinds PR-A widened: <code>deploy.rollout_started</code>, <code>deploy.rollout_completed</code>, <code>deploy.rollout_aborted</code>, <code>deploy.canary_step_advanced</code>, <code>deploy.alert_rule_fired</code>.</p>
+      {{if .Data.RecentAudit}}
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Kind</th>
+            <th>App</th>
+            <th>Deployment</th>
+            <th>Actor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Data.RecentAudit}}
+          <tr>
+            <td>{{.TimeLabel}}</td>
+            <td><code>{{.Kind}}</code></td>
+            <td>{{if .AppSlug}}<a href="/dashboard/apps/{{.AppSlug}}">{{.AppSlug}}</a>{{else}}<span class="empty">∅</span>{{end}}</td>
+            <td><code>{{.DeploymentID}}</code></td>
+            <td><code>{{.Actor}}</code></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="empty">No safe-releases audit rows in the last <code>safedeploy_in_flight_rollouts</code> tick window.</p>
+      {{end}}
+    </section>
+
+    <section>
+      <h2>Active safe-releases alerts ({{len .Data.ActiveAlerts}})</h2>
+      <p>Filtered to the 4 PR-B metric kinds: <code>canary_stuck_step</code>, <code>safedeploy_audit_emit_failing</code>, <code>deployment_audit_gc_failing</code>, <code>canary_fleet_in_flight_high</code>. Minimum plan: <code>scale</code>.</p>
+      {{if .Data.ActiveAlerts}}
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Metric</th>
+            <th>Enabled</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Data.ActiveAlerts}}
+          <tr>
+            <td><code>{{.Name}}</code></td>
+            <td><code>{{.Metric}}</code></td>
+            <td>{{if .Enabled}}<span class="badge complete">enabled</span>{{else}}<span class="badge aborted">disabled</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="empty">No enabled safe-releases alert rules on this account. Enable a preset via <code>/dashboard/alerts</code> to surface here.</p>
+      {{end}}
+    </section>
+  </main>
+
+  <footer>
+    Safe-releases dashboard · issue #976 / ADR-122 · PR-A/B/C.
+  </footer>
+</body>
+</html>

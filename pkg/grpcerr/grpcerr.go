@@ -51,9 +51,11 @@ func codeToGRPC(code string) codes.Code {
 		// HTTP status (503 vs 429).
 		return codes.ResourceExhausted
 	case api.CodeBuildUndetected,
-		api.CodeValidation:
+		api.CodeValidation,
+		api.CodeInvalidRef:
 		return codes.InvalidArgument
-	case api.CodeNotFound:
+	case api.CodeNotFound,
+		api.CodeGitHubInstallNotFound:
 		// CodeNotFound → HTTP 404 on the REST surface (StatusForCode in
 		// pkg/api/errors.go); gRPC's equivalent is codes.NotFound, not
 		// InvalidArgument. The previous mapping collapsed the two and
@@ -66,6 +68,8 @@ func codeToGRPC(code string) codes.Code {
 	case api.CodeBuildOOM,
 		api.CodeBuildTimeout:
 		return codes.ResourceExhausted
+	case api.CodeSourceRefUnavailable:
+		return codes.Unavailable
 	case api.CodeBillingPastDue,
 		api.CodeUnauthorized:
 		return codes.PermissionDenied

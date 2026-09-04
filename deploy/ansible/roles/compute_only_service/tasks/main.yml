@@ -251,6 +251,7 @@
     mode: "0640"
 
 - name: compute_only_service — install systemd unit
+  notify: restart faas-imaged
   ansible.builtin.copy:
     src: faas-imaged.service
     dest: /etc/systemd/system/faas-imaged.service
@@ -259,7 +260,7 @@
     mode: "0644"
   register: imaged_unit
 
-- name: compute_only_service — systemctl daemon-reload (idempotent, after new unit file)
+- name: compute_only_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: imaged_unit.changed
@@ -331,6 +332,7 @@
 # templates/99-faas-node-name.conf.j2 — body is identical across
 # roles.
 - name: compute_only_service — install FAAS_NODE_NAME drop-in (Mega-PR-A)
+  notify: restart faas-imaged
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-node-name.conf.j2
     dest: /etc/systemd/system/faas-imaged.service.d/99-faas-node-name.conf
@@ -344,6 +346,7 @@
 # roles/compute_only_service/templates/99-faas-role.conf.j2 for
 # the full rationale.
 - name: compute_only_service — install FAAS_IMAGED_ROLE drop-in (Mega-PR-C)
+  notify: restart faas-imaged
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
     dest: /etc/systemd/system/faas-imaged.service.d/99-faas-role.conf
@@ -355,6 +358,7 @@
 # deliberately named zz-* so it wins over an older release-runtime
 # EnvironmentFile drop-in that may still exist on a manually upgraded host.
 - name: compute_only_service — install canonical imaged vmmd mTLS drop-in
+  notify: restart faas-imaged
   ansible.builtin.template:
     src: zz-faas-vmmd-client.conf.j2
     dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-vmmd-client.conf
@@ -367,6 +371,7 @@
 # an old /usr/local/bin/faas-guest-init can otherwise survive a daemon rollout
 # and make every newly staged base boot with stale guest code.
 - name: compute_only_service — install canonical guest-init drop-in
+  notify: restart faas-imaged
   ansible.builtin.template:
     src: zz-faas-guest-init.conf.j2
     dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-guest-init.conf

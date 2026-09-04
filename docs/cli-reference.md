@@ -17,6 +17,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`crons`](#crons) | Manage scheduled requests |
 | [`triggers`](#triggers) | Manage unified event triggers (broker mappings + cron-linked rows) |
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
+| [`workflows`](#workflows) | Manage durable execution workflows |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight: scan local source; deployed-only checks are reported as skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
@@ -28,7 +29,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`tenant-surfaces`](#tenant-surfaces) | Manage tenant surfaces (multi-hostname SAN bundle per app) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|delete --app &lt;slug&gt;) |
-| [`openapi`](#openapi) | Pre-publish openapi schema-drift gate (openapi diff &lt;baseline&gt; &lt;proposed&gt;) |
+| [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt;) |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
 | [`inspect`](#inspect) | Read-only operator surface (inspect &lt;slug&gt; --upstreams [--scope &lt;scope&gt;] [--json]) |
@@ -525,6 +526,37 @@ List tasks for one run
 Tail logs for one task
 
 
+## workflows
+
+Manage durable execution workflows
+
+`gregale workflows [<subcommand>]`
+
+### workflows list
+
+List workflow runs for an app
+
+### workflows run
+
+Trigger a new workflow run
+
+### workflows status
+
+Show details of a workflow run
+
+### workflows steps
+
+List steps for a workflow run
+
+### workflows cancel
+
+Cancel an active workflow run
+
+### workflows events
+
+Send external event to a workflow run
+
+
 ## dashboard
 
 Open the account dashboard in your browser
@@ -774,13 +806,33 @@ Delete one edge rule
 
 ## openapi
 
-Pre-publish openapi schema-drift gate (openapi diff &lt;baseline&gt; &lt;proposed&gt;)
+Manage app OpenAPI docs + pre-publish schema-drift checks
 
 `gregale openapi [<subcommand>]`
 
 ### openapi diff
 
 Diff two openapi.yaml files; exit 2 on any BREAKING row
+
+### openapi get
+
+Fetch an app OpenAPI document (manual_import|auto)
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <manual_import|auto>` | document source | one of `manual_import` · `auto` |
+
+### openapi import
+
+Import an app OpenAPI document from a JSON file or stdin
+
+### openapi dry-run
+
+Preview uncovered routes without importing the document
+
+### openapi rm
+
+Remove the imported app OpenAPI document
 
 
 ## env

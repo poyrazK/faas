@@ -426,7 +426,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
-	traceShutdown, traceErr := trace.InitTracer(ctx, "vmmd", wire.Version, log)
+	ops := wire.NewOpsMetrics("vmmd")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "vmmd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("vmmd: init tracing: %w", traceErr)
 	}
@@ -693,7 +694,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// emit site for wake.readiness_200) can capture them at
 	// JailerVMM construction. Hoisted from the listener block
 	// below; same single-registry pattern as every other daemon.
-	ops := wire.NewOpsMetrics("vmmd")
 	wire.BootStamps(ctx, "vmmd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-054 acceptance: wire the LocalCacheBackend observer so

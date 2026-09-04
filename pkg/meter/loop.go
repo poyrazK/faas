@@ -206,8 +206,8 @@ func (l *Loop) WithPartitionCreate(fn func(ctx context.Context)) *Loop {
 // WithCanaryProgression attaches the canary_progression tick
 // runtime (issue #976 / ADR-122 / SAFE-RELEASES-A). cmd/meterd
 // calls this when FAAS_CANARY_PROGRESSION_TOKEN is set so the
-// goroutine has a service-account bearer to drive
-// apid.PatchDeploymentsIdTraffic with. nil disables the tick
+// goroutine has a service-account bearer to drive APID's atomic
+// canary-advance endpoint with. nil disables the tick
 // (Loop.Run skips the goroutine); the apid meterd surface stays
 // unaffected. Mirrors WithProbe's nil-skip + env-gate pattern.
 func (l *Loop) WithCanaryProgression(p *canary.Progression) *Loop {
@@ -354,7 +354,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// tick. Gated on WithCanaryProgression (set by cmd/meterd
 	// when FAAS_CANARY_PROGRESSION_TOKEN is on — the token is the
 	// apid-issued service-account credential the runtime uses to
-	// drive PatchDeploymentsIdTraffic). When unwired, the
+	// drive the atomic canary-advance endpoint. When unwired, the
 	// goroutine is skipped — a meterd without the token is a
 	// meterd without the orchestrator's advancement authority,
 	// and skipping silently is the right behaviour (the operator
@@ -384,7 +384,16 @@ func (l *Loop) Run(ctx context.Context) error {
 		go func() {
 			errc <- l.runTicks(ctx, l.cfg.SafeDeployInterval,
 				func(c context.Context) error {
-					_, err := l.safedeploy.Once(c)
+					// SAFE-RELEASES-OBS PR-A: fold the per-tick
+					// Stats struct into the daemon's wire.OpsMetrics
+					// registry so the safedeploy_orchestrator_*
+					// counters surface from boot. Pre-PR the Stats
+					// lived only in the per-tick log line; operators
+					// had no fleet-level view. IncOps is nil-safe
+					// (Loop.ops is always non-nil but the test seam
+					// builds Loop without one).
+					stats, inFlight, err := l.safedeploy.Once(c)
+					l.safedeploy.IncOps(l.ops, stats, inFlight)
 					return err
 				}, "safedeploy")
 		}()

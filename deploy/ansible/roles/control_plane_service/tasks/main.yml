@@ -45,9 +45,9 @@
     group: faas
     mode: "0640"
   loop:
-    - { src: "apid.toml.example",    dest: "/etc/faas/apid.toml.example" }
-    - { src: "schedd.toml.example",  dest: "/etc/faas/schedd.toml.example" }
-    - { src: "meterd.toml.example",  dest: "/etc/faas/meterd.toml.example" }
+    - { src: "apid.toml.example", dest: "/etc/faas/apid.toml.example" }
+    - { src: "schedd.toml.example", dest: "/etc/faas/schedd.toml.example" }
+    - { src: "meterd.toml.example", dest: "/etc/faas/meterd.toml.example" }
 
 - name: control_plane_service — install shared storage env example
   ansible.builtin.copy:
@@ -71,6 +71,10 @@
   notify: restart faas-meterd
 
 - name: control_plane_service — install systemd units
+  notify:
+    - restart faas-apid
+    - restart faas-schedd
+    - restart faas-meterd
   ansible.builtin.copy:
     src: "{{ item.src }}"
     dest: "{{ item.dest }}"
@@ -78,9 +82,9 @@
     group: root
     mode: "0644"
   loop:
-    - { src: "faas-apid.service",    dest: "/etc/systemd/system/faas-apid.service" }
-    - { src: "faas-schedd.service",  dest: "/etc/systemd/system/faas-schedd.service" }
-    - { src: "faas-meterd.service",  dest: "/etc/systemd/system/faas-meterd.service" }
+    - { src: "faas-apid.service", dest: "/etc/systemd/system/faas-apid.service" }
+    - { src: "faas-schedd.service", dest: "/etc/systemd/system/faas-schedd.service" }
+    - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
 
 # Tier A7 PR-D — pre-create /run/faas with the canonical
@@ -152,6 +156,9 @@
 # enable/start per the role's idempotency contract); the operator's
 # `systemctl enable --now` picks the drop-in up automatically.
 - name: control_plane_service — install FAAS_NODE_NAME drop-in per unit (Mega-PR-A)
+  notify:
+    - restart faas-apid
+    - restart faas-meterd
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-node-name.conf.j2
     dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-node-name.conf"
@@ -163,6 +170,7 @@
     - faas-meterd
 
 - name: control_plane_service — install central schedd identity drop-in
+  notify: restart faas-schedd
   ansible.builtin.template:
     src: 99-faas-schedd-node-name.conf.j2
     dest: /etc/systemd/system/faas-schedd.service.d/99-faas-node-name.conf
@@ -214,6 +222,7 @@
 # legacy Unix socket. Remove the drop-in on a role transition so a host does
 # not retain a stale TCP endpoint after returning to single-box mode.
 - name: control_plane_service — install apid AppErrors target drop-in
+  notify: restart faas-apid
   ansible.builtin.template:
     src: 99-faas-app-errors.conf.j2
     dest: /etc/systemd/system/faas-apid.service.d/99-faas-app-errors.conf
@@ -224,6 +233,7 @@
   when: faas_apid_app_errors_listen | default('') | length > 0
 
 - name: control_plane_service — remove apid AppErrors target drop-in
+  notify: restart faas-apid
   ansible.builtin.file:
     path: /etc/systemd/system/faas-apid.service.d/99-faas-app-errors.conf
     state: absent
@@ -231,6 +241,7 @@
   when: faas_apid_app_errors_listen | default('') | length == 0
 
 - name: control_plane_service — install split-box schedd routing drop-in
+  notify: restart faas-schedd
   ansible.builtin.template:
     src: 99-faas-schedd-routing.conf.j2
     dest: /etc/systemd/system/faas-schedd.service.d/99-faas-routing.conf
@@ -244,7 +255,7 @@
 # defense-in-depth so a loose perm on a sibling role's file also
 # fails this role's run). Each assert is a no-op when the file is
 # absent (operator-provisioned via `gregalectl secrets init`).
-- name: control_plane_service — sealed.env split perm-asserts (issue #585 / ADR-127)
+- name: control_plane_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
 
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
@@ -255,6 +266,10 @@
 # roles/control_plane_service/templates/99-faas-role.conf.j2
 # for the full rationale.
 - name: control_plane_service — install FAAS_<DAEMON>_ROLE drop-in per unit (Mega-PR-C)
+  notify:
+    - restart faas-apid
+    - restart faas-schedd
+    - restart faas-meterd
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
     dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-role.conf"
@@ -274,7 +289,7 @@
     group: faas
     mode: "0770"
   loop:
-    - { path: "/var/log/faas",   user: "faas-apid" }
+    - { path: "/var/log/faas", user: "faas-apid" }
     - { path: "/var/spool/faas", user: "faas-apid" }
     - { path: "/etc/faas/statuspage", user: "faas-apid" }
   # imaged-owned dirs (/srv/fc/snap, /srv/fc/sigs) moved to
@@ -407,7 +422,7 @@
 # overlap in progress" without blocking. Mode tripwire still
 # hard-fails if .previous exists with loose perms — that's the
 # same 0400 root:root tripwire as the current file, no exemption.
-- name: control_plane_service — soft assert host.age.previous (issue #316 / ADR-057)
+- name: control_plane_service — soft assert host.age.previous (issue # 316 / ADR-057)
   ansible.builtin.stat:
     path: /etc/faas/secrets/host.age.previous
   register: faas_host_age_previous_stat
@@ -444,11 +459,11 @@
 # touches the on-disk 0400 file; the tripwire is for the box
 # that runs `gregalectl backup unseal-archive-creds` and would
 # otherwise write a loose-perm file.
-- name: control_plane_service — assert archive-creds.json mode is 0400 root:root if present (issue #562)
+- name: control_plane_service — assert archive-creds.json mode is 0400 root:root if present (issue # 562)
   ansible.builtin.stat:
     path: /etc/faas/secrets/storage-box/archive-creds.json
   register: faas_archive_creds_stat
-- name: control_plane_service — assert archive-creds.json perms (issue #562)
+- name: control_plane_service — assert archive-creds.json perms (issue # 562)
   ansible.builtin.assert:
     that:
       - faas_archive_creds_stat.stat.mode == "0400"
@@ -469,7 +484,8 @@
 # by systemd when the unit is reloaded (mirrors the
 # postgres storage-box drop-in at deploy/ansible/roles/
 # postgres/files/postgresql@.service.d/99-faas-off-host-backup.conf).
-- name: control_plane_service — install apid log-archive drop-in (issue #562)
+- name: control_plane_service — install apid log-archive drop-in (issue # 562)
+  notify: restart faas-apid
   ansible.builtin.copy:
     src: "faas-apid.service.d/99-faas-log-archive.conf"
     dest: "/etc/systemd/system/faas-apid.service.d/99-faas-log-archive.conf"
@@ -480,6 +496,7 @@
   when: faas_archive_creds_stat.stat.exists
 
 - name: control_plane_service — remove apid archive drop-in when creds are absent
+  notify: restart faas-apid
   ansible.builtin.file:
     path: /etc/systemd/system/faas-apid.service.d/99-faas-log-archive.conf
     state: absent
@@ -497,7 +514,7 @@
 # Missing dir on a deploy attempt is fail-closed at the apid
 # pre-flight gate (handlers.go::createDeployment), so a never-
 # populated install is non-fatal at startup.
-- name: control_plane_service — ensure trusted-publishers dir exists with mode 0755 root:root (issue #472)
+- name: control_plane_service — ensure trusted-publishers dir exists with mode 0755 root:root (issue # 472)
   ansible.builtin.file:
     path: /etc/faas/secrets/trusted-publishers
     state: directory
@@ -652,7 +669,7 @@
 # `resend` (or `postmark`) and silently booting with a journal-
 # only sender in production will miss every dunning + quota
 # notice. The dev-mode escape hatch is FAAS_DEV=1.
-- name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue #246 / ADR-115)
+- name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue # 246 / ADR-115)
   ansible.builtin.shell: |
     set -euo pipefail
     sealed=/etc/faas/sealed.env

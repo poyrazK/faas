@@ -47,11 +47,10 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       RELEASE_TAG: ${{ inputs.release_tag }}
-      # Job-level env so the `Verify deployment` step's SSH heredoc
-      # inherits the critical/best-effort split (the embedded heredoc
-      # already declares these locally inside the `REMOTE` block).
-      FAAS_CRITICAL_SERVICES: "vmmd apid schedd gatewayd-internal gatewayd-public meterd githubd"
-      FAAS_BEST_EFFORT_SERVICES: "imaged"
+      # The critical / best-effort service split is owned by
+      # pkg/daemonunitspec (Entry.Critical) and shipped as
+      # deploy/etc/daemons.json; the env lists that used to live here were
+      # read by nothing (ADR-143 dead-config sweep).
     # Only deploy if the CI workflow's test job succeeded.
     # If ci.yml doesn't exist yet or the test job name differs, remove this.
     # needs: test

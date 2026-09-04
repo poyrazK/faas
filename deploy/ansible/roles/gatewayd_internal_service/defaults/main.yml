@@ -9,6 +9,8 @@
 # `-e gatewayd_route_metrics_enabled=false` at the playbook call
 # site; the toml drop in tasks/main.yml honours the override.
 gatewayd_route_metrics_enabled: true
+# ADR-143: streaming responses are a paid Hobby+ feature; production is on.
+gatewayd_streaming_enabled: true
 
 # Shared public wildcard suffix. Operators with a different Cloudflare/public
 # zone override this variable; the split compute gateway must receive the same

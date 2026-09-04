@@ -72,13 +72,19 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	}
 
 	var (
-		sourcePath  string
-		sourceBytes int64
-		dockerfile  bool
-		runtime     string
-		handler     string
-		kind        state.DeploymentKind
+		sourcePath     string
+		sourceBytes    int64
+		dockerfile     bool
+		runtime        string
+		handler        string
+		kind           state.DeploymentKind
+		sourceAccepted bool
 	)
+	defer func() {
+		if sourcePath != "" && !sourceAccepted {
+			_ = os.Remove(sourcePath)
+		}
+	}()
 
 	for {
 		part, err := mr.NextPart()
@@ -102,6 +108,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			if vErr != nil {
 				api.WriteProblem(w, vErr)
 				return
+			}
+			if sourcePath != "" {
+				_ = os.Remove(sourcePath)
 			}
 			sourcePath, sourceBytes = path, n
 		case "dockerfile":
@@ -139,6 +148,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	//     is the canonical "this is a database" signal.
 	// Both pass the same spooled tarball — no extra I/O.
 	if prob := scanForStatefulShape(sourcePath, dockerfile); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := scanSourceTarballSecrets(sourcePath, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -202,6 +215,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 			return
 		}
+		sourceAccepted = true
 		// Look up the durable deployment row to build the wire
 		// response. LatestDeployment returns the row we just
 		// inserted (state.Store.CreateDeployment is its own tx

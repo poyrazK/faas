@@ -1,0 +1,10 @@
+---
+# gatewayd-internal opens the database once at start-up
+# (cmd/gatewayd-internal/run.go, FAAS_GEOIP_AUTO_REFRESH=0), so a new
+# release only takes effect after a restart. try-restart keeps the first
+# bootstrap a no-op (the unit is not active yet).
+- name: geoip — try-restart faas-gatewayd-internal
+  ansible.builtin.command: systemctl try-restart faas-gatewayd-internal.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-gatewayd-internal
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

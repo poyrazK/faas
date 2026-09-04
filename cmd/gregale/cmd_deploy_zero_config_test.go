@@ -348,11 +348,12 @@ func TestDeployZeroConfig_ReceiptContainsProvenance(t *testing.T) {
 	withCwd(t, repo)
 
 	// Resolve the expected HEAD SHA + a known source-bytes sha
-	// from the git archive of the test repo. Computing the
+	// from the filtered git archive of the test repo. Computing the
 	// expected source_sha256 from the file the test just wrote
 	// would couple the pin to the test's own bookkeeping; running
-	// `git archive` mirrors what cmdDeployTarball does, so the
-	// expected digest is the value the receipt must report.
+	// `git archive` plus the production filter mirrors what
+	// cmdDeployTarball does, so the expected digest is the value
+	// the receipt must report.
 	shaCmd := exec.Command("git", "rev-parse", "HEAD")
 	shaCmd.Dir = repo
 	shaOut, err := shaCmd.Output()
@@ -367,7 +368,12 @@ func TestDeployZeroConfig_ReceiptContainsProvenance(t *testing.T) {
 	if out, err := archiveCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git archive: %v\n%s", err, out)
 	}
-	expectedFileSHA, err := fileSHA256Hex(t, archivePath)
+	filteredPath, _, _, err := packGitArchive(archivePath, defaultZeroConfigSourceCapMB, modeOff)
+	if err != nil {
+		t.Fatalf("filter expected tarball: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(filteredPath) })
+	expectedFileSHA, err := fileSHA256Hex(t, filteredPath)
 	if err != nil {
 		t.Fatalf("sha256(expected tarball): %v", err)
 	}

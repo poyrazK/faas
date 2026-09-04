@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 
@@ -41,12 +42,21 @@ import (
 // to the noop provider and shutdown is a no-op (see
 // pkg/wire/otelinit security note).
 func InitTracer(ctx context.Context, serviceName, version string, log *slog.Logger) (shutdown func(context.Context) error, err error) {
+	return InitTracerWithRegistry(ctx, serviceName, version, log, nil, "")
+}
+
+// InitTracerWithRegistry initializes tracing and attaches trace exporter
+// health metrics to reg. metricPrefix should match the daemon's OpsMetrics
+// prefix; it may be empty when reg is nil.
+func InitTracerWithRegistry(ctx context.Context, serviceName, version string, log *slog.Logger, reg prometheus.Registerer, metricPrefix string) (shutdown func(context.Context) error, err error) {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	h, err := otelinit.Init(ctx, otelinit.Config{
-		Name:    serviceName,
-		Version: version,
+		Name:              serviceName,
+		Version:           version,
+		MetricsRegisterer: reg,
+		MetricPrefix:      metricPrefix,
 	}, log)
 	if err != nil {
 		return nil, err

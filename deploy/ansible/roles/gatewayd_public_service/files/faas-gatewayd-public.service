@@ -1,61 +1,24 @@
 [Unit]
 Description=onebox-faas gatewayd-public — plain-HTTP edge (Tier A7 split, ADR-070; TLS terminates at Caddy upstream)
 Documentation=https://docs.gregale.dev/ops/gatewayd-public
-# gatewayd-public depends on apid (route cache mirror subscribes to
-# app_changed / domain_changed pg_notify). gatewayd-internal may be local
-# on a one-box host or remote on the compute box, so it is configured as a
-# dial target rather than a systemd dependency.
 After=faas-cp.slice network-online.target faas-apid.service
 Wants=faas-cp.slice faas-apid.service
 
 [Service]
 Type=simple
-# Select the gateway binary from the active verified release bundle.
-# /opt/faas/current is atomically flipped by the release installer,
-# keeping the public and internal gateways on one release identity.
+User=faas
+Group=faas
 ExecStart=/opt/faas/current/bin/gatewayd-public
 Restart=on-failure
 RestartSec=2s
-# PR #1082 review-fix #2: surface the per-unit restart count to the
-# daemon via $SYSTEMD_RESTARTS_ON_FAILURE (systemd 254+
-# RestartCountExport). pkg/wire/daemon.go::Daemon() reads the env var
-# at boot and records it on daemon_restart_count so the
-# FaasRestartLoop / FaasRepeatedRestart / FaasStuckActivating alerts
-# (ADR-128) have a real-time signal.
 RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
-
 Slice=faas-cp.slice
 MemoryMax=512M
-
-# Public listener: plain HTTP on 127.0.0.1:8080 behind Caddy upstream
-# (api.gregale.dev). No low-port bind, no TLS termination in this
-# daemon — CAP_NET_BIND_SERVICE is therefore unused.
 AmbientCapabilities=
-
-# Control listener (PR-J / 2026-08-05). The default control_addr
-# (127.0.0.1:9090) is the SAME port gatewayd-internal binds for its
-# control plane. Both daemons were launched with that default
-# (gatewayd-public ran without --config; gatewayd-internal's
-# /etc/faas/gatewayd-internal.toml was never shipped by
-# cd-controlplane.yml). They fought for :9090 every restart cycle,
-# the loser dying with `bind: address already in use` and taking the
-# egress listener fd with it via the stop() defer — meterd then
-# log-flooded from the missing /run/faas/gatewayd-egress.sock and
-# OOM-killed (run 31121004495, run 30987332162 post-#639).
-#
-# Pick a port the rest of the platform doesn't claim: apid control is
-# :9101, schedd control is :9091, prometheus-node-exporter is :9100,
-# prometheus is :9095, leaving :9092 free for gatewayd-public's
-# control. Read by cmd/gatewayd-public/main.go:154 (envOr("FAAS_PUBLIC_CONTROL_ADDR")).
 Environment=FAAS_PUBLIC_CONTROL_ADDR=127.0.0.1:9092
 Environment=FAAS_INTERNAL_TARGET=
 Environment=FAAS_COMPUTE_GATEWAY_DISCOVERY=database
 Environment=FAAS_CONTROL_PLANE_API_TARGET=http://127.0.0.1:8081
-
-# Hardening baseline — gatewayd-public is NOT root; runs as faas:faas.
-User=faas
-Group=faas
-
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -64,24 +27,17 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-# gatewayd-public dials gatewayd-internal.sock (AF_UNIX) and accepts
-# Caddy's reverse-proxy on 127.0.0.1:8080 (AF_INET). It does NOT make
-# outbound HTTP — the reverse-proxy is inbound-only.
-RestrictAddressFamilies=AF_UNIX AF_INET
 SystemCallArchitectures=native
 LockPersonality=yes
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
 ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
-
-# Plain-HTTP mode: no certmagic storage. Reads gatewayd-internal.sock
-# from /run/faas (vmmd's bind-mount via the internal unit's
-# ReadWritePaths); ReadWritePaths=/run/faas here dials it.
-ReadWritePaths=/run/faas
 ReadOnlyPaths=/etc/faas
+ReadWritePaths=/run/faas
 
 [Install]
 WantedBy=multi-user.target

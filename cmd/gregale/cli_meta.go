@@ -369,6 +369,19 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "workflows",
+		DocSlug: "workflows",
+		Short:   "Manage durable execution workflows",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List workflow runs for an app"},
+			{Name: "run", Short: "Trigger a new workflow run"},
+			{Name: "status", Short: "Show details of a workflow run"},
+			{Name: "steps", Short: "List steps for a workflow run"},
+			{Name: "cancel", Short: "Cancel an active workflow run"},
+			{Name: "events", Short: "Send external event to a workflow run"},
+		},
+	},
+	{
 		Name:    "dashboard",
 		DocSlug: "dashboard",
 		Short:   "Open the account dashboard in your browser",
@@ -591,9 +604,15 @@ var cliCommands = []cliCommand{
 		// CI consumes the exit code.
 		Name:    "openapi",
 		DocSlug: "openapi",
-		Short:   "Pre-publish openapi schema-drift gate (openapi diff <baseline> <proposed>)",
+		Short:   "Manage app OpenAPI docs + pre-publish schema-drift checks",
 		Subcommands: []cliSub{
 			{Name: "diff", Short: "Diff two openapi.yaml files; exit 2 on any BREAKING row"},
+			{Name: "get", Short: "Fetch an app OpenAPI document (manual_import|auto)", Flags: []cliFlag{
+				{Name: "source", Short: "document source", Value: "manual_import|auto", ClosedSet: []string{"manual_import", "auto"}},
+			}},
+			{Name: "import", Short: "Import an app OpenAPI document from a JSON file or stdin"},
+			{Name: "dry-run", Short: "Preview uncovered routes without importing the document"},
+			{Name: "rm", Short: "Remove the imported app OpenAPI document"},
 		},
 	},
 	{

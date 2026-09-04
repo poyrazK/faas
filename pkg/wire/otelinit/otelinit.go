@@ -36,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -109,6 +110,12 @@ type Config struct {
 	// issue #555 acceptance #5). The override exists so tests can
 	// run with a 3- or 5-span window.
 	WindowSize int
+	// MetricsRegisterer receives trace exporter health metrics. Leave nil
+	// when the caller does not expose a daemon Prometheus registry.
+	MetricsRegisterer prometheus.Registerer
+	// MetricPrefix is the exact daemon metric prefix (for example,
+	// gatewayd_public). When empty, Name is used.
+	MetricPrefix string
 }
 
 // Init wires up the OTel SDK per the config. Returns a Handle whose
@@ -125,6 +132,14 @@ type Config struct {
 func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 	if cfg.Name == "" {
 		return nil, errors.New("otelinit: Name is required")
+	}
+	metricPrefix := cfg.MetricPrefix
+	if metricPrefix == "" {
+		metricPrefix = cfg.Name
+	}
+	health, err := NewTraceExporterHealth(cfg.MetricsRegisterer, metricPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("otelinit: register trace exporter health: %w", err)
 	}
 	res, err := sdkresource.New(ctx,
 		sdkresource.WithAttributes(
@@ -185,7 +200,13 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 	}
 	client, err := otlptracehttp.New(ctx, exporterOptions...)
 	if err != nil {
+		health.SetUnavailable()
 		return nil, fmt.Errorf("otelinit: build OTLP/HTTP client: %w", err)
+	}
+	var exporter sdktrace.SpanExporter = client
+	if health != nil {
+		health.SetEnabled(true)
+		exporter = health.Wrap(exporter)
 	}
 
 	rate := defaultSamplingRate
@@ -210,7 +231,7 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 	sampler := sdktrace.ParentBased(NewDeploymentAware(root, WithCounter(counter)))
 
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(client,
+		sdktrace.WithBatcher(exporter,
 			sdktrace.WithBatchTimeout(batchTimeout),
 			sdktrace.WithMaxExportBatchSize(512),
 		),

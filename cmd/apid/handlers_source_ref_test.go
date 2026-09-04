@@ -5,8 +5,8 @@
 //
 // The githubd side is mocked via a recording GithubdClient so the
 // handler tests can exercise the round-trip without a real socket.
-// The recording fake exposes one-shot canned responses for the two
-// RPCs the handler calls (MintInstallationToken + StreamSourceRef)
+// The recording fake exposes a one-shot canned response for the
+// StreamSourceRef RPC; token minting is owned by githubd.
 // and records the (account_id, installation_id, repo, ref, max_bytes)
 // tuple so the audit + spool pipelines can assert on it after the
 // handler returns.
@@ -31,6 +31,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -75,6 +76,8 @@ type sourceRefFake struct {
 	streamBody     io.ReadCloser // closed by caller; bytes flow to validateAndSpool
 	streamTruncate bool
 	streamBytes    int64
+	streamSHA      string
+	streamStatsErr error
 	streamErr      error
 }
 
@@ -104,9 +107,11 @@ func (f *sourceRefFake) StreamSourceRef(_ context.Context, acctID string, instID
 	}
 	return &StreamSourceRefResult{
 		Body: f.streamBody,
-		Stats: StreamSourceRefStats{
-			Truncated:     f.streamTruncate,
-			BytesStreamed: f.streamBytes,
+		Stats: &StreamSourceRefStats{
+			Truncated:         f.streamTruncate,
+			BytesStreamed:     f.streamBytes,
+			ResolvedCommitSHA: f.streamSHA,
+			Err:               f.streamStatsErr,
 		},
 	}, nil
 }
@@ -145,6 +150,21 @@ func (f *sourceRefFake) Close() error { return nil }
 type nopReadCloser struct{ *bytes.Reader }
 
 func (nopReadCloser) Close() error { return nil }
+
+type sourceRefFailingReader struct {
+	data []byte
+	done bool
+}
+
+func (r *sourceRefFailingReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, errors.New("simulated mid-stream failure")
+	}
+	r.done = true
+	return copy(p, r.data), nil
+}
+
+func (*sourceRefFailingReader) Close() error { return nil }
 
 // buildSourceRefTarGz returns a minimal valid tar.gz with one
 // `index.js` file. Used to feed the streaming fake so
@@ -194,6 +214,7 @@ type sourceRefTestEnv struct {
 func newSourceRefTestServer(t *testing.T, plan api.Plan, slug string, installID int64) sourceRefTestEnv {
 	t.Helper()
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
 
 	store := state.NewMemStore()
 	gh := &sourceRefFake{
@@ -331,6 +352,9 @@ func TestSourceRef_BadRef(t *testing.T) {
 		{"path traversal", "main/../../etc", api.CodeInvalidRef},
 		{"shell injection", "main;rm -rf /", api.CodeInvalidRef},
 		{"spaces", "feature branch", api.CodeInvalidRef},
+		{"wildcard", "feature*", api.CodeInvalidRef},
+		{"trailing dot", "release.", api.CodeInvalidRef},
+		{"at sign", "@", api.CodeInvalidRef},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -386,8 +410,9 @@ func TestSourceRef_NoInstall(t *testing.T) {
 }
 
 // TestSourceRef_HappyPath is the central coverage pin: a JSON POST
-// with a valid 40-char ref reaches the githubd gRPC bridge twice
-// (mint + stream), the spool pipeline writes the tarball, the
+// with a valid 40-char ref reaches the githubd gRPC bridge once
+// (the bridge owns token minting + archive streaming), the spool
+// pipeline writes the tarball, the
 // deployment row carries Kind=DeploymentKindGitHub + CommitSHA +
 // SourceURL="github://<repo>@<sha>", the audit row carries
 // {repo, ref, source_sha, install_id, app_id, deployment_id, build_id}
@@ -405,8 +430,8 @@ func TestSourceRef_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
 	}
-	if e.gh.mintCalls != 1 {
-		t.Errorf("mintCalls = %d, want 1", e.gh.mintCalls)
+	if e.gh.mintCalls != 0 {
+		t.Errorf("mintCalls = %d, want 0 (githubd owns token minting)", e.gh.mintCalls)
 	}
 	if e.gh.streamCalls != 1 {
 		t.Errorf("streamCalls = %d, want 1", e.gh.streamCalls)
@@ -480,6 +505,40 @@ func TestSourceRef_HappyPath(t *testing.T) {
 	}
 }
 
+// TestSourceRef_BranchUsesResolvedSHA pins the provenance boundary:
+// a mutable branch ref is accepted only when githubd returns a canonical
+// commit SHA, and the deployment stores the SHA rather than the branch.
+func TestSourceRef_BranchUsesResolvedSHA(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	const resolvedSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.streamSHA = resolvedSHA
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello",
+		Ref:  "release/2026-q3",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.streamRef != "release/2026-q3" {
+		t.Fatalf("stream ref = %q, want branch ref", e.gh.streamRef)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("deployment count = %d, want 1", len(deps))
+	}
+	if deps[0].CommitSHA != resolvedSHA {
+		t.Errorf("CommitSHA = %q, want resolved %q", deps[0].CommitSHA, resolvedSHA)
+	}
+	if deps[0].SourceURL != "github://onebox-faas/hello@"+resolvedSHA {
+		t.Errorf("SourceURL = %q, want canonical SHA", deps[0].SourceURL)
+	}
+}
+
 // TestSourceRef_StreamError pins the 503 mapping when the githubd
 // gRPC returns an Unavailable problem mid-stream.
 func TestSourceRef_StreamError(t *testing.T) {
@@ -499,6 +558,27 @@ func TestSourceRef_StreamError(t *testing.T) {
 	deps, _ := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
 	if len(deps) != 0 {
 		t.Errorf("deployment row written on 503 (%d); want 0", len(deps))
+	}
+}
+
+// TestSourceRef_MidStreamErrorMapsToUnavailable pins the error path where
+// githubd has already delivered bytes before the gRPC stream fails. The pipe
+// reader reports a local copy error first, but the terminal stream problem
+// must win so clients can retry instead of treating the response as a bad
+// tarball.
+func TestSourceRef_MidStreamErrorMapsToUnavailable(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = &sourceRefFailingReader{data: e.tarball}
+	e.gh.streamStatsErr = api.ErrSourceRefUnavailable("githubd stream failed")
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body)
+	}
+	if got := bodyCode(t, rec); got != api.CodeSourceRefUnavailable {
+		t.Errorf("code = %q, want %q", got, api.CodeSourceRefUnavailable)
 	}
 }
 
@@ -561,8 +641,8 @@ func TestSourceRef_Idempotency(t *testing.T) {
 		t.Errorf("missing Idempotent-Replayed: true header; got %q",
 			rec.Header().Get("Idempotent-Replayed"))
 	}
-	if e.gh.mintCalls != 1 {
-		t.Errorf("mintCalls = %d after replay, want 1 (no re-mint)", e.gh.mintCalls)
+	if e.gh.mintCalls != 0 {
+		t.Errorf("mintCalls = %d after replay, want 0 (githubd owns token minting)", e.gh.mintCalls)
 	}
 	if e.gh.streamCalls != 1 {
 		t.Errorf("streamCalls = %d after replay, want 1 (no re-stream)", e.gh.streamCalls)

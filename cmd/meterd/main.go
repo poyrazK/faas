@@ -638,7 +638,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
-	traceShutdown, traceErr := trace.InitTracer(ctx, "meterd", wire.Version, log)
+	ops := wire.NewOpsMetrics("meterd")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "meterd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("meterd: init tracing: %w", traceErr)
 	}
@@ -884,10 +885,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
 	// so the Loop has it from the first tick. meter.NewLoop accepts nil
 	// and coerces to a fresh test registry; here we hand it the real one.
-	ops := wire.NewOpsMetrics("meterd")
 	wire.BootStamps(ctx, "meterd", ops)
 	wire.RegisterDefaultOps(ops)
-
 	// Residency timer: emits the §12 "Resident GB per paying customer"
 	// gauge (ADR-031, PR #141). Wired into the loop alongside
 	// sample/quota/stripe/dunning so all five timers share the same
@@ -1008,7 +1007,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("meterd: runtime config watcher exited", "err", err)
 		}
 	}()
-	canaryProg, canaryAPID, canaryActor, canaryAccount := buildCanaryProgression(deps, store, ops, log)
+	canaryProg, canaryAPID := buildCanaryProgression(deps, store, ops, log)
 	safeDeployOrch := buildSafeDeployOrchestrator(deps, store, ops, log, canaryAPID, evaluator)
 	// ADR-099 / issue #1184 Workstream A: 7 job-task Prometheus
 	// metrics on a fresh per-daemon registry (same pattern as
@@ -1084,6 +1083,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if c := ops.DeploymentAuditGCRowsDeleted(); c != nil {
 			c.Add(float64(n))
 		}
+	}, func(error) {
+		// SAFE-RELEASES-OBS PR-A: bump the GC-failed counter so
+		// PR-B's deployment_audit_gc_failing alert can page on a
+		// sustained prune-loop failure. Pre-PR this was journal-
+		// only.
+		if c := ops.DeploymentAuditGCFailedTotal(); c != nil {
+			c.Inc()
+		}
 	})
 
 	// ADR-123 / issue #1233: alert-preset signal-feeding
@@ -1122,29 +1129,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Ops:      ops,
 		Interval: mc.DeploymentFailureSweepInterval,
 	})
-	// Issue #976 / ADR-122 / SAFE-RELEASES-A: canary_progression
-	// free-function goroutine (mirrors CertExpiryRefresherLoop +
-	// AccountSpendAggregatorLoop above). Wired when
-	// FAAS_CANARY_PROGRESSION_TOKEN + FAAS_APID_BASE_URL are both
-	// set; the loop is the driver's ctx-cancelled twin of the
-	// meter.Loop.WithCanaryProgression goroutine — the loop
-	// owns the orchestrator tick, this free-function is the
-	// standby that catches up if the loop's goroutine is
-	// dropped during a meterd restart. (Both paths are no-op
-	// when canaryProg is nil because Loop skips the goroutine
-	// AND this loop's Store/APID nil guard returns early.)
-	if canaryProg != nil && canaryAPID != nil {
-		go CanaryProgressionLoop(ctx, CanaryProgressionParams{
-			Store:    store,
-			APID:     canaryAPID,
-			Log:      log,
-			Ops:      ops,
-			Interval: mc.CanaryEvalInterval,
-			Actor:    canaryActor,
-			Account:  canaryAccount,
-		})
-	}
-
 	// Metrics + healthz listener. Mirrors cmd/schedd/main.go:143-158 —
 	// per-daemon Prometheus registry (ADR-015), mux at /metrics +
 	// /healthz, 5s graceful shutdown on drain. Empty cfg.MetricsAddr
@@ -1389,8 +1373,8 @@ func buildUpstreamProbe(deps runDeps, store state.Store, ops *wire.OpsMetrics, l
 
 // buildCanaryProgression (issue #976 / ADR-122 / SAFE-RELEASES-A)
 // wires the canary_progression meterd tick driver. Returns
-// (progression, apid client, actor UUID, account UUID). All four
-// are nil/"" when FAAS_CANARY_PROGRESSION_TOKEN is unset (default
+// (progression, apid client). Both are nil when
+// FAAS_CANARY_PROGRESSION_TOKEN is unset (default
 // OFF — the cluster outline's rollout gate flips the token
 // generation ON in a follow-up operator-config PR). When ON:
 //
@@ -1399,18 +1383,17 @@ func buildUpstreamProbe(deps runDeps, store state.Store, ops *wire.OpsMetrics, l
 //     single-control-plane topology; the multi-host fleet reads
 //     it from the host-age identity file).
 //   - FAAS_CANARY_PROGRESSION_TOKEN is the apid-issued
-//     service-account bearer (NOT a customer token) carrying the
-//     orchestrator's actor UUID; the deployment_audit row it
-//     emits carries this actor + the matched account_id.
+//     service-account bearer (NOT a customer token). APID stamps
+//     the trusted actor and account_id on the atomic audit row.
 //
-// Returns (nil, nil, "", "") when the token is missing — the
+// Returns (nil, nil) when the token is missing — the
 // call sites nil-check the progression and skip the goroutine,
 // preserving the pre-PR meterd behaviour exactly.
-func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger) (*canary.Progression, *api.Client, string, string) {
+func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger) (*canary.Progression, *api.Client) {
 	token := deps.getenv("FAAS_CANARY_PROGRESSION_TOKEN")
 	if token == "" {
 		log.Info("meterd: canary_progression disabled — FAAS_CANARY_PROGRESSION_TOKEN unset; running without canary_progression tick")
-		return nil, nil, "", ""
+		return nil, nil
 	}
 	apidBase := deps.getenv("FAAS_APID_BASE_URL")
 	if apidBase == "" {
@@ -1418,16 +1401,8 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 		apidBase = "http://localhost:8080"
 	}
 	apid := api.NewClient(apidBase, token)
-	// The actor + account for the audit row are the
-	// service-account's identity. The token is opaque on the
-	// meterd side (no JWT decode) — the operator-init service
-	// stamps the deployment_audit row with the token's UUID via
-	// the apid's auth-facade introspection. Until that lands,
-	// stamp a deterministic sentinel so audit consumers can
-	// still correlate rows to the canary_progression emitter.
-	const actorSentinel = "meterd:canary_progression"
-	progression := canary.NewProgression(&canaryStoreAdapter{store: store}, apid, ops, log, actorSentinel, actorSentinel)
-	return progression, apid, actorSentinel, actorSentinel
+	progression := canary.NewProgression(&canaryStoreAdapter{store: store}, apid, ops, log)
+	return progression, apid
 }
 
 // buildSafeDeployOrchestrator (issue #976 / ADR-122 / SAFE-RELEASES-F)
@@ -1467,6 +1442,12 @@ func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsM
 	storeAdapter := &safedeployStoreAdapter{store: store}
 	const actorSentinel = "meterd:safedeploy"
 	orchestrator := safedeploy.NewOrchestrator(storeAdapter, log, actorSentinel, actorSentinel)
+	// SAFE-RELEASES-OBS PR-A: wire the daemon's wire.OpsMetrics
+	// so emitAudit can bump the deployment_audit_emitted_total
+	// counter on every successful + failed audit emit. nil-allowed
+	// in the constructor so the smoke test (which builds an
+	// Orchestrator without ops) keeps compiling.
+	orchestrator.Ops = ops
 	// Wire the ActionDispatcher onto the Evaluator. When
 	// apidClient is nil (FAAS_CANARY_PROGRESSION_TOKEN unset but
 	// FAAS_SAFEDEPLOY_TOKEN set), the ActionDispatcher is built

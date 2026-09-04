@@ -1432,6 +1432,40 @@ groups:
           summary: "OTLP metrics exporter has recorded errors"
           description: "A configured daemon has recorded one or more OTLP metrics export failures during the last 10m. The exporter may have recovered; inspect the error rate, duration, and last-success timestamp before escalating."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOTLPMetricsExporterDown.md"
+
+      - alert: FaasOTLPTraceExporterDown
+        expr: |
+          ({__name__=~".*_otel_trace_exporter_enabled"} == 1)
+          and on (job, instance)
+          ({__name__=~".*_otel_trace_exporter_up"} == 0)
+        for: 10m
+        labels:
+          severity: warn
+          component: platform
+          family: telemetry_pipeline
+        annotations:
+          summary: "OTLP trace exporter is configured but down"
+          description: "A daemon's OTLP trace exporter has failed its most recent batch export for 10m. Local trace-ring and Prometheus surfaces remain available, but the remote trace backend is stale and new spans may be dropped. Check the trace export error counter, collector endpoint, and TLS configuration before restarting the daemon."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOTLPTraceExporterDown.md"
+
+      - alert: FaasOTLPTraceExporterErrors
+        expr: |
+          sum by (job, instance) (
+            rate({__name__=~".*_otel_trace_export_total", trigger="batch", outcome="error"}[10m])
+          ) > 0
+          and on (job, instance)
+          sum by (job, instance) (
+            {__name__=~".*_otel_trace_exporter_enabled"}
+          ) > 0
+        for: 10m
+        labels:
+          severity: info
+          component: platform
+          family: telemetry_pipeline
+        annotations:
+          summary: "OTLP trace exporter has recorded errors"
+          description: "A configured daemon has recorded one or more OTLP trace batch export failures during the last 10m. The exporter may have recovered; inspect trace export rate, dropped spans, duration, and last-success timestamp before escalating."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOTLPTraceExporterDown.md"
       # Issue #573 / ADR-128 — restart-loop detection (cluster B commit 7
       # of the platform-observability mega-PR). The three alerts below
       # answer the three operator questions from the issue body:
@@ -1582,42 +1616,12 @@ groups:
       # Cold-start guard: on a freshly-booted schedd node every
       # kind in `schedd_operator_action_trace_completeness_ratio`
       # reads the Prometheus GaugeVec default (0) until the
-      # driver ticks (~60s) and pre-fills vacuous truth (1.0)
-      # via its SQL aggregation (pkg/sched/operator_intent_
-      # completeness.go:172-179). The naive `min(gauge) = 0`
-      # would clamp_min to 0.001 and fire the Page alert
-      # `< 0.50 for 10m` false-positive at t=10m on every
-      # restart. The `unless ... or vector(1)` idiom substitutes
-      # 1.0 (vacuous truth) when `sum(gauge) == 0` (every kind
-      # still at the Prometheus default — the driver has not
-      # observed ANY rows yet) — same semantic the SQL
-      # aggregation uses, materialised at the alert layer so
-      # the gauge's pre-instantiation default of 0 stays
-      # untouched (the panic-resilience unit test at
-      # pkg/sched/operator_intent_completeness_test.go:118 and
-      # the pgtest sibling both pin that contract). A panic
-      # mid-driver-tick that leaves some kinds Set and others
-      # at the Prometheus default still surfaces as `min = 0
-      # AND sum > 0` and triggers the alert as before — the
-      # `sum == 0` guard only engages when EVERY kind is at
-      # the pre-tick default (i.e., the driver has never
-      # observed anything).
-      #
-      # Known limitation (finding #1 of /code-review 1162):
-      # the guard also swallows the *pre-Set* panic case —
-      # when schedd's driver panics anywhere before reaching
-      # the Set loop at pkg/sched/operator_intent_completeness
-      # .go:235-238, every kind stays at 0 and the Page alert
-      # stays silent. Compensating signal:
-      # FaasOperatorActionTraceCompletenessLoopStalled
-      # (info-tier, `time() - timestamp(gauge) > 180 for 5m`),
-      # which fires ONLY when the schedd daemon has fully
-      # stopped scraping. For the "driver panicked, daemon
-      # still up" case operators rely on `journalctl -u
-      # schedd` slog capture (the panic logs at the goroutine
-      # crash site). Tightening this requires a separate
-      # "first driver tick completed" counter — out of scope
-      # for this fix.
+      # driver completes its first query. The explicit first-tick
+      # counter is the source of truth for that state; using the
+      # gauge sum was unsafe because a panic before the Set loop
+      # is indistinguishable from a healthy, not-yet-observed
+      # driver. After the first successful query, a real all-zero
+      # result is no longer hidden by the cold-start guard.
       #
       # Page+warn pair share `family=obs_trace, component=schedd`
       # — alertmanager's inhibit rule (page suppresses warn when
@@ -1625,7 +1629,7 @@ groups:
       # never pages through while the page is firing.
       # ─────────────────────────────────────────────────────────────────
       - record: obs:operator_action_trace_completeness_ratio
-        expr: clamp_min((min(schedd_operator_action_trace_completeness_ratio) unless on() (sum(schedd_operator_action_trace_completeness_ratio) == 0)) or on() vector(1), 0.001)
+        expr: clamp_min((min(schedd_operator_action_trace_completeness_ratio) unless on() (schedd_operator_action_trace_completeness_first_tick_completed_total == 0)) or on() vector(1), 0.001)
 
       - alert: FaasOperatorActionTraceCompletenessLowPage
         expr: obs:operator_action_trace_completeness_ratio < 0.50
@@ -1652,14 +1656,11 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOperatorActionTraceCompletenessLow.md"
 
       - alert: FaasOperatorActionTraceCompletenessLoopStalled
-        # The schedd driver (60s tick) hasn't updated the gauge
-        # in >3m. Without this alert, a frozen gauge (Prometheus
-        # sees the last-written value) looks identical to a healthy
-        # one — a wedged driver is invisible until traffic resumes.
-        # 180s = 3x the 60s tick, same logic as the
-        # FaasAuditRetentionLoopStalled precedent above
-        # (26h vs 24h cadence slack).
-        expr: time() - timestamp(schedd_operator_action_trace_completeness_ratio) > 180
+        # The schedd driver (60s tick) hasn't completed a
+        # successful query in >3m. This uses an explicit producer
+        # timestamp; Prometheus scrape timestamps would stay fresh
+        # even when the gauge value is frozen.
+        expr: (schedd_operator_action_trace_completeness_first_tick_completed_total > 0) and (time() - schedd_operator_action_trace_completeness_last_success_timestamp_seconds > 180)
         for: 5m
         labels:
           severity: info
@@ -1667,7 +1668,23 @@ groups:
           component: schedd
         annotations:
           summary: "schedd obs trace completeness driver loop stale >3m"
-          description: "The schedd observability driver (pkg/sched/operator_intent_completeness.go, 60s tick) has not updated schedd_operator_action_trace_completeness_ratio in >3m (3x the tick interval). The gauge is frozen at its last value — the trace-completeness page+warn alerts may be silent even though the system is broken. Routes to faas-silent (info-tier). Drill down per the runbook; the gauge freeze usually means schedd's Postgres pool is exhausted or the goroutine crashed."
+          description: "The schedd observability driver (pkg/sched/operator_intent_completeness.go, 60s tick) has not completed a successful trace completeness query in >3m (3x the tick interval). The producer-written last-success timestamp is stale, so the gauge may be frozen while Prometheus scrapes remain healthy. Routes to faas-silent (info-tier). Drill down per the runbook; the stale signal usually means schedd's Postgres pool is exhausted or the goroutine crashed."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOperatorActionTraceCompletenessLow.md"
+
+      - alert: FaasOperatorActionTraceCompletenessFirstTickStalled
+        # A schedd that never completes its first query has no
+        # trustworthy completeness signal at all. Page after ten
+        # minutes so ordinary database startup jitter is tolerated,
+        # while still surfacing the pre-Set panic case.
+        expr: schedd_operator_action_trace_completeness_first_tick_completed_total == 0
+        for: 10m
+        labels:
+          severity: page
+          family: obs_trace
+          component: schedd
+        annotations:
+          summary: "schedd trace completeness driver has not completed its first tick"
+          description: "The schedd observability driver has not completed a successful operator-action trace completeness query within 10m of the metric becoming visible. The completeness recording rule is intentionally guarded until this first success, so the platform currently has no trustworthy trace-correlation coverage signal. Check schedd logs and Postgres connectivity, then recover per the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOperatorActionTraceCompletenessLow.md"
 
       # ─────────────────────────────────────────────────────────────────

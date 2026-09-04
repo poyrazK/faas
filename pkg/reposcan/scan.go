@@ -118,10 +118,11 @@ type Result struct {
 
 // Scan walks an fs.FS (the extracted tarball in production,
 // fstest.MapFS in tests) and returns a deterministic Result. A
-// missing source file is a no-op, not an error: a tarball with only
-// a Dockerfile is scannable as a Tier-4 single-unit. The only error
-// path is invalid-path escape attempts, which fail closed so a
-// malicious tarball can never reach the host.
+// missing source file is a no-op, not an error. The Tier-4 root
+// floor is used only when the root contains a deployable marker;
+// an empty or documentation-only archive must not masquerade as an
+// application. The only error path is invalid-path escape attempts,
+// which fail closed so a malicious tarball can never reach the host.
 //
 // Detector fan-out order is intentional: tier 1 (compose, Procfile,
 // k8s, render, fly, serverless, app.yaml) before tier 2/3 so the
@@ -199,8 +200,11 @@ func Scan(fsys fs.FS) (Result, error) {
 		}
 	}
 
-	// Tier 4 — root floor.
-	if len(seeds) == 0 {
+	// Tier 4 — root floor. Do not manufacture an app for an empty or
+	// unrelated repository. This result is consumed by reconcile, so a
+	// synthetic root workload would otherwise create a real app from a
+	// README-only or malformed source archive.
+	if len(seeds) == 0 && hasRootFloorMarker(fsys) {
 		seeds = append(seeds, workloadSeed{
 			name:    keyApp,
 			rootDir: "",
@@ -214,16 +218,30 @@ func Scan(fsys fs.FS) (Result, error) {
 	sortStableByName(workloads)
 	sortManagedByName(managed)
 
-	if highestTier == 0 {
-		highestTier = TierSingle
-	}
-
 	return Result{
 		Workloads: workloads,
 		Managed:   managed,
 		Tier:      highestTier,
 		Warnings:  warnings,
 	}, nil
+}
+
+// hasRootFloorMarker reports whether the archive has enough source shape to
+// be treated as one root application. Detector-specific manifests already
+// produce seeds above; this list covers the simple single-project markers
+// that intentionally use the root-floor fallback.
+func hasRootFloorMarker(fsys fs.FS) bool {
+	for _, marker := range []string{
+		"Dockerfile", "dockerfile", "package.json", "requirements.txt",
+		"pyproject.toml", "Pipfile", "pipfile", "setup.py", "go.mod",
+		"Cargo.toml", "pom.xml",
+	} {
+		info, err := fs.Stat(fsys, marker)
+		if err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // sortStableByName sorts Workloads in place by Name (case-insensitive,

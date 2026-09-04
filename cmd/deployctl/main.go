@@ -1,7 +1,7 @@
 // Command deployctl drives the systemd unit + daemons.json generator
 // that powers DEPLOY-2 (issue #649). One Go source of truth —
 // pkg/daemonunitspec — emits the 8 production daemon unit files into
-// the three deploy trees + the cp-cp-only faas-cp.slice + the
+// every deploy tree + the control-plane-only faas-cp.slice + the
 // cd-controlplane workflow's daemons.json inventory.
 //
 // Subcommands:
@@ -109,60 +109,37 @@ type target struct {
 	skip map[string]bool // daemon names to skip for this target
 }
 
-// cpcpIndex is the slot of the cp-cp target inside defaultTargets.
-// The deploy workflow installs cp-cp on the EX44 box; cp-sys is the
-// legacy + dev-VM tree; cp-ans is the ansible control_plane_service
-// role drop-in. cp-cp is index 0 by convention — it ships the most
-// daemons (all 8) plus faas-cp.slice, and `make generate` walks the
-// slice in order so it emits first.
-const cpcpIndex = 0
+// sliceIndex is the slot of the tree that also ships faas-cp.slice
+// (the control_plane_service ansible role). The slice is the
+// control-plane wrapper, not a Registry member, so it is emitted by
+// name rather than by daemon iteration.
+const sliceIndex = 1
 
-// defaultTargets — the trees systemd unit files live in across the
-// platform. Index 0 is cp-cp (see cpcpIndex); index 1 is the legacy
-// tree + dev VMs; index 2+ are the per-box ansible role drop-ins
-// (Gate-B PR-2: split into control_plane_service, githubd_service,
-// compute_only_service so each role ships only its own daemons).
+// defaultTargets — every tree systemd unit files live in. Each ansible
+// service role ships ONLY the daemons it installs (the role's tasks
+// copy `files/faas-<daemon>.service` verbatim), so the skip-set is the
+// role's daemon set inverted. Index 0 is the legacy + dev-VM tree.
 //
-// PR-1 (issue #911 / ADR-110): index 0 still targets the v1 cp-cp
-// tree (deploy/controlplane/systemd/) so the `make generate` /
-// `make generate-check` gate continues to function. The cd-controlplane
-// workflow (CD pipeline) no longer reads from this tree — it walks the
-// per-role files/ paths (defaultTargets[2..]). Phase 2 (after PR-X
-// `gregale secrets init` lands) deletes the v1 tree; the cpcpIndex slot
-// will then rebind to a v2 path. The tombstone RETIRED.md in
-// deploy/controlplane/ explains the v1 → v2 mapping for operators.
-//
-// Mega-PR-C: index 0's `skip: cpcpSkipOnlyBuilderd` ensures the new
-// builderd registry entry does NOT emit into the v1 tombstone. The
-// tombstone is a v1 snapshot — adding a post-v1 daemon to it would
-// (a) leave an untracked faas-builderd.service after every
-// `make generate`, breaking `make generate-check`, and (b) confuse
-// the v1→v2 operator narrative.
+// ADR-143: pkg/daemonunitspec is the single source of truth for every
+// production unit. Before this change the vmmd, gatewayd-internal,
+// gatewayd-public and builderd roles carried hand-edited copies that
+// had drifted from the Go spec (ordering, LoadCredential=, env), and
+// the retired v1 `deploy/controlplane/systemd/` tombstone was still a
+// generator target. `make generate-check` now gates all eight roles.
 var defaultTargets = []target{
-	{dir: "deploy/controlplane/systemd", skip: cpcpSkipOnlyBuilderd()},
 	{dir: "deploy/systemd", skip: legacySkips()},
 	{dir: "deploy/ansible/roles/control_plane_service/files", skip: ansibleRoleSkips()},
-	{dir: "deploy/ansible/roles/githubd_service/files", skip: githubdOnlySkips()},
-	{dir: "deploy/ansible/roles/compute_only_service/files", skip: computeOnlySkips()},
+	{dir: "deploy/ansible/roles/githubd_service/files", skip: only("githubd")},
+	{dir: "deploy/ansible/roles/compute_only_service/files", skip: only("imaged")},
+	{dir: "deploy/ansible/roles/vmmd_service/files", skip: only("vmmd")},
+	{dir: "deploy/ansible/roles/gatewayd_internal_service/files", skip: only("gatewayd-internal")},
+	{dir: "deploy/ansible/roles/gatewayd_public_service/files", skip: only("gatewayd-public")},
+	{dir: "deploy/ansible/roles/builderd_service/files", skip: only("builderd")},
 }
 
-// cpcpSkipOnlyBuilderd: the v1 cp-cp tombstone (deploy/controlplane/systemd)
-// is a frozen snapshot of the EX44-era daemon set. Daemons that
-// joined AFTER the tombstone was retired (Mega-PR-C: builderd) get
-// skipped so they emit only into the modern trees. The tombstone's
-// 8 v1 unit files stay byte-identical under `make generate-check`.
-func cpcpSkipOnlyBuilderd() map[string]bool {
-	return map[string]bool{
-		"builderd": true,
-	}
-}
-
-// ansibleRoleSkips: the ansible control_plane_service role only ships
-// 3 of the 8 daemons today (apid, meterd, schedd). imaged moved to
-// compute_only_service in Gate-B PR-2; vmmd + gatewayd-internal +
-// gatewayd-public + githubd + builderd are NOT shipped by this role
-// (builderd lives on fsn-2 via builderd_service). Widening the role
-// to all 8 is a separate ops change.
+// ansibleRoleSkips: the control_plane_service role ships apid, meterd
+// and schedd. githubd has its own role on the same box; every compute
+// daemon lives on the compute-only roles.
 func ansibleRoleSkips() map[string]bool {
 	return map[string]bool{
 		"githubd":           true,
@@ -174,42 +151,22 @@ func ansibleRoleSkips() map[string]bool {
 	}
 }
 
-// githubdOnlySkips: githubd_service is single-daemon (Gate-B PR-2).
-// Every daemon other than githubd is skipped so the role's files/
-// tree only carries faas-githubd.service + githubd.toml.example.
-// builderd lives on fsn-2 via its own role, so it's skipped here too.
-func githubdOnlySkips() map[string]bool {
-	return map[string]bool{
-		"apid":              true,
-		"schedd":            true,
-		"meterd":            true,
-		"imaged":            true,
-		"vmmd":              true,
-		"builderd":          true,
-		"gatewayd-public":   true,
-		"gatewayd-internal": true,
+// only returns the skip-set for a single-daemon role: every Registry
+// daemon except `name` is skipped. Deriving it from the Registry means
+// a new daemon is automatically excluded from every single-daemon role
+// instead of silently appearing in all of them.
+func only(name string) map[string]bool {
+	skip := make(map[string]bool, len(daemonunitspec.Registry))
+	for _, entry := range daemonunitspec.Registry {
+		if entry.Name != name {
+			skip[entry.Name] = true
+		}
 	}
-}
-
-// computeOnlySkips: compute_only_service ships imaged only (Gate-B
-// PR-2). vmmd + gatewayd-internal + builderd have their own ansible
-// roles (Mega-PR-C added builderd_service); the registry adds their
-// units so the deployctl generator skips them in this tree's emit.
-func computeOnlySkips() map[string]bool {
-	return map[string]bool{
-		"apid":              true,
-		"schedd":            true,
-		"meterd":            true,
-		"githubd":           true,
-		"vmmd":              true,
-		"builderd":          true,
-		"gatewayd-public":   true,
-		"gatewayd-internal": true,
-	}
+	return skip
 }
 
 // legacySkips: deploy/systemd/ exists for legacy + dev VMs; doesn't
-// ship githubd or meterd (those only exist on cp-cp today).
+// ship githubd or meterd (those only exist on the control plane).
 func legacySkips() map[string]bool {
 	return map[string]bool{
 		"githubd": true,
@@ -243,15 +200,16 @@ func targetsFor(dirs []string) []target {
 	return out
 }
 
-// isCPCP reports whether t is the cp-cp target. Comparing resolved
-// target structs (rather than dir path strings) survives the runCheck
-// remap where `d` is `tmp/tree-0` and t.dir is the source-dir string.
-func isCPCP(t target) bool {
-	return filepath.Clean(t.dir) == filepath.Clean(defaultTargets[cpcpIndex].dir)
+// isSliceTarget reports whether t is the tree that ships faas-cp.slice.
+// Comparing resolved target structs (rather than dir path strings)
+// survives the runCheck remap where `d` is `tmp/tree-N` and t.dir is
+// the source-dir string.
+func isSliceTarget(t target) bool {
+	return filepath.Clean(t.dir) == filepath.Clean(defaultTargets[sliceIndex].dir)
 }
 
 // runGenerate writes units + daemons.json to the named target dirs.
-// If no dirs are given, all three targets + daemons.json.
+// If no dirs are given, every default target + daemons.json.
 func runGenerate(args []string) error {
 	if len(args) == 0 {
 		args = targetDirs()
@@ -358,10 +316,10 @@ func runDeploy(args []string) error {
 
 // generateTo is the core: write unit files + slice + JSON to named
 // dirs + daemonsPath. Each entry in `ts` is the resolved target
-// (with its skip-set) for the corresponding dir in `dirs`. The cp-cp
-// slice is emitted into whichever dir is the cp-cp target.
+// (with its skip-set) for the corresponding dir in `dirs`. The
+// faas-cp.slice is emitted into whichever dir is the slice target.
 func generateTo(ts []target, dirs []string, daemonsPath string) error {
-	cpcpDir := ""
+	sliceDir := ""
 	for i, d := range dirs {
 		t := ts[i]
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -376,23 +334,23 @@ func generateTo(ts []target, dirs []string, daemonsPath string) error {
 				return fmt.Errorf("write %s: %w", path, err)
 			}
 		}
-		if isCPCP(t) {
-			cpcpDir = d
+		if isSliceTarget(t) {
+			sliceDir = d
 		}
 	}
 	// faas-cp.slice lives outside the Registry (it's the wrapper,
-	// not a member). Only cp-cp ships it.
-	if err := writeCPSlice(cpcpDir); err != nil {
+	// not a member). Only the control_plane_service role ships it.
+	if err := writeCPSlice(sliceDir); err != nil {
 		return err
 	}
 	return writeDaemonsJSON(daemonsPath)
 }
 
 // writeCPSlice writes faas-cp.slice into the named dir. Empty dir is
-// a no-op (no cp-cp target in `dirs`); generator callers pass the
-// actual cp-cp path (committed or tmpdir), not the registry literal.
-func writeCPSlice(cpcpDir string) error {
-	if cpcpDir == "" {
+// a no-op (no slice target in `dirs`); generator callers pass the
+// actual tree path (committed or tmpdir), not the registry literal.
+func writeCPSlice(sliceDir string) error {
+	if sliceDir == "" {
 		return nil
 	}
 	body := "[Unit]\n" +
@@ -400,7 +358,7 @@ func writeCPSlice(cpcpDir string) error {
 		"\n" +
 		"[Slice]\n" +
 		"MemoryMax=3G\n"
-	path := filepath.Join(cpcpDir, "faas-cp.slice")
+	path := filepath.Join(sliceDir, "faas-cp.slice")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
@@ -461,10 +419,10 @@ func runCheck(args []string, quiet bool) error {
 	// tmpdir path no longer encodes it.
 	ts := targetsFor(dirs)
 
-	// Per-target tmpdir suffix: two of the three default targets
-	// end in `systemd` (cp-cp + cp-sys), so `filepath.Base(d)` would
-	// collide and the cp-cp regeneration would clobber cp-sys. The
-	// suffix must be unique per `dir` regardless of trailing name.
+	// Per-target tmpdir suffix: every ansible role target ends in
+	// `files`, so `filepath.Base(d)` would collide and one role's
+	// regeneration would clobber another's. The suffix must be
+	// unique per `dir` regardless of trailing name.
 	tmpDirs := make([]string, len(dirs))
 	for i := range dirs {
 		tmpDirs[i] = filepath.Join(tmp, fmt.Sprintf("tree-%d", i))
@@ -516,12 +474,10 @@ func runCheck(args []string, quiet bool) error {
 //     change, not a generator regression. Preserved artefacts do NOT trip
 //     the gate.
 //
-// PR-1 (issue #911 / ADR-110): the v1 cp-cp tree
-// (deploy/controlplane/systemd/) is now a tombstone; the CD pipeline no
-// longer reads from it. Phase 2 (after PR-X) deletes it. Until then,
-// `make generate-check` keeps comparing the regenerated tmpdir against
-// the committed cp-cp tree so a daemonunitspec change cannot silently
-// drift.
+// ADR-143: the v1 `deploy/controlplane/systemd/` tombstone was deleted;
+// every remaining target is a live tree (legacy/dev VMs or an ansible
+// role's files/), so `make generate-check` is the parity gate for
+// everything that can reach a production host.
 //
 // Reports the names that drift; `quiet` controls print/no-print.
 func compareTrees(committed, regenerated string, quiet bool) error {

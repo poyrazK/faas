@@ -868,6 +868,11 @@ const (
 	// before INSERT so a typo doesn't surface as a CHECK
 	// violation deep in the pgstore layer.
 	CodeInvalidCanaryPreset = "invalid_canary_preset"
+	// CodeCanaryStepConflict is returned when two progression workers
+	// race the same persisted canary step. The losing worker must
+	// re-read the deployment on its next tick; it must never retry the
+	// traffic write against a stale step.
+	CodeCanaryStepConflict = "canary_step_conflict"
 	// CodeTrafficPercentSumInvalid (issue #556) is a 409
 	// (Conflict) for the defensive backstop: post-write
 	// Σ(traffic_percent WHERE status='live') != 100. In
@@ -1563,7 +1568,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid:
+	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
 		// != 100 after UpdateDeploymentTraffic. Defensive backstop;
 		// unreachable in practice. Sits next to CodeConflict /
@@ -2935,6 +2940,24 @@ func ErrWorkflowDeploymentUnavailable() *Problem {
 		"workflow definitions are validated by this release but require the workflow runtime deployment endpoint to be enabled")
 }
 
+// ErrWorkflowRunNotFound returns a 404 when a workflow run is not found.
+func ErrWorkflowRunNotFound() *Problem {
+	return NewProblem(http.StatusNotFound, CodeWorkflowRunNotFound,
+		"Workflow run not found", "the requested workflow run was not found.")
+}
+
+// ErrWorkflowStepNotFound returns a 404 when a workflow step is not found.
+func ErrWorkflowStepNotFound() *Problem {
+	return NewProblem(http.StatusNotFound, CodeWorkflowStepNotFound,
+		"Workflow step not found", "the requested workflow step was not found.")
+}
+
+// ErrWorkflowNotRunning returns a 409 when attempting an action on a non-running workflow run.
+func ErrWorkflowNotRunning() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
+		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
+}
+
 // ErrJobTaskNotFound marks a 404 on (run_id, task_index) lookups
 // when the tuple doesn't exist OR belongs to a different account.
 // Distinct from CodeNotFound so the dashboard can render a
@@ -3844,6 +3867,17 @@ func ErrInvalidCanaryPreset(got string) *Problem {
 		"Invalid canary preset",
 		fmt.Sprintf("canary preset %q is not in the closed-set catalog (%v); see --canary-preset in `gregale deploy --help`.", got, canary.AllowedCanaryPresets)).
 		WithDocs("https://docs.gregale.dev/deployments#canary-presets")
+}
+
+// ErrCanaryStepConflict is the expected concurrency response for the
+// meterd canary progression path. The expected_step compare-and-swap
+// belongs in the same transaction as traffic and audit writes, so a
+// stale worker receives a stable 409 instead of replaying a transition.
+func ErrCanaryStepConflict(expected, actual int) *Problem {
+	return NewProblem(http.StatusConflict, CodeCanaryStepConflict,
+		"Canary step changed",
+		fmt.Sprintf("expected canary_step=%d, but the deployment is already at canary_step=%d; refresh and continue from the current step.", expected, actual)).
+		WithDocs(docsBase + "/deployments#canary")
 }
 
 // ErrTrafficPercentSumInvalid (issue #556) is the defensive

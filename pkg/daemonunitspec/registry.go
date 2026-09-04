@@ -25,6 +25,32 @@ type Entry struct {
 	Unit      func() daemonunit.Unit
 	Critical  bool
 	Lifecycle Lifecycle
+	// Role is the split-box host role that runs the daemon (ADR-110).
+	// It is the single source for the control-plane / compute-only
+	// partition that the manifest renderer, deploy/ansible/vars/daemons.yml
+	// (role_convergence + fleet_verify) and deployctl's per-role trees all
+	// used to copy by hand (ADR-143).
+	Role Role
+}
+
+// Role is a split-box host role.
+type Role string
+
+const (
+	RoleControlPlane Role = "control-plane"
+	RoleComputeOnly  Role = "compute-only"
+)
+
+// DaemonsForRole returns the Registry daemon names that run on a host of
+// the given role, in activation order.
+func DaemonsForRole(role Role) []string {
+	var out []string
+	for _, e := range Registry {
+		if e.Role == role {
+			out = append(out, e.Name)
+		}
+	}
+	return out
 }
 
 type Probe string
@@ -56,14 +82,14 @@ func ActivationOrder() []string {
 // (Diff matches by set membership) — order here is for human readability
 // and the order the workflow actually restarts the services in.
 var Registry = []Entry{
-	{Name: "vmmd", Unit: UnitVmmd, Critical: true, Lifecycle: Lifecycle{Probe: ProbeUnix, ProbeTarget: "/run/faas/vmmd.sock"}},
-	{Name: "apid", Unit: UnitApid, Critical: true, Lifecycle: Lifecycle{Probe: ProbeSystemd}},
-	{Name: "schedd", Unit: UnitSchedd, Critical: true, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/schedd.sock"}},
-	{Name: "gatewayd-internal", Unit: UnitGatewaydInternal, Critical: true, Lifecycle: Lifecycle{After: []string{"schedd", "apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9090"}},
-	{Name: "gatewayd-public", Unit: UnitGatewaydPublic, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8080"}},
-	{Name: "meterd", Unit: UnitMeterd, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
-	{Name: "githubd", Unit: UnitGithubd, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
-	{Name: "imaged", Unit: UnitImaged, Critical: false, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9102"}},
+	{Name: "vmmd", Unit: UnitVmmd, Role: RoleComputeOnly, Critical: true, Lifecycle: Lifecycle{Probe: ProbeUnix, ProbeTarget: "/run/faas/vmmd.sock"}},
+	{Name: "apid", Unit: UnitApid, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{Probe: ProbeSystemd}},
+	{Name: "schedd", Unit: UnitSchedd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/schedd.sock"}},
+	{Name: "gatewayd-internal", Unit: UnitGatewaydInternal, Role: RoleComputeOnly, Critical: true, Lifecycle: Lifecycle{After: []string{"schedd", "apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9090"}},
+	{Name: "gatewayd-public", Unit: UnitGatewaydPublic, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8080"}},
+	{Name: "meterd", Unit: UnitMeterd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
+	{Name: "githubd", Unit: UnitGithubd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
+	{Name: "imaged", Unit: UnitImaged, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9102"}},
 	// Mega-PR-C (issue #911 / ADR-110): builderd is the build
 	// orchestrator on fsn-2 (compute-only). Spawns ephemeral
 	// builder microVMs through vmmd (ADR-003) — no KVM direct
@@ -79,7 +105,7 @@ var Registry = []Entry{
 	// builderd schedules builds via gRPC over the wire to
 	// apid on fsn-1 (the [apphub] layer), so there is no
 	// ordering dependency at unit-activation time.
-	{Name: "builderd", Unit: UnitBuilderd, Critical: true, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/builderd.sock"}},
+	{Name: "builderd", Unit: UnitBuilderd, Role: RoleComputeOnly, Critical: true, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/builderd.sock"}},
 }
 
 // UnitByName returns the daemonunit.Unit for the given daemon name.

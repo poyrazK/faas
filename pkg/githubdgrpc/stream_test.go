@@ -14,6 +14,7 @@ import (
 	"time"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -46,11 +47,11 @@ func (s *streamSvc) MintInstallationToken(accountID string, installationID int64
 	return s.mintToken, s.mintExpires, nil
 }
 
-func (s *streamSvc) StreamSourceRef(_ context.Context, _ string, _ int64, _, _ string, _ int64) (io.ReadCloser, bool, int64, error) {
+func (s *streamSvc) StreamSourceRef(_ context.Context, _ string, _ int64, _, _ string, _ int64) (io.ReadCloser, string, bool, int64, error) {
 	if s.streamErr != nil {
-		return nil, false, 0, s.streamErr
+		return nil, "", false, 0, s.streamErr
 	}
-	return io.NopCloser(strings.NewReader(s.streamBody)), s.streamTrunc, s.streamTotal, nil
+	return io.NopCloser(strings.NewReader(s.streamBody)), "", s.streamTrunc, s.streamTotal, nil
 }
 
 // newStreamServer wires streamSvc into a bufconn listener and returns
@@ -205,11 +206,11 @@ type oneChunkSvc struct {
 	streamErr   error
 }
 
-func (s *oneChunkSvc) StreamSourceRef(_ context.Context, _ string, _ int64, _, _ string, _ int64) (io.ReadCloser, bool, int64, error) {
+func (s *oneChunkSvc) StreamSourceRef(_ context.Context, _ string, _ int64, _, _ string, _ int64) (io.ReadCloser, string, bool, int64, error) {
 	if s.streamErr != nil {
-		return nil, false, 0, s.streamErr
+		return nil, "", false, 0, s.streamErr
 	}
-	return &chunkedReader{data: []byte("A")}, s.streamTrunc, s.streamTotal, nil
+	return &chunkedReader{data: []byte("A")}, "", s.streamTrunc, s.streamTotal, nil
 }
 
 func TestStreamSourceRef_HappyPath(t *testing.T) {
@@ -362,6 +363,37 @@ func TestStreamSourceRef_ServiceError(t *testing.T) {
 	}
 	if cerr := res.Body.Close(); cerr != nil && !strings.Contains(cerr.Error(), "boom") {
 		t.Errorf("body close err = %v, want substring 'boom'", cerr)
+	}
+}
+
+func TestStreamSourceRef_ProblemPreservesCode(t *testing.T) {
+	srv := grpc.NewServer()
+	svc := &oneChunkSvc{streamErr: api.ErrGitHubInstallNotFound()}
+	githubdgrpc.New(svc, wire.NewOpsMetrics("githubd_install_missing"), nil).Register(srv)
+	lis := bufconn.Listen(1024 * 1024)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return lis.Dial()
+		}),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	res, err := githubdgrpc.NewClient(conn).StreamSourceRef(context.Background(), "acct", 1, "x/y", "main", 1<<20)
+	if err != nil {
+		t.Fatalf("initial stream: %v", err)
+	}
+	_, _ = io.ReadAll(res.Body)
+	if err := res.Body.Close(); err == nil {
+		t.Fatal("expected missing-install problem")
+	} else if p := api.AsProblem(err); p == nil || p.Code != api.CodeGitHubInstallNotFound {
+		t.Fatalf("close error = %v, want code %s", err, api.CodeGitHubInstallNotFound)
 	}
 }
 

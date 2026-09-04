@@ -134,7 +134,7 @@
   failed_when: false
   when: pg_rclone_conf.stat.exists | default(false)
 
-- name: postgres_backup — create off-host backup dirs (issue #250 / F3)
+- name: postgres_backup — create off-host backup dirs (issue # 250 / F3)
   ansible.builtin.command:
     cmd: >-
       rclone mkdir
@@ -241,5 +241,5 @@
 # push owns storage-box.user + storage-box.host; the rest are checked
 # here as defense in depth). Each assert is a no-op when the file is
 # absent (operator-provisioned via `gregalectl secrets init`).
-- name: postgres_backup — sealed.env split perm-asserts (issue #585 / ADR-127)
+- name: postgres_backup — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml

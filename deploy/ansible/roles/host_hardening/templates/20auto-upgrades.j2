@@ -1,0 +1,4 @@
+// {{ ansible_managed }} — host_hardening role (spec §11, ADR-143).
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";

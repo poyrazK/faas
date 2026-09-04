@@ -31,6 +31,8 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gitfetch"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -816,21 +818,35 @@ func (s *RealService) MintInstallationToken(accountID string, installationID int
 // for the deployment row's source_bytes column.
 //
 // Errors:
-//   - ErrNoBinding when s.Installs.ErrNotFound.
-//   - the underlying SourceRefStreamer errors are passed
-//     through verbatim so the gRPC handler can map them via
-//     toStatusErr (codes.NotFound / InvalidArgument /
-//     Unauthenticated / Unavailable).
-func (s *RealService) StreamSourceRef(ctx context.Context, accountID string, installationID int64, repoFullName, ref string, maxArchiveBytes int64) (io.ReadCloser, bool, int64, error) {
+//   - api.CodeGitHubInstallNotFound when the streamer cannot prove
+//     the requested account/install binding.
+//   - the remaining SourceRefStreamer errors are passed through
+//     so the gRPC handler can map them via toStatusErr.
+func (s *RealService) StreamSourceRef(ctx context.Context, accountID string, installationID int64, repoFullName, ref string, maxArchiveBytes int64) (io.ReadCloser, string, bool, int64, error) {
 	if s.Streamer == nil {
-		return nil, false, 0, fmt.Errorf("githubd: source-ref streamer not configured")
+		return nil, "", false, 0, fmt.Errorf("githubd: source-ref streamer not configured")
 	}
-	rc, err := s.Streamer.Stream(ctx, accountID, installationID, repoFullName, ref, maxArchiveBytes)
+	res, err := s.Streamer.Stream(ctx, accountID, installationID, repoFullName, ref, maxArchiveBytes)
 	if err != nil {
 		if errors.Is(err, ErrNoBinding) {
-			return nil, false, 0, ErrNoBinding
+			return nil, "", false, 0, api.ErrGitHubInstallNotFound()
 		}
-		return nil, false, 0, err
+		if errors.Is(err, gitfetch.ErrNotFound) {
+			if isCanonicalCommitSHA(ref) {
+				return nil, "", false, 0, api.ErrSourceRefUnavailable("GitHub could not fetch the requested commit")
+			}
+			return nil, "", false, 0, api.ErrInvalidRef(ref)
+		}
+		if errors.Is(err, gitfetch.ErrUnauthorized) {
+			return nil, "", false, 0, api.ErrSourceRefUnavailable("GitHub rejected the installation token")
+		}
+		if errors.Is(err, gitfetch.ErrBadArchive) {
+			return nil, "", false, 0, api.ErrSourceRefUnavailable("GitHub returned an invalid source archive")
+		}
+		return nil, "", false, 0, err
+	}
+	if res.Body == nil {
+		return nil, "", false, 0, fmt.Errorf("githubd: source-ref streamer returned nil body")
 	}
 	// The streamer already wraps the body in
 	// io.LimitReader(maxArchiveBytes + 1, …); the apid-side
@@ -842,7 +858,19 @@ func (s *RealService) StreamSourceRef(ctx context.Context, accountID string, ins
 	// bytes_streamed field, which is the cumulative count
 	// at EOF — same posture as the tarball SHA on the
 	// multipart path.
-	return rc, false, 0, nil
+	return res.Body, res.ResolvedCommitSHA, false, 0, nil
+}
+
+func isCanonicalCommitSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // bindingToGRPC translates the durable state row into the gRPC

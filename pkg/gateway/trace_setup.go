@@ -21,7 +21,10 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -98,6 +101,13 @@ type TraceSetup struct {
 // `name` is the OTel service.name (e.g. "gatewayd-public").
 // `version` is the OTel service.version (typically wire.Version).
 func InstallTracePipeline(ctx context.Context, name, version string, log *slog.Logger) (*TraceSetup, error) {
+	return InstallTracePipelineWithRegistry(ctx, name, version, log, nil, "")
+}
+
+// InstallTracePipelineWithRegistry is InstallTracePipeline with trace
+// exporter health metrics attached to reg. metricPrefix should match the
+// daemon's wire.OpsMetrics prefix (gatewayd_public for gatewayd-public).
+func InstallTracePipelineWithRegistry(ctx context.Context, name, version string, log *slog.Logger, reg prometheus.Registerer, metricPrefix string) (*TraceSetup, error) {
 	ring := buildRingFromEnv()
 
 	// W3C TraceContext + Baggage propagators (canonical OTel
@@ -129,6 +139,10 @@ func InstallTracePipeline(ctx context.Context, name, version string, log *slog.L
 	// mounted the ring exporter twice, doubling the ring's per-
 	// span cost).
 	exporters := []sdktrace.SpanExporter{NewTraceRingExporter(ring, log)}
+	health, err := otelinit.NewTraceExporterHealth(reg, metricPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("trace_setup: register trace exporter health: %w", err)
+	}
 	otlpExporter, otlpErr := buildOTLPExporter(ctx, log)
 	if otlpErr != nil {
 		// The OTLP endpoint is optional. Log a warning and run
@@ -136,6 +150,15 @@ func InstallTracePipeline(ctx context.Context, name, version string, log *slog.L
 		// GET /v1/traces/{trace_id} even when the collector is
 		// down.
 		log.Warn("trace_setup: OTLP exporter disabled", "err", otlpErr)
+		if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+			health.SetUnavailable()
+		}
+	}
+	if otlpExporter != nil {
+		health.SetEnabled(true)
+		otlpExporter = health.Wrap(otlpExporter)
+	} else if otlpErr == nil {
+		health.SetEnabled(false)
 	}
 	if otlpExporter != nil {
 		exporters = append(exporters, otlpExporter)
@@ -182,17 +205,24 @@ func buildOTLPExporter(ctx context.Context, log *slog.Logger) (sdktrace.SpanExpo
 	if raw == "" {
 		return nil, nil
 	}
-	// Strip "http://" or "https://" prefix so the SDK parses it
-	// as host:port — the SDK convention is "scheme://host:port".
 	endpoint := raw
 	if u, err := url.Parse(raw); err == nil && u.Host != "" {
-		endpoint = u.Host
+		endpoint = u.String()
 	}
 	log.Info("trace_setup: OTLP exporter enabled", "endpoint", endpoint)
-	return otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint(endpoint),
-		otlptracehttp.WithInsecure(),
-	)
+	options := []otlptracehttp.Option{otlptracehttp.WithTimeout(5 * time.Second)}
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		options = append(options, otlptracehttp.WithEndpointURL(endpoint))
+		if strings.HasPrefix(endpoint, "http://") {
+			options = append(options, otlptracehttp.WithInsecure())
+		}
+	} else {
+		options = append(options,
+			otlptracehttp.WithEndpoint(endpoint),
+			otlptracehttp.WithInsecure(),
+		)
+	}
+	return otlptracehttp.New(ctx, options...)
 }
 
 // multiExporter fans ExportSpans / Shutdown to a list of exporters.

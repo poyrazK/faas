@@ -1142,6 +1142,36 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollback", body, &out)
 }
 
+// RollbackToWithRule (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
+// is the variant of RollbackTo that ALSO stamps the
+// deployment_audit row's alert_rule_id column with the supplied
+// alert rule UUID. Used by the meterd safedeploy ActionDispatcher
+// when an alert rule's action=rollback fires and the dispatcher
+// triggers the apid rollback; this lets the operator click from
+// the audit timeline back to /dashboard/alerts/{id}.
+//
+// Why a separate method (not just adding an optional parameter to
+// RollbackTo): keeping RollbackTo's signature stable preserves the
+// generated SDK surface (RollbackTo is a public SDK method). The
+// new entry point is an internal seam used only by meterd; SDK
+// callers continue to call RollbackTo unchanged.
+//
+// alertRuleID is the UUID of the alert_rules row that fired;
+// pass "" (empty) to fall back to RollbackTo's behaviour with no
+// rule stamping. The handler stamps alert_rule_id only when both
+// the body's AlertRuleID parses as a UUID AND the rule row
+// exists — otherwise the audit row is emitted with alert_rule_id
+// NULL (fail-soft; an invalid rule id should not block the
+// rollback itself).
+func (c *Client) RollbackToWithRule(ctx context.Context, slug, targetDeploymentID, alertRuleID string) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	body := RollbackRequest{TargetDeploymentID: &targetDeploymentID}
+	if alertRuleID != "" {
+		body.AlertRuleID = &alertRuleID
+	}
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollback", body, &out)
+}
+
 // ListDeploymentAudit returns the deployment_audit timeline for
 // one deployment (issue #976 / ADR-122 / SAFE-RELEASES-E.2 +
 // production-leveling Stream A). The handler
@@ -1174,6 +1204,17 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 	var out DeploymentResponse
 	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
+}
+
+// AdvanceCanary advances exactly one persisted canary step. APID resolves
+// the next percentage from the deployment's stored preset and performs the
+// expected-step compare-and-swap together with traffic, rollout state, and
+// audit writes. A 409 means another worker won the race and the caller should
+// re-read the row on its next tick.
+func (c *Client) AdvanceCanary(ctx context.Context, id string, expectedStep int) (CanaryAdvanceResponse, error) {
+	var out CanaryAdvanceResponse
+	return out, c.do(ctx, "POST", "/v1/deployments/"+id+"/canary/advance",
+		AdvanceCanaryRequest{ExpectedStep: expectedStep}, &out)
 }
 
 // RecoverRollout (issue #976 / ADR-122 / SAFE-RELEASES-R) is the
@@ -4179,4 +4220,52 @@ func (c *Client) UpdateCorsPreset(ctx context.Context, id string, req UpdateCors
 // Returns nil on 204.
 func (c *Client) DeleteCorsPreset(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/cors-presets/"+id, nil, nil)
+}
+
+// RunWorkflow (ADR-081) triggers a new workflow execution run for an app.
+func (c *Client) RunWorkflow(ctx context.Context, slug, workflowName string, input json.RawMessage) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
+	err := c.do(ctx, "POST", path, input, &resp)
+	return resp, err
+}
+
+// ListWorkflowRuns (ADR-081) lists workflow runs for an app.
+func (c *Client) ListWorkflowRuns(ctx context.Context, slug string, limit, offset int, status string) (ListWorkflowRunsResponse, error) {
+	var resp ListWorkflowRunsResponse
+	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?limit=%d&offset=%d", slug, limit, offset)
+	if status != "" {
+		path += "&status=" + status
+	}
+	err := c.do(ctx, "GET", path, nil, &resp)
+	return resp, err
+}
+
+// GetWorkflowRun (ADR-081) retrieves the state of a workflow run.
+func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID, nil, &resp)
+	return resp, err
+}
+
+// ListWorkflowSteps (ADR-081) lists step records for a workflow run.
+func (c *Client) ListWorkflowSteps(ctx context.Context, runID string) (ListWorkflowStepsResponse, error) {
+	var resp ListWorkflowStepsResponse
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID+"/steps", nil, &resp)
+	return resp, err
+}
+
+// SendWorkflowEvent (ADR-081) injects an external event into a workflow run.
+func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string, payload json.RawMessage) (InjectWorkflowEventResponse, error) {
+	var resp InjectWorkflowEventResponse
+	req := InjectWorkflowEventRequest{EventName: eventName, Payload: payload}
+	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/events", req, &resp)
+	return resp, err
+}
+
+// CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
+func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/cancel", nil, &resp)
+	return resp, err
 }

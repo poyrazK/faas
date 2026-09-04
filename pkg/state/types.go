@@ -1570,17 +1570,18 @@ type Deployment struct {
 	// SAFE-RELEASES-A). CanaryPreset is the catalog name from
 	// pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100);
 	// CanaryStep is the zero-indexed position in
-	// pkg/api/canary.LookupPreset(CanaryPreset).Stages; CanaryTotalSteps
-	// is the ladder length. canary_step_bounds_chk locks the
-	// invariant (total=0,step=0) OR (total>0,0<=step<=total).
+	// pkg/api/canary.LookupPreset(CanaryPreset).Stages while a rollout
+	// is in flight; a completed rollout uses the terminal sentinel
+	// CanaryStep == CanaryTotalSteps. CanaryTotalSteps is the ladder
+	// length. canary_step_bounds_chk locks the invariant
+	// (total=0,step=0) OR (total>0,0<=step<=total).
 	//
 	// Stamped at deploy time by the apid CreateDeployment path
 	// (BuildDeploymentForInsert at cmd/apid/handlers_sidecars.go:308).
 	// Advanced on a wall-clock boundary by the canary_progression
-	// meterd tick (pkg/canary, Mega PR #2 commit 3) which calls
-	// pkg/api.Client.PatchDeploymentsIdTraffic — apid remains the
-	// authoritative writer of deployments.* per CLAUDE.md
-	// ownership rules.
+	// meterd tick (pkg/canary, issue #976) which calls APID's atomic
+	// AdvanceCanary endpoint — apid remains the authoritative writer
+	// of deployments.* per CLAUDE.md ownership rules.
 	CanaryPreset        string     `json:"canary_preset,omitempty"`
 	CanaryStep          int        `json:"canary_step,omitempty"`
 	CanaryTotalSteps    int        `json:"canary_total_steps,omitempty"`
@@ -2152,6 +2153,26 @@ const (
 	AlertMetricFailedDeployments AlertMetric = "deployment_failed"
 	AlertMetricCertExpirySeconds AlertMetric = "cert_expiry_seconds"
 	AlertMetricQueueDepth        AlertMetric = "queue_depth"
+	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
+	// Prometheus-counter-backed tripwire for a canary sitting at the
+	// same step past StuckAfterDuration. The actual firing happens
+	// in Prometheus against safedeploy_orchestrator_stuck_detected_total;
+	// the catalog entry exists so customers / operators see the
+	// preset in /dashboard/alerts. See pkg/alerts/safe_releases_presets.go.
+	AlertMetricCanaryStuckStep AlertMetric = "canary_stuck_step"
+	// AlertMetricSafedeployAuditEmitFailing — trips when
+	// safedeploy_orchestrator_audit_emit_failed_total rate > 0.1/sec
+	// for 10 min. Critical; closes the audit-trail-blacked-out failure
+	// mode PR-A unblocked.
+	AlertMetricSafedeployAuditEmitFailing AlertMetric = "safedeploy_audit_emit_failing"
+	// AlertMetricDeploymentAuditGCFailing — trips when
+	// deployment_audit_gc_failed_total rate > 0 for 1 h. Warning;
+	// 90-day GC failure is a disk-fill risk.
+	AlertMetricDeploymentAuditGCFailing AlertMetric = "deployment_audit_gc_failing"
+	// AlertMetricCanaryFleetInFlightHigh — trips when
+	// safedeploy_in_flight_rollouts > 50 for 10 min. Warning;
+	// operator back-pressure signal.
+	AlertMetricCanaryFleetInFlightHigh AlertMetric = "canary_fleet_in_flight_high"
 )
 
 // AlertComparison is the textual form of the comparison operator stored
@@ -3596,6 +3617,24 @@ const (
 	DeployHealthRecovered   DeploymentAuditKind = "deploy.health_recovered"
 	DeployRolledBack        DeploymentAuditKind = "deploy.rolled_back"
 	DeployRemoved           DeploymentAuditKind = "deploy.removed"
+	// SAFE-RELEASES-OBS PR-A (migrations/20260905000000000_deployment_audit_kinds_widen.sql):
+	// orchestrator emit surface. Closed-set widening that
+	// migration 00477 promised-but-never-shipped when Mega PR #2
+	// added the orchestrator goroutine. Without this widening the
+	// orchestrator's emitAudit calls hit SQLSTATE 23514 silently
+	// (the state-machine write landed regardless) — exactly the
+	// silent soak-bypass the audit trail exists to prevent.
+	DeployRolloutStarted   DeploymentAuditKind = "deploy.rollout_started"
+	DeployRolloutCompleted DeploymentAuditKind = "deploy.rollout_completed"
+	DeployRolloutAborted   DeploymentAuditKind = "deploy.rollout_aborted"
+	// SAFE-RELEASES-OBS PR-D: canary-step + alert-rule audit
+	// kinds. Mirrors the orchestrator's per-tick emit surface
+	// (deploy.canary_step_advanced will replace the existing
+	// deploy.traffic_changed payload shape; deploy.alert_rule_fired
+	// surfaces alert-driven rollbacks/demotes/promotes with a
+	// rule-scoped stamp).
+	DeployCanaryStepAdvanced DeploymentAuditKind = "deploy.canary_step_advanced"
+	DeployAlertRuleFired     DeploymentAuditKind = "deploy.alert_rule_fired"
 )
 
 // DeploymentAudit is one row of the deployment_audit table
@@ -3619,6 +3658,16 @@ type DeploymentAudit struct {
 	Actor        string              // NOT NULL; resolved actor from EmitAs
 	At           time.Time           // NOT NULL DEFAULT now()
 	Data         json.RawMessage     // nullable; verbatim payload at emit time
+	// AlertRuleID (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122) is
+	// the alert_rule.id that triggered this audit row. Populated by
+	// pkg/safedeploy.ActionDispatcher when a rollback/demote/promote
+	// fires, AND by pkg/alerts/evaluator when the canary preset
+	// advances. nil for non-rule-triggered rows (the orchestrator's
+	// own deploy.rollout_* lifecycle emits). The DB column
+	// (migrations/20260905000000002) is UUID NULL + partial index
+	// (alert_rule_id, at DESC) WHERE alert_rule_id IS NOT NULL so
+	// the /dashboard/alerts/{id} reverse-lookup query stays cheap.
+	AlertRuleID *uuid.UUID
 }
 
 // AuditLogFilter is the read-side query shape for the audit_log table.

@@ -20,6 +20,7 @@ from .admin_refund_response import AdminRefundResponse
 from .admin_refund_response_provider import AdminRefundResponseProvider
 from .admin_set_github_webhook_secret_request import AdminSetGithubWebhookSecretRequest
 from .admin_set_github_webhook_secret_response import AdminSetGithubWebhookSecretResponse
+from .advance_canary_request import AdvanceCanaryRequest
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_status import AlertDeliveryResponseStatus
 from .alert_preset_response import AlertPresetResponse
@@ -134,6 +135,7 @@ from .build_response import BuildResponse
 from .build_response_failure_class import BuildResponseFailureClass
 from .build_response_kind import BuildResponseKind
 from .build_response_status import BuildResponseStatus
+from .canary_advance_response import CanaryAdvanceResponse
 from .canary_preset_spec import CanaryPresetSpec
 from .canary_preset_spec_preset import CanaryPresetSpecPreset
 from .cancel_deployment_request import CancelDeploymentRequest
@@ -355,6 +357,9 @@ from .grace_window_response import GraceWindowResponse
 from .import_app_open_api_body import ImportAppOpenAPIBody
 from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
 from .import_app_open_api_body_paths import ImportAppOpenAPIBodyPaths
+from .inject_workflow_event_request import InjectWorkflowEventRequest
+from .inject_workflow_event_response import InjectWorkflowEventResponse
+from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
 from .install_bind_request import InstallBindRequest
 from .install_bind_response import InstallBindResponse
 from .instance_response import InstanceResponse
@@ -424,6 +429,8 @@ from .list_secrets_for_account_response import ListSecretsForAccountResponse
 from .list_tenant_surfaces_response import ListTenantSurfacesResponse
 from .list_trigger_dead_letter_response import ListTriggerDeadLetterResponse
 from .list_trigger_records_response import ListTriggerRecordsResponse
+from .list_workflow_runs_response import ListWorkflowRunsResponse
+from .list_workflow_steps_response import ListWorkflowStepsResponse
 from .log_excerpt import LogExcerpt
 from .log_excerpt_level import LogExcerptLevel
 from .log_excerpt_source import LogExcerptSource
@@ -689,7 +696,11 @@ from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_response import WakeTimelineResponse
 from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
+from .workflow_run_response import WorkflowRunResponse
+from .workflow_run_response_status import WorkflowRunResponseStatus
 from .workflow_spec import WorkflowSpec
+from .workflow_step_response import WorkflowStepResponse
+from .workflow_step_response_status import WorkflowStepResponseStatus
 from .workflow_step_spec import WorkflowStepSpec
 from .workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
 from .workflow_step_spec_method import WorkflowStepSpecMethod
@@ -717,6 +728,7 @@ __all__ = (
     "AdminRefundResponseProvider",
     "AdminSetGithubWebhookSecretRequest",
     "AdminSetGithubWebhookSecretResponse",
+    "AdvanceCanaryRequest",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseStatus",
     "AlertPresetResponse",
@@ -831,6 +843,7 @@ __all__ = (
     "BuildResponseFailureClass",
     "BuildResponseKind",
     "BuildResponseStatus",
+    "CanaryAdvanceResponse",
     "CanaryPresetSpec",
     "CanaryPresetSpecPreset",
     "CancelDeploymentRequest",
@@ -1044,6 +1057,9 @@ __all__ = (
     "ImportAppOpenAPIBody",
     "ImportAppOpenAPIBodyInfo",
     "ImportAppOpenAPIBodyPaths",
+    "InjectWorkflowEventRequest",
+    "InjectWorkflowEventResponse",
+    "InjectWorkflowEventResponseStatus",
     "InstallBindRequest",
     "InstallBindResponse",
     "InstanceResponse",
@@ -1113,6 +1129,8 @@ __all__ = (
     "ListTenantSurfacesResponse",
     "ListTriggerDeadLetterResponse",
     "ListTriggerRecordsResponse",
+    "ListWorkflowRunsResponse",
+    "ListWorkflowStepsResponse",
     "LogExcerpt",
     "LogExcerptLevel",
     "LogExcerptSource",
@@ -1370,7 +1388,11 @@ __all__ = (
     "WakeTimelineResponse",
     "WorkflowRetrySpec",
     "WorkflowRetrySpecBackoff",
+    "WorkflowRunResponse",
+    "WorkflowRunResponseStatus",
     "WorkflowSpec",
+    "WorkflowStepResponse",
+    "WorkflowStepResponseStatus",
     "WorkflowStepSpec",
     "WorkflowStepSpecInputType0",
     "WorkflowStepSpecMethod",

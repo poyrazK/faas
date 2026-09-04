@@ -44,6 +44,7 @@ import (
 	"filippo.io/age"
 	"github.com/caddyserver/certmagic"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -1583,7 +1584,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
-	traceShutdown, traceErr := trace.InitTracer(ctx, "gatewayd-internal", wire.Version, log)
+	var metricsRegisterer prometheus.Registerer
+	var metricPrefix string
+	if deps.opsMetrics != nil {
+		metricsRegisterer = deps.opsMetrics.Registry()
+		metricPrefix = deps.opsMetrics.MetricPrefix()
+	}
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "gatewayd-internal", wire.Version, log, metricsRegisterer, metricPrefix)
 	if traceErr != nil {
 		return fmt.Errorf("gatewayd-internal: init tracing: %w", traceErr)
 	}
