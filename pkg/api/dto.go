@@ -910,6 +910,11 @@ type CreateDeploymentRequest struct {
 	// silently dropped; the customer who set it expects it to
 	// apply).
 	Sidecars Sidecars `json:"sidecars,omitempty"`
+	// Workflows carries the ADR-081 declarative definitions alongside
+	// the deployment. The apid validation boundary rejects this field
+	// until the workflow runtime persistence path is available rather
+	// than silently discarding customer configuration.
+	Workflows []WorkflowSpec `json:"workflows,omitempty"`
 	// TrafficPercent (issue #556 / traffic splitting across
 	// deployments, PR-A) is the per-deployment traffic share in
 	// the [0, 100] range. Pointer so that omitted == "server

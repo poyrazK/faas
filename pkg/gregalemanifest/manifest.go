@@ -375,10 +375,10 @@ type QueueConfig struct {
 	Mode string `json:"mode"`
 }
 
-// Manifest is the parsed `gregale.yaml` root. Only `triggers` is
-// recognised in PR-C; other top-level keys are validated strictly
-// (yaml.Decoder.KnownFields(true)) so a typo like `trigger:` (singular)
-// surfaces as a load-time error rather than silently shipping a
+// Manifest is the parsed `gregale.yaml` root. The supported top-level
+// declarations are `triggers` and `workflows`; other keys are validated
+// strictly (yaml.Decoder.KnownFields(true)) so a typo like `trigger:`
+// (singular) surfaces as a load-time error rather than silently shipping a
 // no-op deploy.
 type Manifest struct {
 	Triggers  []Trigger          `yaml:"triggers"`
@@ -450,9 +450,10 @@ func parseManifest(b []byte) (*Manifest, error) {
 	return m, nil
 }
 
-// Validate runs schema checks against the decoded manifest. Triggered
-// before any `CreateCron` fan-out in `cmdDeployTarball` so a typo'd
-// schedule aborts the deploy before any cron row is mutated.
+// Validate runs schema checks against the decoded manifest. It retains the
+// historical plan-free API for callers that only consume trigger manifests;
+// workflow-aware callers must use ValidateForPlan so workflow gates and caps
+// are evaluated against the account's actual plan.
 //
 // Validation order matches the failure modes a customer would debug
 // most often: kind first (so an unknown kind surfaces as a clear
@@ -467,6 +468,13 @@ func parseManifest(b []byte) (*Manifest, error) {
 // path is byte-for-byte identical to PR-C, the five new kinds each
 // validate their Config via decodeAndValidateConfig below.
 func (m *Manifest) Validate() error {
+	return m.ValidateForPlan(api.PlanScale)
+}
+
+// ValidateForPlan runs schema checks and applies workflow limits for plan.
+// Trigger validation is plan-independent; workflows are paid-only and their
+// definition count, step timeout, and wait timeout are plan-bound.
+func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
 	}
@@ -561,6 +569,15 @@ func (m *Manifest) Validate() error {
 		seen[k] = struct{}{}
 	}
 
+	if len(m.Workflows) == 0 {
+		return nil
+	}
+	if !plan.WorkflowsAllowed() {
+		return fmt.Errorf("workflows: plan %q does not allow workflows", plan)
+	}
+	if max := plan.WorkflowMaxPerApp(); max > 0 && len(m.Workflows) > max {
+		return fmt.Errorf("workflows: %d definitions exceed the plan limit of %d", len(m.Workflows), max)
+	}
 	seenWorkflows := make(map[string]struct{}, len(m.Workflows))
 	for i, wf := range m.Workflows {
 		if wf.Name == "" {
@@ -570,7 +587,7 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("workflows[%d]: duplicate workflow name %q", i, wf.Name)
 		}
 		seenWorkflows[wf.Name] = struct{}{}
-		if _, err := api.ValidateWorkflowDAG(wf, api.PlanScale); err != nil {
+		if _, err := api.ValidateWorkflowDAG(wf, plan); err != nil {
 			return fmt.Errorf("workflows[%d] %q: %w", i, wf.Name, err)
 		}
 	}

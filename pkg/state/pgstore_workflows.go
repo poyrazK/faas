@@ -76,17 +76,29 @@ func scanWorkflowEventCols(scan func(...any) error) (*WorkflowEvent, error) {
 }
 
 func (s *PgStore) CreateWorkflowRun(ctx context.Context, r *WorkflowRun) error {
+	if r == nil {
+		return fmt.Errorf("%w: nil run", ErrWorkflowInvalidRecord)
+	}
 	if r.ID == "" {
 		r.ID = uuid.NewString()
 	}
 	if r.Status == "" {
 		r.Status = WorkflowRunStatusPending
 	}
+	if err := validateWorkflowRunStatus(r.Status); err != nil {
+		return err
+	}
 	if r.ScheduledFor.IsZero() {
 		r.ScheduledFor = time.Now().UTC()
 	}
 	if len(r.Input) == 0 {
 		r.Input = json.RawMessage("{}")
+	}
+	if err := validateWorkflowJSON(r.Input, true); err != nil {
+		return err
+	}
+	if err := validateWorkflowJSON(r.DefinitionSnapshot, true); err != nil {
+		return err
 	}
 
 	query := `
@@ -118,6 +130,9 @@ func (s *PgStore) GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, 
 }
 
 func (s *PgStore) ListWorkflowRuns(ctx context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error) {
+	if opts.Offset < 0 || opts.Limit < 0 {
+		return nil, 0, ErrWorkflowInvalidPagination
+	}
 	countQuery := `SELECT count(*) FROM workflow_runs WHERE app_id = $1`
 	var args []any
 	args = append(args, appID)
@@ -141,7 +156,7 @@ func (s *PgStore) ListWorkflowRuns(ctx context.Context, appID string, opts ListW
 		argIdx++
 	}
 
-	query += ` ORDER BY created_at DESC`
+	query += ` ORDER BY created_at DESC, id DESC`
 	if opts.Limit > 0 {
 		query += fmt.Sprintf(` LIMIT $%d`, argIdx)
 		qArgs = append(qArgs, opts.Limit)
@@ -174,6 +189,12 @@ func (s *PgStore) ListWorkflowRuns(ctx context.Context, appID string, opts ListW
 }
 
 func (s *PgStore) MarkWorkflowRunStatus(ctx context.Context, id, status string, output json.RawMessage, lastErr *string) error {
+	if err := validateWorkflowRunStatus(status); err != nil {
+		return err
+	}
+	if err := validateWorkflowJSON(output, false); err != nil {
+		return err
+	}
 	query := `
 		UPDATE workflow_runs
 		SET status = $2,
@@ -203,7 +224,7 @@ func (s *PgStore) ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error)
 		WHERE id = (
 			SELECT id FROM workflow_runs
 			WHERE status = 'pending' AND scheduled_for <= now()
-			ORDER BY scheduled_for ASC
+			ORDER BY scheduled_for ASC, id ASC
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		)
@@ -234,6 +255,37 @@ func (s *PgStore) CountActiveRunsByApp(ctx context.Context, appID string) (int, 
 }
 
 func (s *PgStore) CreateWorkflowSteps(ctx context.Context, runID string, steps []*WorkflowStep) error {
+	if len(steps) == 0 {
+		return nil
+	}
+	for _, step := range steps {
+		if step == nil {
+			return fmt.Errorf("%w: nil step", ErrWorkflowInvalidRecord)
+		}
+		if step.StepName == "" {
+			return fmt.Errorf("%w: step name is empty", ErrWorkflowInvalidRecord)
+		}
+		status := step.Status
+		if status == "" {
+			status = WorkflowStepStatusPending
+		}
+		if err := validateWorkflowStepStatus(status); err != nil {
+			return err
+		}
+		if step.Attempt < 0 {
+			return ErrWorkflowInvalidAttempt
+		}
+		if err := validateWorkflowJSON(step.Input, false); err != nil {
+			return err
+		}
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_runs WHERE id = $1)`, runID).Scan(&exists); err != nil {
+		return fmt.Errorf("pgstore: check workflow run: %w", err)
+	}
+	if !exists {
+		return ErrWorkflowRunNotFound
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("pgstore: begin create workflow steps: %w", err)
@@ -263,7 +315,7 @@ func (s *PgStore) CreateWorkflowSteps(ctx context.Context, runID string, steps [
 }
 
 func (s *PgStore) GetWorkflowSteps(ctx context.Context, runID string) ([]*WorkflowStep, error) {
-	query := fmt.Sprintf(`SELECT %s FROM workflow_steps WHERE run_id = $1 ORDER BY created_at ASC`, workflowStepSelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM workflow_steps WHERE run_id = $1 ORDER BY created_at ASC, step_name ASC`, workflowStepSelectCols)
 	rows, err := s.pool.Query(ctx, query, runID)
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: get workflow steps: %w", err)
@@ -282,6 +334,15 @@ func (s *PgStore) GetWorkflowSteps(ctx context.Context, runID string) ([]*Workfl
 }
 
 func (s *PgStore) MarkWorkflowStepStatus(ctx context.Context, runID, stepName, status string, attempt int, output json.RawMessage, stepErr *string) error {
+	if err := validateWorkflowStepStatus(status); err != nil {
+		return err
+	}
+	if attempt < 0 {
+		return ErrWorkflowInvalidAttempt
+	}
+	if err := validateWorkflowJSON(output, false); err != nil {
+		return err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("pgstore: begin mark workflow step: %w", err)
@@ -321,6 +382,22 @@ func (s *PgStore) MarkWorkflowStepStatus(ctx context.Context, runID, stepName, s
 }
 
 func (s *PgStore) InsertWorkflowEvent(ctx context.Context, e *WorkflowEvent) error {
+	if e == nil {
+		return fmt.Errorf("%w: nil event", ErrWorkflowInvalidRecord)
+	}
+	if e.RunID == "" || e.EventName == "" {
+		return fmt.Errorf("%w: event run_id and event_name are required", ErrWorkflowInvalidRecord)
+	}
+	if err := validateWorkflowJSON(e.Payload, false); err != nil {
+		return err
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_runs WHERE id = $1)`, e.RunID).Scan(&exists); err != nil {
+		return fmt.Errorf("pgstore: check workflow run for event: %w", err)
+	}
+	if !exists {
+		return ErrWorkflowRunNotFound
+	}
 	if e.ID == "" {
 		e.ID = uuid.NewString()
 	}
@@ -341,7 +418,7 @@ func (s *PgStore) InsertWorkflowEvent(ctx context.Context, e *WorkflowEvent) err
 }
 
 func (s *PgStore) GetWorkflowEventsForRun(ctx context.Context, runID string) ([]*WorkflowEvent, error) {
-	query := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE run_id = $1 ORDER BY received_at ASC`, workflowEventSelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE run_id = $1 ORDER BY received_at ASC, id ASC`, workflowEventSelectCols)
 	rows, err := s.pool.Query(ctx, query, runID)
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: get workflow events: %w", err)
@@ -363,7 +440,7 @@ func (s *PgStore) FindMatchingEvent(ctx context.Context, runID, eventName string
 	query := fmt.Sprintf(`
 		SELECT %s FROM workflow_events
 		WHERE run_id = $1 AND event_name = $2
-		ORDER BY received_at ASC
+		ORDER BY received_at ASC, id ASC
 		LIMIT 1
 	`, workflowEventSelectCols)
 
@@ -379,6 +456,9 @@ func (s *PgStore) FindMatchingEvent(ctx context.Context, runID, eventName string
 }
 
 func (s *PgStore) SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.Duration) (int, error) {
+	if olderThan < 0 {
+		return 0, ErrWorkflowInvalidRecord
+	}
 	secs := int64(olderThan.Seconds())
 	intervalStr := fmt.Sprintf("%d seconds", secs)
 
@@ -395,6 +475,9 @@ func (s *PgStore) SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.D
 }
 
 func (s *PgStore) SweepExpiredWorkflowEvents(ctx context.Context, olderThan time.Duration) (int, error) {
+	if olderThan < 0 {
+		return 0, ErrWorkflowInvalidRecord
+	}
 	secs := int64(olderThan.Seconds())
 	intervalStr := fmt.Sprintf("%d seconds", secs)
 

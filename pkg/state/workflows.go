@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -29,11 +30,58 @@ const (
 )
 
 var (
-	ErrWorkflowRunNotFound   = errors.New("state: workflow run not found")
-	ErrWorkflowStepNotFound  = errors.New("state: workflow step not found")
-	ErrWorkflowEventNotFound = errors.New("state: workflow event not found")
-	ErrWorkflowNotRunning    = errors.New("state: workflow run is not in running state")
+	ErrWorkflowRunNotFound       = errors.New("state: workflow run not found")
+	ErrWorkflowStepNotFound      = errors.New("state: workflow step not found")
+	ErrWorkflowEventNotFound     = errors.New("state: workflow event not found")
+	ErrWorkflowNotRunning        = errors.New("state: workflow run is not in running state")
+	ErrWorkflowInvalidStatus     = errors.New("state: invalid workflow status")
+	ErrWorkflowInvalidAttempt    = errors.New("state: workflow attempt cannot be negative")
+	ErrWorkflowInvalidPagination = errors.New("state: workflow pagination cannot be negative")
+	ErrWorkflowInvalidInput      = errors.New("state: workflow JSON payload is invalid")
+	ErrWorkflowInvalidRecord     = errors.New("state: workflow record is invalid")
 )
+
+func validateWorkflowRunStatus(status string) error {
+	switch status {
+	case WorkflowRunStatusPending, WorkflowRunStatusRunning,
+		WorkflowRunStatusAwaitingEvent, WorkflowRunStatusSucceeded,
+		WorkflowRunStatusFailed, WorkflowRunStatusDead:
+		return nil
+	default:
+		return fmt.Errorf("%w: run status %q", ErrWorkflowInvalidStatus, status)
+	}
+}
+
+func validateWorkflowStepStatus(status string) error {
+	switch status {
+	case WorkflowStepStatusPending, WorkflowStepStatusRunning,
+		WorkflowStepStatusAwaitingEvent, WorkflowStepStatusSucceeded,
+		WorkflowStepStatusFailed, WorkflowStepStatusDead, WorkflowStepStatusSkipped:
+		return nil
+	default:
+		return fmt.Errorf("%w: step status %q", ErrWorkflowInvalidStatus, status)
+	}
+}
+
+func validateWorkflowJSON(raw json.RawMessage, required bool) error {
+	if len(raw) == 0 {
+		if required {
+			return fmt.Errorf("%w: required JSON payload is empty", ErrWorkflowInvalidInput)
+		}
+		return nil
+	}
+	if !json.Valid(raw) {
+		return fmt.Errorf("%w: malformed JSON", ErrWorkflowInvalidInput)
+	}
+	return nil
+}
+
+func cloneWorkflowJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	return append(json.RawMessage(nil), raw...)
+}
 
 // WorkflowRun is one row of public.workflow_runs.
 type WorkflowRun struct {

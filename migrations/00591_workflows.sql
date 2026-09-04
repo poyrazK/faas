@@ -79,8 +79,27 @@ DROP TRIGGER IF EXISTS workflow_due_trg ON workflow_runs;
 CREATE TRIGGER workflow_due_trg
     AFTER INSERT OR UPDATE OF status ON workflow_runs
     FOR EACH ROW
-    WHEN (new.status IN ('pending','running','awaiting_event'))
+    WHEN (new.status IN ('pending','running'))
     EXECUTE FUNCTION workflow_due_notify();
+
+CREATE OR REPLACE FUNCTION workflow_event_due_notify() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE payload jsonb;
+BEGIN
+    payload := jsonb_build_object(
+        'run_id', new.run_id::text,
+        'event_name', new.event_name
+    );
+    PERFORM pg_notify('workflow_due', payload::text);
+    RETURN new;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS workflow_event_due_trg ON workflow_events;
+CREATE TRIGGER workflow_event_due_trg
+    AFTER INSERT ON workflow_events
+    FOR EACH ROW
+    EXECUTE FUNCTION workflow_event_due_notify();
 
 -- +goose StatementEnd
 
@@ -88,6 +107,8 @@ CREATE TRIGGER workflow_due_trg
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS workflow_due_trg ON workflow_runs;
 DROP FUNCTION IF EXISTS workflow_due_notify();
+DROP TRIGGER IF EXISTS workflow_event_due_trg ON workflow_events;
+DROP FUNCTION IF EXISTS workflow_event_due_notify();
 DROP TABLE IF EXISTS workflow_events CASCADE;
 DROP TABLE IF EXISTS workflow_steps CASCADE;
 DROP TABLE IF EXISTS workflow_runs CASCADE;

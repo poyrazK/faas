@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
@@ -11,6 +12,9 @@ import (
 
 // CreateWorkflowRun inserts a new workflow_runs row into memory.
 func (m *MemStore) CreateWorkflowRun(_ context.Context, r *WorkflowRun) error {
+	if r == nil {
+		return fmt.Errorf("%w: nil run", ErrWorkflowInvalidRecord)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -23,14 +27,30 @@ func (m *MemStore) CreateWorkflowRun(_ context.Context, r *WorkflowRun) error {
 	if r.Status == "" {
 		r.Status = WorkflowRunStatusPending
 	}
+	if err := validateWorkflowRunStatus(r.Status); err != nil {
+		return err
+	}
 	if r.ScheduledFor.IsZero() {
 		r.ScheduledFor = now
 	}
 	if len(r.Input) == 0 {
 		r.Input = json.RawMessage("{}")
 	}
+	if err := validateWorkflowJSON(r.Input, true); err != nil {
+		return err
+	}
+	if err := validateWorkflowJSON(r.DefinitionSnapshot, true); err != nil {
+		return err
+	}
 
-	m.workflowRuns[r.ID] = *r
+	if _, exists := m.workflowRuns[r.ID]; exists {
+		return fmt.Errorf("%w: workflow_runs.id", ErrConflict)
+	}
+	stored := *r
+	stored.Input = cloneWorkflowJSON(r.Input)
+	stored.Output = cloneWorkflowJSON(r.Output)
+	stored.DefinitionSnapshot = cloneWorkflowJSON(r.DefinitionSnapshot)
+	m.workflowRuns[r.ID] = stored
 	return nil
 }
 
@@ -44,11 +64,17 @@ func (m *MemStore) GetWorkflowRun(_ context.Context, id string) (*WorkflowRun, e
 		return nil, ErrWorkflowRunNotFound
 	}
 	cp := r
+	cp.Input = cloneWorkflowJSON(r.Input)
+	cp.Output = cloneWorkflowJSON(r.Output)
+	cp.DefinitionSnapshot = cloneWorkflowJSON(r.DefinitionSnapshot)
 	return &cp, nil
 }
 
 // ListWorkflowRuns lists runs for an app with pagination and status filtering.
 func (m *MemStore) ListWorkflowRuns(_ context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error) {
+	if opts.Offset < 0 || opts.Limit < 0 {
+		return nil, 0, ErrWorkflowInvalidPagination
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -61,10 +87,16 @@ func (m *MemStore) ListWorkflowRuns(_ context.Context, appID string, opts ListWo
 			continue
 		}
 		cp := r
+		cp.Input = cloneWorkflowJSON(r.Input)
+		cp.Output = cloneWorkflowJSON(r.Output)
+		cp.DefinitionSnapshot = cloneWorkflowJSON(r.DefinitionSnapshot)
 		matched = append(matched, &cp)
 	}
 
 	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].ID > matched[j].ID
+		}
 		return matched[i].CreatedAt.After(matched[j].CreatedAt)
 	})
 
@@ -82,6 +114,12 @@ func (m *MemStore) ListWorkflowRuns(_ context.Context, appID string, opts ListWo
 
 // MarkWorkflowRunStatus transitions a workflow run's status and records output/error.
 func (m *MemStore) MarkWorkflowRunStatus(_ context.Context, id, status string, output json.RawMessage, lastErr *string) error {
+	if err := validateWorkflowRunStatus(status); err != nil {
+		return err
+	}
+	if err := validateWorkflowJSON(output, false); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -94,7 +132,7 @@ func (m *MemStore) MarkWorkflowRunStatus(_ context.Context, id, status string, o
 	r.Status = status
 	r.UpdatedAt = now
 	if len(output) > 0 {
-		r.Output = output
+		r.Output = cloneWorkflowJSON(output)
 	}
 	if lastErr != nil {
 		r.LastError = lastErr
@@ -128,6 +166,9 @@ func (m *MemStore) ClaimNextPendingRun(_ context.Context) (*WorkflowRun, error) 
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].ScheduledFor.Equal(candidates[j].ScheduledFor) {
+			return candidates[i].ID < candidates[j].ID
+		}
 		return candidates[i].ScheduledFor.Before(candidates[j].ScheduledFor)
 	})
 
@@ -159,21 +200,53 @@ func (m *MemStore) CountActiveRunsByApp(_ context.Context, appID string) (int, e
 
 // CreateWorkflowSteps persists the step rows for a workflow run.
 func (m *MemStore) CreateWorkflowSteps(_ context.Context, runID string, steps []*WorkflowStep) error {
+	if len(steps) == 0 {
+		return nil
+	}
+	for _, step := range steps {
+		if step == nil {
+			return fmt.Errorf("%w: nil step", ErrWorkflowInvalidRecord)
+		}
+		if step.StepName == "" {
+			return fmt.Errorf("%w: step name is empty", ErrWorkflowInvalidRecord)
+		}
+		status := step.Status
+		if status == "" {
+			status = WorkflowStepStatusPending
+		}
+		if err := validateWorkflowStepStatus(status); err != nil {
+			return err
+		}
+		if step.Attempt < 0 {
+			return ErrWorkflowInvalidAttempt
+		}
+		if err := validateWorkflowJSON(step.Input, false); err != nil {
+			return err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if _, ok := m.workflowRuns[runID]; !ok {
+		return ErrWorkflowRunNotFound
+	}
 	if _, ok := m.workflowSteps[runID]; !ok {
 		m.workflowSteps[runID] = make(map[string]WorkflowStep)
 	}
 
 	now := time.Now().UTC()
 	for _, s := range steps {
-		s.RunID = runID
-		if s.Status == "" {
-			s.Status = WorkflowStepStatusPending
+		if _, exists := m.workflowSteps[runID][s.StepName]; exists {
+			continue
 		}
-		s.CreatedAt = now
-		m.workflowSteps[runID][s.StepName] = *s
+		stored := *s
+		stored.RunID = runID
+		if stored.Status == "" {
+			stored.Status = WorkflowStepStatusPending
+		}
+		stored.CreatedAt = now
+		stored.Input = cloneWorkflowJSON(stored.Input)
+		m.workflowSteps[runID][stored.StepName] = stored
 	}
 	return nil
 }
@@ -191,10 +264,15 @@ func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*Workflo
 	var steps []*WorkflowStep
 	for _, s := range stepsMap {
 		cp := s
+		cp.Input = cloneWorkflowJSON(s.Input)
+		cp.Output = cloneWorkflowJSON(s.Output)
 		steps = append(steps, &cp)
 	}
 
 	sort.Slice(steps, func(i, j int) bool {
+		if steps[i].CreatedAt.Equal(steps[j].CreatedAt) {
+			return steps[i].StepName < steps[j].StepName
+		}
 		return steps[i].CreatedAt.Before(steps[j].CreatedAt)
 	})
 
@@ -203,6 +281,15 @@ func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*Workflo
 
 // MarkWorkflowStepStatus updates the execution state of a step.
 func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, status string, attempt int, output json.RawMessage, err *string) error {
+	if statusErr := validateWorkflowStepStatus(status); statusErr != nil {
+		return statusErr
+	}
+	if attempt < 0 {
+		return ErrWorkflowInvalidAttempt
+	}
+	if jsonErr := validateWorkflowJSON(output, false); jsonErr != nil {
+		return jsonErr
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -219,7 +306,7 @@ func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, st
 	step.Status = status
 	step.Attempt = attempt
 	if len(output) > 0 {
-		step.Output = output
+		step.Output = cloneWorkflowJSON(output)
 	}
 	if err != nil {
 		step.Error = err
@@ -246,8 +333,20 @@ func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, st
 
 // InsertWorkflowEvent appends an external event to a run's event log.
 func (m *MemStore) InsertWorkflowEvent(_ context.Context, e *WorkflowEvent) error {
+	if e == nil {
+		return fmt.Errorf("%w: nil event", ErrWorkflowInvalidRecord)
+	}
+	if e.RunID == "" || e.EventName == "" {
+		return fmt.Errorf("%w: event run_id and event_name are required", ErrWorkflowInvalidRecord)
+	}
+	if err := validateWorkflowJSON(e.Payload, false); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.workflowRuns[e.RunID]; !ok {
+		return ErrWorkflowRunNotFound
+	}
 
 	if e.ID == "" {
 		e.ID = uuid.NewString()
@@ -258,8 +357,17 @@ func (m *MemStore) InsertWorkflowEvent(_ context.Context, e *WorkflowEvent) erro
 	if len(e.Payload) == 0 {
 		e.Payload = json.RawMessage("{}")
 	}
+	for _, events := range m.workflowEvents {
+		for _, existing := range events {
+			if existing.ID == e.ID {
+				return fmt.Errorf("%w: workflow_events.id", ErrConflict)
+			}
+		}
+	}
 
-	m.workflowEvents[e.RunID] = append(m.workflowEvents[e.RunID], *e)
+	stored := *e
+	stored.Payload = cloneWorkflowJSON(e.Payload)
+	m.workflowEvents[e.RunID] = append(m.workflowEvents[e.RunID], stored)
 	return nil
 }
 
@@ -268,10 +376,17 @@ func (m *MemStore) GetWorkflowEventsForRun(_ context.Context, runID string) ([]*
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	events := m.workflowEvents[runID]
+	events := append([]WorkflowEvent(nil), m.workflowEvents[runID]...)
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].ReceivedAt.Equal(events[j].ReceivedAt) {
+			return events[i].ID < events[j].ID
+		}
+		return events[i].ReceivedAt.Before(events[j].ReceivedAt)
+	})
 	var res []*WorkflowEvent
 	for _, e := range events {
 		cp := e
+		cp.Payload = cloneWorkflowJSON(e.Payload)
 		res = append(res, &cp)
 	}
 	return res, nil
@@ -282,9 +397,17 @@ func (m *MemStore) FindMatchingEvent(_ context.Context, runID, eventName string)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for _, e := range m.workflowEvents[runID] {
+	events := append([]WorkflowEvent(nil), m.workflowEvents[runID]...)
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].ReceivedAt.Equal(events[j].ReceivedAt) {
+			return events[i].ID < events[j].ID
+		}
+		return events[i].ReceivedAt.Before(events[j].ReceivedAt)
+	})
+	for _, e := range events {
 		if e.EventName == eventName {
 			cp := e
+			cp.Payload = cloneWorkflowJSON(e.Payload)
 			return &cp, nil
 		}
 	}
@@ -293,6 +416,9 @@ func (m *MemStore) FindMatchingEvent(_ context.Context, runID, eventName string)
 
 // SweepExpiredWorkflowRuns removes finished workflow runs older than olderThan.
 func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Duration) (int, error) {
+	if olderThan < 0 {
+		return 0, ErrWorkflowInvalidRecord
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -311,6 +437,9 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 
 // SweepExpiredWorkflowEvents removes events older than olderThan.
 func (m *MemStore) SweepExpiredWorkflowEvents(_ context.Context, olderThan time.Duration) (int, error) {
+	if olderThan < 0 {
+		return 0, ErrWorkflowInvalidRecord
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

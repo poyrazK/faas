@@ -29,6 +29,7 @@ import (
 const (
 	serverSrcPath         = "server.go"
 	dtoFile               = "dto.go"
+	workflowFile          = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
 	secretsFile           = "secrets.go"
 	envFile               = "env.go"             // issue #395 / ADR-045
 	registryFile          = "registry_auth.go"   // issue #461 / ADR-062
@@ -767,6 +768,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 
 	files := []string{
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", workflowFile),
 		filepath.Join(root, "pkg", "api", secretsFile),
 		filepath.Join(root, "pkg", "api", envFile),
 		filepath.Join(root, "pkg", "api", registryFile),

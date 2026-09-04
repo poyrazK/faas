@@ -1471,13 +1471,14 @@ const (
 	CodeJobCommandInvalid = "job_command_invalid"
 
 	// Workflows (ADR-081).
-	CodePlanWorkflowsNotAllowed = "plan_workflows_not_allowed"
-	CodePlanWorkflowsQuota      = "plan_workflows_quota"
-	CodeWorkflowDAGCycle        = "workflow_dag_cycle"
-	CodeWorkflowStepNotFound    = "workflow_step_not_found"
-	CodeWorkflowRunNotFound     = "workflow_run_not_found"
-	CodeWorkflowEventNotFound   = "workflow_event_not_found"
-	CodeWorkflowNotRunning      = "workflow_not_running"
+	CodePlanWorkflowsNotAllowed       = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota            = "plan_workflows_quota"
+	CodeWorkflowDAGCycle              = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound          = "workflow_step_not_found"
+	CodeWorkflowRunNotFound           = "workflow_run_not_found"
+	CodeWorkflowEventNotFound         = "workflow_event_not_found"
+	CodeWorkflowNotRunning            = "workflow_not_running"
+	CodeWorkflowDeploymentUnavailable = "workflow_deployment_unavailable"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1526,6 +1527,8 @@ func StatusForCode(code string) int {
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist:
 		return http.StatusBadRequest
+	case CodeWorkflowDeploymentUnavailable:
+		return http.StatusNotImplemented
 	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeMirrorSlotAtCapacity:
 		return http.StatusServiceUnavailable
@@ -2918,6 +2921,17 @@ func ErrPlanWorkflowsQuota(plan Plan, limit, observed int) *Problem {
 		fmt.Sprintf("concurrent workflow run quota reached (%d/%d) for the %s plan.", observed, limit, plan)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#workflows")
+}
+
+// ErrWorkflowDeploymentUnavailable prevents a client from mistaking the
+// schema-only workflow foundation for a deploy path that can persist and
+// serve definitions. It is temporary until the workflow runtime deployment
+// endpoint is present; returning 501 is safer than accepting and dropping
+// customer configuration.
+func ErrWorkflowDeploymentUnavailable() *Problem {
+	return NewProblem(http.StatusNotImplemented, CodeWorkflowDeploymentUnavailable,
+		"Workflow deployment unavailable",
+		"workflow definitions are validated by this release but require the workflow runtime deployment endpoint to be enabled")
 }
 
 // ErrJobTaskNotFound marks a 404 on (run_id, task_index) lookups

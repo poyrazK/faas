@@ -435,6 +435,18 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if len(req.Workflows) > 0 {
+		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+		// PR-1279 contains the schema/state foundation; the runtime
+		// deployment persistence path is delivered by the stacked
+		// workflow runtime change. Fail explicitly until that path is
+		// available so a valid definition cannot be silently dropped.
+		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
+		return
+	}
 	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
 			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))

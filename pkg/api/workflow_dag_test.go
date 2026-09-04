@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -175,5 +177,172 @@ func TestValidateWorkflowDAG(t *testing.T) {
 				t.Fatalf("expected %d steps in order, got %d", tt.wantOrder, len(order))
 			}
 		})
+	}
+}
+
+func TestValidateWorkflowDAG_RejectsPlanAndPolicyViolations(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    WorkflowSpec
+		plan    Plan
+		wantErr error
+	}{
+		{
+			name: "free plan",
+			spec: WorkflowSpec{
+				Name:  "free",
+				Steps: []WorkflowStepSpec{{Name: "main", Run: "do_work"}},
+			},
+			plan:    PlanFree,
+			wantErr: ErrWorkflowPlanNotAllowed,
+		},
+		{
+			name: "negative active timeout",
+			spec: WorkflowSpec{
+				Name:  "negative-timeout",
+				Steps: []WorkflowStepSpec{{Name: "main", Run: "do_work", Timeout: -time.Second}},
+			},
+			plan:    PlanHobby,
+			wantErr: ErrWorkflowTimeoutInvalid,
+		},
+		{
+			name: "subsecond event timeout",
+			spec: WorkflowSpec{
+				Name:  "short-wait",
+				Steps: []WorkflowStepSpec{{Name: "wait", WaitForEvent: "ready", Timeout: 500 * time.Millisecond}},
+			},
+			plan:    PlanHobby,
+			wantErr: ErrWorkflowWaitTimeoutInvalid,
+		},
+		{
+			name: "retry attempt zero",
+			spec: WorkflowSpec{
+				Name: "bad-retry",
+				Steps: []WorkflowStepSpec{{
+					Name: "main", Run: "do_work",
+					Retry: &WorkflowRetrySpec{MaxAttempts: 0, Backoff: "fixed"},
+				}},
+			},
+			plan:    PlanHobby,
+			wantErr: ErrWorkflowRetryInvalid,
+		},
+		{
+			name: "duplicate dependency",
+			spec: WorkflowSpec{
+				Name: "duplicate-dependency",
+				Steps: []WorkflowStepSpec{
+					{Name: "first", Run: "first"},
+					{Name: "second", Run: "second", DependsOn: []string{"first", "first"}},
+				},
+			},
+			plan:    PlanHobby,
+			wantErr: ErrWorkflowDuplicateDependency,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ValidateWorkflowDAG(tt.spec, tt.plan)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateWorkflowDAG_DeterministicOrder(t *testing.T) {
+	spec := WorkflowSpec{
+		Name: "stable-order",
+		Steps: []WorkflowStepSpec{
+			{Name: "zeta", Run: "zeta"},
+			{Name: "alpha", Run: "alpha"},
+			{Name: "middle", Run: "middle", DependsOn: []string{"alpha"}},
+		},
+	}
+	want := []string{"alpha", "middle", "zeta"}
+	for i := 0; i < 20; i++ {
+		got, err := ValidateWorkflowDAG(spec, PlanHobby)
+		if err != nil {
+			t.Fatalf("ValidateWorkflowDAG: %v", err)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Fatalf("order = %v, want %v", got, want)
+			}
+		}
+	}
+}
+
+func TestWorkflowSpecJSONWireShape(t *testing.T) {
+	const payload = `{
+  "name": "process_order",
+  "trigger": {"type": "manual"},
+  "steps": [{
+    "name": "charge",
+    "run": "charge_stripe",
+    "input": {"order_id": "o-1"},
+    "retry": {"max_attempts": 3, "backoff": "exponential"},
+    "timeout": "30s"
+  }]
+}`
+
+	var spec WorkflowSpec
+	if err := json.Unmarshal([]byte(payload), &spec); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if spec.Trigger == nil || spec.Trigger.Type != "manual" {
+		t.Fatalf("trigger = %+v, want manual", spec.Trigger)
+	}
+	if got := spec.Steps[0].Timeout; got != 30*time.Second {
+		t.Fatalf("timeout = %v, want 30s", got)
+	}
+	var input map[string]string
+	if err := json.Unmarshal(spec.Steps[0].Input, &input); err != nil || input["order_id"] != "o-1" {
+		t.Fatalf("input = %s, want object containing order_id", spec.Steps[0].Input)
+	}
+	if _, err := ValidateWorkflowDAG(spec, PlanHobby); err != nil {
+		t.Fatalf("ValidateWorkflowDAG: %v", err)
+	}
+
+	encoded, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	encodedText := string(encoded)
+	if !strings.Contains(encodedText, `"timeout":"30s"`) {
+		t.Fatalf("encoded workflow = %s, want duration string", encodedText)
+	}
+	if !strings.Contains(encodedText, `"run":"charge_stripe"`) {
+		t.Fatalf("encoded workflow = %s, want run field", encodedText)
+	}
+
+	var wait WorkflowSpec
+	if err := json.Unmarshal([]byte(`{"name":"wait","steps":[{"name":"await","wait_for_event":"shipment_created","timeout":"7d"}]}`), &wait); err != nil {
+		t.Fatalf("json.Unmarshal day timeout: %v", err)
+	}
+	if got := wait.Steps[0].Timeout; got != 7*24*time.Hour {
+		t.Fatalf("day timeout = %v, want 168h", got)
+	}
+	if _, err := ValidateWorkflowDAG(wait, PlanHobby); err != nil {
+		t.Fatalf("ValidateWorkflowDAG day timeout: %v", err)
+	}
+}
+
+func TestWorkflowStepJSONRejectsUnknownField(t *testing.T) {
+	var spec WorkflowSpec
+	err := json.Unmarshal([]byte(`{"name":"bad","steps":[{"name":"main","run":"do_work","unknown":true}]}`), &spec)
+	if err == nil || !strings.Contains(err.Error(), `unknown field "unknown"`) {
+		t.Fatalf("error = %v, want nested unknown-field error", err)
+	}
+}
+
+func TestWorkflowRetryJSONRejectsUnknownField(t *testing.T) {
+	var spec WorkflowSpec
+	err := json.Unmarshal([]byte(`{"name":"bad","steps":[{"name":"main","run":"do_work","retry":{"max_attempts":2,"jitter":"full"}}]}`), &spec)
+	if err == nil || !strings.Contains(err.Error(), `unknown field "jitter"`) {
+		t.Fatalf("error = %v, want nested retry unknown-field error", err)
 	}
 }

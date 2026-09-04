@@ -1371,6 +1371,17 @@ type Limits struct {
 	// WorkflowsAllowed (ADR-081) toggles whether the plan may declare
 	// and execute multi-step durable workflows. Free=false, Hobby+Pro+Scale=true.
 	WorkflowsAllowed bool
+	// WorkflowMaxPerApp is the maximum number of workflow definitions an
+	// app may declare.
+	WorkflowMaxPerApp int
+	// WorkflowMaxConcurrent is the maximum number of in-flight workflow
+	// runs for one app.
+	WorkflowMaxConcurrent int
+	// WorkflowStepMaxTimeout is the maximum active execution timeout for
+	// one workflow step.
+	WorkflowStepMaxTimeout time.Duration
+	// WorkflowMaxWaitDays is the maximum wait_for_event timeout.
+	WorkflowMaxWaitDays int
 }
 
 // UpstreamProbeMaxConcurrent (ADR-098 §D2) is the global worker-pool
@@ -1759,6 +1770,10 @@ var planLimits = map[Plan]Limits{
 		AppErrorsAllowed:       false,
 		JobsAllowed:            false,
 		WorkflowsAllowed:       false,
+		WorkflowMaxPerApp:      0,
+		WorkflowMaxConcurrent:  0,
+		WorkflowStepMaxTimeout: 0,
+		WorkflowMaxWaitDays:    0,
 	},
 	PlanHobby: {
 		Plan:                  PlanHobby,
@@ -2123,6 +2138,10 @@ var planLimits = map[Plan]Limits{
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
 		WorkflowsAllowed:       true,
+		WorkflowMaxPerApp:      3,
+		WorkflowMaxConcurrent:  10,
+		WorkflowStepMaxTimeout: 10 * time.Minute,
+		WorkflowMaxWaitDays:    7,
 	},
 	PlanPro: {
 		Plan:                  PlanPro,
@@ -2460,6 +2479,10 @@ var planLimits = map[Plan]Limits{
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
 		WorkflowsAllowed:       true,
+		WorkflowMaxPerApp:      10,
+		WorkflowMaxConcurrent:  50,
+		WorkflowStepMaxTimeout: 30 * time.Minute,
+		WorkflowMaxWaitDays:    7,
 	},
 	PlanScale: {
 		Plan:                  PlanScale,
@@ -2831,6 +2854,10 @@ var planLimits = map[Plan]Limits{
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
 		WorkflowsAllowed:       true,
+		WorkflowMaxPerApp:      50,
+		WorkflowMaxConcurrent:  200,
+		WorkflowStepMaxTimeout: 2 * time.Hour,
+		WorkflowMaxWaitDays:    7,
 	},
 }
 
@@ -4015,21 +4042,13 @@ var (
 	// JobBackoffMaxSeconds) defined in the const block above.
 	JobMaxRetries = [4]int{0, 3, 5, 10}
 
-	// WorkflowMaxPerApp is the maximum number of workflow definitions an
-	// app may declare (ADR-081 §6). Free=0, Hobby=3, Pro=10, Scale=50.
-	WorkflowMaxPerApp = [4]int{0, 3, 10, 50}
-
-	// WorkflowMaxConcurrentRuns is the maximum number of in-flight workflow
-	// runs an app may execute simultaneously (status IN ('pending','running','awaiting_event')).
-	// Free=0, Hobby=10, Pro=50, Scale=200.
+	// Deprecated workflow cap aliases retained for source compatibility with
+	// the original PR-1279 shorthand. New code must read the named fields on
+	// Limits through the Plan accessors below.
+	WorkflowMaxPerApp         = [4]int{0, 3, 10, 50}
 	WorkflowMaxConcurrentRuns = [4]int{0, 10, 50, 200}
-
-	// WorkflowStepMaxTimeoutSec is the ceiling on any individual step's timeout
-	// in seconds. Free=0, Hobby=600s (10m), Pro=1800s (30m), Scale=7200s (2h).
 	WorkflowStepMaxTimeoutSec = [4]int{0, 600, 1800, 7200}
-
-	// WorkflowMaxWaitDays is the hard ceiling on wait_for_event timeouts (7 days).
-	WorkflowMaxWaitDays = 7
+	WorkflowMaxWaitDays       = 7
 )
 
 // DefaultComputeNodeCeilingMB is the per-compute-node admission ceiling
@@ -4345,17 +4364,39 @@ func (p Plan) WorkflowsAllowed() bool {
 
 // WorkflowMaxPerApp returns the maximum workflow definitions an app may declare.
 func (p Plan) WorkflowMaxPerApp() int {
-	return WorkflowMaxPerApp[p.PlanIndex()]
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.WorkflowMaxPerApp
 }
 
 // WorkflowMaxConcurrentRuns returns the maximum simultaneous active workflow runs.
 func (p Plan) WorkflowMaxConcurrentRuns() int {
-	return WorkflowMaxConcurrentRuns[p.PlanIndex()]
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.WorkflowMaxConcurrent
 }
 
 // WorkflowStepMaxTimeout returns the maximum allowed timeout for any single step.
 func (p Plan) WorkflowStepMaxTimeout() time.Duration {
-	return time.Duration(WorkflowStepMaxTimeoutSec[p.PlanIndex()]) * time.Second
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.WorkflowStepMaxTimeout
+}
+
+// WorkflowMaxWaitDays returns the maximum wait_for_event timeout for
+// the plan. Unknown plans fail closed.
+func (p Plan) WorkflowMaxWaitDays() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.WorkflowMaxWaitDays
 }
 
 // PlanIndex returns the canonical 0..3 integer index used to key
