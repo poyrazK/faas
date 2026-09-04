@@ -33,7 +33,7 @@ func pgTestLifecycleNode(t *testing.T, s *state.PgStore, lifecycle state.NodeLif
 	n, err := s.CreateComputeNode(t.Context(), state.ComputeNode{
 		Name:               "lc-" + uuid.NewString(),
 		TargetURL:          "unix:///run/faas/vmmd.sock",
-		Active:             false, // overwritten by lifecycle CAS below
+		Active:             true, // seed the active lifecycle for the CAS below
 		MemMB:              8192,
 		MaxConcurrency:     16,
 		AdmissionCeilingMB: 256,

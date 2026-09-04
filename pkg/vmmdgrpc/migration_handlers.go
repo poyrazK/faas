@@ -453,7 +453,10 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		// Manager.Wake normally cleans its own partial allocation. The
 		// explicit destroy is idempotent and also protects alternate VMM
 		// implementations that return an error after registering a VM.
-		s.destroyMigrationVM(ctx, req.GetInstanceId())
+		if cleanupErr := s.destroyMigrationVM(ctx, req.GetInstanceId()); cleanupErr != nil && s.log != nil {
+			s.log.Warn("vmmd: migration adoption cleanup failed",
+				"instance_id", req.GetInstanceId(), "err", cleanupErr)
+		}
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}

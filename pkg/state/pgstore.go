@@ -13376,7 +13376,16 @@ func (s *PgStore) NodeSetLifecycle(ctx context.Context, id string, expected, nex
 		return mapErr(err)
 	}
 	if rows == 0 {
-		// CAS missed — caller decides whether to retry.
+		// A zero row count is ambiguous: either another writer won the
+		// CAS, or the row was deleted after the caller's read. Re-read
+		// by id so the Store contract can distinguish ErrNotFound from
+		// an ordinary lifecycle race.
+		if _, getErr := s.NodeGet(ctx, id); getErr != nil {
+			if errors.Is(getErr, ErrNotFound) {
+				return ErrNotFound
+			}
+			return getErr
+		}
 		return ErrConflict
 	}
 	return nil
