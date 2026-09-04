@@ -456,11 +456,6 @@ type Engine struct {
 	// Lazily initialised in NewEngine. Lock discipline is a LEAF:
 	// wakeCoord.mu is taken and released BEFORE e.lockApp(appID).
 	wakeCoord *wakeCoord
-	// wakeFanoutCache memoises the per-app fan-out policy for
-	// wakeFanoutCacheTTL so a burst does not put an app+account read on
-	// the wake hot path for every queued caller.
-	wakeFanoutMu    sync.Mutex
-	wakeFanoutCache map[string]wakeFanoutEntry
 
 	// warmAffinity is the sticky-warm cache (placement scheduler PR,
 	// ADR-025). Defaults to a zero-TTL cache that always returns "no
@@ -1467,7 +1462,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 			)
 		}
 	}
-	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutFor(ctx, appID))
+	call, isLeader, err := e.wakeCoord.Enter(appID)
 	if err != nil {
 		return CoordOutcome{}, err
 	}

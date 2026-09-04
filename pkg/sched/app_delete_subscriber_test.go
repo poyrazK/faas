@@ -79,11 +79,11 @@ func TestAppDeleteSubscriber_ForgetOnNotify(t *testing.T) {
 
 	// Leader is mid-boot. Add a follower so we exercise the
 	// "followers unwind too" branch.
-	leaderCall, isLeader, err := engine.wakeCoord.Enter(app.ID, WakeFanout{})
+	leaderCall, isLeader, err := engine.wakeCoord.Enter(app.ID)
 	if err != nil || !isLeader {
 		t.Fatalf("leader Enter: %v / isLeader=%v", err, isLeader)
 	}
-	followerCall, isLeader, err := engine.wakeCoord.Enter(app.ID, WakeFanout{})
+	followerCall, isLeader, err := engine.wakeCoord.Enter(app.ID)
 	if err != nil || isLeader {
 		t.Fatalf("follower Enter: %v / isLeader=%v", err, isLeader)
 	}
@@ -165,7 +165,7 @@ func TestAppDeleteSubscriber_IgnoresOtherChannels(t *testing.T) {
 	go func() { done <- sub.Run(ctx, fake.channel()) }()
 
 	// Register a leader so the entry exists.
-	leaderCall, isLeader, err := engine.wakeCoord.Enter(app.ID, WakeFanout{})
+	leaderCall, isLeader, err := engine.wakeCoord.Enter(app.ID)
 	if err != nil || !isLeader {
 		t.Fatalf("Enter: %v / isLeader=%v", err, isLeader)
 	}
