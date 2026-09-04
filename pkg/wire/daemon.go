@@ -138,16 +138,17 @@ func BootStamps(ctx context.Context, name string, ops *OpsMetrics) {
 // registry used by /metrics. OTEL_EXPORTER_OTLP_METRICS_ENDPOINT takes
 // precedence; the generic OTLP endpoint is the fallback shared with traces.
 // The exporter is deliberately best-effort so a collector outage cannot take
-// a serving daemon down.
+// a serving daemon down. The bridge also registers exporter-health metrics
+// when no endpoint is configured, making an intentional disable explicit.
 func startOTLPMetrics(ctx context.Context, serviceName string, ops *OpsMetrics) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
 	if endpoint == "" {
 		endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	}
-	if endpoint == "" || ops == nil {
+	if ops == nil {
 		return
 	}
-	shutdown, err := StartOTLPMetrics(ctx, ops.Registry(), endpoint, serviceName, slog.Default())
+	shutdown, err := startOTLPMetricsWithPrefix(ctx, ops.Registry(), endpoint, serviceName, ops.metricPrefix, slog.Default())
 	if err != nil {
 		slog.Default().Warn("otlp metrics bridge disabled", "service", serviceName, "err", err)
 		return

@@ -286,6 +286,21 @@
     - restart grafana-server
     - reload grafana provisioning
 
+# Observability pipeline health — the daemon-owned Prometheus-to-OTLP bridge
+# exposes configured/up state, export outcomes, latency, and last-success
+# timestamps. Byte-identical copy of deploy/grafana/telemetry-pipeline.json;
+# the source tree remains the operator-visible dashboard definition.
+- name: grafana — drop telemetry-pipeline dashboard JSON
+  ansible.builtin.copy:
+    src: telemetry-pipeline.json
+    dest: "{{ gv_dashboards_dir }}/telemetry-pipeline.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 # ADR-127 §D3 / G19 — bridge wire-protocol framing protection
 # dashboard. Byte-identical copy of deploy/grafana/
 # bridge-protection.json (Makefile:172-185 grafana-mirror-check

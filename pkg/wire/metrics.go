@@ -87,8 +87,12 @@ type InstanceStatRow struct {
 // a counter + latency histogram in the ADR-015 shape.
 type OpsMetrics struct {
 	registry *prometheus.Registry
-	ops      *prometheus.CounterVec
-	dur      *prometheus.HistogramVec
+	// metricPrefix is the exact prefix used by this registry's metric
+	// names. It can differ from the OTel service name for compatibility
+	// aliases such as gatewayd-internal → gatewayd.
+	metricPrefix string
+	ops          *prometheus.CounterVec
+	dur          *prometheus.HistogramVec
 	// watchdogKills: introduced in commit 3 for the §6.1 state
 	// watchdog. Labels identify the transition the watchdog forced
 	// (from_state → to_state) — alerting on a non-zero rate of
@@ -3977,6 +3981,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	throttleSecondsTotal.WithLabelValues(topAppOtherAccountLabel, topAppOtherLabel)
 	return &OpsMetrics{
 		registry:                             reg,
+		metricPrefix:                         prefix,
 		ops:                                  ops,
 		dur:                                  dur,
 		watchdogKills:                        watchdogKills,
