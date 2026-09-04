@@ -98,6 +98,7 @@
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
 - name: builderd_service — install systemd unit
+  notify: restart faas-builderd
   ansible.builtin.copy:
     src: faas-builderd.service
     dest: /etc/systemd/system/faas-builderd.service
@@ -106,7 +107,7 @@
     mode: "0644"
   register: builderd_unit
 
-- name: builderd_service — systemctl daemon-reload (idempotent, after new unit file)
+- name: builderd_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: builderd_unit.changed
@@ -124,6 +125,7 @@
 # carry the canonical host identity. Mirrors the vmmd / schedd /
 # control-plane roles.
 - name: builderd_service — install FAAS_NODE_NAME drop-in (Mega-PR-A)
+  notify: restart faas-builderd
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-node-name.conf.j2
     dest: /etc/systemd/system/faas-builderd.service.d/99-faas-node-name.conf
@@ -137,6 +139,7 @@
 # (compute-only on fsn-2). See roles/builderd_service/templates/
 # 99-faas-role.conf.j2 for the full rationale.
 - name: builderd_service — install FAAS_BUILDERD_ROLE drop-in (Mega-PR-C)
+  notify: restart faas-builderd
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
     dest: /etc/systemd/system/faas-builderd.service.d/99-faas-role.conf
