@@ -497,7 +497,8 @@ type Engine struct {
 	// ok=false → chooser falls back to legacy tie-break) so a
 	// missed wiring is a silent no-op rather than a nil-deref
 	// panic — parallel to warmAffinity's contract above.
-	upstreamAffinity *UpstreamAffinity
+	upstreamAffinityMu sync.RWMutex
+	upstreamAffinity   *UpstreamAffinity
 
 	// overage is the spend-cap pause-workload seam (issue #561).
 	// Nil tolerates the gate branch as a no-op (pre-#561 fixtures
@@ -717,8 +718,23 @@ func (e *Engine) WithWarmAffinity(w *WarmAffinity) *Engine {
 // legacy tie-break) so legacy test fixtures that don't wire
 // this keep their existing single-box behaviour.
 func (e *Engine) WithUpstreamAffinity(u *UpstreamAffinity) *Engine {
+	e.upstreamAffinityMu.Lock()
 	e.upstreamAffinity = u
+	e.upstreamAffinityMu.Unlock()
 	return e
+}
+
+// UpstreamAffinity returns the currently configured placement cache. It is a
+// snapshot accessor for the runtime-config watcher; nil means the chooser
+// should fail open to its legacy placement order.
+func (e *Engine) UpstreamAffinity() *UpstreamAffinity {
+	if e == nil {
+		return nil
+	}
+	e.upstreamAffinityMu.RLock()
+	u := e.upstreamAffinity
+	e.upstreamAffinityMu.RUnlock()
+	return u
 }
 
 // WithOverageChecker attaches the spend-cap pause-workload seam
@@ -2153,10 +2169,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// is already in scope here; the empty-string fallback at
 	// appDeploymentKeyOf covers the cold-path branch where dep
 	// is nil (legacy callers).
-	preferredRegion, _, _ := e.upstreamAffinity.Score(appID, dep.ID)
-	if preferredRegion == "" && e.upstreamAffinity != nil {
-		if rerr := e.upstreamAffinity.Refresh(ctx, acct.ID, appID, dep.ID); rerr == nil {
-			preferredRegion, _, _ = e.upstreamAffinity.Score(appID, dep.ID)
+	upstreamAffinity := e.UpstreamAffinity()
+	preferredRegion, _, _ := upstreamAffinity.Score(appID, dep.ID)
+	if preferredRegion == "" && upstreamAffinity != nil {
+		if rerr := upstreamAffinity.Refresh(ctx, acct.ID, appID, dep.ID); rerr == nil {
+			preferredRegion, _, _ = upstreamAffinity.Score(appID, dep.ID)
 		} else {
 			// best-effort: log at debug, fall through to legacy
 			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", appID, "err", rerr)

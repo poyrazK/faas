@@ -220,3 +220,29 @@ func TestMemStoreRuntimeConfigOperationGuardsAndTerminalPaths(t *testing.T) {
 		t.Fatalf("succeed orphan operation: %v", err)
 	}
 }
+
+func TestMemStoreRuntimeConfigOperationCanBeBlockedBeforeClaim(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	config, err := store.UpsertRuntimeConfig(ctx, RuntimeConfigUpdate{
+		Key: "graceful_limit", DesiredValue: json.RawMessage(`10`), ApplyMode: RuntimeConfigApplyGraceful,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	op, err := store.CreateRuntimeConfigOperation(ctx, config, "actor", "controller unavailable")
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	if err := store.MarkRuntimeConfigOperationBlocked(ctx, op.ID, "controller_unavailable", "no controller"); err != nil {
+		t.Fatalf("mark pending operation blocked: %v", err)
+	}
+	blocked, err := store.GetRuntimeConfigOperation(ctx, op.ID)
+	if err != nil || blocked.Status != RuntimeConfigOperationBlocked || blocked.FinishedAt == nil {
+		t.Fatalf("blocked operation = %#v, %v", blocked, err)
+	}
+	row, err := store.GetRuntimeConfig(ctx, config.Key, config.Scope, config.ScopeID)
+	if err != nil || row.Status != RuntimeConfigBlocked || row.LastError != "no controller" {
+		t.Fatalf("blocked config row = %#v, %v", row, err)
+	}
+}

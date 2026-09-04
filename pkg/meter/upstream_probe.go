@@ -41,6 +41,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -144,6 +145,11 @@ type Probe struct {
 	// (net.Dialer{Timeout: Timeout}) wrapped in a TLS
 	// handshake.
 	Dialer func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// enabled is a runtime kill-switch. The probe object stays wired while
+	// disabled so a later feature-flag enable takes effect on the next tick.
+	enabled atomic.Bool
+	gateSet atomic.Bool
 }
 
 // UpstreamProbeStore is the minimal store surface the probe
@@ -189,7 +195,7 @@ func NewProbe(store UpstreamProbeStore, region string, log *slog.Logger) *Probe 
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Probe{
+	p := &Probe{
 		Store:         store,
 		Region:        region,
 		Log:           log,
@@ -197,6 +203,20 @@ func NewProbe(store UpstreamProbeStore, region string, log *slog.Logger) *Probe 
 		Timeout:       DefaultProbeTimeout,
 		MaxConcurrent: api.UpstreamProbeMaxConcurrent,
 	}
+	// Preserve the historical always-on behavior for callers that construct a
+	// probe directly. cmd/meterd opts into the gate with SetEnabled.
+	p.enabled.Store(true)
+	return p
+}
+
+// SetEnabled attaches the runtime feature gate used by meterd. It is safe to
+// call while Run is in progress.
+func (p *Probe) SetEnabled(enabled bool) *Probe {
+	if p != nil {
+		p.enabled.Store(enabled)
+		p.gateSet.Store(true)
+	}
+	return p
 }
 
 // Run is the per-tick probe driver. It walks the dedup'd
@@ -213,6 +233,9 @@ func NewProbe(store UpstreamProbeStore, region string, log *slog.Logger) *Probe 
 // resolved IP, not the hostname; slog fields carry the IP
 // hash, not the literal.
 func (p *Probe) Run(ctx context.Context) (int, error) {
+	if p != nil && p.gateSet.Load() && !p.enabled.Load() {
+		return 0, nil
+	}
 	targets, err := p.Store.ListDistinctUpstreamHostHashes(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("meter: upstream probe list targets: %w", err)

@@ -35,15 +35,16 @@ const (
 )
 
 // HSTSEnabled gates Strict-Transport-Security. Default true; flipped
-// to false by cmd/{apid,gatewayd-internal}/main.go when FAAS_HSTS_ENABLED=false
+// to false by cmd/{apid,gatewayd-internal,gatewayd-public}/main.go when
+// FAAS_HSTS_ENABLED=false
 // is set (dev mode). RFC 6797 §7.2 says UAs ignore HSTS on plain HTTP,
 // so the env knob is purely cosmetic — production TLS listeners always
 // emit it.
 //
 // Package-level var (not constructor arg) so the test suite can flip
-// it without re-plumbing every Middleware call. Production init reads
-// the env once at startup, so a runtime flip on a long-running daemon
-// is unsupported (and would race any in-flight request).
+// it without re-plumbing every Middleware call. SetHSTSEnabled protects
+// reads and writes with hstsMu, so the gateway runtime-config watcher can
+// safely apply an operator change while requests are in flight.
 var HSTSEnabled = true
 var hstsMu sync.RWMutex
 

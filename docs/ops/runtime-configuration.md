@@ -26,10 +26,11 @@ process.
 `hot` settings are validated, swapped into the process snapshot, acknowledged,
 and are immediately visible to new requests without restarting apid or
 interrupting in-flight requests. Feature gates and the domain doctor TTL use
-this path. HSTS uses the same hot setter and is guarded for concurrent request
-reads. The environment value is only a bootstrap fallback; once a durable
-operator value has been applied, a restart cannot replace it with the
-environment value.
+this path. The tenant-surfaces and HSTS gates are also consumed by the edge
+daemons through the shared runtime-config watcher; data placement is consumed
+by both schedd and meterd. The environment value is only a bootstrap fallback;
+once a durable operator value has been applied, a restart cannot replace it
+with the environment value.
 
 `graceful`, `rolling`, and `break_glass` settings are never reported as live
 just because the database write succeeded. The PATCH returns `202` with a
@@ -37,13 +38,20 @@ durable row in `runtime_config_operations`; a deployment/daemon controller
 must claim that row, apply the change, and call the state-layer terminal
 method. Successful completion updates both the operation and the matching
 `runtime_config_entries` row in one database transaction. Failure/block reasons
-remain visible to the operator. These modes are not part of the hot,
-zero-downtime guarantee until their controller is enabled for the deployment.
+remain visible to the operator. In the current deployment, no controller is
+enabled for these modes, so mutable requests are immediately marked
+`blocked` with `controller_unavailable` instead of remaining pending forever.
+These modes are not part of the hot, zero-downtime guarantee until their
+controller is enabled for the deployment. The API exposes
+`controller_enabled` so an operator can distinguish an actionable queue from
+an intentionally blocked setting.
 
 Bootstrap secrets, listener addresses, billing provider selection, and daemon
 role are deployment-managed and are intentionally not editable in the web
 console. This prevents a UI action from creating a partial topology or a
-credential outage.
+credential outage. A runtime flag is still only as safe as the consumers that
+subscribe to it; adding a new daemon consumer requires a versioned apply path
+and an acknowledgement before the catalog is expanded.
 
 ## API
 

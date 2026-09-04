@@ -49,6 +49,13 @@ func TestSurfaceCertRenewer_TickOnce_NilStoreFailsClosed(t *testing.T) {
 	}
 }
 
+func TestSurfaceCertRenewer_TickOnce_RuntimeDisabledIsNoop(t *testing.T) {
+	r := NewSurfaceCertRenewer(nil, nil).SetEnabled(func() bool { return false })
+	if err := r.tickOnce(context.Background()); err != nil {
+		t.Fatalf("disabled renewer tick = %v, want nil", err)
+	}
+}
+
 func TestSurfaceCertRenewer_TickOnce_PicksUpDueSurface(t *testing.T) {
 	r, m, surf, ctx := renewerFixture(t)
 	before := time.Now()

@@ -7,23 +7,24 @@ import "encoding/json"
 // catalog intentionally supports booleans, bounded integers, durations, and
 // enums without changing the API for every new setting.
 type OperatorRuntimeConfig struct {
-	Key            string          `json:"key"`
-	Label          string          `json:"label"`
-	Description    string          `json:"description"`
-	Category       string          `json:"category"`
-	Kind           string          `json:"kind"`
-	DefaultValue   json.RawMessage `json:"default_value"`
-	DesiredValue   json.RawMessage `json:"desired_value"`
-	EffectiveValue json.RawMessage `json:"effective_value"`
-	Source         string          `json:"source"`
-	ApplyMode      string          `json:"apply_mode"`
-	Mutable        bool            `json:"mutable"`
-	Sensitive      bool            `json:"sensitive"`
-	Status         string          `json:"status"`
-	LastError      string          `json:"last_error,omitempty"`
-	Version        int64           `json:"version"`
-	UpdatedAt      string          `json:"updated_at,omitempty"`
-	AppliedAt      string          `json:"applied_at,omitempty"`
+	Key               string          `json:"key"`
+	Label             string          `json:"label"`
+	Description       string          `json:"description"`
+	Category          string          `json:"category"`
+	Kind              string          `json:"kind"`
+	DefaultValue      json.RawMessage `json:"default_value"`
+	DesiredValue      json.RawMessage `json:"desired_value"`
+	EffectiveValue    json.RawMessage `json:"effective_value"`
+	Source            string          `json:"source"`
+	ApplyMode         string          `json:"apply_mode"`
+	ControllerEnabled bool            `json:"controller_enabled"`
+	Mutable           bool            `json:"mutable"`
+	Sensitive         bool            `json:"sensitive"`
+	Status            string          `json:"status"`
+	LastError         string          `json:"last_error,omitempty"`
+	Version           int64           `json:"version"`
+	UpdatedAt         string          `json:"updated_at,omitempty"`
+	AppliedAt         string          `json:"applied_at,omitempty"`
 }
 
 // OperatorRuntimeConfigOperation is the polling shape for a graceful,

@@ -23,6 +23,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -94,6 +97,107 @@ func TestEnv_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("store after delete = %d, want 0", len(rows))
+	}
+}
+
+func TestInvalidateAppSnapshotsMarksWarmAndInitStale(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := createApp(t, e, "env-snapshot-invalidate-app")
+	ctx := context.Background()
+	dep, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		ImageDigest: "sha256:deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
+		Kind:        state.DeploymentKindImage,
+		Status:      state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if _, err := e.store.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: dep.ID,
+			Tier:         tier,
+			FCVersion:    "test",
+			StorageKey:   "snap/" + tier,
+		}); err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", tier, err)
+		}
+	}
+
+	invalidated, err := e.s.invalidateAppSnapshots(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("invalidateAppSnapshots: %v", err)
+	}
+	if invalidated != 2 {
+		t.Fatalf("invalidated = %d, want warm + init", invalidated)
+	}
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if _, err := e.store.LatestSnapshotForTier(ctx, dep.ID, tier); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("LatestSnapshotForTier(%s) err = %v, want not found after invalidation", tier, err)
+		}
+	}
+}
+
+func TestInvalidateAppSnapshotsCoversMultipleDeployments(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := createApp(t, e, "env-snapshot-multi-deployment-app")
+	ctx := context.Background()
+	for i, status := range []state.DeploymentStatus{state.DeployLive, state.DeploySuperseded} {
+		dep, err := e.store.CreateDeployment(ctx, state.Deployment{
+			AppID:       app.ID,
+			ImageDigest: fmt.Sprintf("sha256:%064x", i+1),
+			Kind:        state.DeploymentKindImage,
+			Status:      status,
+		})
+		if err != nil {
+			t.Fatalf("CreateDeployment(%d): %v", i, err)
+		}
+		if _, err := e.store.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: dep.ID,
+			Tier:         state.SnapshotTierWarm,
+			FCVersion:    "test",
+			StorageKey:   fmt.Sprintf("snap/%d", i),
+		}); err != nil {
+			t.Fatalf("CreateSnapshot(%d): %v", i, err)
+		}
+	}
+
+	invalidated, err := e.s.invalidateAppSnapshots(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("invalidateAppSnapshots: %v", err)
+	}
+	if invalidated != 2 {
+		t.Fatalf("invalidated = %d, want both deployments", invalidated)
+	}
+}
+
+func TestEnvMutationInvalidatesRestorableSnapshot(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := createApp(t, e, "env-snapshot-http-app")
+	ctx := context.Background()
+	dep, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		ImageDigest: "sha256:deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
+		Kind:        state.DeploymentKindImage,
+		Status:      state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if _, err := e.store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID,
+		Tier:         state.SnapshotTierWarm,
+		FCVersion:    "test",
+		StorageKey:   "snap/http",
+	}); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	rec := e.do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/LOG_LEVEL", api.PutAppEnvRequest{Value: "debug"}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT env: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := e.store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierWarm); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("LatestSnapshotForTier after env mutation = %v, want not found", err)
 	}
 }
 
