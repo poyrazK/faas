@@ -986,6 +986,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-132: the data-placement flag controls both the scheduler affinity
 	// reader and this probe. Keep the probe goroutine alive while disabled so
 	// a hot enable is picked up on the next interval.
+	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
+	defer runtimeCancel()
 	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
@@ -998,11 +1000,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return nil
 		}, log)
-	if err := watcher.Reconcile(ctx); err != nil {
+	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("meterd: initial runtime config reconcile failed", "err", err)
 	}
 	go func() {
-		if err := watcher.Run(ctx); err != nil && !runtimeconfig.IsContextDone(err) {
+		if err := watcher.Run(runtimeCtx); err != nil && !runtimeconfig.IsContextDone(err) {
 			log.Error("meterd: runtime config watcher exited", "err", err)
 		}
 	}()

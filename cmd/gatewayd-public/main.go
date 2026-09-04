@@ -188,6 +188,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// gatewayd-public owns the outer response headers, so it must consume the
 	// same durable HSTS flag as apid and gatewayd-internal. This keeps a hot
 	// operator change from producing different security headers at the edge.
+	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
+	defer runtimeCancel()
 	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
@@ -200,11 +202,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return nil
 		}, log)
-	if err := watcher.Reconcile(ctx); err != nil {
+	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("gatewayd-public: initial runtime config reconcile failed", "err", err)
 	}
 	go func() {
-		if err := watcher.Run(ctx); err != nil && !runtimeconfig.IsContextDone(err) {
+		if err := watcher.Run(runtimeCtx); err != nil && !runtimeconfig.IsContextDone(err) {
 			log.Error("gatewayd-public: runtime config watcher exited", "err", err)
 		}
 	}()

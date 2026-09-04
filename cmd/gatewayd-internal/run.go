@@ -1172,6 +1172,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// runtime flag as apid. The watcher applies only acknowledged values and
 	// repairs missed notifications on its five-second interval.
 	if pool != nil {
+		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
+		defer runtimeCancel()
 		watcher := runtimeconfig.New(pgStore, pool,
 			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
@@ -1188,11 +1190,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 				return nil
 			}, log)
-		if err := watcher.Reconcile(ctx); err != nil {
+		if err := watcher.Reconcile(runtimeCtx); err != nil {
 			log.Warn("gatewayd: initial runtime config reconcile failed", "err", err)
 		}
 		go func() {
-			if err := watcher.Run(ctx); err != nil && !runtimeconfig.IsContextDone(err) {
+			if err := watcher.Run(runtimeCtx); err != nil && !runtimeconfig.IsContextDone(err) {
 				log.Error("gatewayd: runtime config watcher exited", "err", err)
 			}
 		}()
