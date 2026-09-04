@@ -211,7 +211,7 @@ func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	if len(got) != 1 || got[0].Targets[0] != "fsn-2.gregale.dev:9080" {
 		t.Fatalf("targets=%v, want Promtail endpoint", got)
 	}
-	if got[0].Labels["job"] != "promtail" {
-		t.Fatalf("job label=%q, want promtail", got[0].Labels["job"])
+	if got[0].Labels["job"] != "promtail-compute" {
+		t.Fatalf("job label=%q, want promtail-compute", got[0].Labels["job"])
 	}
 }

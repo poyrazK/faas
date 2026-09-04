@@ -22,7 +22,8 @@ the FaaS service may remain healthy while incident evidence is at risk.
 
 2. Check Promtail metrics in Prometheus:
 
-   - `up{job="promtail"}` — process scrape health.
+   - `up{job=~"promtail|promtail-compute"}` — process scrape health for the
+     local control-plane and discovered compute-host Promtail targets.
    - `rate(promtail_sent_entries_total[10m])` — successful sends.
    - `increase(promtail_dropped_entries_total[10m])` — entries lost after
      the bounded retry budget.

@@ -68,7 +68,7 @@ scrape_configs:
   # Issue #274: discover every compute-host Promtail endpoint from the same
   # active registry, but through a separate HTTP-SD endpoint so the gateway
   # scrape never attempts to hit Promtail's port.
-  - job_name: "promtail"
+  - job_name: "promtail-compute"
     http_sd_configs:
       - url: "{{ prom_compute_promtail_discovery_url }}"
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"

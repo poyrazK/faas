@@ -38,7 +38,7 @@ func (s *server) computeMetricsDiscovery(w http.ResponseWriter, r *http.Request)
 // port, keeping node replacement and drain behavior identical to the gateway
 // scrape.
 func (s *server) promtailMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
-	s.metricsDiscovery(w, r, "promtail", promtailMetricsTarget)
+	s.metricsDiscovery(w, r, "promtail-compute", promtailMetricsTarget)
 }
 
 func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job string, targetFn func(string) (string, bool)) {

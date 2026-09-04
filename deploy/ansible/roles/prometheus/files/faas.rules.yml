@@ -37,7 +37,7 @@ groups:
         expr: sum by (instance) (promtail_dropped_entries_total)
 
       - alert: FaasLokiPromtailDown
-        expr: up{job="promtail"} == 0
+        expr: up{job=~"promtail|promtail-compute"} == 0
         for: 10m
         labels:
           severity: page
