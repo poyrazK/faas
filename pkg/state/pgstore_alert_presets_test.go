@@ -12,7 +12,7 @@
 // closed-set CHECK + the seed-only mutator posture), so the test
 // surface here is the schema-vs-row mapping + the (category, name)
 // order. TestPg_AlertPresetCatalog_SeedMigration pins that the
-// migration 00348 seed inserts the 8 catalog rows verbatim.
+// migrations 00348 and 20260905000000001 seed the 12 catalog rows.
 //
 // pgtest.Open handles the skip when Postgres is unreachable, so
 // the test is safe to run on a dev box without /var/run/postgresql.
@@ -27,7 +27,7 @@ import (
 
 // TestPg_AlertPresetCatalog_ListOrdered pins the
 // (category, name) sort order of ListAlertPresets. After the seed
-// migration lands, the 8 catalog rows must come back in the order
+// migration lands, the 12 catalog rows must come back in the order
 // availability < deployment < infrastructure < reliability, and
 // within each category by name.
 func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
@@ -53,11 +53,11 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows.Err: %v", err)
 	}
-	// The PR-A seed (migrations/00348_alert_presets_seed.sql) ships
-	// 8 rows. The exact names may shift in future migrations; this
+	// The base seed (migrations/00348_alert_presets_seed.sql) plus the
+	// safe-releases seed ships 12 rows. The exact names may shift in future migrations; this
 	// test pins the COUNT + the (category, name) ordering shape.
-	if len(got) != 8 {
-		t.Errorf("catalog row count = %d; want 8 (PR-A seed)", len(got))
+	if len(got) != 12 {
+		t.Errorf("catalog row count = %d; want 12 (base + safe-releases seeds)", len(got))
 	}
 	// Verify (category, name) order is sorted.
 	for i := 1; i < len(got); i++ {
@@ -195,7 +195,7 @@ func TestPg_AlertPresetCatalog_NameLengthCheck(t *testing.T) {
 }
 
 // TestPg_AlertPresetByName_HappyUnknown pins the Store-served
-// AlertPresetByName read path against the 8-row PR-A seed: a
+// AlertPresetByName read path against the seeded catalog: a
 // seeded name returns the catalog row, an unknown name returns
 // state.ErrNotFound. Coverage-bump: this method had 0% coverage
 // on the pgstore side at round-6 rebase, dropping the pkg/state
@@ -241,7 +241,7 @@ func TestPg_AlertPresetByName_HappyUnknown(t *testing.T) {
 // this test guards against a future migration accidentally re-disabling
 // a row (e.g. a seed re-run with `enabled_in_catalog=false` on a
 // pre-existing name) and against a future maintainer re-introducing a
-// "coming soon" row without bumping this test (which lists all 8).
+// "coming soon" row without bumping this test (which lists all 12).
 //
 // Once a new preset lands in the catalog seed, add its name to the
 // `expectedNames` set so this test stays a closed-set pin.
@@ -256,14 +256,18 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 	}
 	defer rows.Close()
 	expectedNames := map[string]bool{
-		"api_down":              true,
-		"cert_expiring_14d":     true,
-		"cold_start_10pct":      true,
-		"deploy_failed":         true,
-		"error_rate_2pct":       true,
-		"p95_latency_1s":        true,
-		"queue_backlog_growing": true,
-		"spend_eur_20":          true,
+		"api_down":                      true,
+		"cert_expiring_14d":             true,
+		"cold_start_10pct":              true,
+		"deploy_failed":                 true,
+		"error_rate_2pct":               true,
+		"p95_latency_1s":                true,
+		"queue_backlog_growing":         true,
+		"spend_eur_20":                  true,
+		"canary_stuck_step":             true,
+		"safedeploy_audit_emit_failing": true,
+		"deployment_audit_gc_failing":   true,
+		"canary_fleet_in_flight_high":   true,
 	}
 	got := make(map[string]bool)
 	for rows.Next() {
@@ -306,6 +310,6 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 		}
 	}
 	if len(disabled) != 0 {
-		t.Errorf("alert_presets rows still disabled after PR-B flip: %v (expected empty — migration 00516 must enable all 8 catalog rows)", disabled)
+		t.Errorf("alert_presets rows still disabled after PR-B flip: %v (expected empty — all catalog rows should be enabled)", disabled)
 	}
 }
