@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -209,6 +210,44 @@ func rawStreamEnabledFromEnv() bool {
 		}
 	}
 	return false
+}
+
+// envMaintenanceRetryAfterSeconds is the operator override for the
+// Retry-After both maintenance gates stamp on their 503 (issue #899
+// finding 3). Documented against
+// api.EdgeRuleMaintenanceRetryAfterSeconds, which stays the default;
+// this daemon is the only place the override is read, per the
+// operator-override convention cmd/schedd/main.go set for the
+// rebalancer tunables.
+const envMaintenanceRetryAfterSeconds = "FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS"
+
+// parseMaintenanceRetryAfter turns the raw env value into a
+// Retry-After (seconds). Empty means unset and yields the platform
+// default. The accepted range is
+// [1, api.MaxEdgeRuleMaintenanceRetryAfterSeconds]: 0 is rejected
+// rather than clamped because RFC 7231 forbids `Retry-After: 0`, so
+// an operator typing 0 means something the platform cannot honour.
+//
+// Malformed input is an error, not a fallback — the caller fails the
+// boot. A silently-ignored override is drift an operator only
+// discovers mid-incident.
+//
+// Pure and side-effect free so the table test exercises it without
+// touching the process environment.
+func parseMaintenanceRetryAfter(raw string) (int, error) {
+	if raw == "" {
+		return api.EdgeRuleMaintenanceRetryAfterSeconds, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q: not an integer (want 1..%d seconds)",
+			envMaintenanceRetryAfterSeconds, raw, api.MaxEdgeRuleMaintenanceRetryAfterSeconds)
+	}
+	if n < 1 || n > api.MaxEdgeRuleMaintenanceRetryAfterSeconds {
+		return 0, fmt.Errorf("%s=%d: out of range (want 1..%d seconds)",
+			envMaintenanceRetryAfterSeconds, n, api.MaxEdgeRuleMaintenanceRetryAfterSeconds)
+	}
+	return n, nil
 }
 
 // routeMetricsEnabledFromEnv (ADR-093) is the per-process
@@ -485,6 +524,14 @@ type runDeps struct {
 	// and a customer has to opt in per-app to use any of the
 	// surface.
 	routeMetricsEnabled bool
+	// maintenanceRetryAfter (issue #899 finding 3) is the
+	// Retry-After (seconds) both maintenance gates stamp on their
+	// 503: the coarse apps.maintenance_mode column and a
+	// kind=maintenance edge rule that carries no per-rule value.
+	// Parsed from FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS at
+	// boot (fail-loud on malformed input); zero in tests, which
+	// then get api.EdgeRuleMaintenanceRetryAfterSeconds (60 s).
+	maintenanceRetryAfter int
 	// synth is the internal unix-socket RPC server schedd dials for cron
 	// dispatch (spec §4.4, M7). nil in tests; production wires it after
 	// the schedd client is dialed.
@@ -1224,6 +1271,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// "operator can disable wholesale on a hot day" property the
 	// two-level design promises.
 	deps.routeMetricsEnabled = cfg.RouteMetricsEnabled || routeMetricsEnabledFromEnv()
+	// Issue #899 finding 3: the maintenance Retry-After override.
+	// Read once at startup and fail loud on a malformed value —
+	// same posture as cmd/schedd/main.go's rebalancer tunables
+	// ("operator typo must surface at boot, not as silent api.*
+	// defaults that mask the typo"). Threaded into its two
+	// consumers (the Handler's coarse gate and the per-rule
+	// compile default) rather than read from a global, so
+	// pkg/api stays a pure constants table.
+	maintenanceRetryAfter, mrErr := parseMaintenanceRetryAfter(os.Getenv(envMaintenanceRetryAfterSeconds))
+	if mrErr != nil {
+		log.Error("gatewayd-internal: maintenance Retry-After override rejected", "err", mrErr)
+		return mrErr
+	}
+	deps.maintenanceRetryAfter = maintenanceRetryAfter
 	// Issue #471 / ADR-047 (PR-A): resolve the http.Server.WriteTimeout.
 	// Spec §4.1 baseline is 300 s; the TOML [response_write_timeout]
 	// key overrides per-cluster. PR-B lifts the per-plan cap on
@@ -1289,7 +1350,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// reads state.EdgeRule via the store; reset on
 	// db.NotifyEdgeRuleChanged is wired via PGBackend.WithEdgeRules
 	// below.
-	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics)
+	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics).
+		withMaintenanceRetryAfter(deps.maintenanceRetryAfter)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
@@ -1581,6 +1643,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// per-app flag (apps.route_metrics_enabled). Same merge point as
 	// WithStreamingEnabled above; both flags ride the same plumbing.
 	handler.WithRouteMetricsEnabled(deps.routeMetricsEnabled)
+	// Issue #899 finding 3: arm the coarse apps.maintenance_mode
+	// gate's Retry-After. Zero (env unset) leaves the handler on
+	// api.EdgeRuleMaintenanceRetryAfterSeconds.
+	handler.WithMaintenanceRetryAfter(deps.maintenanceRetryAfter)
 	// Issue #560: per-deployment require_authn. The adapter
 	// + auditor are nil-safe; the pre-issue public-by-default
 	// behaviour is preserved for unit tests + dev boxes that
