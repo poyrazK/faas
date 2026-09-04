@@ -306,7 +306,7 @@
 # Byte-identical copy of deploy/grafana/loki-pipeline.json; the dashboard
 # shows target availability, source ingestion, successful sends, drops, and
 # the stable loki_send_total recording rule.
-- name: grafana — drop loki-pipeline dashboard JSON (issue #274)
+- name: "grafana — drop loki-pipeline dashboard JSON (issue #274)"
   ansible.builtin.copy:
     src: loki-pipeline.json
     dest: "{{ gv_dashboards_dir }}/loki-pipeline.json"
