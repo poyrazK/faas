@@ -839,6 +839,20 @@ func (l *Loop) Run(ctx context.Context) error {
 		workflowsDispatchT = time.NewTicker(time.Second)
 		defer workflowsDispatchT.Stop()
 	}
+	// Workflow retention follows the same hourly cadence and deferred first
+	// fire as the existing instance retention sweep. It is separately gated
+	// because workflow retention is only attached when the workflow runtime is
+	// configured, while the legacy instance retention path is always present.
+	var workflowRetentionT *time.Ticker
+	var workflowRetentionFirst <-chan time.Time
+	if l.workflowRetention != nil {
+		t := time.NewTicker(api.DefaultRetentionInterval)
+		defer t.Stop()
+		workflowRetentionT = t
+		delay := time.NewTimer(retentionFirstFireDelay)
+		defer delay.Stop()
+		workflowRetentionFirst = delay.C
+	}
 	// Trigger dispatch ticker (issue #757 / ADR-100, commit #14).
 	// 1 s cadence matches runCronTick and the §6.1 watchdog — a
 	// trigger record sitting in `pending` for >1 tick before
@@ -899,6 +913,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runJobsReaperTick(ctx)
 		case <-jobsTick(workflowsDispatchT):
 			l.runWorkflowsDispatchTick(ctx)
+		case <-workflowRetentionFirst:
+			l.runWorkflowRetention(ctx)
+			workflowRetentionFirst = nil
+		case <-workflowRetentionTick(workflowRetentionT):
+			l.runWorkflowRetention(ctx)
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
@@ -965,6 +984,15 @@ func watchdogTick(t *time.Ticker) <-chan time.Time {
 // separate so each ticker type's name shows up in stack traces if
 // a future regression corrupts the channel wiring.
 func retentionTick(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
+// workflowRetentionTick is the nil-safe channel adapter for the workflow
+// retention ticker. A nil ticker disables the select arm entirely.
+func workflowRetentionTick(t *time.Ticker) <-chan time.Time {
 	if t == nil {
 		return nil
 	}
@@ -2787,6 +2815,15 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	}
 	if err := l.workflowOrch.DispatchTick(ctx); err != nil {
 		l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
+	}
+}
+
+func (l *Loop) runWorkflowRetention(ctx context.Context) {
+	if l.workflowRetention == nil {
+		return
+	}
+	if err := l.workflowRetention.SweepOnce(ctx); err != nil {
+		l.log.Warn("workflow retention: sweep failed", "err", err)
 	}
 }
 

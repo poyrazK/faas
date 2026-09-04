@@ -466,6 +466,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("schedd")
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
+	workflowMetrics := wire.NewWorkflowMetrics(ops.Registry())
 	// Dashboard gauges (spec §12): schedd owns the snapshots table and the
 	// admission ledger, so the four fcvm_* gauges live here, not in vmmd.
 	// The DashboardMetrics callbacks close over `store` (PG) and `ledger`
@@ -1616,7 +1617,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if workflowsDispatchEnabled(os.Getenv("FAAS_WORKFLOWS_ENABLED")) {
 				if executor, ok := synth.(sched.WorkflowStepExecutor); ok {
 					loop.WithWorkflowsDispatched(true).
-						WithWorkflowOrchestrator(sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, nil, log)).
+						WithWorkflowOrchestrator(sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, workflowMetrics, log)).
 						WithWorkflowRetention(sched.NewWorkflowRetention(store, log))
 					log.Info("schedd workflows dispatch enabled — FAAS_WORKFLOWS_ENABLED=1")
 				} else {

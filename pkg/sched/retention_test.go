@@ -192,6 +192,35 @@ func TestLoopRunRetentionWiresThroughLoop(t *testing.T) {
 	}
 }
 
+type workflowRetentionCountingStore struct {
+	state.WorkflowStore
+	runs   int
+	events int
+}
+
+func (s *workflowRetentionCountingStore) SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.Duration) (int, error) {
+	s.runs++
+	return s.WorkflowStore.SweepExpiredWorkflowRuns(ctx, olderThan)
+}
+
+func (s *workflowRetentionCountingStore) SweepExpiredWorkflowEvents(ctx context.Context, olderThan time.Duration) (int, error) {
+	s.events++
+	return s.WorkflowStore.SweepExpiredWorkflowEvents(ctx, olderThan)
+}
+
+// TestLoopRunWorkflowRetentionWiresThroughLoop pins the workflow-specific
+// retention ticker's dispatch seam without waiting for the hourly ticker.
+func TestLoopRunWorkflowRetentionWiresThroughLoop(t *testing.T) {
+	counting := &workflowRetentionCountingStore{WorkflowStore: state.NewMemStore()}
+	loop := NewLoop(nil, nil, slog.Default()).WithWorkflowRetention(NewWorkflowRetention(counting, slog.Default()))
+
+	loop.runWorkflowRetention(context.Background())
+
+	if counting.runs != 1 || counting.events != 1 {
+		t.Fatalf("workflow retention calls = runs:%d events:%d, want one each", counting.runs, counting.events)
+	}
+}
+
 // TestTransitionStampsTerminalAt pins the Engine.transition side of
 // the contract: a successful transition to STOPPED (or FAILED) writes
 // terminal_at on the row in the same UPDATE. This is the producer
