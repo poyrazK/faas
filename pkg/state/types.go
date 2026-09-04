@@ -1570,17 +1570,18 @@ type Deployment struct {
 	// SAFE-RELEASES-A). CanaryPreset is the catalog name from
 	// pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100);
 	// CanaryStep is the zero-indexed position in
-	// pkg/api/canary.LookupPreset(CanaryPreset).Stages; CanaryTotalSteps
-	// is the ladder length. canary_step_bounds_chk locks the
-	// invariant (total=0,step=0) OR (total>0,0<=step<=total).
+	// pkg/api/canary.LookupPreset(CanaryPreset).Stages while a rollout
+	// is in flight; a completed rollout uses the terminal sentinel
+	// CanaryStep == CanaryTotalSteps. CanaryTotalSteps is the ladder
+	// length. canary_step_bounds_chk locks the invariant
+	// (total=0,step=0) OR (total>0,0<=step<=total).
 	//
 	// Stamped at deploy time by the apid CreateDeployment path
 	// (BuildDeploymentForInsert at cmd/apid/handlers_sidecars.go:308).
 	// Advanced on a wall-clock boundary by the canary_progression
-	// meterd tick (pkg/canary, Mega PR #2 commit 3) which calls
-	// pkg/api.Client.PatchDeploymentsIdTraffic — apid remains the
-	// authoritative writer of deployments.* per CLAUDE.md
-	// ownership rules.
+	// meterd tick (pkg/canary, issue #976) which calls APID's atomic
+	// AdvanceCanary endpoint — apid remains the authoritative writer
+	// of deployments.* per CLAUDE.md ownership rules.
 	CanaryPreset        string     `json:"canary_preset,omitempty"`
 	CanaryStep          int        `json:"canary_step,omitempty"`
 	CanaryTotalSteps    int        `json:"canary_total_steps,omitempty"`

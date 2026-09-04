@@ -1313,6 +1313,11 @@ func (s *server) handler() http.Handler {
 	// powerful as the min_instances PATCH (Σ rebalance affects
 	// sibling live rows in the same app).
 	mux.HandleFunc("PATCH /v1/deployments/{id}/traffic", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateDeploymentTraffic))))
+	// Issue #976 / ADR-122 — meterd's single-step canary write seam.
+	// The endpoint is idempotent and compare-and-swap guarded; APID
+	// derives the next stage from persisted state and the store commits
+	// traffic, canary state, rollout completion, and audit atomically.
+	mux.HandleFunc("POST /v1/deployments/{id}/canary/advance", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.advanceCanary)))))
 	// ADR-124 deployment queue controls. Four routes; cancel +
 	// clear-obsolete (Free-allowed); reorder + clear-obsolete's
 	// plan-gated path use ScopeDeployWrite + Plan.QueueControlsAllowed.

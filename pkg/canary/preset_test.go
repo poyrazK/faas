@@ -25,11 +25,9 @@ import (
 
 // stubStore satisfies the canary.Store interface for tests.
 type stubStore struct {
-	mu        sync.Mutex
-	rows      []CanaryRow
-	auditRows []AuditEntry
-	listErr   error
-	auditErr  error
+	mu      sync.Mutex
+	rows    []CanaryRow
+	listErr error
 }
 
 func (s *stubStore) ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error) {
@@ -43,36 +41,23 @@ func (s *stubStore) ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error)
 	return out, nil
 }
 
-func (s *stubStore) AppendDeploymentAudit(ctx context.Context, entry AuditEntry) (int64, error) {
-	if s.auditErr != nil {
-		return 0, s.auditErr
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.auditRows = append(s.auditRows, entry)
-	return int64(len(s.auditRows)), nil
-}
-
 // stubAPID satisfies the APIDClient interface for tests by capturing
-// the (deployment_id, percent) tuples the Progression passed to it.
-// Returns a zero api.DeploymentResponse — pkg/canary.Once doesn't
-// inspect the return value.
 type stubAPID struct {
-	mu      sync.Mutex
-	patches []string
-	percent []int
-	err     error
+	mu       sync.Mutex
+	advances []string
+	expected []int
+	err      error
 }
 
-func (a *stubAPID) PatchDeploymentsIdTraffic(ctx context.Context, id string, percent int) (api.DeploymentResponse, error) {
+func (a *stubAPID) AdvanceCanary(ctx context.Context, id string, expectedStep int) (api.CanaryAdvanceResponse, error) {
 	if a.err != nil {
-		return api.DeploymentResponse{}, a.err
+		return api.CanaryAdvanceResponse{}, a.err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.patches = append(a.patches, id)
-	a.percent = append(a.percent, percent)
-	return api.DeploymentResponse{}, nil
+	a.advances = append(a.advances, id)
+	a.expected = append(a.expected, expectedStep)
+	return api.CanaryAdvanceResponse{}, nil
 }
 
 // TestProgressionOnce_ZeroTimestampDefensiveGuard — code-review
@@ -98,10 +83,9 @@ func TestProgressionOnce_ZeroTimestampDefensiveGuard(t *testing.T) {
 			{
 				ID:                "00000000-0000-0000-0000-000000000001",
 				AppID:             "00000000-0000-0000-0000-000000000002",
-				AccountID:         "00000000-0000-0000-0000-000000000003",
 				CanaryPreset:      "balanced",
 				CanaryStep:        0,           // advance from step 0 → step 1
-				CanaryTotalSteps:  3,           // balanced has 3 stages
+				CanaryTotalSteps:  4,           // balanced has 4 stages
 				CanaryStepStarted: time.Time{}, // zero time — defensive path
 				RolloutState:      "rolling_out",
 				CanaryStages:      nil,
@@ -112,7 +96,7 @@ func TestProgressionOnce_ZeroTimestampDefensiveGuard(t *testing.T) {
 	// Nil Ops is the nil-safe path; the runtime does not panic on
 	// nil receiver, the counter increment silently no-ops. The
 	// production wiring in cmd/meterd passes a real *wire.OpsMetrics.
-	prog := NewProgression(store, apid, nil, slog.Default(), "test:actor", "acct-uuid")
+	prog := NewProgression(store, apid, nil, slog.Default())
 
 	stats, err := prog.Once(context.Background())
 	if err != nil {
@@ -121,11 +105,11 @@ func TestProgressionOnce_ZeroTimestampDefensiveGuard(t *testing.T) {
 	if stats.Advanced != 1 {
 		t.Errorf("stats.Advanced = %d, want 1 (zero-time defensive path must still advance — elapsed = 56y > Duration)", stats.Advanced)
 	}
-	if len(apid.patches) != 1 {
-		t.Errorf("apid patches = %d, want 1 (the defensive guard must still run the wall-clock check and advance)", len(apid.patches))
+	if len(apid.advances) != 1 {
+		t.Errorf("apid advances = %d, want 1 (the defensive guard must still run the wall-clock check and advance)", len(apid.advances))
 	}
-	if got := apid.percent[0]; got != 10 {
-		t.Errorf("patched percent = %d, want 10 (balanced step 1 → 10%%)", got)
+	if got := apid.expected[0]; got != 0 {
+		t.Errorf("expected step = %d, want 0 (APID derives the next traffic percentage)", got)
 	}
 }
 
@@ -141,10 +125,9 @@ func TestProgressionOnce_WallClockSkipsWhenNotElapsed(t *testing.T) {
 			{
 				ID:                "00000000-0000-0000-0000-000000000001",
 				AppID:             "00000000-0000-0000-0000-000000000002",
-				AccountID:         "00000000-0000-0000-0000-000000000003",
 				CanaryPreset:      "balanced",
 				CanaryStep:        0,
-				CanaryTotalSteps:  3,
+				CanaryTotalSteps:  4,
 				CanaryStepStarted: now.Add(-30 * time.Second), // 30s ago — balanced step 0 Duration is 30s
 				RolloutState:      "rolling_out",
 				CanaryStages:      nil,
@@ -152,7 +135,7 @@ func TestProgressionOnce_WallClockSkipsWhenNotElapsed(t *testing.T) {
 		},
 	}
 	apid := &stubAPID{}
-	prog := NewProgression(store, apid, nil, slog.Default(), "test:actor", "acct-uuid")
+	prog := NewProgression(store, apid, nil, slog.Default())
 	prog.Now = func() time.Time { return now }
 
 	stats, err := prog.Once(context.Background())
@@ -165,7 +148,7 @@ func TestProgressionOnce_WallClockSkipsWhenNotElapsed(t *testing.T) {
 	if stats.Advanced != 0 {
 		t.Errorf("stats.Advanced = %d, want 0 (not yet elapsed)", stats.Advanced)
 	}
-	if len(apid.patches) != 0 {
-		t.Errorf("apid patches = %d, want 0 (must not patch when not yet elapsed)", len(apid.patches))
+	if len(apid.advances) != 0 {
+		t.Errorf("apid advances = %d, want 0 (must not advance when not yet elapsed)", len(apid.advances))
 	}
 }

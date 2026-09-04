@@ -2850,6 +2850,89 @@ func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, mi
 	return d, nil
 }
 
+// AdvanceCanary applies one automatic canary transition under the same
+// critical section as its traffic rebalance and audit insert. The expected
+// step is a compare-and-swap: concurrent meterd workers cannot both advance
+// the same row.
+func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
+	if params.ExpectedStep < 0 || params.TrafficPercent < 0 || params.TrafficPercent > 100 {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return Deployment{}, 0, ErrNotFound
+	}
+	if d.Status != DeployLive || (d.RolloutState != "pending" && d.RolloutState != "rolling_out") ||
+		d.CanaryTotalSteps <= 0 || params.ExpectedStep >= d.CanaryTotalSteps {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	if d.CanaryStep != params.ExpectedStep {
+		return Deployment{}, 0, ErrCanaryStepConflict
+	}
+	depUUID, err := uuid.Parse(d.ID)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary deployment id %q: %w", d.ID, err)
+	}
+
+	siblings := make([]siblingRow, 0)
+	for otherID, other := range m.deployments {
+		if other.AppID == d.AppID && other.Status == DeployLive && otherID != id {
+			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
+		}
+	}
+	sort.SliceStable(siblings, func(i, j int) bool { return siblings[i].ID < siblings[j].ID })
+	now := time.Now().UTC()
+	newStep := params.ExpectedStep + 1
+	terminal := newStep >= d.CanaryTotalSteps-1
+	persistedStep := newStep
+	if terminal {
+		params.TrafficPercent = 100
+		// The terminal stage is represented by canary_step equal to
+		// canary_total_steps, matching the existing rollout recovery
+		// sentinel. In-flight stages remain zero-indexed catalog rows.
+		persistedStep = d.CanaryTotalSteps
+	} else if len(siblings) == 0 {
+		return Deployment{}, 0, ErrTrafficPercentSumInvalid
+	}
+
+	d.CanaryStep = persistedStep
+	d.CanaryStepStartedAt = &now
+	d.TrafficPercent = params.TrafficPercent
+	if terminal {
+		d.RolloutState = "complete"
+		d.RolloutCompletedAt = &now
+		for _, sibling := range siblings {
+			other := m.deployments[sibling.ID]
+			other.Status = DeploySuperseded
+			other.TrafficPercent = 0
+			m.deployments[sibling.ID] = other
+		}
+	} else {
+		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-params.TrafficPercent)
+		for i, sibling := range siblings {
+			other := m.deployments[sibling.ID]
+			other.TrafficPercent = newWeights[i]
+			m.deployments[sibling.ID] = other
+		}
+	}
+	m.deployments[id] = d
+
+	audit := params.Audit
+	if audit.DeploymentID == uuid.Nil {
+		audit.DeploymentID = depUUID
+	}
+	if audit.At.IsZero() {
+		audit.At = now
+	}
+	auditID, err := m.appendDeploymentAuditLocked(audit)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: append canary audit: %w", err)
+	}
+	return d, auditID, nil
+}
+
 // UpdateDeploymentTraffic mirrors PgStore.UpdateDeploymentTraffic
 // (issue #556 PR-A). The "zero siblings" rebalance semantics is
 // the same as the pgstore: setting row R's traffic_percent to
@@ -4245,10 +4328,27 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		// is stamped at d.TrafficPercent below (handler defaults to
 		// 100 when the caller omits the optional pointer). Mirrors
 		// the pgstore's two-field SET in CreateDeployment.
-		prior := m.deployments[priorID]
-		prior.Status = DeploySuperseded
-		prior.TrafficPercent = 0
-		m.deployments[priorID] = prior
+		if d.CanaryTotalSteps <= 0 {
+			prior := m.deployments[priorID]
+			prior.Status = DeploySuperseded
+			prior.TrafficPercent = 0
+			m.deployments[priorID] = prior
+		}
+	}
+	if d.CanaryTotalSteps <= 0 {
+		// A stable deployment terminates any active canary overlap as
+		// well as the newest prior row. Without this sweep, a stable
+		// deploy made during a canary would leave the residual stable
+		// revision live and later collide with the one-live index when
+		// the new row is activated.
+		for otherID, other := range m.deployments {
+			if other.AppID != d.AppID || other.Status != DeployLive || otherID == priorID {
+				continue
+			}
+			other.Status = DeploySuperseded
+			other.TrafficPercent = 0
+			m.deployments[otherID] = other
+		}
 	}
 
 	if d.ID == "" {
@@ -4263,14 +4363,11 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if d.Kind == "" {
 		d.Kind = DeploymentKindImage
 	}
-	// Issue #556 PR-A: default traffic_percent to 100 when caller
-	// supplies zero. The schema's NOT NULL DEFAULT 100 covers the
-	// SQL write path; mirroring here keeps the in-memory shape
-	// aligned so unit tests that exercise the store don't need
-	// Postgres. PR-A semantics: traffic_percent on a fresh deploy
-	// is 100; on supersede it's 0 (set above); PR-C may add
-	// proportional forms.
-	if d.TrafficPercent == 0 {
+	// Issue #556 PR-A: default traffic_percent to 100 for a stable
+	// deployment when the caller supplies zero. A canary's zero is
+	// meaningful (a valid custom first stage), and the APID handler
+	// has already copied the selected first stage onto the row.
+	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 {
 		d.TrafficPercent = 100
 	}
 	m.deployments[d.ID] = d
@@ -4352,12 +4449,10 @@ func (m *MemStore) LiveDeployment(_ context.Context, appID string) (Deployment, 
 
 // LiveDeploymentForScope (ADR-091 / PR-D) mirrors PgStore — iterates
 // m.deployments filtering on (app_id, scope, status='live') and
-// keeps the most-recent row. The MemStore has no uniqueness
-// constraint that mirrors deployments_app_scope_live_uniq; if a
-// test setup inserts two live rows with the same (app, scope), the
-// most-recent one wins (same behaviour as LiveDeployment). The
-// partial unique index only enforces the invariant in production
-// Postgres.
+// keeps the most-recent row. Active canaries intentionally create two
+// live rows with the same (app, scope), so the newest row wins for new
+// capacity just as it does in Postgres. Stable rows are still unique
+// under deployments_app_scope_live_uniq in production.
 func (m *MemStore) LiveDeploymentForScope(_ context.Context, appID, scope string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -4972,8 +5067,60 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 	return m.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
-func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
-	return m.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+func (m *MemStore) MarkDeploymentLive(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if d.Status == DeployLive || d.CanaryTotalSteps <= 0 {
+		d.Status = DeployLive
+		d.Error = ""
+		m.deployments[id] = d
+		return nil
+	}
+
+	// A canary becomes live beside the previous deployment. Apply its
+	// initial stage and reset the wall-clock anchor at activation time;
+	// build time must not consume the customer's observation window.
+	siblings := make([]siblingRow, 0)
+	for otherID, other := range m.deployments {
+		if other.AppID == d.AppID && other.Status == DeployLive && otherID != id {
+			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
+		}
+	}
+	sort.SliceStable(siblings, func(i, j int) bool { return siblings[i].ID < siblings[j].ID })
+	if len(siblings) == 0 && d.TrafficPercent != 100 {
+		// There is no previous revision to receive the residual. A
+		// first deployment cannot be meaningfully canaried, so make it
+		// a safe 100% completion instead of publishing a broken split.
+		now := time.Now().UTC()
+		d.Status = DeployLive
+		d.Error = ""
+		d.TrafficPercent = 100
+		d.CanaryStep = d.CanaryTotalSteps
+		d.RolloutState = "complete"
+		d.CanaryStepStartedAt = &now
+		d.RolloutCompletedAt = &now
+		m.deployments[id] = d
+		return nil
+	}
+
+	d.Status = DeployLive
+	d.Error = ""
+	d.RolloutState = "rolling_out"
+	now := time.Now().UTC()
+	d.RolloutStartedAt = &now
+	d.CanaryStepStartedAt = &now
+	newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-d.TrafficPercent)
+	for i, sibling := range siblings {
+		other := m.deployments[sibling.ID]
+		other.TrafficPercent = newWeights[i]
+		m.deployments[sibling.ID] = other
+	}
+	m.deployments[id] = d
+	return nil
 }
 
 // MarkDeploymentCancelled (ADR-124) — memstore mirror of

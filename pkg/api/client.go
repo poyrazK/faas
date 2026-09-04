@@ -1176,6 +1176,17 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
 }
 
+// AdvanceCanary advances exactly one persisted canary step. APID resolves
+// the next percentage from the deployment's stored preset and performs the
+// expected-step compare-and-swap together with traffic, rollout state, and
+// audit writes. A 409 means another worker won the race and the caller should
+// re-read the row on its next tick.
+func (c *Client) AdvanceCanary(ctx context.Context, id string, expectedStep int) (CanaryAdvanceResponse, error) {
+	var out CanaryAdvanceResponse
+	return out, c.do(ctx, "POST", "/v1/deployments/"+id+"/canary/advance",
+		AdvanceCanaryRequest{ExpectedStep: expectedStep}, &out)
+}
+
 // RecoverRollout (issue #976 / ADR-122 / SAFE-RELEASES-R) is the
 // operator manual-recovery escape hatch — POST
 // /v1/apps/{slug}/rollouts/recover. The CLI subcommand

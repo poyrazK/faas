@@ -119,6 +119,17 @@ var ErrCorsWildcardWithCredentials = errors.New("state: cors action cannot combi
 // HTTP response uses the canonical RFC 7807 code.
 var ErrInvalidTrafficPercent = errors.New("state: invalid traffic_percent")
 
+// ErrCanaryStepConflict is returned by AdvanceCanary when the deployment's
+// current step differs from the caller's expected step. The compare-and-swap
+// is checked while the deployment row is locked, so this is the safe race
+// loser result for concurrent meterd workers.
+var ErrCanaryStepConflict = errors.New("state: canary step conflict")
+
+// ErrCanaryStateInvalid is returned when an automatic canary advance reaches
+// a deployment that is not an active, live rollout or whose persisted ladder
+// is internally inconsistent.
+var ErrCanaryStateInvalid = errors.New("state: canary state does not permit advance")
+
 // ErrInvalidPreviewPrState is returned by SetPreviewPrState when the
 // requested state is outside the closed set
 // {open,closed,stale,torn_down}. The CHECK constraint
@@ -208,6 +219,23 @@ var ErrRolloutNotStuck = errors.New("state: rollout is not stuck; use promote in
 // to api.ErrRolloutStateInvalid (409 Conflict) so the CLI's
 // post-condition check is loud.
 var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit recovery")
+
+// CanaryAdvanceParams is the state-owned portion of one automatic canary
+// transition. The API layer resolves the next preset stage and supplies the
+// audit envelope; the store atomically applies the expected-step CAS,
+// traffic rebalance, rollout completion, and audit insert.
+type CanaryAdvanceParams struct {
+	ExpectedStep   int
+	TrafficPercent int
+	Audit          DeploymentAudit
+}
+
+// CanaryAdvancer is intentionally separate from Store so existing narrow test
+// doubles do not have to grow a new method. Production stores implement it;
+// the APID handler type-asserts it before accepting the transition.
+type CanaryAdvancer interface {
+	AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error)
+}
 
 // RecoverRolloutStuckAfter (issue #976 / ADR-122 / SAFE-RELEASES-R +
 // production-leveling Stream C) is the canned stuck-detection
@@ -2126,17 +2154,15 @@ type Store interface {
 	// generic state.Stamp.
 	SafedeployStampRollout(ctx context.Context, id string, state string, startedAt, completedAt, abortedAt *time.Time, abortedReason string) (Deployment, error)
 	// LiveDeploymentForScope (ADR-091 / PR-D) returns the unique
-	// live deployment for (appID, scope). Backed by the partial
-	// UNIQUE index deployments_app_scope_live_uniq that PR-D
-	// adds in migration 00213 — at most one live row per
-	// (app_id, scope), so the read is deterministic. Returns
-	// ErrNotFound when no live deployment exists for the scope
-	// (the wake path should fall back to ErrNoDeployment, surfacing
-	// 404 from the gateway). Used by schedd Phase 1 wake when the
-	// caller passed an explicit deploymentID: read `dep.Scope`
-	// from the resolved deployment, then re-resolve the live
-	// row for that scope so the env overlay only contains that
-	// scope's rows.
+	// newest live deployment for (appID, scope). Stable rows remain
+	// unique, while an active canary temporarily overlaps its predecessor
+	// (issue #976); the deterministic newest-first read selects the canary
+	// for new capacity. Returns ErrNotFound when no live deployment exists
+	// for the scope (the wake path should fall back to ErrNoDeployment,
+	// surfacing 404 from the gateway). Used by schedd Phase 1 wake when the
+	// caller passed an explicit deploymentID: read `dep.Scope` from the
+	// resolved deployment, then re-resolve the live row for that scope so
+	// the env overlay only contains that scope's rows.
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (Deployment, error)
 	// CountLiveInstancesByDeployment returns the number of instances
 	// currently in {WAKING, COLD_BOOTING, RUNNING} for the given

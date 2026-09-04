@@ -363,6 +363,12 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 		}
 		dep.CanaryPreset = preset.Name
 		dep.CanaryTotalSteps = preset.TotalSteps()
+		if first, ok := preset.StageAt(0); ok {
+			// The first stage is applied when imaged marks the row live;
+			// keeping it on the row lets the live transition rebalance
+			// the previous revision before meterd starts the timer.
+			dep.TrafficPercent = first.Percent
+		}
 		// SAFE-RELEASES code-review hardening (migration 00517):
 		// canary_step_started_at is NOT NULL post-00517, so the
 		// apid Create path must stamp it on every row. The
@@ -472,8 +478,10 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 	// fire a second NotifyDeploymentChanged so imaged's F5 cleanup
 	// handler (handleDeploymentChanged) can drop the prior snapshot.
 	// The notify carries status="superseded" + to=prev.ID; if no prev
-	// existed (first deploy on this app), skip the second notify.
-	if prev.ID != "" {
+	// existed (first deploy on this app), skip the second notify. A
+	// canary deliberately keeps its prior live revision as the
+	// residual traffic bucket, so it must not emit this cleanup signal.
+	if prev.ID != "" && d.CanaryTotalSteps <= 0 {
 		_ = s.notif.Notify(ctxr, db.NotifyDeploymentChanged,
 			fmt.Sprintf(`{"kind":"image","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, prev.ID, prev.ID))
 	}
@@ -508,11 +516,17 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 	// without a schema migration. Omit-when-zero rule matches
 	// the PR #984 annotation-merge helper.
 	resolvedActor := resolvedActorString(d.DeployedVia, d.DeployedByUserID, d.PusherLogin)
+	supersedes := prev.ID
+	if d.CanaryTotalSteps > 0 {
+		// The prior revision remains live until the terminal canary
+		// transition; it is not superseded at deployment creation.
+		supersedes = ""
+	}
 	appDeployedData := map[string]any{
 		"app_id":        app.ID,
 		"deployment_id": d.ID,
 		"ref":           req.Image,
-		"supersedes":    prev.ID,
+		"supersedes":    supersedes,
 		"has_overrides": hasOverrides,
 	}
 	// Issue #977 / ADR-116: mirror the annotation surface into the
