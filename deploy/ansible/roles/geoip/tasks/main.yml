@@ -1,0 +1,89 @@
+---
+# geoip — see defaults/main.yml for the contract. Idempotent because every
+# artefact is keyed by the pinned release name and verified by checksum.
+
+- name: geoip — assert both checksums are pinned (64 hex chars)
+  ansible.builtin.assert:
+    that:
+      - faas_geoip_gz_sha256 is match('^[0-9a-f]{64}$')
+      - faas_geoip_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      faas_geoip_gz_sha256 / faas_geoip_sha256 must be the pinned SHA-256 of
+      the {{ faas_geoip_release }} DB-IP release. A placeholder would
+      silently disable geo edge rules on every compute node.
+  when: faas_geoip_enabled | bool
+
+- name: geoip — create database directory (world-readable, root-owned)
+  ansible.builtin.file:
+    path: "{{ faas_geoip_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_geoip_enabled | bool
+
+- name: geoip — download the pinned DB-IP release
+  ansible.builtin.get_url:
+    url: "{{ faas_geoip_url }}"
+    dest: "{{ faas_geoip_dir }}/dbip-country-lite-{{ faas_geoip_release }}.mmdb.gz"
+    checksum: "sha256:{{ faas_geoip_gz_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+    timeout: 120
+  when: faas_geoip_enabled | bool
+
+- name: geoip — decompress the pinned release next to the archive
+  ansible.builtin.command:
+    argv:
+      - gzip
+      - --decompress
+      - --keep
+      - --force
+      - "{{ faas_geoip_dir }}/dbip-country-lite-{{ faas_geoip_release }}.mmdb.gz"
+    creates: "{{ faas_geoip_dir }}/dbip-country-lite-{{ faas_geoip_release }}.mmdb"
+  when: faas_geoip_enabled | bool
+
+- name: geoip — checksum the decompressed database
+  ansible.builtin.stat:
+    path: "{{ faas_geoip_dir }}/dbip-country-lite-{{ faas_geoip_release }}.mmdb"
+    checksum_algorithm: sha256
+  register: faas_geoip_db_stat
+  when: faas_geoip_enabled | bool
+
+- name: geoip — refuse a database that does not match the pin
+  ansible.builtin.assert:
+    that:
+      - faas_geoip_db_stat.stat.exists
+      - faas_geoip_db_stat.stat.checksum == faas_geoip_sha256
+    fail_msg: >-
+      {{ faas_geoip_dir }}/dbip-country-lite-{{ faas_geoip_release }}.mmdb
+      has sha256 {{ faas_geoip_db_stat.stat.checksum | default('(missing)') }},
+      expected {{ faas_geoip_sha256 }}.
+  when: faas_geoip_enabled | bool
+
+- name: geoip — point the canonical path at the pinned release
+  ansible.builtin.file:
+    src: "{{ faas_geoip_dir }}/dbip-country-lite-{{ faas_geoip_release }}.mmdb"
+    dest: "{{ faas_geoip_db_path }}"
+    state: link
+    owner: root
+    group: root
+  notify: restart faas-gatewayd-internal
+  when: faas_geoip_enabled | bool
+
+- name: geoip — ship the CC BY 4.0 attribution next to the database
+  ansible.builtin.copy:
+    src: ATTRIBUTION.txt
+    dest: "{{ faas_geoip_dir }}/ATTRIBUTION.txt"
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_geoip_enabled | bool
+
+- name: geoip — remove the canonical path when the role is disabled
+  ansible.builtin.file:
+    path: "{{ faas_geoip_db_path }}"
+    state: absent
+  notify: restart faas-gatewayd-internal
+  when: not (faas_geoip_enabled | bool)

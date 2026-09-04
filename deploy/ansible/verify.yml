@@ -1,0 +1,16 @@
+---
+# verify.yml — prove every enabled daemon on the fleet is active and
+# answering its readiness probe, then run `gregalectl doctor`. Strict:
+# a daemon the host role requires but nobody enabled is a failure here
+# (bootstrap.yml runs the same role in lenient mode at the end of every
+# play). Wire it into `make verify-fleet`. ADR-143.
+- name: Verify the converged fleet
+  hosts: control_plane:compute_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    faas_verify_strict: true
+  roles:
+    - role: fleet_verify

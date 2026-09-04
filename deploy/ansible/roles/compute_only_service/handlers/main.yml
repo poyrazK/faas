@@ -1,0 +1,19 @@
+---
+# ADR-143: every unit, drop-in and config change must reach the running
+# daemon. `systemctl try-restart` only restarts an ACTIVE unit, so the first
+# bootstrap (before the operator's `gregalectl secrets init` + `systemctl
+# enable --now`) stays a no-op and an unconfigured daemon is never started
+# into a crash loop. The daemon-reload handler is listed first because
+# handlers run in file order and a drop-in change is invisible to systemd
+# until the manager reloads.
+- name: compute_only_service — daemon-reload after unit or drop-in changes
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen:
+    - restart faas-imaged
+
+- name: compute_only_service — try-restart faas-imaged
+  ansible.builtin.command: systemctl try-restart faas-imaged.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-imaged
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

@@ -26,7 +26,6 @@ root="${1:-.}"
 # file, surfacing the deletion.
 unit_paths=(
   "${root}/deploy/systemd"
-  "${root}/deploy/controlplane/systemd"
   "${root}/deploy/ansible/roles/control_plane_service/files"
   "${root}/deploy/ansible/roles/builderd_service/files"
   "${root}/deploy/ansible/roles/compute_only_service/files"
@@ -43,7 +42,7 @@ unit_paths=(
 # `rel` is the unit path with the leading `${root}/` stripped, so apid's
 # two homes show up as either `deploy/systemd/faas-apid.service` or
 # `deploy/ansible/roles/control_plane_service/files/faas-apid.service`.
-allowlist_re='^(deploy/(systemd|controlplane/systemd)/faas-apid\.service|deploy/ansible/roles/control_plane_service/files/faas-apid\.service)$'
+allowlist_re='^(deploy/systemd/faas-apid\.service|deploy/ansible/roles/control_plane_service/files/faas-apid\.service)$'
 
 errors=0
 

@@ -1,0 +1,29 @@
+---
+# ansible-lint gate (ADR-143). Runs in CI via `make ansible-lint` at the
+# `production` profile. Three rules are skipped deliberately; every other
+# finding is a merge blocker.
+profile: production
+
+exclude_paths:
+  - .generated/
+  - .cache/
+
+skip_list:
+  # Task names are "<role> — <verb phrase>" on purpose: the role prefix is
+  # what makes a 40-role bootstrap log greppable, and ansible-lint wants
+  # the first character upper-cased. 600+ occurrences; renaming them buys
+  # nothing operators asked for.
+  - name[casing]
+  # Variables are `faas_*` (platform-wide) rather than `<role>_*`: the same
+  # value (faas_node_name, faas_box_role, ...) is read by many roles and the
+  # manifest renderer emits them into host_vars. A role prefix would be a
+  # lie about ownership.
+  - var-naming[no-role-prefix]
+  # Long lines are almost all load-bearing comments explaining an incident;
+  # wrapping them hurts more than it helps.
+  - yaml[line-length]
+  # `_shared` is deliberately NOT a role (a leading underscore marks a
+  # task/template library included by path from real roles) and
+  # `metal-h2c-acceptance` is named after the G19.3 acceptance fixture it
+  # installs. Both are referenced by path from playbooks, docs and CI.
+  - role-name

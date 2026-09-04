@@ -51,6 +51,7 @@
     dest: /etc/nftables.conf.faas-orig
     remote_src: true
     force: false
+    mode: preserve
   when:
     - nftables_conf_stat.stat.exists
     - nftables_managed_marker.rc | default(1) != 0
@@ -106,7 +107,7 @@
     mode: "0644"
   register: bridge_unit
 
-- name: nftables — systemctl daemon-reload (idempotent, after new unit file)
+- name: nftables — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: bridge_unit.changed
@@ -133,7 +134,7 @@
     mode: "0644"
   register: fwd_dropin
 
-- name: nftables — apply ip_forward sysctl (no reboot needed for this key)
+- name: nftables — apply ip_forward sysctl (no reboot needed for this key)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.command: sysctl -p /etc/sysctl.d/90-faas-ip-forward.conf
   changed_when: false
   when: fwd_dropin.changed
@@ -157,7 +158,8 @@
 # running the old ruleset until next reboot. Gated on nft_drop.changed
 # to stay no-op on a converged box. Idempotent: the ruleset's
 # `flush ruleset` first directive wipes and re-loads.
-- name: nftables — load the ruleset (no reload handler; reload directly)
+- name: nftables — load the ruleset (no reload handler; reload directly)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
+  changed_when: true
   ansible.builtin.command: nft -f /etc/nftables.conf
   when: nft_drop.changed
 

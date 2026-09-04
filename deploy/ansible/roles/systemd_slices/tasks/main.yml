@@ -68,9 +68,9 @@
       [Slice]
       CPUWeight={{ item.weight }}
   loop:
-    - { plan: free,  weight: 2 }
+    - { plan: free, weight: 2 }
     - { plan: hobby, weight: 4 }
-    - { plan: pro,   weight: 8 }
+    - { plan: pro, weight: 8 }
     - { plan: scale, weight: 16 }
   loop_control:
     label: "faas-tenant-{{ item.plan }}.slice"

@@ -33,9 +33,9 @@
 #   FAAS_APID_ADVISORY_TLS_CERT_PATH = /etc/faas/tls/apid/advisory.crt
 #   FAAS_APID_ADVISORY_TLS_KEY_PATH  = /etc/faas/tls/apid/advisory.key
 #   FAAS_APID_ADVISORY_TLS_CA_PATH   = /etc/faas/tls/ca/ca.crt
-#   FAAS_GITHUBD_TLS_CERT_PATH       = /etc/faas/tls/apid/githubd-client.crt
-#   FAAS_GITHUBD_TLS_KEY_PATH        = /etc/faas/tls/apid/githubd-client.key
-#   FAAS_GITHUBD_TLS_CA_PATH         = /etc/faas/tls/ca/ca.crt
+#   (apid reaches githubd over the unix socket FAAS_APID_GITHUBD_BRIDGE_SOCK /
+#   FAAS_GITHUBD_SOCKET; there is no githubd TLS client env — ADR-143 removed
+#   the FAAS_GITHUBD_TLS_* lines that documented variables nothing read.)
 #
 # Partial cluster is rejected at startup with the exact env-var
 # name(s) missing. See cmd/gregale/commands_pki.go for the operator

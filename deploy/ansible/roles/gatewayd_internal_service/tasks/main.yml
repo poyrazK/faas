@@ -10,6 +10,7 @@
 # explanation of why declaring it here would lose the bind-mount).
 
 - name: gatewayd_internal_service — install systemd unit
+  notify: restart faas-gatewayd-internal
   ansible.builtin.copy:
     src: faas-gatewayd-internal.service
     dest: /etc/systemd/system/faas-gatewayd-internal.service
@@ -116,7 +117,7 @@
     state: file
   when: gatewayd_app_errors_target | default('') | length > 0
 
-- name: gatewayd_internal_service — systemctl daemon-reload (idempotent, after new unit file)
+- name: gatewayd_internal_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: gatewayd_internal_unit.changed
@@ -181,5 +182,5 @@
 # internal owns gatewayd-internal.env; the rest are checked here as
 # defense in depth). Each assert is a no-op when the file is
 # absent (operator-provisioned via `gregalectl secrets init`).
-- name: gatewayd_internal_service — sealed.env split perm-asserts (issue #585 / ADR-127)
+- name: gatewayd_internal_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml

@@ -35,7 +35,7 @@
     success_msg: "kernel unified-cgroup-hierarchy: enabled"
   changed_when: false
 
-- name: cgroups_v2 — assert no v1 controllers are mounted
+- name: cgroups_v2 — assert no v1 controllers are mounted  # noqa: command-instead-of-module (read-only query / no module equivalent)
   ansible.builtin.command: mount
   register: mount_out
   changed_when: false

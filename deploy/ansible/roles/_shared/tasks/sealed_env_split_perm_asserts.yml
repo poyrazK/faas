@@ -46,17 +46,17 @@
 ---
 # PRIVATE bucket — 0400 root:root. Loaded via EnvironmentFile= per-
 # daemon or LoadCredential=%d/path for content-shaped secret material.
-- name: sealed_env_split_perm_asserts — stat PRIVATE per-daemon secret files (issue #585 / ADR-127)
+- name: sealed_env_split_perm_asserts — stat PRIVATE per-daemon secret files (issue # 585 / ADR-127)
   ansible.builtin.stat:
     path: "{{ item.path }}"
   loop:
-    - {name: schedd_env,                        path: /etc/faas/secrets/schedd/schedd.env}
-    - {name: meterd_billing_env,                path: /etc/faas/secrets/meterd/billing.env}
-    - {name: githubd_env,                       path: /etc/faas/secrets/githubd/githubd.env}
-    - {name: githubd_app_pem,                   path: /etc/faas/secrets/githubd/app.pem}
-    - {name: gatewayd_internal_env,             path: /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env}
-    - {name: pg_basebackup_push_storage_user,   path: /etc/faas/secrets/pg-basebackup-push/storage-box.user}
-    - {name: pg_basebackup_push_storage_host,   path: /etc/faas/secrets/pg-basebackup-push/storage-box.host}
+    - {name: schedd_env, path: /etc/faas/secrets/schedd/schedd.env}
+    - {name: meterd_billing_env, path: /etc/faas/secrets/meterd/billing.env}
+    - {name: githubd_env, path: /etc/faas/secrets/githubd/githubd.env}
+    - {name: githubd_app_pem, path: /etc/faas/secrets/githubd/app.pem}
+    - {name: gatewayd_internal_env, path: /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env}
+    - {name: pg_basebackup_push_storage_user, path: /etc/faas/secrets/pg-basebackup-push/storage-box.user}
+    - {name: pg_basebackup_push_storage_host, path: /etc/faas/secrets/pg-basebackup-push/storage-box.host}
   loop_control:
     label: "{{ item.name }}"
   register: faas_sealed_env_split_private_stat
@@ -92,7 +92,7 @@
 # ansible role catches the wrong-mode case before apid's startup
 # tripwire does (with a friendly message instead of an opaque
 # boot-time failure).
-- name: sealed_env_split_perm_asserts — stat PUBLIC per-daemon files (issue #585 / ADR-127)
+- name: sealed_env_split_perm_asserts — stat PUBLIC per-daemon files (issue # 585 / ADR-127)
   ansible.builtin.stat:
     path: "{{ item.path }}"
   loop:

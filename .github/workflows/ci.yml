@@ -305,10 +305,25 @@ jobs:
           ansible-playbook --syntax-check scale_check.yml
           # Gate-D: keep the trusted deployment-runner bootstrap parseable.
           ansible-playbook --syntax-check fleet_runner.yml
+          # ADR-143: the post-activation verify playbook is production
+          # tooling (`make verify-fleet`) and must stay parseable.
+          ansible-playbook --syntax-check verify.yml
           # Gate-E: render and validate the 1/10/100/1000 compute-node
           # topologies, then run Ansible check-mode against the largest one.
           cd ../..
           GREGALE_ANSIBLE_SCALE_CHECK=1 go test -count=1 -timeout=5m ./cmd/gregalectl -run '^TestRenderManifestAnsibleFiles_ScaleMatrix$'
+          # ADR-143: scale_check.yml carried real asserts for months but was
+          # only ever --syntax-check'ed (which evaluates nothing). Run it.
+          make ansible-scale-check ANSIBLE_PLAYBOOK=ansible-playbook
+
+      # ADR-143: ansible-lint at the production profile. Config + the three
+      # deliberately skipped cosmetic rules live in deploy/ansible/.ansible-lint.
+      # Pinned like ansible-core so the gate fails on OUR drift only.
+      - name: ansible-lint
+        run: |
+          set -euo pipefail
+          pip install --quiet 'ansible-lint==26.8.0'
+          make ansible-lint
           # Join and control-plane adoption plays are separate production
           # entrypoints and must be parsed independently; bootstrap syntax
           # checking does not cover their task bodies.
@@ -1038,7 +1053,7 @@ jobs:
     # exceeded`) on the Azure centralus runner. Switch the image to
     # mirror.gcr.io (Google's transparent mirror of Docker Hub, no auth,
     # no per-IP rate limit) — same pattern as FAAS_BUILDER_BASE_REF on
-    # the prod box (deploy/controlplane/sealed.env.example:22 —
+    # the prod box (the retired v1 deploy/controlplane/sealed.env.example —
     # RETIRED 2026-08-15 by issue #911 / PR-1; v2 path is PR-X
     # `gregale secrets init`). A pre-step `docker pull` with retry
     # covers the case where the service container's own pull path

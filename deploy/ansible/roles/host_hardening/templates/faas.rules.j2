@@ -1,0 +1,7 @@
+## {{ ansible_managed }} — host_hardening role (spec §11, ADR-143).
+-D
+-b 8192
+-f 1
+{% for rule in faas_hardening_auditd_rules %}
+{{ rule }}
+{% endfor %}

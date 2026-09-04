@@ -80,6 +80,7 @@
     - faas_storage_format | bool
 
 - name: xfs — format the explicitly approved blank device
+  changed_when: true
   ansible.builtin.command:
     argv: [mkfs.xfs, -m, reflink=1, "{{ faas_storage_device }}"]
   register: faas_storage_mkfs

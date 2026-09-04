@@ -11,75 +11,23 @@ ExecStartPre=/usr/bin/chmod 0775 /run/faas
 ExecStart=/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml
 ExecStartPost=/usr/bin/chown root:faas /run/faas
 ExecStartPost=/usr/bin/chmod 0775 /run/faas
-Environment=TMPDIR=/srv/fc/base
-# Issue #585 / ADR-127 — sealed.env is apid-only; vmmd keeps compute-db.env
-# (DATABASE_URL) but no longer inherits the full sealed.env.
-EnvironmentFile=-/etc/faas/compute-db.env
-# Shared OCI storage contract. Optional for single-box/local deployments;
-# required on a multi-box fleet and identical on every storage consumer.
-EnvironmentFile=-/etc/faas/storage.env
 Restart=on-failure
 RestartSec=2s
-# PR #1082 review-fix #2: surface the per-unit restart count to the
-# daemon via the $SYSTEMD_RESTARTS_ON_FAILURE env var (systemd 254+
-# RestartCountExport). pkg/wire/daemon.go::Daemon() reads the env var
-# at boot and records it on daemons.gregale_dev_restart_count_total
-# so the FaasRestartLoop / FaasRepeatedRestart / FaasStuckActivating
-# alerts (ADR-128) have a real-time signal instead of relying on
-# node_exporter scraping node_systemd_restart_count at 15s resolution.
 RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
-
 Slice=faas-cp.slice
-# Keep in sync with pkg/daemonunitspec/vmmd.go — this role is NOT a
-# deployctl generate target (see defaultTargets in cmd/deployctl/main.go),
-# so the drift gate does not cover it. Full rationale lives in the spec;
-# short version: a per-unit memory bound on vmmd does not measure vmmd.
-# tmpfs pages are charged to whichever cgroup WRITES them, and vmmd
-# populates each jail chroot on /srv/fc/jail (tmpfs) with a ~400 MB
-# layer.ext4 per instance — so this cgroup carries roughly
-# (live instances x layer size). One Scale instance already exceeded the
-# old MemoryHigh=512M, and shmem without swap is unreclaimable, so
-# MemoryHigh could not reclaim: it spun (pgscan 138.7M vs pgsteal 2.5M)
-# and every process vmmd forked thrashed on its own text pages. A
-# `tc qdisc add` sat in D state for a full 35 s cold-boot budget.
-# MemoryMax is therefore the slice ceiling, not a tighter cap.
 MemoryMax=3G
 Delegate=yes
-
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-
+EnvironmentFile=-/etc/faas/compute-db.env
+EnvironmentFile=-/etc/faas/storage.env
+Environment=TMPDIR=/srv/fc/base
+Environment=FAAS_HOST_AGE_RECIPIENT_PATH=/etc/faas/secrets/host.age.pub
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/lib/faas/cache
-# RuntimeDirectory=faas (not ReadWritePaths alone) makes /run/faas a
-# real directory on the host /run tmpfs, bind-mounted into this unit's
-# mount namespace and propagated back. With PrivateTmp=yes the dirent
-# would be created inside vmmd's per-mount-namespace tmpfs instance
-# and NOT visible from the host — every other daemon that dials
-# /run/faas/vmmd.sock would get `no such file or directory` even though
-# `ss -lnx` shows the LISTEN entry (run 30839233808).
-#
-# This unit is the SOLE owner of /run/faas on disk. schedd and
-# gatewayd-internal does NOT declare RuntimeDirectory=faas — when systemd sees
-# /run/faas is deliberately host-shared. A per-unit RuntimeDirectory
-# would create a private bind-mount that can hide or remove schedd and
-# gatewayd sockets during a vmmd restart (run 30841750214, post-#619).
-# tmpfiles.d and the install/chown fixups above own its lifecycle.
-#
-# /run/faas ownership is host-shared and is provisioned by tmpfiles.d;
-# the install/chown fixups above reassert root:faas 0775 at activation.
-# This is the activation-time fixup; on a fresh box it runs BEFORE
-# schedd or gatewayd-internal (which sit in the `faas` group) get a
-# chance to bind() their .sock into /run/faas. Without it the
-# "bind: permission denied" cycle returns (run 31121004495, post
-# PR #633 deploy 2026-08-04). Defense-in-depth: the
-# compute_only_service role also (a) chowns /run/faas at deploy
-# time and (b) ships a tmpfiles.d rule so the canonical ownership
-# survives every reboot. The ExecStartPre covers the case where
-# someone wipes /run between reboots without the tmpfiles-d firing.
-PrivateTmp=no
 ProtectHome=yes
+PrivateTmp=no
 ProtectKernelModules=yes
+ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/lib/faas/cache
 
 [Install]
 WantedBy=multi-user.target

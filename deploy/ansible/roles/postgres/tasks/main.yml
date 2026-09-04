@@ -225,7 +225,7 @@
 # systemd specifier and is intentionally not embedded in this PostgreSQL
 # setting; PostgreSQL invokes archive_command through a shell after it has
 # already substituted `%p` and `%f`.
-- name: postgres — set archive_command (reload-only) — issue #250
+- name: postgres — set archive_command (reload-only) — issue # 250
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"
     regexp: "^#?archive_command\\s*="
@@ -259,7 +259,7 @@
 # postgresql.service target does not own the cluster process, so a drop-in
 # there cannot provide archive_command's environment and makes the target
 # report failed when an optional credential is absent.
-- name: postgres — install off-host backup drop-in dir (issue #250)
+- name: postgres — install off-host backup drop-in dir (issue # 250)
   ansible.builtin.file:
     path: /etc/systemd/system/postgresql@.service.d
     state: directory
@@ -268,7 +268,7 @@
     mode: "0755"
   failed_when: false  # chroot/CI may not have systemd
 
-- name: postgres — drop off-host backup drop-in (issue #250)
+- name: postgres — drop off-host backup drop-in (issue # 250)
   ansible.builtin.template:
     src: postgresql@.service.d/99-faas-off-host-backup.conf
     dest: /etc/systemd/system/postgresql@.service.d/99-faas-off-host-backup.conf
@@ -279,7 +279,7 @@
   failed_when: false
   notify: daemon-reload postgres
 
-- name: postgres — remove legacy aggregate-unit backup drop-in (issue #250)
+- name: postgres — remove legacy aggregate-unit backup drop-in (issue # 250)
   ansible.builtin.file:
     path: /etc/systemd/system/postgresql.service.d/99-faas-off-host-backup.conf
     state: absent
@@ -287,7 +287,7 @@
   failed_when: false
   notify: daemon-reload postgres
 
-- name: postgres — reload systemd to pick up the off-host backup drop-in
+- name: postgres — reload systemd to pick up the off-host backup drop-in  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: pg_off_host_backup_dropin is changed

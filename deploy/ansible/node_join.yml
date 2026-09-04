@@ -296,7 +296,8 @@
       register: faas_release_kernel_prewarm
       changed_when: false
 
-- import_playbook: bootstrap.yml
+- name: Converge the adopted node with the production bootstrap
+  import_playbook: bootstrap.yml
 
 - name: Verify the signed release before promoting its operator CLI
   hosts: compute_nodes
@@ -542,6 +543,7 @@
       changed_when: true
 
     - name: Unseal the reusable rclone configuration
+      changed_when: true
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -554,6 +556,7 @@
       when: (faas_join_rclone_envelope_source | default('') | trim) != ''
 
     - name: Unseal the reusable archive credentials
+      changed_when: true
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -642,7 +645,7 @@
         port: 8080
         timeout: 60
 
-    - name: Require every compute-only service to be active
+    - name: Require every compute-only service to be active  # noqa: command-instead-of-module (read-only query / no module equivalent)
       ansible.builtin.command: "systemctl is-active {{ item }}"
       changed_when: false
       loop:

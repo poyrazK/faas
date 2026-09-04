@@ -18,7 +18,7 @@
       installing grype {{ grype_version }} +
       syft {{ syft_version }} into {{ install_root }}/bin
 
-- name: supply_chain_scanners — ensure {{ install_root }}/bin
+- name: supply_chain_scanners — ensure the bin dir under {{ install_root }}
   ansible.builtin.file:
     path: "{{ install_root }}/bin"
     state: directory
@@ -55,7 +55,7 @@
       compromised supply chain.
   when: arch == "amd64"
 
-- name: supply_chain_scanners — untar grype into {{ install_root }}/bin
+- name: supply_chain_scanners — untar grype into the bin dir under {{ install_root }}
   ansible.builtin.unarchive:
     src: "/tmp/grype-{{ grype_version }}.tar.gz"
     dest: "{{ install_root }}/bin"
@@ -160,7 +160,7 @@
       compromised supply chain.
   when: arch == "amd64"
 
-- name: supply_chain_scanners — untar syft into {{ install_root }}/bin
+- name: supply_chain_scanners — untar syft into the bin dir under {{ install_root }}
   ansible.builtin.unarchive:
     src: "/tmp/syft-{{ syft_version }}.tar.gz"
     dest: "{{ install_root }}/bin"

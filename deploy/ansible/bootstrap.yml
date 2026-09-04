@@ -64,6 +64,10 @@
     # Shared preconditions (every box):
     - role: cgroups_v2
     - role: grub
+    # ADR-143: spec §11 OS posture (sshd, fail2ban, security updates,
+    # auditd, kernel sysctls). Runs right after grub so a lockout guard
+    # failure stops the play before anything else is touched.
+    - role: host_hardening
     - role: storage
       tags: [storage]
     - role: lvm
@@ -88,6 +92,9 @@
     # Topology cleanup is safe during image seeding and must also remove
     # legacy one-box services left on an existing control-plane host.
     - role: role_convergence
+    # ADR-143: prove convergence. Lenient here (first bootstrap has no
+    # enabled units yet); `make verify-fleet` runs the strict form.
+    - role: fleet_verify
 
 - name: Bootstrap a Gate-B compute-only node (fsn-2)
   hosts: compute_nodes
@@ -106,6 +113,8 @@
     # production paging credentials or run a second Alertmanager instance.
     - role: cgroups_v2
     - role: grub
+    # ADR-143: spec §11 OS posture, same as the control-plane play.
+    - role: host_hardening
     - role: storage
       tags: [storage]
     - role: lvm
@@ -118,8 +127,12 @@
     - role: node_exporter
     # Compute-only:
     - role: vmmd_service
+    # ADR-143: stage the GeoIP database BEFORE gatewayd-internal so its
+    # first start finds the file at the FAAS_GEOIP_DB_PATH default.
+    - role: geoip
     - role: gatewayd_internal_service
     - role: builderd_service
     - role: compute_only_service
     - role: log_archive
     - role: role_convergence
+    - role: fleet_verify
