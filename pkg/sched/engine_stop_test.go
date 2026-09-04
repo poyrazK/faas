@@ -5,7 +5,7 @@
 //   1. mode='worker' / 'job' → SignalAndKill on the routed VMM,
 //      then DestroyWithExport, then transition to STOPPED.
 //   2. mode='service' → existing snapshotAndPark path, plus an
-//      async convergeServiceReplicas fire-and-forget.
+//      async replica-convergence fire-and-forget.
 //   3. mode='request' (default) / 'mirror' → existing
 //      snapshotAndPark path, no SignalAndKill call.
 //
@@ -154,10 +154,7 @@ func TestEngineStopInstance_JobUsesSignalAndKill(t *testing.T) {
 
 // TestEngineStopInstance_ServiceSnapshotsAndConverges pins
 // mode='service': the snapshot cache must be preserved (Park),
-// and convergeServiceReplicas must be triggered (best-effort).
-// Today convergeServiceReplicas is a no-op stub (M-4 workstream
-// E fills it in); this test asserts the snapshot path, not the
-// convergence logic.
+// and replica convergence must be triggered (best-effort).
 func TestEngineStopInstance_ServiceSnapshotsAndConverges(t *testing.T) {
 	store := state.NewMemStore()
 	rec := &recordingStopVMM{fakeVMM: &fakeVMM{}}

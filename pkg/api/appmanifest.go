@@ -225,6 +225,17 @@ func (m AppManifest) Validate() error {
 	return m.ValidatePlan(PlanScale)
 }
 
+// ValidateLifecyclePlan validates the lifecycle portion of an app manifest
+// before an image-derived entrypoint exists. App settings are persisted on the
+// app row and are merged into the image manifest later, so requiring a real
+// entrypoint here would make the customer API depend on deployment order.
+func (m AppManifest) ValidateLifecyclePlan(plan Plan) error {
+	if len(m.Entrypoint) == 0 {
+		m.Entrypoint = []string{"__lifecycle_validation__"}
+	}
+	return m.ValidatePlan(plan)
+}
+
 // ValidatePlan rejects a manifest that guest-init could not act
 // on, with the per-plan tier tightening from M-2 / ADR-137+138.
 // Per-plan caps:
@@ -340,11 +351,13 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	if m.MaxRetries > MaxAppManifestMaxRetries {
 		return fmt.Errorf("app manifest: max_retries %d exceeds %d absolute cap", m.MaxRetries, MaxAppManifestMaxRetries)
 	}
-	// ServiceReplicas shape: only meaningful when ExecutionMode=service,
-	// but Validate() accepts the field whenever present (min<=max,
-	// desired in [min,max], all non-negative). M-2 commit 6 wires
-	// admission; M-4 workstream E lands the rolling deploy semantics.
+	// ServiceReplicas shape: only meaningful when ExecutionMode=service.
+	// Rejecting the other modes here prevents a stale replica policy from
+	// silently following an app after it switches back to request/worker/job.
 	if m.ServiceReplicas != nil {
+		if m.EffectiveExecutionMode() != ExecutionModeService {
+			return fmt.Errorf("app manifest: service_replicas requires execution_mode=service")
+		}
 		r := m.ServiceReplicas
 		if r.Min < 0 || r.Max < 0 || r.Desired < 0 {
 			return fmt.Errorf("app manifest: service_replicas values must be >= 0 (got min=%d max=%d desired=%d)", r.Min, r.Max, r.Desired)

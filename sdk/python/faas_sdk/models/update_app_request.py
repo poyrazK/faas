@@ -19,11 +19,36 @@ from ..models.update_app_request_eviction_priority_type_3_type_1 import (
     UpdateAppRequestEvictionPriorityType3Type1,
     check_update_app_request_eviction_priority_type_3_type_1,
 )
+from ..models.update_app_request_execution_mode_type_1 import (
+    UpdateAppRequestExecutionModeType1,
+    check_update_app_request_execution_mode_type_1,
+)
+from ..models.update_app_request_execution_mode_type_2_type_1 import (
+    UpdateAppRequestExecutionModeType2Type1,
+    check_update_app_request_execution_mode_type_2_type_1,
+)
+from ..models.update_app_request_execution_mode_type_3_type_1 import (
+    UpdateAppRequestExecutionModeType3Type1,
+    check_update_app_request_execution_mode_type_3_type_1,
+)
+from ..models.update_app_request_restart_policy_type_1 import (
+    UpdateAppRequestRestartPolicyType1,
+    check_update_app_request_restart_policy_type_1,
+)
+from ..models.update_app_request_restart_policy_type_2_type_1 import (
+    UpdateAppRequestRestartPolicyType2Type1,
+    check_update_app_request_restart_policy_type_2_type_1,
+)
+from ..models.update_app_request_restart_policy_type_3_type_1 import (
+    UpdateAppRequestRestartPolicyType3Type1,
+    check_update_app_request_restart_policy_type_3_type_1,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.public_auth_block import PublicAuthBlock
     from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_replicas import ServiceReplicas
 
 
 T = TypeVar("T", bound="UpdateAppRequest")
@@ -36,6 +61,31 @@ class UpdateAppRequest:
     ram_mb: int | None | Unset = UNSET
     idle_timeout_s: int | None | Unset = UNSET
     max_concurrency: int | None | Unset = UNSET
+    execution_mode: (
+        None
+        | Unset
+        | UpdateAppRequestExecutionModeType1
+        | UpdateAppRequestExecutionModeType2Type1
+        | UpdateAppRequestExecutionModeType3Type1
+    ) = UNSET
+    """Lifecycle contract for the app. Omit for no change; service/worker/job are plan-gated."""
+    restart_policy: (
+        None
+        | Unset
+        | UpdateAppRequestRestartPolicyType1
+        | UpdateAppRequestRestartPolicyType2Type1
+        | UpdateAppRequestRestartPolicyType3Type1
+    ) = UNSET
+    """Restart behavior for the workload. Omit for no change."""
+    startup_deadline_s: int | None | Unset = UNSET
+    """Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."""
+    max_retries: int | None | Unset = UNSET
+    """Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default."""
+    service_replicas: ServiceReplicas | Unset = UNSET
+    """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
+    Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
+    the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
+    image-digest pinning semantics land in M-4."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -126,6 +176,46 @@ class UpdateAppRequest:
             max_concurrency = UNSET
         else:
             max_concurrency = self.max_concurrency
+
+        execution_mode: None | str | Unset
+        if isinstance(self.execution_mode, Unset):
+            execution_mode = UNSET
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        else:
+            execution_mode = self.execution_mode
+
+        restart_policy: None | str | Unset
+        if isinstance(self.restart_policy, Unset):
+            restart_policy = UNSET
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        else:
+            restart_policy = self.restart_policy
+
+        startup_deadline_s: int | None | Unset
+        if isinstance(self.startup_deadline_s, Unset):
+            startup_deadline_s = UNSET
+        else:
+            startup_deadline_s = self.startup_deadline_s
+
+        max_retries: int | None | Unset
+        if isinstance(self.max_retries, Unset):
+            max_retries = UNSET
+        else:
+            max_retries = self.max_retries
+
+        service_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_replicas, Unset):
+            service_replicas = self.service_replicas.to_dict()
 
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
@@ -260,6 +350,16 @@ class UpdateAppRequest:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if max_concurrency is not UNSET:
             field_dict["max_concurrency"] = max_concurrency
+        if execution_mode is not UNSET:
+            field_dict["execution_mode"] = execution_mode
+        if restart_policy is not UNSET:
+            field_dict["restart_policy"] = restart_policy
+        if startup_deadline_s is not UNSET:
+            field_dict["startup_deadline_s"] = startup_deadline_s
+        if max_retries is not UNSET:
+            field_dict["max_retries"] = max_retries
+        if service_replicas is not UNSET:
+            field_dict["service_replicas"] = service_replicas
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -307,6 +407,7 @@ class UpdateAppRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_replicas import ServiceReplicas
 
         d = dict(src_dict)
 
@@ -336,6 +437,127 @@ class UpdateAppRequest:
             return cast(int | None | Unset, data)
 
         max_concurrency = _parse_max_concurrency(d.pop("max_concurrency", UNSET))
+
+        def _parse_execution_mode(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestExecutionModeType1
+            | UpdateAppRequestExecutionModeType2Type1
+            | UpdateAppRequestExecutionModeType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_1 = check_update_app_request_execution_mode_type_1(data)
+
+                return execution_mode_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_2_type_1 = check_update_app_request_execution_mode_type_2_type_1(data)
+
+                return execution_mode_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_3_type_1 = check_update_app_request_execution_mode_type_3_type_1(data)
+
+                return execution_mode_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestExecutionModeType1
+                | UpdateAppRequestExecutionModeType2Type1
+                | UpdateAppRequestExecutionModeType3Type1,
+                data,
+            )
+
+        execution_mode = _parse_execution_mode(d.pop("execution_mode", UNSET))
+
+        def _parse_restart_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestRestartPolicyType1
+            | UpdateAppRequestRestartPolicyType2Type1
+            | UpdateAppRequestRestartPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_1 = check_update_app_request_restart_policy_type_1(data)
+
+                return restart_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_2_type_1 = check_update_app_request_restart_policy_type_2_type_1(data)
+
+                return restart_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_3_type_1 = check_update_app_request_restart_policy_type_3_type_1(data)
+
+                return restart_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestRestartPolicyType1
+                | UpdateAppRequestRestartPolicyType2Type1
+                | UpdateAppRequestRestartPolicyType3Type1,
+                data,
+            )
+
+        restart_policy = _parse_restart_policy(d.pop("restart_policy", UNSET))
+
+        def _parse_startup_deadline_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        startup_deadline_s = _parse_startup_deadline_s(d.pop("startup_deadline_s", UNSET))
+
+        def _parse_max_retries(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        max_retries = _parse_max_retries(d.pop("max_retries", UNSET))
+
+        _service_replicas = d.pop("service_replicas", UNSET)
+        service_replicas: ServiceReplicas | Unset
+        if isinstance(_service_replicas, Unset):
+            service_replicas = UNSET
+        else:
+            service_replicas = ServiceReplicas.from_dict(_service_replicas)
 
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
@@ -560,6 +782,11 @@ class UpdateAppRequest:
             ram_mb=ram_mb,
             idle_timeout_s=idle_timeout_s,
             max_concurrency=max_concurrency,
+            execution_mode=execution_mode,
+            restart_policy=restart_policy,
+            startup_deadline_s=startup_deadline_s,
+            max_retries=max_retries,
+            service_replicas=service_replicas,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,

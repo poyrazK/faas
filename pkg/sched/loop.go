@@ -1432,17 +1432,20 @@ func (l *Loop) waitPrimes() {
 // handleNotification decodes the JSON payload and applies the policy.
 //
 //   - app_changed: `kind=parked` is actionable and tears down the app's live
-//     instances; other app changes are informational. Wake materialises an
-//     instance on demand (first request), so no eager instance creation here.
-//   - deployment_changed: informational.
+//     instances; lifecycle changes reconcile service replicas. Other app
+//     changes are informational. Wake materialises request-mode instances on
+//     demand (first request), so no eager instance creation is needed there.
+//   - deployment_changed: a deployment becoming live reconciles its service
+//     replica target; other transitions remain informational.
 //   - snapshot_prime: imaged finished building a deployment's layer; boot it
 //     once, snapshot it, and park it (spec §5 step 6, ADR-018).
 func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppChanged:
 		var p struct {
-			Kind  string `json:"kind"`
-			AppID string `json:"app_id"`
+			Kind             string `json:"kind"`
+			AppID            string `json:"app_id"`
+			LifecycleChanged bool   `json:"lifecycle_changed"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
 			l.log.Warn("sched: bad app_changed payload", "err", err)
@@ -1460,8 +1463,30 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			}
 			return
 		}
+		if p.LifecycleChanged && p.AppID != "" {
+			go l.engine.ReconcileServiceApp(context.WithoutCancel(ctx), p.AppID)
+		}
 		l.log.Debug("app_changed", "payload", n.Payload)
 	case db.NotifyDeploymentChanged:
+		var p struct {
+			DeploymentID string `json:"deployment_id"`
+			To           string `json:"to"`
+			Status       string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			l.log.Warn("sched: bad deployment_changed payload", "err", err)
+			return
+		}
+		if p.Status == string(state.DeployLive) {
+			deploymentID := p.DeploymentID
+			if deploymentID == "" {
+				// Older imaged versions carried the deployment id in `to`.
+				deploymentID = p.To
+			}
+			if deploymentID != "" {
+				go l.engine.ReconcileServiceDeployment(context.WithoutCancel(ctx), deploymentID)
+			}
+		}
 		l.log.Debug("deployment_changed", "payload", n.Payload)
 	case db.NotifySnapshotPrime:
 		var p struct {

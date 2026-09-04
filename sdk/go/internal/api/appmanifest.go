@@ -17,6 +17,27 @@ const (
 	DefaultAppUID  = 1000
 )
 
+// Execution modes and restart policies are part of the app lifecycle contract
+// exposed by the v1 API. Empty values preserve the request-driven defaults.
+const (
+	ExecutionModeRequest = "request"
+	ExecutionModeService = "service"
+	ExecutionModeWorker  = "worker"
+	ExecutionModeJob     = "job"
+
+	RestartPolicyNo            = "no"
+	RestartPolicyOnFailure     = "on-failure"
+	RestartPolicyAlways        = "always"
+	RestartPolicyUnlessStopped = "unless-stopped"
+)
+
+// ServiceReplicas is the desired-count policy for service-mode deployments.
+type ServiceReplicas struct {
+	Min     int `json:"min"`
+	Max     int `json:"max"`
+	Desired int `json:"desired"`
+}
+
 // AppManifest is the /etc/faas/app.json contract: the single handoff from the
 // build/imaging side (imaged) to the guest side (guest-init). imaged writes it
 // into the app layer; guest-init applies env, execs the entrypoint as the app
@@ -37,6 +58,19 @@ type AppManifest struct {
 	Healthz string `json:"healthz,omitempty"`
 	// User is the unix user to exec as; empty means DefaultAppUser.
 	User string `json:"user,omitempty"`
+	// ExecutionMode selects request, replicated service, worker, or job
+	// lifecycle semantics. Empty preserves the request-driven default.
+	ExecutionMode string `json:"execution_mode,omitempty"`
+	// RestartPolicy controls supervisor restarts. Empty defers to the
+	// execution-mode default.
+	RestartPolicy string `json:"restart_policy,omitempty"`
+	// StartupDeadlineS is the time-to-ready bound. Zero uses the plan default.
+	StartupDeadlineS int `json:"startup_deadline_s,omitempty"`
+	// MaxRetries is the consecutive restart-attempt bound. Zero uses the plan
+	// default.
+	MaxRetries int `json:"max_retries,omitempty"`
+	// ServiceReplicas is honoured when ExecutionMode is service.
+	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
 }
 
 // EffectivePort returns Port or the default.

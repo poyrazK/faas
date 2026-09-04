@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from ..models.canary_preset_spec import CanaryPresetSpec
     from ..models.create_deployment_overrides import CreateDeploymentOverrides
     from ..models.sidecar import Sidecar
+    from ..models.workflow_spec import WorkflowSpec
 
 
 T = TypeVar("T", bound="CreateDeploymentRequest")
@@ -53,6 +54,9 @@ class CreateDeploymentRequest:
     sidecars: list[Sidecar] | Unset = UNSET
     """Up to 2 stateless sidecars (1 init + 1 sidecar). nil/omitted = no sidecars. See ADR-068 for the hard 2-cap
     and stateless-only contract."""
+    workflows: list[WorkflowSpec] | Unset = UNSET
+    """Workflow DAG definitions for this deployment. Paid-plan only; runtime deployment persistence is staged
+    separately."""
     traffic_percent: int | None | Unset = UNSET
     """Per-deployment traffic-split weight (issue #556 PR-A). nil = server default 100; explicit 0..100 = opt into
     canary (Pro/Scale only)."""
@@ -108,6 +112,13 @@ class CreateDeploymentRequest:
             for sidecars_item_data in self.sidecars:
                 sidecars_item = sidecars_item_data.to_dict()
                 sidecars.append(sidecars_item)
+
+        workflows: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.workflows, Unset):
+            workflows = []
+            for workflows_item_data in self.workflows:
+                workflows_item = workflows_item_data.to_dict()
+                workflows.append(workflows_item)
 
         traffic_percent: int | None | Unset
         if isinstance(self.traffic_percent, Unset):
@@ -176,6 +187,8 @@ class CreateDeploymentRequest:
             field_dict["require_signed"] = require_signed
         if sidecars is not UNSET:
             field_dict["sidecars"] = sidecars
+        if workflows is not UNSET:
+            field_dict["workflows"] = workflows
         if traffic_percent is not UNSET:
             field_dict["traffic_percent"] = traffic_percent
         if scope is not UNSET:
@@ -200,6 +213,7 @@ class CreateDeploymentRequest:
         from ..models.canary_preset_spec import CanaryPresetSpec
         from ..models.create_deployment_overrides import CreateDeploymentOverrides
         from ..models.sidecar import Sidecar
+        from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
         image = d.pop("image", UNSET)
@@ -238,6 +252,15 @@ class CreateDeploymentRequest:
                 sidecars_item = Sidecar.from_dict(sidecars_item_data)
 
                 sidecars.append(sidecars_item)
+
+        _workflows = d.pop("workflows", UNSET)
+        workflows: list[WorkflowSpec] | Unset = UNSET
+        if _workflows is not UNSET:
+            workflows = []
+            for workflows_item_data in _workflows:
+                workflows_item = WorkflowSpec.from_dict(workflows_item_data)
+
+                workflows.append(workflows_item)
 
         def _parse_traffic_percent(data: object) -> int | None | Unset:
             if data is None:
@@ -363,6 +386,7 @@ class CreateDeploymentRequest:
             overrides=overrides,
             require_signed=require_signed,
             sidecars=sidecars,
+            workflows=workflows,
             traffic_percent=traffic_percent,
             scope=scope,
             reason=reason,

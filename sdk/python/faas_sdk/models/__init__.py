@@ -158,6 +158,8 @@ from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowS
 from .create_app_request import CreateAppRequest
 from .create_app_request_app_protocol import CreateAppRequestAppProtocol
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
+from .create_app_request_execution_mode import CreateAppRequestExecutionMode
+from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_type import CreateAppRequestType
 from .create_app_webhook_request import CreateAppWebhookRequest
@@ -640,6 +642,12 @@ from .update_app_request_app_protocol import UpdateAppRequestAppProtocol
 from .update_app_request_eviction_priority_type_1 import UpdateAppRequestEvictionPriorityType1
 from .update_app_request_eviction_priority_type_2_type_1 import UpdateAppRequestEvictionPriorityType2Type1
 from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequestEvictionPriorityType3Type1
+from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
+from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
+from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
+from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
+from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
 from .update_app_webhook_request import UpdateAppWebhookRequest
 from .update_app_webhook_request_event_filter_item import UpdateAppWebhookRequestEventFilterItem
 from .update_app_webhook_request_retry_policy import UpdateAppWebhookRequestRetryPolicy
@@ -679,6 +687,14 @@ from .wake_timeline_event_data import WakeTimelineEventData
 from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_response import WakeTimelineResponse
+from .workflow_retry_spec import WorkflowRetrySpec
+from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
+from .workflow_spec import WorkflowSpec
+from .workflow_step_spec import WorkflowStepSpec
+from .workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
+from .workflow_step_spec_method import WorkflowStepSpecMethod
+from .workflow_trigger_spec import WorkflowTriggerSpec
+from .workflow_trigger_spec_type import WorkflowTriggerSpecType
 
 __all__ = (
     "AccountAppSecretResponse",
@@ -839,6 +855,8 @@ __all__ = (
     "CreateAppRequest",
     "CreateAppRequestAppProtocol",
     "CreateAppRequestEvictionPriority",
+    "CreateAppRequestExecutionMode",
+    "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestType",
     "CreateAppWebhookRequest",
@@ -1309,6 +1327,12 @@ __all__ = (
     "UpdateAppRequestEvictionPriorityType1",
     "UpdateAppRequestEvictionPriorityType2Type1",
     "UpdateAppRequestEvictionPriorityType3Type1",
+    "UpdateAppRequestExecutionModeType1",
+    "UpdateAppRequestExecutionModeType2Type1",
+    "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestRestartPolicyType1",
+    "UpdateAppRequestRestartPolicyType2Type1",
+    "UpdateAppRequestRestartPolicyType3Type1",
     "UpdateAppWebhookRequest",
     "UpdateAppWebhookRequestEventFilterItem",
     "UpdateAppWebhookRequestRetryPolicy",
@@ -1344,4 +1368,12 @@ __all__ = (
     "WakeTimelineJSONRow",
     "WakeTimelineJSONRowKind",
     "WakeTimelineResponse",
+    "WorkflowRetrySpec",
+    "WorkflowRetrySpecBackoff",
+    "WorkflowSpec",
+    "WorkflowStepSpec",
+    "WorkflowStepSpecInputType0",
+    "WorkflowStepSpecMethod",
+    "WorkflowTriggerSpec",
+    "WorkflowTriggerSpecType",
 )

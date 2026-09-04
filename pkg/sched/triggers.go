@@ -54,4 +54,8 @@ const (
 
 	// TriggerMirror — best-effort asynchronous preview/mirror admission.
 	TriggerMirror = "mirror"
+
+	// TriggerServiceReplica — replacement admission for a service deployment
+	// whose live count fell below its desired replica count.
+	TriggerServiceReplica = "service.replica"
 )

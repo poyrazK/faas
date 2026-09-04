@@ -1,7 +1,13 @@
 from typing import Literal
 
 IssueBrowserCSRFTokenAction = Literal[
-    "auth.logout", "auth.session.revoke", "auth.sessions.revoke_all", "mfa_confirm", "mfa_disable", "mfa_recover"
+    "auth.logout",
+    "auth.session.revoke",
+    "auth.sessions.revoke_all",
+    "mfa_confirm",
+    "mfa_disable",
+    "mfa_recover",
+    "set_password",
 ]
 
 ISSUE_BROWSER_CSRF_TOKEN_ACTION_VALUES: set[IssueBrowserCSRFTokenAction] = {
@@ -11,6 +17,7 @@ ISSUE_BROWSER_CSRF_TOKEN_ACTION_VALUES: set[IssueBrowserCSRFTokenAction] = {
     "mfa_confirm",
     "mfa_disable",
     "mfa_recover",
+    "set_password",
 }
 
 

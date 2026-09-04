@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // This slice targets the pure-logic surfaces in pkg/state that carry no
@@ -94,6 +96,19 @@ func TestAppManifestMarshalJSON(t *testing.T) {
 	}
 	if len(decoded.Entrypoint) != 2 || decoded.Port != 8080 || decoded.Healthz != "/healthz" {
 		t.Fatalf("round-trip manifest = %+v", decoded)
+	}
+	// Lifecycle-only manifests must not be collapsed to {}: app settings
+	// are persisted before the first deployment creates an entrypoint.
+	lifecycle := AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &ServiceReplicas{Min: 1, Max: 3, Desired: 2},
+	}
+	b, err = lifecycle.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) == "{}" {
+		t.Fatal("lifecycle-only manifest was collapsed to {}")
 	}
 }
 

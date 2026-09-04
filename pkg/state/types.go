@@ -1138,15 +1138,39 @@ func PreviewPrStateIsValid(s string) bool {
 	}
 }
 
-// AppManifest is the runner-scaffold payload. Stored as jsonb in Postgres;
-// lives inside the snapshot for guest-init.
+// ServiceReplicas is the desired-count policy for service-mode deployments.
+type ServiceReplicas struct {
+	Min     int `json:"min"`
+	Max     int `json:"max"`
+	Desired int `json:"desired"`
+}
+
+// AppManifest is the runner-scaffold and app-owned lifecycle payload. Stored
+// as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
+// image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
-	Entrypoint []string          `json:"entrypoint,omitempty"`
-	Env        map[string]string `json:"env,omitempty"`
-	WorkingDir string            `json:"working_dir,omitempty"`
-	Port       int               `json:"port,omitempty"`
-	Healthz    string            `json:"healthz,omitempty"`
-	User       string            `json:"user,omitempty"`
+	Entrypoint       []string          `json:"entrypoint,omitempty"`
+	Env              map[string]string `json:"env,omitempty"`
+	WorkingDir       string            `json:"working_dir,omitempty"`
+	Port             int               `json:"port,omitempty"`
+	Healthz          string            `json:"healthz,omitempty"`
+	User             string            `json:"user,omitempty"`
+	ExecutionMode    string            `json:"execution_mode,omitempty"`
+	RestartPolicy    string            `json:"restart_policy,omitempty"`
+	StartupDeadlineS int               `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int               `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas  `json:"service_replicas,omitempty"`
+}
+
+// IsZero reports whether the manifest carries no runner or lifecycle fields.
+// It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
+// app rows to persist a non-empty contract.
+func (m AppManifest) IsZero() bool {
+	return m.Entrypoint == nil && m.Env == nil && m.WorkingDir == "" &&
+		m.Port == 0 && m.Healthz == "" && m.User == "" &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" &&
+		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
+		m.ServiceReplicas == nil
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
@@ -1333,7 +1357,7 @@ type GitHubInstall struct {
 // round-trips cleanly.
 func (m AppManifest) MarshalJSON() ([]byte, error) {
 	type alias AppManifest
-	if m.Entrypoint == nil && m.Env == nil && m.WorkingDir == "" && m.Port == 0 && m.Healthz == "" && m.User == "" {
+	if m.IsZero() {
 		return []byte("{}"), nil
 	}
 	return json.Marshal(alias(m))
@@ -3825,9 +3849,9 @@ type CreditLedgerEntry struct {
 }
 
 // UpdateAppParams is the partial-update payload for PATCH /v1/apps/{slug}.
-// Nil pointers mean "leave unchanged" (only the slug/ram/idle/concurrency/
-// min_instances/status fields are user-mutable; type and runtime are
-// immutable).
+// Nil pointers mean "leave unchanged". Type and runtime remain immutable;
+// lifecycle fields are stored as an app-owned manifest patch alongside the
+// existing resource and scaling settings.
 type UpdateAppParams struct {
 	RAMMB          *int
 	IdleTimeoutS   *int // explicit 0 clears to plan default
