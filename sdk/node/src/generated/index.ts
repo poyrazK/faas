@@ -358,6 +358,10 @@ export type { WakeTimelineApp } from './models/WakeTimelineApp.js';
 export type { WakeTimelineEvent } from './models/WakeTimelineEvent.js';
 export type { WakeTimelineJSONRow } from './models/WakeTimelineJSONRow.js';
 export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
+export type { WorkflowRetrySpec } from './models/WorkflowRetrySpec.js';
+export type { WorkflowSpec } from './models/WorkflowSpec.js';
+export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
+export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';
 
 export { AccountService } from './services/AccountService.js';
 export { AdminService } from './services/AdminService.js';
