@@ -93,14 +93,14 @@ func cmdOpenapiDryRun(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	fmt.Fprintf(osStdout, "OpenAPI %s: %d endpoint(s)\n", resp.OpenAPIVersion, resp.EndpointCount)
+	_, _ = fmt.Fprintf(osStdout, "OpenAPI %s: %d endpoint(s)\n", resp.OpenAPIVersion, resp.EndpointCount)
 	if len(resp.Suggestions) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no uncovered routes)")
 		return 0
 	}
 	_, _ = fmt.Fprintln(osStdout, "Uncovered routes:")
 	for _, suggestion := range resp.Suggestions {
-		fmt.Fprintf(osStdout, "  %-32s %-20s %s\n", suggestion.Path, joinOpenapiMethods(suggestion.Methods), suggestion.Kind)
+		_, _ = fmt.Fprintf(osStdout, "  %-32s %-20s %s\n", suggestion.Path, joinOpenapiMethods(suggestion.Methods), suggestion.Kind)
 	}
 	return 0
 }
