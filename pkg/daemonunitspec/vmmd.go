@@ -88,18 +88,45 @@ func UnitVmmd() daemonunit.Unit {
 		// the node served 503 until an operator intervened. See
 		// docs/runbooks/FaasComputeNodeStuckInactive.md.
 		//
-		// MemoryHigh is the load-bearing half: it throttles and reclaims
-		// rather than killing, so a leak degrades vmmd instead of
-		// dropping the node. MemoryMax is the backstop that keeps the
-		// blast radius off gatewayd-internal's share of the slice.
-		// Steady-state RSS is ~20-50 MB, so these are 10-25x headroom.
+		// That growth is no longer undiagnosed, and MemoryHigh=512M /
+		// MemoryMax=1G (the first containment attempt) made things
+		// strictly worse. Both facts are measured:
 		//
-		// These are CONTAINMENT bounds, not a fix: 2.1 GB is ~40x steady
-		// state and looks like a leak or an unbounded buffer. That growth
-		// is still undiagnosed — capture a heap profile before restarting
-		// a fat vmmd.
-		MemoryHigh: "512M",
-		MemoryMax:  "1G",
+		//  1. The 2.1 GB was LocalCacheBackend.Put teeing a snapshot blob
+		//     into a bytes.Buffer — ~2x the blob with doubling growth.
+		//     Not a leak. Fixed by streaming that Put to a spool file.
+		//
+		//  2. A per-unit memory bound on vmmd does not measure vmmd.
+		//     tmpfs pages are charged to whichever cgroup WRITES them,
+		//     and vmmd populates each jail chroot on /srv/fc/jail (tmpfs)
+		//     with a ~400 MB layer.ext4 per instance. Verified on a live
+		//     node: writing 200 MB into the jail from a shell charged
+		//     user.slice, not vmmd, while vmmd's own shmem sat at 450 MB
+		//     of jail content it had written. So vmmd's cgroup carries
+		//     roughly (live instances x layer size), and a single Scale
+		//     instance already exceeded MemoryHigh=512M.
+		//
+		//     Worse, shmem with no swap is unreclaimable. MemoryHigh does
+		//     not throttle-and-reclaim against it, it spins: measured
+		//     pgscan 138,686,137 against pgsteal 2,494,654 (55 pages
+		//     scanned per page freed) with 2.1M refaults, because the only
+		//     evictable pages left were the executables' own text. Every
+		//     process vmmd forked thrashed on its own code — a `tc qdisc
+		//     add` sat in D state in filemap_fault for a full 35 s
+		//     cold-boot budget until it was killed. Lifting the bound live
+		//     took setup_network from 18,586 ms to 87 ms.
+		//
+		// So: no MemoryHigh (it cannot do its job against unreclaimable
+		// shmem), and MemoryMax deliberately equal to the slice ceiling —
+		// vmmd is bounded BY ITS SLICE, not by a tighter per-unit cap that
+		// would really be a cap on jail residency. imaged sets 4G on the
+		// same reasoning. The CI hardening gate still sees a MemoryMax.
+		//
+		// The remaining design smell is that jail tmpfs is charged to a
+		// 3 GB control-plane slice at all; sizing that properly (or moving
+		// the charge to the tenant scope, which widenSnapshotMemoryCgroup
+		// already does for the mem file) needs an ADR.
+		MemoryMax: FaasCPSliceMemoryMax,
 
 		// vmmd owns the node-local snapshot fan-out worker, so it must see
 		// the same shared OCI registry configuration as the control plane.

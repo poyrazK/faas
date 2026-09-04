@@ -33,12 +33,17 @@ Slice=faas-cp.slice
 # Keep in sync with pkg/daemonunitspec/vmmd.go — this role is NOT a
 # deployctl generate target (see defaultTargets in cmd/deployctl/main.go),
 # so the drift gate does not cover it. Full rationale lives in the spec;
-# short version: vmmd was the only gated daemon with no memory bound,
-# Delegate=yes does not put the microVMs in its cgroup (they live under
-# faas-tenant.slice), and an unbounded vmmd OOM-killed the shared 3 G
-# faas-cp.slice on 2026-09-03 and took the node out of rotation.
-MemoryHigh=512M
-MemoryMax=1G
+# short version: a per-unit memory bound on vmmd does not measure vmmd.
+# tmpfs pages are charged to whichever cgroup WRITES them, and vmmd
+# populates each jail chroot on /srv/fc/jail (tmpfs) with a ~400 MB
+# layer.ext4 per instance — so this cgroup carries roughly
+# (live instances x layer size). One Scale instance already exceeded the
+# old MemoryHigh=512M, and shmem without swap is unreclaimable, so
+# MemoryHigh could not reclaim: it spun (pgscan 138.7M vs pgsteal 2.5M)
+# and every process vmmd forked thrashed on its own text pages. A
+# `tc qdisc add` sat in D state for a full 35 s cold-boot budget.
+# MemoryMax is therefore the slice ceiling, not a tighter cap.
+MemoryMax=3G
 Delegate=yes
 
 AmbientCapabilities=CAP_NET_BIND_SERVICE
