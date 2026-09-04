@@ -11,6 +11,8 @@
 #     it live via `-w` so the running kernel inherits immediately.
 
 - name: grub — set cgroup karg and update-grub if needed
+  vars:
+    cgroup_extra_kargs: "" # platform-specific extras (e.g. intel_iommu=on) go here
   block:
     - name: grub — read current /proc/cmdline
       ansible.builtin.command: cat /proc/cmdline
@@ -39,8 +41,6 @@
         - "'cgroup_no_v1=0' not in grub_default.content | b64decode or 'systemd.unified_cgroup_hierarchy=1' not in grub_default.content | b64decode"
       notify: grub rebuild
 
-  vars:
-    cgroup_extra_kargs: "" # platform-specific extras (e.g. intel_iommu=on) go here
 
 - name: "grub — sysctl: disable unprivileged user namespaces (spec §11)"
   ansible.builtin.copy:

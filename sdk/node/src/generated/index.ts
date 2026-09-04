@@ -20,6 +20,7 @@ export type { AddTrustedSignerRequest } from './models/AddTrustedSignerRequest.j
 export type { AdminRefundResponse } from './models/AdminRefundResponse.js';
 export type { AdminSetGithubWebhookSecretRequest } from './models/AdminSetGithubWebhookSecretRequest.js';
 export type { AdminSetGithubWebhookSecretResponse } from './models/AdminSetGithubWebhookSecretResponse.js';
+export type { AdvanceCanaryRequest } from './models/AdvanceCanaryRequest.js';
 export type { AlertDeliveryResponse } from './models/AlertDeliveryResponse.js';
 export type { AlertPresetResponse } from './models/AlertPresetResponse.js';
 export type { AlertRuleResponse } from './models/AlertRuleResponse.js';
@@ -76,6 +77,7 @@ export type { BuildListResponse } from './models/BuildListResponse.js';
 export type { BuildPlan } from './models/BuildPlan.js';
 export type { BuildProvenanceResponse } from './models/BuildProvenanceResponse.js';
 export type { BuildResponse } from './models/BuildResponse.js';
+export type { CanaryAdvanceResponse } from './models/CanaryAdvanceResponse.js';
 export type { CanaryPresetSpec } from './models/CanaryPresetSpec.js';
 export type { CancelDeploymentRequest } from './models/CancelDeploymentRequest.js';
 export type { ChangeMemberRoleRequest } from './models/ChangeMemberRoleRequest.js';

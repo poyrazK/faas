@@ -146,7 +146,7 @@
 # This role owns the drop so the rule lives next to the scrape
 # config that references it. The postgres_backup role does NOT drop
 # rules (single source of truth per CLAUDE.md Component ownership).
-- name: prometheus — drop pg_backup.rules.yml (issue #250)
+- name: prometheus — drop pg_backup.rules.yml (issue # 250)
   ansible.builtin.copy:
     src: pg_backup.rules.yml
     dest: /etc/prometheus/pg_backup.rules.yml
@@ -200,7 +200,7 @@
 # tolerates a missing rule_files entry, so on a fresh checkout
 # before this task runs the alert is silently skipped — wired
 # into the rule_files: block at prometheus.yml.j2:17-22.
-- name: prometheus — drop data_placement.yaml (ADR-098 §9.A, issue #951)
+- name: prometheus — drop data_placement.yaml (ADR-098 §9.A, issue # 951)
   ansible.builtin.copy:
     src: ../../../../../pkg/promqlrules/data_placement.yaml
     dest: /etc/prometheus/data_placement.yaml

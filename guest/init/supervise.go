@@ -26,6 +26,7 @@ import (
 // the boot() glue waits on Run()'s return the same way it always has.
 type Supervisor struct {
 	Max     int                          // max restarts after the initial start
+	Policy  string                       // restart policy; empty preserves on-failure
 	Start   func() error                 // runs the app to completion; nil = clean exit
 	OnCrash func(attempt int, err error) // optional hook for logging/backoff
 
@@ -73,6 +74,11 @@ type Supervisor struct {
 	// idempotency to "this one workload's stop sequence" which is
 	// what the contract actually means.
 	stopOnce sync.Once
+
+	// stopRequested is set before the graceful-stop sequence starts. The
+	// supervisor checks it after Start returns so an intentional SIGTERM does
+	// not get mistaken for a crash and restarted under an `always` policy.
+	stopRequested atomic.Bool
 }
 
 // LastExitCode returns -1 if no fork has observed an exit yet;
@@ -197,6 +203,34 @@ func (s *Supervisor) trackRunErr(err error) {
 	s.lastRunErr.Store(&err)
 }
 
+// RequestStop marks the workload as intentionally stopping. It is separate
+// from Stop because the signal handler can receive a stop request before the
+// child has forked; in that case there is no process to signal, but Run must
+// still avoid starting a replacement after the current Start returns.
+func (s *Supervisor) RequestStop() {
+	s.stopRequested.Store(true)
+}
+
+// shouldRestart applies the OCI-style restart policy to one completed run.
+// An explicit stop always wins over the configured policy. Unknown and empty
+// policies fail open to the historical on-failure behavior so old manifests
+// remain compatible.
+func (s *Supervisor) shouldRestart(err error) bool {
+	if s.stopRequested.Load() {
+		return false
+	}
+	switch s.Policy {
+	case api.RestartPolicyNo:
+		return false
+	case api.RestartPolicyAlways, api.RestartPolicyUnlessStopped:
+		return true
+	case api.RestartPolicyOnFailure, "":
+		return err != nil
+	default:
+		return err != nil
+	}
+}
+
 // Run starts the app and supervises it. It returns nil if the app ever exits
 // cleanly, or the last error once the restart budget is exhausted.
 //
@@ -207,6 +241,10 @@ func (s *Supervisor) trackRunErr(err error) {
 func (s *Supervisor) Run() error {
 	restarts := 0
 	for {
+		if s.stopRequested.Load() {
+			s.trackRunErr(nil)
+			return nil
+		}
 		err := s.Start()
 		// Record the most-recent exit (or -1) so characterize can
 		// surface it on the report. Mirrors what Run sees.
@@ -220,11 +258,20 @@ func (s *Supervisor) Run() error {
 		} else {
 			s.trackExit(0)
 		}
-		if err == nil {
-			s.trackRunErr(nil)
-			return nil // clean exit; nothing to supervise
+		if !s.shouldRestart(err) {
+			if err == nil || s.stopRequested.Load() {
+				s.trackRunErr(nil)
+				return nil
+			}
+			s.trackRunErr(err)
+			return err
 		}
 		if restarts >= s.Max {
+			if err == nil {
+				final := fmt.Errorf("app restart budget exhausted after %d restart(s)", restarts)
+				s.trackRunErr(final)
+				return final
+			}
 			final := fmt.Errorf("app crash-looped after %d restart(s): %w", restarts, err)
 			s.trackRunErr(final)
 			return final
@@ -255,6 +302,7 @@ func (s *Supervisor) Run() error {
 //   - ctx is cancelled → SIGKILL is sent immediately (the grace
 //     timer is overridden by ctx.Done).
 func (s *Supervisor) Stop(ctx context.Context, sig syscall.Signal, grace time.Duration) error {
+	s.RequestStop()
 	cmd := s.lastCmd.Load()
 	if cmd == nil || cmd.Process == nil {
 		return nil // no fork yet — nothing to stop

@@ -115,6 +115,17 @@ var AllowedAlertRuleMetrics = []string{
 	"deployment_failed",
 	"cert_expiry_seconds",
 	"queue_depth",
+	// SAFE-RELEASES-OBS PR-B (issue #976 / ADR-122): 4 new
+	// Prometheus-counter-backed tripwires for the canary/safedeploy
+	// lifecycle. The actual firing happens in Prometheus against
+	// the wire.OpsMetrics counters; the catalog entry exists so
+	// customers see the presets in /dashboard/alerts and the
+	// handler validates the rule.metric. Operators only — gated
+	// by minimum_plan = 'scale' in migrations/20260905000000001.
+	"canary_stuck_step",
+	"safedeploy_audit_emit_failing",
+	"deployment_audit_gc_failing",
+	"canary_fleet_in_flight_high",
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.

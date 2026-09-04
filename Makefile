@@ -147,7 +147,7 @@ generate: ## (re)generate systemd unit files + daemons.json from pkg/daemonunits
 	$(GO) run ./cmd/deployctl/ generate
 
 .PHONY: generate-check
-generate-check: ## CI gate: assert generated == committed for the 3 deploy trees + daemons.json
+generate-check: ## CI gate: assert generated == committed for every deploy tree (legacy + 7 ansible roles) + daemons.json
 	$(GO) run ./cmd/deployctl/ check
 
 .PHONY: generate-diff
@@ -557,8 +557,29 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/preflight.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/bootstrap.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/site.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/verify.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/scale_check.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/fleet_runner.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join_control_plane.yml --syntax-check
+
+.PHONY: ansible-lint
+ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143
+	cd deploy/ansible && ansible-lint --offline --nocolor .
+
+.PHONY: ansible-scale-check
+ansible-scale-check: ## Render the example manifest and RUN scale_check.yml (not just --syntax-check) — ADR-143
+	test -x ./bin/gregalectl || $(GO) build -o ./bin/gregalectl ./cmd/gregalectl
+	rm -rf .cache/ansible-scale-check && ./bin/gregalectl manifest ansible --manifest-file deploy/manifest/examples/splitbox.example.yaml --output-dir $(CURDIR)/.cache/ansible-scale-check
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i $(CURDIR)/.cache/ansible-scale-check/inventory/hosts.ini scale_check.yml
+
+.PHONY: env-contract-check
+env-contract-check: ## Every FAAS_* a daemon reads is declared + delivered; docs/ops/env-contract.md in sync — ADR-143
+	$(GO) test -count=1 ./pkg/daemonunitspec/ -run 'TestEnvContract|TestDaemonsYAML'
+
+.PHONY: verify-fleet
+verify-fleet: ## Strict post-activation verification: every required daemon enabled, active, probe-answering; gregalectl doctor — ADR-143
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/verify.yml
 
 .PHONY: bootstrap-observability
 bootstrap-observability: ## Deploy the off-host Loki backend and FaaS Promtail shippers

@@ -127,12 +127,13 @@
     mode: '0644'
   register: mha_service_file
 
-- name: metal-h2c-acceptance — reload systemd after unit changes
+- name: metal-h2c-acceptance — reload systemd after unit changes  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: mha_service_file.changed
 
 - name: metal-h2c-acceptance — provision the five fixture apps
+  changed_when: true
   ansible.builtin.shell: "{{ mha_fixture_provision_command }}"
   args:
     executable: /bin/bash

@@ -250,6 +250,21 @@ func staticEgressIPString(ip *netip.Addr) string {
 	return ip.String()
 }
 
+// startupDeadlineForApp resolves the readiness budget at the scheduler
+// boundary. The manifest stores an optional customer override; zero inherits
+// the plan default. Returning zero for an unknown plan preserves the vmmd
+// default for legacy/test callers instead of inventing a budget here.
+func startupDeadlineForApp(app state.App, plan api.Plan) int32 {
+	if app.Manifest.StartupDeadlineS > 0 {
+		return int32(app.Manifest.StartupDeadlineS)
+	}
+	limits, ok := api.LimitsFor(plan)
+	if !ok || limits.DefaultStartupDeadlineS <= 0 {
+		return 0
+	}
+	return int32(limits.DefaultStartupDeadlineS)
+}
+
 // Notifier is the pg_notify surface the engine needs. db.Notify (pool-backed)
 // satisfies it via poolNotifier; tests inject a fake.
 type Notifier interface {
@@ -452,6 +467,11 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// serviceAppMu serialises service replica allocation across all live
+	// deployments for an app. It is distinct from appMu because replica
+	// reconciliation invokes admission, which acquires appMu itself, and
+	// from serviceMu, which protects one deployment's state transition.
+	serviceAppMu map[string]*sync.Mutex
 	// serviceMu serialises replica reconciliation per deployment. It is
 	// separate from appMu because reconciliation invokes admission, which
 	// must acquire appMu itself.
@@ -644,6 +664,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		fcVer:           fcVer,
 		log:             log,
 		appMu:           map[string]*sync.Mutex{},
+		serviceAppMu:    map[string]*sync.Mutex{},
 		serviceMu:       map[string]*sync.Mutex{},
 		wakeCoord:       newWakeCoord(),
 		warmBroadcaster: newWarmHintBroadcaster(),
@@ -2313,7 +2334,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
-		Plan:       acct.Plan, AccountID: acct.ID,
+		// M-3: resolve the optional app override against the account's
+		// plan before crossing the scheduler/vmmd boundary.
+		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
+		Plan:             acct.Plan, AccountID: acct.ID,
 		SealedEnv: sealedEnv,
 		Sidecars:  sidecars,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
@@ -3870,10 +3894,13 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		VCPUCount:  int32(limits.VCPU),
 		MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
-		Plan:       acct.Plan,
-		AccountID:  acct.ID,
-		SealedEnv:  sealedEnv,
-		Sidecars:   sidecars,
+		// M-3: migration must preserve the same readiness budget as the
+		// original wake, including a manifest override.
+		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
+		Plan:             acct.Plan,
+		AccountID:        acct.ID,
+		SealedEnv:        sealedEnv,
+		Sidecars:         sidecars,
 		// ADR-045: api_env plaintext layer; the loadAPIEnv
 		// helper already fail-softs on a lookup error and logs
 		// Warn (engine.go:2382-2396). A hiccup here ships an
@@ -4332,7 +4359,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
-		Plan:       acct.Plan, AccountID: acct.ID,
+		// M-3: deploy prime uses the same plan-resolved readiness budget
+		// as ordinary wakes, so first boot and later wakes agree.
+		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
+		Plan:             acct.Plan, AccountID: acct.ID,
 		SealedEnv: sealedEnv,
 		Sidecars:  sidecars,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
@@ -4482,7 +4512,17 @@ func (e *Engine) Park(ctx context.Context, instanceID string) error {
 		return err
 	}
 	defer e.unlockApp(ins.AppID)
-	return e.snapshotAndPark(ctx, *ins)
+	if err := e.snapshotAndPark(ctx, *ins); err != nil {
+		return err
+	}
+	// Park is also used by operator and quota paths, not only the request
+	// reaper. A service replica that reaches PARKED through one of those paths
+	// must still trigger the desired-count reconciler; otherwise the service
+	// can remain below its configured floor without another lifecycle event.
+	if ins.Mode == string(state.InstanceModeService) {
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	}
+	return nil
 }
 
 // ParkWithReason is the meterd-triggered variant (M7, spec §4.7). It

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api/canary"
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
@@ -1503,6 +1505,16 @@ type DeploymentAuditResponse struct {
 	Actor     string          `json:"actor"`
 	Data      json.RawMessage `json:"data,omitempty"`
 	AccountID string          `json:"account_id,omitempty"`
+	// AlertRuleID (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
+	// is the alert_rule.id that triggered this audit row when
+	// non-nil. Closed set: nil for orchestrator-lifecycle rows
+	// (deploy.rollout_*, deploy.canary_step_advanced); non-nil
+	// for the deploy.alert_rule_fired + rollback/demote/promote
+	// paths. The /dashboard/alerts/{id} handler uses this to
+	// reverse-link from the audit timeline back to the firing
+	// rule. Wire-additive per ADR-016 (pre-PR consumers see no
+	// field; post-PR consumers see "alert_rule_id": "<uuid>").
+	AlertRuleID *uuid.UUID `json:"alert_rule_id,omitempty"`
 }
 
 // ListDeploymentAuditResponse is the paginated wrapper for
@@ -1855,6 +1867,22 @@ type UpdateDeploymentTrafficRequest struct {
 	TrafficPercent int `json:"traffic_percent"`
 }
 
+// AdvanceCanaryRequest is the compare-and-swap body for
+// POST /v1/deployments/{id}/canary/advance. The server derives the next
+// traffic percentage from the deployment's persisted canary preset; the
+// caller only supplies the step it observed, so a stale or concurrent worker
+// cannot choose an arbitrary traffic value.
+type AdvanceCanaryRequest struct {
+	ExpectedStep int `json:"expected_step"`
+}
+
+// CanaryAdvanceResponse carries the atomically advanced deployment and the
+// deployment_audit row id written in the same transaction.
+type CanaryAdvanceResponse struct {
+	Deployment DeploymentResponse `json:"deployment"`
+	AuditID    string             `json:"audit_id"`
+}
+
 // CreateMirrorRuleRequest is the body for
 // POST /v1/apps/{slug}/mirrors (issue #72 / ADR-125 traffic
 // mirroring PR-A2). The (SourceDeploymentID, MirrorDeploymentID)
@@ -2036,6 +2064,18 @@ type RollbackRequest struct {
 	// deployment is rejected explicitly). Nil/empty falls back to the
 	// most-recent superseded deployment (legacy behaviour).
 	TargetDeploymentID *string `json:"target_deployment_id,omitempty"`
+
+	// AlertRuleID (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122):
+	// when set, the handler stamps the deployment_audit row's
+	// alert_rule_id column with this UUID so an operator can click
+	// through from the audit timeline to /dashboard/alerts/{id} and
+	// see which alert rule triggered the auto-rollback. Wire-additive
+	// per ADR-016; the field is ignored when nil/empty (legacy
+	// operator-driven rollbacks carry no rule attribution). Only
+	// privileged in-process callers (ActionDispatcher via meterd)
+	// set this; the API does not enforce role because the
+	// underlying endpoint already requires MFA + ScopesDeployWrite.
+	AlertRuleID *string `json:"alert_rule_id,omitempty"`
 }
 
 // AccountResponse is the whoami payload. Limits is the plan's

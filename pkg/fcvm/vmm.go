@@ -457,11 +457,11 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if spec.SkipReady {
 		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON)
 	}
-	return v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON)
+	return v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON)
 }
 
 func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) error {
-	return v.boot(ctx, l, cfg, true, "", workloads, secretsEnvJSON, apiEnvJSON)
+	return v.boot(ctx, l, cfg, true, "", 0, workloads, secretsEnvJSON, apiEnvJSON)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -475,17 +475,18 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // per-deployment override readiness probe path. Empty keeps the legacy
 // TCP-accept on :8080 (pre-PR-D default). Non-empty → waitReady does
 // HTTP GET <healthcheckPath> against <HostIP>:8080 and accepts 2xx as
-// ready. The BootColdBoot wrapper threads ColdBootSpec.HealthcheckPath
-// into this parameter; tests that already have resolved paths in hand
-// can pass "" to keep the legacy probe.
+// ready. startupDeadlineS is the plan-resolved per-app readiness budget;
+// zero preserves the vmmd default for legacy callers. The BootColdBoot
+// wrapper threads both fields from ColdBootSpec; tests that already have
+// resolved paths in hand can pass "" to keep the legacy probe.
 //
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath, nil, nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, nil, nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) (err error) {
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
 		return err
@@ -540,7 +541,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	// vsockUDSSock is created by the time startJailer returns. No
 	// post-start PUT needed.
 	if !skipReady {
-		if err = v.waitReady(ctx, l, healthcheckPath); err != nil {
+		if err = v.waitReady(ctx, l, healthcheckPath, startupDeadlineS); err != nil {
 			return fmt.Errorf("vmm: readiness: %w", err)
 		}
 	}
@@ -855,7 +856,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return fmt.Errorf("vmm: resume hook: %w", err)
 	}
 	tResume := time.Now()
-	if err = v.waitReady(ctx, l, spec.HealthcheckPath); err != nil {
+	if err = v.waitReady(ctx, l, spec.HealthcheckPath, spec.StartupDeadlineS); err != nil {
 		return fmt.Errorf("vmm: readiness after restore: %w", err)
 	}
 	tReady := time.Now()
@@ -3003,8 +3004,16 @@ func (v *JailerVMM) ownChrootRoot(root string, l Lease) error {
 // is the canonical app_not_listening detection; the HTTP probe that
 // never returns 2xx is app_startup_timeout (the app may be up but
 // the healthcheck is wrong — distinct failure).
-func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath string) error {
-	deadline := time.Now().Add(v.readyTimeout)
+func readyTimeoutFor(defaultTimeout time.Duration, startupDeadlineS ...int) time.Duration {
+	if len(startupDeadlineS) > 0 && startupDeadlineS[0] > 0 {
+		return time.Duration(startupDeadlineS[0]) * time.Second
+	}
+	return defaultTimeout
+}
+
+func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS ...int) error {
+	readyTimeout := readyTimeoutFor(v.readyTimeout, startupDeadlineS...)
+	deadline := time.Now().Add(readyTimeout)
 	addr := net.JoinHostPort(l.HostIP.String(), "8080")
 	// issue #517 / PR-C / ADR-064 — stamp the readiness probe start
 	// so the wake.readiness_200 emit can carry the elapsed_ms
@@ -3041,7 +3050,7 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 				connRefusedCount++
 			}
 			if time.Now().After(deadline) {
-				return v.notReadyProblem(l, healthcheckPath, connRefusedCount)
+				return v.notReadyProblem(l, healthcheckPath, connRefusedCount, readyTimeout)
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -3060,7 +3069,7 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 		if time.Now().After(deadline) {
 			return api.NewProblem(422, api.CodeAppStartupTimeout,
 				"app did not become ready in time",
-				fmt.Sprintf("guest %s not ready (healthcheck %s) after %s", l.Instance, healthcheckPath, v.readyTimeout))
+				fmt.Sprintf("guest %s not ready (healthcheck %s) after %s", l.Instance, healthcheckPath, readyTimeout))
 		}
 		probeCount++
 		if ok, err := healthcheckProbe(ctx, client, addr, healthcheckPath); err == nil && ok {
@@ -3088,16 +3097,20 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 // HTTP GET path on healthcheckPath != ""). The whycopy catalog's
 // Observed renderer templates the port into the Why field so the
 // customer sees the literal ":8080" in the failure response.
-func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefusedCount int) *api.Problem {
+func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefusedCount int, timeout ...time.Duration) *api.Problem {
+	readyTimeout := v.readyTimeout
+	if len(timeout) > 0 && timeout[0] > 0 {
+		readyTimeout = timeout[0]
+	}
 	if connRefusedCount > 0 {
 		return api.NewProblem(422, api.CodeAppNotListening,
 			"no process listening on $PORT",
 			fmt.Sprintf("readiness probe dialed :8080 and got ECONNREFUSED on every attempt (refused_count=%d, deadline=%s, instance=%s)",
-				connRefusedCount, v.readyTimeout, l.Instance))
+				connRefusedCount, readyTimeout, l.Instance))
 	}
 	return api.NewProblem(422, api.CodeAppStartupTimeout,
 		"app did not become ready in time",
-		fmt.Sprintf("guest %s not ready after %s (no probes connected)", l.Instance, v.readyTimeout))
+		fmt.Sprintf("guest %s not ready after %s (no probes connected)", l.Instance, readyTimeout))
 }
 
 // isConnRefusedErr returns true when the dial error is the kernel's

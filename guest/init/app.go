@@ -16,9 +16,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// MaxRestarts is the supervisor's crash-loop budget (spec §4.8: restart ≤3, then
-// the VM exits and schedd marks the instance FAILED).
+// MaxRestarts is the legacy/default supervisor crash-loop budget. New
+// manifests may override it with AppManifest.MaxRetries; zero means inherit
+// this compatibility default because the guest does not carry plan context.
 const MaxRestarts = 3
+
+// supervisorPolicyFromManifest resolves the guest-side portion of the
+// lifecycle contract. The API validates the closed-set policy and plan caps
+// before the manifest reaches the guest; this helper only supplies the
+// backwards-compatible default for old layers and zero-valued fields.
+func supervisorPolicyFromManifest(m api.AppManifest) (string, int) {
+	max := m.MaxRetries
+	if max <= 0 {
+		max = MaxRestarts
+	}
+	return m.EffectiveRestartPolicy(), max
+}
 
 // BuildEnv merges the manifest env over a base environment and returns a
 // deterministic, deduplicated "KEY=VALUE" slice suitable for execve. Manifest

@@ -6,7 +6,7 @@
 // imports pkg/api for the DeploymentResponse wire shape but does
 // NOT import pkg/state (it talks to the store via a Store interface
 // declared in this file, satisfied by pkg/state.Store's
-// ListCanaryInFlight + AppendDeploymentAudit). The reason pkg/canary
+// ListCanaryInFlight). The reason pkg/canary
 // avoids the concrete pkg/state: cmd/meterd wires both packages and
 // the meterd runtime must compile cleanly even when the meterd
 // binary is cross-compiled to a machine without /dev/kvm (the
@@ -14,9 +14,9 @@
 //
 // Once(ctx) is the single method cmd/meterd calls per tick. It walks
 // state.ListCanaryInFlight, computes the next step on a wall-clock
-// boundary, calls apid's PatchDeploymentsIdTraffic (apid-authoritative
-// per CLAUDE.md ownership), stamps rollout_state='complete' on the
-// terminal step, and emits one deployment_audit row per transition.
+// boundary, calls APID's atomic AdvanceCanary endpoint (apid-authoritative
+// per CLAUDE.md ownership), which stamps traffic, canary state, terminal
+// rollout state, and the deployment_audit row together.
 // Per-row failures log + skip so a single broken canary never halts
 // the tick.
 package canary
@@ -40,7 +40,6 @@ import (
 // their own method sets.
 type Store interface {
 	ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error)
-	AppendDeploymentAudit(ctx context.Context, entry AuditEntry) (int64, error)
 }
 
 // CanaryRow is the subset of state.Deployment the runtime reads.
@@ -51,7 +50,6 @@ type Store interface {
 type CanaryRow struct {
 	ID                string
 	AppID             string
-	AccountID         string
 	CanaryPreset      string
 	CanaryStep        int
 	CanaryTotalSteps  int
@@ -67,40 +65,27 @@ type CanaryRow struct {
 	CanaryStages json.RawMessage
 }
 
-// AuditEntry is the subset of state.DeploymentAudit the runtime
-// writes. pkg/state.MemStore + PgStore accept a partial shape via a
-// concrete wrapper at the meterd seam.
-type AuditEntry struct {
-	DeploymentID string
-	AccountID    string
-	Kind         string
-	Actor        string
-	Data         json.RawMessage
-}
-
 // APIDClient is the slice of pkg/api.Client the runtime needs to
 // shift traffic. Declared locally so pkg/canary can be tested with
 // a fake client.
 type APIDClient interface {
-	PatchDeploymentsIdTraffic(ctx context.Context, id string, percent int) (api.DeploymentResponse, error)
+	AdvanceCanary(ctx context.Context, id string, expectedStep int) (api.CanaryAdvanceResponse, error)
 }
 
 // Progression drives the canary_progression tick. Construct via
 // NewProgression in cmd/meterd; tests build one inline.
 type Progression struct {
-	Store   Store
-	APID    APIDClient
-	Ops     *wire.OpsMetrics
-	Log     *slog.Logger
-	Now     func() time.Time
-	Actor   string // service-account UUID stamped into the audit row
-	Account string // service-account account_id stamped into the audit row
+	Store Store
+	APID  APIDClient
+	Ops   *wire.OpsMetrics
+	Log   *slog.Logger
+	Now   func() time.Time
 }
 
 // NewProgression builds a Progression with nil-coerced Log / Now so
 // a misconfigured daemon cannot silently skip audit emits (the
 // runtime fails-soft via log.Warn; tests assert the audit emit).
-func NewProgression(store Store, apid APIDClient, ops *wire.OpsMetrics, log *slog.Logger, actor, account string) *Progression {
+func NewProgression(store Store, apid APIDClient, ops *wire.OpsMetrics, log *slog.Logger) *Progression {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -108,13 +93,11 @@ func NewProgression(store Store, apid APIDClient, ops *wire.OpsMetrics, log *slo
 		ops = wire.NewOpsMetrics("meter_test")
 	}
 	return &Progression{
-		Store:   store,
-		APID:    apid,
-		Ops:     ops,
-		Log:     log,
-		Now:     time.Now,
-		Actor:   actor,
-		Account: account,
+		Store: store,
+		APID:  apid,
+		Ops:   ops,
+		Log:   log,
+		Now:   time.Now,
 	}
 }
 
@@ -131,17 +114,14 @@ func NewProgression(store Store, apid APIDClient, ops *wire.OpsMetrics, log *slo
 //     skip (defensive — the predicate in ListCanaryInFlight should
 //     have excluded it).
 //  3. Compute next step = canary_step + 1. If next >= total, this
-//     is the terminal step → set rollout_state='complete' on the
-//     patch.
+//     is the terminal step → APID completes the rollout in the same write.
 //  4. Compare elapsed = Now() - canary_step_started_at against the
 //     current stage's Duration. If < Duration → still on this step,
 //     skip.
-//  5. Call APID.PatchDeploymentsIdTraffic(deployment_id, stage.Percent).
-//     On error → log warn + skip.
-//  6. Emit one deploy.traffic_changed audit row via
-//     Store.AppendDeploymentAudit with the from/to percent payload.
-//  7. Increment ops.CanaryProgressionAdvancedTotal() (or
-//     CompletedTotal on the terminal step).
+//  5. Call APID.AdvanceCanary(deployment_id, expected_step).
+//     APID derives the next percentage and commits the CAS + traffic + audit
+//     atomically. On error → log warn + skip.
+//  6. Increment ops.CanaryProgressionAdvancedTotal().
 func (p *Progression) Once(ctx context.Context) (Stats, error) {
 	if p.Store == nil {
 		return Stats{}, errors.New("canary: nil Store")
@@ -239,7 +219,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 				"canary_step", row.CanaryStep,
 				"canary_total_steps", row.CanaryTotalSteps)
 			if p.Ops != nil {
-				p.Ops.CanaryProgressionZeroTimestampTotal()()
+				if c := p.Ops.CanaryProgressionZeroTimestampTotal(); c != nil {
+					c.Inc()
+				}
 			}
 		}
 		elapsed := now.Sub(row.CanaryStepStarted)
@@ -247,56 +229,28 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 			stats.SkippedNotElapsed++
 			continue
 		}
-		// Advance: PATCH traffic to nextStage.Percent. The terminal
-		// step's PATCH is also routed here (nextStep = total - 1,
-		// nextStage.Percent = 100, Duration = 0); the apid
-		// PatchDeploymentsIdTraffic handler does the Σ=100
-		// redistribution.
-		if _, err := p.APID.PatchDeploymentsIdTraffic(ctx, row.ID, nextStage.Percent); err != nil {
-			p.Log.Warn("canary: patch traffic failed",
+		// Advance through APID's atomic state transition. The endpoint
+		// derives nextStage.Percent from the persisted preset, so the
+		// runtime cannot apply a stale or caller-invented traffic value.
+		if _, err := p.APID.AdvanceCanary(ctx, row.ID, row.CanaryStep); err != nil {
+			p.Log.Warn("canary: advance failed",
 				"deployment_id", row.ID, "to_percent", nextStage.Percent, "err", err)
 			stats.Errors++
 			if p.Ops != nil {
-				p.Ops.CanaryProgressionErrorsTotal("patch_traffic")()
+				if c := p.Ops.CanaryProgressionErrorsTotal("advance"); c != nil {
+					c.Inc()
+				}
 			}
 			continue
 		}
-		// Audit emit (one row per transition).
-		data, _ := json.Marshal(map[string]any{
-			"deployment_id": row.ID,
-			"app_id":        row.AppID,
-			"from_percent":  currentStage.Percent,
-			"to_percent":    nextStage.Percent,
-			"from_step":     row.CanaryStep,
-			"to_step":       nextStep,
-			"canary_preset": row.CanaryPreset,
-			"actor":         "canary_progression",
-			"at":            now.UTC().Format(time.RFC3339Nano),
-		})
-		_, auditErr := p.Store.AppendDeploymentAudit(ctx, AuditEntry{
-			DeploymentID: row.ID,
-			AccountID:    row.AccountID,
-			Kind:         "deploy.traffic_changed",
-			Actor:        p.actorOrDefault(),
-			Data:         data,
-		})
-		if auditErr != nil {
-			// The patch already landed — a failed audit is logged
-			// but not propagated. The orchestrator (commit 5) does
-			// not depend on this row; the deployment_audit table is
-			// for timeline visibility.
-			p.Log.Warn("canary: append audit failed",
-				"deployment_id", row.ID, "err", auditErr)
-		}
 		stats.Advanced++
 		if p.Ops != nil {
-			p.Ops.CanaryProgressionAdvancedTotal()()
+			if c := p.Ops.CanaryProgressionAdvancedTotal(row.CanaryPreset); c != nil {
+				c.Inc()
+			}
 		}
-		// Terminal step flip: the orchestrator (commit 5) writes
-		// rollout_state='complete' on its own walk; we don't
-		// duplicate the write here to avoid two writers racing on
-		// the same column. The next-list predicate excludes
-		// complete rows so we just step out.
+		// APID owns the terminal rollout_state transition; the next
+		// list predicate excludes complete rows.
 	}
 	return stats, nil
 }
@@ -306,13 +260,6 @@ func (p *Progression) now() time.Time {
 		return time.Now()
 	}
 	return p.Now()
-}
-
-func (p *Progression) actorOrDefault() string {
-	if p.Actor == "" {
-		return "meterd:canary_progression"
-	}
-	return p.Actor
 }
 
 // Stats is the per-tick observation surface for ops + tests.

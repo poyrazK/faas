@@ -2,9 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AdvanceCanaryRequest } from '../models/AdvanceCanaryRequest.js';
 import type { BuildListResponse } from '../models/BuildListResponse.js';
 import type { BuildProvenanceResponse } from '../models/BuildProvenanceResponse.js';
 import type { BuildResponse } from '../models/BuildResponse.js';
+import type { CanaryAdvanceResponse } from '../models/CanaryAdvanceResponse.js';
 import type { CancelDeploymentRequest } from '../models/CancelDeploymentRequest.js';
 import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
@@ -133,7 +135,7 @@ export class DeploymentsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `code: invalid_ref | validation_failed. ref must be a 40-char
+        400: `code: invalid_ref | validation_failed. ref must be a valid 40-char
         SHA, branch, or tag.
         `,
         401: `code: unauthorized`,
@@ -366,7 +368,7 @@ export class DeploymentsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Plan tier gate tripped (Hobby / Free).`,
+        403: `Canary traffic splitting is unavailable on the Hobby / Free plan.`,
         404: `code: not_found`,
         409: `one of: rollout_not_stuck | rollout_state_invalid`,
         422: `action ∉ {advance, promote, abort} (closed-set check).`,
@@ -704,6 +706,50 @@ export class DeploymentsService {
         outside the inclusive \`[0, 100]\` range. Stable code
         \`invalid_traffic_percent\`.
         `,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Advance one persisted canary stage.
+   * Atomically advances the deployment's canary ladder by one stage.
+   * The caller supplies the canary_step it observed; APID resolves the
+   * next percentage from the deployment's persisted preset and rejects
+   * stale workers with `409 canary_step_conflict`. The state transition,
+   * sibling traffic rebalance, terminal promotion, and deployment audit
+   * row are committed together. Pro/Scale only — Free/Hobby are rejected
+   * at 403 `plan_traffic_split_not_allowed`.
+   *
+   * @returns CanaryAdvanceResponse The atomically advanced deployment and audit row id.
+   * @throws ApiError
+   */
+  public static advanceDeploymentCanary({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: AdvanceCanaryRequest,
+  }): CancelablePromise<CanaryAdvanceResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/canary/advance',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Plan tier gate tripped (Hobby / Free).`,
+        404: `code: not_found`,
+        409: `Stale canary step, invalid rollout state, or traffic sum conflict.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

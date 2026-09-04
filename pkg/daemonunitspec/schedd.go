@@ -70,6 +70,13 @@ func UnitSchedd() daemonunit.Unit {
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/schedd/schedd.env -/etc/faas/storage.env",
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/var/lib/faas/oci-tmp"},
+			// ADR-143: every production gate is declared, never implied.
+			// Jobs dispatch stays OFF until the vmmd job RPC lands
+			// (Mega-1.5; cmd/schedd/main.go wires the fail-open stub).
+			// Flip to "1" in the same PR that ships the RPC. Without an
+			// explicit value the daemon logged "disabled" on every boot
+			// and `POST /v1/jobs/{name}/runs` rows sat pending forever.
+			{Key: "FAAS_JOBS_DISPATCH", Value: "0"},
 		},
 
 		NoNewPrivileges:       true,

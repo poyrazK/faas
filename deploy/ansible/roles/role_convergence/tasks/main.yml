@@ -20,6 +20,10 @@
       control_plane or compute_nodes inventory; the legacy single-box path
       is not supported for production hosts.
 
+- name: role_convergence — load the daemon topology (shared with fleet_verify)
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/daemons.yml"
+
 - name: role_convergence — select the allowed daemon set
   ansible.builtin.set_fact:
     faas_role_allowed_units: >-
@@ -112,7 +116,7 @@
   loop_control:
     label: "{{ item.item }}"
 
-- name: role_convergence — verify forbidden services are inactive
+- name: role_convergence — verify forbidden services are inactive  # noqa: command-instead-of-module (read-only query / no module equivalent)
   ansible.builtin.command: "systemctl is-active {{ item }}"
   register: faas_forbidden_states
   changed_when: false

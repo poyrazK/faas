@@ -31,6 +31,163 @@ func TestInstanceModeForApp(t *testing.T) {
 	}
 }
 
+func TestClassifyServiceReplicasSeparatesReadiness(t *testing.T) {
+	replicas := []state.Instance{
+		{Mode: string(state.InstanceModeService), State: string(state.StateRunning)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateWaking)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateColdBooting)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateSnapshotting)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateMigrating)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateParked)},
+		{Mode: string(state.InstanceModeService), State: string(state.StateFailed)},
+	}
+
+	got := classifyServiceReplicas(replicas)
+	if got.ready != 1 || got.starting != 2 || got.draining != 2 || got.unavailable != 2 {
+		t.Fatalf("service replica status = %+v, want ready:1 starting:2 draining:2 unavailable:2", got)
+	}
+	if got.inFlight() != 4 || got.managed() != 5 {
+		t.Fatalf("service replica capacity = in_flight:%d managed:%d, want in_flight:4 managed:5", got.inFlight(), got.managed())
+	}
+}
+
+func TestAllocateServiceReplicaTargets(t *testing.T) {
+	tests := []struct {
+		name    string
+		deploys []state.Deployment
+		desired int
+		want    map[string]int
+	}{
+		{
+			name: "single generation keeps full target",
+			deploys: []state.Deployment{
+				{ID: "stable", TrafficPercent: 100},
+			},
+			desired: 3,
+			want:    map[string]int{"stable": 3},
+		},
+		{
+			name: "weighted canary",
+			deploys: []state.Deployment{
+				{ID: "canary", TrafficPercent: 25},
+				{ID: "stable", TrafficPercent: 75},
+			},
+			desired: 4,
+			want:    map[string]int{"canary": 1, "stable": 3},
+		},
+		{
+			name: "positive generations get a warm floor",
+			deploys: []state.Deployment{
+				{ID: "canary", TrafficPercent: 1},
+				{ID: "stable", TrafficPercent: 99},
+			},
+			desired: 3,
+			want:    map[string]int{"canary": 1, "stable": 2},
+		},
+		{
+			name: "small target favors higher traffic",
+			deploys: []state.Deployment{
+				{ID: "canary", TrafficPercent: 10},
+				{ID: "stable", TrafficPercent: 90},
+			},
+			desired: 1,
+			want:    map[string]int{"canary": 0, "stable": 1},
+		},
+		{
+			name: "invalid split prefers newest generation",
+			deploys: []state.Deployment{
+				{ID: "newest", TrafficPercent: 0},
+				{ID: "older", TrafficPercent: 0},
+			},
+			desired: 2,
+			want:    map[string]int{"newest": 2, "older": 0},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := allocateServiceReplicaTargets(tt.deploys, tt.desired)
+			for id, want := range tt.want {
+				if got[id] != want {
+					t.Errorf("target[%q] = %d, want %d", id, got[id], want)
+				}
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("target map has %d entries, want %d: %+v", len(got), len(tt.want), got)
+			}
+			sum := 0
+			for _, target := range got {
+				sum += target
+			}
+			if sum != tt.desired {
+				t.Fatalf("allocated replicas = %d, want %d: %+v", sum, tt.desired, got)
+			}
+		})
+	}
+}
+
+func TestReconcileServiceApp_AllocatesAcrossLiveGenerations(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanPro, 128, 5)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 3, Desired: 3},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, stable.ID,
+			string(state.StateRunning), app.RAMMB, "node-1", "stable-wake-"+string(rune('1'+i)), string(state.InstanceModeService)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	canary, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:            app.ID,
+		Kind:             state.DeploymentKindImage,
+		ImageDigest:      "sha256:canary",
+		Status:           state.DeployPending,
+		TrafficPercent:   10,
+		CanaryTotalSteps: 4,
+		Scope:            stable.Scope,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(context.Background(), canary.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.ReconcileServiceApp(context.Background(), app.ID)
+
+	instances, err := store.ListInstancesForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runningByDeployment := map[string]int{}
+	parkedByDeployment := map[string]int{}
+	for _, ins := range instances {
+		if ins.Mode != string(state.InstanceModeService) {
+			continue
+		}
+		switch state.State(ins.State) {
+		case state.StateRunning:
+			runningByDeployment[ins.DeploymentID]++
+		case state.StateParked:
+			parkedByDeployment[ins.DeploymentID]++
+		}
+	}
+	if runningByDeployment[stable.ID] != 2 || runningByDeployment[canary.ID] != 1 {
+		t.Fatalf("running replicas = stable:%d canary:%d, want stable:2 canary:1; all=%+v",
+			runningByDeployment[stable.ID], runningByDeployment[canary.ID], runningByDeployment)
+	}
+	if parkedByDeployment[stable.ID] != 1 {
+		t.Fatalf("parked stable replicas = %d, want 1; all=%+v", parkedByDeployment[stable.ID], parkedByDeployment)
+	}
+}
+
 func TestConvergeServiceReplicas_AdmitsDeficit(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
@@ -105,6 +262,41 @@ func TestConvergeServiceReplicas_IgnoresNonServiceInstances(t *testing.T) {
 	}
 }
 
+func TestConvergeServiceReplicas_StopsInFlightNonServiceWakeAfterModeSwitch(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
+	requestWake, err := store.CreateInstance(context.Background(), app.ID, dep.ID,
+		string(state.StateColdBooting), app.RAMMB, "node-1", "wake-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 2, Desired: 1},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.convergeServiceReplicas(context.Background(), dep.ID)
+
+	gotRequest, err := store.InstanceByID(context.Background(), requestWake.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRequest.State != string(state.StateStopped) {
+		t.Fatalf("in-flight request wake state = %q, want STOPPED after mode switch", gotRequest.State)
+	}
+	count, err := store.CountLiveInstancesByDeployment(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("live instances after mode switch = %d, want one service replica", count)
+	}
+}
+
 func TestConvergeServiceReplicas_NoOpForNonService(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
@@ -163,6 +355,77 @@ func TestConvergeServiceReplicas_ParksSurplus(t *testing.T) {
 	}
 	if running != 1 || parked != 1 {
 		t.Fatalf("service states = running:%d parked:%d, want running:1 parked:1", running, parked)
+	}
+}
+
+func TestConvergeServiceReplicas_PreservesReadyWhileReplacementStarts(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 2, Desired: 1},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateRunning), app.RAMMB, "node-1", "wake-ready", string(state.InstanceModeService))
+	if err != nil {
+		t.Fatal(err)
+	}
+	starting, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateColdBooting), app.RAMMB, "node-1", "wake-starting", string(state.InstanceModeService))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.convergeServiceReplicas(context.Background(), dep.ID)
+
+	gotReady, err := store.InstanceByID(context.Background(), ready.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotReady.State != string(state.StateRunning) {
+		t.Fatalf("ready replica state = %q, want RUNNING", gotReady.State)
+	}
+	gotStarting, err := store.InstanceByID(context.Background(), starting.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotStarting.State != string(state.StateColdBooting) {
+		t.Fatalf("starting replica state = %q, want COLD_BOOTING", gotStarting.State)
+	}
+}
+
+func TestConvergeServiceReplicas_ReplacesTerminalReplica(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 2, Desired: 2},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateFailed), app.RAMMB, "node-1", "wake-failed", string(state.InstanceModeService)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateRunning), app.RAMMB, "node-1", "wake-ready", string(state.InstanceModeService)); err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.convergeServiceReplicas(context.Background(), dep.ID)
+
+	count, err := store.CountLiveInstancesByDeployment(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("live service replicas = %d, want 2 after terminal replacement", count)
 	}
 }
 

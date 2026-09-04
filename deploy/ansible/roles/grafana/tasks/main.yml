@@ -209,7 +209,7 @@
 # growth) keyed off vmmd_cpu_throttle_seconds_total{account_id, app_id}
 # and vmmd_cpu_throttle_ratio{slice}. Reference: docs/runbooks/FaasCpuStarvation.md
 # §Verify (panel IDs + expressions).
-- name: grafana — drop top-throttled-apps dashboard JSON (issue #301)
+- name: grafana — drop top-throttled-apps dashboard JSON (issue # 301)
   ansible.builtin.copy:
     src: top-throttled-apps.json
     dest: "{{ gv_dashboards_dir }}/top-throttled-apps.json"
@@ -264,7 +264,7 @@
 # cross-daemon warn, component=platform — deliberately not paired
 # with the apid-only FaasApidAuditWriteFailures, see the rule's
 # section-header comment).
-- name: grafana — drop audit-write-fidelity dashboard JSON (PR #1111 follow-on)
+- name: grafana — drop audit-write-fidelity dashboard JSON (PR # 1111 follow-on)
   ansible.builtin.copy:
     src: audit-write-fidelity.json
     dest: "{{ gv_dashboards_dir }}/audit-write-fidelity.json"
@@ -275,7 +275,7 @@
     - restart grafana-server
     - reload grafana provisioning
 
-- name: grafana — drop obs-trace-completeness dashboard JSON (PR #1111 follow-on)
+- name: grafana — drop obs-trace-completeness dashboard JSON (PR # 1111 follow-on)
   ansible.builtin.copy:
     src: obs-trace-completeness.json
     dest: "{{ gv_dashboards_dir }}/obs-trace-completeness.json"

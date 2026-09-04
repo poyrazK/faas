@@ -1,54 +1,26 @@
 [Unit]
 Description=onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 split, ADR-070)
 Documentation=https://docs.gregale.dev/ops/gatewayd-internal
-# gatewayd-internal is the daemon gatewayd-public forwards to. It
-# must come up AFTER the local vmmd/runtime directory. On a split box,
-# apid and schedd are remote control-plane peers and are reached through
-# the rendered network/TLS configuration; they are intentionally masked on
-# compute-only hosts. Keeping them out of Wants= prevents a role-correct
-# compute node from inheriting a local control-plane dependency.
 After=faas-cp.slice network-online.target faas-vmmd.service
 Wants=faas-cp.slice faas-vmmd.service
 
 [Service]
 Type=simple
-# Binary is selected by the active release bundle. The release
-# installer atomically flips /opt/faas/current, so every daemon on
-# the box runs the same verified release and rollback remains one
-# symlink operation.
+User=faas
+Group=faas
 ExecStart=/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml
 Restart=on-failure
 RestartSec=2s
-# PR #1082 review-fix #2: surface the per-unit restart count to the
-# daemon via $SYSTEMD_RESTARTS_ON_FAILURE (systemd 254+
-# RestartCountExport). pkg/wire/daemon.go::Daemon() reads the env var
-# at boot and records it on daemon_restart_count so the
-# FaasRestartLoop / FaasRepeatedRestart / FaasStuckActivating alerts
-# (ADR-128) have a real-time signal.
 RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
-
 Slice=faas-cp.slice
 MemoryMax=512M
-# Issue #585 / ADR-127 — sealed.env is apid-only; gatewayd-internal loads its
-# own per-daemon secrets (FAAS_TLS_DNS_TOKEN) from a 0400 file, and the shared
-# session key via LoadCredential (mirroring apid).
-EnvironmentFile=-/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env
 EnvironmentFile=-/etc/faas/compute-db.env
-
-# The default is unix-only for one-box installs. Split-box manifests replace
-# this value with a private 0.0.0.0:8080 listener through a drop-in; the
-# control-plane CIDR is enforced by the generated nftables policy. No
-# AmbientCapabilities=CAP_NET_BIND_SERVICE is needed for port 8080.
+EnvironmentFile=-/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env
 Environment=FAAS_GATEWAY_LISTEN=off
 Environment=FAAS_SESSION_KEY=%d/faas_session_key
 Environment=FAAS_LOG_ARCHIVE_CREDS_PATH=%d/faas_archive_creds
 LoadCredential=faas_session_key:/etc/faas/secrets/session.key
 LoadCredential=faas_archive_creds:-/etc/faas/secrets/storage-box/archive-creds.json
-
-# Hardening baseline — gatewayd-internal is NOT root; runs as faas:faas.
-User=faas
-Group=faas
-
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -57,29 +29,16 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-ReadOnlyPaths=/etc/faas
-# Unix-only (no AF_INET/AF_INET6 — we never dial external IPs from
-# here; all forwarding is via the unix socket to the public daemon
-# and gRPC to per-node schedd/vmmd over loopback mTLS).
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 LockPersonality=yes
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
-
-# /run/faas is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
-# across the faas service set). Declaring it here would create a SECOND
-# per-unit tmpfs instance whose bind-mount does not propagate back to the
-# host /run, so gatewayd-internal.sock would land inside this unit's own
-# tmpfs and be invisible to the public daemon (run 30841750214).
-# ReadWritePaths=/run/faas below is sufficient — this unit writes into
-# the host /run/faas directory that vmmd's RuntimeDirectory created.
-# Mode 0660 + group faas on the socket file itself is the §11 ACL
-# (ADR-015) — only faas:faas can dial.
+ReadOnlyPaths=/etc/faas
 ReadWritePaths=/run/faas
 
 [Install]

@@ -119,6 +119,17 @@ var ErrCorsWildcardWithCredentials = errors.New("state: cors action cannot combi
 // HTTP response uses the canonical RFC 7807 code.
 var ErrInvalidTrafficPercent = errors.New("state: invalid traffic_percent")
 
+// ErrCanaryStepConflict is returned by AdvanceCanary when the deployment's
+// current step differs from the caller's expected step. The compare-and-swap
+// is checked while the deployment row is locked, so this is the safe race
+// loser result for concurrent meterd workers.
+var ErrCanaryStepConflict = errors.New("state: canary step conflict")
+
+// ErrCanaryStateInvalid is returned when an automatic canary advance reaches
+// a deployment that is not an active, live rollout or whose persisted ladder
+// is internally inconsistent.
+var ErrCanaryStateInvalid = errors.New("state: canary state does not permit advance")
+
 // ErrInvalidPreviewPrState is returned by SetPreviewPrState when the
 // requested state is outside the closed set
 // {open,closed,stale,torn_down}. The CHECK constraint
@@ -208,6 +219,23 @@ var ErrRolloutNotStuck = errors.New("state: rollout is not stuck; use promote in
 // to api.ErrRolloutStateInvalid (409 Conflict) so the CLI's
 // post-condition check is loud.
 var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit recovery")
+
+// CanaryAdvanceParams is the state-owned portion of one automatic canary
+// transition. The API layer resolves the next preset stage and supplies the
+// audit envelope; the store atomically applies the expected-step CAS,
+// traffic rebalance, rollout completion, and audit insert.
+type CanaryAdvanceParams struct {
+	ExpectedStep   int
+	TrafficPercent int
+	Audit          DeploymentAudit
+}
+
+// CanaryAdvancer is intentionally separate from Store so existing narrow test
+// doubles do not have to grow a new method. Production stores implement it;
+// the APID handler type-asserts it before accepting the transition.
+type CanaryAdvancer interface {
+	AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error)
+}
 
 // RecoverRolloutStuckAfter (issue #976 / ADR-122 / SAFE-RELEASES-R +
 // production-leveling Stream C) is the canned stuck-detection
@@ -2119,17 +2147,15 @@ type Store interface {
 	// generic state.Stamp.
 	SafedeployStampRollout(ctx context.Context, id string, state string, startedAt, completedAt, abortedAt *time.Time, abortedReason string) (Deployment, error)
 	// LiveDeploymentForScope (ADR-091 / PR-D) returns the unique
-	// live deployment for (appID, scope). Backed by the partial
-	// UNIQUE index deployments_app_scope_live_uniq that PR-D
-	// adds in migration 00213 — at most one live row per
-	// (app_id, scope), so the read is deterministic. Returns
-	// ErrNotFound when no live deployment exists for the scope
-	// (the wake path should fall back to ErrNoDeployment, surfacing
-	// 404 from the gateway). Used by schedd Phase 1 wake when the
-	// caller passed an explicit deploymentID: read `dep.Scope`
-	// from the resolved deployment, then re-resolve the live
-	// row for that scope so the env overlay only contains that
-	// scope's rows.
+	// newest live deployment for (appID, scope). Stable rows remain
+	// unique, while an active canary temporarily overlaps its predecessor
+	// (issue #976); the deterministic newest-first read selects the canary
+	// for new capacity. Returns ErrNotFound when no live deployment exists
+	// for the scope (the wake path should fall back to ErrNoDeployment,
+	// surfacing 404 from the gateway). Used by schedd Phase 1 wake when the
+	// caller passed an explicit deploymentID: read `dep.Scope` from the
+	// resolved deployment, then re-resolve the live row for that scope so
+	// the env overlay only contains that scope's rows.
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (Deployment, error)
 	// CountLiveInstancesByDeployment returns the number of instances
 	// currently in {WAKING, COLD_BOOTING, RUNNING} for the given
@@ -2721,10 +2747,9 @@ type Store interface {
 	// call with the same threshold affects 0 rows because all
 	// matching rows are now 'failed'.
 	//
-	// The reaper only updates the build row. The owning deployment
-	// row is flipped to DeployFailed separately (issue #195 B1.5
-	// for the imaged defer path; ADR-031 for the requeue-vs-fail
-	// reconciliation).
+	// The owning in-flight deployment is flipped to DeployFailed in
+	// the same store operation. This keeps the build and deployment
+	// state machine consistent when the builder process disappears.
 	SweepStuckRunningBuilds(ctx context.Context, threshold time.Time) (int, error)
 
 	// Custom domains (apid is sole writer).
@@ -4238,6 +4263,50 @@ type Store interface {
 	// GC can still have its audit rows listed — the dashboard
 	// shows them under the orphaned-deployment_id sentinel.
 	ListDeploymentAudit(ctx context.Context, deploymentID string, limit int) ([]DeploymentAudit, error)
+
+	// RecentInvocations (SAFE-RELEASES-OBS PR-E, issue #976 /
+	// ADR-122) is the read seam for the canary simulator's
+	// `gregale canary simulate` subcommand. Returns invocation
+	// rows for the app whose `created_at >= since`, ordered
+	// (created_at DESC, id DESC), capped at `limit`. The
+	// invocations_app_created_at_idx partial index
+	// (migrations/00060) backs the query so the simulator's
+	// 1h-look-back stays sub-millisecond at one-box scale.
+	//
+	// limit > 0 caps the page; <= 0 means "no row cap" (the
+	// simulator passes 10_000 as a safety bound). The simulator
+	// uses the count, not the rows themselves — the rows are
+	// returned only so the simulator can render
+	// `observed_traffic` truthfully.
+	RecentInvocations(ctx context.Context, appID string, since time.Time, limit int) ([]Invocation, error)
+
+	// RecentErrorRate (SAFE-RELEASES-OBS PR-E) returns the
+	// fraction of failed invocations in the [since, now] window
+	// for the given app. Computed as
+	// COUNT(state='failed' OR state='dead_letter') /
+	// COUNT(*). Returns 0.0 when no invocations match (no error;
+	// the simulator's neutral path handles the empty-window case
+	// separately via RecentInvocations).
+	RecentErrorRate(ctx context.Context, appID string, since time.Time) (float64, error)
+
+	// RecentP95LatencyMs (SAFE-RELEASES-OBS PR-E) returns the
+	// 95th-percentile completion latency in milliseconds over the
+	// [since, now] window for the given app. Computed via
+	// percentile_cont(0.95) within group ORDER BY
+	// (completed_at - created_at). Returns 0.0 when no
+	// completed invocations match (no error; the simulator
+	// surfaces this as a "no latency data" note rather than a
+	// zero-projection failure).
+	RecentP95LatencyMs(ctx context.Context, appID string, since time.Time) (float64, error)
+
+	// ListDeploymentAuditByAlertRule (SAFE-RELEASES-OBS PR-D) is
+	// the reverse-lookup query behind /dashboard/alerts/{id} — every
+	// deployment_audit row whose alert_rule_id matches the supplied
+	// rule, newest first. Backs the partial index
+	// deployment_audit_alert_rule_idx created in migrations/20260905000000002 so
+	// the query stays sub-millisecond. limit > 0 caps the page;
+	// <= 0 means "no row cap" (caller is responsible for bounding).
+	ListDeploymentAuditByAlertRule(ctx context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error)
 
 	// AppendDeploymentStage (ADR-117, migration 00302) appends a
 	// closed stage transition to deployments.stage_state and returns

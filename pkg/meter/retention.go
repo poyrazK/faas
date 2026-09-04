@@ -423,7 +423,7 @@ func RetentionOnceDeploymentAudit(ctx context.Context, db retentionExecer) (int6
 // meterd_deployment_audit_gc_rows_deleted_total counter (SAFE-
 // RELEASES Stream D). nil-allowed so test callers can wire the
 // loop without a Prometheus registry.
-func RetentionLoopDeploymentAudit(ctx context.Context, db retentionExecer, interval time.Duration, log *slog.Logger, onTickRows func(int64)) {
+func RetentionLoopDeploymentAudit(ctx context.Context, db retentionExecer, interval time.Duration, log *slog.Logger, onTickRows func(int64), onTickError func(error)) {
 	if interval <= 0 {
 		interval = DefaultDeploymentAuditRetentionInterval
 	}
@@ -450,6 +450,17 @@ func RetentionLoopDeploymentAudit(ctx context.Context, db retentionExecer, inter
 			default:
 				if log != nil {
 					log.Error("deployment audit retention tick failed", "err", err)
+				}
+				// SAFE-RELEASES-OBS PR-A: surface the failure
+				// through the onTickError callback so cmd/meterd
+				// can bump the deployment_audit_gc_failed_total
+				// counter. Pre-PR the failure was journal-only —
+				// operators had to grep logs to notice the prune
+				// loop was down (disk-fill risk). PR-B's
+				// deployment_audit_gc_failing alert queries the
+				// counter's rate over a 1h window.
+				if onTickError != nil {
+					onTickError(err)
 				}
 			}
 		}

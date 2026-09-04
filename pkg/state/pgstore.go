@@ -4413,6 +4413,31 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		}
 		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
+	if d.CanaryTotalSteps <= 0 {
+		// Stable creation may end an active canary, so lock the whole
+		// live set in deterministic id order before the prior-row
+		// lookup. This preserves the lock ordering used by traffic
+		// updates and avoids a create-vs-rebalance deadlock.
+		rows, err := tx.Query(ctx,
+			`select id from deployments
+			  where app_id = $1 and status = 'live'
+			  order by id for update`, d.AppID)
+		if err != nil {
+			return Deployment{}, fmt.Errorf("state: lock live deployments: %w", err)
+		}
+		for rows.Next() {
+			var ignored string
+			if err := rows.Scan(&ignored); err != nil {
+				rows.Close()
+				return Deployment{}, fmt.Errorf("state: scan live deployment lock: %w", err)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return Deployment{}, fmt.Errorf("state: iterate live deployment locks: %w", err)
+		}
+		rows.Close()
+	}
 
 	// 2. Lock + supersede the prior live/pending row, if any. PR-B: the
 	//    supersede is in-tx so a failed INSERT below rolls it back too.
@@ -4442,6 +4467,10 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	//    The 2-return shape keeps the signature backward-compatible
 	//    with pre-PR-B call sites (the slice-3 cascade test on main
 	//    relies on `dep, err :=` form).
+	//
+	//    Stable deployments supersede the prior row here. Canary
+	//    deployments intentionally leave it live as the residual traffic
+	//    bucket until the canary reaches its terminal stage.
 	var priorID string
 	if err := tx.QueryRow(ctx,
 		`select id from deployments
@@ -4455,7 +4484,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 			return Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
 		}
 		// pgx.ErrNoRows → no prior; that's fine. Move on.
-	} else {
+	} else if d.CanaryTotalSteps <= 0 {
 		// Issue #556 PR-A: zero the prior row's traffic_percent in
 		// the same tx so Σ over live rows remains 100 by construction
 		// (the new INSERT defaults traffic_percent to 100 below).
@@ -4470,6 +4499,19 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 			  where id = $1`,
 			priorID); err != nil {
 			return Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
+		}
+	}
+	if d.CanaryTotalSteps <= 0 {
+		// A stable deployment terminates any active canary overlap as
+		// well as the newest prior row. The app-level partial unique
+		// index requires every other live revision to be gone before
+		// this deployment is activated.
+		if _, err := tx.Exec(ctx,
+			`update deployments
+			    set status = 'superseded', traffic_percent = 0
+			  where app_id = $1 and status = 'live'`,
+			d.AppID); err != nil {
+			return Deployment{}, fmt.Errorf("state: supersede live canary siblings: %w", err)
 		}
 	}
 
@@ -4500,14 +4542,13 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	// schema layer; the explicit write here mirrors the
 	// operator-supplied case.
 	//
-	// Defensive default: if a caller hands us d.TrafficPercent=0
-	// (Go zero value, the wire-omitted case from a test or a
-	// future handler that forgets to set the field), stamp 100
-	// here so we never INSERT a row at 0 that would then receive
-	// no traffic. Mirrors memstore.CreateDeployment (the unit-test
-	// suite that exercises MemStore stays aligned with PgStore),
-	// and matches the schema NOT NULL DEFAULT 100 contract.
-	if d.TrafficPercent == 0 {
+	// Defensive default for stable deployments: if a caller hands us
+	// d.TrafficPercent=0 (the Go zero value, or the wire-omitted case),
+	// stamp 100 here. A canary's zero can be a meaningful custom first
+	// stage, and the APID handler has already copied that stage onto the
+	// row. Mirrors memstore.CreateDeployment while preserving the schema
+	// NOT NULL DEFAULT 100 contract for non-canary rows.
+	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 {
 		d.TrafficPercent = 100
 	}
 	row := tx.QueryRow(ctx,
@@ -4623,16 +4664,14 @@ func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment,
 	return scanDeploymentWithRootfs(row)
 }
 
-// LiveDeploymentForScope (ADR-091 / PR-D) returns the unique live
-// deployment for the (app_id, scope) pair. Backed by the partial
-// UNIQUE index deployments_app_scope_live_uniq added in migration
-// 00213: at most one live row per (app_id, scope), so the LIMIT 1
-// is belt-and-suspenders and the result is deterministic. Returns
-// ErrNotFound when no live row exists for the scope — the wake
-// path converts that into a 404 via the ErrNoDeployment sentinel
-// already used by LiveDeployment. The query plan uses the partial
-// index (index-only on app_id, scope via INCLUDE-less btree; the
-// rootfs columns are heap-fetched, identical to LiveDeployment).
+// LiveDeploymentForScope (ADR-091 / PR-D) returns the newest live
+// deployment for the (app_id, scope) pair. Stable deployments remain
+// unique in Postgres, while an active canary deliberately overlaps its
+// predecessor (issue #976); ordering keeps the wake path deterministic
+// and selects the canary revision for new capacity. Returns ErrNotFound
+// when no live row exists for the scope — the wake path converts that
+// into a 404 via the ErrNoDeployment sentinel already used by
+// LiveDeployment.
 func (s *PgStore) LiveDeploymentForScope(ctx context.Context, appID, scope string) (Deployment, error) {
 	row := s.pool.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
@@ -5158,6 +5197,138 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	return d, nil
 }
 
+// AdvanceCanary atomically commits one automatic canary step. The expected
+// step is checked while the deployment row is locked; traffic redistribution,
+// terminal promotion, sibling supersede, and the audit row all share the same
+// transaction.
+func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
+	if params.ExpectedStep < 0 || params.TrafficPercent < 0 || params.TrafficPercent > 100 {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+`
+		   from deployments where id = $1 for update`, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrNotFound) {
+			return Deployment{}, 0, ErrNotFound
+		}
+		return Deployment{}, 0, fmt.Errorf("state: advance canary load: %w", err)
+	}
+	if dep.Status != DeployLive || (dep.RolloutState != "pending" && dep.RolloutState != "rolling_out") ||
+		dep.CanaryTotalSteps <= 0 || params.ExpectedStep >= dep.CanaryTotalSteps {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	if dep.CanaryStep != params.ExpectedStep {
+		return Deployment{}, 0, ErrCanaryStepConflict
+	}
+	if _, err := uuid.Parse(dep.ID); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary deployment id %q: %w", dep.ID, err)
+	}
+
+	rows, err := tx.Query(ctx,
+		`select id, traffic_percent
+		   from deployments
+		  where app_id = $1 and status = 'live' and id != $2
+		  order by id
+		  for update`, dep.AppID, dep.ID)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary lock siblings: %w", err)
+	}
+	var siblings []struct {
+		ID    string
+		Prior int
+	}
+	for rows.Next() {
+		var sibling struct {
+			ID    string
+			Prior int
+		}
+		if err := rows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+			rows.Close()
+			return Deployment{}, 0, fmt.Errorf("state: advance canary scan sibling: %w", err)
+		}
+		siblings = append(siblings, sibling)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary iterate siblings: %w", err)
+	}
+
+	now := time.Now().UTC()
+	newStep := params.ExpectedStep + 1
+	terminal := newStep >= dep.CanaryTotalSteps-1
+	persistedStep := newStep
+	if terminal {
+		params.TrafficPercent = 100
+		// Keep the established terminal sentinel: in-flight stages are
+		// zero-indexed, while a completed rollout stores step=total.
+		persistedStep = dep.CanaryTotalSteps
+	} else if len(siblings) == 0 {
+		return Deployment{}, 0, ErrTrafficPercentSumInvalid
+	}
+	newWeights := RedistributeTraffic(siblings, 100-params.TrafficPercent)
+	if terminal {
+		if _, err := tx.Exec(ctx,
+			`update deployments set status = 'superseded', traffic_percent = 0
+			  where app_id = $1 and status = 'live' and id != $2`, dep.AppID, dep.ID); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: advance canary supersede siblings: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`update deployments set
+			canary_step = $2,
+			canary_step_started_at = $3,
+			traffic_percent = $4,
+			rollout_state = case when $2 >= canary_total_steps then 'complete' else rollout_state end,
+			rollout_started_at = coalesce(rollout_started_at, $3),
+			rollout_completed_at = case when $2 >= canary_total_steps then $3 else rollout_completed_at end
+		 where id = $1`, dep.ID, persistedStep, now, params.TrafficPercent); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary update: %w", err)
+	}
+	if !terminal {
+		for i, sibling := range siblings {
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = $2 where id = $1`,
+				sibling.ID, newWeights[i]); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: advance canary sibling %s: %w", sibling.ID, err)
+			}
+		}
+	}
+
+	auditAt := params.Audit.At
+	if auditAt.IsZero() {
+		auditAt = now
+	}
+	auditKind := params.Audit.Kind
+	if auditKind == "" {
+		auditKind = DeployTrafficChanged
+	}
+	var auditID int64
+	if err := tx.QueryRow(ctx,
+		`insert into deployment_audit
+		    (deployment_id, account_id, kind, actor, at, data)
+		 values ($1::uuid, $2, $3, $4, $5, $6::jsonb)
+		 returning id`, dep.ID, params.Audit.AccountID, string(auditKind), params.Audit.Actor, auditAt, []byte(params.Audit.Data)).Scan(&auditID); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary audit: %w", err)
+	}
+	updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+`
+		   from deployments where id = $1`, dep.ID))
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary readback: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary commit: %w", err)
+	}
+	return updated, auditID, nil
+}
+
 // RedistributeTraffic assigns weights to N siblings that sum to
 // residual (typically 100 - newPercent from UpdateDeploymentTraffic)
 // using the largest-remainder method. The returned slice is in the
@@ -5674,7 +5845,100 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 }
 
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
-	return s.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: mark deployment live begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+`
+		   from deployments where id = $1 for update`, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrNotFound) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: mark deployment live load: %w", err)
+	}
+	if dep.Status == DeployLive || dep.CanaryTotalSteps <= 0 {
+		if _, err := tx.Exec(ctx,
+			`update deployments set status = $2, error = '' where id = $1`, id, string(DeployLive)); err != nil {
+			return fmt.Errorf("state: mark deployment live update: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("state: mark deployment live commit: %w", err)
+		}
+		return nil
+	}
+
+	rows, err := tx.Query(ctx,
+		`select id, traffic_percent
+		   from deployments
+		  where app_id = $1 and status = 'live'
+		  for update`, dep.AppID)
+	if err != nil {
+		return fmt.Errorf("state: mark canary live lock siblings: %w", err)
+	}
+	var siblings []struct {
+		ID    string
+		Prior int
+	}
+	for rows.Next() {
+		var sibling struct {
+			ID    string
+			Prior int
+		}
+		if err := rows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+			rows.Close()
+			return fmt.Errorf("state: mark canary live scan sibling: %w", err)
+		}
+		if sibling.ID != id {
+			siblings = append(siblings, sibling)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("state: mark canary live iterate siblings: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if len(siblings) == 0 && dep.TrafficPercent != 100 {
+		// A first deployment has no residual bucket. Complete it at
+		// 100% rather than exposing an invalid one-row split.
+		if _, err := tx.Exec(ctx,
+			`update deployments set
+				status = 'live', error = '',
+				traffic_percent = 100,
+				canary_step = canary_total_steps,
+				canary_step_started_at = $2,
+				rollout_state = 'complete',
+				rollout_completed_at = $2
+			 where id = $1`, id, now); err != nil {
+			return fmt.Errorf("state: mark first canary live: %w", err)
+		}
+	} else {
+		if _, err := tx.Exec(ctx,
+			`update deployments set
+				status = 'live', error = '',
+				rollout_state = 'rolling_out',
+				rollout_started_at = $2,
+				canary_step_started_at = $2
+			 where id = $1`, id, now); err != nil {
+			return fmt.Errorf("state: mark canary live: %w", err)
+		}
+		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
+		for i, sibling := range siblings {
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = $2 where id = $1`,
+				sibling.ID, newWeights[i]); err != nil {
+				return fmt.Errorf("state: mark canary sibling %s: %w", sibling.ID, err)
+			}
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: mark deployment live commit: %w", err)
+	}
+	return nil
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
@@ -7214,20 +7478,56 @@ func (s *PgStore) UpdateBuildProvenanceSBOM(ctx context.Context, buildID, sbomKe
 }
 
 // SweepStuckRunningBuilds is the reaper sweep (issue #195 B1.4).
-// Returns the number of rows flipped. A partial index on
-// builds(status='running') keeps this O(matches) instead of O(table).
+// Returns the number of build rows flipped. The owning in-flight
+// deployment is failed in the same transaction so a crashed builder
+// cannot leave the deployment permanently stuck in building.
+// A partial index on builds(status='running') keeps this O(matches)
+// instead of O(table).
 func (s *PgStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Time) (int, error) {
-	tag, err := s.pool.Exec(ctx,
-		`update builds set
-		   status        = 'failed',
-		   failure_class = 'timeout',
-		   finished_at   = now()
-		 where status = 'running' and started_at < $1`,
-		threshold)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return int(tag.RowsAffected()), nil
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var buildsFlipped, deploymentsFailed int
+	err = tx.QueryRow(ctx, `
+		with stuck as (
+			select id, deployment_id
+			  from builds
+			 where status = 'running' and started_at < $1
+			 for update skip locked
+		),
+		flipped as (
+			update builds b
+			   set status = 'failed',
+			       failure_class = 'timeout',
+			       finished_at = now()
+			  from stuck s
+			 where b.id = s.id
+			returning s.deployment_id
+		),
+		failed_deployments as (
+			update deployments d
+			   set status = 'failed',
+			       error = 'build timed out',
+			       error_code = $2
+			  from flipped f
+			 where d.id = f.deployment_id
+			   and d.status in ('pending', 'building', 'imaging', 'snapshotting')
+			returning d.id
+		)
+		select
+			(select count(*) from flipped),
+			(select count(*) from failed_deployments)
+	`, threshold, api.CodeBuildTimeout).Scan(&buildsFlipped, &deploymentsFailed)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return buildsFlipped, nil
 }
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7
@@ -19229,8 +19529,8 @@ func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAud
 	var id int64
 	err := s.pool.QueryRow(ctx,
 		`insert into deployment_audit
-		    (deployment_id, account_id, kind, actor, at, data)
-		 values ($1, $2, $3, $4, coalesce($5, now()), $6::jsonb)
+		    (deployment_id, account_id, kind, actor, at, data, alert_rule_id)
+		 values ($1, $2, $3, $4, coalesce($5, now()), $6::jsonb, $7)
 		 returning id`,
 		entry.DeploymentID,
 		entry.AccountID,
@@ -19242,6 +19542,11 @@ func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAud
 		// 00333, which preserves the events.at timestamp).
 		nullTime(entry.At),
 		[]byte(entry.Data),
+		// SAFE-RELEASES-OBS PR-D: nil for non-rule-triggered rows;
+		// ActionDispatcher + evaluator stamp this for the 5
+		// rule-touching audit kinds. NULL on insert is fine — the
+		// partial index excludes null rows.
+		entry.AlertRuleID,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("state: append deployment_audit: %w", err)
@@ -19264,7 +19569,7 @@ func (s *PgStore) ListDeploymentAudit(ctx context.Context, deploymentID string, 
 		limit = cap
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, deployment_id, account_id, kind, actor, at, data
+		`select id, deployment_id, account_id, kind, actor, at, data, alert_rule_id
 		   from deployment_audit
 		  where deployment_id = $1::uuid
 		  order by at desc, id desc
@@ -19277,17 +19582,61 @@ func (s *PgStore) ListDeploymentAudit(ctx context.Context, deploymentID string, 
 	var out []DeploymentAudit
 	for rows.Next() {
 		var (
-			d       DeploymentAudit
-			dataRaw []byte
+			d         DeploymentAudit
+			dataRaw   []byte
+			alertRule *uuid.UUID
 		)
-		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw); err != nil {
+		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw, &alertRule); err != nil {
 			return nil, fmt.Errorf("state: scan deployment_audit row: %w", err)
 		}
+		d.AlertRuleID = alertRule
 		d.Data = json.RawMessage(dataRaw)
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: list deployment_audit rows: %w", err)
+	}
+	return out, nil
+}
+
+// ListDeploymentAuditByAlertRule (SAFE-RELEASES-OBS PR-D) returns
+// deployment_audit rows whose alert_rule_id matches, newest first.
+// Backs the /dashboard/alerts/{id} reverse-lookup query. The
+// partial index deployment_audit_alert_rule_idx (migrations/20260905000000002)
+// keeps the lookup sub-millisecond; only rows with non-null
+// alert_rule_id participate so the index stays tiny.
+func (s *PgStore) ListDeploymentAuditByAlertRule(ctx context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error) {
+	const cap = 500
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, deployment_id, account_id, kind, actor, at, data, alert_rule_id
+		   from deployment_audit
+		  where alert_rule_id = $1::uuid
+		  order by at desc, id desc
+		  limit $2`,
+		alertRuleID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit by alert_rule: %w", err)
+	}
+	defer rows.Close()
+	var out []DeploymentAudit
+	for rows.Next() {
+		var (
+			d         DeploymentAudit
+			dataRaw   []byte
+			alertRule *uuid.UUID
+		)
+		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw, &alertRule); err != nil {
+			return nil, fmt.Errorf("state: scan deployment_audit row by alert_rule: %w", err)
+		}
+		d.AlertRuleID = alertRule
+		d.Data = json.RawMessage(dataRaw)
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit by alert_rule rows: %w", err)
 	}
 	return out, nil
 }
@@ -22178,6 +22527,83 @@ func (s *PgStore) DeleteInvocationsByIDs(ctx context.Context, ids []string) (int
 		return 0, fmt.Errorf("state: invocations reaper delete: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// RecentInvocations (SAFE-RELEASES-OBS PR-E, issue #976 / ADR-122)
+// returns invocation rows for appID whose created_at >= since,
+// ordered (created_at DESC, id DESC), capped at limit.
+func (s *PgStore) RecentInvocations(ctx context.Context, appID string, since time.Time, limit int) ([]Invocation, error) {
+	if appID == "" {
+		return nil, fmt.Errorf("state: RecentInvocations: empty app_id")
+	}
+	const cap = 10_000
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	rows, err := s.pool.Query(ctx,
+		`select `+invocationSelectCols+`
+		   from invocations
+		  where app_id = $1::uuid
+		    and created_at >= $2
+		  order by created_at desc, id desc
+		  limit $3`,
+		appID, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: RecentInvocations: %w", err)
+	}
+	defer rows.Close()
+	return scanInvocations(rows)
+}
+
+// RecentErrorRate (SAFE-RELEASES-OBS PR-E) returns the fraction of
+// failed invocations (state IN ('failed','dead_letter')) in the
+// [since, now] window for appID. Returns 0.0 when there are no rows.
+func (s *PgStore) RecentErrorRate(ctx context.Context, appID string, since time.Time) (float64, error) {
+	if appID == "" {
+		return 0, fmt.Errorf("state: RecentErrorRate: empty app_id")
+	}
+	var total, failed int
+	err := s.pool.QueryRow(ctx,
+		`select count(*),
+		        count(*) filter (where state in ('failed','dead_letter'))
+		   from invocations
+		  where app_id = $1::uuid
+		    and created_at >= $2`,
+		appID, since).Scan(&total, &failed)
+	if err != nil {
+		return 0, fmt.Errorf("state: RecentErrorRate: %w", err)
+	}
+	if total == 0 {
+		return 0.0, nil
+	}
+	return float64(failed) / float64(total), nil
+}
+
+// RecentP95LatencyMs (SAFE-RELEASES-OBS PR-E) returns the
+// 95th-percentile completion latency in milliseconds over the
+// [since, now] window for appID. Returns 0.0 when there is no data.
+func (s *PgStore) RecentP95LatencyMs(ctx context.Context, appID string, since time.Time) (float64, error) {
+	if appID == "" {
+		return 0, fmt.Errorf("state: RecentP95LatencyMs: empty app_id")
+	}
+	var p95 *float64
+	err := s.pool.QueryRow(ctx,
+		`select coalesce(
+		           percentile_cont(0.95) within group (order by extract(epoch from (completed_at - created_at)) * 1000.0),
+		           0.0)
+		   from invocations
+		  where app_id = $1::uuid
+		    and state = 'completed'
+		    and completed_at is not null
+		    and created_at >= $2`,
+		appID, since).Scan(&p95)
+	if err != nil {
+		return 0, fmt.Errorf("state: RecentP95LatencyMs: %w", err)
+	}
+	if p95 == nil {
+		return 0.0, nil
+	}
+	return *p95, nil
 }
 
 // ListDeadlineBreachedInvocations returns up to `limit` invocation IDs

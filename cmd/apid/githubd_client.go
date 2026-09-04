@@ -16,6 +16,7 @@ import (
 	"crypto/tls"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -70,14 +71,15 @@ type GithubdClient interface {
 // counterpart (PR-A invariant — see cmd/apid/handlers_source_ref.go).
 type StreamSourceRefResult struct {
 	Body  io.ReadCloser
-	Stats StreamSourceRefStats
+	Stats *StreamSourceRefStats
 }
 
 // StreamSourceRefStats mirrors pkg/githubdgrpc.StreamSourceRefStats.
 type StreamSourceRefStats struct {
-	Truncated     bool
-	BytesStreamed int64
-	Err           error
+	Truncated         bool
+	BytesStreamed     int64
+	ResolvedCommitSHA string
+	Err               error
 }
 
 // Aliases for the platform-friendly enum + struct mirrors — same shape
@@ -283,11 +285,33 @@ func (l *liveClient) StreamSourceRef(ctx context.Context, accountID string, inst
 	if res == nil {
 		return nil, nil
 	}
-	return &StreamSourceRefResult{Body: res.Body, Stats: StreamSourceRefStats{
-		Truncated:     res.Stats.Truncated,
-		BytesStreamed: res.Stats.BytesStreamed,
-		Err:           res.Stats.Err,
-	}}, nil
+	stats := &StreamSourceRefStats{}
+	return &StreamSourceRefResult{
+		Body:  &liveSourceRefBody{ReadCloser: res.Body, remote: res.Stats, local: stats},
+		Stats: stats,
+	}, nil
+}
+
+type liveSourceRefBody struct {
+	io.ReadCloser
+	remote *githubdgrpc.StreamSourceRefStats
+	local  *StreamSourceRefStats
+	once   sync.Once
+	err    error
+}
+
+func (b *liveSourceRefBody) Close() error {
+	b.once.Do(func() {
+		b.err = b.ReadCloser.Close()
+		if b.remote == nil || b.local == nil {
+			return
+		}
+		b.local.Truncated = b.remote.Truncated
+		b.local.BytesStreamed = b.remote.BytesStreamed
+		b.local.ResolvedCommitSHA = b.remote.ResolvedCommitSHA
+		b.local.Err = b.remote.Err
+	})
+	return b.err
 }
 
 // newGithubdClient is the slice-1 constructor: returns the stub. Slice 7

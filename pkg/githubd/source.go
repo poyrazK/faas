@@ -86,17 +86,15 @@ type SourceFetcher interface {
 // Implementations must:
 //
 //   - Resolve the install row for accountID (the install token is
-//     sealed at rest in state.GitHubInstall.SealedToken). The
-//     install_id is NOT re-validated against inst.InstallationID
-//     here — the apid handler passes the durable install_id it
-//     pulled from state.GitHubInstallForAccount, so the row's
-//     own installation_id is authoritative. Mismatch is a config
-//     bug, not a security one (no cross-account take-over is
-//     possible because accountID gates the row lookup).
+//     sealed at rest in state.GitHubInstall.SealedToken) and verify
+//     installID matches inst.InstallationID. A mismatch is returned
+//     as ErrNoBinding so a stale or forged bridge request cannot
+//     use a different installation's token.
 //   - Mint (or refresh) the install token via TokenCache.Token —
 //     singleflight + 5-min proactive refresh keeps the cached
-//     token under 55 min of GitHub's 1 h TTL. On 401 from
-//     codeload: TokenCache.Invalidate + retry once. On retry
+//     token under 55 min of GitHub's 1 h TTL. On 401 from the
+//     commit or codeload request: TokenCache.Invalidate + retry once.
+//     On retry
 //     401: surface ErrSourceRefUnavailable (mirrors
 //     source_fetcher.go's ErrUnauthorized / ErrNotFound
 //     surface).
@@ -109,5 +107,12 @@ type SourceFetcher interface {
 //     must NEVER escape this function — not in logs, not in
 //     URLs, not in the response body, not in any error string.
 type SourceRefStreamer interface {
-	Stream(ctx context.Context, accountID string, installID int64, repoFullName, ref string, maxArchiveBytes int64) (io.ReadCloser, error)
+	Stream(ctx context.Context, accountID string, installID int64, repoFullName, ref string, maxArchiveBytes int64) (SourceRefStream, error)
+}
+
+// SourceRefStream carries the raw archive body and the immutable commit SHA
+// resolved for the requested branch, tag, or short SHA.
+type SourceRefStream struct {
+	Body              io.ReadCloser
+	ResolvedCommitSHA string
 }
