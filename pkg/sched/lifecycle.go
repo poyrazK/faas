@@ -29,6 +29,34 @@ func desiredServiceReplicas(manifest state.AppManifest) int {
 	return manifest.ServiceReplicas.Desired
 }
 
+// serviceReplicaStatus is the scheduler's readiness projection for one
+// service deployment. A service target is about healthy serving capacity, not
+// merely rows that still hold a RAM reservation:
+//
+//   - ready replicas are RUNNING after the boot readiness gate;
+//   - starting replicas are still in WAKING/COLD_BOOTING;
+//   - draining replicas are leaving service (SNAPSHOTTING/MIGRATING); and
+//   - unavailable replicas are terminal or parked.
+//
+// The in-flight buckets are deliberately separate from ready. This prevents a
+// scale-down from parking the last healthy replica just because a replacement
+// is still booting, while still preventing the reconciler from admitting
+// duplicate replacements for work already in flight.
+type serviceReplicaStatus struct {
+	ready       int
+	starting    int
+	draining    int
+	unavailable int
+}
+
+func (s serviceReplicaStatus) inFlight() int {
+	return s.starting + s.draining
+}
+
+func (s serviceReplicaStatus) managed() int {
+	return s.ready + s.inFlight()
+}
+
 func normalizedInstanceMode(mode string) string {
 	if mode == "" {
 		return string(state.InstanceModeNormal)
@@ -40,21 +68,39 @@ func instanceModeMatchesApp(app state.App, ins state.Instance) bool {
 	return normalizedInstanceMode(ins.Mode) == instanceModeForApp(app)
 }
 
-func listLiveServiceReplicas(ctx context.Context, store state.Store, appID, deploymentID string) ([]state.Instance, error) {
+// listServiceReplicas returns every service-mode row for a deployment,
+// including terminal and parked history. The reconciler needs those states to
+// distinguish an unavailable replica from a boot already in flight; filtering
+// to CountsForConcurrency would collapse that distinction.
+func listServiceReplicas(ctx context.Context, store state.Store, appID, deploymentID string) ([]state.Instance, error) {
 	instances, err := store.ListInstancesForApp(ctx, appID)
 	if err != nil {
 		return nil, err
 	}
-	live := make([]state.Instance, 0, len(instances))
+	replicas := make([]state.Instance, 0, len(instances))
 	for _, ins := range instances {
-		if ins.DeploymentID != deploymentID ||
-			ins.Mode != string(state.InstanceModeService) ||
-			!state.State(ins.State).CountsForConcurrency() {
-			continue
+		if ins.DeploymentID == deploymentID && ins.Mode == string(state.InstanceModeService) {
+			replicas = append(replicas, ins)
 		}
-		live = append(live, ins)
 	}
-	return live, nil
+	return replicas, nil
+}
+
+func classifyServiceReplicas(replicas []state.Instance) serviceReplicaStatus {
+	var status serviceReplicaStatus
+	for _, replica := range replicas {
+		switch state.State(replica.State) {
+		case state.StateRunning:
+			status.ready++
+		case state.StateWaking, state.StateColdBooting:
+			status.starting++
+		case state.StateSnapshotting, state.StateMigrating:
+			status.draining++
+		default:
+			status.unavailable++
+		}
+	}
+	return status
 }
 
 func listLiveDeploymentInstances(ctx context.Context, store state.Store, appID, deploymentID string) ([]state.Instance, error) {
@@ -169,20 +215,24 @@ func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID strin
 	if serviceMode {
 		desired = desiredServiceReplicas(app.Manifest)
 	}
-	liveReplicas, err := listLiveServiceReplicas(ctx, e.store, dep.AppID, deploymentID)
+	serviceReplicas, err := listServiceReplicas(ctx, e.store, dep.AppID, deploymentID)
 	if err != nil {
-		e.log.Warn("sched: count service replicas", "deployment", deploymentID, "err", err)
+		e.log.Warn("sched: list service replicas", "deployment", deploymentID, "err", err)
 		return
 	}
-	live := len(liveReplicas)
-	if excess := live - desired; excess > 0 {
-		parked := e.parkSurplusServiceReplicas(ctx, liveReplicas, excess)
-		live -= parked
+	status := classifyServiceReplicas(serviceReplicas)
+	// Never trade away healthy capacity while a replacement is still
+	// booting. A deployment can temporarily exceed desired during a
+	// scale-down, but it must not temporarily fall below desired because a
+	// not-yet-ready replica was counted as equivalent to RUNNING.
+	if excess := status.ready - desired; excess > 0 {
+		parked := e.parkSurplusServiceReplicas(ctx, serviceReplicas, excess)
+		status.ready -= parked
 	}
 	if desired <= 0 {
 		return
 	}
-	for live < desired {
+	for status.managed() < desired {
 		result, admitErr := e.AdmitInstanceForDeployment(
 			ctx, dep.AppID, dep.ID, dep.Scope, TriggerServiceReplica,
 		)
@@ -194,7 +244,11 @@ func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID strin
 			e.log.Debug("sched: service replica admission at capacity", "app", dep.AppID, "deployment", dep.ID)
 			return
 		}
-		live++
+		// AdmitInstanceForDeployment returns only after the new replica has
+		// reached RUNNING (or has failed), so count the successful result as
+		// ready for this pass. A later asynchronous transition will trigger
+		// another reconciliation for failures and replacements.
+		status.ready++
 	}
 }
 
@@ -214,24 +268,46 @@ func (e *Engine) isMirrorDeployment(ctx context.Context, appID, deploymentID str
 // drainIncompatibleServiceReplicas removes request/worker/job instances that
 // were already live when the app switched into service mode. They cannot count
 // toward the service target and must release their resident admission before a
-// service replica can be admitted. Waking rows are left to their normal
-// transition path; once they reach RUNNING, the transition hook schedules the
-// same reconciliation pass again.
+// service replica can be admitted. In-flight rows are destroyed as well: if a
+// request-mode wake were allowed to finish after the mode switch, it could
+// consume capacity as an extra RUNNING VM and never trigger a service
+// reconciliation because its instance mode is not service.
 func (e *Engine) drainIncompatibleServiceReplicas(ctx context.Context, instances []state.Instance) int {
-	parked := 0
+	removed := 0
 	for _, ins := range instances {
-		if state.State(ins.State) != state.StateRunning ||
-			normalizedInstanceMode(ins.Mode) == string(state.InstanceModeService) ||
+		if normalizedInstanceMode(ins.Mode) == string(state.InstanceModeService) ||
 			ins.Mode == string(state.InstanceModeMirror) {
 			continue
 		}
-		if err := e.Park(ctx, ins.ID); err != nil {
-			e.log.Warn("sched: park incompatible service instance", "instance", ins.ID, "deployment", ins.DeploymentID, "err", err)
+		fresh, err := e.store.InstanceByID(ctx, ins.ID)
+		if err != nil {
+			if !errors.Is(err, state.ErrNotFound) {
+				e.log.Warn("sched: reload incompatible service instance", "instance", ins.ID, "deployment", ins.DeploymentID, "err", err)
+			}
 			continue
 		}
-		parked++
+		switch state.State(fresh.State) {
+		case state.StateRunning:
+			if err := e.Park(ctx, fresh.ID); err != nil {
+				e.log.Warn("sched: park incompatible service instance", "instance", fresh.ID, "deployment", fresh.DeploymentID, "err", err)
+				continue
+			}
+			removed++
+		case state.StateWaking, state.StateColdBooting:
+			// A mode switch is an explicit lifecycle change. Destroy the
+			// in-flight VM and close its reservation so the subsequent
+			// service admit cannot be rejected by a stale request wake.
+			destroyCtx := context.WithoutCancel(ctx)
+			if err := e.timedDestroy(destroyCtx, fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
+				e.log.Warn("sched: destroy incompatible service wake", "instance", fresh.ID, "deployment", fresh.DeploymentID, "err", err)
+				continue
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+			removed++
+		}
 	}
-	return parked
+	return removed
 }
 
 // parkSurplusServiceReplicas drains the oldest RUNNING service instances first.
