@@ -2747,10 +2747,9 @@ type Store interface {
 	// call with the same threshold affects 0 rows because all
 	// matching rows are now 'failed'.
 	//
-	// The reaper only updates the build row. The owning deployment
-	// row is flipped to DeployFailed separately (issue #195 B1.5
-	// for the imaged defer path; ADR-031 for the requeue-vs-fail
-	// reconciliation).
+	// The owning in-flight deployment is flipped to DeployFailed in
+	// the same store operation. This keeps the build and deployment
+	// state machine consistent when the builder process disappears.
 	SweepStuckRunningBuilds(ctx context.Context, threshold time.Time) (int, error)
 
 	// Custom domains (apid is sole writer).

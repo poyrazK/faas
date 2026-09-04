@@ -2,11 +2,10 @@
 //
 // Client-side --secret-scan (cmd/gregale/pack.go) is best-effort: a
 // customer can --secret-scan=off, or build a tarball out-of-band and
-// upload it via `curl -F source=@…`, and the server has no protection.
-// This file is the server-side defense: every POST /v1/projects/scan
-// (and /apply) walks the extracted tree, runs pkg/secretscan over every
-// text-shaped file, and rejects the upload if any candidate match is
-// produced.
+// upload it via `curl -F source=@…`. This file is the server-side
+// defense: every project scan and deploy tarball/source-ref ingress
+// walks the extracted tree, runs pkg/secretscan over every text-shaped
+// file, and rejects the upload if any candidate match is produced.
 //
 // The reject envelope is api.Problem with code=secret_scan_strict,
 // status=422, and the full findings list under `secret_findings` plus
@@ -41,18 +40,6 @@ import (
 // skipping over truncating.
 const serverSecretScanMaxBytes = 1 << 20
 
-// serverSecretScanExcludeDirs is the server-side analogue of
-// cmd/gregale/pack.go::defaultExcludeDirs. Mirrors the same skip set
-// plus the typical build-artifact dirs:
-func serverSecretScanIsExcludedDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", "vendor", "__pycache__",
-		".venv", "venv", "target", "dist", "build":
-		return true
-	}
-	return false
-}
-
 // openSpoolFile opens a file from the apid extract spool for scanning.
 // The spool lives under the apid-internal scan dir (cmd/apid/scan_service.go
 // passes req.ScanDir, which is a freshly-created os.MkdirTemp that the
@@ -84,10 +71,10 @@ func openSpoolFile(path string) (*os.File, error) {
 }
 
 // scanExtractedTreeSecrets walks scanDir and returns every secret
-// match found across all text-shaped files. Errors are non-fatal: a
-// single file that can't be opened or read is logged via errs but
-// does not abort the walk. The caller decides whether to 422 (today)
-// or fail-open (the v1 alternative, rejected for security).
+// match found across all text-shaped files. A file that can't be
+// opened or read stops the walk and is returned alongside any findings
+// collected so far. The caller decides whether to 422 (today) or
+// fail-open (the v1 alternative, rejected for security).
 //
 // The scan is purely advisory at the wire — the upload's bytes are
 // NOT modified. The customer's local CLI is the one that redacts;
@@ -101,9 +88,6 @@ func scanExtractedTreeSecrets(scanDir string) ([]secretscan.Finding, error) {
 			return werr
 		}
 		if d.IsDir() {
-			if p != scanDir && serverSecretScanIsExcludedDir(d.Name()) {
-				return filepath.SkipDir
-			}
 			return nil
 		}
 		rel, rerr := filepath.Rel(scanDir, p)
@@ -152,6 +136,36 @@ func scanExtractedTreeSecrets(scanDir string) ([]secretscan.Finding, error) {
 		return findings, walkErr
 	}
 	return findings, nil
+}
+
+// scanSourceTarballSecrets applies the extraction and server-side secret
+// scan gates to a spooled deploy tarball. Project scans already pass through
+// this sequence; keeping it here makes the direct tarball and source-ref
+// ingress paths subject to the same expanded-size, entry-type, and secret
+// policy before a build row is created.
+func scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+	scanDir, prob := extractTarGzToDir(sourcePath, defaultExtractLimits(limits))
+	if prob != nil {
+		return prob
+	}
+	defer func() { _ = os.RemoveAll(scanDir) }()
+
+	findings, err := scanExtractedTreeSecrets(scanDir)
+	if err != nil && len(findings) == 0 {
+		return api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Secret scan failed", err.Error())
+	}
+	if len(findings) > 0 {
+		return newSecretScanRejectionProblem(findings)
+	}
+	if err != nil {
+		// Partial findings are still actionable, but do not silently
+		// convert a walk error into an accepted source when no finding
+		// happened to be in the unreadable portion.
+		return api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Secret scan failed", err.Error())
+	}
+	return nil
 }
 
 // newSecretScanRejectionProblem builds the 422 envelope for an

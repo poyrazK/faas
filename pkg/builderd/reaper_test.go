@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -73,6 +74,16 @@ func TestReaperLoop_SweepsStuckRow(t *testing.T) {
 	}
 	if got.FinishedAt.IsZero() {
 		t.Error("stuck-running sweep: finished_at was not stamped")
+	}
+	dep, err := store.DeploymentByID(context.Background(), got.DeploymentID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if dep.Status != state.DeployFailed {
+		t.Errorf("stuck-running sweep: deployment status = %q, want %q", dep.Status, state.DeployFailed)
+	}
+	if dep.ErrorCode != api.CodeBuildTimeout {
+		t.Errorf("stuck-running sweep: deployment error_code = %q, want %q", dep.ErrorCode, api.CodeBuildTimeout)
 	}
 }
 

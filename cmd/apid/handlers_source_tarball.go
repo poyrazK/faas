@@ -1,8 +1,10 @@
 // cmd/apid/handlers_source_tarball.go — the local-tarball deploy
-// path (issue #961 / Mega-A PR-1). The CLI is the trust root for
-// this path; apid does NOT consult github_installations and does NOT
-// attempt a server-side git fetch. See docs/adr/0XX-local-tarball-
-// deploy-trust-root.md for the full trust model.
+// path (issue #961 / Mega-A PR-1). The CLI is the producer/trust root
+// for the tarball's provenance; apid still validates archive shape and
+// scans the extracted source at ingress. It does NOT consult
+// github_installations or attempt a server-side git fetch. See
+// docs/adr/0XX-local-tarball-deploy-trust-root.md for the full trust
+// model.
 //
 // Wire shape:
 //
@@ -31,6 +33,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
@@ -145,6 +148,16 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	sourceAccepted := false
+	defer func() {
+		if !sourceAccepted {
+			_ = os.Remove(spoolPath)
+		}
+	}()
+	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 
 	sourceURL := "local-tar://" + sidecar.Repo
 	commitSHA := sidecar.Ref // informational only; not used by the build pipeline
@@ -176,6 +189,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 		return
 	}
+	sourceAccepted = true
 
 	s.auditLocalTarballDeploy(r.Context(), acct, app, res, sidecar, spoolBytes, ann)
 

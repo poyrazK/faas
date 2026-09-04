@@ -135,7 +135,7 @@ export class DeploymentsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `code: invalid_ref | validation_failed. ref must be a 40-char
+        400: `code: invalid_ref | validation_failed. ref must be a valid 40-char
         SHA, branch, or tag.
         `,
         401: `code: unauthorized`,

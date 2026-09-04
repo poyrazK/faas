@@ -1637,10 +1637,10 @@ type StreamSourceRefRequest struct {
 	// repo_full_name is "owner/name". Validated against the same
 	// shape pkg/gitfetch/http.go::isValidRepoPath enforces.
 	RepoFullName string `protobuf:"bytes,3,opt,name=repo_full_name,json=repoFullName,proto3" json:"repo_full_name,omitempty"`
-	// ref is the pinned commit SHA, branch, or tag. apid resolves
-	// branches/tags to a SHA via api.github.com/repos/<repo>/commits/<ref>
-	// BEFORE calling this RPC, so the streamer only sees 7–40 char
-	// lowercase hex SHAs (pkg/gitfetch/http.go::isValidCommitSHA).
+	// ref is the requested commit SHA, branch, or tag. githubd resolves
+	// branches/tags to a canonical SHA via the authenticated GitHub API
+	// BEFORE fetching codeload, so the terminal chunk can carry immutable
+	// provenance back to apid.
 	Ref string `protobuf:"bytes,4,opt,name=ref,proto3" json:"ref,omitempty"`
 	// max_archive_bytes is the per-plan cap (Free 100 MB / Hobby 100 /
 	// Pro 250 / Scale 250 × 1024²). Applied as
@@ -1736,8 +1736,12 @@ type StreamSourceRefChunk struct {
 	// the apid handler can record source_bytes on the deployment
 	// row without summing the data fields.
 	BytesStreamed int64 `protobuf:"varint,3,opt,name=bytes_streamed,json=bytesStreamed,proto3" json:"bytes_streamed,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// resolved_commit_sha is the canonical 40-character commit SHA
+	// selected for the requested ref. It is repeated on the terminal
+	// metadata frame so apid can stamp immutable provenance.
+	ResolvedCommitSha string `protobuf:"bytes,4,opt,name=resolved_commit_sha,json=resolvedCommitSha,proto3" json:"resolved_commit_sha,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *StreamSourceRefChunk) Reset() {
@@ -1789,6 +1793,13 @@ func (x *StreamSourceRefChunk) GetBytesStreamed() int64 {
 		return x.BytesStreamed
 	}
 	return 0
+}
+
+func (x *StreamSourceRefChunk) GetResolvedCommitSha() string {
+	if x != nil {
+		return x.ResolvedCommitSha
+	}
+	return ""
 }
 
 var File_onebox_faas_githubd_v1_githubd_proto protoreflect.FileDescriptor
@@ -1905,11 +1916,12 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x0finstallation_id\x18\x02 \x01(\x03R\x0einstallationId\x12$\n" +
 	"\x0erepo_full_name\x18\x03 \x01(\tR\frepoFullName\x12\x10\n" +
 	"\x03ref\x18\x04 \x01(\tR\x03ref\x12*\n" +
-	"\x11max_archive_bytes\x18\x05 \x01(\x03R\x0fmaxArchiveBytes\"o\n" +
+	"\x11max_archive_bytes\x18\x05 \x01(\x03R\x0fmaxArchiveBytes\"\x9f\x01\n" +
 	"\x14StreamSourceRefChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1c\n" +
 	"\ttruncated\x18\x02 \x01(\bR\ttruncated\x12%\n" +
-	"\x0ebytes_streamed\x18\x03 \x01(\x03R\rbytesStreamed*b\n" +
+	"\x0ebytes_streamed\x18\x03 \x01(\x03R\rbytesStreamed\x12.\n" +
+	"\x13resolved_commit_sha\x18\x04 \x01(\tR\x11resolvedCommitSha*b\n" +
 	"\fInstallState\x12\x15\n" +
 	"\x11STATE_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rNOT_INSTALLED\x10\x01\x12\x0e\n" +

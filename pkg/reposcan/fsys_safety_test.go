@@ -112,10 +112,9 @@ func TestFSSafety_ReadFirstValidFileSkipsMissing(t *testing.T) {
 }
 
 // TestFSSafety_Scan_NoEscapePossible — the Scan() entry point
-// never returns a workload whose source string contains "../"
-// even when the input fsys has no manifest files at all (forcing
-// the Tier-4 floor). The Tier-4 source is "root-floor", not
-// anything that could leak a path.
+// never returns a workload whose source string contains "../".
+// An empty archive is not a deployable root application and must
+// therefore produce no synthetic workload.
 func TestFSSafety_Scan_NoEscapePossible(t *testing.T) {
 	t.Parallel()
 	r, err := Scan(fstest.MapFS{})
@@ -127,13 +126,11 @@ func TestFSSafety_Scan_NoEscapePossible(t *testing.T) {
 			t.Errorf("workload source contains '..': %q", w.Source)
 		}
 	}
-	// The Tier-4 root-floor seed name is "app" with source
-	// "root-floor" — a fully-qualified literal.
-	if len(r.Workloads) != 1 || r.Workloads[0].Name != "app" {
-		t.Errorf("Tier-4 floor failed: workloads = %v", r.Workloads)
+	if len(r.Workloads) != 0 {
+		t.Errorf("empty archive produced workloads = %v", r.Workloads)
 	}
-	if r.Workloads[0].Source != "root-floor" {
-		t.Errorf("Tier-4 source = %q, want 'root-floor'", r.Workloads[0].Source)
+	if r.Tier != 0 {
+		t.Errorf("empty archive tier = %s, want unknown", r.Tier)
 	}
 }
 

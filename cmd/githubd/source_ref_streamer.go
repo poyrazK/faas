@@ -15,7 +15,8 @@
 //     5-min proactive refresh).
 //   - GET https://codeload.github.com/<repo>/tar.gz/<ref> with
 //     `Authorization: Bearer <token>`. Body is the tar.gz stream.
-//   - On 401 mid-stream: TokenCache.Invalidate + retry once.
+//   - On a 401 from the commit or archive request: invalidate the
+//     cached token and retry once.
 //   - Retry 401 → ErrSourceRefUnavailable (the apid handler turns
 //     this into 503 + code=source_ref_unavailable).
 //   - On any other 4xx/5xx: surface ErrNotFound / ErrBadArchive
@@ -28,12 +29,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"path"
+	"net/url"
 	"strings"
 	"time"
 
@@ -69,10 +71,12 @@ type sourceRefInstallsLookup interface {
 // One instance per daemon; safe for concurrent use (http.Client
 // is goroutine-safe and TokenCache is singleflight-guarded).
 type sourceRefStreamer struct {
-	installs sourceRefInstallsLookup
-	tokens   sourceRefTokenLookup
-	http     *http.Client
-	log      *slog.Logger
+	installs        sourceRefInstallsLookup
+	tokens          sourceRefTokenLookup
+	http            *http.Client
+	log             *slog.Logger
+	apiBaseURL      string
+	codeloadBaseURL string
 	// maxArchiveBytes is the streaming cap applied via
 	// io.LimitReader. 0 disables the cap (tests). Production
 	// wiring sets it to the caller's per-plan SourceTarballMaxMB
@@ -95,6 +99,8 @@ func newSourceRefStreamer(installs sourceRefInstallsLookup, tokens sourceRefToke
 		tokens:          tokens,
 		http:            httpClient,
 		log:             log,
+		apiBaseURL:      "https://api.github.com",
+		codeloadBaseURL: "https://codeload.github.com",
 		maxArchiveBytes: 0, // overridden by Stream caller per-plan
 	}
 }
@@ -123,19 +129,19 @@ func newSourceRefStreamer(installs sourceRefInstallsLookup, tokens sourceRefToke
 // maxArchiveBytes + 1 so the caller can detect "the cap was hit"
 // by reading one extra byte and rolling the spool file back.
 // capBytes <= 0 disables the cap (test-only path).
-func (s *sourceRefStreamer) Stream(ctx context.Context, accountID string, installID int64, repoFullName, ref string, maxArchiveBytes int64) (io.ReadCloser, error) {
+func (s *sourceRefStreamer) Stream(ctx context.Context, accountID string, installID int64, repoFullName, ref string, maxArchiveBytes int64) (githubd.SourceRefStream, error) {
 	// 1. Resolve the install row. ErrNoBinding on
 	// state.ErrNotFound so the gRPC handler can return 404.
 	inst, err := s.installs.ForAccount(ctx, accountID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return nil, githubd.ErrNoBinding
+			return githubd.SourceRefStream{}, githubd.ErrNoBinding
 		}
-		return nil, fmt.Errorf("githubd: source-ref streamer: resolve install: %w", err)
+		return githubd.SourceRefStream{}, fmt.Errorf("githubd: source-ref streamer: resolve install: %w", err)
 	}
-	if inst.AccountID == "" || inst.InstallationID == 0 {
+	if inst.AccountID == "" || inst.AccountID != accountID || inst.InstallationID == 0 {
 		// Defensive: same posture as installationSourceFetcher.
-		return nil, githubd.ErrNoBinding
+		return githubd.SourceRefStream{}, githubd.ErrNoBinding
 	}
 	if inst.InstallationID != installID {
 		// The apid handler passes the durable install_id it
@@ -149,23 +155,20 @@ func (s *sourceRefStreamer) Stream(ctx context.Context, accountID string, instal
 			"expected_install_id", installID,
 			"stored_install_id", inst.InstallationID,
 			"repo", repoFullName)
-		return nil, githubd.ErrNoBinding
+		return githubd.SourceRefStream{}, githubd.ErrNoBinding
 	}
 
 	// 2. Validate the inputs are well-formed up front so a
-	// malformed value never reaches the HTTP layer. The same
-	// gates pkg/gitfetch/http.go applies — duplicated here
-	// rather than imported, because pkg/githubd does not import
-	// pkg/gitfetch (the same decoupling as SourceTree vs
-	// gitfetch.Tree). The shape MUST stay byte-for-byte
-	// identical to pkg/gitfetch/http.go's isValidRepoPath /
-	// isValidCommitSHA; the test suite pins both implementations
-	// against the same fixture table.
+	// malformed value never reaches the HTTP layer. The repo gate
+	// mirrors pkg/gitfetch/http.go; the ref gate is intentionally
+	// broader because this path accepts branch/tag names and resolves
+	// them to a commit before fetching the archive. The duplicated
+	// checks keep pkg/githubd decoupled from the transport package.
 	if !isValidSourceRefRepo(repoFullName) {
-		return nil, fmt.Errorf("githubd: source-ref streamer: invalid repo %q: %w", repoFullName, gitfetch.ErrBadArchive)
+		return githubd.SourceRefStream{}, fmt.Errorf("githubd: source-ref streamer: invalid repo %q: %w", repoFullName, gitfetch.ErrBadArchive)
 	}
 	if !isValidSourceRefRef(ref) {
-		return nil, fmt.Errorf("githubd: source-ref streamer: invalid ref %q: %w", ref, gitfetch.ErrBadArchive)
+		return githubd.SourceRefStream{}, fmt.Errorf("githubd: source-ref streamer: invalid ref %q: %w", ref, gitfetch.ErrBadArchive)
 	}
 
 	// 3. GET the archive. TokenCache.Token handles
@@ -174,30 +177,91 @@ func (s *sourceRefStreamer) Stream(ctx context.Context, accountID string, instal
 	// rest piggy-back on the same call.
 	token, err := s.tokens.Token(ctx, installID)
 	if err != nil {
-		return nil, fmt.Errorf("githubd: source-ref streamer: mint install token: %w", err)
+		return githubd.SourceRefStream{}, fmt.Errorf("githubd: source-ref streamer: mint install token: %w", err)
 	}
 
-	body, err := s.fetchArchive(ctx, repoFullName, ref, token)
+	body, resolvedSHA, err := s.resolveAndFetch(ctx, repoFullName, ref, token)
 	if err == nil {
-		return s.capAndWrap(body, maxArchiveBytes), nil
+		return githubd.SourceRefStream{
+			Body:              s.capAndWrap(body, maxArchiveBytes),
+			ResolvedCommitSHA: resolvedSHA,
+		}, nil
 	}
 
-	// 4. On 401 mid-stream: invalidate the cache entry and
-	// retry once. The second 401 surfaces as ErrUnauthorized
+	// 4. On 401 from either upstream request: invalidate the cache
+	// entry and retry once. The second 401 surfaces as ErrUnauthorized
 	// (wrapped) so the apid handler can branch on
 	// errors.Is(err, gitfetch.ErrUnauthorized).
 	if errors.Is(err, gitfetch.ErrUnauthorized) {
 		s.tokens.Invalidate(installID)
 		token, terr := s.tokens.Token(ctx, installID)
 		if terr != nil {
-			return nil, fmt.Errorf("githubd: source-ref streamer: re-mint install token after 401: %w", terr)
+			return githubd.SourceRefStream{}, fmt.Errorf("githubd: source-ref streamer: re-mint install token after 401: %w", terr)
 		}
-		body, err = s.fetchArchive(ctx, repoFullName, ref, token)
+		body, resolvedSHA, err = s.resolveAndFetch(ctx, repoFullName, ref, token)
 		if err == nil {
-			return s.capAndWrap(body, maxArchiveBytes), nil
+			return githubd.SourceRefStream{
+				Body:              s.capAndWrap(body, maxArchiveBytes),
+				ResolvedCommitSHA: resolvedSHA,
+			}, nil
 		}
 	}
-	return nil, err
+	return githubd.SourceRefStream{}, err
+}
+
+func (s *sourceRefStreamer) resolveAndFetch(ctx context.Context, repoFullName, ref, token string) (io.ReadCloser, string, error) {
+	commitSHA, err := s.resolveCommitSHA(ctx, repoFullName, ref, token)
+	if err != nil {
+		return nil, "", err
+	}
+	body, err := s.fetchArchive(ctx, repoFullName, commitSHA, token)
+	if err != nil {
+		return nil, "", err
+	}
+	return body, commitSHA, nil
+}
+
+func (s *sourceRefStreamer) resolveCommitSHA(ctx context.Context, repoFullName, ref, token string) (string, error) {
+	if isCanonicalSourceRefSHA(ref) {
+		return ref, nil
+	}
+	endpoint := strings.TrimRight(s.apiBaseURL, "/") +
+		"/repos/" + repoFullName + "/commits/" + url.PathEscape(ref)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("githubd: source-ref streamer: new commit request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "onebox-faas-githubd/1.0")
+
+	resp, err := s.http.Do(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", fmt.Errorf("githubd: source-ref streamer: %w", err)
+		}
+		return "", fmt.Errorf("githubd: source-ref streamer: commit lookup: %w", err)
+	}
+	defer func() { _ = drainAndCloseSourceRef(resp.Body) }()
+
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
+		return "", fmt.Errorf("githubd: source-ref streamer: commit lookup %d: %w", resp.StatusCode, gitfetch.ErrUnauthorized)
+	case resp.StatusCode == http.StatusNotFound:
+		return "", fmt.Errorf("githubd: source-ref streamer: commit lookup %d: %w", resp.StatusCode, gitfetch.ErrNotFound)
+	case resp.StatusCode >= 400:
+		return "", fmt.Errorf("githubd: source-ref streamer: commit lookup %d: %w", resp.StatusCode, gitfetch.ErrBadArchive)
+	}
+
+	var result map[string]string
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(&result); err != nil {
+		return "", fmt.Errorf("githubd: source-ref streamer: invalid commit response: %w", err)
+	}
+	commitSHA := result["sha"]
+	if !isCanonicalSourceRefSHA(commitSHA) {
+		return "", fmt.Errorf("githubd: source-ref streamer: invalid commit SHA: %w", gitfetch.ErrBadArchive)
+	}
+	return commitSHA, nil
 }
 
 // fetchArchive GETs https://codeload.github.com/<repo>/tar.gz/<ref>
@@ -207,8 +271,8 @@ func (s *sourceRefStreamer) Stream(ctx context.Context, accountID string, instal
 // ErrBadArchive. The body is NOT closed here; capAndWrap (or
 // the caller's defer) is responsible.
 func (s *sourceRefStreamer) fetchArchive(ctx context.Context, repoFullName, ref, token string) (io.ReadCloser, error) {
-	url := "https://codeload.github.com" + path.Join("/", repoFullName, "/tar.gz/", ref)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	archiveURL := strings.TrimRight(s.codeloadBaseURL, "/") + "/" + repoFullName + "/tar.gz/" + url.PathEscape(ref)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("githubd: source-ref streamer: new request: %w", err)
 	}
@@ -321,14 +385,56 @@ func isValidSourceRefRepo(s string) bool {
 	return true
 }
 
-// isValidSourceRefRef mirrors pkg/gitfetch/http.go's
-// isValidCommitSHA. Accepts 40 lowercase-hex SHAs and 7+ short
-// SHAs. Branches/tags are NOT matched here — the apid handler
-// resolves them via api.github.com/repos/<repo>/commits/<ref>
-// before calling Stream, so by the time we reach this function
-// the ref is already a SHA.
+// isValidSourceRefRef accepts Git branch/tag names as well as short and full
+// lowercase SHAs. The value is sent to the GitHub API as a path component,
+// so Git's unsafe ref forms are rejected before any network call.
 func isValidSourceRefRef(s string) bool {
-	if len(s) < 7 || len(s) > 40 {
+	if len(s) < 1 || len(s) > 200 || s == "@" || strings.HasPrefix(s, "/") ||
+		strings.HasSuffix(s, "/") || strings.Contains(s, "//") ||
+		strings.Contains(s, "..") || strings.Contains(s, "@{") ||
+		strings.HasSuffix(s, ".") {
+		return false
+	}
+	if len(s) < 7 && isLowerHexSourceRef(s) {
+		return false
+	}
+	if strings.ContainsRune(s, 92) || strings.ContainsRune(s, 0) ||
+		strings.ContainsRune(s, 96) || strings.ContainsRune(s, 63) ||
+		strings.ContainsRune(s, 37) || strings.ContainsRune(s, 91) ||
+		strings.ContainsRune(s, 93) || strings.ContainsRune(s, 123) ||
+		strings.ContainsRune(s, 125) || strings.ContainsRune(s, 60) ||
+		strings.ContainsRune(s, 62) || strings.ContainsRune(s, 34) ||
+		strings.ContainsRune(s, 39) || strings.ContainsRune(s, '*') {
+		return false
+	}
+	for _, r := range s {
+		if r <= 0x20 || r == 0x7f || strings.ContainsRune(":^~", r) {
+			return false
+		}
+	}
+	for _, part := range strings.Split(s, "/") {
+		if part == "" || strings.HasPrefix(part, ".") ||
+			strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
+}
+
+func isCanonicalSourceRefSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func isLowerHexSourceRef(s string) bool {
+	if s == "" {
 		return false
 	}
 	for _, r := range s {
