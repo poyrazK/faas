@@ -275,15 +275,14 @@ func TestCreateDeployment_WorkflowPlanGate(t *testing.T) {
 	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanWorkflowsNotAllowed)
 }
 
-func TestCreateDeployment_WorkflowFailsClosedUntilRuntime(t *testing.T) {
+func TestCreateDeployment_WorkflowDefinitionsPersist(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "workflow-app"}, nil)
 
 	rec := e.do(t, "POST", "/v1/apps/workflow-app/deployments", workflowDeploymentRequest(), nil)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("workflow deployment on Hobby: status %d, want 501: %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("workflow deployment on Hobby: status %d, want 202: %s", rec.Code, rec.Body)
 	}
-	assertProblem(t, rec, http.StatusNotImplemented, api.CodeWorkflowDeploymentUnavailable)
 
 	app, err := e.store.AppBySlug(context.Background(), "workflow-app")
 	if err != nil {
@@ -293,8 +292,11 @@ func TestCreateDeployment_WorkflowFailsClosedUntilRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDeploymentsForApp: %v", err)
 	}
-	if len(deployments) != 0 {
-		t.Fatalf("deployment rows = %d, want 0 when workflow persistence is unavailable", len(deployments))
+	if len(deployments) != 1 {
+		t.Fatalf("deployment rows = %d, want 1", len(deployments))
+	}
+	if !strings.Contains(string(deployments[0].Workflows), "process_order") {
+		t.Fatalf("persisted workflows = %s", deployments[0].Workflows)
 	}
 }
 

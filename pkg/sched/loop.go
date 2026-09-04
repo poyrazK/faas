@@ -2617,6 +2617,35 @@ func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.I
 	return h.invoke(ctx, appID, inv, nil)
 }
 
+// ExecuteStep adapts the gateway invocation envelope to the workflow
+// executor seam. Unlike the legacy Invoke method it returns the downstream
+// HTTP status, which is required for durable retry classification.
+func (h *httpGatewaySynth) ExecuteStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	headerBytes, err := json.Marshal(headers)
+	if err != nil {
+		return 0, nil, fmt.Errorf("sched: workflow headers: %w", err)
+	}
+	inv := state.Invocation{
+		ID:      "workflow-" + middleware.NewRequestID(),
+		AppID:   appID,
+		Source:  state.InvocationSource("workflow"),
+		Method:  method,
+		Path:    path,
+		Headers: headerBytes,
+		Payload: body,
+	}
+	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	return statusCode, out.Result, nil
+}
+
 // InvokeWithWake is the pre-woken variant used by the unified invocation
 // drain. The target is the result of schedd's engine.Wake call, so the
 // gateway-internal side can forward directly to the selected instance.
@@ -2625,10 +2654,15 @@ func (h *httpGatewaySynth) InvokeWithWake(ctx context.Context, appID string, inv
 }
 
 func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, error) {
+	out, _, err := h.invokeWithStatus(ctx, appID, inv, wake)
+	return out, err
+}
+
+func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
 	var headers map[string]string
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
-			return inv, fmt.Errorf("sched: invocation headers: %w", err)
+			return inv, 0, fmt.Errorf("sched: invocation headers: %w", err)
 		}
 	}
 	dispatch := map[string]any{
@@ -2649,12 +2683,12 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 	}
 	body, err := json.Marshal(dispatch)
 	if err != nil {
-		return inv, fmt.Errorf("sched: invocation marshal: %w", err)
+		return inv, 0, fmt.Errorf("sched: invocation marshal: %w", err)
 	}
 	url := h.basePrefix + "/v1/invocations:dispatch"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return inv, fmt.Errorf("sched: invocation request: %w", err)
+		return inv, 0, fmt.Errorf("sched: invocation request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	// ADR-119 — schedd's move-1 dial is now gated by the same
@@ -2673,7 +2707,7 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 			} else {
 				tok, mErr := h.mintInternalSvcToken(appID)
 				if mErr != nil {
-					return inv, fmt.Errorf("sched: invocation mint: %w", mErr)
+					return inv, 0, fmt.Errorf("sched: invocation mint: %w", mErr)
 				}
 				req.Header.Set("Authorization", "Bearer "+tok)
 			}
@@ -2681,18 +2715,19 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return inv, fmt.Errorf("sched: invocation do: %w", err)
+		return inv, 0, fmt.Errorf("sched: invocation do: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return inv, fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		return inv, 0, fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
 	}
 	var out struct {
-		State  string          `json:"state"`
-		Result json.RawMessage `json:"result"`
+		State      string          `json:"state"`
+		Result     json.RawMessage `json:"result"`
+		StatusCode int             `json:"status_code"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return inv, fmt.Errorf("sched: invocation response: %w", err)
+		return inv, 0, fmt.Errorf("sched: invocation response: %w", err)
 	}
 	if out.State != "" {
 		inv.State = state.InvocationState(out.State)
@@ -2702,7 +2737,10 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 	if len(out.Result) > 0 {
 		inv.Result = append(json.RawMessage(nil), out.Result...)
 	}
-	return inv, nil
+	if out.StatusCode == 0 {
+		out.StatusCode = http.StatusOK
+	}
+	return inv, out.StatusCode, nil
 }
 
 // runCronTick walks every enabled cron and dispatches any whose

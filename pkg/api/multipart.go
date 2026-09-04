@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 )
@@ -44,6 +45,11 @@ func newMultipartWriter(dst *bytes.Buffer, slug string, dockerfile bool, runtime
 	if a.PRNumber > 0 {
 		_ = w.WriteField("pr_number", fmt.Sprintf("%d", a.PRNumber))
 	}
+	if len(a.Workflows) > 0 {
+		if raw, err := json.Marshal(a.Workflows); err == nil {
+			_ = w.WriteField("workflows", string(raw))
+		}
+	}
 	return w
 }
 
@@ -59,4 +65,5 @@ type DeployAnnotations struct {
 	Tag        string // closed-set enum (DB CHECK; handler validates too)
 	DeployedBy string // human-readable actor label
 	PRNumber   int    // positive int (DB CHECK; 0 collapses to NULL)
+	Workflows  []WorkflowSpec
 }

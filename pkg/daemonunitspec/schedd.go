@@ -77,6 +77,10 @@ func UnitSchedd() daemonunit.Unit {
 			// explicit value the daemon logged "disabled" on every boot
 			// and `POST /v1/jobs/{name}/runs` rows sat pending forever.
 			{Key: "FAAS_JOBS_DISPATCH", Value: "0"},
+			// Durable workflow dispatch is opt-in until the workflow
+			// runtime rollout is enabled on this host. Operators can
+			// override this unit default with a later systemd drop-in.
+			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "0"},
 		},
 
 		NoNewPrivileges:       true,

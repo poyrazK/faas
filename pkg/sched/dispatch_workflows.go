@@ -1,6 +1,7 @@
 package sched
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -52,14 +53,84 @@ func (o *WorkflowOrchestrator) emitAudit(ctx context.Context, kind string, paylo
 	}
 }
 
+const workflowNoTimeoutWake = 100 * 365 * 24 * time.Hour
+
+var workflowTimeoutOutput = json.RawMessage(`{"timeout":true}`)
+
+func workflowRetryDelay(spec api.WorkflowStepSpec, attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := time.Second
+	if spec.Retry != nil && spec.Retry.Backoff == "exponential" {
+		shift := attempt - 1
+		if shift > 8 {
+			shift = 8
+		}
+		delay = time.Duration(1<<shift) * time.Second
+	}
+	if delay > 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return delay
+}
+
+func workflowWaitDeadline(createdAt time.Time, timeout time.Duration) time.Time {
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	if timeout <= 0 {
+		return time.Now().UTC().Add(workflowNoTimeoutWake)
+	}
+	return createdAt.Add(timeout)
+}
+
+// workflowTimeoutHandlerDecision keeps an on_timeout target out of the normal
+// DAG until its source wait actually times out. It also lets the event path
+// skip that target, so a fallback step cannot run on both branches or leave a
+// successful event-driven run permanently pending.
+func workflowTimeoutHandlerDecision(stepName string, specs []api.WorkflowStepSpec, steps map[string]*state.WorkflowStep) (blocked, skip bool) {
+	referenced := false
+	waiting := false
+	triggered := false
+	for _, spec := range specs {
+		if spec.OnTimeout != stepName {
+			continue
+		}
+		referenced = true
+		step, ok := steps[spec.Name]
+		if !ok {
+			waiting = true
+			continue
+		}
+		switch step.Status {
+		case state.WorkflowStepStatusSucceeded:
+			if bytes.Equal(step.Output, workflowTimeoutOutput) {
+				triggered = true
+			}
+		case state.WorkflowStepStatusSkipped:
+			// A skipped source cannot trigger a timeout handler.
+		default:
+			waiting = true
+		}
+	}
+	if !referenced || triggered {
+		return false, false
+	}
+	if waiting {
+		return true, false
+	}
+	return false, true
+}
+
 // DispatchTick runs one iteration of claiming pending runs and advancing active ones.
 func (o *WorkflowOrchestrator) DispatchTick(ctx context.Context) error {
 	if o.store == nil {
 		return nil
 	}
 
-	// 1. Claim any pending workflow runs ready for execution
-	claimed, err := o.store.ClaimNextPendingRun(ctx)
+	// Claim one newly queued run or one parked wait whose deadline is due.
+	claimed, err := o.store.ClaimNextDueWorkflowRun(ctx)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		if o.log != nil {
 			o.log.Warn("workflow orchestrator: claim pending failed", "err", err)
@@ -209,8 +280,25 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		return nil
 	}
 
-	// Find runnable steps: status is pending and all depends_on are succeeded
+	// First revisit a due parked wait. This is the timeout path; normal event
+	// delivery marks the step succeeded before advancing the run.
 	advancedAny := false
+	for _, s := range steps {
+		if s.Status != state.WorkflowStepStatusAwaitingEvent {
+			continue
+		}
+		stepSpec, exists := specStepMap[s.StepName]
+		if !exists {
+			continue
+		}
+		adv, err := o.executeStep(ctx, run, s, stepSpec)
+		if err != nil && o.log != nil {
+			o.log.Warn("workflow orchestrator: resume wait error", "run_id", runID, "step", s.StepName, "err", err)
+		}
+		advancedAny = advancedAny || adv
+	}
+
+	// Find runnable steps: status is pending and all depends_on are succeeded
 	for _, s := range steps {
 		if s.Status != state.WorkflowStepStatusPending {
 			continue
@@ -218,6 +306,16 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 
 		stepSpec, exists := specStepMap[s.StepName]
 		if !exists {
+			continue
+		}
+		blocked, skip := workflowTimeoutHandlerDecision(s.StepName, spec.Steps, stepMap)
+		if skip {
+			_ = o.store.MarkWorkflowStepStatus(ctx, runID, s.StepName, state.WorkflowStepStatusSkipped, s.Attempt, nil, nil)
+			s.Status = state.WorkflowStepStatusSkipped
+			advancedAny = true
+			continue
+		}
+		if blocked {
 			continue
 		}
 
@@ -281,11 +379,13 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			return true, nil
 		}
 
-		// Check timeout
-		if spec.Timeout > 0 && time.Since(step.CreatedAt) > spec.Timeout {
+		// Check timeout. scheduled_for is the durable deadline, but retain the
+		// created_at calculation as a safe fallback for old rows.
+		deadline := workflowWaitDeadline(step.CreatedAt, spec.Timeout)
+		if !time.Now().UTC().Before(deadline) {
 			if spec.OnTimeout != "" {
-				errMsg := "wait_for_event timed out"
-				_ = o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusFailed, step.Attempt, nil, &errMsg)
+				_ = o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, workflowTimeoutOutput, nil)
+				_ = o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusPending, time.Now().UTC())
 			} else {
 				errMsg := "wait_for_event timed out with no handler"
 				_ = o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusDead, step.Attempt, nil, &errMsg)
@@ -294,9 +394,11 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			return true, nil
 		}
 
-		// Park run in awaiting_event
+		// Park run in awaiting_event. The scheduler deadline makes timeout
+		// handling durable across schedd restarts; waits without a timeout are
+		// parked far in the future and resume only through event injection.
 		_ = o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusAwaitingEvent, step.Attempt, nil, nil)
-		_ = o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusAwaitingEvent, nil, nil)
+		_ = o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusAwaitingEvent, deadline)
 		o.emitAudit(ctx, events.WorkflowAwaitingEvent, map[string]any{
 			"run_id":        run.ID,
 			"app_id":        run.AppID,
@@ -375,8 +477,11 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	}
 
 	if (statusCode >= 500 || err != nil) && step.Attempt+1 < maxAttempts {
-		// Retry eligible — kept in pending for next tick
+		// Retry eligible — schedule the next attempt after the configured
+		// backoff so a failing dependency cannot hot-loop the dispatcher.
 		_ = o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusPending, step.Attempt+1, nil, &errMsg)
+		_ = o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusPending,
+			time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1)))
 		return false, nil
 	}
 
@@ -448,7 +553,7 @@ func (o *WorkflowOrchestrator) ProcessEvent(ctx context.Context, runID, eventNam
 	})
 
 	if run.Status == state.WorkflowRunStatusAwaitingEvent {
-		_ = o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusRunning, nil, nil)
+		_ = o.store.ScheduleWorkflowRun(ctx, runID, state.WorkflowRunStatusPending, time.Now().UTC())
 	}
 
 	return o.AdvanceWorkflowRun(ctx, runID)

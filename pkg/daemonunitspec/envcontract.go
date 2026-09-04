@@ -367,6 +367,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMM_TLS_CERT_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMM_TLS_KEY_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_WEBHOOK_SECRET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal)"},
+	{Name: "FAAS_WORKFLOWS_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceUnit, Note: "explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch"},
 }
 
 // EnvContractByName indexes EnvContract by variable name.

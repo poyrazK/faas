@@ -2522,9 +2522,8 @@ paths:
         - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
         Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
         The optional `workflows` array is plan-gated and schema-validated;
-        until workflow runtime persistence is enabled, a request containing
-        workflow definitions returns `501 workflow_deployment_unavailable`
-        rather than accepting and dropping them.
+        accepted definitions are persisted with the deployment and snapshotted
+        when a workflow run starts.
       requestBody:
         required: true
         description: "Either a prebuilt OCI image reference (`application/json`) or a source tarball upload (`multipart/form-data`). See the operation description for plan size caps."
@@ -2549,6 +2548,9 @@ paths:
                 runtime:
                   type: string
                   enum: [node22, python312, go124, go124-alpine, node24, python313]
+                workflows:
+                  type: string
+                  description: "JSON array of workflow definitions (plan-gated)."
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -2561,15 +2563,11 @@ paths:
                 example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","image_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","kind":"tarball","status":"pending","created_at":"2026-08-29T11:25:00Z"}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '403': { $ref: '#/components/responses/SourceEgressDenied' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
-        '501':
-          description: Workflow definitions are valid but workflow runtime deployment persistence is not enabled yet.
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/deployments/source-ref:
     parameters:
@@ -13820,10 +13818,8 @@ components:
         new_balance: { type: integer, minimum: 0 }
 
     # ─── Workflow deployment shape (ADR-081) ─────────────────────────────
-    # Workflow declarations are validated at the deployment boundary. The
-    # runtime persistence/execution endpoint is staged separately; clients
-    # must not assume that an accepted deployment silently ignores these
-    # declarations.
+    # Workflow declarations are validated and persisted at the deployment
+    # boundary; runs snapshot the selected definition from the live deploy.
     WorkflowTriggerSpec:
       description: "How a workflow starts. Manual is the only supported trigger in v1."
       type: object
@@ -14023,7 +14019,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkflowSpec'
-          description: "Workflow DAG definitions for this deployment. Paid-plan only; runtime deployment persistence is staged separately."
+          description: "Workflow DAG definitions for this deployment. Paid-plan only; persisted with the deployment and snapshotted at run start."
         # Issue #556 PR-A: per-deployment traffic-split weight
         # (Pro/Scale only). nil/omitted = server default 100 (the
         # most-recent live row receives all traffic, preserving

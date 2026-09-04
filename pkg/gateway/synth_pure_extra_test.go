@@ -173,6 +173,15 @@ type fakeSynthDispatcher struct {
 	targets []Target
 }
 
+type statusAwareSynthDispatcher struct{ fakeSynthDispatcher }
+
+func (f *statusAwareSynthDispatcher) InvokeWithStatus(_ context.Context, _ string, inv state.Invocation) (state.Invocation, int, error) {
+	f.invs = append(f.invs, inv)
+	inv.State = state.InvocationDispatching
+	inv.Result = json.RawMessage(`{"ok":true}`)
+	return inv, http.StatusCreated, nil
+}
+
 func (f *fakeSynthDispatcher) Wake(_ context.Context, appID string) error {
 	f.wakes = append(f.wakes, appID)
 	return nil
@@ -309,6 +318,26 @@ func TestHandleInvocationDispatch_DispatchesOnValidRequest(t *testing.T) {
 	}
 	if w.Code != http.StatusOK {
 		t.Errorf("code = %d, want 200", w.Code)
+	}
+}
+
+func TestHandleInvocationDispatch_UsesOptionalDownstreamStatus(t *testing.T) {
+	d := &statusAwareSynthDispatcher{}
+	srv := NewSynthServer("/tmp/faas-synth-status-test.sock", d, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch", strings.NewReader(`{"invocation_id":"inv-status","app_id":"app-status"}`))
+	srv.handleInvocationDispatch(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 transport response", w.Code)
+	}
+	var response struct {
+		StatusCode int `json:"status_code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("status_code = %d, want 201", response.StatusCode)
 	}
 }
 

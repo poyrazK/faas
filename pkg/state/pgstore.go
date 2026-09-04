@@ -4577,16 +4577,16 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		`insert into deployments (app_id, image_digest, kind, source_path, source_bytes, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
 		                          override_liveness_probe,
-		                          sidecars,
-		                          status,
+			                          sidecars,
+			                          status,
 		                          min_instances,
 		                          traffic_percent,
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
-		                          reason, tag, deployed_by, pr_number)
+		                          reason, tag, deployed_by, pr_number, workflows)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'pending', $18, $19, coalesce(nullif($20, ''), 'default'),
 		         nullif($21, '')::uuid, coalesce(nullif($22, ''), 'api'), nullif($23, '')::inet, nullif($24, ''),
-		         $25, $26, $27, nullif($28, 0))
+		         $25, $26, $27, nullif($28, 0), $29)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), d.SourceBytes,
 		nullString(d.Handler), nullString(d.LogPath),
@@ -4622,7 +4622,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// or a future handler that forgets to set the field)
 		// collapses to NULL rather than tripping the
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
-		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber)
+		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
+		notNullEmptyJSONRaw(d.Workflows))
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -16832,7 +16833,8 @@ const deploymentSelectColumnsWithRootfs = `
 	-- + deleted_by_principal are the soft-delete audit columns.
 	coalesce(priority, 100), coalesce(reordered_by_principal, ''), reordered_at,
 	cancelled_at, coalesce(cancelled_by_principal, ''), coalesce(cancel_reason, ''),
-	deleted_at, coalesce(deleted_by_principal, '')`
+	deleted_at, coalesce(deleted_by_principal, ''),
+	coalesce(workflows, '[]'::jsonb)`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -16882,7 +16884,8 @@ const deploymentSelectColumnsQualified = `
 	-- coalesce choices.
 	coalesce(d.priority, 100), coalesce(d.reordered_by_principal, ''), d.reordered_at,
 	d.cancelled_at, coalesce(d.cancelled_by_principal, ''), coalesce(d.cancel_reason, ''),
-	d.deleted_at, coalesce(d.deleted_by_principal, '')`
+	d.deleted_at, coalesce(d.deleted_by_principal, ''),
+	coalesce(d.workflows, '[]'::jsonb)`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -16990,7 +16993,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		// "lockstep or pgx panic" invariant.
 		&d.Priority, &d.ReorderedByPrincipal, &d.ReorderedAt,
 		&d.CancelledAt, &d.CancelledByPrincipal, &d.CancelReason,
-		&d.DeletedAt, &d.DeletedByPrincipal,
+		&d.DeletedAt, &d.DeletedByPrincipal, &d.Workflows,
 	); err != nil {
 		return mapErr(err)
 	}

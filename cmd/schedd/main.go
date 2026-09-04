@@ -1613,6 +1613,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 			loop.WithGatewaySynth(synth)
+			if workflowsDispatchEnabled(os.Getenv("FAAS_WORKFLOWS_ENABLED")) {
+				if executor, ok := synth.(sched.WorkflowStepExecutor); ok {
+					loop.WithWorkflowsDispatched(true).
+						WithWorkflowOrchestrator(sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, nil, log)).
+						WithWorkflowRetention(sched.NewWorkflowRetention(store, log))
+					log.Info("schedd workflows dispatch enabled — FAAS_WORKFLOWS_ENABLED=1")
+				} else {
+					log.Error("schedd workflows dispatch requested but gateway synth has no workflow executor")
+				}
+			} else {
+				log.Info("schedd workflows dispatch disabled — set FAAS_WORKFLOWS_ENABLED=1 to enable")
+			}
 		}
 	}
 
@@ -1859,6 +1871,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 // non-empty value (including "0" or "false") as enabled makes a templated
 // production environment unexpectedly activate an incomplete jobs path.
 func jobsDispatchEnabled(value string) bool {
+	return strings.TrimSpace(value) == "1"
+}
+
+// workflowsDispatchEnabled is an exact opt-in so a partially configured
+// workflow runtime cannot activate from a truthy-but-ambiguous environment
+// value. It mirrors the jobs dispatch gate above.
+func workflowsDispatchEnabled(value string) bool {
 	return strings.TrimSpace(value) == "1"
 }
 

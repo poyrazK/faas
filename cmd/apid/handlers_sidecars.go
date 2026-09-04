@@ -311,6 +311,9 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 	}
+	if len(req.Workflows) > 0 {
+		dep.Workflows, _ = json.Marshal(req.Workflows)
+	}
 	// Issue #556 PR-A: thread the optional TrafficPercent pointer
 	// through. Omitted (nil) → server-side default 100 (matches
 	// schema NOT NULL DEFAULT 100 and the pre-#556 behaviour of

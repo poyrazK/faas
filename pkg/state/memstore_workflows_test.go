@@ -94,6 +94,32 @@ func TestMemStore_WorkflowRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestMemStore_DueWorkflowRunScheduling(t *testing.T) {
+	ctx := context.Background()
+	ms := state.NewMemStore()
+	future := time.Now().UTC().Add(time.Hour)
+	run := &state.WorkflowRun{
+		AppID: "app-due", WorkflowName: "due", ScheduledFor: future,
+		DefinitionSnapshot: json.RawMessage(`{"steps":[{"name":"main"}]}`),
+	}
+	if err := ms.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatalf("CreateWorkflowRun: %v", err)
+	}
+	if _, err := ms.ClaimNextDueWorkflowRun(ctx); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("future claim error = %v, want ErrNotFound", err)
+	}
+	if err := ms.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusPending, time.Now().UTC()); err != nil {
+		t.Fatalf("ScheduleWorkflowRun: %v", err)
+	}
+	claimed, err := ms.ClaimNextDueWorkflowRun(ctx)
+	if err != nil {
+		t.Fatalf("ClaimNextDueWorkflowRun: %v", err)
+	}
+	if claimed.ID != run.ID || claimed.Status != state.WorkflowRunStatusRunning {
+		t.Fatalf("claimed = %#v, want running %s", claimed, run.ID)
+	}
+}
+
 func TestMemStore_WorkflowStepsAndEvents(t *testing.T) {
 	ctx := context.Background()
 	ms := state.NewMemStore()

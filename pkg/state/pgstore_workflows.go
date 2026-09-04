@@ -242,6 +242,54 @@ func (s *PgStore) ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error)
 	return r, nil
 }
 
+// ClaimNextDueWorkflowRun claims either a newly queued run or a parked wait
+// whose timeout deadline has arrived. FOR UPDATE SKIP LOCKED keeps multiple
+// schedd workers from dispatching the same run.
+func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error) {
+	query := fmt.Sprintf(`
+		UPDATE workflow_runs
+		SET status = 'running',
+		    started_at = COALESCE(started_at, now()),
+		    updated_at = now()
+		WHERE id = (
+			SELECT id FROM workflow_runs
+			WHERE status IN ('pending', 'awaiting_event') AND scheduled_for <= now()
+			ORDER BY scheduled_for ASC, id ASC
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		RETURNING %s
+	`, workflowRunSelectCols)
+
+	r, err := scanWorkflowRunCols(s.pool.QueryRow(ctx, query).Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("pgstore: claim next due workflow run: %w", err)
+	}
+	return r, nil
+}
+
+// ScheduleWorkflowRun updates the run's scheduler state and next due time.
+func (s *PgStore) ScheduleWorkflowRun(ctx context.Context, id, status string, scheduledFor time.Time) error {
+	if err := validateWorkflowRunStatus(status); err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE workflow_runs
+		SET status = $2, scheduled_for = $3, updated_at = now()
+		WHERE id = $1
+	`, id, status, scheduledFor.UTC())
+	if err != nil {
+		return fmt.Errorf("pgstore: schedule workflow run: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrWorkflowRunNotFound
+	}
+	return nil
+}
+
 func (s *PgStore) CountActiveRunsByApp(ctx context.Context, appID string) (int, error) {
 	query := `
 		SELECT count(*) FROM workflow_runs

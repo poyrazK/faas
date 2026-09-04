@@ -361,9 +361,10 @@ func dnsTokenLookupFromEnv(provider string) string {
 // wake-only path left cron traffic invisible to the runner and the
 // meter (spec §4.4, M7).
 type synthAdapter struct {
-	backend gateway.Backend
-	wake    func(ctx context.Context, appID string) error
-	invoke  func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
+	backend          gateway.Backend
+	wake             func(ctx context.Context, appID string) error
+	invoke           func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
+	invokeWithStatus func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error)
 	// forward is the same HTTP→vmmd bridge installed on the public
 	// gateway handler. Synthetic invocations must use that bridge too;
 	// waking an instance without delivering the envelope leaves the row
@@ -384,6 +385,14 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 		return inv, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
 	}
 	return a.invoke(ctx, appID, inv)
+}
+
+func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+	if a.invokeWithStatus != nil {
+		return a.invokeWithStatus(ctx, appID, inv)
+	}
+	out, err := a.Invoke(ctx, appID, inv)
+	return out, http.StatusOK, err
 }
 
 // InvokeWithTarget is the pre-woken synthetic invocation path. Schedd owns
@@ -407,8 +416,13 @@ func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv s
 // completes the invocation row, which is what makes sync invoke and async
 // polling return the function's actual response.
 func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, error) {
+	out, _, err := a.forwardInvocationWithStatus(ctx, target, inv)
+	return out, err
+}
+
+func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, error) {
 	if a.forward == nil {
-		return inv, fmt.Errorf("gateway synth: invocation forwarder is not wired")
+		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
 
 	method := inv.Method
@@ -424,12 +438,12 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 	}
 	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(inv.Payload))
 	if err != nil {
-		return inv, fmt.Errorf("gateway synth: build request: %w", err)
+		return inv, 0, fmt.Errorf("gateway synth: build request: %w", err)
 	}
 	if len(inv.Headers) > 0 {
 		var headers map[string]string
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
-			return inv, fmt.Errorf("gateway synth: decode invocation headers: %w", err)
+			return inv, 0, fmt.Errorf("gateway synth: decode invocation headers: %w", err)
 		}
 		for key, value := range headers {
 			req.Header.Set(key, value)
@@ -462,7 +476,7 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 		} else {
 			encoded, err := json.Marshal(string(body))
 			if err != nil {
-				return inv, fmt.Errorf("gateway synth: encode response: %w", err)
+				return inv, 0, fmt.Errorf("gateway synth: encode response: %w", err)
 			}
 			inv.Result = encoded
 		}
@@ -470,7 +484,7 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 		inv.Result = nil
 	}
 	inv.State = state.InvocationDispatching
-	return inv, nil
+	return inv, rec.Code, nil
 }
 
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
@@ -1094,6 +1108,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			return synth.forwardInvocation(ctx, target, inv)
+		},
+		invokeWithStatus: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+			app, err := pgStore.AppByID(ctx, appID)
+			if err != nil {
+				return inv, 0, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
+			}
+			cli, err := deps.scheddRouter.ScheddForApp(ctx, app)
+			if err != nil {
+				return inv, 0, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
+			}
+			instanceID, nodeID, deploymentID, wakeID, port, err := cli.Wake(ctx, appID, "", "")
+			if err != nil {
+				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
+			}
+			target := gateway.Target{InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}
+			backend.RecordTarget(appID, target)
+			inv.InstanceID = instanceID
+			return synth.forwardInvocationWithStatus(ctx, target, inv)
 		},
 	}
 	// Construct the SynthServer before wiring the gate — the

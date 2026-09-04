@@ -168,6 +168,9 @@ type EnqueueParams struct {
 	Tag        string
 	DeployedBy string
 	PRNumber   int
+	// Workflows is the validated definition set carried by a multipart source
+	// deploy and stored with the deployment for run snapshotting.
+	Workflows json.RawMessage
 }
 
 // EnqueueResult is the durable artifact the caller writes back to
@@ -291,6 +294,7 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 		Tag:        p.Tag,
 		DeployedBy: p.DeployedBy,
 		PRNumber:   p.PRNumber,
+		Workflows:  append(json.RawMessage(nil), p.Workflows...),
 	})
 	if err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create deployment: %w", err)
