@@ -172,6 +172,8 @@ export type { GdprAuditExportResponse } from './models/GdprAuditExportResponse.j
 export type { GraceWindowResponse } from './models/GraceWindowResponse.js';
 export type { Id32 } from './models/Id32.js';
 export type { IdempotencyKey } from './models/IdempotencyKey.js';
+export type { InjectWorkflowEventRequest } from './models/InjectWorkflowEventRequest.js';
+export type { InjectWorkflowEventResponse } from './models/InjectWorkflowEventResponse.js';
 export type { InstallBindRequest } from './models/InstallBindRequest.js';
 export type { InstallBindResponse } from './models/InstallBindResponse.js';
 export type { InstanceResponse } from './models/InstanceResponse.js';
@@ -207,6 +209,8 @@ export type { ListSecretsForAccountResponse } from './models/ListSecretsForAccou
 export type { ListTenantSurfacesResponse } from './models/ListTenantSurfacesResponse.js';
 export type { ListTriggerDeadLetterResponse } from './models/ListTriggerDeadLetterResponse.js';
 export type { ListTriggerRecordsResponse } from './models/ListTriggerRecordsResponse.js';
+export type { ListWorkflowRunsResponse } from './models/ListWorkflowRunsResponse.js';
+export type { ListWorkflowStepsResponse } from './models/ListWorkflowStepsResponse.js';
 export type { LogExcerpt } from './models/LogExcerpt.js';
 export type { MagicLinkSignupRequest } from './models/MagicLinkSignupRequest.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
@@ -359,7 +363,9 @@ export type { WakeTimelineEvent } from './models/WakeTimelineEvent.js';
 export type { WakeTimelineJSONRow } from './models/WakeTimelineJSONRow.js';
 export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
 export type { WorkflowRetrySpec } from './models/WorkflowRetrySpec.js';
+export type { WorkflowRunResponse } from './models/WorkflowRunResponse.js';
 export type { WorkflowSpec } from './models/WorkflowSpec.js';
+export type { WorkflowStepResponse } from './models/WorkflowStepResponse.js';
 export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';
 
