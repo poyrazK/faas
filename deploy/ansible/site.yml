@@ -1,0 +1,35 @@
+# Observability overlay for the split-box deployment (issue #274).
+#
+# bootstrap.yml owns the FaaS hosts. This playbook deliberately keeps the
+# Loki backend on a separate observability host so losing a FaaS box does not
+# also destroy the logs needed to investigate it. Run after the normal host
+# bootstrap with an inventory that contains one or more hosts in the
+# `observability` group.
+
+- name: Deploy the off-host Loki backend
+  hosts: observability
+  gather_facts: true
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - role: loki
+
+- name: Deploy Promtail on FaaS hosts
+  hosts: control_plane:compute_nodes
+  gather_facts: true
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require a dedicated observability host
+      ansible.builtin.assert:
+        that:
+          - groups['observability'] | default([]) | length >= 1
+        fail_msg: >-
+          The observability overlay requires at least one host in the
+          inventory's [observability] group. Keeping Loki off the FaaS hosts
+          is the durability boundary for issue #274.
+      run_once: true
+  roles:
+    - role: promtail

@@ -170,3 +170,48 @@ func TestComputeMetricsTargetValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestPromtailMetricsTargetReusesComputeHost(t *testing.T) {
+	got, ok := promtailMetricsTarget("tcp://fsn-2.gregale.dev:8080")
+	if !ok {
+		t.Fatal("promtailMetricsTarget rejected a valid compute target")
+	}
+	if got != "fsn-2.gregale.dev:9080" {
+		t.Fatalf("target=%q, want fsn-2.gregale.dev:9080", got)
+	}
+}
+
+func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
+	store := state.NewMemStore()
+	target := "tcp://fsn-2.gregale.dev:8080"
+	if _, err := store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name:               "fsn-2.faas",
+		TargetURL:          "tcp://vmmd-2.gregale.dev:50051",
+		GatewayTargetURL:   &target,
+		VPCPUs:             4,
+		MemMB:              8192,
+		MaxConcurrency:     16,
+		AdmissionCeilingMB: 4096,
+	}); err != nil {
+		t.Fatalf("upsert active node: %v", err)
+	}
+
+	srv := newServer(store, nil, "gregale.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, promtailMetricsDiscoveryPath, nil)
+	req.RemoteAddr = "127.0.0.1:9099"
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got []prometheusTargetGroup
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode discovery response: %v", err)
+	}
+	if len(got) != 1 || got[0].Targets[0] != "fsn-2.gregale.dev:9080" {
+		t.Fatalf("targets=%v, want Promtail endpoint", got)
+	}
+	if got[0].Labels["job"] != "promtail-compute" {
+		t.Fatalf("job label=%q, want promtail-compute", got[0].Labels["job"])
+	}
+}

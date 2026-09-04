@@ -1,0 +1,49 @@
+# promtail — journal shipper for FaaS hosts (issue #274).
+
+promtail_version: "3.5.3"
+# SHA-256 of promtail-linux-amd64.zip from the upstream v{{ promtail_version }} release.
+promtail_release_sha256: "16cfde821980d4c3b5fa45647cca81f428c0921bc125ba7e27596dda8d1b64c5"
+
+promtail_listen_address: auto
+promtail_listen_port: 9080
+promtail_positions_file: /var/lib/promtail/positions.yaml
+promtail_config_path: /etc/promtail/config.yml
+promtail_environment: production
+promtail_host_label: "{{ faas_node_name | default(inventory_hostname) }}"
+
+# The endpoint must be the private HTTPS Loki push URL in production. It is
+# intentionally empty so an incomplete inventory fails closed.
+promtail_loki_url: ""
+promtail_loki_tenant_id: gregale
+promtail_loki_server_name: ""
+promtail_loki_ca_file: /etc/faas/secrets/loki/tls/ca.crt
+promtail_loki_client_cert_file: /etc/faas/secrets/loki/tls/promtail.crt
+promtail_loki_client_key_file: /etc/faas/secrets/loki/tls/promtail.key
+
+# Journal matches are explicit so unrelated host services are not sent to the
+# operations backend. The gatewayd-internal unit carries the structured
+# customer-log records emitted by the app-log stream.
+promtail_journal_units:
+  - faas-apid.service
+  - faas-schedd.service
+  - faas-meterd.service
+  - faas-gatewayd-public.service
+  - faas-gatewayd-internal.service
+  - faas-githubd.service
+  - faas-vmmd.service
+  - faas-imaged.service
+  - faas-builderd.service
+  - prometheus.service
+  - alertmanager.service
+  - grafana-server.service
+  - node_exporter.service
+
+promtail_journal_max_age: 12h
+promtail_batch_wait: 1s
+promtail_batch_size: 1048576
+promtail_min_backoff: 500ms
+promtail_max_backoff: 5m
+promtail_max_retries: 10
+
+# Dev mode only permits a local HTTP target and skips mTLS-file assertions.
+promtail_dev_mode: false

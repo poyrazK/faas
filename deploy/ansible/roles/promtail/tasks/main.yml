@@ -1,0 +1,166 @@
+# promtail — journal shipper on every FaaS host (issue #274).
+#
+# Promtail is asynchronous and bounded: the journal is the local source of
+# truth, positions are persisted, retries are capped, and Loki outages never
+# enter a customer request path. Entries that exceed the retry budget are
+# dropped and exposed through Promtail's metrics so the loss is actionable.
+
+- name: promtail — assert SHA-256 pin was supplied
+  ansible.builtin.assert:
+    that:
+      - promtail_release_sha256 is defined
+      - promtail_release_sha256 | length == 64
+    fail_msg: >-
+      promtail_release_sha256 is not set. Pin the checksum from the Grafana
+      Loki release before installing the shipper.
+
+- name: promtail — require HTTPS Loki endpoint in production
+  ansible.builtin.assert:
+    that:
+      - promtail_loki_url | length > 0
+      - promtail_loki_url is match('^https://')
+      - promtail_loki_url is not search('127\\.0\\.0\\.1|localhost')
+      - promtail_loki_url is not search('@')
+      - promtail_loki_server_name | length > 0
+    fail_msg: >-
+      promtail_loki_url must be a private-network HTTPS Loki push endpoint
+      without URL credentials and with an explicit TLS server name; customer
+      and platform logs must not leave the host over plaintext or target the
+      local box.
+  when: not (promtail_dev_mode | bool)
+
+- name: promtail — derive effective listen address
+  ansible.builtin.set_fact:
+    promtail_effective_listen_address: >-
+      {{ promtail_listen_address if promtail_listen_address != 'auto' else
+         ((faas_private_dns_address | default(faas_private_address | default(ansible_default_ipv4.address, true), true))
+          if faas_box_role | default('') == 'compute-only' else '127.0.0.1') }}
+
+- name: promtail — require a resolved listen address
+  ansible.builtin.assert:
+    that:
+      - promtail_effective_listen_address | length > 0
+      - promtail_listen_port | int > 0
+      - promtail_listen_port | int < 65536
+    fail_msg: >-
+      Promtail has no usable listen address or port. Compute hosts derive the
+      private transport address; override promtail_listen_address only with a
+      validated private address.
+
+- name: promtail — create service account with journal access
+  ansible.builtin.user:
+    name: promtail
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/promtail
+    create_home: false
+    groups:
+      - systemd-journal
+    append: true
+
+- name: promtail — create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: promtail
+    group: promtail
+    mode: "0750"
+  loop:
+    - /var/lib/promtail
+    - /etc/promtail
+
+- name: promtail — stat mTLS material
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop:
+    - { name: ca, path: "{{ promtail_loki_ca_file }}" }
+    - { name: cert, path: "{{ promtail_loki_client_cert_file }}" }
+    - { name: key, path: "{{ promtail_loki_client_key_file }}" }
+  register: promtail_tls_stats
+  when: not (promtail_dev_mode | bool)
+  no_log: true
+
+- name: promtail — require mTLS material in production
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - (item.stat.mode | default('0000')) in ['0400', '0440', '0444', '0640', '0644']
+    fail_msg: >-
+      Promtail TLS {{ item.item.name }} is missing or has an unsupported mode;
+      provision the certificate bundle out-of-band and keep the private key
+      restricted to root:promtail.
+  loop: "{{ promtail_tls_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: not (promtail_dev_mode | bool)
+  no_log: true
+
+- name: promtail — download release archive
+  ansible.builtin.get_url:
+    url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-amd64.zip"
+    dest: "/tmp/promtail-{{ promtail_version }}-linux-amd64.zip"
+    checksum: "sha256:{{ promtail_release_sha256 }}"
+    mode: "0644"
+
+- name: promtail — unpack release archive
+  ansible.builtin.unarchive:
+    src: "/tmp/promtail-{{ promtail_version }}-linux-amd64.zip"
+    dest: /tmp
+    remote_src: true
+    creates: "/tmp/promtail-linux-amd64"
+
+- name: promtail — install binary
+  ansible.builtin.copy:
+    src: /tmp/promtail-linux-amd64
+    dest: /usr/local/bin/promtail
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  notify: restart promtail
+
+- name: promtail — render config
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ promtail_config_path }}"
+    owner: promtail
+    group: promtail
+    mode: "0640"
+  notify: restart promtail
+
+- name: promtail — verify rendered config
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/promtail
+      - -config.file={{ promtail_config_path }}
+      - -check-syntax=true
+  changed_when: false
+  check_mode: false
+
+- name: promtail — install systemd unit
+  ansible.builtin.template:
+    src: promtail.service.j2
+    dest: /etc/systemd/system/promtail.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - daemon-reload
+    - restart promtail
+
+- name: promtail — enable and start service
+  ansible.builtin.service:
+    name: promtail
+    enabled: true
+    state: started
+
+- name: promtail — remove downloaded archive
+  ansible.builtin.file:
+    path: "/tmp/promtail-{{ promtail_version }}-linux-amd64.zip"
+    state: absent
+
+- name: promtail — remove unpacked binary
+  ansible.builtin.file:
+    path: /tmp/promtail-linux-amd64
+    state: absent

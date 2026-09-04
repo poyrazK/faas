@@ -1054,6 +1054,10 @@ func (s *server) handler() http.Handler {
 	// active control-plane registry. This internal route is loopback-only;
 	// gatewayd-internal rejects the same path before its public /v1 proxy.
 	mux.HandleFunc("GET /v1/internal/metrics/targets", s.computeMetricsDiscovery)
+	// Issue #274: Promtail metrics are discovered from the same active
+	// compute-node registry, but use a separate HTTP-SD endpoint so the
+	// gateway and shipper jobs never scrape each other's ports.
+	mux.HandleFunc("GET /v1/internal/metrics/promtail-targets", s.promtailMetricsDiscovery)
 	mux.HandleFunc("GET /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listApps))))
 	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createApp)))))
 	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getApp))))

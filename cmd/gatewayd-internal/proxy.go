@@ -172,7 +172,8 @@ func (a *apidProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func isApidMetricsDiscoveryPath(p string) bool {
-	return p == "/v1/internal/metrics/targets"
+	return p == "/v1/internal/metrics/targets" ||
+		p == "/v1/internal/metrics/promtail-targets"
 }
 
 // isApidLogsPath matches the `GET /v1/apps/{slug}/logs` family
