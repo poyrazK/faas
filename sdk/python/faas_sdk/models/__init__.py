@@ -687,6 +687,14 @@ from .wake_timeline_event_data import WakeTimelineEventData
 from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_response import WakeTimelineResponse
+from .workflow_retry_spec import WorkflowRetrySpec
+from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
+from .workflow_spec import WorkflowSpec
+from .workflow_step_spec import WorkflowStepSpec
+from .workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
+from .workflow_step_spec_method import WorkflowStepSpecMethod
+from .workflow_trigger_spec import WorkflowTriggerSpec
+from .workflow_trigger_spec_type import WorkflowTriggerSpecType
 
 __all__ = (
     "AccountAppSecretResponse",
@@ -1360,4 +1368,12 @@ __all__ = (
     "WakeTimelineJSONRow",
     "WakeTimelineJSONRowKind",
     "WakeTimelineResponse",
+    "WorkflowRetrySpec",
+    "WorkflowRetrySpecBackoff",
+    "WorkflowSpec",
+    "WorkflowStepSpec",
+    "WorkflowStepSpecInputType0",
+    "WorkflowStepSpecMethod",
+    "WorkflowTriggerSpec",
+    "WorkflowTriggerSpecType",
 )
