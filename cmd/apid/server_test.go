@@ -94,7 +94,7 @@ func (e testEnv) addAdminSession(t *testing.T, req *http.Request) {
 		t.Fatal("admin session helper requires a server, session manager, and store")
 	}
 	sid := uuid.NewString()
-	if _, err := e.store.CreateSession(context.Background(), sid, e.acct.ID, "192.0.2.10", "admin-test-ua"); err != nil {
+	if _, err := e.store.CreateSession(req.Context(), sid, e.acct.ID, "192.0.2.10", "admin-test-ua"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	token, err := e.s.sessions.IssueWithSessionAndBindingHashAndStepUp(sid, e.acct.ID, "", time.Now(), false)
