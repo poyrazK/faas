@@ -1,32 +1,35 @@
-# migrations/ — goose, numbered, append-only (spec §5)
+# migrations/ — goose, timestamped, append-only (spec §5)
 
 Never edit a merged migration. Schema authored in spec §5; sqlc generates typed
 queries against it. Every state column carries a CHECK constraint.
 
-## Slot reservations
+## Creating a migration
 
-If your PR needs to claim a migration slot but the schema isn't ready yet
-(typical when multiple PRs are racing for the same next free slot — see
-ADR-041), drop a no-op reservation at that slot:
+Use the generator; do not choose a version manually:
 
-```sql
--- +goose Up
--- +goose StatementBegin
-select 1;
--- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-select 1;
--- +goose StatementEnd
+```sh
+make migration-new NAME=add_job_priority
 ```
 
-Filenames containing `_reservation` or `_reserve_slot` (case-insensitive)
-are reservations. The cross-PR slot gate (`scripts/ci/check_migration_slots.sh`)
-ignores them when computing overlaps, so multiple PRs can hold
-reservations at the same slot while only their real schemas must not
-collide. Canonical name: `NNNNN_reserve_slot.sql`. See ADR-041.
+It creates `YYYYMMDDHHMMSSmmm_name.sql` using UTC time with millisecond
+precision. Timestamp IDs let independent PRs merge in either order. The
+migration runner compares the complete embedded migration set with
+`goose_db_version` and applies every missing post-cutover migration, including
+one whose numeric ID is lower than a migration already deployed.
 
-Reservations still count toward the embedded 1..N contiguity required by
-`embed_test.go::TestMigrationsContiguous` — they are real migrations that
-just don't do anything, and goose still applies them.
+Versions `00001` through `00590` are the frozen legacy namespace. They remain
+contiguous and strict. Never add another five-digit migration or a
+`reserve_slot` file; ADR-142 supersedes ADR-041 for all new work.
+
+## Authoring contract
+
+- Prefer additive expand migrations. Backfill separately, deploy compatible
+  code, and contract only after every old binary is gone.
+- New migrations must be replay-safe; CI removes their ledger rows and runs
+  them again against the already-expanded schema.
+- If migration B depends on migration A, stack the PRs or merge A first.
+  Timestamp IDs remove coordination for independent migrations; they do not
+  turn incompatible DDL into compatible DDL.
+- Regenerate `schema.sql` and sqlc output when the schema shape changes.
+
+See ADR-142 for the cutover and runtime safety rules.

@@ -80,12 +80,12 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("db: set goose dialect: %w", err)
 	}
-	option, repaired, err := reservationMigrationOption(ctx, sqlDB)
+	option, outOfOrder, err := historicalMigrationOption(ctx, sqlDB)
 	if err != nil {
 		return fmt.Errorf("db: inspect migration ledger: %w", err)
 	}
-	if len(repaired) > 0 {
-		log.Printf("db: reconciling missing no-op migration reservations: %v", repaired)
+	if len(outOfOrder) > 0 {
+		log.Printf("db: applying permitted out-of-order migrations: %v", outOfOrder)
 	}
 	var options []goose.OptionsFunc
 	if option != nil {
@@ -169,7 +169,12 @@ type MigrationStatus struct {
 	// on a database that has never been migrated.
 	DBVersion int64
 	// MaxEmbedded is the highest migration version compiled into this binary.
+	// It is diagnostic only: after ADR-142, a high maximum does not prove that
+	// every lower timestamp migration has been applied.
 	MaxEmbedded int64
+	// EmbeddedVersions is the complete migration set required by this binary.
+	// Waiters compare this set against the ledger instead of comparing maxima.
+	EmbeddedVersions []int64
 	// Pending names the migrations that MigrateUp would apply, in order.
 	Pending []string
 }
@@ -209,15 +214,24 @@ func Status(ctx context.Context, pool *pgxpool.Pool) (MigrationStatus, error) {
 	if err != nil {
 		return MigrationStatus{}, fmt.Errorf("db: collect migrations: %w", err)
 	}
+	applied, err := appliedMigrationVersions(ctx, sqlDB)
+	if err != nil {
+		return MigrationStatus{}, fmt.Errorf("db: list applied migrations: %w", err)
+	}
 
+	return migrationStatusFrom(dbVersion, collected, applied), nil
+}
+
+func migrationStatusFrom(dbVersion int64, collected goose.Migrations, applied map[int64]struct{}) MigrationStatus {
 	st := MigrationStatus{DBVersion: dbVersion}
 	for _, m := range collected {
+		st.EmbeddedVersions = append(st.EmbeddedVersions, m.Version)
 		if m.Version > st.MaxEmbedded {
 			st.MaxEmbedded = m.Version
 		}
-		if m.Version > dbVersion {
+		if _, ok := applied[m.Version]; !ok {
 			st.Pending = append(st.Pending, filepath.Base(m.Source))
 		}
 	}
-	return st, nil
+	return st
 }

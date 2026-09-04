@@ -22,9 +22,9 @@ func quietLogger() *slog.Logger {
 
 // TestWaitForMigrationsApplied_NotifyUnblocks is the happy path:
 // the waiter subscribes first, the "leader" (a goroutine) inserts
-// a row at MAX(version_id), the migration_notify_trg (migration
+// the required row, the migration_notify_trg (migration
 // 00347) fires pg_notify('migrations_applied'), the waiter
-// re-reads the ledger, observes current >= maxEmbedded, and
+// re-reads the ledger, observes the complete required set, and
 // returns.
 //
 // This is the F2-B fix in test form: the non-leader path of
@@ -52,7 +52,7 @@ func TestWaitForMigrationsApplied_NotifyUnblocks(t *testing.T) {
 	}
 	// No rows yet — MAX(version_id) = 0; the helper will subscribe.
 
-	const maxEmbedded int64 = 1
+	expected := []int64{1}
 
 	// Capture the current MAX before subscribing so the test
 	// asserts "waiter saw the leader's row materialise", not
@@ -69,7 +69,7 @@ func TestWaitForMigrationsApplied_NotifyUnblocks(t *testing.T) {
 	// Launch waiter.
 	waitErr := make(chan error, 1)
 	go func() {
-		waitErr <- WaitForMigrationsApplied(ctx, pool, maxEmbedded, quietLogger())
+		waitErr <- WaitForMigrationsApplied(ctx, pool, expected, quietLogger())
 	}()
 
 	// Give the waiter time to subscribe. The helper subscribes
@@ -81,7 +81,7 @@ func TestWaitForMigrationsApplied_NotifyUnblocks(t *testing.T) {
 	// Simulate the leader inserting the final migration row.
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)`,
-		maxEmbedded); err != nil {
+		expected[0]); err != nil {
 		t.Fatalf("leader INSERT: %v", err)
 	}
 
@@ -100,13 +100,13 @@ func TestWaitForMigrationsApplied_NotifyUnblocks(t *testing.T) {
 		`SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version`).Scan(&final); err != nil {
 		t.Fatalf("scan final: %v", err)
 	}
-	if final != maxEmbedded {
-		t.Fatalf("expected ledger at v=%d, got v=%d", maxEmbedded, final)
+	if final != expected[0] {
+		t.Fatalf("expected ledger at v=%d, got v=%d", expected[0], final)
 	}
 }
 
 // TestWaitForMigrationsApplied_NoOpIfAlreadyCurrent pins the fast
-// path: if the ledger is already at v >= maxEmbedded before the
+// path: if the ledger already contains the complete required set before the
 // waiter subscribes, the helper returns immediately without
 // subscribing. This is the dev-loop case where the operator reruns
 // the waiter after the leader crashed and was restarted manually.
@@ -136,7 +136,7 @@ func TestWaitForMigrationsApplied_NoOpIfAlreadyCurrent(t *testing.T) {
 	}
 
 	start := time.Now()
-	if err := WaitForMigrationsApplied(ctx, pool, 2, quietLogger()); err != nil {
+	if err := WaitForMigrationsApplied(ctx, pool, []int64{1, 2}, quietLogger()); err != nil {
 		t.Fatalf("expected fast-path success, got: %v", err)
 	}
 	elapsed := time.Since(start)
@@ -174,7 +174,7 @@ func TestWaitForMigrationsApplied_RespectsContextCancel(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	const maxEmbedded int64 = 5 // far above current (0); helper must block.
+	expected := []int64{1, 5} // absent from the fresh ledger; helper must block.
 
 	var (
 		wg     sync.WaitGroup
@@ -183,7 +183,7 @@ func TestWaitForMigrationsApplied_RespectsContextCancel(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		waitEr = WaitForMigrationsApplied(ctx, pool, maxEmbedded, quietLogger())
+		waitEr = WaitForMigrationsApplied(ctx, pool, expected, quietLogger())
 	}()
 
 	// Let the waiter reach the select{}.
@@ -205,7 +205,7 @@ func TestWaitForMigrationsApplied_RespectsContextCancel(t *testing.T) {
 // guard. Without it, the helper would panic deep inside
 // db.SubscribeWithReconnect, which is harder to attribute.
 func TestWaitForMigrationsApplied_NilPoolErrors(t *testing.T) {
-	if err := WaitForMigrationsApplied(context.Background(), nil, 1, quietLogger()); err == nil {
+	if err := WaitForMigrationsApplied(context.Background(), nil, []int64{1}, quietLogger()); err == nil {
 		t.Fatalf("nil pool: expected error, got nil")
 	}
 }
@@ -220,11 +220,67 @@ func TestWaitForMigrationsApplied_NoMigrationsNoOp(t *testing.T) {
 	pool := pgtest.Open(t)
 
 	start := time.Now()
-	if err := WaitForMigrationsApplied(context.Background(), pool, 0, quietLogger()); err != nil {
-		t.Fatalf("maxEmbedded=0: expected nil, got %v", err)
+	if err := WaitForMigrationsApplied(context.Background(), pool, nil, quietLogger()); err != nil {
+		t.Fatalf("empty migration set: expected nil, got %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
-		t.Fatalf("maxEmbedded=0 fast-path took %s; expected <100ms", elapsed)
+		t.Fatalf("empty-set fast-path took %s; expected <100ms", elapsed)
+	}
+}
+
+// TestReadMissingAppliedMigrations_MaxDoesNotHideGap pins ADR-142's core
+// readiness rule: a later timestamp in the ledger cannot hide an earlier
+// migration that merged afterward.
+func TestReadMissingAppliedMigrations_MaxDoesNotHideGap(t *testing.T) {
+	pool := pgtest.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx,
+		`CREATE TABLE IF NOT EXISTS goose_db_version (
+			id          bigserial PRIMARY KEY,
+			version_id  bigint NOT NULL,
+			is_applied  boolean NOT NULL,
+			tstamp      timestamptz DEFAULT now()
+		)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const later = int64(20260904150000999)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO goose_db_version (version_id, is_applied) VALUES (1, true), ($1, true)`, later); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	missing, err := readMissingAppliedMigrations(ctx, pool, []int64{1, 2, later})
+	if err != nil {
+		t.Fatalf("read missing: %v", err)
+	}
+	if len(missing) != 1 || missing[0] != 2 {
+		t.Fatalf("missing = %v, want [2]", missing)
+	}
+}
+
+func TestReadMissingAppliedMigrations_LatestRollbackWins(t *testing.T) {
+	pool := pgtest.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx,
+		`CREATE TABLE IF NOT EXISTS goose_db_version (
+			id          bigserial PRIMARY KEY,
+			version_id  bigint NOT NULL,
+			is_applied  boolean NOT NULL,
+			tstamp      timestamptz DEFAULT now()
+		)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO goose_db_version (version_id, is_applied) VALUES (42, true), (42, false)`); err != nil {
+		t.Fatalf("seed apply and rollback: %v", err)
+	}
+
+	missing, err := readMissingAppliedMigrations(ctx, pool, []int64{42})
+	if err != nil {
+		t.Fatalf("read missing: %v", err)
+	}
+	if len(missing) != 1 || missing[0] != 42 {
+		t.Fatalf("missing = %v, want [42] after rollback", missing)
 	}
 }
 

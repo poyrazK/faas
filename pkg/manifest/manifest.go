@@ -464,10 +464,10 @@ type PostgreSQL struct {
 	DSN string `yaml:"dsn"`
 	// Database is the database name (default `faas`).
 	Database string `yaml:"database"`
-	// MigrationMaxSlot is the upper bound on the migrations/ slot
-	// number — the validator refuses a manifest whose DB schema is
-	// older than the largest in the embedded migrations set. PR-3a
-	// will start enforcing this end-to-end.
+	// MigrationMaxSlot is legacy manifest metadata from the sequential-ID
+	// era. ADR-142 makes MAX(version_id) insufficient for readiness, so new
+	// code must compare the complete embedded migration set with the ledger.
+	// Retained for schema-v1 manifest compatibility only.
 	MigrationMaxSlot int `yaml:"migration_max_slot"`
 	// Policy is the migration policy (`off`, `on-boot`,
 	// `on-boot-offline`). `on-boot-offline` is the single-box dev

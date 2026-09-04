@@ -7,12 +7,14 @@ import (
 	"regexp"
 
 	"github.com/pressly/goose/v3"
+
+	"github.com/onebox-faas/faas/migrations"
 )
 
-// reservationMigrationFilenameRe mirrors the reservation convention used by
-// migrations/embed_test.go and scripts/ci/check_migration_slots.sh. A
-// reservation is a deliberate no-op fence, so recording a missing historical
-// reservation is safe; a real migration must continue to fail closed.
+// reservationMigrationFilenameRe preserves the ADR-041 convention for the
+// frozen legacy set. A reservation is a deliberate no-op fence, so recording
+// a missing historical reservation is safe; a real legacy migration must
+// continue to fail closed.
 var reservationMigrationFilenameRe = regexp.MustCompile(`(?i)^[0-9]{5}_(.*_)?(reservation|reserve_slot)(_[^/]*)?\.sql$`)
 
 // missingHistoricalMigrations returns the migration files that Goose would
@@ -37,12 +39,16 @@ func isReservationMigrationSource(source string) bool {
 	return reservationMigrationFilenameRe.MatchString(filepath.Base(source))
 }
 
-// migrationOptionsForMissingReservations detects the narrow historical-gap
-// case that can be repaired automatically. Goose's WithAllowMissing option
-// is safe only when every missing file is a no-op reservation; using it for a
-// real schema migration could apply DDL out of order. A nil option preserves
-// Goose's normal fail-closed behaviour for every other gap.
-func migrationOptionsForMissingReservations(current int64, known map[int64]struct{}, found goose.Migrations) (goose.OptionsFunc, []int64) {
+// migrationOptionsForHistoricalGaps enables Goose's out-of-order mode only
+// for explicitly safe namespaces:
+//   - legacy no-op reservation files, preserving the pre-cutover repair path;
+//   - timestamp migrations at or after ADR-142's cutover marker.
+//
+// A missing real migration from the frozen 1..590 range keeps Goose's strict
+// failure path. This prevents the new concurrency model from silently
+// replaying old migrations that were not authored under its replay-safe
+// contract.
+func migrationOptionsForHistoricalGaps(current int64, known map[int64]struct{}, found goose.Migrations) (goose.OptionsFunc, []int64) {
 	missing := missingHistoricalMigrations(current, known, found)
 	if len(missing) == 0 {
 		return nil, nil
@@ -50,7 +56,7 @@ func migrationOptionsForMissingReservations(current int64, known map[int64]struc
 
 	versions := make([]int64, 0, len(missing))
 	for _, migration := range missing {
-		if !isReservationMigrationSource(migration.Source) {
+		if !isReservationMigrationSource(migration.Source) && !migrations.IsTimestampMigrationVersion(migration.Version) {
 			return nil, nil
 		}
 		versions = append(versions, migration.Version)
@@ -58,10 +64,10 @@ func migrationOptionsForMissingReservations(current int64, known map[int64]struc
 	return goose.WithAllowMissing(), versions
 }
 
-// reservationMigrationOption reads the database ledger and returns an
-// allow-missing option only when all historical gaps are no-op reservations.
-// The caller must hold MigrationLockKey before invoking this function.
-func reservationMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.OptionsFunc, []int64, error) {
+// historicalMigrationOption reads the database ledger and returns an
+// allow-missing option only when every historical gap is allowed by
+// migrationOptionsForHistoricalGaps. The caller must hold MigrationLockKey.
+func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.OptionsFunc, []int64, error) {
 	current, err := goose.GetDBVersionContext(ctx, sqlDB)
 	if err != nil {
 		return nil, nil, err
@@ -70,21 +76,8 @@ func reservationMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.Optio
 		return nil, nil, nil
 	}
 
-	rows, err := sqlDB.QueryContext(ctx, `SELECT version_id FROM goose_db_version`)
+	known, err := ledgerMigrationVersions(ctx, sqlDB)
 	if err != nil {
-		return nil, nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	known := make(map[int64]struct{})
-	for rows.Next() {
-		var version int64
-		if err := rows.Scan(&version); err != nil {
-			return nil, nil, err
-		}
-		known[version] = struct{}{}
-	}
-	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
 
@@ -92,6 +85,48 @@ func reservationMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.Optio
 	if err != nil {
 		return nil, nil, err
 	}
-	option, repaired := migrationOptionsForMissingReservations(current, known, found)
-	return option, repaired, nil
+	option, allowed := migrationOptionsForHistoricalGaps(current, known, found)
+	return option, allowed, nil
+}
+
+func ledgerMigrationVersions(ctx context.Context, sqlDB *sql.DB) (map[int64]struct{}, error) {
+	return migrationVersions(ctx, sqlDB, false)
+}
+
+func appliedMigrationVersions(ctx context.Context, sqlDB *sql.DB) (map[int64]struct{}, error) {
+	return migrationVersions(ctx, sqlDB, true)
+}
+
+func migrationVersions(ctx context.Context, sqlDB *sql.DB, appliedOnly bool) (map[int64]struct{}, error) {
+	query := `SELECT version_id FROM goose_db_version`
+	if appliedOnly {
+		// Goose records both apply and rollback events. Only the newest event
+		// for each version describes its current state; an older true row must
+		// not hide a later rollback.
+		query = `SELECT version_id
+			FROM (
+				SELECT DISTINCT ON (version_id) version_id, is_applied
+				FROM goose_db_version
+				ORDER BY version_id, id DESC
+			) AS latest
+			WHERE is_applied = true`
+	}
+	rows, err := sqlDB.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	versions := make(map[int64]struct{})
+	for rows.Next() {
+		var version int64
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		versions[version] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return versions, nil
 }

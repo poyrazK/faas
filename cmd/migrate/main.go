@@ -21,8 +21,7 @@
 //	                     for parallel boot without a leader.
 //
 //	-wait-for-migrations — do NOT apply. Block until the leader has
-//	                     applied every embedded migration (the ledger's
-//	                     MAX(version_id) >= the binary's MaxEmbedded).
+//	                     applied every embedded migration ID.
 //	                     Subscribes to db.NotifyMigrationsApplied;
 //	                     polls the ledger every waitPollInterval as a
 //	                     safety net for notify loss. The non-leader
@@ -112,6 +111,7 @@ func run() error {
 	log.Info("migration status",
 		"db_version", st.DBVersion,
 		"max_embedded", st.MaxEmbedded,
+		"embedded_count", len(st.EmbeddedVersions),
 		"pending_count", len(st.Pending),
 		"pending", st.Pending,
 	)
@@ -129,7 +129,7 @@ func run() error {
 	// box is somehow mid-migration.
 	if *waitForMigrations {
 		log.Info("migrate: blocking on leader")
-		if err := WaitForMigrationsApplied(ctx, pool, st.MaxEmbedded, log); err != nil {
+		if err := WaitForMigrationsApplied(ctx, pool, st.EmbeddedVersions, log); err != nil {
 			return fmt.Errorf("wait-for-migrations: %w", err)
 		}
 		log.Info("migrate: leader caught up; exiting")
@@ -143,6 +143,15 @@ func run() error {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		return err
 	}
-	log.Info("migrations applied", "db_version", st.MaxEmbedded)
+	after, err := db.Status(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("post-migrate status: %w", err)
+	}
+	if len(after.Pending) != 0 {
+		return fmt.Errorf("post-migrate verification: %d embedded migrations remain pending: %v", len(after.Pending), after.Pending)
+	}
+	log.Info("migrations applied",
+		"db_version", after.DBVersion,
+		"embedded_count", len(after.EmbeddedVersions))
 	return nil
 }

@@ -45,8 +45,7 @@
 # gate. Only direct requires are load-bearing for the release
 # invariant.
 #
-# Convention: mirrors scripts/ci/check_migration_slots.sh — pure
-# bash, no `pip install` / no extra runner setup, no Go-built binary.
+# This is pure bash: no `pip install`, runner setup, or Go-built binary.
 
 set -euo pipefail
 

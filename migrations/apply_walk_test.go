@@ -14,9 +14,6 @@ package migrations_test
 
 import (
 	"context"
-	"os"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,10 +27,8 @@ import (
 //
 // Three assertions:
 //
-//  1. the applied rows cover every version up to max(version_id), except
-//     for explicitly verified sibling-PR gaps on a pull-request build.
-//     Those gaps are real files that another open PR owns and are passed
-//     through FAAS_MIGRATION_ALLOWED_GAPS by the migration-slot gate.
+//  1. every embedded migration ID has an applied ledger row. IDs need not be
+//     contiguous after ADR-142's timestamp cutover.
 //  2. max(version_id) == highest embedded migration prefix — the binary's
 //     embedded set must agree with what goose recorded. Catches
 //     findMissingMigrations-style failures that embed_test.go misses (e.g.,
@@ -57,15 +52,8 @@ func TestMigrationsApplyAndWalk(t *testing.T) {
 
 	// Walk goose_db_version. Goose creates a sentinel row (version_id=0,
 	// is_applied=true) on first table creation, then one row per applied
-	// migration. On a normal main/release build the table therefore holds
-	// max(version_id)+1 rows. A PR build may temporarily omit slots owned by
-	// a verified sibling PR; those slots are the only permitted holes here.
-	//
-	// The WHERE is_applied filter is deliberate: goose keeps a row with
-	// is_applied=false for the migration it's currently working on (the
-	// "started but not committed" state). Those rows are an internal
-	// implementation detail of goose's transactional apply path and
-	// shouldn't influence a contiguity sanity check.
+	// migration. Exact set membership is load-bearing: MAX(version_id) can be
+	// current while a lower timestamp migration that merged later is absent.
 	var nRows, maxVer int64
 	if err := pool.QueryRow(ctx,
 		"SELECT COUNT(*), COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied",
@@ -85,21 +73,31 @@ func TestMigrationsApplyAndWalk(t *testing.T) {
 	for _, f := range files {
 		embedded[f.Version] = true
 	}
-	allowedGaps := externallyClaimedMigrationGaps()
-	var permittedMissing int64
-	for version := int64(1); version <= maxVer; version++ {
-		if embedded[version] {
-			continue
-		}
-		if !allowedGaps[version] {
-			t.Errorf("goose_db_version is missing migration version %d, which is not a verified sibling-PR gap", version)
-			continue
-		}
-		permittedMissing++
+	appliedRows, err := pool.Query(ctx,
+		`SELECT version_id FROM goose_db_version WHERE is_applied = true`)
+	if err != nil {
+		t.Fatalf("query applied versions: %v", err)
 	}
-	expectedRows := maxVer + 1 - permittedMissing
+	defer appliedRows.Close()
+	applied := make(map[int64]bool, len(files)+1)
+	for appliedRows.Next() {
+		var version int64
+		if err := appliedRows.Scan(&version); err != nil {
+			t.Fatalf("scan applied version: %v", err)
+		}
+		applied[version] = true
+	}
+	if err := appliedRows.Err(); err != nil {
+		t.Fatalf("walk applied versions: %v", err)
+	}
+	for version := range embedded {
+		if !applied[version] {
+			t.Errorf("goose_db_version is missing embedded migration version %d", version)
+		}
+	}
+	expectedRows := int64(len(files) + 1) // embedded files + goose v0 sentinel
 	if nRows != expectedRows {
-		t.Errorf("goose_db_version row count %d != expected %d after accounting for %d verified sibling-PR gap(s) (max version %d plus the version=0 sentinel)", nRows, expectedRows, permittedMissing, maxVer)
+		t.Errorf("goose_db_version row count %d != expected %d (embedded migrations plus the version=0 sentinel)", nRows, expectedRows)
 	}
 
 	highest := files[len(files)-1].Version
@@ -128,25 +126,6 @@ func TestMigrationsApplyAndWalk(t *testing.T) {
 	// version-table row counts before; this assertion pins the
 	// post-rename schema shape.
 	assertColumnRenamed(t, pool, "accounts", "provider_customer_id")
-}
-
-// externallyClaimedMigrationGaps mirrors the static migration-contiguity
-// test. The environment is populated only after the PR slot gate has
-// verified that an open sibling PR owns the missing versions. Main and
-// release jobs leave it empty, preserving strict migration checking.
-func externallyClaimedMigrationGaps() map[int64]bool {
-	allowed := make(map[int64]bool)
-	for _, raw := range strings.Split(os.Getenv("FAAS_MIGRATION_ALLOWED_GAPS"), ",") {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		version, err := strconv.ParseInt(raw, 10, 64)
-		if err == nil && version > 0 {
-			allowed[version] = true
-		}
-	}
-	return allowed
 }
 
 // assertColumnRenamed fails the test if `table` does not have

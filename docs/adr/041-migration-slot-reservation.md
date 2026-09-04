@@ -1,5 +1,8 @@
 # ADR-041 — Migration slot reservation convention
 
+**Superseded by ADR-142 for migrations after version 590.** This ADR remains
+the historical contract for the frozen five-digit migration set.
+
 Status: Accepted, 2026-07-28. Owner: @poyrazK. Related: spec §5
 (migrations), ADR-039 (server-side session revocation),
 `scripts/ci/check_migration_slots.sh` (introduced in PR #377), issue

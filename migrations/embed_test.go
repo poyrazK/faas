@@ -1,28 +1,27 @@
 package migrations
 
-// Static migration-contiguity check — fails fast on PR builds when the
-// migration set on main doesn't form a clean 1..N sequence.
+// Static migration-ID checks. The legacy set remains contiguous through
+// LegacyMigrationMaxVersion; post-cutover migrations use sortable UTC
+// timestamp IDs and may be merged or applied out of order.
 //
 // Background: PR #93's deploy (commit 5fbc0e3) failed at the migrate step
 // with "goose: error: found 1 missing migrations before current version 21:
 // version 14". PR #83's earlier deploy had bumped the prod DB to v21 by
 // walking 13 → 15 cleanly (PR #77 with v14 hadn't merged yet), so the v14
-// gap went undetected at PR-time. This test catches the same failure mode
-// for any future slot — including the v19 gap that ships on origin/main
-// today (00018 → 00020).
+// gap went undetected at PR-time. The legacy contiguity test permanently
+// guards that history; exact-set checks cover out-of-order timestamp IDs.
 //
-// Migrations are append-only and contiguous; never skip a slot. Per
-// migrations/README.md and spec §5.
+// Migrations are append-only. Per migrations/README.md and spec §5.
 
 import (
 	"bufio"
 	"io/fs"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // MigrationFile is one parsed entry in the embedded migration set. Exported
@@ -34,12 +33,11 @@ type MigrationFile struct {
 	Name    string // filename, e.g. "00014_cli_auth_codes.sql"
 }
 
-// nameRe matches the goose "NNNNN_name.sql" convention. The leading digits
-// can be any length — the repo currently uses 5-digit prefixes uniformly,
-// but \d+ leaves room for future growth past 99,999 migrations.
+// nameRe accepts both legacy five-digit IDs and post-cutover 17-digit UTC
+// timestamp IDs. Namespace-specific validation happens below.
 var nameRe = regexp.MustCompile(`^(\d+)_(.+)\.sql$`)
 
-// filenameCommentRe matches an optional "-- filename: NNNNN_name.sql" line
+// filenameCommentRe matches an optional "-- filename: <version>_name.sql" line
 // in the migration header. The check is additive: a file without this
 // comment passes; a file with this comment must match its actual filename.
 // No existing migration has this comment today (introduced as a convention
@@ -54,25 +52,20 @@ var filenameCommentRe = regexp.MustCompile(`^-- filename:\s*(\S+)\s*$`)
 // then drop me on merge." Both shapes (the canonical `NNNNN_reserve_slot`
 // and the alt `NNNNN_no_op_slot_reservation` from PR #369) match.
 //
-// Contiguity and unique-prefix checks ignore these files when
-// iterating the embedded set; reservations are tracked separately so
-// the cross-PR gate's behaviour and the local test agree. Mirrors
-// scripts/ci/check_migration_slots.sh::slots_from_paths exactly —
-// keep both regexes in lockstep (the gate has a BATS self-test that
-// asserts this regex matches the fixtures; mirror it here).
+// These files remain part of the immutable legacy ledger but are ignored by
+// checks that apply only to real schema changes. ADR-142 retires reservations
+// and the former cross-PR slot gate for all post-cutover migrations.
 var reservationFilenameRe = regexp.MustCompile(`^[0-9]{5}_(.*_)?(reservation|reserve_slot)(_[^/]*)?\.sql$`)
 
 // isReservationFilename reports whether name is a no-op slot-reservation
-// file per ADR-041. Exported so apply_walk_test.go (external test package)
-// can reuse the rule from a different package without re-importing the
-// regex.
+// file per ADR-041.
 func isReservationFilename(name string) bool {
 	return reservationFilenameRe.MatchString(name)
 }
 
 // LoadMigrations reads every embedded *.sql file, parses its filename, and
 // returns the set sorted by version. Files that don't match the
-// NNNNN_name.sql pattern are reported via t.Errorf and skipped — they
+// <numeric-version>_name.sql pattern are reported via t.Errorf and skipped — they
 // would be silently dropped by goose anyway, but a parse failure here is
 // the only signal at PR time that the convention has drifted.
 //
@@ -98,7 +91,7 @@ func LoadMigrations(t *testing.T) []MigrationFile {
 		}
 		m := nameRe.FindStringSubmatch(e.Name())
 		if m == nil {
-			t.Errorf("migration filename %q does not match NNNNN_name.sql convention", e.Name())
+			t.Errorf("migration filename %q does not match <numeric-version>_name.sql convention", e.Name())
 			continue
 		}
 		v, err := strconv.ParseInt(m[1], 10, 64)
@@ -113,65 +106,58 @@ func LoadMigrations(t *testing.T) []MigrationFile {
 	return out
 }
 
-// TestMigrationsContiguous asserts the embedded migration set is exactly
-// {1, 2, …, N} with no gaps. A gap means goose's strict
-// findMissingMigrations will refuse to apply future deploys whose binary
-// embeds a slot the DB is past — the failure mode that bit PR #93's
-// deploy (run 29841378918). The first missing slot is reported; full
-// contiguity is required for the check to pass.
-//
-// Reservation files (NNNNN_reserve_slot.sql, NNNNN_no_op_slot_reservation.sql
-// — see ADR-041) DO occupy a slot in the {1..N} sequence: they are
-// real (non-DDL) goose statements that goose applies and writes to
-// goose_db_version. The carve-out for reservations is only in the
-// unique-prefix check (TestMigrationsUniquePrefixes) and the cross-PR
-// gate (scripts/ci/check_migration_slots.sh::slots_from_paths), where
-// reservations exist to hold a slot for a real schema to land in. A
-// reservation at slot N between two real schemas at N-1 and N+1 is
-// fine — it's just another file in the embedded set, and goose treats
-// it like any other no-op migration. The contiguity invariant on the
-// file set therefore treats reservations as first-class entries.
-func TestMigrationsContiguous(t *testing.T) {
+// TestMigrationsLegacyContiguous freezes the original 1..590 sequence. Old
+// binaries and existing databases still rely on that history being complete;
+// only migrations in the timestamp namespace may arrive out of order.
+func TestMigrationsLegacyContiguous(t *testing.T) {
 	files := LoadMigrations(t)
 	if len(files) == 0 {
 		t.Fatal("no embedded migrations; embed.go is empty?")
 	}
-	allowedGaps := externallyClaimedMigrationGaps()
 	want := int64(1)
 	for position, f := range files {
-		for want < f.Version && allowedGaps[want] {
-			want++
+		if f.Version > LegacyMigrationMaxVersion {
+			continue
 		}
 		if f.Version != want {
-			t.Errorf("migration slot %d is missing (got %s in position %d); migrations are append-only and contiguous, never skip a slot", want, f.Name, position+1)
+			t.Errorf("legacy migration slot %d is missing (got %s in position %d); versions 1..%d are frozen and contiguous", want, f.Name, position+1, LegacyMigrationMaxVersion)
 			return // report first gap, not all
 		}
 		want++
 	}
+	if got := want - 1; got != LegacyMigrationMaxVersion {
+		t.Errorf("legacy migration tail is %d, want frozen cutover %d", got, LegacyMigrationMaxVersion)
+	}
 }
 
-// externallyClaimedMigrationGaps is populated only by the PR migration gate
-// after it has verified that a sibling open PR owns the missing slots. Main
-// and release checks leave the variable empty and therefore retain the strict
-// contiguous 1..N invariant. The value is a comma-separated list of decimal
-// migration versions, for example "00456,00457".
-func externallyClaimedMigrationGaps() map[int64]bool {
-	allowed := make(map[int64]bool)
-	for _, raw := range strings.Split(os.Getenv("FAAS_MIGRATION_ALLOWED_GAPS"), ",") {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
+// TestMigrationsVersionNamespaces prevents the old coordination scheme from
+// returning. Five-digit migrations stop at 00590; every later migration must
+// be a valid 17-digit UTC YYYYMMDDHHMMSSmmm timestamp at or after the cutover.
+func TestMigrationsVersionNamespaces(t *testing.T) {
+	for _, f := range LoadMigrations(t) {
+		prefix := strings.SplitN(f.Name, "_", 2)[0]
+		if f.Version <= LegacyMigrationMaxVersion {
+			if len(prefix) != 5 {
+				t.Errorf("legacy migration %s must retain its five-digit prefix", f.Name)
+			}
 			continue
 		}
-		version, err := strconv.ParseInt(raw, 10, 64)
-		if err == nil && version > 0 {
-			allowed[version] = true
+		if !IsTimestampMigrationVersion(f.Version) {
+			t.Errorf("migration %s is in the forbidden gap after legacy v%d; use 'make migration-new NAME=...'", f.Name, LegacyMigrationMaxVersion)
+			continue
+		}
+		if len(prefix) != TimestampMigrationVersionDigits {
+			t.Errorf("timestamp migration %s has %d prefix digits, want %d (YYYYMMDDHHMMSSmmm)", f.Name, len(prefix), TimestampMigrationVersionDigits)
+			continue
+		}
+		if _, err := time.Parse("20060102150405", prefix[:14]); err != nil {
+			t.Errorf("timestamp migration %s has invalid UTC date/time: %v", f.Name, err)
 		}
 	}
-	return allowed
 }
 
-// TestMigrationsUniquePrefixes asserts no two REAL migration files share
-// the same NNNNN prefix. A collision here would panic goose at startup
+// TestMigrationsUniquePrefixes asserts no two real migration files share
+// the same numeric prefix. A collision here would panic goose at startup
 // with "duplicate version N detected" — a failure mode the repo has hit
 // twice already (PR #73 and PR #83 renumberings). Distinct from
 // contiguity: two files both with prefix 14 would parse but produce the
@@ -181,10 +167,9 @@ func externallyClaimedMigrationGaps() map[int64]bool {
 // check. A real schema at the same slot as a reservation is the whole
 // point of the carve-out — the reservation is shadowed by the real
 // schema, and a follow-up commit drops the reservation. Without this
-// exclusion, a PR landing at a slot already held by a reservation
-// would fail locally even though the cross-PR gate clears it, which is
-// the mismatch PR #352 hit on rebase. Mirrors the gate's
-// slots_from_paths.
+// exclusion, the historical migration set would reject reservation files
+// that intentionally share a legacy slot. New timestamp migrations never use
+// reservations; ADR-142 retires that workflow after v590.
 func TestMigrationsUniquePrefixes(t *testing.T) {
 	files := LoadMigrations(t)
 	seen := make(map[int64]string, len(files))
@@ -232,8 +217,7 @@ func TestMigrationsGooseUpDirective(t *testing.T) {
 // schema shadow a reservation at the same slot; if a reservation ever
 // smuggles in real DDL, the carved-out slot is no longer truly free and
 // a subsequent PR at that slot would race with the DDL on apply. The
-// gate's regex matches the same filenames; keep this regex, the gate's
-// regex (slots_from_paths), and the filename convention in lockstep.
+// This remains as a permanent check on the frozen legacy files.
 func TestMigrationsReservationsAreNoOp(t *testing.T) {
 	files := LoadMigrations(t)
 	for _, f := range files {
@@ -341,7 +325,7 @@ func TestMigrationsGooseDownDirective(t *testing.T) {
 }
 
 // TestMigrationsFilenameMatchesComment asserts that when a migration
-// carries a "-- filename: NNNNN_name.sql" comment in its first 10 lines,
+// carries a "-- filename: <version>_name.sql" comment in its first 10 lines,
 // that comment matches the actual filename. The rule is additive: a
 // file without the comment passes; a file with a mismatching comment
 // fails. Forward-looking — no existing migration has the comment, so
@@ -355,6 +339,21 @@ func TestMigrationsFilenameMatchesComment(t *testing.T) {
 		}
 		if got != f.Name {
 			t.Errorf("%s: header comment '-- filename: %s' does not match actual filename %q", f.Name, got, f.Name)
+		}
+	}
+}
+
+// TestMigrationsNoGeneratorPlaceholders prevents an untouched migration-new
+// template from being merged as an accidental no-op.
+func TestMigrationsNoGeneratorPlaceholders(t *testing.T) {
+	for _, f := range LoadMigrations(t) {
+		data, err := fs.ReadFile(FS, f.Name)
+		if err != nil {
+			t.Errorf("read %s: %v", f.Name, err)
+			continue
+		}
+		if strings.Contains(string(data), "Write the additive forward migration here.") {
+			t.Errorf("%s still contains the migration-new placeholder; replace it with the forward migration", f.Name)
 		}
 	}
 }

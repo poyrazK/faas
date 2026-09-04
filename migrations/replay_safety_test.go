@@ -53,12 +53,6 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 	if len(versions) == 0 {
 		t.Skip("no parseable versions in FAAS_REPLAY_CHECK_VERSIONS")
 	}
-	// Replaying from the LOWEST added version covers every version above it,
-	// because goose resumes from max(version_id) and applies everything
-	// greater. That is also the realistic drift shape: a box that lost the
-	// tail of its ledger, not one isolated row.
-	from := versions[0]
-
 	ctx := context.Background()
 	pool := pgtest.Open(t) // t.Skip-friendly when Postgres is absent
 
@@ -67,21 +61,22 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 		t.Fatalf("initial MigrateUp: %v", err)
 	}
 
-	// 2. Drop the ledger rows for the new migrations, leaving their schema
-	//    effects in place. This is precisely the box's drifted state.
-	tag, err := pool.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id >= $1`, from)
+	// 2. Drop exactly the ledger rows added by this PR, leaving their schema
+	//    effects in place. With timestamp IDs, unrelated migrations may have
+	//    higher or lower versions and must not be pulled into this replay.
+	tag, err := pool.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id = ANY($1::bigint[])`, versions)
 	if err != nil {
-		t.Fatalf("delete goose rows >= %d: %v", from, err)
+		t.Fatalf("delete goose rows %v: %v", versions, err)
 	}
-	if tag.RowsAffected() == 0 {
-		t.Fatalf("no goose_db_version rows at or above %d — the version list (%v) does not match "+
-			"what was applied, so this test would prove nothing", from, versions)
+	if got, want := tag.RowsAffected(), int64(len(versions)); got != want {
+		t.Fatalf("deleted %d goose_db_version rows for %v, want %d — the version list does not match "+
+			"what was applied, so this test would prove only part of the diff", got, versions, want)
 	}
 
-	// 3. Re-apply. Every migration from `from` up must tolerate its own
+	// 3. Re-apply. Every migration this PR added must tolerate its own
 	//    effects already being present.
 	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf(`migration %d is not replay-safe: %v
+		t.Fatalf(`migration set %v is not replay-safe: %v
 
 This migration fails when its objects already exist but goose has no row for
 it. That is the state the DO box has reached twice (00030, 00053), and it
@@ -95,11 +90,11 @@ Make the new migration re-runnable. The established shapes in this repo:
   pg_constraint / information_schema first (see 00053 for a worked example)
 
 Do NOT edit an already-merged migration to fix this — migrations are
-append-only (CLAUDE.md). Only the migration this PR adds should change.`, from, err)
+append-only (CLAUDE.md). Only the migration this PR adds should change.`, versions, err)
 	}
 }
 
-// parseVersions turns "53,54,55" (or "00053,00054") into a sorted []int64.
+// parseVersions turns legacy or timestamp version strings into sorted int64s.
 func parseVersions(t *testing.T, raw string) []int64 {
 	t.Helper()
 	var out []int64
