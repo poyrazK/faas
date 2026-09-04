@@ -12255,6 +12255,30 @@ components:
         ram_mb: { type: integer , example: 256}
         max_concurrency: { type: integer }
         idle_timeout_s: { type: integer }
+        # Service/lifecycle settings are persisted on the app and merged into
+        # every deployment manifest. Omitted values use the mode/plan defaults.
+        execution_mode:
+          type: string
+          enum: [request, service, worker, job]
+          description: "Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."
+          example: service
+        restart_policy:
+          type: string
+          enum: [no, on-failure, always, unless-stopped]
+          description: "Restart behavior for the workload. Omitted uses the execution-mode default."
+          example: always
+        startup_deadline_s:
+          type: integer
+          minimum: 0
+          description: "Upper bound on time-to-ready in seconds. 0 uses the plan default."
+          example: 30
+        max_retries:
+          type: integer
+          minimum: 0
+          description: "Maximum consecutive restart attempts. 0 uses the plan default."
+          example: 5
+        service_replicas:
+          $ref: '#/components/schemas/ServiceReplicas'
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -12361,6 +12385,32 @@ components:
         ram_mb: { type: [integer, "null"] , example: 256}
         idle_timeout_s: { type: [integer, "null"] }
         max_concurrency: { type: [integer, "null"] }
+        # Lifecycle settings are partial updates. Setting execution_mode away
+        # from service clears the existing service replica policy.
+        execution_mode:
+          type: [string, "null"]
+          enum: [request, service, worker, job, null]
+          description: "Lifecycle contract for the app. Omit for no change; service/worker/job are plan-gated."
+          example: service
+        restart_policy:
+          type: [string, "null"]
+          enum: [no, on-failure, always, unless-stopped, null]
+          description: "Restart behavior for the workload. Omit for no change."
+          example: always
+        startup_deadline_s:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."
+          example: 30
+        max_retries:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default."
+          example: 5
+        service_replicas:
+          allOf:
+            - $ref: '#/components/schemas/ServiceReplicas'
+          description: "Full replacement of the service replica policy. Omit for no change."
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -12805,7 +12855,7 @@ components:
           description: "Startup grace during which failures don't count (Docker 17.05+, default 0s)."
 
     ServiceReplicas:
-      description: "Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E). Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20). min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land in M-4."
+      description: "Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E). Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land in M-4."
       type: object
       required: [min, max, desired]
       properties:

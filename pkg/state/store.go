@@ -3566,16 +3566,12 @@ type Store interface {
 	// is fine — the row still has a non-NULL wake_id after the write.
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
 	// CreateInstanceWithMode (issue #72 / ADR-125 PR-A3) is the
-	// mode-aware overload the schedd uses to stamp mode='mirror'
-	// on canary-shadow instances. mode must be either
-	// InstanceModeNormal or InstanceModeMirror — the SQL CHECK
-	// (migrations/00385) rejects any other value. The legacy
-	// CreateInstance method preserves its no-mode signature
-	// (mode='normal' is the column default) so test fixtures
-	// and pre-A3 callers continue to work bit-for-bit; only the
-	// 3 schedd engine call sites and the mirror admission
-	// (Engine.AdmitMirrorInstance) call this overload with
-	// an explicit mode value.
+	// mode-aware overload the schedd uses to stamp mirror and
+	// execution-mode values on new rows. mode must be one of the
+	// InstanceMode constants admitted by the instances.mode CHECK.
+	// The legacy CreateInstance method preserves its no-mode signature
+	// (mode='normal' is the column default) so test fixtures and pre-A3
+	// callers continue to work bit-for-bit.
 	CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error)
 	// CreateJobInstance creates the job-task shape required by the jobs
 	// schema: app_id and deployment_id are NULL, while job_id and kind are

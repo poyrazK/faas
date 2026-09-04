@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,9 +11,21 @@ from ..models.create_app_request_eviction_priority import (
     CreateAppRequestEvictionPriority,
     check_create_app_request_eviction_priority,
 )
+from ..models.create_app_request_execution_mode import (
+    CreateAppRequestExecutionMode,
+    check_create_app_request_execution_mode,
+)
+from ..models.create_app_request_restart_policy import (
+    CreateAppRequestRestartPolicy,
+    check_create_app_request_restart_policy,
+)
 from ..models.create_app_request_runtime import CreateAppRequestRuntime, check_create_app_request_runtime
 from ..models.create_app_request_type import CreateAppRequestType, check_create_app_request_type
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.service_replicas import ServiceReplicas
+
 
 T = TypeVar("T", bound="CreateAppRequest")
 
@@ -31,6 +43,19 @@ class CreateAppRequest:
     ram_mb: int | Unset = UNSET
     max_concurrency: int | Unset = UNSET
     idle_timeout_s: int | Unset = UNSET
+    execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
+    """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
+    restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
+    """Restart behavior for the workload. Omitted uses the execution-mode default."""
+    startup_deadline_s: int | Unset = UNSET
+    """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
+    max_retries: int | Unset = UNSET
+    """Maximum consecutive restart attempts. 0 uses the plan default."""
+    service_replicas: ServiceReplicas | Unset = UNSET
+    """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
+    Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
+    the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
+    image-digest pinning semantics land in M-4."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -85,6 +110,22 @@ class CreateAppRequest:
 
         idle_timeout_s = self.idle_timeout_s
 
+        execution_mode: str | Unset = UNSET
+        if not isinstance(self.execution_mode, Unset):
+            execution_mode = self.execution_mode
+
+        restart_policy: str | Unset = UNSET
+        if not isinstance(self.restart_policy, Unset):
+            restart_policy = self.restart_policy
+
+        startup_deadline_s = self.startup_deadline_s
+
+        max_retries = self.max_retries
+
+        service_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_replicas, Unset):
+            service_replicas = self.service_replicas.to_dict()
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -128,6 +169,16 @@ class CreateAppRequest:
             field_dict["max_concurrency"] = max_concurrency
         if idle_timeout_s is not UNSET:
             field_dict["idle_timeout_s"] = idle_timeout_s
+        if execution_mode is not UNSET:
+            field_dict["execution_mode"] = execution_mode
+        if restart_policy is not UNSET:
+            field_dict["restart_policy"] = restart_policy
+        if startup_deadline_s is not UNSET:
+            field_dict["startup_deadline_s"] = startup_deadline_s
+        if max_retries is not UNSET:
+            field_dict["max_retries"] = max_retries
+        if service_replicas is not UNSET:
+            field_dict["service_replicas"] = service_replicas
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -155,6 +206,8 @@ class CreateAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.service_replicas import ServiceReplicas
+
         d = dict(src_dict)
         slug = d.pop("slug")
 
@@ -177,6 +230,31 @@ class CreateAppRequest:
         max_concurrency = d.pop("max_concurrency", UNSET)
 
         idle_timeout_s = d.pop("idle_timeout_s", UNSET)
+
+        _execution_mode = d.pop("execution_mode", UNSET)
+        execution_mode: CreateAppRequestExecutionMode | Unset
+        if isinstance(_execution_mode, Unset):
+            execution_mode = UNSET
+        else:
+            execution_mode = check_create_app_request_execution_mode(_execution_mode)
+
+        _restart_policy = d.pop("restart_policy", UNSET)
+        restart_policy: CreateAppRequestRestartPolicy | Unset
+        if isinstance(_restart_policy, Unset):
+            restart_policy = UNSET
+        else:
+            restart_policy = check_create_app_request_restart_policy(_restart_policy)
+
+        startup_deadline_s = d.pop("startup_deadline_s", UNSET)
+
+        max_retries = d.pop("max_retries", UNSET)
+
+        _service_replicas = d.pop("service_replicas", UNSET)
+        service_replicas: ServiceReplicas | Unset
+        if isinstance(_service_replicas, Unset):
+            service_replicas = UNSET
+        else:
+            service_replicas = ServiceReplicas.from_dict(_service_replicas)
 
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
@@ -217,6 +295,11 @@ class CreateAppRequest:
             ram_mb=ram_mb,
             max_concurrency=max_concurrency,
             idle_timeout_s=idle_timeout_s,
+            execution_mode=execution_mode,
+            restart_policy=restart_policy,
+            startup_deadline_s=startup_deadline_s,
+            max_retries=max_retries,
+            service_replicas=service_replicas,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,

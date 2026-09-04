@@ -81,6 +81,15 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 // Returns *api.Problem instead of error to mirror cmd/apid/handlers.go
 // buildApp, the established helper signature in this package.
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	if manifest, changed := mergedLifecycleManifest(app, req); changed {
+		maxConcurrency := app.MaxConcurrency
+		if req.MaxConcurrency != nil {
+			maxConcurrency = *req.MaxConcurrency
+		}
+		if prob := lifecycleProblem(acct.Plan, manifest, maxConcurrency); prob != nil {
+			return prob
+		}
+	}
 	if req.MinInstances == nil {
 		// fall through to the egress allowlist branch
 	} else {
@@ -685,10 +694,10 @@ func countIPAllowlistAudit(mode string, ipAllowlist []string) int {
 }
 
 // updateApp is the PATCH /v1/apps/{slug} handler. User-tunable:
-// RAM, idle_timeout_s, max_concurrency, and min_instances (Pro/Scale
-// only — validateUpdateApp gates the feature). Type and runtime are
-// immutable. Plan caps re-enforced when RAM or concurrency changes
-// (spec §4.2: "validation enforces plan quotas before any work").
+// RAM, idle_timeout_s, max_concurrency, min_instances, and lifecycle
+// configuration (Pro/Scale only — validateUpdateApp gates the relevant
+// features). Type and runtime are immutable. Plan caps are re-enforced when
+// RAM, concurrency, or lifecycle settings change.
 func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -844,6 +853,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			}
 		}
 	}
+	lifecycleManifest, lifecycleChanged := stateManifestForUpdate(app, &req)
 	params := state.UpdateAppParams{
 		RAMMB:              req.RAMMB,
 		IdleTimeoutS:       req.IdleTimeoutS,
@@ -1027,6 +1037,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		SetCORSDefaultEnabled: req.CORSDefaultEnabled != nil,
 		CORSDefaultOrigins:    req.CORSDefaultOrigins,
 		SetCORSDefaultOrigins: req.CORSDefaultEnabled != nil && *req.CORSDefaultEnabled,
+		Manifest:              lifecycleManifest,
 	}
 	if req.PublicAuth != nil {
 		// params.PublicAuth is unset when req.PublicAuth is
@@ -1048,7 +1059,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
+		fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","lifecycle_changed":%t}`, app.Slug, app.ID, lifecycleChanged))
 	s.log.Info("app updated", "app", updated.ID, "slug", updated.Slug, "account", acct.ID)
 	// IAM-4 (issue #291): record what the customer actually altered.
 	// Mirrors cron.updated: only fields the caller touched (req.X != nil)
@@ -1154,6 +1165,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.EgressAllowlist != nil {
 		oldApp["egress_allowlist"] = egressStringList(app.EgressAllowlist)
 		newApp["egress_allowlist"] = egressStringList(updated.EgressAllowlist)
+	}
+	if lifecycleChanged {
+		oldApp["lifecycle"] = apiManifestFromState(app.Manifest)
+		newApp["lifecycle"] = apiManifestFromState(updated.Manifest)
 	}
 	s.audit.Emit(r.Context(), "app.updated", &acct.ID, map[string]any{
 		"app_id": updated.ID,

@@ -188,7 +188,17 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if mc == 0 {
 		mc = 1
 	}
+	lifecycle := lifecycleManifestFromCreate(req)
+	// A service's desired replica count is its steady-state instance
+	// requirement. When max_concurrency is omitted, make the default large
+	// enough for that target; an explicit max_concurrency remains authoritative.
+	if req.MaxConcurrency == 0 && lifecycle.EffectiveExecutionMode() == api.ExecutionModeService && lifecycle.ServiceReplicas != nil && lifecycle.ServiceReplicas.Desired > mc {
+		mc = lifecycle.ServiceReplicas.Desired
+	}
 	if prob := api.ValidateAppConfig(limits, ram, mc); prob != nil {
+		return state.App{}, prob
+	}
+	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
 		return state.App{}, prob
 	}
 	// Issue #471 / ADR-047: per-app streaming flag. Apply the
@@ -406,6 +416,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// reaches the floor in practice because every exit
 		// path above assigns appProtocol explicitly.
 		AppProtocol: appProtocol,
+		Manifest:    stateManifestFromAPI(lifecycle),
 	}, nil
 }
 
@@ -588,12 +599,17 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		MinInstances: a.MinInstances,
 		Status:       string(a.Status), URL: appURLForDomain(a.Slug, s.domain),
 		Manifest: api.AppManifest{
-			Entrypoint: a.Manifest.Entrypoint,
-			Env:        a.Manifest.Env,
-			WorkingDir: a.Manifest.WorkingDir,
-			Port:       a.Manifest.Port,
-			Healthz:    a.Manifest.Healthz,
-			User:       a.Manifest.User,
+			Entrypoint:       a.Manifest.Entrypoint,
+			Env:              a.Manifest.Env,
+			WorkingDir:       a.Manifest.WorkingDir,
+			Port:             a.Manifest.Port,
+			Healthz:          a.Manifest.Healthz,
+			User:             a.Manifest.User,
+			ExecutionMode:    a.Manifest.ExecutionMode,
+			RestartPolicy:    a.Manifest.RestartPolicy,
+			StartupDeadlineS: a.Manifest.StartupDeadlineS,
+			MaxRetries:       a.Manifest.MaxRetries,
+			ServiceReplicas:  apiManifestFromState(a.Manifest).ServiceReplicas,
 		},
 		EgressAllowlist: ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger

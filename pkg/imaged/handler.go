@@ -1726,6 +1726,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
+	manifest = applyAppLifecycle(manifest, app)
 	if err := manifest.Validate(); err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
 		return fmt.Errorf("imaged: validate manifest: %w", err)
@@ -2231,6 +2232,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
+	manifest = applyAppLifecycle(manifest, app)
 	if err := manifest.Validate(); err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
 		return fmt.Errorf("imaged: validate manifest: %w", err)
@@ -2513,8 +2515,13 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 			"deployment_id", dep.ID, "stage", "readiness", "err", serr)
 	}
 	// Fan out so audit / dashboard SSE see the terminal transition.
-	if err := h.notif.Notify(ctx, db.NotifyDeploymentChanged,
-		`{"app_id":"`+dep.AppID+`","to":"`+dep.ID+`","status":"live"}`); err != nil {
+	payload, _ := json.Marshal(struct {
+		AppID        string `json:"app_id"`
+		DeploymentID string `json:"deployment_id"`
+		To           string `json:"to"`
+		Status       string `json:"status"`
+	}{AppID: dep.AppID, DeploymentID: dep.ID, To: dep.ID, Status: string(state.DeployLive)})
+	if err := h.notif.Notify(ctx, db.NotifyDeploymentChanged, string(payload)); err != nil {
 		h.log.Warn("imaged: notify live", "err", err)
 	}
 	return nil
