@@ -362,7 +362,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// The trace setup is gatewayd-public's responsibility because
 	// the ring is per-daemon (ADR-070 cross-box HA is N boxes each
 	// with their own ring; the GET endpoint reaches this box only).
-	traceSetup, err := gateway.InstallTracePipeline(ctx, "gatewayd-public", wire.Version, log)
+	traceSetup, err := gateway.InstallTracePipelineWithRegistry(ctx, "gatewayd-public", wire.Version, log, opsMetrics.Registry(), opsMetrics.MetricPrefix())
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: trace setup: %w", err)
 	}

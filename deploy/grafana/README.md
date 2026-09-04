@@ -121,7 +121,7 @@ Panels:
 
 1. **Operator action trace completeness by kind (5m)** — `clamp_min(schedd_operator_action_trace_completeness_ratio, 0.001)`. Per-kind ratio timeseries with green≥0.95 / yellow 0.50-0.95 / red<0.50 threshold bands. `clamp_min(0.001)` mirrors the `vmmd_cold_boot_ratio` recording-rule precedent so the y-axis is bounded away from the `WithLabelValues(...)` default of 0 before the driver's first pass.
 2. **Operator action audit write rate by kind (denominator)** — `topk(8, sum by (kind) (rate({__name__=~".*_audit_log_write_total"}[5m])))` stacked. Disambiguator for the vacuous-truth default of 1.0 (absent kinds read 1.0 by `pkg/sched/operator_intent_completeness.go:172-179`). A kind whose ratio sits at 1.000 with non-zero write rate is a real violation; a kind whose ratio sits at 1.000 with flat write rate is a vacuous default. Same precedent as `FaasAuditRetentionTableGrowingFasterThanPruned`'s `> 0` precondition at `faas.rules.yml:463-469`.
-3. **Driver loop freshness (s, healthy <180)** — `time() - timestamp(schedd_operator_action_trace_completeness_ratio)`. Stat with green<180 / yellow<360 / red≥360. Same logic as `FaasAuditRetentionLoopStalled` (26h vs 24h cadence slack — `faas.rules.yml:421`).
+3. **Driver loop freshness (s, healthy <180)** — `time() - schedd_operator_action_trace_completeness_last_success_timestamp_seconds`. The producer writes the timestamp only after a successful query, so scrape freshness cannot mask a wedged driver. Stat with green<180 / yellow<360 / red≥360.
 4. **Worst-kind completeness ratio** — recording rule `obs:operator_action_trace_completeness_ratio` (the cold-start-guarded expression — see the `Recording rule` paragraph below the alert list).
 
 UID `faas-obs-trace-completeness-pr-1111`. Mirror at
@@ -133,32 +133,20 @@ Companion alerts at
 
 - `FaasOperatorActionTraceCompletenessLowPage` (page) — `< 0.50` for 10m. Cross-daemon correlation is broken when audit rows lack `trace_id`.
 - `FaasOperatorActionTraceCompletenessLowWarn` (warn) — `< 0.95` for 30m. Above the page threshold but below the contractual floor.
-- `FaasOperatorActionTraceCompletenessLoopStalled` (info) — gauge stale >180s for 5m. Schedd driver goroutine wedged.
+- `FaasOperatorActionTraceCompletenessLoopStalled` (info) — producer last-success timestamp stale >180s for 5m. Schedd driver goroutine wedged after at least one successful tick.
+- `FaasOperatorActionTraceCompletenessFirstTickStalled` (page) — no successful first tick for 10m. Covers a pre-Set panic or a driver blocked before publishing any completeness value.
 
-All three share `family=obs_trace, component=schedd` so the alertmanager inhibit rule auto-pairs page+warn.
+All four share `family=obs_trace, component=schedd` so the alertmanager inhibit rule auto-pairs page+warn.
 
 Recording rule: `obs:operator_action_trace_completeness_ratio` —
-`clamp_min((min(schedd_…) unless on() (sum(schedd_…) == 0)) or on()
-vector(1), 0.001)`. The `unless ... or vector(1)` idiom is the
-cold-start guard: when EVERY kind is still at the Prometheus
-GaugeVec default (0 — i.e., the schedd driver has not yet ticked
-after a fresh boot), the rule substitutes 1.0 (vacuous truth) so
-the Page alert does NOT fire false-positive at t=10m on every
-restart. A panic mid-tick that leaves some kinds Set and others
-at the Prometheus default still produces `sum != 0`, so the guard
-does NOT engage and the alert fires as before — preserving the
-panic-resilience contract pinned at
-`pkg/sched/operator_intent_completeness_test.go:118`.
-
-**Known limitation (finding #1 of `/code-review 1162`):** the guard
-also swallows the *pre-Set* panic case — when schedd's driver
-panics before reaching the Set loop, every kind stays at 0 and
-the Page alert stays silent. The compensating signal is
-`FaasOperatorActionTraceCompletenessLoopStalled` (info-tier) —
-but only when the daemon has fully stopped scraping. For the
-"driver panicked, daemon still up" case, operators rely on
-`journalctl -u schedd` slog capture. Tightening this requires a
-separate "first driver tick completed" counter — out of scope.
+`clamp_min((min(schedd_…) unless on()
+(schedd_operator_action_trace_completeness_first_tick_completed_total == 0))
+or on() vector(1), 0.001)`. The explicit first-success counter is the
+cold-start guard: before the driver completes its first query, the rule
+substitutes 1.0 (vacuous truth) so restart noise does not page. Once a
+query succeeds, a real all-zero result is no longer hidden. The separate
+first-tick page covers a pre-Set panic or a driver that cannot complete its
+initial query.
 
 Regression test: `pkg/promqlrules/testdata/obs_trace_completeness.test.yml`
 (Go-level driver at `pkg/promqlrules/rules_test.go:74` walks the
@@ -171,19 +159,22 @@ Runbook: `docs/runbooks/FaasOperatorActionTraceCompletenessLow.md`.
 
 ## `telemetry-pipeline.json` (OTLP exporter health)
 
-Four-panel dashboard for the daemon-owned Prometheus-to-OTLP metrics bridge.
-It shows the number of configured exporters, the number currently up, export
-failure rate by scrape target, and age since the last successful export. The
-bridge remains best-effort: local Prometheus scraping and daemon serving are
-not gated on collector availability.
+Eight-panel dashboard for both daemon-owned telemetry exporters. The first
+four panels show the Prometheus-to-OTLP metrics bridge; the next four show
+configured/up trace exporters, trace export failures, and age since the last
+successful trace export. Both bridges remain best-effort: local Prometheus
+scraping and daemon serving are not gated on collector availability.
 
 UID `faas-telemetry-pipeline`. Mirror at
 `deploy/ansible/roles/grafana/files/telemetry-pipeline.json` (byte-identical —
 `make grafana-mirror-check` enforces the contract). Companion alerts are
-`FaasOTLPMetricsExporterDown` and `FaasOTLPMetricsExporterErrors` in
+`FaasOTLPMetricsExporterDown`, `FaasOTLPMetricsExporterErrors`,
+`FaasOTLPTraceExporterDown`, and `FaasOTLPTraceExporterErrors` in
 `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 
 Runbook: `docs/runbooks/FaasOTLPMetricsExporterDown.md`.
+
+Trace exporter runbook: `docs/runbooks/FaasOTLPTraceExporterDown.md`.
 
 ## Provisioning (PR #141, ADR-031)
 

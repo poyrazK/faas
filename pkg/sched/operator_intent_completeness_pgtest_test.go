@@ -102,6 +102,12 @@ func TestRunOperatorIntentCompletenessTick_FixesColumnRef(t *testing.T) {
 	if !strings.Contains(body, wantForcePark) {
 		t.Errorf("force_park gauge not stamped to 0.5 (column-ref regression?):\nmetrics body did not contain %q", wantForcePark)
 	}
+	if !strings.Contains(body, "schedd_operator_action_trace_completeness_first_tick_completed_total 1") {
+		t.Errorf("first-tick completion counter was not recorded:\n%s", body)
+	}
+	if !strings.Contains(body, "# HELP schedd_operator_action_trace_completeness_last_success_timestamp_seconds") {
+		t.Errorf("last-success timestamp metric was not registered:\n%s", body)
+	}
 
 	// Sanity-pin: the OTHER kinds (force_cold_boot, etc.) stay
 	// at their 1.0 vacuous default — no rows in window ⇒
