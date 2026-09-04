@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/geoip"
@@ -53,7 +54,19 @@ type ResolveSlugFn func(slug string) (appID string, ok bool)
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
-	Plan      api.Plan
+	// OrgID (ADR-123) is the org this app belongs to
+	// (state.App.OrgID, hydrated from apps.org_id by
+	// pgRouter.toApp). The members_only public-auth gate
+	// calls pkg/authz.IsOrgMember(ctx, app.OrgID, accountID)
+	// on every request to a members_only app — see
+	// applyIngressMembersOnly below. Empty for pre-00099
+	// apps (the gate surfaces a 500 misconfig in that case
+	// rather than a 403 pass-through, same posture as
+	// applyIngressIPAllowlist's empty-CIDR misconfig). Default
+	// empty in fakeBackend unit tests; production path
+	// always populates for org-bearing apps.
+	OrgID string
+	Plan  api.Plan
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -250,9 +263,10 @@ type PublicAuthConfig struct {
 // must stay in sync with the apps_public_auth_mode_chk
 // CHECK constraint in migrations/00153_apps_public_auth.sql
 // (widened in 00326 for ip_allowlist + 00333 for
-// internal_only). Companion drift-guard tests pin the three
-// surfaces equal: pkg/api/public_auth_constants_test.go (api
-// vs state) and pkg/gateway/handler_public_auth_constants_test.go
+// internal_only + 00347 for members_only). Companion
+// drift-guard tests pin the three surfaces equal:
+// pkg/api/public_auth_constants_test.go (api vs state)
+// and pkg/gateway/handler_public_auth_constants_test.go
 // (handler package-local lowercase).
 const (
 	publicAuthModeOpen         = "open"
@@ -260,6 +274,7 @@ const (
 	publicAuthModeBasic        = "basic"
 	publicAuthModeIPAllowlist  = "ip_allowlist"
 	publicAuthModeInternalOnly = "internal_only"
+	publicAuthModeMembersOnly  = "members_only"
 )
 
 // docsTypeBase is the canonical docs path prefix for problem
@@ -867,6 +882,30 @@ type Handler struct {
 	// depth: a misconfiguration that lets every internal-only
 	// request through is worse than a 500).
 	internalSvcVerifier InternalSvcVerifier
+
+	// membersOnlyPrincipal (ADR-123) is the cookie-side
+	// bridge for the public_auth_mode='members_only' gate
+	// at applyIngressMembersOnly. It resolves the
+	// authenticated account_id from the inbound request's
+	// cookie envelope via cmd/gatewayd-internal/
+	// auth_principal_adapter.go (which imports
+	// pkg/auth/middleware), preserving the L300-303
+	// "pkg/gateway has no import on pkg/auth" posture.
+	// nil = cookie side disabled — the gate 500s
+	// rather than silently letting every members_only
+	// request through (defence in depth).
+	membersOnlyPrincipal CookiePrincipalExtractor
+
+	// membersOnlyChecker (ADR-123) is the DB-side
+	// bridge for the public_auth_mode='members_only' gate.
+	// It calls pkg/authz.IsOrgMember(ctx, app.OrgID,
+	// accountID) — the production impl at
+	// pkg/authz/is_org_member.go::PoolOrgMemberChecker
+	// wraps pgxpool.Pool. nil = DB side disabled —
+	// the gate 500s rather than silently letting every
+	// members_only request through (same defence in
+	// depth as internalSvcVerifier at L740).
+	membersOnlyChecker authz.OrgMemberChecker
 
 	// validator (PR-B) is the per-rule JSON-Schema validate
 	// handle consulted by applyEdgeRuleValidate. Wired via
@@ -4893,6 +4932,23 @@ haveApp:
 	// both gates share the same verifier (cmd/gatewayd-internal/
 	// internal_svc_verifier.go).
 	if h.applyIngressInternalSvc(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	// ADR-123: per-app ingress 'members_only' mode runs
+	// AFTER applyIngressIPAllowlist (L4628) and
+	// applyIngressInternalSvc (above) — cheap-to-evaluate
+	// modes short-circuit first — and BEFORE applyEdgeRuleIP
+	// (below) — so a denied request never wakes a
+	// Firecracker microVM. The synth-side gate
+	// (pkg/gateway/synth_members_only.go) is the parallel
+	// cron-fired path; both gates share the same
+	// OrgMemberChecker (cmd/gatewayd-internal's pgxpool
+	// adapter at run.go) AND the same cookie-principal
+	// extractor. Cron has no human session, so the synth
+	// gate denies every cron wake to a members_only app —
+	// keeping the wake path free of the slow SQL lookup.
+	if h.applyIngressMembersOnly(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}

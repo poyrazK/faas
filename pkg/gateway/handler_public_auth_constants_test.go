@@ -28,10 +28,11 @@ import (
 // pkg/gateway package-local constants against the canonical
 // pkg/api constants. ADR-118 adds publicAuthModeIPAllowlist
 // ("ip_allowlist"); ADR-119 adds publicAuthModeInternalOnly
-// ("internal_only"). Order matters: open, bearer, basic,
-// ip_allowlist, internal_only — matches the historical
-// ship order so a future contributor reading the slice
-// knows which mode shipped when.
+// ("internal_only"); ADR-123 adds publicAuthModeMembersOnly
+// ("members_only"). Order matters: open, bearer, basic,
+// ip_allowlist, internal_only, members_only — matches the
+// historical ship order so a future contributor reading the
+// slice knows which mode shipped when.
 func TestPublicAuthGatewayModeConstantsAgree(t *testing.T) {
 	gatewaySet := map[string]string{
 		"open":          publicAuthModeOpen,
@@ -39,6 +40,7 @@ func TestPublicAuthGatewayModeConstantsAgree(t *testing.T) {
 		"basic":         publicAuthModeBasic,
 		"ip_allowlist":  publicAuthModeIPAllowlist,
 		"internal_only": publicAuthModeInternalOnly,
+		"members_only":  publicAuthModeMembersOnly,
 	}
 	apiSet := map[string]string{
 		"open":          api.AppPublicAuthModeOpen,
@@ -46,6 +48,7 @@ func TestPublicAuthGatewayModeConstantsAgree(t *testing.T) {
 		"basic":         api.AppPublicAuthModeBasic,
 		"ip_allowlist":  api.AppPublicAuthModeIPAllowlist,
 		"internal_only": api.AppPublicAuthModeInternalOnly,
+		"members_only":  api.AppPublicAuthModeMembersOnly,
 	}
 	if len(gatewaySet) != len(apiSet) {
 		t.Fatalf("set size mismatch: pkg/gateway has %d modes, pkg/api has %d; "+

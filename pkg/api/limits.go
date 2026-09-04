@@ -522,6 +522,19 @@ type Limits struct {
 	// (return false) — same contract as the other accessors above.
 	PublicAuthBasicAllowed bool
 
+	// PublicAuthMembersOnlyAllowed (ADR-123) gates whether the
+	// plan may opt apps into public_auth_mode='members_only'.
+	// Free = false (Free personal-org has exactly 1 member, so
+	// members_only on Free would collapse to bearer with the same
+	// account — keep the abuse-floor posture clean and reject);
+	// Hobby+ = true (the org/membership infrastructure is Hobby+
+	// via the OrgMembersMax ladder; ADR-061 line 174). Enforced
+	// at the apid PATCH validator with 402
+	// CodePlanPublicAuthMembersOnlyNotAllowed. Unknown plans
+	// fail closed (return false) — same contract as the other
+	// accessors above.
+	PublicAuthMembersOnlyAllowed bool
+
 	// RequireAuthnDefault (issue #695 / ADR-080) is the default
 	// value stamped onto a freshly created app's `require_authn`
 	// column when the customer omitted `require_authn` from the
@@ -1517,8 +1530,9 @@ var planLimits = map[Plan]Limits{
 		// path — public-by-default, no bearer/basic opt-in. The 'open'
 		// default mode is always available regardless of plan, so
 		// existing Free apps keep working with no migration work.
-		PublicAuthBearerAllowed: false,
-		PublicAuthBasicAllowed:  false,
+		PublicAuthBearerAllowed:      false,
+		PublicAuthBasicAllowed:       false,
+		PublicAuthMembersOnlyAllowed: false,
 		// Issue #695 / ADR-080: Free stays public-by-default. The
 		// token gate isn't unlocked on Free (RequireAuthn=false above);
 		// matching the default literal avoids customers creating a
@@ -1882,8 +1896,9 @@ var planLimits = map[Plan]Limits{
 		// basic stays gated — basic adds sealed-credential storage cost
 		// the Hobby customer shape doesn't typically need. The
 		// 'open' mode is always available.
-		PublicAuthBearerAllowed: true,
-		PublicAuthBasicAllowed:  false,
+		PublicAuthBearerAllowed:      true,
+		PublicAuthBasicAllowed:       false,
+		PublicAuthMembersOnlyAllowed: true,
 		// Issue #695 / ADR-080: Hobby unlocks the token gate as a
 		// default (RequireAuthnAllowed is gated above so customers
 		// can't PATCH-true, but defaults can stamp true). The mode
@@ -2252,8 +2267,9 @@ var planLimits = map[Plan]Limits{
 		// admin-endpoint use cases where HTTP Basic is the customer's
 		// existing primitive. Sealed-credential storage cost is
 		// negligible at Pro scale (~50 apps).
-		PublicAuthBearerAllowed: true,
-		PublicAuthBasicAllowed:  true,
+		PublicAuthBearerAllowed:      true,
+		PublicAuthBasicAllowed:       true,
+		PublicAuthMembersOnlyAllowed: true,
 		// Issue #695 / ADR-080: Pro unlocks both the token gate
 		// (RequireAuthn above) AND the bearer scope (PublicAuthBearerAllowed
 		// above). Default new apps to (true, "bearer") so the customer
@@ -2603,8 +2619,9 @@ var planLimits = map[Plan]Limits{
 		// the SaaS-scale customer shape has rotating-CI keys and
 		// per-environment admin endpoints that benefit from both
 		// auth modes.
-		PublicAuthBearerAllowed: true,
-		PublicAuthBasicAllowed:  true,
+		PublicAuthBearerAllowed:      true,
+		PublicAuthBasicAllowed:       true,
+		PublicAuthMembersOnlyAllowed: true,
 		// Issue #695 / ADR-080: Scale mirrors Pro on the auth default
 		// — the gate unlocks AND the bearer scope unlocks, so the
 		// secure-by-default literal (true, "bearer") applies. A future
@@ -4470,6 +4487,26 @@ func (p Plan) PublicAuthIPAllowlistAllowed() bool {
 		return false
 	}
 	return l.PublicAuthIPAllowlistAllowed
+}
+
+// PublicAuthMembersOnlyAllowed reports whether the plan may opt
+// apps into public_auth_mode='members_only' (ADR-123). Hobby+
+// only — Free is locked because Free personal-org has exactly 1
+// member (the account itself), so members_only on Free would
+// collapse to bearer with the same account. apid's updateApp
+// handler gates `req.PublicAuth.Mode` on the bool; the handler
+// returns 402 CodePlanPublicAuthMembersOnlyNotAllowed. Unknown
+// plans fail closed (return false) — same contract as the other
+// accessors above. The structural symmetry with
+// PublicAuthBearerAllowed (Hobby+, the apps:read scope requires
+// Hobby+) is deliberate: both gates enforce that the
+// human-identity shape is paid-tier.
+func (p Plan) PublicAuthMembersOnlyAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false
+	}
+	return l.PublicAuthMembersOnlyAllowed
 }
 
 // PublicAuthIPAllowlistMaxEntries returns the per-plan CIDR-entry

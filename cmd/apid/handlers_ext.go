@@ -474,6 +474,19 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			if !acct.Plan.PublicAuthBasicAllowed() {
 				return api.ErrPlanPublicAuthBasicNotAllowed(acct.Plan)
 			}
+		case api.AppPublicAuthModeMembersOnly:
+			// ADR-120: plan tier Hobby+ — Free personal-org has
+			// exactly 1 member (the account itself) so members_only
+			// on Free collapses to bearer with the same account,
+			// which is exactly the conflation ADR-079 §2 avoided by
+			// gating bearer at Hobby+. Closed-enum already passed
+			// (422 supersedes 402 here, per ADR-079 line 252 — a
+			// unknown mode does NOT reach this switch arm). No
+			// app-side payload required (cookie + org-membership
+			// lookup live on the request, not in PublicAuthBlock).
+			if !acct.Plan.PublicAuthMembersOnlyAllowed() {
+				return api.ErrPlanPublicAuthMembersOnlyNotAllowed(acct.Plan)
+			}
 		case api.AppPublicAuthModeIPAllowlist:
 			// ADR-118: plan tier first — Free/Hobby + non-pip
 			// cap surfaces 403 even when the rest of the

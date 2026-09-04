@@ -10,6 +10,7 @@ package middleware_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -1567,5 +1569,195 @@ func TestLog_SessionTouchFailedStripsControlChars(t *testing.T) {
 	}
 	if !strings.Contains(out, "INJECT") {
 		t.Errorf("sanitised log should still contain the printable payload: %q", out)
+	}
+}
+
+// --- AttachSessionIfPresent: soft-attach cookie branch (ADR-123) ---------
+//
+// AttachSessionIfPresent is the public-front-door companion to
+// RequireSession: it stamps the principal into r.Context() when a
+// valid cookie is present, but NEVER 401s on miss/invalid. The
+// members_only ingress gate (pkg/gateway/handler.go::applyIngressMembersOnly)
+// relies on this so the cookie envelope survives the proxy hop without
+// breaking open/bearer/basic/ip_allowlist/internal_only traffic that
+// legitimately arrives with no cookie.
+
+// TestAttachSessionIfPresent_NoCookie_PassesThrough pins the
+// dominant case for open-mode traffic: a request arrives without
+// a faas_sid cookie. AttachSessionIfPresent returns false and
+// does NOT write anything to the response writer.
+func TestAttachSessionIfPresent_NoCookie_PassesThrough(t *testing.T) {
+	authn := newFakeAuthn()
+	mw := newMW(t, authn, &fakeSessions{}, &fakeLookups{}, nil)
+
+	r := mkRequest("GET", "/v1/apps", nil, nil)
+	if mw.AttachSessionIfPresent(r) {
+		t.Errorf("ok = true, want false (no cookie)")
+	}
+	acct, _, ok := authmw.AccountFromContext(r)
+	if ok {
+		t.Errorf("ctx stamped without cookie: %+v", acct)
+	}
+}
+
+// TestAttachSessionIfPresent_AEADVerifyFails_PassesThrough pins
+// the soft posture on tampered cookies: Sessions.Verify returns
+// non-nil → stamp NOT applied → caller passes through. This is
+// in contrast to RequireSession, which clears the cookie + 401s
+// on the same path. The public-front-door deliberately does NOT
+// surface the failure to the client (the upstream RequireSession
+// on apid already covers that surface).
+func TestAttachSessionIfPresent_AEADVerifyFails_PassesThrough(t *testing.T) {
+	authn := newFakeAuthn()
+	sess := &fakeSessions{err: errors.New("AEAD tag mismatch")}
+	mw := newMW(t, authn, sess, &fakeLookups{}, nil)
+
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "tampered"})
+	if mw.AttachSessionIfPresent(r) {
+		t.Errorf("ok = true, want false (AEAD verify failed)")
+	}
+	if _, _, ok := authmw.AccountFromContext(r); ok {
+		t.Errorf("ctx stamped on AEAD failure")
+	}
+}
+
+// TestAttachSessionIfPresent_EmptySid_PassesThrough pins the
+// pre-IAM-3 empty-sid branch: AEAD verify succeeds but env.Sid
+// is empty (legacy cookie). Soft attach passes through; the
+// next request from a re-login overwrites the cookie value.
+func TestAttachSessionIfPresent_EmptySid_PassesThrough(t *testing.T) {
+	authn := newFakeAuthn()
+	sess := &fakeSessions{env: session.Envelope{AccountID: "acct-1", Sid: ""}}
+	mw := newMW(t, authn, sess, &fakeLookups{}, nil)
+
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "pre-iam-3"})
+	if mw.AttachSessionIfPresent(r) {
+		t.Errorf("ok = true, want false (empty sid)")
+	}
+	if _, _, ok := authmw.AccountFromContext(r); ok {
+		t.Errorf("ctx stamped on empty sid")
+	}
+}
+
+// TestAttachSessionIfPresent_RevokedRow_PassesThrough pins the
+// revoked-row branch: AEAD verifies, live row is found but
+// RevokedAt != nil. Soft attach returns false silently; the
+// upstream RequireSession on apid has already emitted
+// auth.session.stolen and the public-front-door doesn't
+// duplicate the audit.
+func TestAttachSessionIfPresent_RevokedRow_PassesThrough(t *testing.T) {
+	authn := newFakeAuthn()
+	audit := &fakeAuditor{}
+	sess := &fakeSessions{env: session.Envelope{AccountID: "acct-1", Sid: "sid-1"}}
+	now := time.Now()
+	lookups := &fakeLookups{sess: state.Session{ID: "sid-1", AccountID: "acct-1", RevokedAt: &now}}
+	mw := newMW(t, authn, sess, lookups, audit)
+
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "valid-cookie"})
+	if mw.AttachSessionIfPresent(r) {
+		t.Errorf("ok = true, want false (revoked)")
+	}
+	if _, _, ok := authmw.AccountFromContext(r); ok {
+		t.Errorf("ctx stamped on revoked row")
+	}
+	if rows := audit.rowsOf("auth.session.stolen"); len(rows) != 0 {
+		t.Errorf("audit rows = %d, want 0 (soft attach suppresses audit)", len(rows))
+	}
+}
+
+// TestAttachSessionIfPresent_LiveRow_StampsCtx pins the happy
+// path: AEAD verifies, live row found, AccountByID returns
+// the matching account → principal stamped into r.Context().
+// This is the surface the members_only gate reads via
+// middleware.PrincipalFrom.
+func TestAttachSessionIfPresent_LiveRow_StampsCtx(t *testing.T) {
+	authn := newFakeAuthn()
+	authn.acctByID["acct-1"] = mkActiveAccount("acct-1")
+	sess := &fakeSessions{env: session.Envelope{AccountID: "acct-1", Sid: "sid-1"}}
+	lookups := &fakeLookups{sess: state.Session{ID: "sid-1", AccountID: "acct-1"}}
+	mw := newMW(t, authn, sess, lookups, nil)
+
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "valid-cookie"})
+	if !mw.AttachSessionIfPresent(r) {
+		t.Errorf("ok = false, want true")
+	}
+	acct, _, ok := authmw.AccountFromContext(r)
+	if !ok {
+		t.Fatalf("ctx not stamped on happy path")
+	}
+	if acct.ID != "acct-1" {
+		t.Errorf("acct.ID = %q, want acct-1", acct.ID)
+	}
+}
+
+// TestAttachSessionIfPresent_LookupError_PassesThrough pins the
+// transient store-error branch: GetSession returns a non-ErrNotFound
+// error. Soft attach returns false silently — the public-front-door
+// does NOT take the failure as a signal to log the user out (a
+// transient pg outage would 401 every customer request, which is
+// the wrong posture). The members_only gate's lookup_error branch
+// (501-style fail-closed) is the right place to surface sustained
+// DB issues.
+func TestAttachSessionIfPresent_LookupError_PassesThrough(t *testing.T) {
+	authn := newFakeAuthn()
+	sess := &fakeSessions{env: session.Envelope{AccountID: "acct-1", Sid: "sid-1"}}
+	lookups := &fakeLookups{getErr: errors.New("pg connection refused")}
+	mw := newMW(t, authn, sess, lookups, nil)
+
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "valid-cookie"})
+	if mw.AttachSessionIfPresent(r) {
+		t.Errorf("ok = true, want false (transient lookup error)")
+	}
+	if _, _, ok := authmw.AccountFromContext(r); ok {
+		t.Errorf("ctx stamped on lookup error")
+	}
+}
+
+// TestAttachSessionIfPresent_BindingMismatch_PassesThrough pins
+// the binding-hash mismatch branch (ADR-076): the cookie envelope's
+// binding_hash disagrees with the live row's binding_hash.
+// Soft attach returns false silently — no auto-revoke, no audit.
+// The per-app authentication boundary (apid's RequireSession)
+// owns the revoke + audit emission; the public-front-door is
+// the per-app authorization boundary, not the per-app authn
+// boundary. Mixing the two would break the layering.
+func TestAttachSessionIfPresent_BindingMismatch_PassesThrough(t *testing.T) {
+	authn := newFakeAuthn()
+	sess := &fakeSessions{env: session.Envelope{
+		AccountID:   "acct-1",
+		Sid:         "sid-1",
+		BindingHash: "stolen-binding",
+	}}
+	lookups := &fakeLookups{sess: state.Session{
+		ID:          "sid-1",
+		AccountID:   "acct-1",
+		BindingHash: "legit-binding",
+	}}
+	mw := authmw.New(authn, sess, lookups, &fakeAuditor{}, slog.Default(), middleware.NewLimiter(middleware.AuthLimitConfig{}), bindinghash.KeyFunc(func() []byte { return []byte("key") }))
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "valid-cookie"})
+	if mw.AttachSessionIfPresent(r) {
+		t.Errorf("ok = true, want false (binding mismatch)")
+	}
+	if _, _, ok := authmw.AccountFromContext(r); ok {
+		t.Errorf("ctx stamped on binding mismatch")
+	}
+	if got := len(lookups.revokeCalls); got != 0 {
+		t.Errorf("revokeCalls = %d, want 0 (soft attach does not revoke)", got)
+	}
+}
+
+// TestAttachSessionIfPresent_NilSessionsLookups_PassesThrough pins
+// the "gate not configured at startup" branch: if Sessions or
+// Lookups is nil (a dev box that never wired the session
+// subsystem), AttachSessionIfPresent returns false silently. The
+// open-front-door must not panic.
+func TestAttachSessionIfPresent_NilSessionsLookups_PassesThrough(t *testing.T) {
+	authn := newFakeAuthn()
+	lim := middleware.NewLimiter(middleware.AuthLimitConfig{})
+	mw := authmw.New(authn, nil, nil, nil, slog.Default(), lim, nil)
+
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "valid-cookie"})
+	if mw.AttachSessionIfPresent(r) {
+		t.Errorf("ok = true, want false (sessions/lookups nil)")
 	}
 }

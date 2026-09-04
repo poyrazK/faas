@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -1105,6 +1106,30 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return app.PublicAuthMode
 		})
+	// ADR-123 — wire the synth-side members_only gate. Same
+	// checker + same cookie principal resolver the Handler
+	// uses; the appOrgIDLookup closure reads the per-app
+	// org_id the same way the per-host LRU cache on the
+	// HTTP-front-door side does (via Store.AppOrgID).
+	// Returns "" on error so a transient pg failure doesn't
+	// 500 every members_only cron fire (the gate's
+	// empty-orgid misconfig branch is reserved for the
+	// "we know the app is in members_only mode AND the row
+	// is broken" case — that's an operator-misconfig
+	// surface, not a transient-failure surface).
+	// F1 (review fix): inline the checker + adapter at the
+	// synth wiring site so the SynthServer fields are NEVER
+	// nil in production. The previous code assigned to
+	// deps.membersOnlyChecker AFTER the synth wiring (at
+	// the bottom of run()), so the WithMembersOnlyChecker
+	// call captured the zero value. Every cron-fired
+	// /v1/synthesize against a members_only app would have
+	// 500'd with operator_error. Now: inlined.
+	deps.synth.WithMembersOnlyChecker(authz.PoolOrgMemberChecker(pool))
+	deps.synth.WithMembersOnlyPrincipalExtractor(newAuthPrincipalAdapter())
+	deps.synth.WithAppOrgIDLookup(func(ctx context.Context, appID string) (string, error) {
+		return pgStore.AppOrgID(ctx, appID)
+	})
 	// Process-local Prometheus registry (spec §12). Constructed here so
 	// every downstream consumer — handler, warm-hint consumer, top-N
 	// sampler — shares the same registry. The registry is exposed via
@@ -1655,6 +1680,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return gateway.App{}, false
 		}
+		// ADR-123: hydrate app.OrgID so applyIngressMembersOnly
+		// can gate edge-routed traffic to a members_only app
+		// against the cookie principal's membership in the
+		// owning org. AppBySlug does NOT inflate state.App with
+		// OrgID (deliberate — only the per-host LRU hydration
+		// path at toApp consults it); we read the narrow
+		// AppOrgID accessor instead. An empty OrgID on a
+		// members_only app routes through the gate's misconfig
+		// 500 branch — the loud-posture contract.
+		orgID, orgErr := deps.pgStore.AppOrgID(ctx, app.ID)
+		if orgErr != nil {
+			if log != nil {
+				log.Warn("edge rule target AppOrgID failed", "slug", slug, "app_id", app.ID, "err", orgErr)
+			}
+			// Fall through with empty OrgID — the gate's
+			// empty-OrgID misconfig branch 500s the request,
+			// which is the correct posture for a transient
+			// store read (the next request hits the same
+			// accessor; a sustained failure will surface in
+			// the operator dashboard via the gate's metric
+			// increment).
+		}
 		return gateway.App{
 			ID:               app.ID,
 			AccountID:        app.AccountID,
@@ -1672,6 +1719,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// maintenance flag (apps.maintenance_mode).
 			MaintenanceMode: app.MaintenanceMode,
 			NodeID:          app.NodeID,
+			// ADR-123: see hydration comment above.
+			OrgID: orgID,
 		}, true
 	}, deps.edgeRulesAudit)
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
@@ -1716,6 +1765,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the SynthServer dependency wiring — single source of
 	// truth on the verifier.
 	handler.WithInternalSvcVerifier(deps.internalSvcVerifier)
+	// ADR-123 — wire the Handler-side members_only gate.
+	// Same checker + same cookie principal resolver the
+	// SynthServer uses; the Handler reads app.OrgID
+	// directly (pgRouter.toApp hydrates it from
+	// Store.AppOrgID at backend.go:218), so the
+	// WithAppOrgIDLookup call is not needed on the
+	// Handler side. The cmd-side adapter at
+	// auth_principal_adapter.go is the only NEW
+	// cmd-side file. Inlined values (F1 review fix):
+	// the deps fields are NOT pre-populated at this
+	// point — they were originally assigned AFTER the
+	// synth wiring (which itself runs BEFORE the
+	// Handler wiring), so the Handler captured the
+	// zero value. Inlining makes the values explicit
+	// and removes the ordering dependency.
+	handler.WithMembersOnlyChecker(authz.PoolOrgMemberChecker(deps.pool))
+	handler.WithMembersOnlyPrincipalExtractor(newAuthPrincipalAdapter())
 	// ADR-046 PR-2: per-instance egress ring buffer + the gRPC
 	// producer channel. The sink is shared between Handler.recordEgress
 	// (writer) and egressgrpc.Server (drainer-on-cadence reader).
@@ -2374,7 +2440,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// transport, so it must use this same mux; otherwise the cross-box
 	// /v1/invocations:dispatch request falls through to the customer
 	// handler and returns 404 while the VM wake itself succeeds.
-	publicListenerHandler := http.Handler(publicHandler)
+	//
+	// ADR-123: wrap publicHandler with the soft-session-attach
+	// middleware so the cookie envelope stamped by the upstream
+	// gatewayd-public proxy lands in r.Context() before
+	// applyIngressMembersOnly runs. Hard RequireSession would
+	// 401 on missing cookie and break open/bearer/basic/ip_allowlist
+	// traffic; AttachSessionIfPresent stamps on success and
+	// passes through silently on miss/invalid. The per-app
+	// members_only gate reads the principal via
+	// middleware.PrincipalFrom and 401s itself when the cookie
+	// is absent — the authn gate stays per-app, not
+	// per-listener. Wrap order: soft-session-attach sits
+	// INSIDE httpsec (so response headers don't see the
+	// stamped principal) and OUTSIDE publicHandler (so the
+	// downstream chain sees the principal). Production
+	// always has deps.authMw non-nil at this point (the
+	// daemon panics at line ~1259 if it isn't); unit tests
+	// + dev boxes with a nil deps.authMw get a pass-through
+	// wrapper (no stamp, no 401 — exactly the pre-ADR-123
+	// behaviour).
+	publicListenerHandler := http.Handler(softSessionAttach(deps.authMw, publicHandler))
 	if deps.synth != nil {
 		unifiedMux := http.NewServeMux()
 		// LOAD-BEARING ORDER: register Handle("/", publicHandler) FIRST,

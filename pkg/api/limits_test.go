@@ -209,7 +209,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// endpoints + private webhook receivers) but basic stays
 			// gated off — the Hobby customer shape doesn't typically
 			// need sealed-credential storage cost.
-			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: false,
+			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: false, PublicAuthMembersOnlyAllowed: true,
 			// ADR-045 (#396): Hobby gets 3 per-app and 10 per-account.
 			AlertRuleLimitPerApp: 3, AlertRuleLimitPerAccount: 10, AlertPresetCatalogLimitPerAccount: 8,
 			// ADR-089 (planned): edge rules — Hobby unlocks 25 rules
@@ -361,7 +361,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #477 / ADR-079: Pro unlocks both bearer + basic.
 			// Basic is the right shape for Pro's typical webhook-
 			// receiver / admin-endpoint use cases.
-			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: true,
+			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: true, PublicAuthMembersOnlyAllowed: true,
 			// ADR-045 (#396): Pro gets 10 per-app and 30 per-account.
 			AlertRuleLimitPerApp: 10, AlertRuleLimitPerAccount: 30, AlertPresetCatalogLimitPerAccount: 8,
 			// ADR-089 (planned): edge rules — Pro unlocks 100 rules
@@ -519,7 +519,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #475: Scale gets 4 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 4,
 			// Issue #477 / ADR-079: Scale unlocks both bearer + basic.
-			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: true,
+			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: true, PublicAuthMembersOnlyAllowed: true,
 			// ADR-045 (#396): Scale gets 25 per-app and 100 per-account.
 			AlertRuleLimitPerApp: 25, AlertRuleLimitPerAccount: 100, AlertPresetCatalogLimitPerAccount: 8,
 			// ADR-089 (planned): edge rules — Scale unlocks 500 rules

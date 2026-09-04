@@ -1423,6 +1423,18 @@ type Store interface {
 	// call CountDeployedApps before this method (that's the bug).
 	CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)
+	// AppOrgID (ADR-123) returns the org_id the app belongs to
+	// (apps.org_id, migration 00099). Bounded surface — added so
+	// the per-host LRU hydration in cmd/gatewayd-internal/
+	// backend.go::toApp can populate gateway.App.OrgID without
+	// inflating the App-struct scan column list. Returns
+	// ErrNotFound on a missing app; an app with a NULL
+	// apps.org_id returns ("", nil) (pre-#190 rows are left
+	// untouched by IAM-6 — customers who haven't been
+	// migrated fall through to the empty-string branch and
+	// the gate's loud 500 misconfig posture kicks in only
+	// when members_only mode AND empty org_id collide).
+	AppOrgID(ctx context.Context, id string) (string, error)
 	// PreviewAppsByParent (ADR-095 / issue #272) lists every
 	// preview app whose preview_of_slug matches the parent. Used
 	// by the dashboard's "preview environments" pane. Results are

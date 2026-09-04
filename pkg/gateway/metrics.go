@@ -87,6 +87,58 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
+// edgeRuleKinds is the closed set of (kind, outcome/result)
+// labels pre-instantiated on the edgeRuleMatch + edgeRuleApply
+// + edgeRuleCompileError counters so the §12 dashboard
+// surfaces every tuple from first scrape (no "missing until
+// first hit" gaps). Single source of truth — both pre-
+// instantiation loops iterate the same slice; a drift between
+// the two loops would mask a metric on one side. The drift
+// guard at TestEdgeRuleKindsAgreeWithCallSites (in
+// metrics_drift_test.go) pins the contract.
+//
+// Composition (kept in sync with the per-feature contract):
+//
+//   - Edge-rule kinds (route, rewrite, redirect, headers,
+//     cors, jwt, ip, validate, limit, maintenance, geo,
+//     throttle) come from migrations/00192_edge_rules.sql:49-51
+//   - the ADR-091 hardening PR-A + the D20.5 (issue #881)
+//     throttle extension.
+//   - Ingress-control kinds (ingress_ip, ingress_members) are
+//     the per-app ingress-control gates (ADR-118 ip_allowlist,
+//     ADR-123 members_only). The internal_only gate uses
+//     ObserveInternalAuthMatch (its own dedicated counter
+//     family — see F4 commit) rather than the edge-rule
+//     counters, so `ingress_internal` does NOT appear here
+//     even though ADR-119 once carved it out as a future-
+//     extension point.
+//
+// Adding a new kind:
+//  1. Append to edgeRuleKinds below.
+//  2. Emit via ObserveEdgeRuleMatch / ObserveEdgeRuleApply
+//     from the new gate's call site.
+//  3. The drift guard's call-site scan will catch any new
+//     kind that emits without being in the closed set (the
+//     guard is a one-way safety net — adding a kind without
+//     emitting it surfaces as a noisy zero-value counter
+//     on the dashboard, which is acceptable).
+var edgeRuleKinds = []string{
+	"rewrite",
+	"redirect",
+	"headers",
+	"cors",
+	"jwt",
+	"ip",
+	"validate",
+	"limit",
+	"maintenance",
+	"geo",
+	"throttle",
+	"budget",
+	"ingress_ip",
+	"ingress_members",
+}
+
 // Metrics is the gatewayd-internal Prometheus bundle. Construct once per Handler via
 // NewMetrics and pass into NewHandlerWith.
 type Metrics struct {
@@ -1208,7 +1260,7 @@ func NewMetrics() *Metrics {
 	// closed set guarantees the §12 dashboard panel "edge rule
 	// match rate" surfaces every (kind, outcome) tuple from
 	// first scrape.
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "ingress_ip"} {
+	for _, kind := range edgeRuleKinds {
 		for _, outcome := range []string{"match", "miss", "blocked", "failed"} {
 			m.edgeRuleMatch.WithLabelValues(kind, outcome)
 		}
@@ -1337,12 +1389,29 @@ func NewMetrics() *Metrics {
 	// so the §12 dashboard chip "edge rule apply rate" + "edge rule
 	// compile errors" surface every tuple from first scrape. Closed
 	// set: {route, rewrite, redirect, headers, cors, jwt, ip, validate,
-	// limit, maintenance, geo, throttle, ingress_ip}. Adding a new
-	// kind requires extending this slice — the metric name is
-	// stable. `ingress_ip` was added by ADR-118 for the per-app
-	// ingress IP allowlist (pkg/gateway/handler.go::
-	// applyIngressIPAllowlist).
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip", "validate", "limit", "maintenance", "geo", "throttle", "ingress_ip"} {
+	// limit, maintenance, geo, throttle, ingress_ip, ingress_internal,
+	// ingress_members}. Adding a new kind requires extending this
+	// slice — the metric name is stable. `ingress_ip` was added by
+	// ADR-118 for the per-app ingress IP allowlist
+	// (pkg/gateway/handler.go::applyIngressIPAllowlist).
+	// `ingress_members` was added by ADR-123 for the per-app
+	// members_only org-membership gate
+	// (pkg/gateway/public_auth_members_only.go::
+	// applyIngressMembersOnly). Note: the internal_only gate
+	// (pkg/gateway/internal_svc_auth.go::applyIngressInternalSvc)
+	// uses ObserveInternalAuthMatch (its own dedicated
+	// counter family) rather than the edge-rule counters —
+	// that's why `ingress_internal` does NOT appear in the
+	// edge-rule closed set even though ADR-119 carved it
+	// out as a future-extension point. Adding it here would
+	// publish zero-valued tuples that nothing emits and that
+	// the §12 dashboard cannot pivot on (no Grafana panel
+	// groups ingress_internal + ingress_ip together — the
+	// internal-only metric family is separate). The closed
+	// set stays truthful: pre-instantiate exactly what the
+	// ObserveEdgeRuleMatch / ObserveEdgeRuleApply call sites
+	// emit.
+	for _, kind := range edgeRuleKinds {
 		for _, result := range []string{"success", "error"} {
 			m.edgeRuleApply.WithLabelValues(kind, result)
 		}
