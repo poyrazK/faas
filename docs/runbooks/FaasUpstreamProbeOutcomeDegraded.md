@@ -32,7 +32,7 @@ upstream.
 
 ```bash
 # Confirm the alert expression is the one firing.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum(rate(meterd_data_upstream_probes_total{outcome!="ok"}[5m]))/sum(rate(meterd_data_upstream_probes_total[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(meterd_data_upstream_probes_total{outcome!="ok"}[5m]))/sum(rate(meterd_data_upstream_probes_total[5m]))'
 
 # Direct underlying metric — see the outcome breakdown.
 curl -fsS http://127.0.0.1:9091/metrics | grep 'meterd_data_upstream_probes_total'
@@ -42,10 +42,10 @@ curl -fsS http://127.0.0.1:9091/metrics | grep 'meterd_data_upstream_probes_tota
 
 ```bash
 # Per-(kind, region) split — breaks down which outcome is dominating.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum by (outcome) (rate(meterd_data_upstream_probes_total[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum by (outcome) (rate(meterd_data_upstream_probes_total[5m]))'
 
 # p95 RTT — is the degradation also connectivity-bound?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=histogram_quantile(0.95, sum by (le, kind, region) (rate(meterd_data_upstream_rtt_ms_bucket[10m])))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=histogram_quantile(0.95, sum by (le, kind, region) (rate(meterd_data_upstream_rtt_ms_bucket[10m])))'
 
 # Recent meterd slog.
 journalctl -u meterd --since '-15m' --no-pager | grep -iE 'probe|outbound|tls|connection refused|timeout'

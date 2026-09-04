@@ -137,3 +137,24 @@ func applyOverrides(manifest api.AppManifest, dep state.Deployment) (api.AppMani
 
 	return manifest, nil
 }
+
+// applyAppLifecycle overlays customer-owned lifecycle settings after image and
+// deployment overrides. The app row is the source of truth for these fields;
+// image config must not be able to change whether a workload is request,
+// service, worker, or job mode.
+func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest {
+	manifest.ExecutionMode = app.Manifest.ExecutionMode
+	manifest.RestartPolicy = app.Manifest.RestartPolicy
+	manifest.StartupDeadlineS = app.Manifest.StartupDeadlineS
+	manifest.MaxRetries = app.Manifest.MaxRetries
+	if app.Manifest.ServiceReplicas == nil {
+		manifest.ServiceReplicas = nil
+	} else {
+		manifest.ServiceReplicas = &api.ServiceReplicas{
+			Min:     app.Manifest.ServiceReplicas.Min,
+			Max:     app.Manifest.ServiceReplicas.Max,
+			Desired: app.Manifest.ServiceReplicas.Desired,
+		}
+	}
+	return manifest
+}

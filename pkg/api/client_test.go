@@ -849,8 +849,8 @@ func TestStreamAppLogs_URLEscape(t *testing.T) {
 }
 
 // TestClient_RejectsCookieOnlyPaths pins the cookie-only-route guard.
-// The guard short-circuits any path matching ^/v1/auth/(sessions|
-// capabilities)(/.*)?$ before the HTTP request is issued, returning
+// The guard short-circuits any path matching the cookie-only route set
+// before the HTTP request is issued, returning
 // a *Problem with CodeUnsupportedByCLI and the docs URL. The plan
 // (Tier A8.1) adds this so the bearer-key CLI never silently hits
 // a 401/302 from a route it has no business calling. Mirror of
@@ -864,6 +864,7 @@ func TestClient_RejectsCookieOnlyPaths(t *testing.T) {
 		{"sessions_subpath", "/v1/auth/sessions/sess_abc123"},
 		{"capabilities_root", "/v1/auth/capabilities"},
 		{"capabilities_subpath", "/v1/auth/capabilities/refresh"},
+		{"set_password_dashboard", "/dashboard/account/set-password"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -875,14 +876,11 @@ func TestClient_RejectsCookieOnlyPaths(t *testing.T) {
 			defer srv.Close()
 			c := NewClient(srv.URL, "fp_live_key")
 
-			// Walk through c.do via a public method that targets
-			// the path. Since no such method exists for the
-			// cookie-only routes (intentional — see
-			// pkg/api/client.go:419-428), assert the rejection
-			// directly via the c.do entry point, the same
-			// surface a future SDK author would hit if they
-			// tried to add one. We re-create the call shape
-			// using a synthetic GET against the rejected path.
+			// Assert the guard directly via the c.do entry point
+			// using a synthetic GET against the rejected path. The
+			// session-aware set-password helper is deliberately
+			// tested separately because it bypasses this bearer-key
+			// guard with an explicit cookie/form request.
 			ctx := context.Background()
 			var out map[string]any
 			err := c.do(ctx, http.MethodGet, tc.path, nil, &out)
@@ -908,6 +906,103 @@ func TestClient_RejectsCookieOnlyPaths(t *testing.T) {
 				t.Errorf("DocsURL = %q, want it to contain /cli/cookie-only-routes", p.DocsURL)
 			}
 		})
+	}
+}
+
+func TestClient_SetPasswordWithSession_SendsCookieForm(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/dashboard/account/set-password" {
+			t.Errorf("path = %q, want /dashboard/account/set-password", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("session request sent bearer Authorization: %q", got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
+			t.Errorf("Content-Type = %q, want application/x-www-form-urlencoded", got)
+		}
+		if got := r.Header.Get("Idempotency-Key"); !uuidV4ShapeRegex.MatchString(got) {
+			t.Errorf("Idempotency-Key = %q, want UUID v4", got)
+		}
+		sid, err := r.Cookie("faas_sid")
+		if err != nil {
+			t.Errorf("faas_sid cookie: %v", err)
+		} else if sid.Value != "sid-token" {
+			t.Errorf("faas_sid = %q, want sid-token", sid.Value)
+		}
+		csrf, err := r.Cookie("faas_csrf")
+		if err != nil {
+			t.Errorf("faas_csrf cookie: %v", err)
+		} else if csrf.Value != "csrf-token" {
+			t.Errorf("faas_csrf = %q, want csrf-token", csrf.Value)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		if got := r.Form.Get("password"); got != "new-password" {
+			t.Errorf("password = %q, want new-password", got)
+		}
+		if got := r.Form.Get("csrf_token"); got != "csrf-token" {
+			t.Errorf("csrf_token = %q, want csrf-token", got)
+		}
+		if got := r.Form.Get("current_password"); got != "old-password" {
+			t.Errorf("current_password = %q, want old-password", got)
+		}
+		w.Header().Set("Location", "/dashboard/account/")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "bearer-token")
+	err := c.SetPasswordWithSession(context.Background(), "sid-token", SetPasswordRequest{
+		Password:        "new-password",
+		CSRFToken:       "csrf-token",
+		CurrentPassword: "old-password",
+	})
+	if err != nil {
+		t.Fatalf("SetPasswordWithSession: %v", err)
+	}
+}
+
+func TestClient_SetPasswordWithSession_RejectsLoginRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/dashboard/account/set-password" {
+			t.Errorf("redirect was followed to %q", r.URL.Path)
+		}
+		w.Header().Set("Location", "/login")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "")
+	if err := c.SetPasswordWithSession(context.Background(), "sid-token", SetPasswordRequest{
+		Password:  "new-password",
+		CSRFToken: "csrf-token",
+	}); err == nil {
+		t.Fatal("SetPasswordWithSession accepted a redirect to /login")
+	}
+}
+
+func TestClient_SetPassword_BearerOnlyIsUnsupported(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		hit = true
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "bearer-token")
+	err := c.SetPassword(context.Background(), "new-password")
+	var p *Problem
+	if !errors.As(err, &p) {
+		t.Fatalf("expected *Problem, got %T: %v", err, err)
+	}
+	if p.Code != CodeUnsupportedByCLI {
+		t.Errorf("Code = %q, want %q", p.Code, CodeUnsupportedByCLI)
+	}
+	if hit {
+		t.Fatal("SetPassword should fail before issuing a bearer-key request")
 	}
 }
 

@@ -30,6 +30,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 )
@@ -189,7 +190,10 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 	if err != nil {
 		return nil, nil, fmt.Errorf("githubd: listen %q: %w", listenTarget, err)
 	}
-	gsrv := grpc.NewServer(wire.ServerCredsOrEmpty(serverTLS)...)
+	gsrv := grpc.NewServer(append(
+		wire.ServerCredsOrEmpty(serverTLS),
+		wire.TraceServerOptions()...,
+	)...)
 	s.GRPCServer.Register(gsrv)
 
 	// HTTP loopback listener for /webhooks/github. ADR-122: the
@@ -203,7 +207,7 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 	// (pkg/githubd/server.go:323). Body cap stays; new server-
 	// level knobs are defence-in-depth against header smuggling
 	// + runaway scrapers holding a connection open.
-	httpHandler := s.WebhookLoopbackHandler()
+	httpHandler := trace.HTTPHandler("githubd", s.WebhookLoopbackHandler())
 	httpSrv := NewWebhookHTTPServer(httpAddr, httpHandler)
 	hLis, err := net.Listen("tcp", httpAddr)
 	if err != nil {

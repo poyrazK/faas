@@ -1,4 +1,4 @@
-// commands_billing_retry.go — `faas billing retry` (issue #242).
+// commands_billing_retry.go — `gregale billing retry` (issue #242).
 //
 // The command is available when the active provider exposes a direct retry
 // operation. Polar intentionally returns billing_retry_unsupported because
@@ -35,7 +35,7 @@ func cmdBillingRetry(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(os.Stderr, "usage: faas billing retry\n")
+		fmt.Fprintf(os.Stderr, "usage: gregale billing retry\n")
 		return 1
 	}
 

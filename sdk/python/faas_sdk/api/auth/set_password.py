@@ -49,6 +49,16 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
+    if response.status_code == 429:
+        response_429 = Problem.from_dict(response.json())
+
+        return response_429
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -70,16 +80,41 @@ def sync_detailed(
     body: SetPasswordRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
-    """Set a password on the authenticated account.
+    """Set or replace the password on the authenticated account.
 
      Authenticated. Lets OAuth-only customers opt into password
-    login. The same Argon2id path as `/auth/reset`, anchored
-    to the session's account rather than a reset token.
+    login and lets customers who already have a password replace
+    it. The same Argon2id path as `/auth/reset`, anchored to the
+    session's account rather than a reset token.
+
+    The form must carry a `csrf_token` minted by
+    `GET /v1/auth/csrf?action=set_password` (double-submit with
+    the `faas_csrf` cookie); a missing or mismatched token is 400
+    `validation_failed`. The route is a same-site form POST, so
+    `SameSite=Lax` alone does not protect it from a customer app
+    hosted under `*.apps.gregale.dev`.
+
+    Proof of presence (ADR-140), decided by what the account has:
+
+    - A step-up verified within the last 5 minutes
+      (`POST /v1/account/mfa/verify`) is accepted as-is.
+    - Otherwise, if an explicit `mfa_required` policy is armed
+      while the account has not enrolled, 403 `mfa_required`.
+      This is a policy hook; MFA remains opt-in for ordinary
+      accounts.
+    - Otherwise, if the account has MFA enrolled, 403
+      `step_up_required` — verify TOTP first, whether or not the
+      account also has a password.
+    - Otherwise, if the account already has a password,
+      `current_password` is required and verified. Missing and
+      wrong both answer 401 `invalid_credentials`.
+    - Otherwise (OAuth-only, no MFA) the request is accepted; the
+      session is the only proof the account has.
 
     Args:
         faas_sid (str | Unset):
         body (SetPasswordRequest): New password for the authenticated account. Lets OAuth-only
-            customers opt into password login.
+            customers opt into password login, and customers who already have a password replace it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,16 +142,41 @@ def sync(
     body: SetPasswordRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Any | Problem | None:
-    """Set a password on the authenticated account.
+    """Set or replace the password on the authenticated account.
 
      Authenticated. Lets OAuth-only customers opt into password
-    login. The same Argon2id path as `/auth/reset`, anchored
-    to the session's account rather than a reset token.
+    login and lets customers who already have a password replace
+    it. The same Argon2id path as `/auth/reset`, anchored to the
+    session's account rather than a reset token.
+
+    The form must carry a `csrf_token` minted by
+    `GET /v1/auth/csrf?action=set_password` (double-submit with
+    the `faas_csrf` cookie); a missing or mismatched token is 400
+    `validation_failed`. The route is a same-site form POST, so
+    `SameSite=Lax` alone does not protect it from a customer app
+    hosted under `*.apps.gregale.dev`.
+
+    Proof of presence (ADR-140), decided by what the account has:
+
+    - A step-up verified within the last 5 minutes
+      (`POST /v1/account/mfa/verify`) is accepted as-is.
+    - Otherwise, if an explicit `mfa_required` policy is armed
+      while the account has not enrolled, 403 `mfa_required`.
+      This is a policy hook; MFA remains opt-in for ordinary
+      accounts.
+    - Otherwise, if the account has MFA enrolled, 403
+      `step_up_required` — verify TOTP first, whether or not the
+      account also has a password.
+    - Otherwise, if the account already has a password,
+      `current_password` is required and verified. Missing and
+      wrong both answer 401 `invalid_credentials`.
+    - Otherwise (OAuth-only, no MFA) the request is accepted; the
+      session is the only proof the account has.
 
     Args:
         faas_sid (str | Unset):
         body (SetPasswordRequest): New password for the authenticated account. Lets OAuth-only
-            customers opt into password login.
+            customers opt into password login, and customers who already have a password replace it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,16 +199,41 @@ async def asyncio_detailed(
     body: SetPasswordRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
-    """Set a password on the authenticated account.
+    """Set or replace the password on the authenticated account.
 
      Authenticated. Lets OAuth-only customers opt into password
-    login. The same Argon2id path as `/auth/reset`, anchored
-    to the session's account rather than a reset token.
+    login and lets customers who already have a password replace
+    it. The same Argon2id path as `/auth/reset`, anchored to the
+    session's account rather than a reset token.
+
+    The form must carry a `csrf_token` minted by
+    `GET /v1/auth/csrf?action=set_password` (double-submit with
+    the `faas_csrf` cookie); a missing or mismatched token is 400
+    `validation_failed`. The route is a same-site form POST, so
+    `SameSite=Lax` alone does not protect it from a customer app
+    hosted under `*.apps.gregale.dev`.
+
+    Proof of presence (ADR-140), decided by what the account has:
+
+    - A step-up verified within the last 5 minutes
+      (`POST /v1/account/mfa/verify`) is accepted as-is.
+    - Otherwise, if an explicit `mfa_required` policy is armed
+      while the account has not enrolled, 403 `mfa_required`.
+      This is a policy hook; MFA remains opt-in for ordinary
+      accounts.
+    - Otherwise, if the account has MFA enrolled, 403
+      `step_up_required` — verify TOTP first, whether or not the
+      account also has a password.
+    - Otherwise, if the account already has a password,
+      `current_password` is required and verified. Missing and
+      wrong both answer 401 `invalid_credentials`.
+    - Otherwise (OAuth-only, no MFA) the request is accepted; the
+      session is the only proof the account has.
 
     Args:
         faas_sid (str | Unset):
         body (SetPasswordRequest): New password for the authenticated account. Lets OAuth-only
-            customers opt into password login.
+            customers opt into password login, and customers who already have a password replace it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -174,16 +259,41 @@ async def asyncio(
     body: SetPasswordRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Any | Problem | None:
-    """Set a password on the authenticated account.
+    """Set or replace the password on the authenticated account.
 
      Authenticated. Lets OAuth-only customers opt into password
-    login. The same Argon2id path as `/auth/reset`, anchored
-    to the session's account rather than a reset token.
+    login and lets customers who already have a password replace
+    it. The same Argon2id path as `/auth/reset`, anchored to the
+    session's account rather than a reset token.
+
+    The form must carry a `csrf_token` minted by
+    `GET /v1/auth/csrf?action=set_password` (double-submit with
+    the `faas_csrf` cookie); a missing or mismatched token is 400
+    `validation_failed`. The route is a same-site form POST, so
+    `SameSite=Lax` alone does not protect it from a customer app
+    hosted under `*.apps.gregale.dev`.
+
+    Proof of presence (ADR-140), decided by what the account has:
+
+    - A step-up verified within the last 5 minutes
+      (`POST /v1/account/mfa/verify`) is accepted as-is.
+    - Otherwise, if an explicit `mfa_required` policy is armed
+      while the account has not enrolled, 403 `mfa_required`.
+      This is a policy hook; MFA remains opt-in for ordinary
+      accounts.
+    - Otherwise, if the account has MFA enrolled, 403
+      `step_up_required` — verify TOTP first, whether or not the
+      account also has a password.
+    - Otherwise, if the account already has a password,
+      `current_password` is required and verified. Missing and
+      wrong both answer 401 `invalid_credentials`.
+    - Otherwise (OAuth-only, no MFA) the request is accepted; the
+      session is the only proof the account has.
 
     Args:
         faas_sid (str | Unset):
         body (SetPasswordRequest): New password for the authenticated account. Lets OAuth-only
-            customers opt into password login.
+            customers opt into password login, and customers who already have a password replace it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

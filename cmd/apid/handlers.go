@@ -188,7 +188,17 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if mc == 0 {
 		mc = 1
 	}
+	lifecycle := lifecycleManifestFromCreate(req)
+	// A service's desired replica count is its steady-state instance
+	// requirement. When max_concurrency is omitted, make the default large
+	// enough for that target; an explicit max_concurrency remains authoritative.
+	if req.MaxConcurrency == 0 && lifecycle.EffectiveExecutionMode() == api.ExecutionModeService && lifecycle.ServiceReplicas != nil && lifecycle.ServiceReplicas.Desired > mc {
+		mc = lifecycle.ServiceReplicas.Desired
+	}
 	if prob := api.ValidateAppConfig(limits, ram, mc); prob != nil {
+		return state.App{}, prob
+	}
+	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
 		return state.App{}, prob
 	}
 	// Issue #471 / ADR-047: per-app streaming flag. Apply the
@@ -406,6 +416,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// reaches the floor in practice because every exit
 		// path above assigns appProtocol explicitly.
 		AppProtocol: appProtocol,
+		Manifest:    stateManifestFromAPI(lifecycle),
 	}, nil
 }
 
@@ -433,6 +444,18 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	var req api.CreateDeploymentRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if len(req.Workflows) > 0 {
+		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+		// PR-1279 contains the schema/state foundation; the runtime
+		// deployment persistence path is delivered by the stacked
+		// workflow runtime change. Fail explicitly until that path is
+		// available so a valid definition cannot be silently dropped.
+		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
 		return
 	}
 	if !isDigestPinned(req.Image) {
@@ -576,12 +599,17 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		MinInstances: a.MinInstances,
 		Status:       string(a.Status), URL: appURLForDomain(a.Slug, s.domain),
 		Manifest: api.AppManifest{
-			Entrypoint: a.Manifest.Entrypoint,
-			Env:        a.Manifest.Env,
-			WorkingDir: a.Manifest.WorkingDir,
-			Port:       a.Manifest.Port,
-			Healthz:    a.Manifest.Healthz,
-			User:       a.Manifest.User,
+			Entrypoint:       a.Manifest.Entrypoint,
+			Env:              a.Manifest.Env,
+			WorkingDir:       a.Manifest.WorkingDir,
+			Port:             a.Manifest.Port,
+			Healthz:          a.Manifest.Healthz,
+			User:             a.Manifest.User,
+			ExecutionMode:    a.Manifest.ExecutionMode,
+			RestartPolicy:    a.Manifest.RestartPolicy,
+			StartupDeadlineS: a.Manifest.StartupDeadlineS,
+			MaxRetries:       a.Manifest.MaxRetries,
+			ServiceReplicas:  apiManifestFromState(a.Manifest).ServiceReplicas,
 		},
 		EgressAllowlist: ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger

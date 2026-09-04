@@ -18,6 +18,13 @@ type CreateAppRequest struct {
 	RAMMB          int    `json:"ram_mb,omitempty"`  // 0 => plan default
 	MaxConcurrency int    `json:"max_concurrency,omitempty"`
 	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
+	// Lifecycle fields are optional at create-time. Empty values preserve the
+	// request-driven default; service_replicas is valid only for service mode.
+	ExecutionMode    string           `json:"execution_mode,omitempty"`
+	RestartPolicy    string           `json:"restart_policy,omitempty"`
+	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int              `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name (the operator-supplied human-readable
@@ -37,6 +44,13 @@ type UpdateAppRequest struct {
 	RAMMB          *int `json:"ram_mb,omitempty"`
 	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
 	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+	// Lifecycle fields are tri-state: nil leaves the current value unchanged.
+	// service_replicas replaces the complete replica policy when present.
+	ExecutionMode    *string          `json:"execution_mode,omitempty"`
+	RestartPolicy    *string          `json:"restart_policy,omitempty"`
+	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int             `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -557,7 +571,12 @@ type PasswordResetConfirm struct {
 // reset-confirm NewPassword field — the handler runs auth
 // (sessionAuth) before encoding, so this is an authenticated surface.
 type SetPasswordRequest struct {
-	Password string `json:"password"`
+	Password  string `json:"password"`
+	CSRFToken string `json:"csrf_token"`
+	// CurrentPassword is required when the account already has a
+	// password and the session carries no fresh step-up (ADR-140).
+	// Ignored for OAuth-only accounts, which have nothing to verify.
+	CurrentPassword string `json:"current_password,omitempty"`
 }
 
 // UsageSummaryResponse is the roll-up for the current month (or any

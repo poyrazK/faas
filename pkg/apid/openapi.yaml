@@ -1378,7 +1378,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [auth.logout, auth.session.revoke, auth.sessions.revoke_all, mfa_confirm, mfa_recover, mfa_disable]
+            enum: [auth.logout, auth.session.revoke, auth.sessions.revoke_all, mfa_confirm, mfa_recover, mfa_disable, set_password]
           description: Exact mutation action the token will authorize.
       responses:
         '200':
@@ -1576,11 +1576,36 @@ paths:
     post:
       tags: [auth]
       operationId: setPassword
-      summary: Set a password on the authenticated account.
+      summary: Set or replace the password on the authenticated account.
       description: |
         Authenticated. Lets OAuth-only customers opt into password
-        login. The same Argon2id path as `/auth/reset`, anchored
-        to the session's account rather than a reset token.
+        login and lets customers who already have a password replace
+        it. The same Argon2id path as `/auth/reset`, anchored to the
+        session's account rather than a reset token.
+
+        The form must carry a `csrf_token` minted by
+        `GET /v1/auth/csrf?action=set_password` (double-submit with
+        the `faas_csrf` cookie); a missing or mismatched token is 400
+        `validation_failed`. The route is a same-site form POST, so
+        `SameSite=Lax` alone does not protect it from a customer app
+        hosted under `*.apps.gregale.dev`.
+
+        Proof of presence (ADR-140), decided by what the account has:
+
+        - A step-up verified within the last 5 minutes
+          (`POST /v1/account/mfa/verify`) is accepted as-is.
+        - Otherwise, if an explicit `mfa_required` policy is armed
+          while the account has not enrolled, 403 `mfa_required`.
+          This is a policy hook; MFA remains opt-in for ordinary
+          accounts.
+        - Otherwise, if the account has MFA enrolled, 403
+          `step_up_required` — verify TOTP first, whether or not the
+          account also has a password.
+        - Otherwise, if the account already has a password,
+          `current_password` is required and verified. Missing and
+          wrong both answer 401 `invalid_credentials`.
+        - Otherwise (OAuth-only, no MFA) the request is accepted; the
+          session is the only proof the account has.
       parameters:
         - $ref: '#/components/parameters/CookieSession'
       requestBody:
@@ -1596,11 +1621,31 @@ paths:
             Location:
               schema: { type: string, example: "/dashboard/account/" }
         '400':
-          description: Chosen password is too weak (≥12 chars required).
+          description: |
+            Chosen password is too weak (`password_too_weak`, ≥12
+            chars required), or the `csrf_token` is missing or does
+            not match the `faas_csrf` cookie (`validation_failed`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
+        '401':
+          description: |
+            No session, or the account has a password and
+            `current_password` is missing or wrong
+            (`invalid_credentials`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: |
+            The account has MFA enrolled and the session carries no
+            step-up from the last 5 minutes (`step_up_required`), or
+            an explicit `mfa_required` policy is pending enrollment
+            (`mfa_required`). MFA is opt-in for ordinary accounts.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ─── Apps ─────────────────────────────────────────────────────────────────
 
@@ -2476,6 +2521,10 @@ paths:
         - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
         - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
         Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
+        The optional `workflows` array is plan-gated and schema-validated;
+        until workflow runtime persistence is enabled, a request containing
+        workflow definitions returns `501 workflow_deployment_unavailable`
+        rather than accepting and dropping them.
       requestBody:
         required: true
         description: "Either a prebuilt OCI image reference (`application/json`) or a source tarball upload (`multipart/form-data`). See the operation description for plan size caps."
@@ -2516,6 +2565,11 @@ paths:
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501':
+          description: Workflow definitions are valid but workflow runtime deployment persistence is not enabled yet.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/deployments/source-ref:
     parameters:
@@ -11278,11 +11332,22 @@ components:
         new_password: { type: string, minLength: 12, maxLength: 256 }
 
     SetPasswordRequest:
-      description: "New password for the authenticated account. Lets OAuth-only customers opt into password login."
+      description: "New password for the authenticated account. Lets OAuth-only customers opt into password login, and customers who already have a password replace it."
       type: object
-      required: [password]
+      required: [password, csrf_token]
       properties:
         password: { type: string, minLength: 12, maxLength: 256 }
+        csrf_token:
+          type: string
+          description: |
+            Double-submit token from `GET /v1/auth/csrf?action=set_password`;
+            must equal the `faas_csrf` cookie that call set.
+        current_password:
+          type: string
+          description: |
+            Required when the account already has a password and the
+            session carries no step-up from the last 5 minutes
+            (ADR-140). Ignored for OAuth-only accounts.
 
     # ─── GitHub install bind picker (PR-B) ──────────────────────────────
 
@@ -12190,6 +12255,30 @@ components:
         ram_mb: { type: integer , example: 256}
         max_concurrency: { type: integer }
         idle_timeout_s: { type: integer }
+        # Service/lifecycle settings are persisted on the app and merged into
+        # every deployment manifest. Omitted values use the mode/plan defaults.
+        execution_mode:
+          type: string
+          enum: [request, service, worker, job]
+          description: "Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."
+          example: service
+        restart_policy:
+          type: string
+          enum: [no, on-failure, always, unless-stopped]
+          description: "Restart behavior for the workload. Omitted uses the execution-mode default."
+          example: always
+        startup_deadline_s:
+          type: integer
+          minimum: 0
+          description: "Upper bound on time-to-ready in seconds. 0 uses the plan default."
+          example: 30
+        max_retries:
+          type: integer
+          minimum: 0
+          description: "Maximum consecutive restart attempts. 0 uses the plan default."
+          example: 5
+        service_replicas:
+          $ref: '#/components/schemas/ServiceReplicas'
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -12296,6 +12385,32 @@ components:
         ram_mb: { type: [integer, "null"] , example: 256}
         idle_timeout_s: { type: [integer, "null"] }
         max_concurrency: { type: [integer, "null"] }
+        # Lifecycle settings are partial updates. Setting execution_mode away
+        # from service clears the existing service replica policy.
+        execution_mode:
+          type: [string, "null"]
+          enum: [request, service, worker, job, null]
+          description: "Lifecycle contract for the app. Omit for no change; service/worker/job are plan-gated."
+          example: service
+        restart_policy:
+          type: [string, "null"]
+          enum: [no, on-failure, always, unless-stopped, null]
+          description: "Restart behavior for the workload. Omit for no change."
+          example: always
+        startup_deadline_s:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."
+          example: 30
+        max_retries:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default."
+          example: 5
+        service_replicas:
+          allOf:
+            - $ref: '#/components/schemas/ServiceReplicas'
+          description: "Full replacement of the service replica policy. Omit for no change."
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -12740,7 +12855,7 @@ components:
           description: "Startup grace during which failures don't count (Docker 17.05+, default 0s)."
 
     ServiceReplicas:
-      description: "Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E). Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20). min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land in M-4."
+      description: "Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E). Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land in M-4."
       type: object
       required: [min, max, desired]
       properties:
@@ -13632,6 +13747,170 @@ components:
         delta_cents: { type: integer, maximum: 0, description: 'Negative integer cents applied to the credit.' }
         new_balance: { type: integer, minimum: 0 }
 
+    # ─── Workflow deployment shape (ADR-081) ─────────────────────────────
+    # Workflow declarations are validated at the deployment boundary. The
+    # runtime persistence/execution endpoint is staged separately; clients
+    # must not assume that an accepted deployment silently ignores these
+    # declarations.
+    WorkflowTriggerSpec:
+      description: "How a workflow starts. Manual is the only supported trigger in v1."
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [manual]
+
+    WorkflowRetrySpec:
+      description: "Retry policy for one workflow step."
+      type: object
+      required: [max_attempts]
+      properties:
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 25
+        backoff:
+          type: string
+          enum: [fixed, exponential]
+
+    WorkflowStepSpec:
+      description: |
+        One workflow step. The canonical ADR-081 target is `run`; `path`
+        and `method` remain accepted for the existing HTTP wake executor
+        during the runtime migration. Exactly one of `run`, `path`, or
+        `wait_for_event` must be supplied.
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        run:
+          type: string
+          description: "Named platform operation to invoke."
+        input:
+          description: "JSON input passed to the named operation."
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: array
+              items: {}
+            - type: string
+            - type: number
+            - type: boolean
+            - type: 'null'
+        path:
+          type: string
+          description: "HTTP wake path, retained for compatibility with the existing executor."
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+        depends_on:
+          type: array
+          items: { type: string }
+        wait_for_event:
+          type: string
+        timeout:
+          type: string
+          description: "Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day suffixes such as `7d`."
+          example: "30s"
+        on_timeout:
+          type: string
+        retry:
+          oneOf:
+            - $ref: '#/components/schemas/WorkflowRetrySpec'
+            - type: 'null'
+
+    WorkflowSpec:
+      description: "A named workflow DAG submitted with a deployment (ADR-081)."
+      type: object
+      required: [name, steps]
+      properties:
+        name:
+          type: string
+        trigger:
+          oneOf:
+            - $ref: '#/components/schemas/WorkflowTriggerSpec'
+            - type: 'null'
+        steps:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WorkflowStepSpec'
+
+    WorkflowRunResponse:
+      description: "A persisted durable workflow run (ADR-081)."
+      type: object
+      required: [id, app_id, workflow_name, status, scheduled_for, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        status:
+          type: string
+          enum: [pending, running, awaiting_event, succeeded, failed, dead]
+        current_step: { type: [string, 'null'] }
+        input: {}
+        output: {}
+        scheduled_for: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        last_error: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ListWorkflowRunsResponse:
+      description: "A paginated list of durable workflow runs."
+      type: object
+      required: [runs, total]
+      properties:
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        total: { type: integer, minimum: 0 }
+
+    WorkflowStepResponse:
+      description: "A step attempt within a durable workflow run."
+      type: object
+      required: [step_name, status, attempt, created_at]
+      properties:
+        step_name: { type: string }
+        status:
+          type: string
+          enum: [pending, running, awaiting_event, succeeded, failed, dead, skipped]
+        attempt: { type: integer, minimum: 0 }
+        input: {}
+        output: {}
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        error: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+
+    ListWorkflowStepsResponse:
+      description: "The ordered steps for a durable workflow run."
+      type: object
+      required: [steps]
+      properties:
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowStepResponse' }
+
+    InjectWorkflowEventResponse:
+      description: "Acknowledgement that an external workflow event was recorded."
+      type: object
+      required: [status, event_name]
+      properties:
+        status: { type: string, enum: [received] }
+        event_name: { type: string }
+
+    InjectWorkflowEventRequest:
+      description: "An external event supplied to resume an awaiting workflow step."
+      type: object
+      required: [event_name]
+      properties:
+        event_name: { type: string }
+        payload: {}
+
     CreateDeploymentRequest:
       description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The override field list is FROZEN — six fields, no more — and any extra field on the override object 400s the request (the handler's decoder rejects unknown keys; see ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068) attaches up to 2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a metrics scraper as `sidecar`. nil/omitted = no sidecars."
       type: object
@@ -13666,6 +13945,13 @@ components:
           items:
             $ref: '#/components/schemas/Sidecar'
           description: "Up to 2 stateless sidecars (1 init + 1 sidecar). nil/omitted = no sidecars. See ADR-068 for the hard 2-cap and stateless-only contract."
+        # ADR-081: declarative workflow definitions attached to this
+        # deployment. Plan-gated and validated before persistence.
+        workflows:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowSpec'
+          description: "Workflow DAG definitions for this deployment. Paid-plan only; runtime deployment persistence is staged separately."
         # Issue #556 PR-A: per-deployment traffic-split weight
         # (Pro/Scale only). nil/omitted = server default 100 (the
         # most-recent live row receives all traffic, preserving

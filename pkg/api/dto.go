@@ -28,6 +28,15 @@ type CreateAppRequest struct {
 	RAMMB          int    `json:"ram_mb,omitempty"`  // 0 => plan default
 	MaxConcurrency int    `json:"max_concurrency,omitempty"`
 	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
+	// Lifecycle settings are app-level defaults merged into every future
+	// deployment manifest. Empty execution_mode/restart_policy and zero
+	// deadline/retry values retain the mode/plan defaults. For service mode,
+	// an omitted max_concurrency defaults to the requested desired replicas.
+	ExecutionMode    string           `json:"execution_mode,omitempty"`
+	RestartPolicy    string           `json:"restart_policy,omitempty"`
+	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int              `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -126,6 +135,16 @@ type UpdateAppRequest struct {
 	RAMMB          *int `json:"ram_mb,omitempty"`
 	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
 	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+	// Lifecycle settings are partial updates. A non-nil service_replicas
+	// replaces the full policy; use min=max=desired=0 to scale a service to
+	// zero. desired must fit the app's max_concurrency; include both fields
+	// when raising the target. Switching away from service clears the old
+	// replica policy and drains live service replicas.
+	ExecutionMode    *string          `json:"execution_mode,omitempty"`
+	RestartPolicy    *string          `json:"restart_policy,omitempty"`
+	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int             `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -910,6 +929,11 @@ type CreateDeploymentRequest struct {
 	// silently dropped; the customer who set it expects it to
 	// apply).
 	Sidecars Sidecars `json:"sidecars,omitempty"`
+	// Workflows carries the ADR-081 declarative definitions alongside
+	// the deployment. The apid validation boundary rejects this field
+	// until the workflow runtime persistence path is available rather
+	// than silently discarding customer configuration.
+	Workflows []WorkflowSpec `json:"workflows,omitempty"`
 	// TrafficPercent (issue #556 / traffic splitting across
 	// deployments, PR-A) is the per-deployment traffic share in
 	// the [0, 100] range. Pointer so that omitted == "server
@@ -2730,7 +2754,12 @@ type PasswordResetConfirm struct {
 // reset-confirm NewPassword field — the handler runs auth
 // (sessionAuth) before encoding, so this is an authenticated surface.
 type SetPasswordRequest struct {
-	Password string `json:"password"`
+	Password  string `json:"password"`
+	CSRFToken string `json:"csrf_token"`
+	// CurrentPassword is required when the account already has a
+	// password and the session carries no fresh step-up (ADR-140).
+	// Ignored for OAuth-only accounts, which have nothing to verify.
+	CurrentPassword string `json:"current_password,omitempty"`
 }
 
 // UsageSummaryResponse is the roll-up for the current month (or any

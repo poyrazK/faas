@@ -81,6 +81,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 501:
+        response_501 = Problem.from_dict(response.json())
+
+        return response_501
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -111,6 +116,10 @@ def sync_detailed(
     - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
     - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
     Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
+    The optional `workflows` array is plan-gated and schema-validated;
+    until workflow runtime persistence is enabled, a request containing
+    workflow definitions returns `501 workflow_deployment_unavailable`
+    rather than accepting and dropping them.
 
     Args:
         slug (str):
@@ -160,6 +169,10 @@ def sync(
     - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
     - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
     Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
+    The optional `workflows` array is plan-gated and schema-validated;
+    until workflow runtime persistence is enabled, a request containing
+    workflow definitions returns `501 workflow_deployment_unavailable`
+    rather than accepting and dropping them.
 
     Args:
         slug (str):
@@ -204,6 +217,10 @@ async def asyncio_detailed(
     - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
     - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
     Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
+    The optional `workflows` array is plan-gated and schema-validated;
+    until workflow runtime persistence is enabled, a request containing
+    workflow definitions returns `501 workflow_deployment_unavailable`
+    rather than accepting and dropping them.
 
     Args:
         slug (str):
@@ -251,6 +268,10 @@ async def asyncio(
     - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
     - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
     Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
+    The optional `workflows` array is plan-gated and schema-validated;
+    until workflow runtime persistence is enabled, a request containing
+    workflow definitions returns `501 workflow_deployment_unavailable`
+    rather than accepting and dropping them.
 
     Args:
         slug (str):

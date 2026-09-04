@@ -244,22 +244,32 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 // collapses both to nil; DeepEqual then sees the same shape.
 func manifestsEqualIgnoreEmptyMaps(a, b api.AppManifest) bool {
 	aClean := api.AppManifest{
-		Entrypoint: a.Entrypoint,
-		Env:        nilIfEmpty(a.Env),
-		EnvSecrets: nilIfEmpty(a.EnvSecrets),
-		WorkingDir: a.WorkingDir,
-		Port:       a.Port,
-		Healthz:    a.Healthz,
-		User:       a.User,
+		Entrypoint:       a.Entrypoint,
+		Env:              nilIfEmpty(a.Env),
+		EnvSecrets:       nilIfEmpty(a.EnvSecrets),
+		WorkingDir:       a.WorkingDir,
+		Port:             a.Port,
+		Healthz:          a.Healthz,
+		User:             a.User,
+		ExecutionMode:    a.ExecutionMode,
+		RestartPolicy:    a.RestartPolicy,
+		StartupDeadlineS: a.StartupDeadlineS,
+		MaxRetries:       a.MaxRetries,
+		ServiceReplicas:  a.ServiceReplicas,
 	}
 	bClean := api.AppManifest{
-		Entrypoint: b.Entrypoint,
-		Env:        nilIfEmpty(b.Env),
-		EnvSecrets: nilIfEmpty(b.EnvSecrets),
-		WorkingDir: b.WorkingDir,
-		Port:       b.Port,
-		Healthz:    b.Healthz,
-		User:       b.User,
+		Entrypoint:       b.Entrypoint,
+		Env:              nilIfEmpty(b.Env),
+		EnvSecrets:       nilIfEmpty(b.EnvSecrets),
+		WorkingDir:       b.WorkingDir,
+		Port:             b.Port,
+		Healthz:          b.Healthz,
+		User:             b.User,
+		ExecutionMode:    b.ExecutionMode,
+		RestartPolicy:    b.RestartPolicy,
+		StartupDeadlineS: b.StartupDeadlineS,
+		MaxRetries:       b.MaxRetries,
+		ServiceReplicas:  b.ServiceReplicas,
 	}
 	return reflect.DeepEqual(aClean, bClean)
 }
@@ -269,4 +279,25 @@ func nilIfEmpty(m map[string]string) map[string]string {
 		return nil
 	}
 	return m
+}
+
+func TestApplyAppLifecycle(t *testing.T) {
+	manifest := api.AppManifest{Entrypoint: []string{"/app/server"}, ExecutionMode: api.ExecutionModeWorker}
+	app := state.App{Manifest: state.AppManifest{
+		ExecutionMode:    api.ExecutionModeService,
+		RestartPolicy:    api.RestartPolicyAlways,
+		StartupDeadlineS: 30,
+		MaxRetries:       5,
+		ServiceReplicas:  &state.ServiceReplicas{Min: 1, Max: 3, Desired: 2},
+	}}
+	got := applyAppLifecycle(manifest, app)
+	if got.ExecutionMode != api.ExecutionModeService || got.RestartPolicy != api.RestartPolicyAlways ||
+		got.StartupDeadlineS != 30 || got.MaxRetries != 5 || got.ServiceReplicas == nil ||
+		got.ServiceReplicas.Desired != 2 {
+		t.Fatalf("lifecycle overlay = %+v", got)
+	}
+	got.ServiceReplicas.Desired = 3
+	if app.Manifest.ServiceReplicas.Desired != 2 {
+		t.Fatal("lifecycle overlay retained the state pointer")
+	}
 }

@@ -16,15 +16,14 @@
 // provider is noop.
 //
 // Security note (issue #555 review): OTEL_EXPORTER_OTLP_ENDPOINT is
-// an operator-controlled trust input. Init does not validate the
-// URL — the SDK dials whatever host:port the operator puts in the
-// env, over plaintext (otlptracehttp.WithInsecure). On a one-box
-// deployment the collector is expected to bind 127.0.0.1; on a
-// multi-box deployment the operator MUST set up mTLS or a private
-// network between the daemon and the collector. Never accept this
-// value from a customer-facing source (request headers, manifest
-// env) — that would let a tenant exfiltrate trace data to an
-// attacker-controlled host.
+// an operator-controlled trust input. Explicit https:// endpoints use
+// the SDK's TLS transport; explicit http:// endpoints and legacy bare
+// host:port values use plaintext. On a one-box deployment the
+// collector is expected to bind 127.0.0.1; on a multi-box deployment
+// the operator should use https:// with the collector's certificates or
+// a private network. Never accept this value from a customer-facing
+// source (request headers, manifest env) — that would let a tenant
+// exfiltrate trace data to an attacker-controlled host.
 package otelinit
 
 import (
@@ -34,6 +33,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -168,13 +168,22 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 		}, nil
 	}
 
-	// OTLP/HTTP exporter. otlptracehttp.WithEndpoint expects
-	// "host:port" (no scheme); the SDK appends /v1/traces.
-	client, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint(endpoint),
-		otlptracehttp.WithInsecure(),
-		otlptracehttp.WithTimeout(5*time.Second),
-	)
+	// OTLP/HTTP supports both the legacy host:port form and a full URL.
+	// Full HTTPS URLs retain TLS; bare host:port and explicit HTTP remain
+	// plaintext for backwards compatibility.
+	exporterOptions := []otlptracehttp.Option{otlptracehttp.WithTimeout(5 * time.Second)}
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		exporterOptions = append(exporterOptions, otlptracehttp.WithEndpointURL(endpoint))
+		if strings.HasPrefix(endpoint, "http://") {
+			exporterOptions = append(exporterOptions, otlptracehttp.WithInsecure())
+		}
+	} else {
+		exporterOptions = append(exporterOptions,
+			otlptracehttp.WithEndpoint(endpoint),
+			otlptracehttp.WithInsecure(),
+		)
+	}
+	client, err := otlptracehttp.New(ctx, exporterOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("otelinit: build OTLP/HTTP client: %w", err)
 	}

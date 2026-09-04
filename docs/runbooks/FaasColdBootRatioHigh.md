@@ -30,7 +30,7 @@ Catching the trend at 30 % gives ~24 h headroom before the
 
 ```bash
 # Confirm the alert expression is the one firing.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=vmmd_cold_boot_ratio'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=vmmd_cold_boot_ratio'
 
 # Direct underlying metric (the denominator).
 curl -fsS http://127.0.0.1:9104/metrics | grep -E 'vmmd_wake_snapshot_tier_total'
@@ -59,7 +59,7 @@ curl -fsS http://127.0.0.1:9104/metrics | grep 'vmmd_wake_failure_total'
 curl -fsS http://127.0.0.1:9104/metrics | grep 'fcvm_snapshot_fleet_avg_bytes'
 
 # Per-box p99 wake latency — use the new ADR-127 per-box histogram.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=histogram_quantile(0.99, sum by (le, box) (rate(vmmd_wake_latency_seconds_bucket[5m])))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=histogram_quantile(0.99, sum by (le, box) (rate(vmmd_wake_latency_seconds_bucket[5m])))'
 
 # Recent vmmd slog — line up the alert-firing time with the warn
 # cluster to see the underlying error chain.

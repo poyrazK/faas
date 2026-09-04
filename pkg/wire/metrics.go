@@ -87,8 +87,12 @@ type InstanceStatRow struct {
 // a counter + latency histogram in the ADR-015 shape.
 type OpsMetrics struct {
 	registry *prometheus.Registry
-	ops      *prometheus.CounterVec
-	dur      *prometheus.HistogramVec
+	// metricPrefix is the exact prefix used by this registry's metric
+	// names. It can differ from the OTel service name for compatibility
+	// aliases such as gatewayd-internal → gatewayd.
+	metricPrefix string
+	ops          *prometheus.CounterVec
+	dur          *prometheus.HistogramVec
 	// watchdogKills: introduced in commit 3 for the §6.1 state
 	// watchdog. Labels identify the transition the watchdog forced
 	// (from_state → to_state) — alerting on a non-zero rate of
@@ -158,7 +162,7 @@ type OpsMetrics struct {
 	// fall back to daemon_restart_count{daemon} with a longer
 	// for-window. Labels are bounded by the closed daemon set
 	// (apid, gatewayd-public, gatewayd-internal, schedd, vmmd,
-	// imaged, meterd, builderd, gregale) × the wire.Version
+	// imaged, meterd, builderd, githubd, gregale) × the wire.Version
 	// string, so the cartesian is pre-instantiated at boot to
 	// surface zero rows from idle.
 	daemonRestartCount *prometheus.CounterVec
@@ -167,10 +171,10 @@ type OpsMetrics struct {
 	// identity of the running binary. Always 1 (the gauge's value
 	// is meaningless — the labels carry the signal). Operator
 	// dashboards query this metric for the "Daemon versions
-	// fleet-wide" heatmap panel. The label set is bounded at 9
+	// fleet-wide" heatmap panel. The label set is bounded at 10
 	// daemon names × the wire.Version × git_sha × build_time
 	// cartesian, but in practice git_sha and build_time are
-	// constant per binary so the realistic cardinality is 9 (one
+	// constant per binary so the realistic cardinality is 10 (one
 	// row per daemon, all sharing the same version+git_sha
 	// tuple). Pre-instantiated at boot — see SetDaemonBuildInfo.
 	daemonBuildInfo *prometheus.GaugeVec
@@ -184,14 +188,13 @@ type OpsMetrics struct {
 	// the closed daemon set with an initial 0.
 	daemonUptimeSeconds *prometheus.GaugeVec
 	// daemonReady (issue #586 / ADR-129) is the per-daemon gauge
-	// that flips 0 → 1 when the daemon has completed all
-	// initialization (TLS handshake, DB pool warm-up, listener
-	// open) and is serving traffic. Until the daemon's run
-	// function signals readiness (via MarkReady, see issue #571
-	// for the /readyz implementation), the gauge reads 0.
+	// that flips 0 → 1 when the daemon's aggregate ReadyzProbe
+	// reports that initialization and serving dependencies are
+	// healthy. Until the probe signals readiness (see issue #571
+	// and pkg/wire/readiness.go), the gauge reads 0.
 	// Pre-instantiated at 0 for every daemon so the §12
 	// dashboard's "Fleet readiness" panel surfaces a zero row
-	// from boot. MarkReady(id) flips to 1.
+	// from boot. The probe observer calls MarkReady(id).
 	daemonReady *prometheus.GaugeVec
 	// faasDeployVersion (issue #586 / ADR-129 / cluster C commit 11)
 	// is the per-version gauge that exposes the platform's
@@ -1858,25 +1861,24 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// call).
 	daemonRestartCount := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_daemon_restart_count",
-		Help: "Count of systemd-driven restarts of THIS daemon process (issue #573 / ADR-128), labelled by (daemon, version). Producer is wire.Daemon() reading $SYSTEMD_RESTARTS_ON_FAILURE at boot; alert rules prefer node_exporter's node_systemd_restart_count{name=~'faas-.*\\.service'} when the systemd collector is enabled (commit 6 of the cluster B mega-PR added --collector.systemd to the node_exporter unit). This counter is the backstop for environments where the systemd collector is disabled. Closed daemon set: apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, gregale.",
+		Help: "Count of systemd-driven restarts of THIS daemon process (issue #573 / ADR-128), labelled by (daemon, version). Producer is wire.Daemon() reading $SYSTEMD_RESTARTS_ON_FAILURE at boot; alert rules prefer node_exporter's node_systemd_restart_count{name=~'faas-.*\\.service'} when the systemd collector is enabled (commit 6 of the cluster B mega-PR added --collector.systemd to the node_exporter unit). This counter is the backstop for environments where the systemd collector is disabled. Closed daemon set: apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, gregale.",
 	}, []string{"daemon", "version"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "gregale", "other"} {
+	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale", "other"} {
 		daemonRestartCount.WithLabelValues(daemon, Version)
 	}
 	// Issue #586 / ADR-129: per-daemon build info + uptime + ready.
-	// Closed daemon set mirrors daemonRestartCount above (9 closed
-	// + "other" overflow = 10). Pre-instantiated with the
+	// Closed daemon set mirrors daemonRestartCount above (10 closed
+	// + "other" overflow = 11). Pre-instantiated with the
 	// current wire.Version, GitSHA, BuildTime so /metrics surfaces
 	// the daemon identity from boot — the operator dashboard
 	// "Daemon versions fleet-wide" panel renders a non-empty
 	// row immediately after the daemon starts, not after the
-	// first SetDaemonBuildInfo call (which only happens on the
-	// ready line). Uptime starts at 0; the goroutine spawned
-	// by wire.Daemon() updates it every 1s. Ready starts at 0;
-	// wire.Daemon().MarkReady flips it to 1.
+	// first SetDaemonBuildInfo call. Uptime starts at 0; the
+	// goroutine spawned by wire.Daemon() updates it every 1s.
+	// Ready starts at 0 and is driven by the daemon's /readyz probe.
 	daemonBuildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_daemon_build_info",
-		Help: "Always-1 gauge that exposes the running binary's identity (issue #586 / ADR-129), labelled by (daemon, version, git_sha, build_time). The labels carry the signal — the gauge value is meaningless. Operator dashboards query this metric for the 'Daemon versions fleet-wide' heatmap panel. The closed daemon set (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, gregale) is pre-instantiated at boot so /metrics surfaces the identity from process start.",
+		Help: "Always-1 gauge that exposes the running binary's identity (issue #586 / ADR-129), labelled by (daemon, version, git_sha, build_time). The labels carry the signal — the gauge value is meaningless. Operator dashboards query this metric for the 'Daemon versions fleet-wide' heatmap panel. The closed daemon set (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, gregale) is pre-instantiated at boot so /metrics surfaces the identity from process start.",
 	}, []string{"daemon", "version", "git_sha", "build_time"})
 	daemonUptimeSeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_daemon_uptime_seconds",
@@ -1884,9 +1886,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"daemon"})
 	daemonReady := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_daemon_ready",
-		Help: "Readiness gauge (issue #586 / ADR-129 / issue #571 PR-A2), labelled by daemon. 0 = initializing / draining / not yet serving traffic; 1 = ready. wire.Daemon() flips the gauge to 1 after the run function blocks (the same source of truth the daemon's /readyz endpoint reads from; see pkg/wire/readiness.go). Operator dashboards query this for the 'Fleet readiness' panel.",
+		Help: "Readiness gauge (issue #586 / ADR-129 / issue #571 PR-A2), labelled by daemon. 0 = initializing / draining / not yet serving traffic; 1 = ready. The daemon's ReadyzProbe observer mirrors the same aggregate state returned by /readyz; see pkg/wire/readiness.go. Operator dashboards query this for the 'Fleet readiness' panel.",
 	}, []string{"daemon"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "gregale", "other"} {
+	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale", "other"} {
 		daemonBuildInfo.WithLabelValues(daemon, Version, GitSHA, BuildTime).Set(1)
 		daemonUptimeSeconds.WithLabelValues(daemon).Set(0)
 		daemonReady.WithLabelValues(daemon).Set(0)
@@ -4096,6 +4098,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	throttleSecondsTotal.WithLabelValues(topAppOtherAccountLabel, topAppOtherLabel)
 	return &OpsMetrics{
 		registry:                             reg,
+		metricPrefix:                         prefix,
 		ops:                                  ops,
 		dur:                                  dur,
 		watchdogKills:                        watchdogKills,
@@ -4356,7 +4359,7 @@ func (m *OpsMetrics) WorkloadOOMKills(app, deployment string) prometheus.Counter
 //
 // The daemon label is normalised through the closed set
 // (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged,
-// meterd, builderd, gregale) — anything else collapses to "other"
+// meterd, builderd, githubd, gregale) — anything else collapses to "other"
 // so the label cardinality stays bounded across the daemon's
 // lifetime. nil-receiver guard mirrors LivenessRestarts /
 // WorkloadOOMKills so unit tests without metrics keep working.
@@ -4365,7 +4368,7 @@ func (m *OpsMetrics) RecordDaemonRestart(daemon, version string, n int) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4389,7 +4392,7 @@ func (m *OpsMetrics) SetDaemonBuildInfo(daemon, version, gitSHA, buildTime strin
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4412,7 +4415,7 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4421,9 +4424,7 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 }
 
 // MarkReady (issue #586 / ADR-129 / issue #571 PR-A2) flips the
-// per-daemon readiness gauge. Called by wire.Daemon() at boot
-// (ready=true) and again by RunAndShutdown on ctx.Done()
-// (ready=false, "draining"). Called directly by the daemon-side
+// per-daemon readiness gauge. Called by the daemon-side
 // readiness probes (pkg/wire/readiness.go, commit 2) when their
 // signals flip — single source of truth between the /readyz body
 // and the daemon_ready gauge.
@@ -4442,7 +4443,7 @@ func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"

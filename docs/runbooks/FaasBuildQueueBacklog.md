@@ -16,7 +16,7 @@ opportunistic builder slot (ADR-003 — runs only when tenant residency
 
 ```bash
 curl -fsS http://127.0.0.1:9105/metrics | grep builderd_build_queue_wait
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=histogram_quantile(0.95,sum(rate(builderd_build_queue_wait_seconds_bucket[5m]))by(le))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=histogram_quantile(0.95,sum(rate(builderd_build_queue_wait_seconds_bucket[5m]))by(le))'
 ```
 
 ## Check

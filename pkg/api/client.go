@@ -55,8 +55,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
-// cookieOnlyPathRE matches API routes that are gated server-side to
-// the dashboard session cookie. The bearer-key CLI cannot reach
+// cookieOnlyPathRE matches routes that are gated server-side to the
+// dashboard session cookie. The bearer-key CLI cannot reach
 // them — a request would 401 (or 302 to the login page) because the
 // session-cookie middleware (cmd/apid/server.go:1097 and
 // cmd/apid/handlers_sessions.go:71-77) treats bearer-key callers
@@ -66,7 +66,7 @@ import (
 // 401/302. The companion tripwire
 // (pkg/api/lint_tripwires_test.go) ensures no other pkg/api file
 // composes a path that matches this regex.
-var cookieOnlyPathRE = regexp.MustCompile(`^/v1/auth/(sessions|capabilities)(/.*)?$`)
+var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password)$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -185,7 +185,8 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	// Cookie-only-route guard — reject paths the bearer-key CLI cannot
 	// reach before allocating anything. The regex matches the closed
 	// set /v1/auth/sessions and /v1/auth/capabilities (with optional
-	// trailing subpath). The status is 403 because the call is
+	// trailing subpath), plus the dashboard set-password form. The
+	// status is 403 because the call is
 	// well-formed but the caller's auth mode does not match the
 	// route's policy — semantically a peer of CodeDeploySignatureInvalid
 	// (403 for "this caller cannot complete this action"). Docs URL
@@ -235,6 +236,17 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 // recipe; methods that need a custom header set it on req before
 // calling doReq.
 func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
+	return c.doReqWithSuccess(cli, req, out, func(resp *http.Response) bool {
+		return resp.StatusCode >= 200 && resp.StatusCode < 300
+	})
+}
+
+// doReqWithSuccess is doReq with a caller-supplied success predicate.
+// Dashboard form mutations use a 302 redirect as their successful
+// response, while the generic SDK path treats all 3xx responses as
+// errors. Keeping the predicate local prevents that dashboard
+// convention from changing response handling for every other method.
+func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, success func(*http.Response) bool) error {
 	// ADR-093 / PR-E: outbound SDK call becomes a child of the
 	// inbound budget when one is attached. The CLI / SDK never
 	// receives a Budget from the user today — but apid's
@@ -263,7 +275,7 @@ func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode >= 300 {
+	if !success(resp) {
 		var p Problem
 		if json.Unmarshal(data, &p) == nil && p.Code != "" {
 			// Copy RFC 7231 §7.1.3 wire headers the server attaches
@@ -282,17 +294,19 @@ func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
 		}
 		return fmt.Errorf("API error: %s", resp.Status)
 	}
-	// Tier A8 / ADR-083: auto-refresh the completion cache on every
-	// 2xx. Runs before the unmarshal so the raw body is still in hand;
-	// errors are swallowed inside MaybeRefresh so a broken cache
-	// (disk full, permission denied, corrupt JSON) never fails a
-	// request. Nil-safe for tests that opt out via SetCompletionCache(nil).
-	if c.cache != nil {
-		c.cache.MaybeRefresh(req.URL.Path, data)
-	}
-	if out != nil && len(data) > 0 {
-		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("decode response: %w", err)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// Tier A8 / ADR-083: auto-refresh the completion cache on every
+		// 2xx. Runs before the unmarshal so the raw body is still in hand;
+		// errors are swallowed inside MaybeRefresh so a broken cache
+		// (disk full, permission denied, corrupt JSON) never fails a
+		// request. Nil-safe for tests that opt out via SetCompletionCache(nil).
+		if c.cache != nil {
+			c.cache.MaybeRefresh(req.URL.Path, data)
+		}
+		if out != nil && len(data) > 0 {
+			if err := json.Unmarshal(data, out); err != nil {
+				return fmt.Errorf("decode response: %w", err)
+			}
 		}
 	}
 	return nil
@@ -2445,14 +2459,50 @@ func (c *Client) ConfirmPasswordReset(ctx context.Context, token, newPassword st
 		PasswordResetConfirm{Token: token, NewPassword: newPassword}, nil)
 }
 
-// SetPassword updates the password on the currently authenticated
-// account. Reachable only after Bearer auth (the dashboard session
-// cookie is interchangeable with the bearer token via
-// sessionAuthFor). Used by OAuth-only customers to opt into password
-// login.
+// SetPassword is retained for source compatibility, but the endpoint
+// is dashboard-session-only and cannot be called by this bearer-key
+// client. Use SetPasswordWithSession when the caller owns the
+// dashboard session cookie and the matching CSRF token.
 func (c *Client) SetPassword(ctx context.Context, password string) error {
 	return c.do(ctx, "POST", "/dashboard/account/set-password",
 		SetPasswordRequest{Password: password}, nil)
+}
+
+// SetPasswordWithSession updates the password through the
+// dashboard-cookie form surface. sessionCookie is the opaque value
+// of the faas_sid cookie; input.CSRFToken is sent both as the
+// csrf_token form field and as the faas_csrf double-submit cookie.
+// The endpoint returns 302 /dashboard/account/ on success, so this
+// method accepts only that redirect and does not follow it. A 302 to
+// /login (missing or invalid session) remains an error.
+func (c *Client) SetPasswordWithSession(ctx context.Context, sessionCookie string, input SetPasswordRequest) error {
+	form := url.Values{
+		"password":   {input.Password},
+		"csrf_token": {input.CSRFToken},
+	}
+	if input.CurrentPassword != "" {
+		form.Set("current_password", input.CurrentPassword)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/dashboard/account/set-password", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Idempotency-Key", newUUIDv4())
+	req.AddCookie(&http.Cookie{Name: "faas_sid", Value: sessionCookie})
+	req.AddCookie(&http.Cookie{Name: "faas_csrf", Value: input.CSRFToken})
+
+	noRedirect := *c.http
+	noRedirect.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return c.doReqWithSuccess(&noRedirect, req, nil, func(resp *http.Response) bool {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return true
+		}
+		return resp.StatusCode == http.StatusFound && resp.Header.Get("Location") == "/dashboard/account/"
+	})
 }
 
 // Logout clears the dashboard session. Idempotent — clearing a
@@ -4129,4 +4179,52 @@ func (c *Client) UpdateCorsPreset(ctx context.Context, id string, req UpdateCors
 // Returns nil on 204.
 func (c *Client) DeleteCorsPreset(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/cors-presets/"+id, nil, nil)
+}
+
+// RunWorkflow (ADR-081) triggers a new workflow execution run for an app.
+func (c *Client) RunWorkflow(ctx context.Context, slug, workflowName string, input json.RawMessage) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
+	err := c.do(ctx, "POST", path, input, &resp)
+	return resp, err
+}
+
+// ListWorkflowRuns (ADR-081) lists workflow runs for an app.
+func (c *Client) ListWorkflowRuns(ctx context.Context, slug string, limit, offset int, status string) (ListWorkflowRunsResponse, error) {
+	var resp ListWorkflowRunsResponse
+	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?limit=%d&offset=%d", slug, limit, offset)
+	if status != "" {
+		path += "&status=" + status
+	}
+	err := c.do(ctx, "GET", path, nil, &resp)
+	return resp, err
+}
+
+// GetWorkflowRun (ADR-081) retrieves the state of a workflow run.
+func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID, nil, &resp)
+	return resp, err
+}
+
+// ListWorkflowSteps (ADR-081) lists step records for a workflow run.
+func (c *Client) ListWorkflowSteps(ctx context.Context, runID string) (ListWorkflowStepsResponse, error) {
+	var resp ListWorkflowStepsResponse
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID+"/steps", nil, &resp)
+	return resp, err
+}
+
+// SendWorkflowEvent (ADR-081) injects an external event into a workflow run.
+func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string, payload json.RawMessage) (InjectWorkflowEventResponse, error) {
+	var resp InjectWorkflowEventResponse
+	req := InjectWorkflowEventRequest{EventName: eventName, Payload: payload}
+	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/events", req, &resp)
+	return resp, err
+}
+
+// CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
+func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/cancel", nil, &resp)
+	return resp, err
 }

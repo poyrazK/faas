@@ -120,6 +120,27 @@ type Heartbeat struct {
 	Concurrency int
 	// ProbeTimeout bounds each dial + Ping. Zero uses the default.
 	ProbeTimeout time.Duration
+
+	// recoverMu guards recovering.
+	recoverMu sync.Mutex
+	// recovering holds the nodes THIS schedd flipped inactive after a
+	// failed ping, so the sweep can keep probing them and put them back
+	// when they answer.
+	//
+	// Why an in-process set rather than a query: `compute_nodes.active`
+	// is overloaded. It means both "an operator drained this node" and
+	// "the watchdog decided it was dead", and nothing on the row
+	// distinguishes them (which is exactly why
+	// UpsertComputeNodeFromVmmd deliberately preserves active=false —
+	// a drained node must not un-drain itself by restarting). Selecting
+	// every inactive row and re-activating whatever answers a ping
+	// would silently undo operator drains.
+	//
+	// Tracking only the rows we ourselves marked keeps the recovery
+	// strictly to nodes the watchdog took out, and needs no schema
+	// change — so ADR-137's lifecycle enum (PR #1218) can replace this
+	// wholesale without a migration to unwind.
+	recovering map[string]state.ComputeNode
 }
 
 // WithOwnerNodeID scopes the heartbeat to a single node. Phase 2
@@ -433,6 +454,14 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		if markUnavailableIfEligible() && !wasUnavailable {
 			h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
 		}
+		// Remember it so the sweep keeps probing. Without this the
+		// node is gone for good: the sweep enumerates ACTIVE nodes,
+		// so a row it just flipped is never looked at again and can
+		// only come back via an operator UPDATE or a vmmd restart
+		// (PR #1293's re-registration path). A transient ping
+		// failure — a vmmd restarting during a rollout — therefore
+		// removed a healthy node from the fleet permanently.
+		h.markRecovering(n)
 		if h.nodeRegistry != nil {
 			h.nodeRegistry.Remove(n.ID)
 		}
@@ -544,6 +573,11 @@ func (h *Heartbeat) Run(ctx context.Context) error {
 			return nil
 		case <-t.C:
 			_ = h.Tick(ctx)
+			// Runs after Tick so a node flipped inactive by this
+			// very sweep is not immediately re-probed with the
+			// same failing transport; it gets its first retry on
+			// the next tick.
+			h.TickRecover(ctx)
 		}
 	}
 }
@@ -564,4 +598,122 @@ func (h *Heartbeat) emitNodeFailed(ctx context.Context, n state.ComputeNode, las
 		NodeName:        n.Name,
 		LastHeartbeatAt: lastSeen,
 	})
+}
+
+// markRecovering records a node the watchdog just flipped inactive so
+// TickRecover keeps probing it.
+func (h *Heartbeat) markRecovering(n state.ComputeNode) {
+	h.recoverMu.Lock()
+	defer h.recoverMu.Unlock()
+	if h.recovering == nil {
+		h.recovering = map[string]state.ComputeNode{}
+	}
+	h.recovering[n.ID] = n
+}
+
+// forgetRecovering stops tracking a node (it came back, or its row is
+// gone).
+func (h *Heartbeat) forgetRecovering(nodeID string) {
+	h.recoverMu.Lock()
+	defer h.recoverMu.Unlock()
+	delete(h.recovering, nodeID)
+}
+
+// recoveringSnapshot returns the nodes currently awaiting recovery.
+func (h *Heartbeat) recoveringSnapshot() []state.ComputeNode {
+	h.recoverMu.Lock()
+	defer h.recoverMu.Unlock()
+	out := make([]state.ComputeNode, 0, len(h.recovering))
+	for _, n := range h.recovering {
+		out = append(out, n)
+	}
+	return out
+}
+
+// TickRecover re-probes the nodes this schedd flipped inactive and puts
+// back the ones that answer.
+//
+// This closes a hole that cost real capacity. The main sweep enumerates
+// ACTIVE nodes, so the moment it marks a node inactive that node stops
+// being probed — the "re-activation happens on the next successful ping"
+// the Tick doc claimed could never happen, because there was no next
+// ping. Observed in production on 2026-09-04: a vmmd restarting during a
+// rollout produced one failed ping, fsn-3 was flipped inactive, and it
+// stayed out of rotation with TCP 50051 reachable the whole time. Every
+// instance piled onto the surviving node until an operator ran
+// `UPDATE compute_nodes SET active = true`.
+//
+// Scope, deliberately narrow:
+//
+//   - Only nodes THIS process marked inactive are probed. An
+//     operator-drained node is never touched, because `active` alone
+//     cannot distinguish the two (see the recovering field comment).
+//   - A schedd restart forgets the set. Those nodes stay inactive, the
+//     same as today — no regression, and vmmd re-registration
+//     (PR #1293) still covers the restart case. The durable fix is
+//     ADR-137's lifecycle enum (PR #1218); this is the stop-gap that
+//     keeps a rollout from halving the fleet in the meantime.
+//   - A row that has vanished is dropped rather than retried forever.
+//
+// Errors never abort the sweep: one unreachable node must not stop the
+// others from recovering.
+func (h *Heartbeat) TickRecover(ctx context.Context) {
+	for _, n := range h.recoveringSnapshot() {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		// Re-read the row: an operator may have re-activated it, or
+		// deleted it, while it sat in the set.
+		fresh, err := h.store.ComputeNodeByID(ctx, n.ID)
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				h.forgetRecovering(n.ID)
+			}
+			continue
+		}
+		if fresh.Active || fresh.Lifecycle == state.NodeLifecycleDraining {
+			// Someone else brought it back; stop tracking.
+			h.forgetRecovering(n.ID)
+			continue
+		}
+		if _, err := h.heartbeatPing(ctx, fresh); err != nil {
+			// Still down. Keep it in the set and try next tick.
+			continue
+		}
+		var reactivateErr error
+		switch fresh.Lifecycle {
+		case state.NodeLifecycleUnavailable:
+			// PR #1218 owns the durable lifecycle state machine. Do not
+			// use the legacy active setter here: it would skip the
+			// unavailable -> recovering transition and hide the recovery
+			// arbiter's ownership of the node.
+			reactivateErr = h.store.NodeSetLifecycle(ctx, fresh.ID,
+				state.NodeLifecycleUnavailable, state.NodeLifecycleRecovering)
+		case "":
+			// Preserve compatibility with pre-lifecycle rows and older
+			// in-memory fixtures that have not populated Lifecycle.
+			reactivateErr = h.store.SetComputeNodeActive(ctx, fresh.ID, true)
+		default:
+			// The row moved while it was being probed. Leave it to the
+			// owner of its new lifecycle state.
+			h.forgetRecovering(fresh.ID)
+			continue
+		}
+		if reactivateErr != nil {
+			h.log.Warn("heartbeat: recovery re-activate failed",
+				"node_id", fresh.ID, "node_name", fresh.Name, "err", reactivateErr)
+			continue
+		}
+		// Stamp the heartbeat immediately. Without it the row is
+		// re-activated carrying its old last_heartbeat_at, and the
+		// staleness gate in the very next Tick flips it straight back
+		// to inactive — a recovery loop that never converges.
+		if err := h.store.HeartbeatComputeNode(ctx, fresh.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			h.log.Warn("heartbeat: recovery stamp failed",
+				"node_id", fresh.ID, "err", err)
+		}
+		h.forgetRecovering(fresh.ID)
+		h.log.Info("heartbeat: node answered again; returned to rotation",
+			"node_id", fresh.ID, "node_name", fresh.Name)
+	}
 }

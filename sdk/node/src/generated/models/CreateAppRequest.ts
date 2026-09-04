@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ServiceReplicas } from './ServiceReplicas.js';
 /**
  * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
@@ -12,6 +13,23 @@ export type CreateAppRequest = {
   ram_mb?: number;
   max_concurrency?: number;
   idle_timeout_s?: number;
+  /**
+   * Lifecycle contract for the app. Default is request; service/worker/job are plan-gated.
+   */
+  execution_mode?: 'request' | 'service' | 'worker' | 'job';
+  /**
+   * Restart behavior for the workload. Omitted uses the execution-mode default.
+   */
+  restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  /**
+   * Upper bound on time-to-ready in seconds. 0 uses the plan default.
+   */
+  startup_deadline_s?: number;
+  /**
+   * Maximum consecutive restart attempts. 0 uses the plan default.
+   */
+  max_retries?: number;
+  service_replicas?: ServiceReplicas;
   /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */

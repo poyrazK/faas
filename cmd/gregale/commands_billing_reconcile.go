@@ -1,4 +1,4 @@
-// commands_billing_reconcile.go — `faas billing reconcile` (PR-P3).
+// commands_billing_reconcile.go — `gregale billing reconcile` (PR-P3).
 //
 // Drives POST /v1/admin/billing-reconcile/{id}. The endpoint calls
 // billing.Provider.ReconcileUsage for the rolling 30-day window
@@ -33,7 +33,7 @@ const billingSubReconcile = "reconcile"
 // provider-scoped, not a transport bug.
 func cmdBillingReconcile(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: faas billing reconcile <account-id>\n")
+		fmt.Fprintf(os.Stderr, "usage: gregale billing reconcile <account-id>\n")
 		return 1
 	}
 	accountID := args[0]

@@ -19,7 +19,7 @@ to cold-boot. Cold boot always works (invariant §6.2/3), but it's
 
 ```bash
 curl -fsS http://127.0.0.1:9104/metrics/fallback | grep -E 'cold_boot|create_from'
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=rate(vmmd_cold_boot_fallback_total[5m])/sum(rate(vmmd_ops_total{op=~"create_from_snapshot|create_cold_boot"}[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=rate(vmmd_cold_boot_fallback_total[5m])/sum(rate(vmmd_ops_total{op=~"create_from_snapshot|create_cold_boot"}[5m]))'
 ```
 
 ## Check

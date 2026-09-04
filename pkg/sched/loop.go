@@ -149,6 +149,12 @@ type Loop struct {
 	// default), both tickers are skipped and queued job_tasks
 	// stay in the DB (Mega-1 cluster-wide gate).
 	jobsDispatched bool
+
+	// workflowsDispatched is the FAAS_WORKFLOWS_ENABLED opt-in for the
+	// workflow dispatch tick (ADR-081).
+	workflowsDispatched bool
+	workflowOrch        *WorkflowOrchestrator
+	workflowRetention   *WorkflowRetention
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -166,6 +172,24 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 // and queued job_tasks just sit in DB (the operator chose this).
 func (l *Loop) WithJobsDispatched(enabled bool) *Loop {
 	l.jobsDispatched = enabled
+	return l
+}
+
+// WithWorkflowsDispatched opts the Loop into the workflow dispatch ticker (ADR-081).
+func (l *Loop) WithWorkflowsDispatched(enabled bool) *Loop {
+	l.workflowsDispatched = enabled
+	return l
+}
+
+// WithWorkflowOrchestrator sets the orchestrator instance for workflow dispatch.
+func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
+	l.workflowOrch = o
+	return l
+}
+
+// WithWorkflowRetention attaches the workflow retention cleaner.
+func (l *Loop) WithWorkflowRetention(r *WorkflowRetention) *Loop {
+	l.workflowRetention = r
 	return l
 }
 
@@ -810,6 +834,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		jobsReaperT = time.NewTicker(5 * time.Second)
 		defer jobsReaperT.Stop()
 	}
+	var workflowsDispatchT *time.Ticker
+	if l.workflowsDispatched {
+		workflowsDispatchT = time.NewTicker(time.Second)
+		defer workflowsDispatchT.Stop()
+	}
 	// Trigger dispatch ticker (issue #757 / ADR-100, commit #14).
 	// 1 s cadence matches runCronTick and the §6.1 watchdog — a
 	// trigger record sitting in `pending` for >1 tick before
@@ -868,6 +897,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runJobsDispatchTick(ctx)
 		case <-jobsTick(jobsReaperT):
 			l.runJobsReaperTick(ctx)
+		case <-jobsTick(workflowsDispatchT):
+			l.runWorkflowsDispatchTick(ctx)
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
@@ -1106,6 +1137,13 @@ func (l *Loop) runHeartbeat(ctx context.Context) {
 	if err := l.heartbeat.Tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		l.log.Warn("heartbeat tick error", "err", err)
 	}
+	// Recovery must be driven from here, not only from Heartbeat.Run:
+	// this loop is what production actually runs, and Run is reserved
+	// for standalone/test drivers. Wiring TickRecover only into Run
+	// left node recovery as dead code on the real path — verified
+	// against a live fleet, where a frozen-then-resumed vmmd stayed
+	// inactive for six minutes with the fix supposedly deployed.
+	l.heartbeat.TickRecover(ctx)
 }
 
 // runDiskDrift dispatches one sweep of the read-only /srv/fc/snap
@@ -1437,17 +1475,20 @@ func (l *Loop) waitPrimes() {
 // handleNotification decodes the JSON payload and applies the policy.
 //
 //   - app_changed: `kind=parked` is actionable and tears down the app's live
-//     instances; other app changes are informational. Wake materialises an
-//     instance on demand (first request), so no eager instance creation here.
-//   - deployment_changed: informational.
+//     instances; lifecycle changes reconcile service replicas. Other app
+//     changes are informational. Wake materialises request-mode instances on
+//     demand (first request), so no eager instance creation is needed there.
+//   - deployment_changed: a deployment becoming live reconciles its service
+//     replica target; other transitions remain informational.
 //   - snapshot_prime: imaged finished building a deployment's layer; boot it
 //     once, snapshot it, and park it (spec §5 step 6, ADR-018).
 func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppChanged:
 		var p struct {
-			Kind  string `json:"kind"`
-			AppID string `json:"app_id"`
+			Kind             string `json:"kind"`
+			AppID            string `json:"app_id"`
+			LifecycleChanged bool   `json:"lifecycle_changed"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
 			l.log.Warn("sched: bad app_changed payload", "err", err)
@@ -1465,8 +1506,30 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			}
 			return
 		}
+		if p.LifecycleChanged && p.AppID != "" {
+			go l.engine.ReconcileServiceApp(context.WithoutCancel(ctx), p.AppID)
+		}
 		l.log.Debug("app_changed", "payload", n.Payload)
 	case db.NotifyDeploymentChanged:
+		var p struct {
+			DeploymentID string `json:"deployment_id"`
+			To           string `json:"to"`
+			Status       string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			l.log.Warn("sched: bad deployment_changed payload", "err", err)
+			return
+		}
+		if p.Status == string(state.DeployLive) {
+			deploymentID := p.DeploymentID
+			if deploymentID == "" {
+				// Older imaged versions carried the deployment id in `to`.
+				deploymentID = p.To
+			}
+			if deploymentID != "" {
+				go l.engine.ReconcileServiceDeployment(context.WithoutCancel(ctx), deploymentID)
+			}
+		}
 		l.log.Debug("deployment_changed", "payload", n.Payload)
 	case db.NotifySnapshotPrime:
 		var p struct {
@@ -2677,6 +2740,15 @@ func (l *Loop) runJobsDispatchTick(ctx context.Context) {
 func (l *Loop) runJobsReaperTick(ctx context.Context) {
 	if _, err := l.engine.JobReaperTick(ctx); err != nil {
 		l.log.Warn("schedd: stuck-job reaper tick failed", "err", err)
+	}
+}
+
+func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
+	if l.workflowOrch == nil {
+		l.workflowOrch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+	}
+	if err := l.workflowOrch.DispatchTick(ctx); err != nil {
+		l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
 	}
 }
 

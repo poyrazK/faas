@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -244,6 +245,56 @@ func TestCreateDeployment_ImageBadDigest(t *testing.T) {
 		api.CreateDeploymentRequest{Image: "r/x@sha256:short"}, nil)
 	if rec.Code != 400 {
 		t.Errorf("image with short digest should 400, got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func workflowDeploymentRequest() api.CreateDeploymentRequest {
+	return api.CreateDeploymentRequest{
+		Image: "registry.example.com/workflow@sha256:" + repeat("a", 64),
+		Workflows: []api.WorkflowSpec{{
+			Name:    "process_order",
+			Trigger: &api.WorkflowTriggerSpec{Type: "manual"},
+			Steps: []api.WorkflowStepSpec{{
+				Name:    "charge",
+				Run:     "charge_stripe",
+				Input:   json.RawMessage(`{"order_id":"o-1"}`),
+				Timeout: time.Second,
+			}},
+		}},
+	}
+}
+
+func TestCreateDeployment_WorkflowPlanGate(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "workflow-app"}, nil)
+
+	rec := e.do(t, "POST", "/v1/apps/workflow-app/deployments", workflowDeploymentRequest(), nil)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("workflow deployment on Free: status %d, want 402: %s", rec.Code, rec.Body)
+	}
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanWorkflowsNotAllowed)
+}
+
+func TestCreateDeployment_WorkflowFailsClosedUntilRuntime(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "workflow-app"}, nil)
+
+	rec := e.do(t, "POST", "/v1/apps/workflow-app/deployments", workflowDeploymentRequest(), nil)
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("workflow deployment on Hobby: status %d, want 501: %s", rec.Code, rec.Body)
+	}
+	assertProblem(t, rec, http.StatusNotImplemented, api.CodeWorkflowDeploymentUnavailable)
+
+	app, err := e.store.AppBySlug(context.Background(), "workflow-app")
+	if err != nil {
+		t.Fatalf("AppBySlug: %v", err)
+	}
+	deployments, err := e.store.ListDeploymentsForApp(context.Background(), app.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp: %v", err)
+	}
+	if len(deployments) != 0 {
+		t.Fatalf("deployment rows = %d, want 0 when workflow persistence is unavailable", len(deployments))
 	}
 }
 

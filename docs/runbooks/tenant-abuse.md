@@ -62,19 +62,19 @@ For ad-hoc Prometheus API queries:
 
 ```bash
 # Top-20 by current 5s rps (the rule's source expression)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=topk(20,apid_top_tenant_rps)' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=topk(20,apid_top_tenant_rps)' | jq .
 
 # Single-customer drill-down — replace $ACCOUNT_ID with the offending uuid
 ACCOUNT_ID=<uuid>
 curl -fsS --data-urlencode "query=sum by (route) (rate(apid_request_total{account_id=\"${ACCOUNT_ID}\"}[5m]))" \
-  'http://127.0.0.1:9090/api/v1/query' | jq .
+  'http://127.0.0.1:9095/api/v1/query' | jq .
 
 # Cross-check gateway-side rps for the same customer
 curl -fsS --data-urlencode "query=sum by (account_id) (gateway_top_tenant_rps{account_id=\"${ACCOUNT_ID}\"})" \
-  'http://127.0.0.1:9090/api/v1/query' | jq .
+  'http://127.0.0.1:9095/api/v1/query' | jq .
 
 # Is the top-1000 cap saturated?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=apid_top_tenant_rps{account_id="other"}' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=apid_top_tenant_rps{account_id="other"}' | jq .
 ```
 
 ## Check
@@ -87,11 +87,11 @@ journalctl -u apid --since '-15m' --no-pager | grep -i "<ACCOUNT_ID>"
 # Cross-check the per-customer failure counter — a spike paired with
 # rising failures = a customer in trouble, not abusive (different
 # runbook: see FaasApidAuditWriteFailures.md)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=apid_request_failures_total' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=apid_request_failures_total' | jq .
 
 # Cross-check the daemon-side per-customer rate via the underlying
 # counter (the gauge is a presentation view; the counter is truth)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=topk(5,sum by (account_id)(rate(apid_request_total{account_id!="__other__"}[5m])))' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=topk(5,sum by (account_id)(rate(apid_request_total{account_id!="__other__"}[5m])))' | jq .
 ```
 
 A spike paired with low `apid_request_failures_total` is a
@@ -168,14 +168,14 @@ Recovery verification:
 ```bash
 # After rate-limit: customer's rps should drop below 500 within 1m
 curl -fsS --data-urlencode "query=apid_top_tenant_rps{account_id=\"${ACCOUNT_ID}\"}" \
-  'http://127.0.0.1:9090/api/v1/query' | jq .
+  'http://127.0.0.1:9095/api/v1/query' | jq .
 
 # After notify: customer should self-correct within 30m; if not,
 # proceed to step 3.
 # After suspend: apid_request_total should drop to ~0 for that
 # account within 1m (their apps are parked).
 curl -fsS --data-urlencode "query=sum(rate(apid_request_total{account_id=\"${ACCOUNT_ID}\"}[5m]))" \
-  'http://127.0.0.1:9090/api/v1/query' | jq .
+  'http://127.0.0.1:9095/api/v1/query' | jq .
 ```
 
 A sustained recovery (no further `FaasTenantAbuse` fires for

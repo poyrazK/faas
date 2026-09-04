@@ -62,7 +62,7 @@ var defaultOps *OpsMetrics
 // BootStamps is the load-bearing call site for the boot-time
 // metric stamps (issue #573 / ADR-128 restart count + issue #586
 // / ADR-129 build info + deploy version + uptime goroutine +
-// ready gauge). Those stamps need ops to be fully constructed,
+// readiness observer wiring). Those stamps need ops to be fully constructed,
 // so they cannot live inside Daemon() (Daemon() is called BEFORE
 // fn runs, and ops is constructed INSIDE fn). Splitting them
 // keeps BootStamps in the per-daemon run() where ops is alive,
@@ -75,8 +75,8 @@ func RegisterDefaultOps(ops *OpsMetrics) {
 
 // BootStamps records the daemon's boot-time metrics (issue #573 /
 // ADR-128 restart count + issue #586 / ADR-129 build info +
-// deploy version + uptime goroutine + ready gauge) and starts
-// the per-second uptime goroutine. Call this immediately after
+// deploy version + uptime goroutine) and starts the per-second
+// uptime and optional OTLP metrics goroutines. Call this immediately after
 // `ops := wire.NewOpsMetrics(name)` and before
 // wire.RegisterDefaultOps(ops), in the daemon's run() function.
 //
@@ -91,13 +91,9 @@ func RegisterDefaultOps(ops *OpsMetrics) {
 // zero times across the entire fleet for years. BootStamps runs
 // after ops is constructed, so the stamps actually fire.
 //
-// The ready-gauge flip moves here too (was in Daemon's "ready"
-// log line): MarkReady(name, true, "") is the entrypoint for the
-// §12 "Fleet readiness" panel, and a daemon's "I am ready" is
-// "ops is constructed and my name is known to the metrics
-// registry" — not "fn is about to be called". With BootStamps
-// inside run(), the flip happens at the same instant the
-// per-daemon metric labels become live.
+// The ready-gauge flip deliberately does NOT happen here. It is driven by
+// the daemon's ReadyzProbe observer, so daemon_ready is aligned with the
+// same dependency and listener checks exposed by /readyz.
 //
 // A nil ops is tolerated — every helper called below has a
 // nil-receiver guard, so a daemon that hasn't wired its
@@ -135,13 +131,36 @@ func BootStamps(ctx context.Context, name string, ops *OpsMetrics) {
 	// the right thing — operators want to see "uptime at the
 	// moment of shutdown" rather than a zero).
 	go recordUptimeWithOps(ctx, name, time.Now(), ops)
+	startOTLPMetrics(ctx, name, ops)
+}
 
-	// Issue #586 / ADR-129: flip daemon_ready{daemon} to 1 so
-	// the §12 "Fleet readiness" panel reflects the serving
-	// window — not the shutdown moment. Until /readyz flips
-	// signals per component (issue #571), the daemon-level
-	// gauge is the only readiness signal.
-	ops.MarkReady(name, true, "")
+// startOTLPMetrics binds the optional OTLP metrics exporter to the same
+// registry used by /metrics. OTEL_EXPORTER_OTLP_METRICS_ENDPOINT takes
+// precedence; the generic OTLP endpoint is the fallback shared with traces.
+// The exporter is deliberately best-effort so a collector outage cannot take
+// a serving daemon down. The bridge also registers exporter-health metrics
+// when no endpoint is configured, making an intentional disable explicit.
+func startOTLPMetrics(ctx context.Context, serviceName string, ops *OpsMetrics) {
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+	if endpoint == "" {
+		endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	}
+	if ops == nil {
+		return
+	}
+	shutdown, err := startOTLPMetricsWithPrefix(ctx, ops.Registry(), endpoint, serviceName, ops.metricPrefix, slog.Default())
+	if err != nil {
+		slog.Default().Warn("otlp metrics bridge disabled", "service", serviceName, "err", err)
+		return
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if shutdownErr := shutdown(shutdownCtx); shutdownErr != nil {
+			slog.Default().Warn("otlp metrics final export failed", "service", serviceName, "err", shutdownErr)
+		}
+	}()
 }
 
 // EnvLogLevel is the operator-facing env var that controls the slog.Level
@@ -300,7 +319,10 @@ func Daemon(name string, fn RunFunc) {
 	// The slog.Logger.With envelope on log already carries "version" and
 	// NewCorrelationLogger already carries "daemon" — re-passing them here
 	// would emit duplicate JSON keys per the slog JSON handler contract.
-	log.Info("ready", "ready", true)
+	// Readiness is emitted by the daemon's ReadyzProbe observer after its
+	// dependencies and serving listener are healthy; process start is not
+	// equivalent to readiness.
+	log.Info("started")
 	if err := fn(ctx, log); err != nil {
 		log.Error("exited with error", "err", err)
 		// Issue #586 / ADR-129 (Finding 2 from PR #1091 review):

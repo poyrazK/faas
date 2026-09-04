@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
+import type { ServiceReplicas } from './ServiceReplicas.js';
 /**
  * Partial update — every field is optional; omitted fields are unchanged.
  */
@@ -11,6 +12,26 @@ export type UpdateAppRequest = {
   ram_mb?: number | null;
   idle_timeout_s?: number | null;
   max_concurrency?: number | null;
+  /**
+   * Lifecycle contract for the app. Omit for no change; service/worker/job are plan-gated.
+   */
+  execution_mode?: 'request' | 'service' | 'worker' | 'job';
+  /**
+   * Restart behavior for the workload. Omit for no change.
+   */
+  restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  /**
+   * Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default.
+   */
+  startup_deadline_s?: number | null;
+  /**
+   * Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default.
+   */
+  max_retries?: number | null;
+  /**
+   * Full replacement of the service replica policy. Omit for no change.
+   */
+  service_replicas?: ServiceReplicas;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

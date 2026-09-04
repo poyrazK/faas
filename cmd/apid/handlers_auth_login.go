@@ -40,6 +40,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/auth"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -402,9 +403,26 @@ func (s *server) postReset(w http.ResponseWriter, r *http.Request) {
 
 // postSetPassword is the authenticated POST /dashboard/account/set-password.
 // Behind sessionAuth; lets OAuth-only customers opt into password
-// login. The same Argon2id Encode + SetAccountPassword path as
-// reset, but anchored to the session's account rather than a reset
-// token.
+// login and lets customers who already have one replace it. The same
+// Argon2id Encode + SetAccountPassword path as reset, but anchored to
+// the session's account rather than a reset token.
+//
+// ADR-140: the proof of presence is chosen by what the account has,
+// in this order, instead of a blanket TOTP step-up on the mount:
+//
+//  1. A fresh step-up stamp (≤ setPasswordStepUpTTL) is accepted as-is —
+//     unchanged for customers who verified TOTP moments ago.
+//  2. MFARequired with no enrollment → 403 mfa_required: an explicit
+//     account policy is pending completion.
+//  3. MFA enrolled → 403 step_up_required: the customer has a second
+//     factor and must use it, whether or not they also have a password.
+//  4. The account has a password → `current_password` is required and
+//     verified. Missing and wrong are the same 401 invalid_credentials
+//     (the caller already knows the account exists, so there is nothing
+//     to enumerate — the padding is for timing, not for presence).
+//  5. No password, no MFA → accepted. There is no factor to re-verify;
+//     the session is the only proof there is, and this opt-in is the
+//     reason the route exists. The audit row records `proof=session`.
 func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
@@ -415,9 +433,27 @@ func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrValidation("could not parse form body"))
 		return
 	}
+	// Same-site form POST: a function at *.apps.gregale.dev is same-site
+	// with api.gregale.dev, so SameSite=Lax still sends faas_sid with a
+	// form that page auto-submits. The purpose-bound token (minted by
+	// GET /v1/auth/csrf?action=set_password) is what proves the form
+	// came from the console — same guard as dashboardDelete.
+	if err := middleware.VerifyAuthenticated(s.sessions, r, csrfActionSetPassword, acct.ID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	// The length rule is free and inspects only the new password, so it
+	// runs before the proof: no DB read and no Argon2id verify for a
+	// request that was never going to be accepted (pkg/auth/password.go
+	// Validate). Nothing leaks — the caller is already the account.
 	plain := r.FormValue("password")
 	if err := auth.Validate(plain); err != nil {
 		api.WriteProblem(w, api.ErrPasswordTooWeak(err.Error()))
+		return
+	}
+	proof, replacing, ok := s.setPasswordProof(w, r, acct)
+	if !ok {
 		return
 	}
 	phc, err := auth.Encode(plain)
@@ -433,7 +469,97 @@ func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 			"internal_error", "Internal Error", "failed to set password"))
 		return
 	}
+	s.audit.Emit(r.Context(), "account.password_set", &acct.ID, map[string]any{
+		"proof":    proof,
+		"replaced": replacing,
+	})
 	http.Redirect(w, r, "/dashboard/account/", http.StatusFound)
+}
+
+// setPasswordStepUpTTL is the same 5-minute window ADR-077 uses on
+// every other sensitive-op route.
+const setPasswordStepUpTTL = 5 * time.Minute
+
+// setPasswordProof decides whether the caller has shown enough to
+// replace or set the account's password (ADR-140, matrix on
+// postSetPassword). Returns the proof name for the audit row and
+// whether a password already existed. On refusal it has written the
+// problem and returns ok=false.
+func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct state.Account) (proof string, replacing bool, ok bool) {
+	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
+	replacing = err == nil
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		s.log.Error("set_password.lookup", "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
+			"internal_error", "Internal Error", "failed to read password"))
+		return "", false, false
+	}
+
+	ts, has := authmw.StepUpFrom(r)
+	if has && !ts.IsZero() && time.Since(ts) <= setPasswordStepUpTTL {
+		return "step_up", replacing, true
+	}
+
+	// MFA is opt-in for ordinary accounts: an account that has neither
+	// enrolled nor been explicitly armed remains eligible for the
+	// OAuth-only/session proof below. Preserve the separate
+	// MFARequired policy hook, though; a pending enrollment policy must
+	// not be bypassed merely because this dashboard route uses the
+	// proof-selection handler instead of RequireMFA.
+	if acct.MFARequired && !acct.MFAEnrolled() {
+		s.audit.Emit(r.Context(), "auth.mfa_gate_hit", &acct.ID, map[string]any{
+			"path":   setPasswordPath,
+			"method": http.MethodPost,
+		})
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired,
+			"MFA required", "complete /v1/account/mfa/enroll or /v1/account/mfa/confirm to access this route"))
+		return "", replacing, false
+	}
+
+	// An enrolled second factor outranks the knowledge factor: a phished
+	// password plus a stolen session must not be enough to rotate the
+	// password on an account that has TOTP. This keeps MFA customers on
+	// the ADR-077 tier regardless of whether they also have a password.
+	if acct.MFAEnrolled() {
+		// Same row RequireStepUpHandler emits, including its
+		// missing/expired split — ADR-077's queries filter on it.
+		reason := "missing"
+		if has && !ts.IsZero() {
+			reason = "expired"
+		}
+		// Path and method are the mount's constants, not read off the
+		// request: the row is identical, and nothing request-derived
+		// flows into the audit payload.
+		s.audit.Emit(r.Context(), "auth.step_up_required", &acct.ID, map[string]any{
+			"path":    setPasswordPath,
+			"method":  http.MethodPost,
+			"reason":  reason,
+			"ttl_sec": int(setPasswordStepUpTTL.Seconds()),
+		})
+		api.WriteProblem(w, api.ErrStepUpRequired())
+		return "", replacing, false
+	}
+
+	if replacing {
+		current := r.FormValue("current_password")
+		matched, verr := auth.Verify(hash, current)
+		if verr != nil {
+			// A malformed stored hash is a data problem, not a wrong
+			// guess; Verify's contract is that it must be surfaced.
+			// Still 401 to the caller — nothing else is safe to say.
+			s.log.Error("set_password.verify", "account_id", acct.ID, "err", verr)
+		}
+		if verr != nil || !matched {
+			s.audit.Emit(r.Context(), "account.password_set_denied", &acct.ID, map[string]any{
+				"reason": "current_password",
+			})
+			api.WriteProblem(w, api.ErrInvalidCredentials())
+			return "", true, false
+		}
+		return "current_password", true, true
+	}
+
+	return "session", false, true
 }
 
 // decodeEmailPasswordRequest pulls email + password out of either a

@@ -1,4 +1,4 @@
-// commands_billing_webhook.go — `faas billing webhook-test`
+// commands_billing_webhook.go — `gregale billing webhook-test`
 // (PR-P4, operator-only).
 //
 // Sends a signed Paddle (or Stripe) webhook to a configured URL so
@@ -18,11 +18,11 @@
 //
 // Usage:
 //
-//	faas billing webhook-test paddle --url https://apid.gregale.dev/v1/webhooks/paddle \
+//	gregale billing webhook-test paddle --url https://apid.gregale.dev/v1/webhooks/paddle \
 //	    --secret-file secrets/.env.sandbox
-//	faas billing webhook-test stripe --url https://apid.gregale.dev/v1/webhooks/stripe \
+//	gregale billing webhook-test stripe --url https://apid.gregale.dev/v1/webhooks/stripe \
 //	    --secret "whsec_…"
-//	faas billing webhook-test paddle --live --secret-file secrets/.env.sandbox
+//	gregale billing webhook-test paddle --live --secret-file secrets/.env.sandbox
 //
 // Exit codes:
 //
@@ -62,7 +62,7 @@ const webhookTestTimeout = 30 * time.Second
 // positional is the provider discriminator.
 func cmdBillingWebhookTest(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: faas billing webhook-test <paddle|stripe> [flags]\n")
+		fmt.Fprintf(os.Stderr, "usage: gregale billing webhook-test <paddle|stripe> [flags]\n")
 		return 1
 	}
 	switch args[0] {
@@ -71,7 +71,7 @@ func cmdBillingWebhookTest(args []string) int {
 	case "stripe":
 		return cmdBillingWebhookTestStripe(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "faas billing webhook-test: unknown provider %q (expected paddle or stripe)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale billing webhook-test: unknown provider %q (expected paddle or stripe)\n", args[0])
 		return 1
 	}
 }
@@ -89,7 +89,7 @@ func cmdBillingWebhookTest(args []string) int {
 func cmdBillingWebhookTestPaddle(args []string) int {
 	cfg, err := parseWebhookTestFlags(args, "https://api.sandbox.paddle.com")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "faas billing webhook-test paddle: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gregale billing webhook-test paddle: %v\n", err)
 		return 1
 	}
 	body, err := webhookTestLoadPayload(cfg.payloadPath, defaultPaddleTestPayload())
@@ -108,7 +108,7 @@ func cmdBillingWebhookTestPaddle(args []string) int {
 func cmdBillingWebhookTestStripe(args []string) int {
 	cfg, err := parseWebhookTestFlags(args, "https://api.stripe.com")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "faas billing webhook-test stripe: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gregale billing webhook-test stripe: %v\n", err)
 		return 1
 	}
 	body, err := webhookTestLoadPayload(cfg.payloadPath, defaultStripeTestPayload())

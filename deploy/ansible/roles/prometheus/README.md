@@ -10,8 +10,8 @@ unit on loopback.
 
 - `apid`      `:9101`
 - `gatewayd-public` control listener `:9092`
-- `schedd`    `:9103` (also exposes `/metrics/fcvm`)
-- `vmmd`      `:9104` (also exposes `/metrics/fallback`)
+- `schedd`    `:9103` (canonical `/metrics`; `/metrics/fcvm` remains an alias)
+- `vmmd`      `:9104` (canonical `/metrics`; `/metrics/fallback` remains an alias)
 - `imaged`    `:9102`
 - `builderd` `:9105` on single-box installs (the daemon's canonical default)
 

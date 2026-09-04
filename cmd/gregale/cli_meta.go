@@ -29,6 +29,8 @@
 
 package main
 
+import "github.com/onebox-faas/faas/pkg/api"
+
 // cliCommand is one top-level gregale command.
 type cliCommand struct {
 	// Name is the literal the user types: "apps", "delayed-task", etc.
@@ -299,6 +301,57 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "triggers",
+		DocSlug: "triggers",
+		Short:   "Manage unified event triggers (broker mappings + cron-linked rows)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List triggers", Flags: []cliFlag{
+				{Name: "app", Short: "filter to an app slug", Value: "slug"},
+				{Name: "kind", Short: "filter by trigger kind", ClosedSet: triggerKindNames},
+			}},
+			{Name: "get", Short: "Show one trigger"},
+			{Name: "create", Short: "Create a broker trigger", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (required)", Req: true, Value: "slug"},
+				{Name: "kind", Short: "trigger kind (required)", Req: true, Value: "kind", ClosedSet: triggerBrokerKindNames},
+				{Name: "slug", Short: "trigger slug (required for non-cron kinds)", Value: "slug"},
+				{Name: "config", Short: "JSON config (inline | @file | -)", Value: "JSON"},
+				{Name: "enabled", Short: "enable the trigger"},
+				{Name: "disabled", Short: "disable the trigger"},
+				{Name: "batch-size", Short: "maximum records per dispatch batch", Value: "N"},
+				{Name: "batch-window-ms", Short: "maximum batch dwell time in milliseconds", Value: "N"},
+				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},
+				{Name: "payload-max-bytes", Short: "maximum broker payload size", Value: "N"},
+				{Name: "broker-poison-strategy", Short: "kafka poison strategy", Value: "commit|seek-to-offset", ClosedSet: []string{api.BrokerPoisonStrategyCommit, api.BrokerPoisonStrategySeekToOffset}},
+			}},
+			{Name: "update", Short: "Update one trigger", Flags: []cliFlag{
+				{Name: "enabled", Short: "enable the trigger"},
+				{Name: "disabled", Short: "disable the trigger"},
+				{Name: "config", Short: "replace JSON config (inline | @file | -)", Value: "JSON"},
+				{Name: "schedule", Short: "replace cron expression", Value: "EXPR"},
+				{Name: "path", Short: "replace cron request path", Value: "PATH"},
+				{Name: "batch-size", Short: "maximum records per dispatch batch", Value: "N"},
+				{Name: "batch-window-ms", Short: "maximum batch dwell time in milliseconds", Value: "N"},
+				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},
+				{Name: "payload-max-bytes", Short: "maximum broker payload size", Value: "N"},
+				{Name: "broker-poison-strategy", Short: "kafka poison strategy", Value: "commit|seek-to-offset", ClosedSet: []string{api.BrokerPoisonStrategyCommit, api.BrokerPoisonStrategySeekToOffset}},
+			}},
+			{Name: "delete", Short: "Delete one trigger", Flags: []cliFlag{
+				{Name: "quiet", Short: "skip the typed confirmation (for scripts)"},
+			}},
+			{Name: "pause", Short: "Disable one trigger"},
+			{Name: "resume", Short: "Enable one trigger"},
+			{Name: "records", Short: "List recent trigger records", Flags: []cliFlag{
+				{Name: "state", Short: "filter by record state", Value: "STATE", ClosedSet: triggerRecordStateNames},
+			}},
+			{Name: "retry", Short: "Re-drive one trigger record"},
+			{Name: "drop", Short: "Drop one trigger record"},
+			{Name: "dlq", Short: "List dead-letter records", Flags: []cliFlag{
+				{Name: "reason", Short: "filter by dead-letter reason", Value: "REASON"},
+			}},
+			{Name: "metrics", Short: "Show per-state trigger metrics"},
+		},
+	},
+	{
 		Name:    "jobs",
 		DocSlug: "jobs",
 		Short:   "Manage jobs (run-to-completion workloads)",
@@ -316,6 +369,19 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "workflows",
+		DocSlug: "workflows",
+		Short:   "Manage durable execution workflows",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List workflow runs for an app"},
+			{Name: "run", Short: "Trigger a new workflow run"},
+			{Name: "status", Short: "Show details of a workflow run"},
+			{Name: "steps", Short: "List steps for a workflow run"},
+			{Name: "cancel", Short: "Cancel an active workflow run"},
+			{Name: "events", Short: "Send external event to a workflow run"},
+		},
+	},
+	{
 		Name:    "dashboard",
 		DocSlug: "dashboard",
 		Short:   "Open the account dashboard in your browser",
@@ -327,7 +393,7 @@ var cliCommands = []cliCommand{
 		// post-deploy. Auth not required (local source only).
 		Name:    dispatchDoctor,
 		DocSlug: "doctor",
-		Short:   "Preflight: scan your source for the 8 source-side failure modes (--strict, --json, [path])",
+		Short:   "Preflight: scan local source; deployed-only checks are reported as skipped",
 		Flags: []cliFlag{
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},
 			{Name: "json", Short: "machine output (default: human prose)"},
@@ -404,11 +470,18 @@ var cliCommands = []cliCommand{
 			// no install-token env). Required when --repo is set.
 			{Name: "ref", Short: "git ref for --repo (branch, tag, or 40-char SHA)", Value: "REF"},
 			// Issue #270: --github emits a copy-paste Actions workflow
-			// snippet for the faas-deploy-action (companion repo
-			// poyrazK/faas-deploy-action). No auth, no side effects.
+			// snippet for the Gregale deploy action. No auth, no side effects.
 			// The snippet uses --name / cwd as the app slug.
-			{Name: "github", Short: "emit a GitHub Actions workflow snippet for faas-deploy-action"},
+			{Name: "github", Short: "emit a GitHub Actions workflow snippet for the Gregale deploy action"},
 			{Name: "template", Short: "scaffold from a built-in template", Value: "NAME", ClosedSet: templateNames13},
+			{Name: "dockerfile", Short: "build with the supplied Dockerfile inside --tarball"},
+			{Name: "runtime", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313"}},
+			{Name: "handler", Short: "function handler", Value: "HANDLER"},
+			{Name: "name", Short: "app name (default: current directory)", Value: "SLUG"},
+			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
+			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
+			{Name: "yes", Short: "skip the apply confirmation prompt"},
+			{Name: "only", Short: "workloads to apply (comma-separated; project apply path)", Value: "SLUGS"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);
@@ -449,6 +522,22 @@ var cliCommands = []cliCommand{
 			// deployment_scope_exclusions on a successful apply so
 			// subsequent deploys honor the persisted set automatically.
 			{Name: "persist-exclude", Short: "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)"},
+			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
+			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
+			{Name: "canary-stages", Short: "custom percent@duration canary stages", Value: "STAGES"},
+			{Name: "require-authn", Short: "require bearer auth on every request"},
+			{Name: "no-require-authn", Short: "drop the token requirement"},
+			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
+			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
+			{Name: "no-triggers", Short: "skip gregale.yaml trigger fan-out"},
+			{Name: "wait", Short: "wait for deployment to become live (default)"},
+			{Name: "no-wait", Short: "return after deployment is queued"},
+			{Name: "secret-scan", Short: "scan .env files before packing", Value: "on|off", ClosedSet: []string{"on", "off"}},
+			{Name: "diff", Short: "preview what would change without deploying"},
+			{Name: "strict", Short: "fail on diff schema/quota/env breaks"},
+			{Name: "lenient", Short: "return success even when diff has breaks"},
+			{Name: "server-diff", Short: "compute deploy diff on apid"},
+			{Name: "doctor-strict", Short: "run doctor before deploy and abort on errors"},
 		},
 	},
 	{
@@ -539,6 +628,8 @@ var cliCommands = []cliCommand{
 			{Name: "template", Short: "template name", Req: true, Value: "NAME", ClosedSet: templateNames13},
 			{Name: "path", Short: "target directory", Req: true, Value: "DIR"},
 			{Name: "deploy", Short: "deploy after scaffolding"},
+			{Name: "name", Short: "app slug used with --deploy", Value: "SLUG"},
+			{Name: "list", Short: "list available templates"},
 		},
 	},
 	{
@@ -555,6 +646,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "upstreams", Short: "List data upstreams captured for this app (ADR-098 §9.A)"},
 			{Name: "scope", Short: "filter by scope (forwarded as ?scope=, used with --upstreams)", Value: "scope"},
+			{Name: "errors", Short: "show the latest failed deployment's persisted error explanation"},
 		},
 	},
 	{

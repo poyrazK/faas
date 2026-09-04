@@ -27,6 +27,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"testing"
@@ -552,4 +554,213 @@ func TestHeartbeat_TableDriven(t *testing.T) {
 			t.Error("live node's LastHeartbeatAt still zero — heartbeat stamp didn't land")
 		}
 	})
+}
+
+// TestHeartbeat_RecoversNodeItMarkedInactive is the regression test for
+// the capacity hole this closes.
+//
+// The sweep enumerates ACTIVE nodes, so the instant it flipped a node
+// inactive that node stopped being probed — the Tick doc's claim that
+// "re-activation happens on the next successful ping" could never come
+// true, because there was no next ping. Observed in production on
+// 2026-09-04: a vmmd restarting during a rollout produced one failed
+// ping, fsn-3 was flipped inactive, and it stayed out of rotation with
+// its port reachable the whole time. Everything piled onto the
+// surviving node until an operator ran UPDATE ... SET active = true.
+func TestHeartbeat_RecoversNodeItMarkedInactive(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName: %v", err)
+	}
+
+	dialer := &heartbeatFakeDialer{
+		pingErr: map[string]error{node.TargetURL: errors.New("vmmd restarting")},
+	}
+	h := NewHeartbeat(store, dialer, nil, nil)
+
+	// Tick 1: the node fails its ping and is taken out of rotation.
+	if err := h.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	h.TickRecover(ctx)
+	after, err := store.ComputeNodeByID(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if after.Active {
+		t.Fatal("precondition: node should have been flipped inactive")
+	}
+
+	// The node comes back (vmmd finished restarting).
+	dialer.mu.Lock()
+	dialer.pingErr = map[string]error{}
+	dialer.mu.Unlock()
+
+	// Tick 2: the main sweep cannot see it — it only lists ACTIVE
+	// nodes — so recovery is the only thing that can bring it back.
+	if err := h.Tick(ctx); err != nil {
+		t.Fatalf("Tick 2: %v", err)
+	}
+	h.TickRecover(ctx)
+
+	recovered, err := store.ComputeNodeByID(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if !recovered.Active {
+		t.Error("node answered its ping but was left inactive; a transient ping failure still costs the fleet a node permanently")
+	}
+	if recovered.LastHeartbeatAt.IsZero() {
+		t.Error("recovered node has no heartbeat stamp; the staleness gate will flip it straight back to inactive next tick")
+	}
+}
+
+// TestHeartbeat_RecoveryLeavesOperatorDrainedNodesAlone is the safety
+// pin. compute_nodes.active is overloaded — it means both "operator
+// drained this node" and "the watchdog decided it was dead" — and
+// nothing on the row distinguishes them. Recovering every inactive row
+// that answers a ping would silently undo operator drains, which is the
+// exact reason UpsertComputeNodeFromVmmd preserves active=false.
+//
+// Only nodes THIS process marked may be recovered.
+func TestHeartbeat_RecoveryLeavesOperatorDrainedNodesAlone(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	drained, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name:               "drained-by-operator",
+		TargetURL:          "tcp://10.0.0.9:50051",
+		VPCPUs:             8,
+		MemMB:              8192,
+		MaxConcurrency:     4,
+		AdmissionCeilingMB: 4096,
+		Active:             true,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	// The operator drains it. It is perfectly reachable — the dialer
+	// has no error for its target — it is simply not wanted. The
+	// lifecycle API distinguishes this durable operator intent from
+	// the legacy active=false/watchdog-unavailable transition.
+	if err := store.NodeSetLifecycle(ctx, drained.ID, state.NodeLifecycleActive, state.NodeLifecycleDraining); err != nil {
+		t.Fatalf("NodeSetLifecycle: %v", err)
+	}
+
+	h := NewHeartbeat(store, &heartbeatFakeDialer{}, nil, nil)
+	for i := 0; i < 3; i++ {
+		if err := h.Tick(ctx); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		h.TickRecover(ctx)
+	}
+
+	after, err := store.ComputeNodeByID(ctx, drained.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if after.Active {
+		t.Error("recovery un-drained an operator-drained node; drains must survive a heartbeat sweep")
+	}
+}
+
+// TestHeartbeat_RecoveryStopsWhenOperatorReactivates keeps the tracking
+// set from growing without bound and from fighting an operator who
+// brought the node back by hand.
+func TestHeartbeat_RecoveryStopsWhenOperatorReactivates(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName: %v", err)
+	}
+	dialer := &heartbeatFakeDialer{
+		pingErr: map[string]error{node.TargetURL: errors.New("down")},
+	}
+	h := NewHeartbeat(store, dialer, nil, nil)
+	if err := h.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := len(h.recoveringSnapshot()); got != 1 {
+		t.Fatalf("recovering set = %d, want 1", got)
+	}
+	// Operator brings it back by hand.
+	if err := store.SetComputeNodeActive(ctx, node.ID, true); err != nil {
+		t.Fatalf("SetComputeNodeActive: %v", err)
+	}
+	h.TickRecover(ctx)
+	if got := len(h.recoveringSnapshot()); got != 0 {
+		t.Errorf("recovering set = %d, want 0 once the row is active again", got)
+	}
+}
+
+// TestHeartbeat_RecoveryDropsDeletedNodes — a row removed while it sat
+// in the set must not be retried forever.
+func TestHeartbeat_RecoveryDropsDeletedNodes(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	h := NewHeartbeat(store, &heartbeatFakeDialer{}, nil, nil)
+	h.markRecovering(state.ComputeNode{ID: "00000000-0000-0000-0000-00000000dead", Name: "ghost"})
+	h.TickRecover(ctx)
+	if got := len(h.recoveringSnapshot()); got != 0 {
+		t.Errorf("recovering set = %d, want 0 (a vanished row must be dropped)", got)
+	}
+}
+
+// TestLoop_RunHeartbeatDrivesRecovery pins the WIRING, which is the
+// part that actually broke.
+//
+// TickRecover was originally called only from Heartbeat.Run. Production
+// does not use Run — cmd/schedd drives the sweep through Loop.Run, which
+// calls Loop.runHeartbeat. So the recovery logic shipped, passed its
+// unit tests, deployed to the fleet, and was dead code: a node frozen
+// and then resumed on a live cluster sat inactive for six minutes with
+// the "fix" running.
+//
+// The lesson is that testing Heartbeat.TickRecover directly proves the
+// algorithm and nothing about whether anything calls it. This test goes
+// through the same entry point production does.
+func TestLoop_RunHeartbeatDrivesRecovery(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName: %v", err)
+	}
+
+	dialer := &heartbeatFakeDialer{
+		pingErr: map[string]error{node.TargetURL: errors.New("vmmd frozen")},
+	}
+	h := NewHeartbeat(store, dialer, nil, nil)
+	loop := &Loop{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	loop.WithHeartbeat(h)
+
+	// Sweep 1 via the production entry point: node goes inactive.
+	loop.runHeartbeat(ctx)
+	down, err := store.ComputeNodeByID(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if down.Active {
+		t.Fatal("precondition: node should be inactive after a failed ping")
+	}
+
+	// It comes back.
+	dialer.mu.Lock()
+	dialer.pingErr = map[string]error{}
+	dialer.mu.Unlock()
+
+	// Sweep 2 via the same entry point. Tick alone cannot see the node
+	// (it lists ACTIVE rows), so this only passes if runHeartbeat also
+	// drives recovery.
+	loop.runHeartbeat(ctx)
+
+	back, err := store.ComputeNodeByID(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if !back.Active {
+		t.Error("node stayed inactive when driven through Loop.runHeartbeat; recovery is not wired into the path production actually runs")
+	}
 }

@@ -61,7 +61,7 @@ threshold bands), and panel 4 (top-8 failing `kind`).
 ```bash
 curl -fsS --data-urlencode \
   'query=topk(10, sum by (endpoint, error_class) (rate({__name__=~".*_audit_log_write_failures_total"}[5m])))' \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 ```
 
 The result tells you which daemon (`endpoint`) and which error
@@ -73,7 +73,7 @@ is driving the spike.
 ```bash
 curl -fsS --data-urlencode \
   'query=topk(10, sum by (kind) (rate({__name__=~".*_audit_log_write_failures_total"}[5m])))' \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 ```
 
 A spike concentrated on `force_park` / `force_cold_boot` /

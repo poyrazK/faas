@@ -748,8 +748,34 @@ type manifestCronClient interface {
 	Whoami(ctx context.Context) (api.AccountResponse, error)
 }
 
+// validateWorkflowManifestForDeploy performs the workflow-only preflight
+// before the CLI creates or fetches the target app. The current PR exposes
+// the workflow schema and state foundation, but not the runtime deployment
+// persistence endpoint, so returning an explicit error here prevents a
+// workflow manifest from leaving behind an app with no corresponding deploy.
+func validateWorkflowManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) error {
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil || len(m.Workflows) == 0 {
+		return nil
+	}
+	acct, err := client.Whoami(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve account plan for workflow manifest: %w", err)
+	}
+	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
+		return err
+	}
+	return errors.New("workflow declarations are not deployable by this client yet; use the workflow runtime deployment endpoint")
+}
+
 // deployManifestTriggers fans the manifest's `triggers:` block out to
-// apid via the existing CreateCron wire. Issue #791 PR-C / ADR-090.
+// apid via the existing CreateCron wire. Workflow declarations are
+// validated here but fail closed until the workflow runtime deployment
+// persistence endpoint is available. Issue #791 PR-C / ADR-090 and
+// ADR-081.
 //
 // No manifest → no-op (returns nil). Bad manifest → wrapped error
 // from gregalemanifest.Validate, surfaced verbatim by printErr. The
@@ -773,6 +799,20 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 	}
 	if err := m.Validate(); err != nil {
 		return err
+	}
+	if len(m.Workflows) > 0 {
+		// PR-1279 adds the workflow schema and state foundation. The
+		// runtime/deployment persistence surface is delivered by the
+		// stacked workflow runtime change, so do not let this CLI report a
+		// successful deploy while dropping the declarations on the floor.
+		acct, whoErr := client.Whoami(ctx)
+		if whoErr != nil {
+			return fmt.Errorf("resolve account plan for workflow manifest: %w", whoErr)
+		}
+		if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
+			return err
+		}
+		return errors.New("workflow declarations are not deployable by this client yet; use the workflow runtime deployment endpoint")
 	}
 
 	// Filter to triggers for THIS app's slug. Triggers targeting
@@ -866,7 +906,7 @@ func cmdDeployTarball(args []string) int {
 	// workflow snippet to stdout and exits 0. No auth, no side effects,
 	// mirrors `cmdBillingPortal --print` (commands_billing.go:104-157).
 	// See cmd_deploy_github.go for the snippet body.
-	githubSnippet := fs.Bool("github", false, "emit a GitHub Actions workflow snippet for the faas-deploy-action")
+	githubSnippet := fs.Bool("github", false, "emit a GitHub Actions workflow snippet for the Gregale deploy action")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
@@ -955,6 +995,11 @@ func cmdDeployTarball(args []string) int {
 	// gregale.yaml with a `triggers:` block is applied AFTER CreateApp
 	// (and BEFORE the deploy body ships) — see deployManifestTriggers.
 	noTriggers := fs.Bool("no-triggers", false, "skip the `gregale.yaml` triggers fan-out (issue #791 PR-C)")
+	// Deployment completion is wait-by-default for compatibility with the
+	// existing deploy command; --no-wait returns once apid queues the
+	// deployment so CI and scripts can continue immediately.
+	waitDeploy := fs.Bool("wait", false, "wait for the deployment to become live (default)")
+	noWaitDeploy := fs.Bool("no-wait", false, "return after the deployment is queued")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
 	// access keys, OpenAI, Anthropic, Google API, PEM private keys, and
@@ -1016,6 +1061,10 @@ func cmdDeployTarball(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale deploy [--doctor-strict] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
+	// run() consumes the global --json before dispatch. Keep the
+	// deploy-local --json spelling equivalent for the diff path,
+	// whose renderer uses a separate option field.
+	*diffJSON = *diffJSON || jsonOutput
 	// --strict / --lenient mutex. Same rationale as
 	// --require-authn / --no-require-authn above.
 	if *diffStrict && *diffLenient {
@@ -1081,6 +1130,16 @@ func cmdDeployTarball(args []string) int {
 	// customers see no behaviour change.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["wait"] && explicit["no-wait"] {
+		return printErr("Invalid flags", fmt.Errorf("--wait and --no-wait are mutually exclusive"))
+	}
+	waitForDeploy := true
+	if explicit["wait"] {
+		waitForDeploy = *waitDeploy
+	}
+	if explicit["no-wait"] && *noWaitDeploy {
+		waitForDeploy = false
+	}
 	var requireAuthnPtr *bool
 	switch {
 	case explicit["require-authn"]:
@@ -1500,7 +1559,8 @@ func cmdDeployTarball(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	// Deploy-diff short-circuit (PR-0 of the deploy-diff cluster).
 	// Runs AFTER authedClient so the SDK reads can resolve, and
@@ -1611,6 +1671,9 @@ func cmdDeployTarball(args []string) int {
 	}
 
 	createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr)
+	if err := validateWorkflowManifestForDeploy(ctx, client, cwd); err != nil {
+		return printErr("Workflow manifest validation failed", err)
+	}
 	if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr); err != nil {
 		return printErr("Could not create or fetch app", err)
 	}
@@ -1629,48 +1692,67 @@ func cmdDeployTarball(args []string) int {
 	}
 
 	if *tarball != "" {
-		// Issue #977 / ADR-116: capture annotation fields onto the
-		// multipart form via the DeployAnnotations struct. The image
-		// path below uses CreateDeploymentRequest's *string/*int
-		// pointers so the wire can distinguish "absent" from
-		// "explicit zero" (omitempty). The tarball path goes through
-		// multipart so DeployAnnotations (value-type with zero
-		// collapsing to "absent") is the right shape.
 		ann := api.DeployAnnotations{
 			Reason:     *reason,
 			Tag:        *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy),
 			PRNumber:   *prNumber,
 		}
-		dep, err := DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, ann)
-		if err != nil {
-			return printErr("Bad --tarball", err)
+		var (
+			dep           api.DeploymentResponse
+			sourceSHA256  string
+			usedResumable bool
+		)
+		if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+			var progress resumableUploadProgress
+			if !jsonOutput {
+				lastPercent := -1
+				progress = func(uploaded, total int64) {
+					percent := int(uploaded * 100 / total)
+					if percent == lastPercent && uploaded != total {
+						return
+					}
+					lastPercent = percent
+					PrintProgress(osStderr, "uploading source: %d%% (%d/%d MiB)", percent, uploaded/(1024*1024), total/(1024*1024))
+				}
+			}
+			var uploadErr error
+			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress)
+			if uploadErr == nil && !usedResumable {
+				dep, uploadErr = DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, ann)
+			}
+			if uploadErr != nil {
+				if errors.Is(uploadErr, context.Canceled) || ctx.Err() != nil {
+					return 130
+				}
+				return printErr("Bad --tarball", uploadErr)
+			}
+		} else {
+			var deployErr error
+			dep, deployErr = DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, ann)
+			if deployErr != nil {
+				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
+					return 130
+				}
+				return printErr("Bad --tarball", deployErr)
+			}
 		}
 		if jsonOutput {
-			// Issue #1182 §P1 follow-up: receipt wraps the deploy
-			// response with commit_sha (zero-config only),
-			// dirty (zero-config only), app_url (always,
-			// computed from the CLI-known slug not the 32-hex
-			// AppID so the URL is actually routable), and
-			// source_sha256 (sha256 of the tarball bytes just
-			// shipped). The tempfile is still on disk at this
-			// point — the deferred os.Remove fires at function
-			// return, so reading for the digest here is safe.
-			var sourceSHA256 string
-			if *tarball != "" {
+			// Legacy multipart uploads do not calculate the digest while
+			// streaming, so preserve the stable receipt field there by
+			// hashing after the request completes.
+			if sourceSHA256 == "" {
 				if sha, hashErr := tarballSHA256(*tarball); hashErr != nil {
-					// Surface a non-fatal warning so the operator
-					// sees the receipt is missing source_sha256.
-					// CI consumers that pin source_sha256 will
-					// notice the absence; silently dropping the
-					// key would make a hash-failure indistinguishable
-					// from a legitimate image / source-ref deploy.
 					PrintWarn(osStderr, "could not hash source tarball for receipt (%v); source_sha256 omitted", hashErr)
 				} else {
 					sourceSHA256 = sha
 				}
 			}
 			return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+		}
+		if !waitForDeploy {
+			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
+			return 0
 		}
 		return streamDeployLogs(client, dep)
 	}
@@ -1711,6 +1793,10 @@ func cmdDeployTarball(args []string) int {
 		// gateway routes on slug, so the receipt's URL has to
 		// be slug-shaped to actually resolve).
 		return jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
+	}
+	if !waitForDeploy {
+		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
+		return 0
 	}
 	return streamDeployLogs(client, dep)
 }
@@ -3030,7 +3116,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}
-				return 0
+				return 3
 			}
 			if e.Event == "end" {
 				if collector != nil {

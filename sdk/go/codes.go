@@ -26,6 +26,9 @@ const (
 	CodeBillingPastDue                = api.CodeBillingPastDue
 	CodeCapacity                      = api.CodeCapacity
 	CodeUnauthorized                  = api.CodeUnauthorized
+	CodeMFARequired                   = api.CodeMFARequired
+	CodeStepUpRequired                = api.CodeStepUpRequired
+	CodeUnsupportedByCLI              = api.CodeUnsupportedByCLI
 	CodeForbidden                     = api.CodeForbidden
 	CodeNotFound                      = api.CodeNotFound
 	CodeValidation                    = api.CodeValidation

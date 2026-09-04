@@ -132,9 +132,10 @@ ARG GO_ARCHIVE_VERSION
 COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
 # BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
 # v1.82.1. Keep the source release's vendored dependency graph for a fast,
-# reproducible build, but replace those modules with fixed releases before
-# compiling. x/net is already fixed in this source release; pin it explicitly
-# too so a future source change cannot lower the builder's dependency floor
+# reproducible build, but replace the source's vulnerable modules with fixed
+# releases, including the Go crypto fix, before compiling. x/net is already
+# fixed in this source release; pin it explicitly so a future source change
+# cannot lower the builder's dependency floor
 # unnoticed.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && \
       rm -rf /var/lib/apt/lists/* && \
@@ -146,16 +147,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       git apply /tmp/buildkit-session-health.patch && \
       go mod edit -require=github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} && \
       go mod edit -require=golang.org/x/net@v0.57.0 && \
+      go mod edit -require=golang.org/x/crypto@v0.56.0 && \
       go mod edit -require=google.golang.org/grpc@v1.83.1 && \
-      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v1.83.1 && \
+      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v1.83.1 golang.org/x/crypto@v0.56.0 && \
       archive_module="$(go env GOMODCACHE)/github.com/moby/go-archive@v${GO_ARCHIVE_VERSION}" && \
       grpc_module="$(go env GOMODCACHE)/google.golang.org/grpc@v1.83.1" && \
+      crypto_module="$(go env GOMODCACHE)/golang.org/x/crypto@v0.56.0" && \
       rm -rf vendor/github.com/moby/go-archive && \
       rm -rf vendor/google.golang.org/grpc && \
+      rm -rf vendor/golang.org/x/crypto && \
       cp -a "${archive_module}" vendor/github.com/moby/go-archive && \
       cp -a "${grpc_module}" vendor/google.golang.org/grpc && \
+      cp -a "${crypto_module}" vendor/golang.org/x/crypto && \
       sed -i \
         -e "s#github.com/moby/go-archive v0.2.0#github.com/moby/go-archive v${GO_ARCHIVE_VERSION}#" \
+        -e "s#golang.org/x/crypto v0.54.0#golang.org/x/crypto v0.56.0#" \
         -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v1.83.1#" \
         vendor/modules.txt && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \

@@ -560,9 +560,10 @@ const (
 	// fires the operator should investigate the key-sealing path.
 	CodeSessionInvalid = "session_invalid"
 	// CodeUnsupportedByCLI is returned by the SDK client when a caller
-	// targets an API route that requires the dashboard session cookie
-	// (e.g. /v1/auth/sessions, /v1/auth/capabilities). The bearer-key
-	// CLI cannot reach these routes — they are mounted behind
+	// targets a route that requires the dashboard session cookie
+	// (e.g. /v1/auth/sessions, /v1/auth/capabilities, or
+	// /dashboard/account/set-password). The bearer-key CLI cannot
+	// reach these routes — they are mounted behind
 	// sessionAuth (cmd/apid/server.go:1097) and reject 401 on a
 	// bearer header. The guard in pkg/api/client.go lifts this into
 	// a clean 403 before the request is even issued so the failure
@@ -1477,6 +1478,16 @@ const (
 	// because the wire contract for the field is "the executor
 	// can't run this argv" rather than "the schema is wrong".
 	CodeJobCommandInvalid = "job_command_invalid"
+
+	// Workflows (ADR-081).
+	CodePlanWorkflowsNotAllowed       = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota            = "plan_workflows_quota"
+	CodeWorkflowDAGCycle              = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound          = "workflow_step_not_found"
+	CodeWorkflowRunNotFound           = "workflow_run_not_found"
+	CodeWorkflowEventNotFound         = "workflow_event_not_found"
+	CodeWorkflowNotRunning            = "workflow_not_running"
+	CodeWorkflowDeploymentUnavailable = "workflow_deployment_unavailable"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1525,6 +1536,8 @@ func StatusForCode(code string) int {
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist:
 		return http.StatusBadRequest
+	case CodeWorkflowDeploymentUnavailable:
+		return http.StatusNotImplemented
 	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeMirrorSlotAtCapacity:
 		return http.StatusServiceUnavailable
@@ -2951,6 +2964,54 @@ func ErrJobQuota(plan Plan, quotaName string, limit, observed int) *Problem {
 			plan, limit, quotaName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#jobs")
+}
+
+// ErrPlanWorkflowsNotAllowed is returned by apid workflow endpoints
+// when the customer's plan has WorkflowsAllowed == false (Free today).
+func ErrPlanWorkflowsNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanWorkflowsNotAllowed,
+		"Workflows unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include durable workflows; upgrade to Hobby or above to orchestrate multi-step processes.", p)).
+		WithDocs(docsBase + "/plans#workflows")
+}
+
+// ErrPlanWorkflowsQuota is returned when an app exceeds its concurrent
+// workflow runs quota.
+func ErrPlanWorkflowsQuota(plan Plan, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanWorkflowsQuota,
+		"Workflow run quota exceeded",
+		fmt.Sprintf("concurrent workflow run quota reached (%d/%d) for the %s plan.", observed, limit, plan)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#workflows")
+}
+
+// ErrWorkflowDeploymentUnavailable prevents a client from mistaking the
+// schema-only workflow foundation for a deploy path that can persist and
+// serve definitions. It is temporary until the workflow runtime deployment
+// endpoint is present; returning 501 is safer than accepting and dropping
+// customer configuration.
+func ErrWorkflowDeploymentUnavailable() *Problem {
+	return NewProblem(http.StatusNotImplemented, CodeWorkflowDeploymentUnavailable,
+		"Workflow deployment unavailable",
+		"workflow definitions are validated by this release but require the workflow runtime deployment endpoint to be enabled")
+}
+
+// ErrWorkflowRunNotFound returns a 404 when a workflow run is not found.
+func ErrWorkflowRunNotFound() *Problem {
+	return NewProblem(http.StatusNotFound, CodeWorkflowRunNotFound,
+		"Workflow run not found", "the requested workflow run was not found.")
+}
+
+// ErrWorkflowStepNotFound returns a 404 when a workflow step is not found.
+func ErrWorkflowStepNotFound() *Problem {
+	return NewProblem(http.StatusNotFound, CodeWorkflowStepNotFound,
+		"Workflow step not found", "the requested workflow step was not found.")
+}
+
+// ErrWorkflowNotRunning returns a 409 when attempting an action on a non-running workflow run.
+func ErrWorkflowNotRunning() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
+		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
 }
 
 // ErrJobTaskNotFound marks a 404 on (run_id, task_index) lookups

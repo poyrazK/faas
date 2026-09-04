@@ -26,16 +26,16 @@ outage.
 
 ```bash
 # Fleet-wide rate.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum%28rate%28apid_failed_login_total%5B5m%5D%29%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum%28rate%28apid_failed_login_total%5B5m%5D%29%29'
 
 # Top-10 IPs by rate.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=topk%2810%2C+sum+by+%28ip%29+%28rate%28apid_failed_login_total%5B5m%5D%29%29%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=topk%2810%2C+sum+by+%28ip%29+%28rate%28apid_failed_login_total%5B5m%5D%29%29%29'
 
 # Raw counter from the apid loopback endpoint.
-curl -fsS 'http://127.0.0.1:9100/metrics' | grep -E '^apid_failed_login_total'
+curl -fsS 'http://127.0.0.1:9101/metrics' | grep -E '^apid_failed_login_total'
 
 # Companion: dropped-on-floor rows (best-effort flusher overflow).
-curl -fsS 'http://127.0.0.1:9100/metrics' | grep -E '^apid_failed_login_audit_dropped_total'
+curl -fsS 'http://127.0.0.1:9101/metrics' | grep -E '^apid_failed_login_audit_dropped_total'
 ```
 
 The metric is incremented per failed login from
@@ -59,11 +59,11 @@ IP="<paste from alert>"
 
 # Their failed-login rate over the alert window.
 curl -fsS --data-urlencode "query=rate(apid_failed_login_total{ip=\"${IP}\"}[5m])" \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 # Was the AuthLimit finally throttling them? (companion counter)
 curl -fsS --data-urlencode "query=rate(apid_authlimit_rejected_total{ip=\"${IP}\"}[5m])" \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 # The audit rows themselves (the breach-resistant email hash is
 # data->>'email_hash'; the ip is data->>'ip_hash' — the audit row
@@ -141,7 +141,7 @@ The alert clears automatically once the rolling 5m rate falls below
 20/min and the `for: 5m` window expires. Triage actions, in order:
 
 1. **Confirm the metric is decaying**:
-   `curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=rate(apid_failed_login_total[5m])'`
+   `curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=rate(apid_failed_login_total[5m])'`
 2. **Identify the pattern**:
    - `topk(20, sum by (ip) (rate(apid_failed_login_total[5m])))` —
      single IP dominates → likely targeted attack.

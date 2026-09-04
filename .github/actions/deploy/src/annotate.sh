@@ -2,7 +2,7 @@
 # src/annotate.sh — Gregale deploy action failure annotator.
 #
 # Reads the CLI's RFC 7807 stderr (written by run.sh on failure to
-# $RUNNER_TEMP/faas-deploy-action.stderr) and emits a single
+# $RUNNER_TEMP/gregale-deploy-action.stderr) and emits a single
 # `::error file=action.yml,line=1::code=<code> — <detail>` line
 # with the bearer token redacted.
 #
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 ACTION_PATH="${ACTION_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
-STDERR_FILE="${RUNNER_TEMP:-/tmp}/faas-deploy-action.stderr"
+STDERR_FILE="${RUNNER_TEMP:-/tmp}/gregale-deploy-action.stderr"
 
 # Token patterns to redact. Order matters: longer / more specific
 # patterns first. The leading "g" pattern matches gh*_ prefixes;

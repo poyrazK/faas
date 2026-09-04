@@ -60,24 +60,24 @@ For ad-hoc queries:
 
 ```bash
 # Current per-account drift (the warn alert's source expression)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_billing_drift_ratio' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_billing_drift_ratio' | jq .
 
 # Fleet-wide drift by provider (the page alert's source expression)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=max by (provider) (meterd_billing_drift_ratio)' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=max by (provider) (meterd_billing_drift_ratio)' | jq .
 
 # Signed drift in mb_seconds — direction tells you which side is
 # under-reported
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_billing_drift_mb_seconds' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_billing_drift_mb_seconds' | jq .
 
 # Per-account detail — replace $ACCOUNT_ID
 ACCOUNT_ID=<uuid>
 curl -fsS --data-urlencode "query=meterd_billing_drift_mb_seconds{account_id=\"${ACCOUNT_ID}\"}" \
-  'http://127.0.0.1:9090/api/v1/query' | jq .
+  'http://127.0.0.1:9095/api/v1/query' | jq .
 
 # Provider reconciliation failures (the page alert's source)
 curl -fsS --data-urlencode \
   'query=sum by (provider, reason) (increase(meterd_billing_drift_reconcile_failures_total[1h]))' \
-  'http://127.0.0.1:9090/api/v1/query' | jq .
+  'http://127.0.0.1:9095/api/v1/query' | jq .
 ```
 
 ## Check
@@ -169,11 +169,11 @@ Recovery verification:
 # After the provider recovers: the drift ratio should drop
 # below 0.005 within one pusher cadence (1 h) + one reconcile
 # cadence (6 h) = ~30 h. Verify with:
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=max by (provider) (meterd_billing_drift_ratio)' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=max by (provider) (meterd_billing_drift_ratio)' | jq .
 
 # After a manual push replay: per-account drift ratio drops
 # below 0.05 within one reconcile tick (~6 h).
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_billing_drift_ratio' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_billing_drift_ratio' | jq .
 ```
 
 A sustained recovery (no further `BillingDrift` or

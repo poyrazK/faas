@@ -71,9 +71,11 @@ type readyState struct {
 // Every method is safe for concurrent use. Set and Report
 // publish and observe a single atomic.Pointer to an immutable
 // readyState — so the (ready, reason) pair is always observed as
-// a consistent snapshot.
+// a consistent snapshot. The probe also notifies its optional metric
+// observer after each signal transition.
 type ReadySignal struct {
-	state atomic.Pointer[readyState]
+	state    atomic.Pointer[readyState]
+	onChange atomic.Pointer[func()]
 }
 
 // newReadySignal constructs a ReadySignal pre-set to (ready,
@@ -104,6 +106,18 @@ func NewReadySignalForTest(ready bool, reason string) *ReadySignal {
 // see either the old state or the new state — never a torn pair.
 func (s *ReadySignal) Set(ready bool, reason string) {
 	s.state.Store(&readyState{ready: ready, reason: reason})
+	if onChange := s.onChange.Load(); onChange != nil {
+		(*onChange)()
+	}
+}
+
+func (s *ReadySignal) setOnChange(onChange func()) {
+	if onChange == nil {
+		s.onChange.Store(nil)
+		return
+	}
+	fn := onChange
+	s.onChange.Store(&fn)
 }
 
 // Report returns the current (ready, reason) snapshot. The pair
@@ -129,8 +143,9 @@ func (s *ReadySignal) Report() (ready bool, reason string) {
 // pre-split behaviour, preserved so an early-boot scrape does not
 // see a spurious 503.
 type ReadyzProbe struct {
-	mu      sync.RWMutex
-	signals []*ReadySignal
+	mu            sync.RWMutex
+	signals       []*ReadySignal
+	readyObserver func(bool, string)
 }
 
 // Register adds a new ReadySignal to the probe and returns it so
@@ -147,7 +162,9 @@ func (p *ReadyzProbe) Register() *ReadySignal {
 	s := newReadySignal(false, "not yet ready")
 	p.mu.Lock()
 	p.signals = append(p.signals, s)
+	s.setOnChange(p.notifyObserver)
 	p.mu.Unlock()
+	p.notifyObserver()
 	return s
 }
 
@@ -171,7 +188,39 @@ func (p *ReadyzProbe) RegisterSignal(s *ReadySignal) {
 	}
 	p.mu.Lock()
 	p.signals = append(p.signals, s)
+	s.setOnChange(p.notifyObserver)
 	p.mu.Unlock()
+	p.notifyObserver()
+}
+
+// SetReadyObserver mirrors the aggregate /readyz result onto an operator
+// metric. It invokes observer once immediately and after every signal change;
+// the callback runs without the probe lock held.
+func (p *ReadyzProbe) SetReadyObserver(observer func(bool, string)) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.readyObserver = observer
+	for _, s := range p.signals {
+		s.setOnChange(p.notifyObserver)
+	}
+	p.mu.Unlock()
+	p.notifyObserver()
+}
+
+func (p *ReadyzProbe) notifyObserver() {
+	if p == nil {
+		return
+	}
+	p.mu.RLock()
+	observer := p.readyObserver
+	p.mu.RUnlock()
+	if observer == nil {
+		return
+	}
+	ready, reason := p.All()
+	observer(ready, reason)
 }
 
 // All returns true iff every registered signal is ready. The

@@ -95,6 +95,9 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 // cmdDeployTarball after the auth client is acquired but before
 // any CreateApp / Deploy call. Returns the exit code.
 func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
+	if err := validateDeployDiffManifest(opts.Cwd); err != nil {
+		return printErr("Could not read deploy manifest", err)
+	}
 	// --server-diff routes through apid's POST /v1/apps/{slug}/diff
 	// (PR-1). The local SDK path (PR-0) is the default; --server-diff
 	// is for CI / headless environments that don't ship the CLI.
@@ -161,6 +164,24 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 		return 1
 	}
 	return 0
+}
+
+// validateDeployDiffManifest rejects manifest declarations that the diff
+// projection cannot represent. In particular, workflow definitions must not
+// disappear from either the local or server diff request while the runtime
+// deployment persistence surface is still staged.
+func validateDeployDiffManifest(cwd string) error {
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil {
+		return nil
+	}
+	if len(m.Workflows) > 0 {
+		return errors.New("workflow declarations are not supported by deploy --diff until workflow runtime deployment persistence is enabled")
+	}
+	return m.Validate()
 }
 
 // buildBaseline reads the live state for the slug. Missing app is

@@ -930,6 +930,18 @@ func dpaPathFromEnv(getenv func(string) string) string {
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	traceShutdown, traceErr := trace.InitTracer(ctx, "apid", wire.Version, log)
+	if traceErr != nil {
+		return fmt.Errorf("apid: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("apid: trace shutdown failed", "err", err)
+		}
+	}()
+
 	// ADR-094: pool-close gate. closePool closes the pool; the
 	// Once guards against double-close when an early-return path
 	// closes the pool explicitly and the deferred fallback also
@@ -1684,6 +1696,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			s := apidProbe.Register()
 			s.Set(true, "")
 		}
+		apidProbe.SetReadyObserver(func(ready bool, reason string) {
+			ops.MarkReady("apid", ready, reason)
+		})
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle("/metrics", promhttp.HandlerFor(
 			prometheus.Gatherers{ops.Registry(), budgetReg},

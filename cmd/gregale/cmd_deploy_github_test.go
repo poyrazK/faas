@@ -44,7 +44,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"app: my-app",
 				"uses: poyrazK/faas/.github/actions/deploy@v1",
 				"${{ secrets.GREGALE_API_KEY }}",
-				"https://api.faas.example",
+				"https://api.gregale.dev",
 			},
 			mustNotLn: []string{
 				"# pin this Action", // no SHA provided → no pin comment

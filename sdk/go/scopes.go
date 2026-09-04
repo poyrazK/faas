@@ -97,3 +97,16 @@ const (
 	DefaultAppUser  = api.DefaultAppUser
 	DefaultAppUID   = api.DefaultAppUID
 )
+
+// App lifecycle enum re-exports.
+const (
+	ExecutionModeRequest = api.ExecutionModeRequest
+	ExecutionModeService = api.ExecutionModeService
+	ExecutionModeWorker  = api.ExecutionModeWorker
+	ExecutionModeJob     = api.ExecutionModeJob
+
+	RestartPolicyNo            = api.RestartPolicyNo
+	RestartPolicyOnFailure     = api.RestartPolicyOnFailure
+	RestartPolicyAlways        = api.RestartPolicyAlways
+	RestartPolicyUnlessStopped = api.RestartPolicyUnlessStopped
+)

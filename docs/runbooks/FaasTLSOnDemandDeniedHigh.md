@@ -34,7 +34,7 @@ denies the mint, the counter bumps, and this alert fires.
 curl -fsS http://127.0.0.1:9090/metrics | grep gateway_tls_on_demand_denied_total
 # Reason breakdown — the per-reason sum lets you confirm allowlist is
 # the source (vs a frozen-zero on dns01 or token = H3.b unmerged).
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum by (reason) (rate(gateway_tls_on_demand_denied_total[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum by (reason) (rate(gateway_tls_on_demand_denied_total[5m]))'
 journalctl -u faas-gatewayd-public --since '-15m' --no-pager | grep -iE 'on-demand denied|allowlist'
 ```
 

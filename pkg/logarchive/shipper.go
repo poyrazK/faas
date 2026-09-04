@@ -97,6 +97,16 @@ func NewShipper(cfg Config, spool *Spool, s3 *S3Client, log *slog.Logger, metric
 	if cfg.RetentionDays <= 0 {
 		cfg.RetentionDays = DefaultRetentionDays
 	}
+	if cfg.LocalBytesMax <= 0 {
+		cfg.LocalBytesMax = DefaultLocalBytesMax
+	}
+	// Keep the configured capacity alongside the current spool gauge when
+	// the production Prometheus implementation supports it. The optional
+	// interface preserves compatibility with the package's lightweight test
+	// metrics fakes.
+	if capacity, ok := metrics.(interface{ SetLocalBytesMax(int64) }); ok {
+		capacity.SetLocalBytesMax(cfg.LocalBytesMax)
+	}
 	return &Shipper{
 		cfg:     cfg,
 		spool:   spool,
@@ -133,9 +143,11 @@ func (s *Shipper) Run(ctx context.Context) error {
 	if _, _, err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 		s.log.Warn("logarchive.first_flush_failed", "err", err)
 	}
+	s.metrics.SetLocalBytes(s.spool.LocalBytes())
 	if _, err := s.PurgeOnce(ctx); err != nil && ctx.Err() == nil {
 		s.log.Warn("logarchive.first_purge_failed", "err", err)
 	}
+	s.metrics.SetLocalBytes(s.spool.LocalBytes())
 	flushTicker := time.NewTicker(s.cfg.FlushInterval)
 	defer flushTicker.Stop()
 	purgeTicker := time.NewTicker(s.cfg.PurgeInterval)
@@ -153,6 +165,7 @@ func (s *Shipper) Run(ctx context.Context) error {
 			if _, err := s.PurgeOnce(ctx); err != nil && ctx.Err() == nil {
 				s.log.Warn("logarchive.purge_failed", "err", err)
 			}
+			s.metrics.SetLocalBytes(s.spool.LocalBytes())
 		}
 	}
 }

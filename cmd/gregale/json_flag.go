@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 
@@ -23,10 +24,10 @@ import (
 // fails CI otherwise.
 //
 //   - cmdLogin (commands.go)             — interactive paste-code prompt
-//   - cmdLogout (commands.go)            — side-effect only; no body
-//   - cmdWhoami (commands.go)            — shell-sourceable plaintext
-//   - cmdInit / runCmdInit* (commands_init.go) — file writes + human-only
-//     template table
+//   - cmdLogout (commands.go)            — emits a small status object
+//   - cmdInit / runCmdInit* (commands_init.go) — file writes and the
+//     --deploy composite retain progress-oriented output; --list has a
+//     machine-readable template slice
 //   - cmdBackup / cmdBackupUnsealRclone  — operator fs writes; no body
 //   - cmdMfa enroll                      — QR PNG is written to disk
 //     (JSON shape is the path)
@@ -96,6 +97,16 @@ func jsonBoolTrue(s string) bool {
 // the wire shape.
 func writeJSON(v any) error {
 	enc := json.NewEncoder(osStdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
+// writeJSONTo is the writer-parametrized companion used by commands
+// whose pure helpers already accept an output stream. Keeping the
+// encoder policy here prevents those commands from silently falling
+// back to human output under --json.
+func writeJSONTo(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

@@ -1,5 +1,5 @@
-name: "faas deploy"
-description: "Deploy a faas/Gregale app from a GitHub Actions workflow using a pinned gregale CLI"
+name: "Gregale deploy"
+description: "Deploy a Gregale app from a GitHub Actions workflow using a pinned gregale CLI"
 author: "Gregale"
 
 # Composite Action, monorepo shape (ADR-093). The vendored binary
@@ -16,12 +16,12 @@ author: "Gregale"
 
 inputs:
   api-key:
-    description: "faas API bearer token (use ${{ secrets.GREGALE_API_KEY }} for the deploy scope)"
+    description: "Gregale API bearer token (use ${{ secrets.GREGALE_API_KEY }} for the deploy scope)"
     required: true
   api-base:
-    description: "faas API base URL (override per environment; default is the public example host)"
+    description: "Gregale API base URL (override per environment; defaults to the public API)"
     required: false
-    default: "https://api.faas.example"
+    default: "https://api.gregale.dev"
   app:
     description: "App slug to deploy"
     required: true

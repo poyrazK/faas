@@ -14,7 +14,7 @@ package main
 // one); the same flags are accepted on deploy with --yes/--json/--only
 // to trigger the transactional apply.
 //
-// The CLI mirrors §4 acceptance verbatim: "faas deploy on the fixture
+// The CLI mirrors §4 acceptance verbatim: "gregale deploy on the fixture
 // repo creates 3 apps + 1 cron on one keypress; over-quota creates
 // nothing; --json output is byte-stable." Test coverage lives in
 // commands_decompose_test.go (Phase 3 task #49).

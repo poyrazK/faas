@@ -49,13 +49,13 @@ Common causes:
 
 ```bash
 # Per-app queue depth (top 10)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=topk(10%2C+gateway_queue_depth)'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=topk(10%2C+gateway_queue_depth)'
 
 # Cold-boot fallback rate (companion signal — high ratio means snapshot restore is failing)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=rate(meterd_cold_boot_total%5B5m%5D)+%2F+rate(meterd_wake_total%5B5m%5D)'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=rate(meterd_cold_boot_total%5B5m%5D)+%2F+rate(meterd_wake_total%5B5m%5D)'
 
 # Wake latency (P95 over 5m)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=histogram_quantile(0.95%2C+sum(rate(gateway_wake_latency_seconds_bucket%5B5m%5D))+by+(le))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=histogram_quantile(0.95%2C+sum(rate(gateway_wake_latency_seconds_bucket%5B5m%5D))+by+(le))'
 ```
 
 ## Silence

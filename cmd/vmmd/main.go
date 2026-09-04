@@ -52,9 +52,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 )
 
@@ -423,6 +426,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
+	traceShutdown, traceErr := trace.InitTracer(ctx, "vmmd", wire.Version, log)
+	if traceErr != nil {
+		return fmt.Errorf("vmmd: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("vmmd: trace shutdown failed", "err", err)
+		}
+	}()
 
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
@@ -1127,6 +1141,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// BuildReadinessProbe call's failure path (the probe is
 	// ready regardless).
 	vmmdProbe, grpcBound := BuildReadinessProbe()
+	vmmdProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("vmmd", ready, reason)
+	})
 	// NOTE: grpcBound.MarkBound() is intentionally NOT called
 	// here — see cmd/vmmd/readiness.go BuildReadinessProbe for
 	// why. The flip must fire inside the serve goroutine, just
@@ -1176,7 +1193,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
 		mux := http.NewServeMux()
-		mux.Handle(metricsPath, ops.Handler())
+		// The canonical scrape combines all vmmd-owned registries. The
+		// dedicated paths below remain for backwards-compatible debugging
+		// and targeted scrapes.
+		mux.Handle(metricsPath, promhttp.HandlerFor(
+			prometheus.Gatherers{
+				ops.Registry(),
+				cbm.Registry(),
+				frm.Registry(),
+				wpm.Registry(),
+			},
+			promhttp.HandlerOpts{Registry: ops.Registry()},
+		))
 		// Cold-boot fallback counter has its own registry (one writer,
 		// one reader). Mount at /metrics/fallback so a scrape that only
 		// wants the ops series stays clean.

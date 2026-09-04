@@ -920,3 +920,91 @@ func TestSweep_PostAuthSignupMagicLink(t *testing.T) {
 		t.Fatalf("PostAuthSignupMagicLink: %v", err)
 	}
 }
+
+func TestClient_SetPasswordWithSession_SendsCookieForm(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/dashboard/account/set-password" {
+			t.Errorf("path = %q, want /dashboard/account/set-password", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("session request sent bearer Authorization: %q", got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
+			t.Errorf("Content-Type = %q, want application/x-www-form-urlencoded", got)
+		}
+		if got := r.Header.Get("Idempotency-Key"); !uuidV4ShapeRegex.MatchString(got) {
+			t.Errorf("Idempotency-Key = %q, want UUID v4", got)
+		}
+		sid, err := r.Cookie("faas_sid")
+		if err != nil {
+			t.Errorf("faas_sid cookie: %v", err)
+		} else if sid.Value != "sid-token" {
+			t.Errorf("faas_sid = %q, want sid-token", sid.Value)
+		}
+		csrf, err := r.Cookie("faas_csrf")
+		if err != nil {
+			t.Errorf("faas_csrf cookie: %v", err)
+		} else if csrf.Value != "csrf-token" {
+			t.Errorf("faas_csrf = %q, want csrf-token", csrf.Value)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		if got := r.Form.Get("password"); got != "new-password" {
+			t.Errorf("password = %q, want new-password", got)
+		}
+		if got := r.Form.Get("csrf_token"); got != "csrf-token" {
+			t.Errorf("csrf_token = %q, want csrf-token", got)
+		}
+		if got := r.Form.Get("current_password"); got != "old-password" {
+			t.Errorf("current_password = %q, want old-password", got)
+		}
+		w.Header().Set("Location", "/dashboard/account/")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "bearer-token")
+	err := c.SetPasswordWithSession(context.Background(), "sid-token", SetPasswordRequest{
+		Password:        "new-password",
+		CSRFToken:       "csrf-token",
+		CurrentPassword: "old-password",
+	})
+	if err != nil {
+		t.Fatalf("SetPasswordWithSession: %v", err)
+	}
+}
+
+func TestClient_SetPasswordWithSession_RejectsLoginRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/dashboard/account/set-password" {
+			t.Errorf("redirect was followed to %q", r.URL.Path)
+		}
+		w.Header().Set("Location", "/login")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "")
+	if err := c.SetPasswordWithSession(context.Background(), "sid-token", SetPasswordRequest{
+		Password:  "new-password",
+		CSRFToken: "csrf-token",
+	}); err == nil {
+		t.Fatal("SetPasswordWithSession accepted a redirect to /login")
+	}
+}
+
+func TestClient_SetPassword_BearerOnlyIsUnsupported(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "bearer-token")
+	err := c.SetPassword(context.Background(), "new-password")
+	var p *Problem
+	if !errors.As(err, &p) {
+		t.Fatalf("expected *Problem, got %T: %v", err, err)
+	}
+	if p.Code != CodeUnsupportedByCLI {
+		t.Errorf("Code = %q, want %q", p.Code, CodeUnsupportedByCLI)
+	}
+}

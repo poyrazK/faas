@@ -1,4 +1,4 @@
-// commands_billing_pricecatalog.go — `faas billing price-catalog` (PR-P3).
+// commands_billing_pricecatalog.go — `gregale billing price-catalog` (PR-P3).
 //
 // Three sub-subcommands backed by the operator-facing admin endpoints:
 //
@@ -26,10 +26,10 @@ const (
 	billingSubPriceCatalogSync  = "sync"
 	billingSubPriceCatalogReset = "reset"
 	priceCatalogResetWarning    = "The provider catalog is durable on the provider platform — resetting local state does NOT delete products.\n" +
-		"Manage products in the provider dashboard, then run `faas billing price-catalog sync` to revalidate."
+		"Manage products in the provider dashboard, then run `gregale billing price-catalog sync` to revalidate."
 )
 
-// cmdBillingPriceCatalog dispatches `faas billing price-catalog <list|sync|reset>`.
+// cmdBillingPriceCatalog dispatches `gregale billing price-catalog <list|sync|reset>`.
 // Bare subcommand prints usage to stderr and exits 1 (matches
 // cmdBilling's bare-subcommand behaviour). Unknown sub-subcommand
 // prints usage + the error to stderr.
@@ -49,20 +49,20 @@ func cmdBillingPriceCatalog(args []string) int {
 		printPriceCatalogUsage(os.Stdout)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "faas billing price-catalog: unknown subcommand %q\n\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale billing price-catalog: unknown subcommand %q\n\n", args[0])
 		printPriceCatalogUsage(os.Stderr)
 		return 1
 	}
 }
 
 // cmdBillingPriceCatalogList renders the cached catalog. Same shape
-// as `faas billing status` — kept as a separate subcommand because
+// as `gregale billing status` — kept as a separate subcommand because
 // operators think of "list" and "status" as different verbs
 // (list = raw data; status = at-a-glance summary that includes the
 // synced-at header). Two surfaces, one printer.
 func cmdBillingPriceCatalogList(args []string) int {
 	if len(args) != 0 {
-		fmt.Fprintf(os.Stderr, "faas billing price-catalog list: unexpected args\n")
+		fmt.Fprintf(os.Stderr, "gregale billing price-catalog list: unexpected args\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -84,7 +84,7 @@ func cmdBillingPriceCatalogList(args []string) int {
 // client; a flaky-network retry within 24h replays the original 200.
 func cmdBillingPriceCatalogSync(args []string) int {
 	if len(args) != 0 {
-		fmt.Fprintf(os.Stderr, "faas billing price-catalog sync: unexpected args\n")
+		fmt.Fprintf(os.Stderr, "gregale billing price-catalog sync: unexpected args\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -106,7 +106,7 @@ func cmdBillingPriceCatalogSync(args []string) int {
 // cleanup will replace the warning with a success message.
 func cmdBillingPriceCatalogReset(args []string) int {
 	if len(args) != 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "faas billing price-catalog reset: unexpected args\n")
+		_, _ = fmt.Fprintf(os.Stderr, "gregale billing price-catalog reset: unexpected args\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -126,11 +126,11 @@ func cmdBillingPriceCatalogReset(args []string) int {
 // Reuses the subcommand names from the const block above so a
 // future rename trips one tripwire.
 func printPriceCatalogUsage(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "usage: faas billing price-catalog <subcommand>\n\n"+
+	_, _ = fmt.Fprintf(w, "usage: gregale billing price-catalog <subcommand>\n\n"+
 		"  %s    read the cached provider price + product catalog\n"+
 		"  %s    force a provider catalog hydration (idempotent)\n"+
 		"  %s   signal a catalog reset (provider-managed; see warning)\n"+
 		"\n"+
-		"Run 'faas billing price-catalog help' for this message.\n",
+		"Run 'gregale billing price-catalog help' for this message.\n",
 		billingSubPriceCatalogList, billingSubPriceCatalogSync, billingSubPriceCatalogReset)
 }

@@ -12,6 +12,10 @@ import (
 // csrfActions exposed by the browser API are deliberately closed. A token is
 // bound to one action and one account, so accepting arbitrary action names
 // here would make the endpoint a generic signer for future mutations.
+// csrfActionSetPassword binds the token POST /dashboard/account/set-password
+// verifies (ADR-140).
+const csrfActionSetPassword = "set_password"
+
 var csrfActions = map[string]struct{}{
 	csrfActionLogout:            {},
 	csrfActionSessionRevoke:     {},
@@ -19,6 +23,7 @@ var csrfActions = map[string]struct{}{
 	"mfa_confirm":               {},
 	"mfa_recover":               {},
 	"mfa_disable":               {},
+	csrfActionSetPassword:       {},
 }
 
 // issueCSRFToken mints the double-submit token used by browser mutations.

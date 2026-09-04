@@ -461,15 +461,14 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// serviceMu serialises replica reconciliation per deployment. It is
+	// separate from appMu because reconciliation invokes admission, which
+	// must acquire appMu itself.
+	serviceMu map[string]*sync.Mutex
 	// wakeCoord is the per-app single-flight coordinator (ADR-098).
 	// Lazily initialised in NewEngine. Lock discipline is a LEAF:
 	// wakeCoord.mu is taken and released BEFORE e.lockApp(appID).
 	wakeCoord *wakeCoord
-	// wakeFanoutCache memoises the per-app fan-out policy for
-	// wakeFanoutCacheTTL so a burst does not put an app+account read on
-	// the wake hot path for every queued caller.
-	wakeFanoutMu    sync.Mutex
-	wakeFanoutCache map[string]wakeFanoutEntry
 
 	// warmAffinity is the sticky-warm cache (placement scheduler PR,
 	// ADR-025). Defaults to a zero-TTL cache that always returns "no
@@ -654,6 +653,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		fcVer:           fcVer,
 		log:             log,
 		appMu:           map[string]*sync.Mutex{},
+		serviceMu:       map[string]*sync.Mutex{},
 		wakeCoord:       newWakeCoord(),
 		warmBroadcaster: newWarmHintBroadcaster(),
 		capacityTable:   newNodeCapacityTable(),
@@ -1344,7 +1344,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	ctx = WithScope(ctx, scope)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
-	if ins, err := e.store.RunningInstanceForApp(ctx, appID); err == nil {
+	if ins, err := e.store.RunningInstanceForApp(ctx, appID); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
 		// PR-C (issue #460 / ADR-053): resolve the live deployment so
 		// the response's Port field is consistent with what
 		// AdmitInstance would have produced. The instance row
@@ -1422,7 +1422,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		// can still pin it back to the schedd slog line that stamped
 		// it (gaps analysis 2026-07-23 review finding #1).
 		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID, RequestCount: ins.RequestCount}, nil
-	} else if !errors.Is(err, state.ErrNotFound) {
+	} else if err != nil && !errors.Is(err, state.ErrNotFound) {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
 	}
@@ -1432,6 +1432,19 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
 	// rather than lift into the typed AtCapacity result.
 	return e.admitAndDispatch(ctx, appID, trigger, false)
+}
+
+func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, ins state.Instance) bool {
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		e.log.Warn("sched: wake: app lookup for instance mode failed; preserving fast path", "app", appID, "instance", ins.ID, "err", err)
+		return true
+	}
+	if instanceModeMatchesApp(app, ins) {
+		return true
+	}
+	e.log.Info("sched: wake: running instance mode does not match app; reconciling", "app", appID, "instance", ins.ID, "instance_mode", normalizedInstanceMode(ins.Mode), "app_mode", instanceModeForApp(app))
+	return false
 }
 
 // EnsureWake (ADR-098) is the single-flight-safe wake entry point.
@@ -1494,7 +1507,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 			)
 		}
 	}
-	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutFor(ctx, appID))
+	call, isLeader, err := e.wakeCoord.Enter(appID)
 	if err != nil {
 		return CoordOutcome{}, err
 	}
@@ -1905,6 +1918,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 		dep = explicitDep
 	}
+	if mode == "" || mode == string(state.InstanceModeNormal) {
+		mode = instanceModeForApp(app)
+	}
 
 	// PR-D (issue #462): worker-class first-check. Mirrors
 	// pkg/sched/reaper.go:170 (workers are reaper-exempt). A
@@ -1917,7 +1933,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// reused — no new wakeOutcome, no new metric row. The check
 	// fires BEFORE admitGate so the cooldown / reject / min-floor
 	// branches are unreachable for worker-class apps.
-	if app.WorkloadClass == state.WorkloadClassWorker {
+	if !bypassGates && (app.WorkloadClass == state.WorkloadClassWorker ||
+		mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeJob)) {
 		release()
 		e.IncAtCapacity(appID, "wake")
 		return WakeResult{AtCapacity: true}, nil
@@ -2190,9 +2207,6 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if err != nil {
 		release()
 		return WakeResult{}, err // *api.Problem from chooser
-	}
-	if mode == "" {
-		mode = string(state.InstanceModeNormal)
 	}
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID, wakeID, mode)
 	if err != nil {
@@ -4401,6 +4415,9 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 					Reason:     "liveness_lost",
 				})
 			}
+			if ins.Mode == string(state.InstanceModeService) {
+				e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+			}
 			reconciled++
 		case errors.Is(recErr, state.ErrConflict):
 			// Node recovered, or a peer moved the row first. Benign
@@ -4508,7 +4525,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 			"app", appID, "err", err)
 	}
 	primeWakeID := primeWakeUUID.String()
-	ins, err := e.store.CreateInstanceWithMode(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID, string(state.InstanceModeNormal))
+	ins, err := e.store.CreateInstanceWithMode(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID, instanceModeForApp(app))
 	if err != nil {
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
@@ -5096,7 +5113,7 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 		// observed at the next admission tick. The async
 		// pattern matches Engine.Wake's own deferred-wake
 		// behaviour.
-		go e.convergeServiceReplicas(ctx, ins.DeploymentID)
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 		return StopOutcome{
 			Instance:        instanceID,
 			Mode:            string(mode),
@@ -5161,29 +5178,6 @@ const (
 	// service).
 	LifecycleReasonCleanExit LifecycleReason = "clean_exit"
 )
-
-// convergeServiceReplicas (M-2 / ADR-137 §Decision 1) brings
-// the live service-replica count up to desired. Best-effort:
-// a failed Wake logs at Warn and the next admission tick
-// retries. The function runs in a detached context
-// (context.WithoutCancel) so the parent Shutdown can't cancel
-// the resume — Mirror-loop closure invariant.
-//
-// Today this is a stub (commit 6 lands only the scaffold +
-// replica-counting logic). The rolling-deploy /
-// image-digest-pinning / drain-on-shutdown semantics are
-// M-4 workstream E.
-func (e *Engine) convergeServiceReplicas(_ context.Context, _ string) {
-	// Stub: full replica convergence (desired=2, ready=1 →
-	// schedule a wake) lands in M-4 workstream E. The M-2
-	// commit ships only the API surface + replica-counting
-	// fields so subsequent commits don't need to re-shape
-	// the call site. The stub is intentionally empty (not
-	// even a log line) — emitting a noise log every replica
-	// convergence tick would inflate observability costs
-	// without informing operators (replica convergence is
-	// visible on the existing `instances` count metric).
-}
 
 // lockedRunning loads an instance, takes its app lock, and returns it only if it
 // is still RUNNING under the lock. A (nil, nil) return means "not RUNNING, skip"
@@ -6879,6 +6873,9 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 			"instance", instanceID, "err", err)
 	}
 	e.emitInstanceChanged(ctx, instanceID, appID, state.StateStopped, "") // wake_id already on the row; the direct-write path doesn't re-load it.
+	if freshLocked.Mode == string(state.InstanceModeService) {
+		e.scheduleServiceReconcile(ctx, deploymentID)
+	}
 
 	// Counter emission. Cardinality bounds match LivenessRestarts.
 	// Empty tuples are collapsed to "unknown" inside the metrics
@@ -7146,6 +7143,10 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 	// subscribed to instance_changed saw the column go empty as
 	// soon as the instance entered RUNNING.
 	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
+	if (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
+		ins.Mode == string(state.InstanceModeService) {
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	}
 
 	// Audit-log emission (spec §6.1). Best-effort: a failure logs
 	// and counts, never rolls back the transition. The state row is

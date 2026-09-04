@@ -255,7 +255,7 @@ grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e
 
 .PHONY: grafana-mirror-check
 grafana-mirror-check: ## SHA-256 byte-identity check for deploy/grafana/ → deploy/ansible/roles/grafana/files/ mirror. PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.
-	@for f in faas-fleet.json top-tenants.json top-throttled-apps.json edge-rules.json audit-write-fidelity.json obs-trace-completeness.json; do \
+	@for f in faas-fleet.json top-tenants.json top-throttled-apps.json edge-rules.json audit-write-fidelity.json obs-trace-completeness.json telemetry-pipeline.json; do \
 	  if [ -f "deploy/grafana/$$f" ] && [ -f "deploy/ansible/roles/grafana/files/$$f" ]; then \
 	    a=$$(shasum -a 256 "deploy/grafana/$$f" | awk '{print $$1}'); \
 	    b=$$(shasum -a 256 "deploy/ansible/roles/grafana/files/$$f" | awk '{print $$1}'); \
