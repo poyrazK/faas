@@ -467,6 +467,11 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// serviceAppMu serialises service replica allocation across all live
+	// deployments for an app. It is distinct from appMu because replica
+	// reconciliation invokes admission, which acquires appMu itself, and
+	// from serviceMu, which protects one deployment's state transition.
+	serviceAppMu map[string]*sync.Mutex
 	// serviceMu serialises replica reconciliation per deployment. It is
 	// separate from appMu because reconciliation invokes admission, which
 	// must acquire appMu itself.
@@ -659,6 +664,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		fcVer:           fcVer,
 		log:             log,
 		appMu:           map[string]*sync.Mutex{},
+		serviceAppMu:    map[string]*sync.Mutex{},
 		serviceMu:       map[string]*sync.Mutex{},
 		wakeCoord:       newWakeCoord(),
 		warmBroadcaster: newWarmHintBroadcaster(),
