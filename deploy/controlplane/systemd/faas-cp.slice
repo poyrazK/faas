@@ -1,5 +1,0 @@
-[Unit]
-Description=onebox-faas control plane (DO dev deployment)
-
-[Slice]
-MemoryMax=3G
