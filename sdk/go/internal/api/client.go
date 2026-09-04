@@ -47,6 +47,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -198,6 +199,17 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 // recipe; methods that need a custom header set it on req before
 // calling doReq.
 func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
+	return c.doReqWithSuccess(cli, req, out, func(resp *http.Response) bool {
+		return resp.StatusCode >= 200 && resp.StatusCode < 300
+	})
+}
+
+// doReqWithSuccess is doReq with a caller-supplied success predicate.
+// Dashboard form mutations use a 302 redirect as their successful
+// response, while the generic SDK path treats all 3xx responses as
+// errors. Keeping the predicate local prevents that dashboard
+// convention from changing response handling for every other method.
+func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, success func(*http.Response) bool) error {
 	resp, err := cli.Do(req)
 	if err != nil {
 		return fmt.Errorf("could not reach the API: %w", err)
@@ -205,14 +217,14 @@ func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode >= 300 {
+	if !success(resp) {
 		var p Problem
 		if json.Unmarshal(data, &p) == nil && p.Code != "" {
 			return &APIError{Problem: p}
 		}
 		return fmt.Errorf("API error: %s", resp.Status)
 	}
-	if out != nil && len(data) > 0 {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && out != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {
 			return fmt.Errorf("decode response: %w", err)
 		}
@@ -881,14 +893,52 @@ func (c *Client) ConfirmPasswordReset(ctx context.Context, token, newPassword st
 		PasswordResetConfirm{Token: token, NewPassword: newPassword}, nil)
 }
 
-// SetPassword updates the password on the currently authenticated
-// account. Reachable only after Bearer auth (the dashboard session
-// cookie is interchangeable with the bearer token via
-// sessionAuthFor). Used by OAuth-only customers to opt into password
-// login.
+// SetPassword is retained for source compatibility, but the endpoint
+// is dashboard-session-only and cannot be called by this bearer-key
+// client. Use SetPasswordWithSession when the caller owns the
+// dashboard session cookie and the matching CSRF token.
 func (c *Client) SetPassword(ctx context.Context, password string) error {
-	return c.do(ctx, "POST", "/dashboard/account/set-password",
-		SetPasswordRequest{Password: password}, nil)
+	return NewProblem(http.StatusForbidden, CodeUnsupportedByCLI,
+		"endpoint requires the dashboard session cookie",
+		"use SetPasswordWithSession with the faas_sid and faas_csrf cookies").WithDocs(
+		docsBase + "/cli/cookie-only-routes")
+}
+
+// SetPasswordWithSession updates the password through the
+// dashboard-cookie form surface. sessionCookie is the opaque value
+// of the faas_sid cookie; input.CSRFToken is sent both as the
+// csrf_token form field and as the faas_csrf double-submit cookie.
+// The endpoint returns 302 /dashboard/account/ on success, so this
+// method accepts only that redirect and does not follow it. A 302 to
+// /login (missing or invalid session) remains an error.
+func (c *Client) SetPasswordWithSession(ctx context.Context, sessionCookie string, input SetPasswordRequest) error {
+	form := url.Values{
+		"password":   {input.Password},
+		"csrf_token": {input.CSRFToken},
+	}
+	if input.CurrentPassword != "" {
+		form.Set("current_password", input.CurrentPassword)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/dashboard/account/set-password", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Idempotency-Key", newUUIDv4())
+	req.AddCookie(&http.Cookie{Name: "faas_sid", Value: sessionCookie})
+	req.AddCookie(&http.Cookie{Name: "faas_csrf", Value: input.CSRFToken})
+
+	noRedirect := *c.http
+	noRedirect.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return c.doReqWithSuccess(&noRedirect, req, nil, func(resp *http.Response) bool {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return true
+		}
+		return resp.StatusCode == http.StatusFound && resp.Header.Get("Location") == "/dashboard/account/"
+	})
 }
 
 // Logout clears the dashboard session. Idempotent — clearing a

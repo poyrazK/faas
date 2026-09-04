@@ -38,7 +38,7 @@ Sensitive-op routes mounted in `cmd/apid/server.go:642,650-657,
 | `POST /v1/orgs/{slug}/transfer_ownership` | `authLimited → requireMFA → requireScope(Deploy) → loadOrg → transferOrgOwnership` | `… → requireScope(Deploy) → loadOrg → requireStepUp(5m) → transferOrgOwnership` |
 | `POST /v1/orgs/{slug}/keys` | `authLimited → loadOrg → createOrgAPIKey` (no `requireMFA`) | `authLimited → requireMFA → loadOrg → requireStepUp(5m) → createOrgAPIKey` |
 | `POST /v1/orgs/{slug}/keys/{id}/rotate` | `authLimited → loadOrg → rotateOrgAPIKey` (no `requireMFA`) | `authLimited → requireMFA → loadOrg → requireStepUp(5m) → rotateOrgAPIKey` |
-| `POST /dashboard/account/set-password` | `dashboardChain → sessionAuth → postSetPassword` | `dashboardChain → sessionAuth → requireStepUpHandler(5m) → postSetPassword` |
+| `POST /dashboard/account/set-password` | `dashboardChain → sessionAuth → postSetPassword` | `dashboardChain → sessionAuth → requireStepUpHandler(5m) → postSetPassword` — **superseded by ADR-140**: the gate is back off the mount and the handler picks the proof (fresh step-up, explicit pending MFA policy, `current_password`, or 403 for MFA-enrolled accounts) |
 | `POST /dashboard/account/delete` | `dashboardChain → sessionAuth → dashboardDelete` | `dashboardChain → sessionAuth → requireStepUpHandler(5m) → dashboardDelete` |
 
 ### Routes added after PR-077

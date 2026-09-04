@@ -552,9 +552,10 @@ const (
 	// fires the operator should investigate the key-sealing path.
 	CodeSessionInvalid = "session_invalid"
 	// CodeUnsupportedByCLI is returned by the SDK client when a caller
-	// targets an API route that requires the dashboard session cookie
-	// (e.g. /v1/auth/sessions, /v1/auth/capabilities). The bearer-key
-	// CLI cannot reach these routes — they are mounted behind
+	// targets a route that requires the dashboard session cookie
+	// (e.g. /v1/auth/sessions, /v1/auth/capabilities, or
+	// /dashboard/account/set-password). The bearer-key CLI cannot
+	// reach these routes — they are mounted behind
 	// sessionAuth (cmd/apid/server.go:1097) and reject 401 on a
 	// bearer header. The guard in pkg/api/client.go lifts this into
 	// a clean 403 before the request is even issued so the failure

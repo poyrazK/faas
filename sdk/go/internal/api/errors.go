@@ -173,6 +173,12 @@ const (
 	CodeBillingPastDue  = "billing_past_due"
 	CodeCapacity        = "capacity_unavailable"
 	CodeUnauthorized    = "unauthorized"
+	CodeMFARequired     = "mfa_required"
+	CodeStepUpRequired  = "step_up_required"
+	// CodeUnsupportedByCLI is returned when a bearer-key SDK client
+	// targets a dashboard-session-only route. Use the dedicated
+	// session-aware helper when the caller has the dashboard cookies.
+	CodeUnsupportedByCLI = "unsupported_by_cli"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
@@ -419,6 +425,10 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized:
 		return http.StatusUnauthorized
+	case CodeMFARequired, CodeStepUpRequired:
+		return http.StatusForbidden
+	case CodeUnsupportedByCLI:
+		return http.StatusForbidden
 	case CodeNotFound:
 		return http.StatusNotFound
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:

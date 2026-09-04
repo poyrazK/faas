@@ -602,7 +602,7 @@ export class AuthService {
     /**
      * Exact mutation action the token will authorize.
      */
-    action: 'auth.logout' | 'auth.session.revoke' | 'auth.sessions.revoke_all' | 'mfa_confirm' | 'mfa_recover' | 'mfa_disable',
+    action: 'auth.logout' | 'auth.session.revoke' | 'auth.sessions.revoke_all' | 'mfa_confirm' | 'mfa_recover' | 'mfa_disable' | 'set_password',
     /**
      * Dashboard session cookie. Sealed; opaque to the client
      * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
@@ -835,10 +835,35 @@ export class AuthService {
     });
   }
   /**
-   * Set a password on the authenticated account.
+   * Set or replace the password on the authenticated account.
    * Authenticated. Lets OAuth-only customers opt into password
-   * login. The same Argon2id path as `/auth/reset`, anchored
-   * to the session's account rather than a reset token.
+   * login and lets customers who already have a password replace
+   * it. The same Argon2id path as `/auth/reset`, anchored to the
+   * session's account rather than a reset token.
+   *
+   * The form must carry a `csrf_token` minted by
+   * `GET /v1/auth/csrf?action=set_password` (double-submit with
+   * the `faas_csrf` cookie); a missing or mismatched token is 400
+   * `validation_failed`. The route is a same-site form POST, so
+   * `SameSite=Lax` alone does not protect it from a customer app
+   * hosted under `*.apps.gregale.dev`.
+   *
+   * Proof of presence (ADR-140), decided by what the account has:
+   *
+   * - A step-up verified within the last 5 minutes
+   * (`POST /v1/account/mfa/verify`) is accepted as-is.
+   * - Otherwise, if an explicit `mfa_required` policy is armed
+   * while the account has not enrolled, 403 `mfa_required`.
+   * This is a policy hook; MFA remains opt-in for ordinary
+   * accounts.
+   * - Otherwise, if the account has MFA enrolled, 403
+   * `step_up_required` — verify TOTP first, whether or not the
+   * account also has a password.
+   * - Otherwise, if the account already has a password,
+   * `current_password` is required and verified. Missing and
+   * wrong both answer 401 `invalid_credentials`.
+   * - Otherwise (OAuth-only, no MFA) the request is accepted; the
+   * session is the only proof the account has.
    *
    * @returns void
    * @throws ApiError
@@ -868,8 +893,23 @@ export class AuthService {
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
         302: `Password set. Redirects to \`/dashboard/account/\`.`,
-        400: `Chosen password is too weak (≥12 chars required).`,
-        401: `code: unauthorized`,
+        400: `Chosen password is too weak (\`password_too_weak\`, ≥12
+        chars required), or the \`csrf_token\` is missing or does
+        not match the \`faas_csrf\` cookie (\`validation_failed\`).
+        `,
+        401: `No session, or the account has a password and
+        \`current_password\` is missing or wrong
+        (\`invalid_credentials\`).
+        `,
+        403: `The account has MFA enrolled and the session carries no
+        step-up from the last 5 minutes (\`step_up_required\`), or
+        an explicit \`mfa_required\` policy is pending enrollment
+        (\`mfa_required\`). MFA is opt-in for ordinary accounts.
+        `,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
       },
     });
   }
