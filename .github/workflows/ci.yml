@@ -1028,15 +1028,10 @@ jobs:
         run: sudo make leakcheck
 
   migrations:
-    # PR #93 follow-up: deploy run 29841378918 failed at the migrate step
-    # with "goose: error: found 1 missing migrations before current version
-    # 21: version 14". The static check (make migrations-check) catches the
-    # same failure mode from filenames alone in microseconds; the apply-and-
-    # walk test exercises pkg/db.MigrateUp end-to-end against a fresh
-    # schema, so SQL that parses but fails to apply is also caught here.
-    # Decoupled from `test` so a regression surfaces immediately with the
-    # exact missing-slot name rather than being buried in the unit-test
-    # sweep.
+    # ADR-142 freezes the legacy 1..590 sequence and moves all new migrations
+    # to collision-resistant UTC timestamp IDs. The static check validates
+    # both namespaces; apply-and-walk verifies exact ledger set membership so
+    # a higher timestamp cannot hide a lower migration merged afterward.
     #
     # 2026-07-31 follow-up: this job failed on the main push with a Docker
     # Hub pull timeout (`registry-1.docker.io/v2/: context deadline
@@ -1064,7 +1059,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
-    name: migrations (contiguity + apply)
+    name: migrations (IDs + apply)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1086,8 +1081,7 @@ jobs:
               exit 1
             fi
           done
-      # fetch-depth: 0 — the slot-collision and replay-safety steps both diff
-      # against origin/<base>, which a shallow clone cannot resolve.
+      # fetch-depth: 0 — replay-safety diffs against origin/<base>.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -1114,42 +1108,7 @@ jobs:
           grep -q "FAAS_BILLING_PROVIDER=polar" deploy/scripts/verify-secrets.sh
           grep -q "FAAS_POLAR_METER_ID" deploy/scripts/verify-secrets.sh
 
-      # Cross-PR slot collision. TestMigrationsUniquePrefixes (in the static
-      # step above) only sees one branch at a time: a PR builds against
-      # refs/pull/N/merge, which cannot contain a sibling PR's files. So two
-      # open PRs can each add 00054_*.sql, both go green, and the collision
-      # only exists after the second merges — at which point main panics with
-      # "goose: duplicate version 54", every other open PR goes red, and the
-      # deploy fails. That happened on slots 51, 52 and 54 (issue #366).
-      # Post-merge detection is too late; this moves it to the only point
-      # where renumbering is cheap.
-      # Reservation carve-out self-test (ADR-041). Verifies slots_from_paths'
-      # regex in isolation — <1 s, no gh / Postgres. Drift between this
-      # regex and the ADR is caught at PR time before the cross-PR gate
-      # silently starts misclassifying filenames.
-      - name: migration slot gate self-test
-        run: BATS_TEST=1 ./scripts/ci/check_migration_slots.sh
-      - name: migration slot collision (vs other open PRs)
-        # PR runs validate the new claim against sibling PRs. Main push runs
-        # repeat the same discovery so a merge does not turn a legitimate
-        # sibling-owned slot into a false contiguity failure while that PR is
-        # still waiting to merge.
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
-        id: migration_slots
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_REF: ${{ github.base_ref || 'main' }}
-        run: ./scripts/ci/check_migration_slots.sh
-      # A PR may append after a contiguous migration range owned by a sibling
-      # PR. The cross-PR gate above has verified those slots are claimed and
-      # non-overlapping; pass that verified list to the local contiguity test.
-      # Both PR and main-push runs use the verified sibling slot list. A
-      # missing slot is therefore allowed only while an open PR claims it;
-      # once that PR closes without merging, main becomes strict again.
       - name: migrations check (static)
-        env:
-          FAAS_MIGRATION_ALLOWED_GAPS: ${{ steps.migration_slots.outputs.external_slots }}
         run: make migrations-check
       # No `-tags no_pg` here on purpose: apply_walk_test.go carries
       # `//go:build !no_pg`, so the static-only `make migrations-check`
@@ -1158,8 +1117,6 @@ jobs:
       # in embed_test.go and are not built under `!no_pg` exclusion
       # here because their package has no build tag.
       - name: migrations apply-and-walk
-        env:
-          FAAS_MIGRATION_ALLOWED_GAPS: ${{ steps.migration_slots.outputs.external_slots }}
         run: go test -race -count=1 -v -run TestMigrationsApplyAndWalk ./migrations/...
 
       # Replay safety for migrations this diff ADDS. apply-and-walk above
@@ -1184,16 +1141,7 @@ jobs:
             base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
           fi
           versions="$(git diff --name-only --diff-filter=A "${base}" HEAD -- 'migrations/*.sql' \
-            | { grep -v -E 'migrations/[0-9]{5}_(.*_)?(reservation|reserve_slot)(_[^/]*)?\.sql$' || true; } \
-            | sed -nE 's|.*/([0-9]{5})_.*\.sql$|\1|p' | sort -u | paste -sd, -)"
-          # The { grep -v || true; } wrapper above swallows grep -v's exit 1 on
-          # empty input. Without it, set -o pipefail propagates the 1 when a PR
-          # has zero added migration files (e.g. a gate-only PR), and the step
-          # fails before the sed step ever runs. The { ...; } runs grep in a
-          # subshell so the || true attaches to grep's exit, not the whole
-          # pipeline. scripts/ci/check_migration_slots.sh handles the same
-          # empty-mine case earlier via `if [[ -z "${mine}" ]]; then exit 0; fi`,
-          # so this fix only needs to live in the inline ci.yml pipeline.
+            | sed -nE 's|.*/([0-9]+)_.*\.sql$|\1|p' | sort -u | paste -sd, -)"
           echo "versions=${versions}" >> "$GITHUB_OUTPUT"
           echo "added migration versions: ${versions:-<none>}"
       - name: migrations replay-safety (new migrations only)

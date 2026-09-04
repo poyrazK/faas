@@ -62,7 +62,7 @@ pkg/api/limits.go     EVERY plan quota/limit lives in this one table — never i
 guest/init            static Go PID1 inside every microVM
 guest/runners/{node22,python312}                              function runner shims
 images/               Dockerfiles for base/runner/builder images
-migrations/           goose, numbered, append-only (never edit a merged migration)
+migrations/           goose, legacy 1–590 then UTC timestamp IDs, append-only
 deploy/{ansible,systemd,nftables}
 docs/adr/
 ```

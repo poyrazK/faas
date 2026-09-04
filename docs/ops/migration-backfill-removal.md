@@ -1,5 +1,8 @@
 # Migration backfill removal
 
+> Historical runbook for the five-digit migration era. ADR-142 freezes that
+> namespace at version 590; new timestamp migrations do not use slot backfills.
+
 The v14 + v19 deploy-time backfill was a one-shot band-aid for prod
 DB drift that existed at the moment PR #104 merged. The deploy at
 run **29851097984** ran the heredoc end-to-end and recorded both

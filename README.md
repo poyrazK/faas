@@ -25,7 +25,7 @@ pkg/      shared libraries (api = the single limits table)
 guest/    code that runs inside every microVM (PID1 + runners)
 images/   Dockerfiles for shared base rootfs images
 deploy/   ansible bootstrap, systemd slices, nftables, ops scripts
-migrations/  goose, numbered, append-only
+migrations/  goose, legacy-sequential then timestamped, append-only
 docs/     spec, UX spec, ADRs
 ```
 

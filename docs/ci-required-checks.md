@@ -37,7 +37,7 @@ was red on `unit tests (pg shard 2)`).
 | `unit tests (pure Go shard 2 — light packages)`            | the rest of the race-enabled tree         | `ci.yml:~380`     |
 | `CodeQL`                                                    | CodeQL SARIF (security gate)              | `codeql.yml`      |
 | `supply-chain-scan (govulncheck high+)`                     | Go vulnerability scan (HIGH+)             | `ci.yml:~900`     |
-| `migrations (contiguity + apply)`                           | Migration slot races (issue #493+#496)    | `ci.yml:~160`     |
+| `migrations (IDs + apply)`                                 | Migration ID, replay, and ledger-set safety (ADR-142) | `ci.yml:~1030` |
 | `daemonunit-check (generated drift)`                        | `pkg/daemonunitspec/*.go` drift           | `ci.yml:~600`     |
 | `sqlc-check (generated drift)`                              | sqlc query drift                          | `ci.yml:~440`     |
 | `sdk-go build + test`                                       | sdk/go compilation + tests                | `ci.yml:~520`     |

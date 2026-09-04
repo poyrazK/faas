@@ -18,8 +18,8 @@ import (
 // (Postgres restart, transport hiccup between INSERT and the LISTEN
 // session). Five seconds is short enough that an operator watching
 // `migrate -wait-for-migrations` sees progress in human time, long
-// enough that the steady-state cost is one cheap MAX(version_id)
-// query per daemon per interval.
+// enough that the steady-state cost is one indexed ledger-set query per
+// daemon per interval.
 //
 // The cost is per-daemon and constant; at fleet sizes we plan to run
 // (single-digit control-plane boxes), that's negligible. If the
@@ -28,8 +28,7 @@ import (
 const waitPollInterval = 5 * time.Second
 
 // WaitForMigrationsApplied blocks until either:
-//   - the leader has applied every embedded migration (the
-//     goose_db_version ledger's MAX(version_id) >= maxEmbedded), or
+//   - the leader has applied every embedded migration ID, or
 //   - ctx is cancelled (caller-driven shutdown / CLI Ctrl-C).
 //
 // The non-leader path of `cmd/migrate -wait-for-migrations`
@@ -57,26 +56,26 @@ const waitPollInterval = 5 * time.Second
 //
 // Tests:
 //   - TestWaitForMigrationsApplied_NotifyUnblocks — leader inserts a
-//     row at MAX(version_id); waiter subscribed first sees the notify.
+//     required migration row; waiter subscribed first sees the notify.
 //   - TestWaitForMigrationsApplied_NoOpIfAlreadyCurrent — waiter's
-//     initial MAX(version_id) already >= maxEmbedded; returns
+//     initial ledger contains the complete required set; returns
 //     immediately, never subscribes.
 //   - TestWaitForMigrationsApplied_RespectsContextCancel — caller
 //     cancels mid-wait; helper returns ctx.Err() inside the deadline.
 func WaitForMigrationsApplied(
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	maxEmbedded int64,
+	expectedVersions []int64,
 	log *slog.Logger,
 ) error {
 	if pool == nil {
 		return fmt.Errorf("migrate: WaitForMigrationsApplied: nil pool")
 	}
-	if maxEmbedded <= 0 {
-		// maxEmbedded==0 means the binary ships no migrations
+	if len(expectedVersions) == 0 {
+		// An empty set means the binary ships no migrations
 		// (e.g. a development build before any DDL landed). Nothing
 		// to wait for; return success. This is distinct from
-		// maxEmbedded==1, where exactly one migration exists and we
+		// []int64{1}, where exactly one migration exists and we
 		// must confirm it has been applied.
 		return nil
 	}
@@ -88,12 +87,12 @@ func WaitForMigrationsApplied(
 	// got here. Common in dev loops where the operator reruns
 	// `migrate -wait-for-migrations` after the leader crashed and
 	// was restarted manually; the ledger is already at the head.
-	current, err := readMaxApplied(ctx, pool)
+	missing, err := readMissingAppliedMigrations(ctx, pool, expectedVersions)
 	if err != nil {
 		return fmt.Errorf("migrate: WaitForMigrationsApplied initial check: %w", err)
 	}
-	if current >= maxEmbedded {
-		log.Info("migrate: already current", "db_version", current, "max_embedded", maxEmbedded)
+	if len(missing) == 0 {
+		log.Info("migrate: already current", "required_count", len(expectedVersions))
 		return nil
 	}
 
@@ -112,7 +111,9 @@ func WaitForMigrationsApplied(
 	defer ticker.Stop()
 
 	log.Info("migrate: waiting for leader",
-		"current", current, "max_embedded", maxEmbedded,
+		"applied_count", len(expectedVersions)-len(missing),
+		"required_count", len(expectedVersions),
+		"missing_count", len(missing),
 		"channel", db.NotifyMigrationsApplied)
 
 	for {
@@ -131,19 +132,19 @@ func WaitForMigrationsApplied(
 			}
 			// Re-read the ledger. The trigger payload is the
 			// version_id as decimal text; parsing it adds no
-			// information over a direct MAX() query.
-			cur, err := readMaxApplied(ctx, pool)
+			// information over a direct ledger-set query.
+			missing, err := readMissingAppliedMigrations(ctx, pool, expectedVersions)
 			if err != nil {
 				return fmt.Errorf("migrate: WaitForMigrationsApplied recheck: %w", err)
 			}
-			if cur >= maxEmbedded {
+			if len(missing) == 0 {
 				log.Info("migrate: caught up via notify",
-					"db_version", cur, "max_embedded", maxEmbedded)
+					"required_count", len(expectedVersions))
 				return nil
 			}
 
 		case <-ticker.C:
-			cur, err := readMaxApplied(ctx, pool)
+			missing, err := readMissingAppliedMigrations(ctx, pool, expectedVersions)
 			if err != nil {
 				// Don't bail on a transient blip — the next tick
 				// or the next notify will re-check. Log and
@@ -152,26 +153,50 @@ func WaitForMigrationsApplied(
 					"err", err)
 				continue
 			}
-			if cur >= maxEmbedded {
+			if len(missing) == 0 {
 				log.Info("migrate: caught up via poll",
-					"db_version", cur, "max_embedded", maxEmbedded)
+					"required_count", len(expectedVersions))
 				return nil
 			}
 		}
 	}
 }
 
-// readMaxApplied returns MAX(version_id) of is_applied=true rows in
-// goose_db_version, or 0 if the ledger is empty (fresh DB). The
-// empty-ledger case is treated as "needs migration"; the leader
-// will insert the first row and the trigger will notify.
-func readMaxApplied(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
-	var v int64
-	err := pool.QueryRow(ctx,
-		`SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = true`,
-	).Scan(&v)
+// readMissingAppliedMigrations compares the binary's complete required set
+// with the applied ledger. Comparing maxima is insufficient after ADR-142:
+// migration 12:00 may merge after migration 15:00 and still need applying.
+func readMissingAppliedMigrations(ctx context.Context, pool *pgxpool.Pool, expected []int64) ([]int64, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT version_id
+		   FROM (
+		       SELECT DISTINCT ON (version_id) version_id, is_applied
+		         FROM goose_db_version
+		        WHERE version_id = ANY($1::bigint[])
+		        ORDER BY version_id, id DESC
+		   ) AS latest
+		  WHERE is_applied = true`, expected)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return v, nil
+	defer rows.Close()
+
+	applied := make(map[int64]struct{}, len(expected))
+	for rows.Next() {
+		var version int64
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		applied[version] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	missing := make([]int64, 0)
+	for _, version := range expected {
+		if _, ok := applied[version]; !ok {
+			missing = append(missing, version)
+		}
+	}
+	return missing, nil
 }

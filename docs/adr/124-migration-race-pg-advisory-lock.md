@@ -1,5 +1,10 @@
 # ADR-124 · Fleet migration race — session-scoped pg_advisory_lock
 
+> **ADR-142 amendment (2026-09-04):** the advisory-lock decision remains in
+> force. Readiness now compares exact migration IDs rather than maxima, and
+> the ledger trigger notifies on every applied insert to support out-of-order
+> timestamp migrations.
+
 - **Status:** accepted (2026-08-21)
 - **Issue:** multi-host safety cluster PR-1 / audit F2
 - **Decision:** Wrap `db.MigrateUp` in a session-scoped `pg_advisory_lock` on a constant bigint key, so concurrent daemons in a fleet serialise before any DDL runs. Companion `cmd/migrate -leader` mode (PR-2) is the preferred prod boot order; the advisory lock is the safety net for parallel boot.

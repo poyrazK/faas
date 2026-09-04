@@ -720,7 +720,10 @@ Nack semantics: queue → no-op; kafka → `SetOffset` rewind; nats → `NakWith
 
 ## 5. Data model (Postgres, authoritative excerpt)
 
-`sqlc` against this schema; migrations via `goose`, numbered, never edited after merge.
+`sqlc` against this schema; migrations via `goose`, append-only and never edited
+after merge. Versions 1–590 are frozen legacy sequence; ADR-142 uses UTC
+timestamp IDs for all new migrations and applies missing post-cutover IDs by
+ledger membership.
 
 ```sql
 create table accounts (
@@ -1200,7 +1203,7 @@ embeds `Invocation` and proxies the three accessors; the other six
 methods are inherited via embedding. Compile-time check lives at
 `pkg/sched/drain_compile_test.go::TestDispatch_ContractCompiles`.
 
-**Migration slot dance:** PR-B claims slots 517-519; PR-C claims 520-522;
+**Historical migration slot dance (pre-ADR-142):** PR-B claims slots 517-519; PR-C claims 520-522;
 PR-E claims 523-524. PR-A + PR-D ship with no migration (pure refactors).
 Real migrations land at 518, 519, 521, 522, 524; the `00XXX_reserve_slot.sql`
 fences are placeholders so a sibling PR branching from main does not

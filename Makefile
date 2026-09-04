@@ -237,8 +237,13 @@ coverage: ## Aggregate coverage/cover-shard*.out and print a sorted table per pa
 
 
 .PHONY: migrations-check
-migrations-check: ## Static migration-contiguity check (no Postgres needed) — PR #93 follow-up
+migrations-check: ## Static legacy-contiguity + timestamp-ID checks (no Postgres needed)
 	$(GO) test -tags no_pg -race -count=1 -run 'TestMigrations' ./migrations/...
+
+.PHONY: migration-new
+migration-new: ## Create timestamped migration: make migration-new NAME=add_job_priority
+	@test -n "$(NAME)" || (echo "NAME is required, e.g. make migration-new NAME=add_job_priority"; exit 1)
+	@$(GO) run ./cmd/migration-new -name "$(NAME)"
 
 .PHONY: grafana-jq-check
 grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e .). PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.
