@@ -276,14 +276,66 @@ func (r *VMMRouter) Client(nodeID string) VMM {
 // cache eviction is unconditional on entry — even a Refresh that
 // later errors out leaves an empty cache slot, so a transient PG
 // blip cannot prolong the use of a stale dialed client.
+// routerCloseGrace is how long an evicted vmmd client stays open before
+// Refresh closes it, so an RPC already in flight can finish.
+//
+// Sized above the longest per-call budget the engine hands out. The
+// longest is the snapshot capture, SnapshotBudgetFor at the largest
+// plan RAM — a Scale park uploads ~1 GB to the OCI registry — plus
+// headroom for the dial and response. Anything shorter reintroduces the
+// bug for the calls most expensive to lose.
+var routerCloseGrace = SnapshotBudgetFor(maxPlanRAMMB()) + 30*time.Second
+
+// maxPlanRAMMB is the largest per-instance RAM any plan allows. Derived
+// from the limits table rather than hardcoded so a future plan with more
+// memory widens the grace automatically instead of silently shortening
+// it relative to the budget.
+func maxPlanRAMMB() int {
+	max := 0
+	for _, plan := range api.Plans {
+		if limits, ok := api.LimitsFor(plan); ok && limits.RAMMB > max {
+			max = limits.RAMMB
+		}
+	}
+	return max
+}
+
 func (r *VMMRouter) Refresh(nodeID, targetURL string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if cli, ok := r.cache[nodeID]; ok && cli != nil {
-		if closer, ok := cli.(io.Closer); ok {
-			_ = closer.Close()
-		}
 		delete(r.cache, nodeID)
+		// Evict now, close LATER. Closing a grpc.ClientConn cancels
+		// every RPC in flight on it with
+		//   "rpc error: code = Canceled desc = grpc: the client
+		//    connection is closing"
+		// so an immediate Close here destroyed any long-running call
+		// that happened to be mid-flight.
+		//
+		// The comment above used to claim in-flight resolves "keep the
+		// client they already hold". They do hold the pointer — but the
+		// connection under it is already gone, so the RPC dies anyway.
+		//
+		// That was not theoretical. PauseAndSnapshot runs for tens of
+		// seconds (a Scale park uploads ~1 GB to ghcr.io), while
+		// compute_node_changed fires on every heartbeat-driven
+		// re-registration and on any operator UPDATE of the row. On
+		// 2026-09-04 an undisturbed prime died at 36s of a 195s budget
+		// with precisely that gRPC error, so no deployment could reach
+		// `live`.
+		//
+		// Deferring the close lets in-flight RPCs drain while new ones
+		// immediately get a freshly dialled client from the empty cache
+		// slot. The delay is bounded and the connection is always
+		// closed, so this does not leak.
+		go func(c any) {
+			timer := time.NewTimer(routerCloseGrace)
+			defer timer.Stop()
+			<-timer.C
+			if closer, ok := c.(io.Closer); ok {
+				_ = closer.Close()
+			}
+		}(cli)
 	}
 	// targets[nodeID] is written unconditionally — even when
 	// targetURL == "" — so the unknown-node path (resolveFor's

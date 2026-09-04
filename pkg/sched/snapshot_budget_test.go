@@ -87,3 +87,39 @@ func TestWatchdogSpares_SnapshotWithinScaledBudget(t *testing.T) {
 		t.Fatal("precondition: the row must still be inside its scaled budget")
 	}
 }
+
+// TestRouterCloseGraceExceedsLongestRPC pins the fix for the bug that
+// blocked every deployment on 2026-09-04.
+//
+// VMMRouter.Refresh used to Close() the evicted client immediately.
+// Closing a grpc.ClientConn cancels every RPC in flight on it, so a
+// compute_node_changed notify — which fires on ordinary re-registration
+// — destroyed any long call that happened to be running. An undisturbed
+// prime died at 36s of a 195s budget with
+// "grpc: the client connection is closing", so no deployment could
+// reach `live`.
+//
+// The grace must exceed the longest budget the engine hands out, or the
+// bug returns for exactly the calls most expensive to lose.
+func TestRouterCloseGraceExceedsLongestRPC(t *testing.T) {
+	longest := SnapshotBudgetFor(maxPlanRAMMB())
+	if routerCloseGrace <= longest {
+		t.Errorf("routerCloseGrace (%s) must exceed the longest per-call budget (%s); "+
+			"a shorter grace cancels in-flight snapshots on any node-change notify",
+			routerCloseGrace, longest)
+	}
+}
+
+// maxPlanRAMMB must track the limits table, not a stale literal — a new
+// plan with more memory has to widen the grace automatically.
+func TestMaxPlanRAMMBTracksLimits(t *testing.T) {
+	got := maxPlanRAMMB()
+	if got <= 0 {
+		t.Fatalf("maxPlanRAMMB() = %d, want the largest plan RAM", got)
+	}
+	for _, plan := range api.Plans {
+		if limits, ok := api.LimitsFor(plan); ok && limits.RAMMB > got {
+			t.Errorf("plan %s allows %d MB but maxPlanRAMMB() = %d", plan, limits.RAMMB, got)
+		}
+	}
+}
