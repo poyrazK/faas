@@ -1101,6 +1101,13 @@ func (l *Loop) runHeartbeat(ctx context.Context) {
 	if err := l.heartbeat.Tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		l.log.Warn("heartbeat tick error", "err", err)
 	}
+	// Recovery must be driven from here, not only from Heartbeat.Run:
+	// this loop is what production actually runs, and Run is reserved
+	// for standalone/test drivers. Wiring TickRecover only into Run
+	// left node recovery as dead code on the real path — verified
+	// against a live fleet, where a frozen-then-resumed vmmd stayed
+	// inactive for six minutes with the fix supposedly deployed.
+	l.heartbeat.TickRecover(ctx)
 }
 
 // runDiskDrift dispatches one sweep of the read-only /srv/fc/snap

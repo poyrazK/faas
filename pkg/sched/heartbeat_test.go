@@ -27,6 +27,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"testing"
@@ -666,5 +668,62 @@ func TestHeartbeat_RecoveryDropsDeletedNodes(t *testing.T) {
 	h.TickRecover(ctx)
 	if got := len(h.recoveringSnapshot()); got != 0 {
 		t.Errorf("recovering set = %d, want 0 (a vanished row must be dropped)", got)
+	}
+}
+
+// TestLoop_RunHeartbeatDrivesRecovery pins the WIRING, which is the
+// part that actually broke.
+//
+// TickRecover was originally called only from Heartbeat.Run. Production
+// does not use Run — cmd/schedd drives the sweep through Loop.Run, which
+// calls Loop.runHeartbeat. So the recovery logic shipped, passed its
+// unit tests, deployed to the fleet, and was dead code: a node frozen
+// and then resumed on a live cluster sat inactive for six minutes with
+// the "fix" running.
+//
+// The lesson is that testing Heartbeat.TickRecover directly proves the
+// algorithm and nothing about whether anything calls it. This test goes
+// through the same entry point production does.
+func TestLoop_RunHeartbeatDrivesRecovery(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName: %v", err)
+	}
+
+	dialer := &heartbeatFakeDialer{
+		pingErr: map[string]error{node.TargetURL: errors.New("vmmd frozen")},
+	}
+	h := NewHeartbeat(store, dialer, nil, nil)
+	loop := &Loop{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	loop.WithHeartbeat(h)
+
+	// Sweep 1 via the production entry point: node goes inactive.
+	loop.runHeartbeat(ctx)
+	down, err := store.ComputeNodeByID(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if down.Active {
+		t.Fatal("precondition: node should be inactive after a failed ping")
+	}
+
+	// It comes back.
+	dialer.mu.Lock()
+	dialer.pingErr = map[string]error{}
+	dialer.mu.Unlock()
+
+	// Sweep 2 via the same entry point. Tick alone cannot see the node
+	// (it lists ACTIVE rows), so this only passes if runHeartbeat also
+	// drives recovery.
+	loop.runHeartbeat(ctx)
+
+	back, err := store.ComputeNodeByID(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if !back.Active {
+		t.Error("node stayed inactive when driven through Loop.runHeartbeat; recovery is not wired into the path production actually runs")
 	}
 }
