@@ -113,7 +113,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode) (outPath str
 		case tar.TypeDir:
 			hdr.Name = name + "/"
 			hdr.Size = 0
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if inputSize < 0 || inputSize > capBytes {
 				return "", 0, findings, fmt.Errorf("git archive entry %q exceeds the %d MB per-file cap", name, capMB)
 			}
@@ -146,7 +146,6 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode) (outPath str
 		hdr.AccessTime = time.Time{}
 		hdr.ChangeTime = time.Time{}
 		hdr.PAXRecords = nil
-		hdr.Xattrs = nil
 		if err := tw.WriteHeader(hdr); err != nil {
 			return "", 0, findings, fmt.Errorf("write git archive header %q: %w", name, err)
 		}
@@ -219,7 +218,7 @@ func readGitArchiveIgnore(srcPath string) ([]gregaleignorePattern, error) {
 		if strings.TrimSuffix(hdr.Name, "/") != gregaleignoreFile {
 			continue
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		if hdr.Typeflag != tar.TypeReg {
 			return nil, fmt.Errorf("%s is not a regular file", gregaleignoreFile)
 		}
 		data, err := io.ReadAll(io.LimitReader(tr, maxGitignoreBytes+1))
@@ -237,9 +236,7 @@ func gitArchiveEntrySafe(name string) bool {
 	// Directory headers conventionally carry one trailing slash. Strip
 	// exactly that slash before checking components, while still rejecting
 	// empty interior components such as "a//b".
-	if strings.HasSuffix(name, "/") {
-		name = strings.TrimSuffix(name, "/")
-	}
+	name = strings.TrimSuffix(name, "/")
 	if name == "" || strings.Contains(name, "\\") || strings.ContainsRune(name, 0) || strings.HasPrefix(name, "/") {
 		return false
 	}
