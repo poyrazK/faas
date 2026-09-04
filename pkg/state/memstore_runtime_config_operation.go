@@ -91,18 +91,18 @@ func (m *MemStore) MarkRuntimeConfigOperationSucceeded(_ context.Context, id str
 }
 
 func (m *MemStore) MarkRuntimeConfigOperationFailed(_ context.Context, id, phase, errMsg string) error {
-	return m.finishRuntimeConfigOperation(id, RuntimeConfigOperationFailed, phase, errMsg)
+	return m.finishRuntimeConfigOperation(id, RuntimeConfigOperationFailed, phase, errMsg, false)
 }
 
 func (m *MemStore) MarkRuntimeConfigOperationBlocked(_ context.Context, id, phase, reason string) error {
-	return m.finishRuntimeConfigOperation(id, RuntimeConfigOperationBlocked, phase, reason)
+	return m.finishRuntimeConfigOperation(id, RuntimeConfigOperationBlocked, phase, reason, true)
 }
 
-func (m *MemStore) finishRuntimeConfigOperation(id string, status RuntimeConfigOperationStatus, phase, message string) error {
+func (m *MemStore) finishRuntimeConfigOperation(id string, status RuntimeConfigOperationStatus, phase, message string, allowPending bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op, ok := m.runtimeConfigOperations[id]
-	if !ok || op.Status != RuntimeConfigOperationRunning {
+	if !ok || (op.Status != RuntimeConfigOperationRunning && !(allowPending && op.Status == RuntimeConfigOperationPending)) {
 		return ErrRuntimeConfigNotFound
 	}
 	if len(message) > 1024 {

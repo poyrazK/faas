@@ -42,7 +42,7 @@ export class OperatorService {
    * controller is available.
    *
    * @returns OperatorRuntimeConfig Applied configuration entry
-   * @returns OperatorRuntimeConfigOperation Graceful apply operation queued
+   * @returns OperatorRuntimeConfigOperation Graceful apply operation queued or blocked
    * @throws ApiError
    */
   public static updateOperatorRuntimeConfig({

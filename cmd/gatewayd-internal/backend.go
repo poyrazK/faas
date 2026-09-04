@@ -24,6 +24,10 @@ type pgRouter struct {
 	// under it is a platform subdomain whose label is the app slug; anything
 	// else is a custom domain resolved through the domains table.
 	appsSuffix string
+	// tenantSurfacesEnabled is the durable runtime gate. Tests and legacy
+	// callers may leave it nil, in which case the historical environment
+	// accessor remains the fallback.
+	tenantSurfacesEnabled func() bool
 }
 
 var _ gateway.Router = pgRouter{}
@@ -39,7 +43,11 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	// surface miss falls through to the legacy custom_domains
 	// path. resolveTenantSurface owns the parser check + the
 	// routing so ResolveHost stays ≤ 50 lines.
-	if api.TenantSurfacesEnabled() {
+	enabled := api.TenantSurfacesEnabled()
+	if r.tenantSurfacesEnabled != nil {
+		enabled = r.tenantSurfacesEnabled()
+	}
+	if enabled {
 		app, ok, err := r.resolveTenantSurface(ctx, host)
 		if err != nil {
 			return gateway.App{}, false, err

@@ -42,21 +42,25 @@ type runtimeConfigDefinition struct {
 	Kind        string
 	Default     json.RawMessage
 	ApplyMode   state.RuntimeConfigApplyMode
-	Mutable     bool
-	Sensitive   bool
+	// ControllerEnabled is true only when this deployment has a live
+	// consumer for the non-hot apply workflow. Hot settings use the same
+	// field to advertise that their watcher/apply path is present.
+	ControllerEnabled bool
+	Mutable           bool
+	Sensitive         bool
 }
 
 var runtimeConfigCatalog = []runtimeConfigDefinition{
-	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, Mutable: true},
-	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, Mutable: true},
-	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, Mutable: true},
-	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, Mutable: true},
-	{Key: runtimeConfigAppErrors, Label: "Automatic app errors", Description: "Accept and aggregate gateway error reports; enabling the socket is a graceful daemon change.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyGraceful, Mutable: true},
-	{Key: runtimeConfigRekey, Label: "Background secret rekey", Description: "Run the background app-secret re-seal worker when host identities are ready; worker lifecycle is rolling.", Category: "Security", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyRolling, Mutable: true},
-	{Key: runtimeConfigHSTS, Label: "Strict transport security", Description: "Emit the HSTS response header on the customer-facing API.", Category: "Security", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, Mutable: true},
-	{Key: "request_read_timeout", Label: "Request read timeout", Description: "HTTP request body read timeout.", Category: "HTTP listener", Kind: "duration", Default: json.RawMessage(`"60s"`), ApplyMode: state.RuntimeConfigApplyGraceful, Mutable: true},
-	{Key: "request_write_timeout", Label: "Request write timeout", Description: "HTTP response write timeout.", Category: "HTTP listener", Kind: "duration", Default: json.RawMessage(`"300s"`), ApplyMode: state.RuntimeConfigApplyGraceful, Mutable: true},
-	{Key: "request_idle_timeout", Label: "Request idle timeout", Description: "HTTP keep-alive idle timeout.", Category: "HTTP listener", Kind: "duration", Default: json.RawMessage(`"120s"`), ApplyMode: state.RuntimeConfigApplyGraceful, Mutable: true},
+	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigAppErrors, Label: "Automatic app errors", Description: "Accept and aggregate gateway error reports; enabling the socket is a graceful daemon change.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
+	{Key: runtimeConfigRekey, Label: "Background secret rekey", Description: "Run the background app-secret re-seal worker when host identities are ready; worker lifecycle is rolling.", Category: "Security", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyRolling, ControllerEnabled: false, Mutable: true},
+	{Key: runtimeConfigHSTS, Label: "Strict transport security", Description: "Emit the HSTS response header on the customer-facing API.", Category: "Security", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: "request_read_timeout", Label: "Request read timeout", Description: "HTTP request body read timeout.", Category: "HTTP listener", Kind: "duration", Default: json.RawMessage(`"60s"`), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
+	{Key: "request_write_timeout", Label: "Request write timeout", Description: "HTTP response write timeout.", Category: "HTTP listener", Kind: "duration", Default: json.RawMessage(`"300s"`), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
+	{Key: "request_idle_timeout", Label: "Request idle timeout", Description: "HTTP keep-alive idle timeout.", Category: "HTTP listener", Kind: "duration", Default: json.RawMessage(`"120s"`), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
 	{Key: "listen_addr", Label: "API listen address", Description: "Bootstrap listener address; changes use a rolling listener transition.", Category: "Bootstrap", Kind: "string", Default: json.RawMessage(`"127.0.0.1:8081"`), ApplyMode: state.RuntimeConfigApplyRolling, Mutable: false},
 	{Key: "metrics_addr", Label: "Metrics listen address", Description: "Bootstrap metrics listener address; changes use a rolling listener transition.", Category: "Bootstrap", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyRolling, Mutable: false},
 	{Key: "billing_provider", Label: "Billing provider", Description: "Provider selection is changed through a rolling deployment with credential preflight.", Category: "Billing", Kind: "enum", Default: json.RawMessage(`"polar"`), ApplyMode: state.RuntimeConfigApplyRolling, Mutable: false},

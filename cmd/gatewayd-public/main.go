@@ -38,6 +38,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -65,6 +66,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -181,6 +183,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// sessions). We construct it here so the DNSHandoff wiring
 	// has a Store to call into. Mirrors cmd/gatewayd-internal/run.go:366.
 	pgStore := state.NewPgStore(pool)
+	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(hstsEnabledFromEnv))
+	httpsec.SetHSTSEnabled(hstsFlag.Load())
+	// gatewayd-public owns the outer response headers, so it must consume the
+	// same durable HSTS flag as apid and gatewayd-internal. This keeps a hot
+	// operator change from producing different security headers at the edge.
+	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS},
+		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			enabled, err := runtimeconfig.Bool(value)
+			if err != nil {
+				return err
+			}
+			if key == runtimeconfig.KeyHSTS {
+				hstsFlag.Store(enabled)
+				httpsec.SetHSTSEnabled(enabled)
+			}
+			return nil
+		}, log)
+	if err := watcher.Reconcile(ctx); err != nil {
+		log.Warn("gatewayd-public: initial runtime config reconcile failed", "err", err)
+	}
+	go func() {
+		if err := watcher.Run(ctx); err != nil && !runtimeconfig.IsContextDone(err) {
+			log.Error("gatewayd-public: runtime config watcher exited", "err", err)
+		}
+	}()
 
 	// Readiness probe. Single signal: PG ping. (certsync/internal-proxy
 	// signals are gone in plain-HTTP mode — once both listeners are
@@ -453,7 +480,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	// Public-facing handler: httpsec outer wrapper → budget middleware →
 	// trace mux → internal proxy.
-	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(hstsEnabledFromEnv))
+	// hstsFlag is seeded above and updated by the runtime-config watcher.
 	// Issue #555 PR-3: otelhttp.NewHandler extracts W3C traceparent
 	// from inbound headers and starts a server span per request; the
 	// emitted spans flow into the TraceRing (PR-2) + OTLP exporter.

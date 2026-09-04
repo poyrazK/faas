@@ -81,24 +81,24 @@ func (s *PgStore) MarkRuntimeConfigOperationSucceeded(ctx context.Context, id st
 	if effectiveValue == nil {
 		effectiveValue = json.RawMessage("null")
 	}
-	return s.finishRuntimeConfigOperation(ctx, id, RuntimeConfigOperationSucceeded, "complete", "", effectiveValue, appliedCount, targetCount)
+	return s.finishRuntimeConfigOperation(ctx, id, RuntimeConfigOperationSucceeded, "complete", "", effectiveValue, appliedCount, targetCount, false)
 }
 
 func (s *PgStore) MarkRuntimeConfigOperationFailed(ctx context.Context, id, phase, errMsg string) error {
 	if len(errMsg) > 1024 {
 		errMsg = errMsg[:1024]
 	}
-	return s.finishRuntimeConfigOperation(ctx, id, RuntimeConfigOperationFailed, phase, errMsg, nil, 0, 0)
+	return s.finishRuntimeConfigOperation(ctx, id, RuntimeConfigOperationFailed, phase, errMsg, nil, 0, 0, false)
 }
 
 func (s *PgStore) MarkRuntimeConfigOperationBlocked(ctx context.Context, id, phase, reason string) error {
 	if len(reason) > 1024 {
 		reason = reason[:1024]
 	}
-	return s.finishRuntimeConfigOperation(ctx, id, RuntimeConfigOperationBlocked, phase, reason, nil, 0, 0)
+	return s.finishRuntimeConfigOperation(ctx, id, RuntimeConfigOperationBlocked, phase, reason, nil, 0, 0, true)
 }
 
-func (s *PgStore) finishRuntimeConfigOperation(ctx context.Context, id string, status RuntimeConfigOperationStatus, phase, message string, effectiveValue json.RawMessage, appliedCount, targetCount int) error {
+func (s *PgStore) finishRuntimeConfigOperation(ctx context.Context, id string, status RuntimeConfigOperationStatus, phase, message string, effectiveValue json.RawMessage, appliedCount, targetCount int, allowPending bool) error {
 	if effectiveValue == nil {
 		effectiveValue = json.RawMessage("null")
 	}
@@ -108,6 +108,10 @@ func (s *PgStore) finishRuntimeConfigOperation(ctx context.Context, id string, s
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	statusPredicate := "status = 'running'"
+	if allowPending {
+		statusPredicate = "status IN ('pending', 'running')"
+	}
 	var key, scope, scopeID string
 	var version int64
 	if err := tx.QueryRow(ctx, `
@@ -118,7 +122,7 @@ func (s *PgStore) finishRuntimeConfigOperation(ctx context.Context, id string, s
 		    target_count = CASE WHEN $2 = 'succeeded' THEN $7 ELSE target_count END,
 		    failed_count = CASE WHEN $2 = 'succeeded' THEN 0 ELSE failed_count END,
 		    finished_at = now()
-		WHERE id = $1 AND status = 'running'
+		WHERE id = $1 AND `+statusPredicate+`
 		RETURNING config_key, scope, scope_id, config_version`,
 		id, string(status), phase, message, string(effectiveValue), appliedCount, targetCount).
 		Scan(&key, &scope, &scopeID, &version); err != nil {

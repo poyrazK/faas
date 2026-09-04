@@ -337,7 +337,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OperatorRuntimeConfig' }
         '202':
-          description: Graceful apply operation queued
+          description: Graceful apply operation queued or blocked
           headers:
             Location:
               schema: { type: string }
@@ -11116,7 +11116,7 @@ components:
       description: "One entry from the closed operator runtime-configuration catalog."
       type: object
       required: [key, label, description, category, kind, default_value,
-                 desired_value, effective_value, source, apply_mode, mutable,
+                 desired_value, effective_value, source, apply_mode, controller_enabled, mutable,
                  sensitive, status, version]
       properties:
         key: { type: string }
@@ -11129,6 +11129,7 @@ components:
         effective_value: {}
         source: { type: string, enum: [default_or_environment, operator] }
         apply_mode: { type: string, enum: [hot, graceful, rolling, break_glass] }
+        controller_enabled: { type: boolean }
         mutable: { type: boolean }
         sensitive: { type: boolean }
         status: { type: string, enum: [pending, applied, failed, blocked] }
@@ -15357,7 +15358,7 @@ components:
           example: onebox-faas/hello
         ref:
           type: string
-          minLength: 7
+          minLength: 1
           maxLength: 200
           description: |
             Commit ref — 40-char SHA, branch, or tag. api.github.com

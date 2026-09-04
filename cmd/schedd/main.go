@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -35,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
@@ -515,29 +517,57 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
 	engine.WithNodeRegistry(nodeRegistry)
-	// ADR-098 PR-D: connection-aware upstream affinity. Wired
-	// when FAAS_UPSTREAM_AFFINITY=1 is set (default OFF per the
-	// cluster outline's rollout gate — flip PR-D last, one
-	// month after PR-C). When OFF, the engine's upstreamAffinity
-	// stays nil and the chooser falls back to the legacy
-	// tie-break (Score returns ok=false → Request.PreferredRegion
-	// stays empty). FAAS_UPSTREAM_AFFINITY_TTL is operator-
-	// overridable (default api.UpstreamAffinityTTL = 30 s, matching
-	// the meterd probe cadence so the cache is never more than
-	// one probe-cycle stale).
-	if os.Getenv("FAAS_UPSTREAM_AFFINITY") != "" {
-		ttl := api.UpstreamAffinityTTL
-		if v := os.Getenv("FAAS_UPSTREAM_AFFINITY_TTL"); v != "" {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				ttl = d
-			} else {
-				log.Warn("FAAS_UPSTREAM_AFFINITY_TTL parse failed; using default", "got", v, "err", err)
-			}
+	// ADR-098 PR-D: connection-aware upstream affinity. The
+	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
+	// fallback; the durable data-placement flag can switch the
+	// chooser without restarting schedd. When disabled, the
+	// engine's upstreamAffinity stays nil and the chooser falls
+	// back to the legacy tie-break. FAAS_UPSTREAM_AFFINITY_TTL is
+	// operator-overridable (default api.UpstreamAffinityTTL = 30 s,
+	// matching the meterd probe cadence so the cache is never more
+	// than one probe-cycle stale).
+	ttl := api.UpstreamAffinityTTL
+	if v := os.Getenv("FAAS_UPSTREAM_AFFINITY_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			ttl = d
+		} else {
+			log.Warn("FAAS_UPSTREAM_AFFINITY_TTL parse failed; using default", "got", v, "err", err)
 		}
-		engine.WithUpstreamAffinity(sched.NewUpstreamAffinity(ttl, store))
+	}
+	upstreamAffinity := sched.NewUpstreamAffinity(ttl, store)
+	upstreamAffinityEnabled := runtimeconfig.NewBoolFlag(os.Getenv("FAAS_UPSTREAM_AFFINITY") != "")
+	if upstreamAffinityEnabled.Load() {
+		engine.WithUpstreamAffinity(upstreamAffinity)
 	} else {
 		log.Info("schedd: upstream affinity disabled — FAAS_UPSTREAM_AFFINITY unset; using legacy chooser")
 	}
+	// ADR-132: data placement is a fleet flag, not an apid-only toggle.
+	// schedd keeps the affinity cache ready and switches the engine's pointer
+	// atomically when the acknowledged runtime value changes.
+	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
+		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			enabled, err := runtimeconfig.Bool(value)
+			if err != nil {
+				return err
+			}
+			if key == runtimeconfig.KeyDataPlacement {
+				upstreamAffinityEnabled.Store(enabled)
+				if enabled {
+					engine.WithUpstreamAffinity(upstreamAffinity)
+				} else {
+					engine.WithUpstreamAffinity(nil)
+				}
+			}
+			return nil
+		}, log)
+	if err := watcher.Reconcile(ctx); err != nil {
+		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
+	}
+	go func() {
+		if err := watcher.Run(ctx); err != nil && !runtimeconfig.IsContextDone(err) {
+			log.Error("schedd: runtime config watcher exited", "err", err)
+		}
+	}()
 
 	// Issue #555 PR-6 — per-deployment 100% sampling window.
 	//

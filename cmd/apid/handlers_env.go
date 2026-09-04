@@ -291,6 +291,20 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		api.WriteProblem(w, api.ErrCapacity("could not persist env var"))
 		return
 	}
+	// A snapshot contains the guest process environment in its memory image.
+	// Invalidate every non-stale snapshot before acknowledging the mutation so
+	// the next wake cold-boots with the new value instead of restoring an old
+	// process image. Running instances remain unchanged; live reload is an
+	// explicit opt-in application feature, not an OS environment mutation.
+	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	if err != nil {
+		s.log.Error("env set: invalidate snapshots", "app", app.Slug, "err", err)
+		s.audit.Emit(r.Context(), "env.snapshot_invalidation_failed", &acct.ID, map[string]any{
+			"app_id": app.ID, "scope": scope, "name": key,
+		})
+		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+		return
+	}
 	// ADR-098 PR-B (C4): when the data-placement flag is on,
 	// run the env-classifier on the just-persisted row. The
 	// classifier (pkg/data/infer.go) extracts host + port from
@@ -384,9 +398,10 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 	// the change to a specific environment. `scope="default"` is
 	// the pre-PR-B shape byte-for-byte — this is purely additive.
 	s.audit.Emit(r.Context(), "env.set", &acct.ID, map[string]any{
-		"app_id": app.ID,
-		"scope":  scope,
-		"name":   key,
+		"app_id":                app.ID,
+		"scope":                 scope,
+		"name":                  key,
+		"snapshots_invalidated": invalidated,
 	})
 	writeJSON(w, http.StatusOK, struct {
 		Key   string `json:"key"`
@@ -469,6 +484,15 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not delete env var"))
 		return
 	}
+	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	if err != nil {
+		s.log.Error("env delete: invalidate snapshots", "app", app.Slug, "err", err)
+		s.audit.Emit(r.Context(), "env.snapshot_invalidation_failed", &acct.ID, map[string]any{
+			"app_id": app.ID, "scope": scope, "name": key,
+		})
+		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+		return
+	}
 	s.log.Info("env deleted",
 		"app", app.Slug,
 		"scope", logsanitize.Field(scope),
@@ -480,11 +504,62 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// env.set). Pre-PR-B audit consumers see an extra field but
 	// no semantic change to the existing ones.
 	s.audit.Emit(r.Context(), "env.deleted", &acct.ID, map[string]any{
-		"app_id": app.ID,
-		"scope":  scope,
-		"name":   key,
+		"app_id":                app.ID,
+		"scope":                 scope,
+		"name":                  key,
+		"snapshots_invalidated": invalidated,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// invalidateAppSnapshots marks all currently restorable snapshots for every
+// deployment of the app stale. Snapshot rows are a cache of a booted process,
+// and an app may have more than one live deployment during a traffic split or
+// rollback window. Invalidating only the newest deployment could therefore
+// resurrect an older process carrying the previous environment. Repeated
+// LatestSnapshotForTier calls are intentional: the state.Store interface
+// exposes the latest-row primitive, and each successful mark removes that row
+// from the next lookup.
+func (s *server) invalidateAppSnapshots(ctx context.Context, appID string) (int, error) {
+	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if errors.Is(err, state.ErrNotFound) {
+		// Apps without a deployment have no snapshot cache to invalidate.
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("list deployments: %w", err)
+	}
+	invalidated := 0
+	for _, deployment := range deployments {
+		for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+			for {
+				snap, snapErr := s.store.LatestSnapshotForTier(ctx, deployment.ID, tier)
+				if errors.Is(snapErr, state.ErrNotFound) {
+					break
+				}
+				if snapErr != nil {
+					return invalidated, fmt.Errorf("latest %s snapshot for deployment %s: %w", tier, deployment.ID, snapErr)
+				}
+				if snap.ID == "" {
+					break
+				}
+				markErr := s.store.MarkSnapshotStale(ctx, snap.ID)
+				if markErr != nil && !errors.Is(markErr, state.ErrNotFound) {
+					return invalidated, fmt.Errorf("mark %s snapshot %s stale: %w", tier, snap.ID, markErr)
+				}
+				if markErr == nil {
+					invalidated++
+				} else {
+					// A concurrent park/GC may remove the row between the
+					// latest lookup and this update. It is already no longer
+					// restorable; stop this tier's walk to avoid retrying a
+					// row whose state changed underneath us.
+					break
+				}
+			}
+		}
+	}
+	return invalidated, nil
 }
 
 // envExistsInScope checks if a (app_id, scope, key) row exists for
