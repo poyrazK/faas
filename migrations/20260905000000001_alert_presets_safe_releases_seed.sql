@@ -81,9 +81,9 @@ INSERT INTO alert_presets (
     (
         'safedeploy_audit_emit_failing',
         'Safedeploy audit emit failing',
-        'Fires when safedeploy_orchestrator_audit_emit_failed_total rate > 0.1/sec for 10 min. Critical. Likely cause: deployment_audit_kind_chk widened-missed (PR-A closes this); the underlying kind widening must have shipped before this alert can stay quiet.',
+        'Fires when safedeploy_orchestrator_audit_emit_failed_total rate > 0.1/sec for 15 min. Critical. Likely cause: deployment_audit_kind_chk widened-missed (PR-A closes this); the underlying kind widening must have shipped before this alert can stay quiet.',
         'deployment',
-        'safedeploy_audit_emit_failing', 'gt', 0.1, '10m',
+        'safedeploy_audit_emit_failing', 'gt', 0.1, '15m',
         15, true, 'scale'
     ),
     -- infrastructure: 90-day audit GC failing
@@ -99,9 +99,9 @@ INSERT INTO alert_presets (
     (
         'canary_fleet_in_flight_high',
         'Canary fleet in-flight high',
-        'Fires when safedeploy_in_flight_rollouts > 50 for 10 min. Warning. Operator back-pressure signal: more than 50 canaries in flight fleet-wide. Backed by pkg/safedeploy/orchestrator.go::Once gauge sample after SafedeployListPendingRollouts.',
+        'Fires when safedeploy_in_flight_rollouts > 50 for 15 min. Warning. Operator back-pressure signal: more than 50 canaries in flight fleet-wide. Backed by pkg/safedeploy/orchestrator.go::Once gauge sample after SafedeployListPendingRollouts.',
         'deployment',
-        'canary_fleet_in_flight_high', 'gt', 50.0, '10m',
+        'canary_fleet_in_flight_high', 'gt', 50.0, '15m',
         15, true, 'scale'
     )
 ON CONFLICT (name) DO NOTHING;
