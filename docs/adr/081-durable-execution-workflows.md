@@ -207,10 +207,10 @@ PR (per ADR-080) uses.
 
 The DSL ships as a sibling JSON field on `CreateDeploymentRequest`
 (mirroring the existing `Sidecars` field at `pkg/api/dto.go:631`).
-There is no `gregale.yaml` parser today — the existing declarative
-surface is JSON-tagged fields on the deploy DTO. A future
-`gregale.yaml` parser is a possible follow-up (deferred — see
-§"Out of scope").
+The same shape is available in the CLI's `gregale.yaml` manifest and is
+converted to the JSON-tagged deploy shape. Duration values follow
+`time.ParseDuration` with a fixed 24-hour `d` suffix for workflow examples
+such as `7d`.
 
 ```jsonc
 {
@@ -632,9 +632,9 @@ first, both consumers follow.
 - Workflow signal / query primitives (Temporal-style) — use the
   `events` table directly via a sidecar if needed.
 - Persistent state across wakes — rejected (breaks the niche).
-- `gregale.yaml` parser introduction — deferred. Current surface
-  is JSON-tagged deploy fields; a future `gregale.yaml` is a
-  possible follow-up.
+- A richer workflow management UI / runtime deployment path is deferred
+  until the stacked workflow runtime change lands; `gregale.yaml` remains
+  an additive CLI convenience over the JSON deploy shape.
 - Per-app wake rate-limit primitive — Risk #3; either lands as a
   pre-PR (per ADR-080 Risk #1 resolution (a)) or as part of the
   migration PR.

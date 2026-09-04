@@ -23,6 +23,7 @@ package main
 // stable, machine-readable error code from the CLI or the dashboard.
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -58,6 +59,10 @@ func validateManifest(dir string, acctPlan api.Plan) (*gregalemanifest.Manifest,
 	if prob := validateManifestAgainstPlan(m, acctPlan); prob != nil {
 		return nil, prob
 	}
+	if err := m.ValidateForPlan(acctPlan); err != nil {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+			"Invalid manifest", err.Error())
+	}
 	return m, nil
 }
 
@@ -85,47 +90,64 @@ func validateManifestBytes(b []byte, acctPlan api.Plan) (*gregalemanifest.Manife
 		// shipping a blank blob. Treat as absent, not error.
 		return nil, nil
 	}
-	// Structural validation (kind/slug/etc). Per-plan tier
-	// gating is delegated to validateManifestAgainstPlan below —
-	// the gregalemanifest package is per-machine (CLI-side) and
-	// doesn't carry plan context. The earlier ValidatePlan
-	// call here (//code-review PR #1202 finding #4) referred to
-	// a method that doesn't exist on this struct (only
-	// gregalemanifest.Manifest.Validate exists); reverted to
-	// Validate + the explicit plan-tier gate already running
-	// below. The plan-tier check is the one the customer's RFC
-	// 7807 response carries the cap for.
-	if err := m.Validate(); err != nil {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
-			"Invalid manifest", err.Error())
-	}
 	if prob := validateManifestAgainstPlan(m, acctPlan); prob != nil {
 		return nil, prob
+	}
+	if err := m.ValidateForPlan(acctPlan); err != nil {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+			"Invalid manifest", err.Error())
 	}
 	return m, nil
 }
 
-// validateManifestAgainstPlan applies the per-plan tier gate the
+// validateManifestAgainstPlan applies the per-plan tier gates the
 // CLI doesn't need. Mirrors the createCron gate pattern at
-// handlers_ext.go:1683-1687 — if any trigger in the manifest is of
-// a kind the plan doesn't unlock, the gate fires BEFORE the store
+// handlers_ext.go:1683-1687 — if a manifest contains a trigger or
+// workflow the plan doesn't unlock, the gate fires BEFORE the store
 // is touched.
 //
-// Today the gate is binary (triggers allowed or not, controlled by
-// Plan.TriggersAllowed() — Free has it off, Hobby+ on). When the
-// per-kind quotas land (PR-B in the trigger cluster), this
-// function will grow per-kind counts against TriggerLimitPerApp /
+// Trigger gating is binary (controlled by Plan.TriggersAllowed() —
+// Free has it off, Hobby+ on); workflow gating additionally checks
+// the definition count and DAG limits in validateWorkflowDefinitions...
+// When the per-kind trigger quotas land (PR-B in the trigger cluster),
+// this function will grow per-kind counts against TriggerLimitPerApp /
 // TriggerLimitPerAccount / TriggerBatchSizeMax.
 func validateManifestAgainstPlan(m *gregalemanifest.Manifest, acctPlan api.Plan) *api.Problem {
 	if m == nil {
 		return nil
 	}
-	if !acctPlan.TriggersAllowed() {
+	if prob := validateWorkflowDefinitionsAgainstPlan(m.Workflows, acctPlan); prob != nil {
+		return prob
+	}
+	if len(m.Triggers) > 0 && !acctPlan.TriggersAllowed() {
 		// The CLI is per-machine, so the CLI doesn't see this gate;
 		// the apid is per-account, so a Free customer posting a
 		// manifest with any trigger gets the upsell here rather
 		// than per-trigger 402s during the deploy loop.
 		return api.ErrPlanTriggersNotAllowed(acctPlan)
+	}
+	return nil
+}
+
+// validateWorkflowDefinitionsAgainstPlan is shared by manifest validation
+// and the JSON deployment boundary. It is deliberately separate from the
+// trigger gate: a manifest may contain only workflows, and a Free account
+// must still receive the workflow-specific 402 rather than a trigger error.
+func validateWorkflowDefinitionsAgainstPlan(workflows []api.WorkflowSpec, plan api.Plan) *api.Problem {
+	if len(workflows) == 0 {
+		return nil
+	}
+	if !plan.WorkflowsAllowed() {
+		return api.ErrPlanWorkflowsNotAllowed(plan)
+	}
+	if max := plan.WorkflowMaxPerApp(); max > 0 && len(workflows) > max {
+		return api.ErrPlanWorkflowsQuota(plan, max, len(workflows))
+	}
+	for i, workflow := range workflows {
+		if _, err := api.ValidateWorkflowDAG(workflow, plan); err != nil {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+				"Invalid workflow", fmt.Sprintf("workflows[%d]: %v", i, err))
+		}
 	}
 	return nil
 }

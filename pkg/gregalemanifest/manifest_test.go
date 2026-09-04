@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestLoad_NoManifest(t *testing.T) {
@@ -36,6 +39,58 @@ func TestLoad_YAMLPresent(t *testing.T) {
 	}
 	if len(m.Triggers) != 0 {
 		t.Errorf("triggers = %+v, want empty", m.Triggers)
+	}
+}
+
+func TestLoad_WorkflowDSL(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`workflows:
+  - name: process_order
+    trigger:
+      type: manual
+    steps:
+      - name: charge
+        run: charge_stripe
+        input:
+          order_id: o-1
+        retry:
+          max_attempts: 3
+          backoff: exponential
+        timeout: 30s
+`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !ok || len(m.Workflows) != 1 {
+		t.Fatalf("loaded manifest = %+v, want one workflow", m)
+	}
+	wf := m.Workflows[0]
+	if wf.Trigger == nil || wf.Trigger.Type != "manual" {
+		t.Fatalf("trigger = %+v, want manual", wf.Trigger)
+	}
+	step := wf.Steps[0]
+	if step.Run != "charge_stripe" || string(step.Input) != `{"order_id":"o-1"}` {
+		t.Fatalf("step = %+v, input = %s", step, step.Input)
+	}
+	if step.Timeout != 30*time.Second {
+		t.Fatalf("timeout = %v, want 30s", step.Timeout)
+	}
+	if err := m.ValidateForPlan(api.PlanHobby); err != nil {
+		t.Fatalf("ValidateForPlan: %v", err)
+	}
+}
+
+func TestValidateForPlan_WorkflowsArePaidOnly(t *testing.T) {
+	m := &Manifest{Workflows: []api.WorkflowSpec{{
+		Name:  "free-workflow",
+		Steps: []api.WorkflowStepSpec{{Name: "main", Run: "do_work"}},
+	}}}
+	if err := m.ValidateForPlan(api.PlanFree); err == nil || !strings.Contains(err.Error(), "does not allow workflows") {
+		t.Fatalf("error = %v, want paid-only workflow error", err)
 	}
 }
 

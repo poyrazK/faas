@@ -748,8 +748,34 @@ type manifestCronClient interface {
 	Whoami(ctx context.Context) (api.AccountResponse, error)
 }
 
+// validateWorkflowManifestForDeploy performs the workflow-only preflight
+// before the CLI creates or fetches the target app. The current PR exposes
+// the workflow schema and state foundation, but not the runtime deployment
+// persistence endpoint, so returning an explicit error here prevents a
+// workflow manifest from leaving behind an app with no corresponding deploy.
+func validateWorkflowManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) error {
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil || len(m.Workflows) == 0 {
+		return nil
+	}
+	acct, err := client.Whoami(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve account plan for workflow manifest: %w", err)
+	}
+	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
+		return err
+	}
+	return errors.New("workflow declarations are not deployable by this client yet; use the workflow runtime deployment endpoint")
+}
+
 // deployManifestTriggers fans the manifest's `triggers:` block out to
-// apid via the existing CreateCron wire. Issue #791 PR-C / ADR-090.
+// apid via the existing CreateCron wire. Workflow declarations are
+// validated here but fail closed until the workflow runtime deployment
+// persistence endpoint is available. Issue #791 PR-C / ADR-090 and
+// ADR-081.
 //
 // No manifest → no-op (returns nil). Bad manifest → wrapped error
 // from gregalemanifest.Validate, surfaced verbatim by printErr. The
@@ -773,6 +799,20 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 	}
 	if err := m.Validate(); err != nil {
 		return err
+	}
+	if len(m.Workflows) > 0 {
+		// PR-1279 adds the workflow schema and state foundation. The
+		// runtime/deployment persistence surface is delivered by the
+		// stacked workflow runtime change, so do not let this CLI report a
+		// successful deploy while dropping the declarations on the floor.
+		acct, whoErr := client.Whoami(ctx)
+		if whoErr != nil {
+			return fmt.Errorf("resolve account plan for workflow manifest: %w", whoErr)
+		}
+		if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
+			return err
+		}
+		return errors.New("workflow declarations are not deployable by this client yet; use the workflow runtime deployment endpoint")
 	}
 
 	// Filter to triggers for THIS app's slug. Triggers targeting
@@ -1615,6 +1655,9 @@ func cmdDeployTarball(args []string) int {
 	}
 
 	createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr)
+	if err := validateWorkflowManifestForDeploy(ctx, client, cwd); err != nil {
+		return printErr("Workflow manifest validation failed", err)
+	}
 	if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr); err != nil {
 		return printErr("Could not create or fetch app", err)
 	}

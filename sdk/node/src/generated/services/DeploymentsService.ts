@@ -31,6 +31,10 @@ export class DeploymentsService {
    * - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
    * - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
    * Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
+   * The optional `workflows` array is plan-gated and schema-validated;
+   * until workflow runtime persistence is enabled, a request containing
+   * workflow definitions returns `501 workflow_deployment_unavailable`
+   * rather than accepting and dropping them.
    *
    * @returns DeploymentResponse The deployment whose build has been accepted and queued.
    * @throws ApiError
@@ -76,6 +80,7 @@ export class DeploymentsService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        501: `Workflow definitions are valid but workflow runtime deployment persistence is not enabled yet.`,
       },
     });
   }
