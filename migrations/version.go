@@ -14,7 +14,7 @@ const (
 	// keeps filenames sortable while making cross-PR collisions vanishingly
 	// unlikely without reserving a global slot.
 	TimestampMigrationMinVersion    int64 = 20_260_904_000_000_000
-	TimestampMigrationVersionDigits       = 17
+	TimestampMigrationVersionDigits int   = 17
 )
 
 // TimestampMigrationVersion returns a UTC YYYYMMDDHHMMSSmmm migration ID.

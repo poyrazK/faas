@@ -1,0 +1,16 @@
+ignore:
+  # Grype matches Go vulnerabilities at module granularity and therefore sees
+  # these x/crypto/ssh findings in binaries that import only x/crypto/argon2.
+  # `go list -deps ./...` contains no x/crypto/ssh package, and the reachable
+  # govulncheck CI gate passes. Pinning the exception to v0.54.0 makes it expire
+  # when the module is upgraded; if SSH becomes reachable, govulncheck blocks.
+  - vulnerability: GO-2026-6354
+    package:
+      name: golang.org/x/crypto
+      version: v0.54.0
+      type: go-module
+  - vulnerability: GO-2026-6355
+    package:
+      name: golang.org/x/crypto
+      version: v0.54.0
+      type: go-module
