@@ -19,11 +19,18 @@ func TestApidProxyDoesNotExposeMetricsDiscovery(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	})
 	h := newApidProxy(upstream.URL, next, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	req := httptest.NewRequest(http.MethodGet, "/v1/internal/metrics/targets", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404", rec.Code)
+	for _, path := range []string{
+		"/v1/internal/metrics/targets",
+		"/v1/internal/metrics/promtail-targets",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status=%d, want 404", rec.Code)
+			}
+		})
 	}
 	if upstreamHits != 0 {
 		t.Fatalf("upstream hits=%d, want 0", upstreamHits)

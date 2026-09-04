@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const computeMetricsDiscoveryPath = "/v1/internal/metrics/targets"
+const (
+	computeMetricsDiscoveryPath  = "/v1/internal/metrics/targets"
+	promtailMetricsDiscoveryPath = "/v1/internal/metrics/promtail-targets"
+)
 
 // prometheusTargetGroup is the HTTP service-discovery wire shape described by
 // Prometheus. One group is emitted per compute node so a node replacement
@@ -26,6 +29,19 @@ type prometheusTargetGroup struct {
 // gateway proxy rejects the same path before its public /v1 forwarding rule,
 // and the apid listener is loopback by default.
 func (s *server) computeMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "gatewayd-internal", computeMetricsTarget)
+}
+
+// promtailMetricsDiscovery serves the control-plane Prometheus HTTP-SD
+// endpoint for Promtail metrics. It reuses the active compute-node registry
+// but rewrites each node's private gateway port to Promtail's private metrics
+// port, keeping node replacement and drain behavior identical to the gateway
+// scrape.
+func (s *server) promtailMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "promtail", promtailMetricsTarget)
+}
+
+func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job string, targetFn func(string) (string, bool)) {
 	if !isLoopbackRemote(r.RemoteAddr) {
 		http.NotFound(w, r)
 		return
@@ -51,10 +67,10 @@ func (s *server) computeMetricsDiscovery(w http.ResponseWriter, r *http.Request)
 			// legacy single-box state. It is not a scrape target yet.
 			continue
 		}
-		target, ok := computeMetricsTarget(*node.GatewayTargetURL)
+		target, ok := targetFn(*node.GatewayTargetURL)
 		if !ok {
 			if s.log != nil {
-				s.log.Warn("ignoring invalid compute metrics target", "node", node.Name)
+				s.log.Warn("ignoring invalid metrics discovery target", "job", job, "node", node.Name)
 			}
 			continue
 		}
@@ -66,7 +82,7 @@ func (s *server) computeMetricsDiscovery(w http.ResponseWriter, r *http.Request)
 		}
 
 		labels := map[string]string{
-			"job":     "gatewayd-internal",
+			"job":     job,
 			"node":    node.Name,
 			"node_id": node.ID,
 		}
@@ -109,6 +125,22 @@ func computeMetricsTarget(raw string) (string, bool) {
 		return "", false
 	}
 	return net.JoinHostPort(host, port), true
+}
+
+// promtailMetricsTarget converts a compute node's canonical gateway target
+// into the same host on Promtail's fixed metrics port. The gateway endpoint
+// is the registry's stable private host identity; only the scrape port is
+// different.
+func promtailMetricsTarget(raw string) (string, bool) {
+	target, ok := computeMetricsTarget(raw)
+	if !ok {
+		return "", false
+	}
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
+		return "", false
+	}
+	return net.JoinHostPort(host, "9080"), true
 }
 
 func isLoopbackRemote(remote string) bool {

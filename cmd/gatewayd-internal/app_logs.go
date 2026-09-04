@@ -190,7 +190,7 @@ func (h *AppLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct sta
 
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
-	h.serveAppLogs(r.Context(), w, flusher, app.ID, sinceSeq, sinceWrittenAt, deploymentID, level, grep)
+	h.serveAppLogsWithIdentity(r.Context(), w, flusher, app.ID, acct.ID, app.ID, sinceSeq, sinceWrittenAt, deploymentID, level, grep)
 }
 
 // serveAppLogs is the receive-pump body. Mirrors the legacy
@@ -205,6 +205,10 @@ func (h *AppLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct sta
 // level + grep (issue #309 / tier-2 DX) are forwarded to
 // schedd as-is; both empty = no filter at the schedd sink.
 func (h *AppLogsHandler) serveAppLogs(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, level string, grep string) {
+	h.serveAppLogsWithIdentity(ctx_, w, flusher, appID, "", appID, sinceSeq, sinceWrittenAt, deploymentID, level, grep)
+}
+
+func (h *AppLogsHandler) serveAppLogsWithIdentity(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, appIdentity string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, level string, grep string) {
 	// Phase 2 / Gate A: resolve the owner schedd for appID via
 	// the per-node router. The fallback path (legacy single
 	// schedd) is gone — the router covers the single-box
@@ -351,9 +355,11 @@ func (h *AppLogsHandler) serveAppLogs(ctx_ context.Context, w http.ResponseWrite
 			// matching SSE envelope; the stream continues after a
 			// gap with the surviving replay and the live tail.
 			if r.frame.IsGap {
+				apislogs.LogAppLogFrame(h.Log, r.frame, accountID, appIdentity, deploymentID)
 				apislogs.RenderAppLogGap(w, flusher, r.frame, appID, h.Ops)
 				continue
 			}
+			apislogs.LogAppLogFrame(h.Log, r.frame, accountID, appIdentity, deploymentID)
 			apislogs.RenderAppLogEvent(w, flusher, r.frame, appID, h.Ops)
 		}
 	}

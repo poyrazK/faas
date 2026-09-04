@@ -53,6 +53,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/openapi.yaml":             true, // metadata
 	"GET /v1/openapi.json":             true, // metadata
 	"GET /v1/internal/metrics/targets": true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	"POST /v1/cli-auth/code":           true, // anonymous device-code (CLI uses wrapper)
 	"POST /v1/cli-auth/exchange":       true,
 	"GET /status/slo.json":             true,

@@ -21,6 +21,65 @@
 
 groups:
   # ────────────────────────────────────────────────────────────────────
+  # Off-host log pipeline health (issue #274).
+  # Promtail exposes its own counters; these recording rules give the
+  # platform a stable, backend-neutral contract for dashboards and alerts.
+  # `loki_send_total` is intentionally an aggregate across Promtail targets,
+  # while the alerts retain the Prometheus `instance` label for triage.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_loki_pipeline
+    interval: 30s
+    rules:
+      - record: loki_send_total
+        expr: sum by (instance) (promtail_sent_entries_total)
+
+      - record: loki_drop_total
+        expr: sum by (instance) (promtail_dropped_entries_total)
+
+      - alert: FaasLokiPromtailDown
+        expr: up{job="promtail"} == 0
+        for: 10m
+        labels:
+          severity: page
+          component: promtail
+          family: loki_pipeline
+        annotations:
+          summary: "Promtail is down on {{ $labels.instance }}"
+          description: "The FaaS host's journal shipper has not been scrapeable for 10m. Platform and customer-context logs may remain only on the FaaS host. Check systemctl status promtail and the host's private route to Loki."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
+
+      - alert: FaasLokiShippingDropped
+        expr: increase(promtail_dropped_entries_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: page
+          component: promtail
+          family: loki_pipeline
+        annotations:
+          summary: "Promtail dropped log entries on {{ $labels.instance }}"
+          description: "Promtail exhausted its bounded retry budget and dropped journal entries during the last 10m. Investigate Loki reachability, mTLS expiry, and disk/journal pressure before the local journal rotates."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
+
+      - alert: FaasLokiShippingStalled
+        expr: |
+          (
+            sum by (instance) (increase(promtail_journal_target_lines_total[10m])) > 0
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(promtail_sent_entries_total[10m])) == 0
+          )
+        for: 10m
+        labels:
+          severity: warn
+          component: promtail
+          family: loki_pipeline
+        annotations:
+          summary: "Promtail is reading journal entries but not shipping on {{ $labels.instance }}"
+          description: "Promtail read journal lines but recorded no successful Loki sends for 10m. This is the backpressure signal; check the dropped-entry counter and the Loki mTLS/client path."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
   # Traffic anomaly recording rules (issue #303, ADR-039).
   # 3-day rolling baseline vs current 5m window. Series:
   #   faas_apid_request_rate_5m:by_route            current rate (reqps)

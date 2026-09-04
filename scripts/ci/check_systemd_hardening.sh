@@ -16,6 +16,8 @@ units=(
   "builderd_service/files/faas-builderd.service"
   "compute_only_service/files/faas-imaged.service"
   "vmmd_service/files/faas-vmmd.service"
+  "loki/templates/loki.service.j2"
+  "promtail/templates/promtail.service.j2"
 )
 
 required=(NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes ProtectKernelModules=yes)

@@ -32,12 +32,14 @@ package apislogs
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
@@ -64,6 +66,42 @@ func RenderAppLogEvent(w http.ResponseWriter, flusher http.Flusher, f scheddgrpc
 		flusher.Flush()
 	}
 	ops.ObserveLogEmitted(appID)
+}
+
+// LogAppLogFrame writes the customer log frame to the daemon's structured
+// journal stream so Promtail can ship it to Loki even when the client only
+// consumes the live SSE path. accountID and appID come from the authenticated
+// account/app lookup; they are the only tenant identity fields that the Loki
+// pipeline promotes to labels. The raw log line remains a field, never a
+// label, and is sanitized to keep one journal record per frame.
+//
+// A nil logger is a no-op for the lightweight handler tests and for callers
+// that intentionally disable off-box customer-log emission.
+func LogAppLogFrame(log *slog.Logger, f scheddgrpc.LogFrame, accountID, appID, deploymentID string) {
+	if log == nil {
+		return
+	}
+	attrs := []any{
+		"account_id", logsanitize.Field(accountID),
+		"app_id", logsanitize.Field(appID),
+		"instance_id", logsanitize.Field(f.InstanceID),
+		"stream", logsanitize.Field(f.Stream),
+		"seq", f.Seq,
+		"written_at", f.WrittenAt.UTC().Format(time.RFC3339Nano),
+	}
+	if deploymentID != "" {
+		attrs = append(attrs, "deployment_id", logsanitize.Field(deploymentID))
+	}
+	if f.IsGap {
+		attrs = append(attrs,
+			"gap_reason", logsanitize.Field(f.GapReason),
+			"gap_to_written_at", f.GapToWrittenAt.UTC().Format(time.RFC3339Nano),
+		)
+		log.Warn("app_log_gap", attrs...)
+		return
+	}
+	attrs = append(attrs, "line", logsanitize.Field(f.Line))
+	log.Info("app_log", attrs...)
 }
 
 // RenderAppLogsError renders a schedd-side dial error as either a

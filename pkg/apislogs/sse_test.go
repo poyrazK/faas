@@ -1,6 +1,9 @@
 package apislogs
 
 import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,6 +13,66 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestLogAppLogFrameStructuredJournalRecord(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	f := scheddgrpc.LogFrame{
+		InstanceID: "instance-1\nspoofed",
+		Seq:        42,
+		Stream:     "stdout",
+		Line:       "hello\r\nworld",
+		WrittenAt:  time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC),
+	}
+	LogAppLogFrame(logger, f, "acct-1\nspoofed", "app-1", "deploy-1")
+
+	var record map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatalf("decode structured log: %v; output=%q", err, buf.String())
+	}
+	if record["msg"] != "app_log" {
+		t.Fatalf("msg=%v, want app_log", record["msg"])
+	}
+	for key, want := range map[string]string{
+		"account_id":    "acct-1·spoofed",
+		"app_id":        "app-1",
+		"instance_id":   "instance-1·spoofed",
+		"deployment_id": "deploy-1",
+		"line":          "hello··world",
+	} {
+		if got := record[key]; got != want {
+			t.Errorf("%s=%v, want %q", key, got, want)
+		}
+	}
+	// JSON records necessarily end in a newline; inspect decoded string
+	// values for injection rather than rejecting the framing newline.
+	for _, key := range []string{"account_id", "app_id", "instance_id", "deployment_id", "line"} {
+		if strings.ContainsAny(record[key].(string), "\r\n") {
+			t.Errorf("%s contains CR/LF: %q", key, record[key])
+		}
+	}
+}
+
+func TestLogAppLogFrameGapUsesWarningRecord(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	LogAppLogFrame(logger, scheddgrpc.LogFrame{
+		IsGap:          true,
+		GapReason:      "seq_below_retained",
+		GapToWrittenAt: time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC),
+		WrittenAt:      time.Date(2026, 7, 29, 12, 0, 1, 0, time.UTC),
+	}, "acct-1", "app-1", "")
+	var record map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatalf("decode structured gap log: %v; output=%q", err, buf.String())
+	}
+	if record["msg"] != "app_log_gap" {
+		t.Fatalf("msg=%v, want app_log_gap", record["msg"])
+	}
+	if record["gap_reason"] != "seq_below_retained" {
+		t.Errorf("gap_reason=%v", record["gap_reason"])
+	}
+}
 
 // TestRenderAppLogEvent_PayloadShape pins the Move 4 acceptance
 // #5 wire shape. The {seq, instance, stream, line, written_at}

@@ -77,6 +77,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/compute-nodes/{name}/heartbeats": true, // CP-1: operator-only (heartbeat history; schedd-owned)
 	"GET /v1/compute-nodes/events":            true, // CP-1: operator-only SSE on compute_node_changed
 	"GET /v1/internal/metrics/targets":        true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists

@@ -56,6 +56,15 @@
       must remain the loopback apid HTTP-SD endpoint. Compute registry
       metadata must not be fetched over a public or provider-specific URL.
 
+- name: prometheus — assert Promtail discovery URL is loopback
+  ansible.builtin.assert:
+    that:
+      - prom_compute_promtail_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/promtail-targets$')
+    fail_msg: >-
+      prom_compute_promtail_discovery_url={{ prom_compute_promtail_discovery_url }}
+      must remain the loopback apid HTTP-SD endpoint. Promtail target
+      metadata must not be fetched over a public or provider-specific URL.
+
 - name: prometheus — create system user `prometheus`
   ansible.builtin.user:
     name: prometheus

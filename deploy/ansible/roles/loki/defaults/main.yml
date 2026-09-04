@@ -1,0 +1,35 @@
+# loki — dedicated off-host log backend (issue #274).
+#
+# The role is intended for a host in the inventory's `observability` group,
+# not for a FaaS control-plane or compute host. FaaS hosts send journald
+# records to this service through Promtail over the private network.
+
+loki_version: "3.5.3"
+# SHA-256 of loki-linux-amd64.zip from the upstream v{{ loki_version }} release.
+loki_release_sha256: "a69a830d33d9709f350270f2191580be25d154fe68ecf92b67e763369656e97d"
+
+# Bind to loopback by default. Production inventory must override this with
+# the observability host's private transport address; never bind Loki to a
+# public interface without a private firewall and mTLS policy in front of it.
+loki_http_listen_address: "127.0.0.1"
+loki_http_listen_port: 3100
+loki_grpc_listen_address: "127.0.0.1"
+loki_grpc_listen_port: 9096
+
+loki_data_dir: /var/lib/loki
+loki_config_path: /etc/loki/config.yml
+loki_retention_period: 168h
+loki_ingestion_rate_mb: 4
+loki_ingestion_burst_size_mb: 6
+loki_max_streams_per_user: 2000
+loki_max_query_series: 500
+loki_max_entries_limit_per_query: 5000
+
+# These files are provisioned out-of-band. The role checks their permissions
+# but never reads or templates their contents.
+loki_tls_ca_file: /etc/faas/secrets/loki/tls/ca.crt
+loki_tls_cert_file: /etc/faas/secrets/loki/tls/server.crt
+loki_tls_key_file: /etc/faas/secrets/loki/tls/server.key
+
+# Dev mode is for connection-free role work only. Production requires mTLS.
+loki_dev_mode: false
