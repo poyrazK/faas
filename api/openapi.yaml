@@ -3115,7 +3115,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: Plan tier gate tripped (Hobby / Free).
+          description: Canary traffic splitting is unavailable on the Hobby / Free plan.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
