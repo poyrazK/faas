@@ -517,6 +517,8 @@ var cliCommands = []cliCommand{
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
 			{Name: "no-triggers", Short: "skip gregale.yaml trigger fan-out"},
+			{Name: "wait", Short: "wait for deployment to become live (default)"},
+			{Name: "no-wait", Short: "return after deployment is queued"},
 			{Name: "secret-scan", Short: "scan .env files before packing", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			{Name: "diff", Short: "preview what would change without deploying"},
 			{Name: "strict", Short: "fail on diff schema/quota/env breaks"},

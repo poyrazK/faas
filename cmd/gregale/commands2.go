@@ -995,6 +995,11 @@ func cmdDeployTarball(args []string) int {
 	// gregale.yaml with a `triggers:` block is applied AFTER CreateApp
 	// (and BEFORE the deploy body ships) — see deployManifestTriggers.
 	noTriggers := fs.Bool("no-triggers", false, "skip the `gregale.yaml` triggers fan-out (issue #791 PR-C)")
+	// Deployment completion is wait-by-default for compatibility with the
+	// existing deploy command; --no-wait returns once apid queues the
+	// deployment so CI and scripts can continue immediately.
+	waitDeploy := fs.Bool("wait", false, "wait for the deployment to become live (default)")
+	noWaitDeploy := fs.Bool("no-wait", false, "return after the deployment is queued")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
 	// access keys, OpenAI, Anthropic, Google API, PEM private keys, and
@@ -1125,6 +1130,16 @@ func cmdDeployTarball(args []string) int {
 	// customers see no behaviour change.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["wait"] && explicit["no-wait"] {
+		return printErr("Invalid flags", fmt.Errorf("--wait and --no-wait are mutually exclusive"))
+	}
+	waitForDeploy := true
+	if explicit["wait"] {
+		waitForDeploy = *waitDeploy
+	}
+	if explicit["no-wait"] && *noWaitDeploy {
+		waitForDeploy = false
+	}
 	var requireAuthnPtr *bool
 	switch {
 	case explicit["require-authn"]:
@@ -1544,7 +1559,8 @@ func cmdDeployTarball(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	// Deploy-diff short-circuit (PR-0 of the deploy-diff cluster).
 	// Runs AFTER authedClient so the SDK reads can resolve, and
@@ -1676,48 +1692,67 @@ func cmdDeployTarball(args []string) int {
 	}
 
 	if *tarball != "" {
-		// Issue #977 / ADR-116: capture annotation fields onto the
-		// multipart form via the DeployAnnotations struct. The image
-		// path below uses CreateDeploymentRequest's *string/*int
-		// pointers so the wire can distinguish "absent" from
-		// "explicit zero" (omitempty). The tarball path goes through
-		// multipart so DeployAnnotations (value-type with zero
-		// collapsing to "absent") is the right shape.
 		ann := api.DeployAnnotations{
 			Reason:     *reason,
 			Tag:        *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy),
 			PRNumber:   *prNumber,
 		}
-		dep, err := DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, ann)
-		if err != nil {
-			return printErr("Bad --tarball", err)
+		var (
+			dep           api.DeploymentResponse
+			sourceSHA256  string
+			usedResumable bool
+		)
+		if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+			var progress resumableUploadProgress
+			if !jsonOutput {
+				lastPercent := -1
+				progress = func(uploaded, total int64) {
+					percent := int(uploaded * 100 / total)
+					if percent == lastPercent && uploaded != total {
+						return
+					}
+					lastPercent = percent
+					PrintProgress(osStderr, "uploading source: %d%% (%d/%d MiB)", percent, uploaded/(1024*1024), total/(1024*1024))
+				}
+			}
+			var uploadErr error
+			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress)
+			if uploadErr == nil && !usedResumable {
+				dep, uploadErr = DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, ann)
+			}
+			if uploadErr != nil {
+				if errors.Is(uploadErr, context.Canceled) || ctx.Err() != nil {
+					return 130
+				}
+				return printErr("Bad --tarball", uploadErr)
+			}
+		} else {
+			var deployErr error
+			dep, deployErr = DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, ann)
+			if deployErr != nil {
+				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
+					return 130
+				}
+				return printErr("Bad --tarball", deployErr)
+			}
 		}
 		if jsonOutput {
-			// Issue #1182 §P1 follow-up: receipt wraps the deploy
-			// response with commit_sha (zero-config only),
-			// dirty (zero-config only), app_url (always,
-			// computed from the CLI-known slug not the 32-hex
-			// AppID so the URL is actually routable), and
-			// source_sha256 (sha256 of the tarball bytes just
-			// shipped). The tempfile is still on disk at this
-			// point — the deferred os.Remove fires at function
-			// return, so reading for the digest here is safe.
-			var sourceSHA256 string
-			if *tarball != "" {
+			// Legacy multipart uploads do not calculate the digest while
+			// streaming, so preserve the stable receipt field there by
+			// hashing after the request completes.
+			if sourceSHA256 == "" {
 				if sha, hashErr := tarballSHA256(*tarball); hashErr != nil {
-					// Surface a non-fatal warning so the operator
-					// sees the receipt is missing source_sha256.
-					// CI consumers that pin source_sha256 will
-					// notice the absence; silently dropping the
-					// key would make a hash-failure indistinguishable
-					// from a legitimate image / source-ref deploy.
 					PrintWarn(osStderr, "could not hash source tarball for receipt (%v); source_sha256 omitted", hashErr)
 				} else {
 					sourceSHA256 = sha
 				}
 			}
 			return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+		}
+		if !waitForDeploy {
+			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
+			return 0
 		}
 		return streamDeployLogs(client, dep)
 	}
@@ -1758,6 +1793,10 @@ func cmdDeployTarball(args []string) int {
 		// gateway routes on slug, so the receipt's URL has to
 		// be slug-shaped to actually resolve).
 		return jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
+	}
+	if !waitForDeploy {
+		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
+		return 0
 	}
 	return streamDeployLogs(client, dep)
 }
