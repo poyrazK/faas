@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigration_00591_Workflows(t *testing.T) {
+func TestMigrationTimestampWorkflows(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 	defer pool.Close()

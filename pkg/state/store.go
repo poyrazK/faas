@@ -2894,7 +2894,8 @@ type Store interface {
 	JobStore
 
 	// Workflows (ADR-081 / issue #669).
-	// Multi-step durable execution workflows land across migrations 00591-00596.
+	// Multi-step durable execution workflows land in the timestamped workflow
+	// schema migration.
 	// The WorkflowStore sub-interface is defined in workflows.go.
 	WorkflowStore
 

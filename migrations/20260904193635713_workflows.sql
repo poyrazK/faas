@@ -1,4 +1,4 @@
--- filename: 00591_workflows.sql
+-- filename: 20260904193635713_workflows.sql
 -- +goose Up
 -- +goose StatementBegin
 

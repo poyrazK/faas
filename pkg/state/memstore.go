@@ -178,7 +178,8 @@ type MemStore struct {
 	jobRuns  map[string]JobRun
 	jobTasks map[string]map[int]JobTask // run_id → task_index → task
 
-	// workflows / workflowSteps / workflowEvents mirror ADR-081 (migrations 00591-00596).
+	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
+	// timestamped workflow schema migration).
 	workflowRuns   map[string]WorkflowRun
 	workflowSteps  map[string]map[string]WorkflowStep // run_id → step_name → step
 	workflowEvents map[string][]WorkflowEvent         // run_id → []WorkflowEvent
