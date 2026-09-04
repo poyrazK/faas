@@ -187,6 +187,7 @@ func TestOpsMetrics_DeploymentAuditEmittedTotal_UnknownKindDrops(t *testing.T) {
 		t.Errorf("expected nil counter for unknown outcome; got %v", testutil.ToFloat64(c))
 	}
 }
+
 // TestOrchestrator_IncOps_SetsInFlightGauge (PR-B) pins the gauge
 // behaviour: IncOps(ops, stats, inFlight) sets the
 // safedeploy_in_flight_rollouts gauge to the inFlight value. The
