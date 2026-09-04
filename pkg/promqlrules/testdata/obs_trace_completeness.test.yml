@@ -15,32 +15,21 @@
 #
 #   1. Recording rule
 #      `obs:operator_action_trace_completeness_ratio` — wraps the
-#      gauge's `min(...)` in a `unless on() (sum == 0) or on()
-#      vector(1)` cold-start guard. When EVERY kind is at the
-#      Prometheus GaugeVec default (0 — the schedd driver has not
-#      yet ticked), the rule returns 1.0 (vacuous truth) so the
-#      Page alert does NOT fire false-positive at t=10m on every
-#      schedd restart.
+#      gauge's `min(...)` in a `unless on()` guard driven by the
+#      explicit first-success counter. Before the driver completes
+#      its first query, the rule returns 1.0 (vacuous truth) so the
+#      Page alert does NOT fire false-positive at t=10m on restart.
 #
 #   2. Page alert
 #      FaasOperatorActionTraceCompletenessLowPage — `< 0.50 for 10m`
 #      on the recording-rule value.
 #
-# Known limitation documented by finding #1 of /code-review 1162:
-# the cold-start guard ALSO swallows the pre-Set panic case — when
-# schedd's driver panics anywhere before reaching the Set loop at
-# pkg/sched/operator_intent_completeness.go:235-238, all 10 kinds
-# stay at 0, `sum == 0` evaluates to true, the guard engages, and
-# the Page alert stays silent. The same is true for any
-# catastrophic metric failure where every kind reads 0. The
-# compensating signal is `FaasOperatorActionTraceCompletenessLoopStalled`
-# (info-tier, fires at `time() - timestamp(gauge) > 180 for 5m`)
-# IF the schedd daemon has fully stopped scraping — i.e., the
-# daemon is down. For the "driver panicked, daemon still up" case
-# there is currently no automatic alert; operators rely on
-# `journalctl -u schedd` slog capture (the panic logs at the
-# goroutine crash site). Tightening this would require a separate
-# "first driver tick completed" counter — out of scope for this PR.
+# The first-success counter also backs the
+# `FaasOperatorActionTraceCompletenessFirstTickStalled` page, so a
+# pre-Set panic or a driver that cannot complete its first query is
+# visible even while schedd remains scrapeable. The freshness alert
+# uses the producer-written last-success timestamp rather than the
+# Prometheus scrape timestamp.
 #
 # The fixture declares all 10 gauge series that schedd surfaces
 # in production (the closed set at
@@ -67,6 +56,8 @@ tests:
   - interval: 30s
     name: "cold start: every kind reads 0 → Page silent (vacuous truth)"
     input_series:
+      - series: 'schedd_operator_action_trace_completeness_first_tick_completed_total'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
       - series: 'schedd_operator_action_trace_completeness_ratio{kind="force_park"}'
         values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
       - series: 'schedd_operator_action_trace_completeness_ratio{kind="force_cold_boot"}'
@@ -99,6 +90,8 @@ tests:
   - interval: 30s
     name: "after first tick: every kind reads 1.0 → Page silent"
     input_series:
+      - series: 'schedd_operator_action_trace_completeness_first_tick_completed_total'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
       - series: 'schedd_operator_action_trace_completeness_ratio{kind="force_park"}'
         values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
       - series: 'schedd_operator_action_trace_completeness_ratio{kind="force_cold_boot"}'
@@ -132,6 +125,8 @@ tests:
   - interval: 30s
     name: "real drop: force_park at 0.3 → Page fires after 10m"
     input_series:
+      - series: 'schedd_operator_action_trace_completeness_first_tick_completed_total'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
       - series: 'schedd_operator_action_trace_completeness_ratio{kind="force_park"}'
         values: '0 0 1 1 1 1 1 1 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3 0.3'
       - series: 'schedd_operator_action_trace_completeness_ratio{kind="force_cold_boot"}'
@@ -166,16 +161,41 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOperatorActionTraceCompletenessLow.md"
 
   # ──────────────────────────────────────────────────────────────
+  # Test 5 — the driver never completes its first query. The
+  # explicit first-tick page must fire even though the completeness
+  # recording rule remains cold-start guarded.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "first tick never completes → FirstTickStalled pages"
+    input_series:
+      - series: 'schedd_operator_action_trace_completeness_first_tick_completed_total'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: FaasOperatorActionTraceCompletenessFirstTickStalled
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              family: obs_trace
+              component: schedd
+            exp_annotations:
+              summary: "schedd trace completeness driver has not completed its first tick"
+              description: "The schedd observability driver has not completed a successful operator-action trace completeness query within 10m of the metric becoming visible. The completeness recording rule is intentionally guarded until this first success, so the platform currently has no trustworthy trace-correlation coverage signal. Check schedd logs and Postgres connectivity, then recover per the runbook."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasOperatorActionTraceCompletenessLow.md"
+
+  # ──────────────────────────────────────────────────────────────
   # Test 4 — panic MID Set loop: 8 of 10 kinds Set to 1.0, 2
-  # still at the Prometheus default 0. sum != 0 so the cold-start
-  # guard does NOT engage; min = 0 so the recording rule returns
-  # 0.001 and the Page alert fires. Mirrors the panic-resilience
+  # still at the Prometheus default 0 after a prior successful tick.
+  # The first-success guard does NOT engage; min = 0 so the recording
+  # rule returns 0.001 and the Page alert fires. Mirrors the panic-resilience
   # contract pinned at pkg/sched/operator_intent_completeness_
   # test.go:118 — gauges in partial Set state must still page.
   # ──────────────────────────────────────────────────────────────
   - interval: 30s
     name: "panic mid-Set-loop: 2 kinds still at 0 → Page fires (guard does NOT engage)"
     input_series:
+      - series: 'schedd_operator_action_trace_completeness_first_tick_completed_total'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
       - series: 'schedd_operator_action_trace_completeness_ratio{kind="force_park"}'
         values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
       - series: 'schedd_operator_action_trace_completeness_ratio{kind="force_cold_boot"}'

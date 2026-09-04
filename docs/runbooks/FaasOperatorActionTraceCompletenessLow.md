@@ -4,7 +4,8 @@ Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`
 (recording rule `obs:operator_action_trace_completeness_ratio`
 + alerts `FaasOperatorActionTraceCompletenessLowPage`,
 `FaasOperatorActionTraceCompletenessLowWarn`,
-`FaasOperatorActionTraceCompletenessLoopStalled`).
+`FaasOperatorActionTraceCompletenessLoopStalled` and
+`FaasOperatorActionTraceCompletenessFirstTickStalled`).
 Metrics: `schedd_operator_action_trace_completeness_ratio{kind}` (gauge,
 set by `pkg/sched/operator_intent_completeness.go::observeOperatorIntentCompleteness`
 on a 60s tick); sibling per-daemon series
@@ -19,7 +20,8 @@ contract clauses C1-C4 (every `operator.action.<verb>` audit row
 carries a non-NULL `events.trace_id`).
 PR: #1111 + follow-on `feat/obs-dashboards-alerts` (this file's
 source).
-Severity: page on Page alert; warn on Warn alert; info on LoopStalled.
+Severity: page on Page and FirstTickStalled alerts; warn on Warn alert;
+info on LoopStalled.
 
 ## Symptom
 
@@ -37,31 +39,13 @@ until schedd's driver ticks and Sets it.
 The recording rule `obs:operator_action_trace_completeness_ratio`
 (used by both Page and Warn alerts + Dashboard B panel 4) wraps
 that `min(...)` in `clamp_min(0.001)` to avoid divide-by-zero in
-any downstream ratio comparison, and applies a `unless on() (
-sum == 0) or on() vector(1)` cold-start guard: when EVERY kind
-is still at the Prometheus GaugeVec default (0 — i.e., the schedd
-driver has not yet ticked after a fresh boot), the rule returns
-1.0 (vacuous truth) instead of 0.001, so the Page alert does NOT
-fire false-positive at t=10m on every restart. A panic mid-tick
-that leaves some kinds Set and others at the Prometheus default
-still produces `sum != 0`, so the guard does NOT engage and the
-alert fires as before — preserving the panic-resilience contract
-pinned at `pkg/sched/operator_intent_completeness_test.go:118`.
-
-**Known limitation (finding #1 of `/code-review 1162`):** the guard
-also swallows the *pre-Set* panic case — when schedd's driver
-panics anywhere before reaching the Set loop at
-`pkg/sched/operator_intent_completeness.go:235-238`, every kind
-stays at the Prometheus default 0, `sum == 0` evaluates to true,
-the guard engages, and the Page alert stays silent. The
-compensating signal is `FaasOperatorActionTraceCompletenessLoopStalled`
-(info-tier, fires at `time() - timestamp(gauge) > 180 for 5m`) —
-but only when the schedd daemon has fully stopped scraping. For
-the "driver panicked, daemon still up" case there is currently
-no automatic alert; operators rely on `journalctl -u schedd` slog
-capture (the panic logs at the goroutine crash site). Tightening
-this would require a separate "first driver tick completed"
-counter — out of scope for this fix.
+any downstream ratio comparison, and applies a cold-start guard
+based on `schedd_operator_action_trace_completeness_first_tick_completed_total`.
+Until the first successful query, the rule returns 1.0 (vacuous truth)
+instead of 0.001, so the Page alert does NOT fire false-positive at
+t=10m on every restart. Once the first query succeeds, a real all-zero
+result is visible. `FaasOperatorActionTraceCompletenessFirstTickStalled`
+pages when that first success never arrives, including a pre-Set panic.
 
 Regression test: `pkg/promqlrules/testdata/obs_trace_completeness.test.yml`
 (Go-level driver at `pkg/promqlrules/rules_test.go:74` walks the
@@ -80,11 +64,13 @@ explicitly per `.github/workflows/ci.yml:248-260`).
   or `pkg/audit.auditKindMetricLabel`'s aliasing of instance-oriented
   kinds onto verb-oriented labels may be drifting. Drill down per
   the Verify section; the next escalation is the page alert.
-- **Info** (`LoopStalled`): `time() - timestamp(gauge) > 180s` for
-  5m. The driver goroutine has stopped updating the gauge for >3
-  ticks. The page+warn alerts may be silent even though the system
-  is broken — Prometheus scrapes see the last-written value frozen.
-  Routes to the `faas-silent` receiver.
+- **Info** (`LoopStalled`): `time() - schedd_operator_action_trace_completeness_last_success_timestamp_seconds > 180s` for
+  5m after at least one successful tick. The producer timestamp is
+  written only after a successful query, so scrape activity cannot mask
+  a frozen gauge. Routes to the `faas-silent` receiver.
+- **Page** (`FirstTickStalled`): the first-success counter remains zero
+  for 10m. The platform has no trustworthy completeness signal yet;
+  check startup and database connectivity immediately.
 
 The companion dashboard `faas obs trace completeness (PR #1111)`
 (`UID faas-obs-trace-completeness-pr-1111`) surfaces panel 1 (the
@@ -171,14 +157,14 @@ before widening (CLAUDE.md §17 G7).
 ### Driver-loop freshness (info-tier alert)
 
 ```bash
-# Stalest kind (max() picks the worst, not an arbitrary one)
+# Producer freshness (written after a successful query)
 curl -fsS --data-urlencode \
-  'query=max(time() - timestamp(schedd_operator_action_trace_completeness_ratio))' \
+  'query=time() - schedd_operator_action_trace_completeness_last_success_timestamp_seconds' \
   'http://127.0.0.1:9095/api/v1/query'
 
-# Per-kind freshness if a single kind is suspect
+# First-tick status (0 means no successful observation yet)
 curl -fsS --data-urlencode \
-  'query=time() - timestamp(schedd_operator_action_trace_completeness_ratio)' \
+  'query=schedd_operator_action_trace_completeness_first_tick_completed_total' \
   'http://127.0.0.1:9095/api/v1/query'
 
 journalctl -u schedd --since '-15m' --no-pager \
@@ -221,10 +207,11 @@ amtool silence add \
   --comment='investigating schedd trace_completeness drop'
 ```
 
-The regex matcher pairs all three (`Page`, `Warn`, `LoopStalled`)
+The regex matcher pairs all four (`Page`, `Warn`, `LoopStalled`,
+`FirstTickStalled`)
 in one silence — page-warn auto-inhibit (alertmanager
 `family=obs_trace, component=schedd`) means the warn is suppressed
-while the page is firing anyway, so silencing all three is safe.
+while the page is firing anyway, so silencing all four is safe.
 
 ## Recover
 
@@ -250,6 +237,15 @@ trips the page, follow Page recovery.
    supervisor rebuild (the gauge pre-instantiation makes this safe).
 3. **If neither**: file an `obs-meta` issue with the slog capture;
    the driver is silently wedged.
+
+### Page (first tick stalled)
+
+1. Check `journalctl -u schedd` for a startup panic or a blocked
+   `operator_intent_completeness` query.
+2. Verify Postgres is reachable and the schedd pool is not exhausted.
+3. Restart schedd after correcting the dependency; confirm
+   `schedd_operator_action_trace_completeness_first_tick_completed_total`
+   becomes `1` and the last-success timestamp advances.
 
 ## Follow-up
 

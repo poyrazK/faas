@@ -118,7 +118,8 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
-	traceShutdown, traceErr := trace.InitTracer(ctx, "imaged", wire.Version, log)
+	ops := wire.NewOpsMetrics("imaged")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "imaged", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("imaged: init tracing: %w", traceErr)
 	}
@@ -290,7 +291,6 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// (Fixup for PR #132: rules in deploy/ansible/roles/prometheus/
 	// files/faas.rules.yml depend on imaged_oci_pull_duration_seconds
 	// being live, not empty.)
-	ops := wire.NewOpsMetrics("imaged")
 	wire.BootStamps(ctx, "imaged", ops)
 	wire.RegisterDefaultOps(ops)
 	// M-1 / ADR-136 §Decision 2: wire pkg/rootfs's per-layer

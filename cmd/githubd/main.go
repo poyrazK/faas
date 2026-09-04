@@ -98,7 +98,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
-	traceShutdown, traceErr := trace.InitTracer(ctx, "githubd", wire.Version, log)
+	ops := wire.NewOpsMetrics("githubd")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "githubd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("githubd: init tracing: %w", traceErr)
 	}
@@ -164,7 +165,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// apid-side reconcile (one PgStore per daemon — no
 	// cross-process shared state).
 	store := state.NewPgStore(pool)
-	ops := wire.NewOpsMetrics("githubd")
 	wire.BootStamps(ctx, "githubd", ops)
 	wire.RegisterDefaultOps(ops)
 	ghAud := audit.New(store, log, ops, "githubd")

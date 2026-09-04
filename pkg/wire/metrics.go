@@ -1684,6 +1684,14 @@ type OpsMetrics struct {
 	// coverage per kind" alert before a 5% drop becomes a
 	// stuck page.
 	operatorActionTraceCompletenessRatio *prometheus.GaugeVec
+	// operatorActionTraceCompletenessFirstTickCompleted is incremented once
+	// after schedd completes its first successful completeness query. It
+	// separates "no observation yet" from a real all-zero result.
+	operatorActionTraceCompletenessFirstTickCompleted prometheus.Counter
+	// operatorActionTraceCompletenessLastSuccessTimestamp records the last
+	// successful schedd completeness query, independent of scrape time.
+	operatorActionTraceCompletenessLastSuccessTimestamp prometheus.Gauge
+	operatorActionTraceCompletenessFirstTickOnce        sync.Once
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -3585,6 +3593,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_operator_action_trace_completeness_ratio",
 		Help: "5-minute trailing ratio (0.0..1.0) of operator.action.<verb>* audit rows whose events.trace_id column is non-NULL. Labelled by kind ∈ {force_park, force_cold_boot, force_restart, force_park.outcome, force_cold_boot.outcome, force_restart.outcome}. Single-registry: registered on every daemon; only schedd sets the value via SetOperatorActionTraceCompleteness (60s tick). A drop below 0.95 is the obs-coverage alert tripwire — every force-action should carry a trace_id end-to-end (PR-#TBD C1-C4 contract).",
 	}, []string{"kind"})
+	operatorActionTraceCompletenessFirstTickCompleted := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_operator_action_trace_completeness_first_tick_completed_total",
+		Help: "Whether schedd has completed at least one successful operator-action trace completeness query; increments once after the first successful observation.",
+	})
+	operatorActionTraceCompletenessLastSuccessTimestamp := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_operator_action_trace_completeness_last_success_timestamp_seconds",
+		Help: "Unix timestamp of the most recent successful operator-action trace completeness query.",
+	})
 	for _, endpoint := range auditEndpointClosedSet {
 		for _, kind := range auditKindClosedSet {
 			auditLogWriteTotal.WithLabelValues(endpoint, kind)
@@ -3609,6 +3625,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditLogWriteTotal,
 		auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio,
+		operatorActionTraceCompletenessFirstTickCompleted,
+		operatorActionTraceCompletenessLastSuccessTimestamp,
 	)
 	reg.MustRegister(commonCollectors...)
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
@@ -4140,6 +4158,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditLogWriteTotal:                   auditLogWriteTotal,
 		auditLogWriteFailuresTotal:           auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio: operatorActionTraceCompletenessRatio,
+		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
+		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
 	}
 }
 
@@ -5070,6 +5090,26 @@ func (m *OpsMetrics) SetOperatorActionTraceCompleteness(kind string, ratio float
 	m.operatorActionTraceCompletenessRatio.WithLabelValues(kind).Set(ratio)
 }
 
+// MarkOperatorActionTraceCompletenessFirstTickCompleted records the first
+// successful completeness observation exactly once. nil-safe.
+func (m *OpsMetrics) MarkOperatorActionTraceCompletenessFirstTickCompleted() {
+	if m == nil {
+		return
+	}
+	m.operatorActionTraceCompletenessFirstTickOnce.Do(func() {
+		m.operatorActionTraceCompletenessFirstTickCompleted.Inc()
+	})
+}
+
+// SetOperatorActionTraceCompletenessLastSuccess records the wall-clock time
+// of a successful completeness observation. nil-safe.
+func (m *OpsMetrics) SetOperatorActionTraceCompletenessLastSuccess(t time.Time) {
+	if m == nil {
+		return
+	}
+	m.operatorActionTraceCompletenessLastSuccessTimestamp.Set(float64(t.UnixNano()) / float64(time.Second))
+}
+
 // CronFireNowDispatchDuration returns the per-result observer for
 // the cron fire-now dispatch-latency histogram (issue #791 PR-D /
 // ADR-090 §Sub-decision 7). result ∈ {succeeded, failed}; the schedd
@@ -5858,6 +5898,14 @@ func (m *OpsMetrics) StorageCacheStaleFallback() prometheus.Counter {
 // Registry returns the underlying registry — pass to promhttp.HandlerFor
 // if you want to share it with metrics from elsewhere.
 func (m *OpsMetrics) Registry() *prometheus.Registry { return m.registry }
+
+// MetricPrefix returns the exact prefix used by this registry's metric names.
+func (m *OpsMetrics) MetricPrefix() string {
+	if m == nil {
+		return ""
+	}
+	return m.metricPrefix
+}
 
 // Observe records one operation outcome. err == nil codes OK; any error
 // is treated as a failure and exposes the gRPC code's string form as the

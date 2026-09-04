@@ -123,6 +123,11 @@ func (l *Loop) observeOperatorIntentCompleteness(ctx context.Context) (gaugeUpda
 	if err := l.observeTraceCompletenessRatio(ctx, &gaugeUpdates); err != nil {
 		l.log.Warn("sched: operator_intent_completeness: trace ratio query failed",
 			"err", err)
+		return gaugeUpdates
+	}
+	if l.ops != nil {
+		l.ops.SetOperatorActionTraceCompletenessLastSuccess(time.Now())
+		l.ops.MarkOperatorActionTraceCompletenessFirstTickCompleted()
 	}
 	return gaugeUpdates
 }

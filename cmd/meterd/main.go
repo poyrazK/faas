@@ -637,7 +637,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
-	traceShutdown, traceErr := trace.InitTracer(ctx, "meterd", wire.Version, log)
+	ops := wire.NewOpsMetrics("meterd")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "meterd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("meterd: init tracing: %w", traceErr)
 	}
@@ -883,10 +884,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
 	// so the Loop has it from the first tick. meter.NewLoop accepts nil
 	// and coerces to a fresh test registry; here we hand it the real one.
-	ops := wire.NewOpsMetrics("meterd")
 	wire.BootStamps(ctx, "meterd", ops)
 	wire.RegisterDefaultOps(ops)
-
 	// Residency timer: emits the §12 "Resident GB per paying customer"
 	// gauge (ADR-031, PR #141). Wired into the loop alongside
 	// sample/quota/stripe/dunning so all five timers share the same

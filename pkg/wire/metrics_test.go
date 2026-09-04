@@ -2267,6 +2267,21 @@ func TestOpsMetrics_SetOperatorActionTraceCompletenessNilSafe(t *testing.T) {
 	m.SetOperatorActionTraceCompleteness("force_park", 1.0)
 }
 
+func TestOpsMetrics_OperatorActionTraceCompletenessTickHealth(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.MarkOperatorActionTraceCompletenessFirstTickCompleted()
+	m.MarkOperatorActionTraceCompletenessFirstTickCompleted()
+	m.SetOperatorActionTraceCompletenessLastSuccess(time.Unix(123, 0))
+
+	body := render(t, m)
+	if !strings.Contains(body, "schedd_operator_action_trace_completeness_first_tick_completed_total 1") {
+		t.Errorf("first-tick counter should be exactly once:\n%s", body)
+	}
+	if !strings.Contains(body, "schedd_operator_action_trace_completeness_last_success_timestamp_seconds 123") {
+		t.Errorf("last-success timestamp missing:\n%s", body)
+	}
+}
+
 // TestOpsMetrics_AlertPresetSignalsRegistered — issue #1233 / ADR-123
 // PR-B pins that the 5 alert-preset signal series all register
 // (HELP + TYPE lines in the /metrics output). Two of the five land
