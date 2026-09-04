@@ -4466,6 +4466,10 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	//    The 2-return shape keeps the signature backward-compatible
 	//    with pre-PR-B call sites (the slice-3 cascade test on main
 	//    relies on `dep, err :=` form).
+	//
+	//    Stable deployments supersede the prior row here. Canary
+	//    deployments intentionally leave it live as the residual traffic
+	//    bucket until the canary reaches its terminal stage.
 	var priorID string
 	if err := tx.QueryRow(ctx,
 		`select id from deployments
@@ -4495,10 +4499,6 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 			priorID); err != nil {
 			return Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
 		}
-	} else {
-		// A canary needs the prior live revision as its residual
-		// traffic bucket. Keep it live until the canary reaches its
-		// terminal stage; MarkDeploymentLive will rebalance both rows.
 	}
 	if d.CanaryTotalSteps <= 0 {
 		// A stable deployment terminates any active canary overlap as
