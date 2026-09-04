@@ -866,7 +866,7 @@ func cmdDeployTarball(args []string) int {
 	// workflow snippet to stdout and exits 0. No auth, no side effects,
 	// mirrors `cmdBillingPortal --print` (commands_billing.go:104-157).
 	// See cmd_deploy_github.go for the snippet body.
-	githubSnippet := fs.Bool("github", false, "emit a GitHub Actions workflow snippet for the faas-deploy-action")
+	githubSnippet := fs.Bool("github", false, "emit a GitHub Actions workflow snippet for the Gregale deploy action")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
@@ -1016,6 +1016,10 @@ func cmdDeployTarball(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale deploy [--doctor-strict] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
+	// run() consumes the global --json before dispatch. Keep the
+	// deploy-local --json spelling equivalent for the diff path,
+	// whose renderer uses a separate option field.
+	*diffJSON = *diffJSON || jsonOutput
 	// --strict / --lenient mutex. Same rationale as
 	// --require-authn / --no-require-authn above.
 	if *diffStrict && *diffLenient {
@@ -3030,7 +3034,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}
-				return 0
+				return 3
 			}
 			if e.Event == "end" {
 				if collector != nil {

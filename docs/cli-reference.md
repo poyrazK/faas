@@ -15,9 +15,10 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
 | [`cors`](#cors) | Configure CORS for an app (allow\|ls\|rm\|show) |
 | [`crons`](#crons) | Manage scheduled requests |
+| [`triggers`](#triggers) | Manage unified event triggers (broker mappings + cron-linked rows) |
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
-| [`doctor`](#doctor) | Preflight: scan your source for the 8 source-side failure modes (--strict, --json, [path]) |
+| [`doctor`](#doctor) | Preflight: scan local source; deployed-only checks are reported as skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
 | [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
 | [`deployment`](#deployment) | Get one deployment (&lt;id&gt; \| set-min-instances &lt;id&gt; --min N) |
@@ -378,6 +379,105 @@ Delete one cron rule
 Show execution history
 
 
+## triggers
+
+Manage unified event triggers (broker mappings + cron-linked rows)
+
+`gregale triggers [<subcommand>]`
+
+### triggers list
+
+List triggers
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | filter to an app slug |  |
+| `--kind <value>` | filter by trigger kind | one of `cron` · `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` |
+
+### triggers get
+
+Show one trigger
+
+### triggers create
+
+Create a broker trigger
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (required) | required |
+| `--kind <kind>` | trigger kind (required) | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` |
+| `--slug <slug>` | trigger slug (required for non-cron kinds) |  |
+| `--config <JSON>` | JSON config (inline \| @file \| -) |  |
+| `--enabled` | enable the trigger |  |
+| `--disabled` | disable the trigger |  |
+| `--batch-size <N>` | maximum records per dispatch batch |  |
+| `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
+| `--max-attempts <N>` | maximum delivery attempts |  |
+| `--payload-max-bytes <N>` | maximum broker payload size |  |
+| `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
+
+### triggers update
+
+Update one trigger
+
+| Flag | Meaning | |
+|---|---|---|
+| `--enabled` | enable the trigger |  |
+| `--disabled` | disable the trigger |  |
+| `--config <JSON>` | replace JSON config (inline \| @file \| -) |  |
+| `--schedule <EXPR>` | replace cron expression |  |
+| `--path <PATH>` | replace cron request path |  |
+| `--batch-size <N>` | maximum records per dispatch batch |  |
+| `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
+| `--max-attempts <N>` | maximum delivery attempts |  |
+| `--payload-max-bytes <N>` | maximum broker payload size |  |
+| `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
+
+### triggers delete
+
+Delete one trigger
+
+| Flag | Meaning | |
+|---|---|---|
+| `--quiet` | skip the typed confirmation (for scripts) |  |
+
+### triggers pause
+
+Disable one trigger
+
+### triggers resume
+
+Enable one trigger
+
+### triggers records
+
+List recent trigger records
+
+| Flag | Meaning | |
+|---|---|---|
+| `--state <STATE>` | filter by record state | one of `pending` · `claimed` · `succeeded` · `retry` · `dead_letter` |
+
+### triggers retry
+
+Re-drive one trigger record
+
+### triggers drop
+
+Drop one trigger record
+
+### triggers dlq
+
+List dead-letter records
+
+| Flag | Meaning | |
+|---|---|---|
+| `--reason <REASON>` | filter by dead-letter reason |  |
+
+### triggers metrics
+
+Show per-state trigger metrics
+
+
 ## jobs
 
 Manage jobs (run-to-completion workloads)
@@ -434,7 +534,7 @@ Open the account dashboard in your browser
 
 ## doctor
 
-Preflight: scan your source for the 8 source-side failure modes (--strict, --json, [path])
+Preflight: scan local source; deployed-only checks are reported as skipped
 
 `gregale doctor [--strict] [--json]`
 
@@ -519,7 +619,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy (--image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--secret-scan <on|off>] [--diff] [--strict] [--lenient] [--server-diff] [--doctor-strict]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -527,8 +627,16 @@ Deploy (--image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | 
 | `--tarball <PATH>` | deploy from a source tarball |  |
 | `--repo <OWNER/NAME>` | deploy from a GitHub repo |  |
 | `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
-| `--github` | emit a GitHub Actions workflow snippet for faas-deploy-action |  |
+| `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
+| `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
+| `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
+| `--handler <HANDLER>` | function handler |  |
+| `--name <SLUG>` | app name (default: current directory) |  |
+| `--function` | deploy as a function; skip shape auto-detection |  |
+| `--app` | deploy as an app; skip shape auto-detection |  |
+| `--yes` | skip the apply confirmation prompt |  |
+| `--only <SLUGS>` | workloads to apply (comma-separated; project apply path) |  |
 | `--reason <text>` | free-text deploy reason (≤280 chars) |  |
 | `--tag <TAG>` | annotation tag | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
 | `--deployed-by <NAME>` | operator label (auto-resolved from git config user.name) |  |
@@ -536,6 +644,20 @@ Deploy (--image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | 
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
 | `--show-affected` | render the WillDeploy + Skipped + Unaffected + Removed partition (ADR-124) |  |
 | `--persist-exclude` | record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3) |  |
+| `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
+| `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
+| `--canary-stages <STAGES>` | custom percent@duration canary stages |  |
+| `--require-authn` | require bearer auth on every request |  |
+| `--no-require-authn` | drop the token requirement |  |
+| `--app-protocol <PROTOCOL>` | wire protocol selector | one of `http1` · `http2` · `grpc` |
+| `--traffic-percent <PERCENT>` | deployment traffic split weight (0-100) |  |
+| `--no-triggers` | skip gregale.yaml trigger fan-out |  |
+| `--secret-scan <on|off>` | scan .env files before packing | one of `on` · `off` |
+| `--diff` | preview what would change without deploying |  |
+| `--strict` | fail on diff schema/quota/env breaks |  |
+| `--lenient` | return success even when diff has breaks |  |
+| `--server-diff` | compute deploy diff on apid |  |
+| `--doctor-strict` | run doctor before deploy and abort on errors |  |
 
 
 ## domains
@@ -686,25 +808,28 @@ Render the env-diff matrix (presence / value-equality across scopes)
 
 Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy])
 
-`gregale init --template <NAME> --path <DIR> [--deploy]`
+`gregale init --template <NAME> --path <DIR> [--deploy] [--name <SLUG>] [--list]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
+| `--name <SLUG>` | app slug used with --deploy |  |
+| `--list` | list available templates |  |
 
 
 ## inspect
 
 Read-only operator surface (inspect &lt;slug&gt; --upstreams [--scope &lt;scope&gt;] [--json])
 
-`gregale inspect <slug> [--upstreams] [--scope <scope>]`
+`gregale inspect <slug> [--upstreams] [--scope <scope>] [--errors]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--upstreams` | List data upstreams captured for this app (ADR-098 §9.A) |  |
 | `--scope <scope>` | filter by scope (forwarded as ?scope=, used with --upstreams) |  |
+| `--errors` | show the latest failed deployment&#39;s persisted error explanation |  |
 
 
 ## invoke

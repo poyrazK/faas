@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +48,7 @@ func cmdLogin(args []string) int {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	fs.Usage = func() {
 		PrintUsage(os.Stderr, "usage: gregale login [--token T]", "auth")
+		fs.PrintDefaults()
 	}
 	token := fs.String("token", "", "API token (CI/non-interactive)")
 	if err := fs.Parse(args); err != nil {
@@ -230,6 +233,9 @@ func cmdLogout() int {
 	// Best-effort: a stuck keychain must not block logout, and a
 	// missing file is not an error. Issue #293.
 	deleteToken()
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]bool{"logged_out": true}))
+	}
 	PrintOK(osStdout, "Logged out")
 	return 0
 }
@@ -382,6 +388,8 @@ func printErr(title string, err error) int {
 	// appends the hint to the existing PrintFail line.
 	var hintErr *NestedMarkerHintError
 	hasHint := errors.As(err, &hintErr)
+	var ec *exitErr
+	hasExit := errors.As(err, &ec)
 	if hasStrict {
 		return renderStrictSecretScanError(title, strictErr)
 	}
@@ -394,13 +402,29 @@ func printErr(title string, err error) int {
 			}
 			return exitCodeForStatus(ae.Problem.Status)
 		}
-		// Non-API errors (network, etc.) — synthesise a 500 Problem so
-		// scripts still see a parseable JSON line on stderr.
-		_ = writeJSONProblem(api.Problem{
-			Status: 500, Code: "internal", Title: title, Detail: err.Error(),
-		})
+		// Non-API errors — synthesise a Problem so scripts still see a
+		// parseable JSON line on stderr. Keep local validation/file
+		// failures as user errors (exit 1), while transport failures
+		// retain the platform/infra exit 3 classification.
+		platformErr := isTransportError(err)
+		problem := api.Problem{Status: 400, Code: "invalid_request", Title: title, Detail: err.Error()}
+		if platformErr {
+			problem.Status = 500
+			problem.Code = "internal"
+		}
+		if hasExit && ec.code == 2 {
+			problem.Status = 401
+			problem.Code = "unauthorized"
+		}
+		_ = writeJSONProblem(problem)
 		if hasHint {
 			PrintWarn(osStderr, "%s", hintErr.Hint)
+		}
+		if hasExit {
+			return ec.code
+		}
+		if platformErr {
+			return 3
 		}
 		return 1
 	}
@@ -412,8 +436,7 @@ func printErr(title string, err error) int {
 		}
 		return exitCodeForStatus(ae.Problem.Status)
 	}
-	var ec *exitErr
-	if errors.As(err, &ec) {
+	if hasExit {
 		PrintFail(osStderr, "%s\n  %s", title, ec.msg)
 		if hasHint {
 			PrintWarn(osStderr, "%s", hintErr.Hint)
@@ -433,6 +456,22 @@ func printErr(title string, err error) int {
 	}
 	PrintFail(osStderr, "%s\n  %s", title, err.Error())
 	return 1
+}
+
+// isTransportError distinguishes an SDK/network failure from a local
+// validation or filesystem error before printErr assigns the JSON exit
+// contract. net/http wraps transport failures in *url.Error; the net.Error
+// and context checks also cover direct callers and cancellation paths.
+func isTransportError(err error) bool {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // renderStrictSecretScanError is the dispatch target for *StrictSecretScanError.
@@ -551,7 +590,7 @@ func renderAPIError(w io.Writer, e *APIError) {
 
 func exitCodeForStatus(status int) int {
 	switch {
-	case status == 401 || status == 402:
+	case status == 401:
 		return 2
 	case status >= 500:
 		return 3

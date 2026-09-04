@@ -1,5 +1,5 @@
 // cmd_deploy_github.go — `gregale deploy --github` snippet generator
-// (issue #270, faas-deploy-action). Companion to the customer-facing
+// (issue #270, Gregale deploy action). Companion to the customer-facing
 // composite Action at poyrazK/faas/.github/actions/deploy (monorepo
 // shape, ADR-093). Emits a copy-paste GitHub Actions workflow snippet
 // to stdout and exits 0 with no auth and no side effects. Mirrors
@@ -138,7 +138,7 @@ func renderGithubSnippet(env githubSnippetEnv, app, pinnedSHA string) string {
 	// API base placeholder. The customer fills in their actual host
 	// (different for Hobby/Pro/Scale deployments). The README's
 	// "Before you commit" section explains the substitution.
-	apiBase := "https://api.faas.example"
+	apiBase := defaultAPIBase
 
 	// The heredoc body uses tab-indented YAML, sandwiched between the
 	// two header-line fences. We keep the secret reference as

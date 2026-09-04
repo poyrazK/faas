@@ -1,5 +1,5 @@
-// commands_billing_status.go — `faas billing status` (PR-P3) +
-// `faas billing status --watch` (PR-P4).
+// commands_billing_status.go — `gregale billing status` (PR-P3) +
+// `gregale billing status --watch` (PR-P4).
 //
 // Prints the active billing Provider name + the cached catalog
 // snapshot. Backs the operator's at-a-glance "is billing wired up
@@ -13,7 +13,7 @@
 // PR-P4 additions:
 //   - --watch N     re-poll the catalog every 5 s for N seconds
 //                   (default 60). Used to watch the cache fill during
-//                   `faas billing price-catalog sync`. Clears the
+//                   `gregale billing price-catalog sync`. Clears the
 //                   terminal between ticks so the operator sees a
 //                   moving snapshot, not a scrolling log.
 //   - --json        emit the raw JSON response (machine-readable;
@@ -58,9 +58,13 @@ const billingStatusTickInterval = 5 * time.Second
 func cmdBillingStatus(args []string) int {
 	watch, watchDur, asJSON, noClear, err := parseBillingStatusFlags(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "faas billing status: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gregale billing status: %v\n", err)
 		return 1
 	}
+	// run() strips the global --json before dispatch. Preserve the
+	// direct parser's --json support while making the top-level flag
+	// equivalent for this legacy command family.
+	asJSON = asJSON || jsonOutput
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -206,7 +210,7 @@ func printBillingStatusJSON(w io.Writer, resp api.BillingCatalogResponse) error 
 //
 // An empty catalog (no hydration yet) renders the active provider,
 // SyncedAt: never synced" header followed by a one-line hint to run
-// `faas billing price-catalog sync`. We do not gate that hint on
+// `gregale billing price-catalog sync`. We do not gate that hint on
 // the response — the operator's CLI subcommand is the right place
 // for actionable guidance.
 func printBillingStatus(w io.Writer, resp api.BillingCatalogResponse) {
@@ -221,7 +225,7 @@ func printBillingStatus(w io.Writer, resp api.BillingCatalogResponse) {
 	_, _ = fmt.Fprintf(tw, "SyncedAt:\t%s\n", syncedAt)
 	if len(resp.Entries) == 0 {
 		_, _ = fmt.Fprintln(tw, "\nCatalog:\t<empty>")
-		_, _ = fmt.Fprintln(tw, "\nRun `faas billing price-catalog sync` to hydrate.")
+		_, _ = fmt.Fprintln(tw, "\nRun `gregale billing price-catalog sync` to hydrate.")
 		return
 	}
 	_, _ = fmt.Fprintln(tw, "\nCatalog:")

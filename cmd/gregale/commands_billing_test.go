@@ -1,6 +1,6 @@
 // commands_billing_test.go — issue #253 + #242 CLI surface pin.
 //
-// Pins the four documented behaviours of `faas billing portal`:
+// Pins the four documented behaviours of `gregale billing portal`:
 //   1. --print prints the URL and skips the browser
 //   2. --no-open (default branch) opens via browser.Default (recorder)
 //   3. empty URL → "portal not configured" friendly error, exit 1
@@ -13,7 +13,7 @@
 //   - payment-method: GET /v1/billing/portal → prints card-on-file
 //
 // The dispatcher (cmdBilling) is pinned by the subcommand routing:
-// `faas billing help` exits 0; `faas billing bogus` exits 1.
+// `gregale billing help` exits 0; `gregale billing bogus` exits 1.
 
 package main
 
@@ -188,7 +188,7 @@ func TestCmdBilling_Dispatch(t *testing.T) {
 		if code := cmdBilling(nil); code != 1 {
 			t.Errorf("cmdBilling (no sub) = %d, want 1", code)
 		}
-		if !strings.Contains(stderr.String(), "usage: faas billing") {
+		if !strings.Contains(stderr.String(), "usage: gregale billing") {
 			t.Errorf("stderr missing usage; got: %q", stderr.String())
 		}
 	})
@@ -202,7 +202,7 @@ func TestCmdBilling_Dispatch(t *testing.T) {
 			t.Errorf("help output missing 'portal' subcommand; got: %q", stdout.String())
 		}
 		// PR-P3 subcommands also appear in the help text so an
-		// operator running `faas billing help` discovers them.
+		// operator running `gregale billing help` discovers them.
 		// Issue #242 adds retry / cancel / payment-method.
 		for _, sub := range []string{"status", "price-catalog", "reconcile", "retry", "cancel", "payment-method"} {
 			if !strings.Contains(stdout.String(), sub) {
@@ -287,7 +287,7 @@ func TestCmdBillingStatus_EmptyCatalogHints(t *testing.T) {
 	if !strings.Contains(out, "never synced") {
 		t.Errorf("status output missing 'never synced'; got: %q", out)
 	}
-	if !strings.Contains(out, "faas billing price-catalog sync") {
+	if !strings.Contains(out, "gregale billing price-catalog sync") {
 		t.Errorf("status output missing actionable hint; got: %q", out)
 	}
 }
@@ -314,7 +314,7 @@ func TestCmdBillingStatus_RejectsArgs(t *testing.T) {
 
 // TestParseBillingStatusFlags pins PR-P4's --watch / --json / --no-clear
 // flag parser. Lives next to TestCmdBillingStatus_RejectsArgs so the
-// full CLI-flag contract for `faas billing status` is documented in
+// full CLI-flag contract for `gregale billing status` is documented in
 // one file.
 func TestParseBillingStatusFlags(t *testing.T) {
 	tests := []struct {

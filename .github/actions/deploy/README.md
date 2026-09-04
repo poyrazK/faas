@@ -1,4 +1,4 @@
-# faas-deploy-action · Gregale deploy for GitHub Actions
+# Gregale deploy action for GitHub Actions
 
 Official GitHub Action for [Gregale](https://github.com/poyrazK/faas) — deploy an app from a GitHub Actions workflow using a pinned `gregale` CLI.
 
@@ -18,7 +18,7 @@ jobs:
       - uses: poyrazK/faas/.github/actions/deploy@v1
         with:
           api-key: ${{ secrets.GREGALE_API_KEY }}
-          api-base: https://api.faas.example
+          api-base: https://api.gregale.dev
           app: my-app
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
           wait: "true"
@@ -38,8 +38,8 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 
 | Input | Description | Required | Default |
 |---|---|---|---|
-| `api-key` | faas API bearer token. Use `${{ secrets.GREGALE_API_KEY }}`. | yes | — |
-| `api-base` | faas API base URL. | no | `https://api.faas.example` |
+| `api-key` | Gregale API bearer token. Use `${{ secrets.GREGALE_API_KEY }}`. | yes | — |
+| `api-base` | Gregale API base URL. | no | `https://api.gregale.dev` |
 | `app` | App slug to deploy. | yes | — |
 | `repo` | OWNER/NAME of the source GitHub repo. | no | `${{ github.repository }}` |
 | `ref` | git ref — branch, tag, or 40-char SHA. | no | `${{ github.sha }}` |

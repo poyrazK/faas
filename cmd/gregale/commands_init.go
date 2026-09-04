@@ -90,11 +90,15 @@ func cmdInit(args []string) int {
 // underlying classification lives in templates.CategoryFor so future
 // surfaces (CLI help, dashboard template picker) can reuse it.
 //
-// Output is human-only; the machine-readable surface is the
-// `templates.Names` slice (and the matching `//go:embed` directive).
-// A future `--json` flag could re-use this layout; we don't ship
-// it yet because no consumer (CI, dashboard) needs it.
+// Human output is grouped for onboarding. Under --json the dispatcher
+// emits the canonical template-name slice instead, so discovery is
+// scriptable without scraping category headings.
 func runCmdInitList(stdout io.Writer) int {
+	if jsonOutput {
+		return jsonOut(writeJSONTo(stdout, struct {
+			Templates []string `json:"templates"`
+		}{Templates: templates.Names}))
+	}
 	for _, cat := range templates.CategoryOrder {
 		var inCat []string
 		for _, n := range templates.Names {

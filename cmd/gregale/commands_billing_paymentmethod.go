@@ -1,4 +1,4 @@
-// commands_billing_paymentmethod.go — `faas billing payment-method`
+// commands_billing_paymentmethod.go — `gregale billing payment-method`
 // (issue #242).
 //
 // Shows the card-on-file summary (brand, last-4, expiry) and
@@ -31,7 +31,7 @@ func cmdBillingPaymentMethod(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(os.Stderr, "usage: faas billing payment-method [--print|--no-open]\n")
+		fmt.Fprintf(os.Stderr, "usage: gregale billing payment-method [--print|--no-open]\n")
 		return 1
 	}
 
