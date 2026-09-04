@@ -19529,8 +19529,8 @@ func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAud
 	var id int64
 	err := s.pool.QueryRow(ctx,
 		`insert into deployment_audit
-		    (deployment_id, account_id, kind, actor, at, data)
-		 values ($1, $2, $3, $4, coalesce($5, now()), $6::jsonb)
+		    (deployment_id, account_id, kind, actor, at, data, alert_rule_id)
+		 values ($1, $2, $3, $4, coalesce($5, now()), $6::jsonb, $7)
 		 returning id`,
 		entry.DeploymentID,
 		entry.AccountID,
@@ -19542,6 +19542,11 @@ func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAud
 		// 00333, which preserves the events.at timestamp).
 		nullTime(entry.At),
 		[]byte(entry.Data),
+		// SAFE-RELEASES-OBS PR-D: nil for non-rule-triggered rows;
+		// ActionDispatcher + evaluator stamp this for the 5
+		// rule-touching audit kinds. NULL on insert is fine — the
+		// partial index excludes null rows.
+		entry.AlertRuleID,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("state: append deployment_audit: %w", err)
@@ -19564,7 +19569,7 @@ func (s *PgStore) ListDeploymentAudit(ctx context.Context, deploymentID string, 
 		limit = cap
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, deployment_id, account_id, kind, actor, at, data
+		`select id, deployment_id, account_id, kind, actor, at, data, alert_rule_id
 		   from deployment_audit
 		  where deployment_id = $1::uuid
 		  order by at desc, id desc
@@ -19577,17 +19582,61 @@ func (s *PgStore) ListDeploymentAudit(ctx context.Context, deploymentID string, 
 	var out []DeploymentAudit
 	for rows.Next() {
 		var (
-			d       DeploymentAudit
-			dataRaw []byte
+			d         DeploymentAudit
+			dataRaw   []byte
+			alertRule *uuid.UUID
 		)
-		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw); err != nil {
+		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw, &alertRule); err != nil {
 			return nil, fmt.Errorf("state: scan deployment_audit row: %w", err)
 		}
+		d.AlertRuleID = alertRule
 		d.Data = json.RawMessage(dataRaw)
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: list deployment_audit rows: %w", err)
+	}
+	return out, nil
+}
+
+// ListDeploymentAuditByAlertRule (SAFE-RELEASES-OBS PR-D) returns
+// deployment_audit rows whose alert_rule_id matches, newest first.
+// Backs the /dashboard/alerts/{id} reverse-lookup query. The
+// partial index deployment_audit_alert_rule_idx (migrations/20260905000000002)
+// keeps the lookup sub-millisecond; only rows with non-null
+// alert_rule_id participate so the index stays tiny.
+func (s *PgStore) ListDeploymentAuditByAlertRule(ctx context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error) {
+	const cap = 500
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, deployment_id, account_id, kind, actor, at, data, alert_rule_id
+		   from deployment_audit
+		  where alert_rule_id = $1::uuid
+		  order by at desc, id desc
+		  limit $2`,
+		alertRuleID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit by alert_rule: %w", err)
+	}
+	defer rows.Close()
+	var out []DeploymentAudit
+	for rows.Next() {
+		var (
+			d         DeploymentAudit
+			dataRaw   []byte
+			alertRule *uuid.UUID
+		)
+		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw, &alertRule); err != nil {
+			return nil, fmt.Errorf("state: scan deployment_audit row by alert_rule: %w", err)
+		}
+		d.AlertRuleID = alertRule
+		d.Data = json.RawMessage(dataRaw)
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit by alert_rule rows: %w", err)
 	}
 	return out, nil
 }
@@ -22478,6 +22527,83 @@ func (s *PgStore) DeleteInvocationsByIDs(ctx context.Context, ids []string) (int
 		return 0, fmt.Errorf("state: invocations reaper delete: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// RecentInvocations (SAFE-RELEASES-OBS PR-E, issue #976 / ADR-122)
+// returns invocation rows for appID whose created_at >= since,
+// ordered (created_at DESC, id DESC), capped at limit.
+func (s *PgStore) RecentInvocations(ctx context.Context, appID string, since time.Time, limit int) ([]Invocation, error) {
+	if appID == "" {
+		return nil, fmt.Errorf("state: RecentInvocations: empty app_id")
+	}
+	const cap = 10_000
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	rows, err := s.pool.Query(ctx,
+		`select `+invocationSelectCols+`
+		   from invocations
+		  where app_id = $1::uuid
+		    and created_at >= $2
+		  order by created_at desc, id desc
+		  limit $3`,
+		appID, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: RecentInvocations: %w", err)
+	}
+	defer rows.Close()
+	return scanInvocations(rows)
+}
+
+// RecentErrorRate (SAFE-RELEASES-OBS PR-E) returns the fraction of
+// failed invocations (state IN ('failed','dead_letter')) in the
+// [since, now] window for appID. Returns 0.0 when there are no rows.
+func (s *PgStore) RecentErrorRate(ctx context.Context, appID string, since time.Time) (float64, error) {
+	if appID == "" {
+		return 0, fmt.Errorf("state: RecentErrorRate: empty app_id")
+	}
+	var total, failed int
+	err := s.pool.QueryRow(ctx,
+		`select count(*),
+		        count(*) filter (where state in ('failed','dead_letter'))
+		   from invocations
+		  where app_id = $1::uuid
+		    and created_at >= $2`,
+		appID, since).Scan(&total, &failed)
+	if err != nil {
+		return 0, fmt.Errorf("state: RecentErrorRate: %w", err)
+	}
+	if total == 0 {
+		return 0.0, nil
+	}
+	return float64(failed) / float64(total), nil
+}
+
+// RecentP95LatencyMs (SAFE-RELEASES-OBS PR-E) returns the
+// 95th-percentile completion latency in milliseconds over the
+// [since, now] window for appID. Returns 0.0 when there is no data.
+func (s *PgStore) RecentP95LatencyMs(ctx context.Context, appID string, since time.Time) (float64, error) {
+	if appID == "" {
+		return 0, fmt.Errorf("state: RecentP95LatencyMs: empty app_id")
+	}
+	var p95 *float64
+	err := s.pool.QueryRow(ctx,
+		`select coalesce(
+		           percentile_cont(0.95) within group (order by extract(epoch from (completed_at - created_at)) * 1000.0),
+		           0.0)
+		   from invocations
+		  where app_id = $1::uuid
+		    and state = 'completed'
+		    and completed_at is not null
+		    and created_at >= $2`,
+		appID, since).Scan(&p95)
+	if err != nil {
+		return 0, fmt.Errorf("state: RecentP95LatencyMs: %w", err)
+	}
+	if p95 == nil {
+		return 0.0, nil
+	}
+	return *p95, nil
 }
 
 // ListDeadlineBreachedInvocations returns up to `limit` invocation IDs

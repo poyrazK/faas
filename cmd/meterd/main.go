@@ -1051,6 +1051,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if c := ops.DeploymentAuditGCRowsDeleted(); c != nil {
 			c.Add(float64(n))
 		}
+	}, func(error) {
+		// SAFE-RELEASES-OBS PR-A: bump the GC-failed counter so
+		// PR-B's deployment_audit_gc_failing alert can page on a
+		// sustained prune-loop failure. Pre-PR this was journal-
+		// only.
+		if c := ops.DeploymentAuditGCFailedTotal(); c != nil {
+			c.Inc()
+		}
 	})
 
 	// ADR-123 / issue #1233: alert-preset signal-feeding
@@ -1402,6 +1410,12 @@ func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsM
 	storeAdapter := &safedeployStoreAdapter{store: store}
 	const actorSentinel = "meterd:safedeploy"
 	orchestrator := safedeploy.NewOrchestrator(storeAdapter, log, actorSentinel, actorSentinel)
+	// SAFE-RELEASES-OBS PR-A: wire the daemon's wire.OpsMetrics
+	// so emitAudit can bump the deployment_audit_emitted_total
+	// counter on every successful + failed audit emit. nil-allowed
+	// in the constructor so the smoke test (which builds an
+	// Orchestrator without ops) keeps compiling.
+	orchestrator.Ops = ops
 	// Wire the ActionDispatcher onto the Evaluator. When
 	// apidClient is nil (FAAS_CANARY_PROGRESSION_TOKEN unset but
 	// FAAS_SAFEDEPLOY_TOKEN set), the ActionDispatcher is built

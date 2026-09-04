@@ -4264,6 +4264,50 @@ type Store interface {
 	// shows them under the orphaned-deployment_id sentinel.
 	ListDeploymentAudit(ctx context.Context, deploymentID string, limit int) ([]DeploymentAudit, error)
 
+	// RecentInvocations (SAFE-RELEASES-OBS PR-E, issue #976 /
+	// ADR-122) is the read seam for the canary simulator's
+	// `gregale canary simulate` subcommand. Returns invocation
+	// rows for the app whose `created_at >= since`, ordered
+	// (created_at DESC, id DESC), capped at `limit`. The
+	// invocations_app_created_at_idx partial index
+	// (migrations/00060) backs the query so the simulator's
+	// 1h-look-back stays sub-millisecond at one-box scale.
+	//
+	// limit > 0 caps the page; <= 0 means "no row cap" (the
+	// simulator passes 10_000 as a safety bound). The simulator
+	// uses the count, not the rows themselves — the rows are
+	// returned only so the simulator can render
+	// `observed_traffic` truthfully.
+	RecentInvocations(ctx context.Context, appID string, since time.Time, limit int) ([]Invocation, error)
+
+	// RecentErrorRate (SAFE-RELEASES-OBS PR-E) returns the
+	// fraction of failed invocations in the [since, now] window
+	// for the given app. Computed as
+	// COUNT(state='failed' OR state='dead_letter') /
+	// COUNT(*). Returns 0.0 when no invocations match (no error;
+	// the simulator's neutral path handles the empty-window case
+	// separately via RecentInvocations).
+	RecentErrorRate(ctx context.Context, appID string, since time.Time) (float64, error)
+
+	// RecentP95LatencyMs (SAFE-RELEASES-OBS PR-E) returns the
+	// 95th-percentile completion latency in milliseconds over the
+	// [since, now] window for the given app. Computed via
+	// percentile_cont(0.95) within group ORDER BY
+	// (completed_at - created_at). Returns 0.0 when no
+	// completed invocations match (no error; the simulator
+	// surfaces this as a "no latency data" note rather than a
+	// zero-projection failure).
+	RecentP95LatencyMs(ctx context.Context, appID string, since time.Time) (float64, error)
+
+	// ListDeploymentAuditByAlertRule (SAFE-RELEASES-OBS PR-D) is
+	// the reverse-lookup query behind /dashboard/alerts/{id} — every
+	// deployment_audit row whose alert_rule_id matches the supplied
+	// rule, newest first. Backs the partial index
+	// deployment_audit_alert_rule_idx created in migrations/20260905000000002 so
+	// the query stays sub-millisecond. limit > 0 caps the page;
+	// <= 0 means "no row cap" (caller is responsible for bounding).
+	ListDeploymentAuditByAlertRule(ctx context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error)
+
 	// AppendDeploymentStage (ADR-117, migration 00302) appends a
 	// closed stage transition to deployments.stage_state and returns
 	// the new row. The `from` and `to` parameters are the
