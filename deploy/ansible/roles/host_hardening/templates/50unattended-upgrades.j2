@@ -1,0 +1,20 @@
+// {{ ansible_managed }} — host_hardening role (spec §11, ADR-143).
+// Security pocket only. Never auto-reboot: parked snapshots live in a
+// tmpfs jail and a reboot must be an operator-driven drain.
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::Package-Blacklist {
+    // Kernel and firecracker-adjacent packages are pinned by the
+    // firecracker role and rolled deliberately.
+    "linux-image-";
+    "linux-headers-";
+    "linux-modules-";
+};
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "{{ 'true' if faas_hardening_unattended_reboot | bool else 'false' }}";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::SyslogEnable "true";

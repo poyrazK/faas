@@ -1,0 +1,8 @@
+# {{ ansible_managed }} — host_hardening role (spec §11, ADR-143).
+[sshd]
+enabled = true
+mode = aggressive
+backend = systemd
+bantime = {{ faas_hardening_fail2ban_bantime }}
+findtime = {{ faas_hardening_fail2ban_findtime }}
+maxretry = {{ faas_hardening_fail2ban_maxretry }}
