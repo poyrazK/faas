@@ -33,6 +33,7 @@ class OperatorRuntimeConfig:
     effective_value: Any
     source: OperatorRuntimeConfigSource
     apply_mode: OperatorRuntimeConfigApplyMode
+    controller_enabled: bool
     mutable: bool
     sensitive: bool
     status: OperatorRuntimeConfigStatus
@@ -62,6 +63,8 @@ class OperatorRuntimeConfig:
         source: str = self.source
 
         apply_mode: str = self.apply_mode
+
+        controller_enabled = self.controller_enabled
 
         mutable = self.mutable
 
@@ -95,6 +98,7 @@ class OperatorRuntimeConfig:
                 "effective_value": effective_value,
                 "source": source,
                 "apply_mode": apply_mode,
+                "controller_enabled": controller_enabled,
                 "mutable": mutable,
                 "sensitive": sensitive,
                 "status": status,
@@ -133,6 +137,8 @@ class OperatorRuntimeConfig:
 
         apply_mode = check_operator_runtime_config_apply_mode(d.pop("apply_mode"))
 
+        controller_enabled = d.pop("controller_enabled")
+
         mutable = d.pop("mutable")
 
         sensitive = d.pop("sensitive")
@@ -168,6 +174,7 @@ class OperatorRuntimeConfig:
             effective_value=effective_value,
             source=source,
             apply_mode=apply_mode,
+            controller_enabled=controller_enabled,
             mutable=mutable,
             sensitive=sensitive,
             status=status,

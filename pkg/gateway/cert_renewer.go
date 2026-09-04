@@ -65,10 +65,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// SurfaceCertRenewer is the periodic renewal goroutine. Wire
-// it from cmd/gatewayd-internal/run.go when the tenant-surfaces
-// feature flag is on; the renewer is a no-op on a nil store
-// so a unit test can pass in an empty MemStore without
+// SurfaceCertRenewer is the periodic renewal goroutine. It may
+// remain running while the tenant-surfaces gate is off; SetEnabled
+// makes each tick a no-op until a durable hot change enables it.
+// A nil store remains a no-op so unit tests can construct it without
 // panicking.
 type SurfaceCertRenewer struct {
 	store state.Store
@@ -92,6 +92,10 @@ type SurfaceCertRenewer struct {
 	// future ADR that surfaces the renewer's tick-time on the
 	// metrics panel.
 	now func() time.Time
+	// enabled is the optional runtime feature gate. A nil gate keeps the
+	// historical always-on behavior used by tests and callers outside the
+	// daemon wiring.
+	enabled func() bool
 }
 
 // NewSurfaceCertRenewer constructs a renewer with the
@@ -128,6 +132,14 @@ func (r *SurfaceCertRenewer) SetRenewBefore(d time.Duration) *SurfaceCertRenewer
 func (r *SurfaceCertRenewer) SetClock(c func() time.Time) *SurfaceCertRenewer {
 	r.clock = c
 	r.now = c
+	return r
+}
+
+// SetEnabled attaches a runtime gate. The renewer remains alive while the
+// feature is disabled so a later hot enable takes effect without restarting
+// gatewayd.
+func (r *SurfaceCertRenewer) SetEnabled(enabled func() bool) *SurfaceCertRenewer {
+	r.enabled = enabled
 	return r
 }
 
@@ -178,6 +190,9 @@ func (r *SurfaceCertRenewer) Run(ctx context.Context) {
 // touched mid-batch by the renewer itself don't cause
 // duplicate fires.
 func (r *SurfaceCertRenewer) tickOnce(ctx context.Context) error {
+	if r.enabled != nil && !r.enabled() {
+		return nil
+	}
 	if r.store == nil {
 		return errors.New("gateway: renewer nil store")
 	}

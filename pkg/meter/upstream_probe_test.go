@@ -37,6 +37,17 @@ type fakeUpstreamProbeStore struct {
 	inserted []sqlc.InsertDataUpstreamProbeParams
 }
 
+func TestProbeDisabledIsNoop(t *testing.T) {
+	p := NewProbe(nil, "us-east-1", nil).SetEnabled(false)
+	written, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("disabled probe run = %v, want nil", err)
+	}
+	if written != 0 {
+		t.Fatalf("disabled probe wrote %d rows, want zero", written)
+	}
+}
+
 func (s *fakeUpstreamProbeStore) ListDistinctUpstreamHostHashes(_ context.Context) ([]state.DataUpstreamTarget, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

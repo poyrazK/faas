@@ -16,6 +16,7 @@ export type OperatorRuntimeConfig = {
   effective_value: any;
   source: 'default_or_environment' | 'operator';
   apply_mode: 'hot' | 'graceful' | 'rolling' | 'break_glass';
+  controller_enabled: boolean;
   mutable: boolean;
   sensitive: boolean;
   status: 'pending' | 'applied' | 'failed' | 'blocked';
