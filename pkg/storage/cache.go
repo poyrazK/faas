@@ -326,25 +326,46 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 		}
 	}()
 
-	if err := c.parent.Put(ctx, key, io.TeeReader(r, tmp)); err != nil {
+	// Spool the whole blob to the temp file FIRST, then hand the
+	// parent that file rather than a TeeReader over the caller's
+	// stream.
+	//
+	// Why not tee straight through: the OCI parent cannot upload
+	// until it knows the blob's digest (the monolithic-PUT endpoint
+	// takes ?digest=sha256:...), so bufferAndHash spools the stream
+	// to a temp file of its own before it sends a byte. Teeing
+	// therefore did not pipeline anything — it just meant the same
+	// bytes were written to disk TWICE per capture, once into this
+	// cache spool and once into the parent's. Measured on a
+	// production node on 2026-09-04, a 1 GiB capture spent ~52 s of
+	// its ~100 s in the parent's redundant copy alone (~20 MB/s on
+	// pd-standard), against a 75 s budget — so parks failed by
+	// timing out on work that never needed doing.
+	//
+	// Handing over an *os.File lets the parent hash in place and
+	// upload from the same fd. One write, not two.
+	written, spoolErr := copyContext(ctx, tmp, r)
+	if spoolErr != nil {
+		return fmt.Errorf("storage: cache: put %q: spool: %w", key, spoolErr)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("storage: cache: put %q: fsync spool: %w", key, err)
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("storage: cache: put %q: rewind spool: %w", key, err)
+	}
+	if err := c.parent.Put(ctx, key, tmp); err != nil {
 		return fmt.Errorf("storage: cache: put %q: parent: %w", key, err)
 	}
 
-	// Post-parent size check covers the no-SizeReader case: a
-	// stream that didn't expose Size can't be pre-checked, so it is
-	// measured here from what the tee actually captured. The parent
-	// holds the canonical copy; we surface the size error but do
-	// not install an entry we can't guarantee eviction for.
-	written, statErr := tmp.Seek(0, io.SeekCurrent)
-	if statErr != nil {
-		return nil // parent accepted the blob; cache mirroring is best-effort
-	}
+	// Post-parent size check covers the no-SizeReader case: a stream
+	// that didn't expose Size can't be pre-checked, so it is measured
+	// here from what was actually spooled. The parent holds the
+	// canonical copy; we surface the size error but do not install an
+	// entry we can't guarantee eviction for.
 	if written > c.maxBytes {
 		return fmt.Errorf("storage: cache: put %q: streamed size %d exceeds maxBytes %d: %w",
 			key, written, c.maxBytes, errCacheBlobOversized)
-	}
-	if err := tmp.Sync(); err != nil {
-		return nil
 	}
 	if err := tmp.Close(); err != nil {
 		return nil
