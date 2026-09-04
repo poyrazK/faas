@@ -4288,6 +4288,10 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.RolloutState = "pending"
 	}
 	serviceRollout := IsServiceRollout(d)
+	if serviceRollout && d.RolloutStartedAt == nil {
+		now := time.Now().UTC()
+		d.RolloutStartedAt = &now
+	}
 
 	// Find the most-recent non-terminal deployment row for this app.
 	// O(N) over the map is fine at one-box scale; spec §6 keeps the
@@ -4520,9 +4524,6 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 			continue
 		}
 		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
-			continue
-		}
-		if IsServiceRollout(d) {
 			continue
 		}
 		out = append(out, d)
