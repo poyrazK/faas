@@ -363,7 +363,7 @@ export class DeploymentsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Plan tier gate tripped (Hobby / Free).`,
+        403: `Canary traffic splitting is unavailable on the Hobby / Free plan.`,
         404: `code: not_found`,
         409: `one of: rollout_not_stuck | rollout_state_invalid`,
         422: `action ∉ {advance, promote, abort} (closed-set check).`,
