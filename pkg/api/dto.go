@@ -5153,7 +5153,34 @@ func (a *EdgeRuleIPAction) Validate() *Problem {
 // or "$id"), followed by an optional-whitespace colon, followed by
 // a URL-shaped value. Verified against 10 cases in this PR-C
 // harness (see plan-file regression-proof walkthrough).
-var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:\s*"(https?://|//)[^"]+"`)
+//
+// Issue #850 follow-up: the PR-C anchoring narrowed the value
+// alternation to `https?://|//`, which broke the superset invariant
+// pkg/gateway/handler.go:2163 depends on. The gateway's compile-time
+// gate (pkg/edgevalidate.schemaRefURLPattern) matches ANY scheme,
+// case-insensitively — `file://`, `ftp://`, `gopher://`, `HTTPS://`.
+// A schema carrying one of those passed apid-Validate (201 Created)
+// and then failed at gateway compile time, which the applier treats
+// as "the gateway dependency is broken": every request to the route
+// got a 502 and ops got a false alarm for a rule the API had
+// accepted.
+//
+// This pattern is therefore deliberately a STRICT SUPERSET of the
+// gateway's:
+//
+//   - `(?i)` + `[a-z][a-z0-9+.-]*:` — any RFC 3986 scheme, any case
+//     (schemes are case-insensitive per RFC 3986 §3.1), matching the
+//     gateway's `(?i)"\$(?:ref|id)"\s*:\s*"[a-z][a-z0-9+.-]*://`.
+//   - the scheme is OPTIONAL, so protocol-relative `//host/x` is
+//     still caught here. The gateway does NOT catch that form; apid
+//     staying stricter in that one direction is safe (a
+//     false-positive 400 at accept time, never a 502 at runtime).
+//
+// The invariant — "everything the gateway refuses to compile, apid
+// refuses to accept" — is pinned by TestAPIDRejectsEverythingCompileRejects
+// in pkg/edgevalidate/apid_parity_test.go. Widen the gateway pattern
+// and that test fails until this one is widened to match.
+var edgeRuleValidateRefURLPattern = regexp.MustCompile(`(?i)"\s*(\$ref|\$id)\s*"\s*:\s*"([a-z][a-z0-9+.-]*:)?//[^"]+"`)
 
 // EdgeRuleValidateAction is the wire shape for a kind=validate edge
 // rule. Schema is a JSON Schema 2020-12 document (Draft 2020-12;
