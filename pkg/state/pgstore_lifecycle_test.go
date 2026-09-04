@@ -60,6 +60,9 @@ func TestPg_NodeSetLifecycle_CASConflict(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	id := pgTestLifecycleNode(t, s, state.NodeLifecycleActive)
 	// Race: heartbeat expects Active, peer already flipped to Draining.
+	if err := s.NodeSetLifecycle(t.Context(), id, state.NodeLifecycleActive, state.NodeLifecycleDraining); err != nil {
+		t.Fatalf("peer NodeSetLifecycle: %v", err)
+	}
 	err := s.NodeSetLifecycle(t.Context(), id, state.NodeLifecycleActive, state.NodeLifecycleUnavailable)
 	if !errors.Is(err, state.ErrConflict) {
 		t.Errorf("wrong expected state = %v, want ErrConflict", err)
