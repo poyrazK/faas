@@ -47,17 +47,17 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
-	"GET /v1/account/dpa":              true, // public markdown (no Bearer; SDK consumers don't render HTML)
-	"POST /v1/webhooks/stripe":         true, // HMAC-signed webhook; outside the Bearer-auth surface
-	"POST /v1/webhooks/resend":         true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
-	"GET /v1/openapi.yaml":             true, // metadata
-	"GET /v1/openapi.json":             true, // metadata
-	"GET /v1/internal/metrics/targets": true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/account/dpa":                       true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"POST /v1/webhooks/stripe":                  true, // HMAC-signed webhook; outside the Bearer-auth surface
+	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
+	"GET /v1/openapi.yaml":                      true, // metadata
+	"GET /v1/openapi.json":                      true, // metadata
+	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
 	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
-	"POST /v1/cli-auth/code":           true, // anonymous device-code (CLI uses wrapper)
-	"POST /v1/cli-auth/exchange":       true,
-	"GET /status/slo.json":             true,
-	"GET /status":                      true,
+	"POST /v1/cli-auth/code":                    true, // anonymous device-code (CLI uses wrapper)
+	"POST /v1/cli-auth/exchange":                true,
+	"GET /status/slo.json":                      true,
+	"GET /status":                               true,
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not

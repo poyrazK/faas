@@ -66,17 +66,17 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"GET /v1/account/dpa":                     true, // public markdown (no auth)
-	"POST /v1/webhooks/stripe":                true, // HMAC-signed webhook
-	"POST /v1/webhooks/paddle":                true, // HMAC-signed webhook (PR #3 / ADR-025)
-	"POST /v1/webhooks/polar":                 true, // Standard Webhooks-signed webhook
-	"POST /v1/webhooks/resend":                true, // Svix-signed webhook (issue #246 / ADR-115)
-	"GET /v1/compute-nodes":                   true, // operator-only (ADR-029)
-	"POST /v1/compute-nodes":                  true, // operator-only
-	"DELETE /v1/compute-nodes/{name}":         true, // operator-only
-	"GET /v1/compute-nodes/{name}/heartbeats": true, // CP-1: operator-only (heartbeat history; schedd-owned)
-	"GET /v1/compute-nodes/events":            true, // CP-1: operator-only SSE on compute_node_changed
-	"GET /v1/internal/metrics/targets":        true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/account/dpa":                       true, // public markdown (no auth)
+	"POST /v1/webhooks/stripe":                  true, // HMAC-signed webhook
+	"POST /v1/webhooks/paddle":                  true, // HMAC-signed webhook (PR #3 / ADR-025)
+	"POST /v1/webhooks/polar":                   true, // Standard Webhooks-signed webhook
+	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115)
+	"GET /v1/compute-nodes":                     true, // operator-only (ADR-029)
+	"POST /v1/compute-nodes":                    true, // operator-only
+	"DELETE /v1/compute-nodes/{name}":           true, // operator-only
+	"GET /v1/compute-nodes/{name}/heartbeats":   true, // CP-1: operator-only (heartbeat history; schedd-owned)
+	"GET /v1/compute-nodes/events":              true, // CP-1: operator-only SSE on compute_node_changed
+	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
 	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
