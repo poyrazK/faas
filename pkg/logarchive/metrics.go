@@ -29,6 +29,7 @@ const (
 	metricBytesUploadedTotal    = "apid_log_archive_bytes_uploaded_total"
 	metricFailuresTotal         = "apid_log_archive_failures_total"
 	metricLocalBytes            = "apid_log_archive_local_bytes"
+	metricLocalBytesMax         = "apid_log_archive_local_bytes_max"
 	metricFlushDurationSeconds  = "apid_log_archive_flush_duration_seconds"
 	metricUploadDurationSeconds = "apid_log_archive_upload_duration_seconds"
 )
@@ -70,6 +71,7 @@ type promMetrics struct {
 	bytesUploaded  prometheus.Counter
 	failures       *prometheus.CounterVec
 	localBytes     prometheus.Gauge
+	localBytesMax  prometheus.Gauge
 	flushDuration  prometheus.Histogram
 	uploadDuration prometheus.Histogram
 }
@@ -97,6 +99,10 @@ func NewMetrics(reg prometheus.Registerer) Metrics {
 		Name: metricLocalBytes,
 		Help: "Current local spool size in bytes (issue #562). Tracked by the shipper's per-tick LocalBytes gauge update; alert fires when this approaches FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX (default 10 GB) during a sustained bucket outage.",
 	})
+	localBytesMax := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: metricLocalBytesMax,
+		Help: "Configured local spool capacity in bytes (issue #562). Stamped by the shipper at construction from FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX; use with apid_log_archive_local_bytes to alert on capacity percentage without hard-coding the deployment override.",
+	})
 	flushDur := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    metricFlushDurationSeconds,
 		Help:    "Wall-clock time for a single shipper tick (issue #562). Buckets {.05, .1, .5, 1, 2, 5, 10, 30} cover the typical 1-30s flush of a few hundred .partial files; sustained ticks near 30s suggest S3 is throttling the operator.",
@@ -107,7 +113,7 @@ func NewMetrics(reg prometheus.Registerer) Metrics {
 		Help:    "Wall-clock time for a single PutObject (issue #562). Buckets {.05, .1, .25, .5, 1, 2.5, 5, 10} cover the typical 50ms-10s PUT for a compressed JSONL object; sustained p99 > 2.5s suggests the vendor's edge latency has degraded.",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 	})
-	reg.MustRegister(files, bytes, failures, localBytes, flushDur, uploadDur)
+	reg.MustRegister(files, bytes, failures, localBytes, localBytesMax, flushDur, uploadDur)
 	for _, status := range []string{"ok", "err"} {
 		files.WithLabelValues(status)
 	}
@@ -119,6 +125,7 @@ func NewMetrics(reg prometheus.Registerer) Metrics {
 		bytesUploaded:  bytes,
 		failures:       failures,
 		localBytes:     localBytes,
+		localBytesMax:  localBytesMax,
 		flushDuration:  flushDur,
 		uploadDuration: uploadDur,
 	}
@@ -156,6 +163,16 @@ func (p *promMetrics) SetLocalBytes(n int64) {
 		return
 	}
 	p.localBytes.Set(float64(n))
+}
+
+// SetLocalBytesMax publishes the effective local spool capacity. It is kept
+// out of the Metrics interface so existing test fakes remain source
+// compatible; the Shipper uses the optional capability when present.
+func (p *promMetrics) SetLocalBytesMax(n int64) {
+	if p == nil {
+		return
+	}
+	p.localBytesMax.Set(float64(n))
 }
 
 func (p *promMetrics) ObserveFlushDuration(seconds float64) {

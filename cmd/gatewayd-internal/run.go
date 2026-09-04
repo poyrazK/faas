@@ -1178,7 +1178,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// We do NOT pass a Broadcaster — gatewayd is the public
 	// listener (CLAUDE.md ownership), not an SSE fan-out source.
 	gatewayOps := wire.NewOpsMetrics("gatewayd")
-	wire.BootStamps(ctx, "gatewayd", gatewayOps)
+	wire.BootStamps(ctx, "gatewayd-internal", gatewayOps)
 	wire.RegisterDefaultOps(gatewayOps)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
 	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).WithEvents(eventsPlatform)
@@ -1526,6 +1526,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
+	traceShutdown, traceErr := trace.InitTracer(ctx, "gatewayd-internal", wire.Version, log)
+	if traceErr != nil {
+		return fmt.Errorf("gatewayd-internal: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("gatewayd-internal: trace shutdown failed", "err", err)
+		}
+	}()
 
 	// ADR-068 / Tier A7 split: TLS termination moved to gatewayd-public.
 	// The legacy daemon always serves plain HTTP on :8080 (the e2e
@@ -2291,7 +2302,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		readyProbe.RegisterSignal(signal)
 		deps.warmHints.SetOnTouch(touch)
 	}
-	controlMux := gateway.ControlMux(handler.Metrics(), readyProbe.ReadyFunc(), deps.drain)
+	readyProbe.SetReadyObserver(func(ready bool, reason string) {
+		if deps.opsMetrics != nil {
+			deps.opsMetrics.MarkReady("gatewayd-internal", ready, reason)
+		}
+	})
+	var controlMux *http.ServeMux
+	if deps.opsMetrics != nil {
+		// Serve the wire registry together with gateway.Metrics. The old
+		// control mux exposed only handler.Metrics(), so daemon lifecycle,
+		// HA, and restart/build signals were absent from the scrape.
+		controlMux = gateway.ControlMuxWithExtra(handler.Metrics(), deps.opsMetrics.Registry(), readyProbe.ReadyFunc(), deps.drain)
+	} else {
+		controlMux = gateway.ControlMux(handler.Metrics(), readyProbe.ReadyFunc(), deps.drain)
+	}
 	// Finding 6 (issue #314): mount the dashboard quota endpoint on the
 	// control mux so an in-box caller (operator's curl today, future
 	// apid-side dial) can read per-app bucket state without going through

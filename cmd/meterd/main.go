@@ -60,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -636,6 +637,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
+	traceShutdown, traceErr := trace.InitTracer(ctx, "meterd", wire.Version, log)
+	if traceErr != nil {
+		return fmt.Errorf("meterd: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("meterd: trace shutdown failed", "err", err)
+		}
+	}()
 
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
@@ -1115,6 +1127,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same mux as /healthz + /metrics. defer stop so the
 	// SIGTERM drain window surfaces in daemon_ready as 0.
 	meterdProbe := BuildReadinessProbe(loop)
+	meterdProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("meterd", ready, reason)
+	})
 	var metricsSrv *http.Server
 	if cfg.MetricsAddr != "" {
 		if deps.metricsListenAndServe == nil {

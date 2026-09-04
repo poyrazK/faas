@@ -31,7 +31,7 @@ fallback in its annotations.
 
 ```bash
 # Per-unit restart count over the last hour.
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=increase%28node_systemd_restart_count%7Bname%3D~%22faas-.%2A%5C.service%22%7D%5B1h%5D%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=increase%28node_systemd_restart_count%7Bname%3D~%22faas-.%2A%5C.service%22%7D%5B1h%5D%29'
 
 # Cumulative restart count (the systemd side).
 systemctl show 'faas-*' --property=Names,NRestarts,ActiveState,SubState \

@@ -5,10 +5,9 @@
 #   warn  → ticket-only email via the alertmanager `faas-warn` route.
 #   page  → operator email + Pushover via the `faas-page` route.
 #
-# Runbook URLs point at docs/ops/<AlertName>.md. Each runbook is a
-# stub today (symptom / verify / silence steps) — the URLs satisfy
-# `runbook_url:` even when the runbook content is a TODO. A follow-up
-# PR fills the runbooks with concrete triage commands.
+# Runbook URLs point at the concrete operator procedures under
+# docs/runbooks/. Keep alert names and runbook links synchronized when
+# adding a new platform signal.
 #
 # Metric names are the ones the daemons actually emit (verified against
 # pkg/wire/metrics.go, pkg/gateway/metrics.go, pkg/fcvm/metrics.go,
@@ -304,9 +303,12 @@ groups:
       # Spec: "API availability 99.5% monthly, wake p95 < 1s,
       #        build success (non-user_error) 99% — error budgets,
       #        not promises."
-      # 5m rolling used to match the status-page cache; spec calls these
-      # monthly but PromQL recursion is out of scope here. Status page
-      # already surfaces the rolling-5m numbers.
+      # 5m rolling remains the fast status-page signal. The paired
+      # multi-window burn-rate alerts below use the 30-day budgets as their
+      # reference (14.4x over 1h and 6x over 6h) so a sustained incident is
+      # caught before it consumes the monthly budget. Long-term monthly
+      # reporting still belongs in the durable metrics backend; this local
+      # Prometheus retains 15 days.
       #
       # `sum(rate(...[5m])) > 0` guards the denominator so an idle box
       # (no traffic yet) produces `false < 0.995` rather than `NaN < 0.995`
@@ -317,8 +319,9 @@ groups:
         expr: |
           (sum(rate(gateway_requests_total{code=~"2.."}[5m]))
             /
-          sum(rate(gateway_requests_total[5m])))
+          clamp_min(sum(rate(gateway_requests_total[5m])), 1))
             < 0.995
+          and sum(rate(gateway_requests_total[5m])) > 0
         for: 10m
         labels:
           severity: page
@@ -329,12 +332,40 @@ groups:
           description: "The 2xx ratio over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
 
+      - alert: FaasApiAvailabilityBurnRateHigh
+        expr: |
+          (
+            (
+              sum(rate(gateway_requests_total{code!~"2.."}[1h]))
+              / clamp_min(sum(rate(gateway_requests_total[1h])), 1)
+            ) > 0.072
+            and sum(rate(gateway_requests_total[1h])) > 0
+          )
+          and
+          (
+            (
+              sum(rate(gateway_requests_total{code!~"2.."}[6h]))
+              / clamp_min(sum(rate(gateway_requests_total[6h])), 1)
+            ) > 0.03
+            and sum(rate(gateway_requests_total[6h])) > 0
+          )
+        for: 10m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: api_availability
+        annotations:
+          summary: "API availability is consuming its monthly error budget rapidly"
+          description: "The API error rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
+
       - alert: FaasBuildSuccessLow
         expr: |
-          (sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m]))
+          (sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m]))
             /
-          sum(rate(builderd_ops_total{op="build"}[5m])))
+          clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])), 1))
             < 0.99
+          and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
         for: 15m
         labels:
           severity: warn
@@ -342,7 +373,34 @@ groups:
           family: build_success
         annotations:
           summary: "Build success (non-user_error) < 99%"
-          description: "Build success excluding user_error has been below the §12 public SLO (99%) for 15m. Status page /status/slo.json shows the same metric."
+          description: "Successful builds (ok or cache_hit), excluding user_error builds from the denominator, have been below the §12 public SLO (99%) for 15m. Status page /status/slo.json shows the same metric."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildSuccessLow.md"
+
+      - alert: FaasBuildSuccessBurnRateHigh
+        expr: |
+          (
+            (
+              sum(rate(builderd_ops_total{op="build",code!~"ok|cache_hit|user_error"}[1h]))
+              / clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h])), 1)
+            ) > 0.144
+            and sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h])) > 0
+          )
+          and
+          (
+            (
+              sum(rate(builderd_ops_total{op="build",code!~"ok|cache_hit|user_error"}[6h]))
+              / clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[6h])), 1)
+            ) > 0.06
+            and sum(rate(builderd_ops_total{op="build",code!="user_error"}[6h])) > 0
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_success
+        annotations:
+          summary: "Build failures are consuming the monthly error budget rapidly"
+          description: "The platform build-failure rate, excluding user_error builds, exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99% monthly build-success budget. Separate customer-content failures from builder infrastructure failures before escalating."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildSuccessLow.md"
 
       # ─────────────────────────────────────────────────────────────────
@@ -520,7 +578,7 @@ groups:
       # a dead alertmanager means alerts evaluate but never page anyone.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasDaemonDown
-        expr: up{job=~"apid|gatewayd|schedd|vmmd|imaged|builderd|meterd|githubd|alertmanager"} == 0
+        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|vmmd|imaged|builderd|meterd|githubd|alertmanager"} == 0
         for: 2m
         labels:
           severity: page
@@ -530,6 +588,67 @@ groups:
           summary: "Daemon {{ $labels.job }} is down"
           description: "Prometheus has been unable to scrape {{ $labels.job }} for 2m. Check systemd status + recent logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonDown.md"
+
+      # A scrape target can be up while the daemon is still warming,
+      # dependency-degraded, or draining. Alert on the readiness state
+      # separately so an HTTP 200 metrics endpoint is not mistaken for a
+      # traffic-safe serving instance. githubd is excluded because it is an
+      # optional integration; its credential-gated degraded state is covered
+      # by the githubd path-filter alert.
+      - alert: FaasDaemonNotReady
+        expr: |
+          apid_daemon_ready{daemon="apid"} == 0
+          or gatewayd_public_daemon_ready{daemon="gatewayd-public"} == 0
+          or gatewayd_daemon_ready{daemon="gatewayd-internal"} == 0
+          or schedd_daemon_ready{daemon="schedd"} == 0
+          or vmmd_daemon_ready{daemon="vmmd"} == 0
+          or imaged_daemon_ready{daemon="imaged"} == 0
+          or builderd_daemon_ready{daemon="builderd"} == 0
+          or meterd_daemon_ready{daemon="meterd"} == 0
+        for: 5m
+        labels:
+          severity: page
+          component: platform
+          family: daemon_readiness
+        annotations:
+          summary: "Daemon {{ $labels.daemon }} is not ready"
+          description: "{{ $labels.daemon }} has exposed daemon_ready=0 for 5m. Check its /readyz response and dependency-specific reason before routing traffic or restarting it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonNotReady.md"
+
+      # The archive shipper is intentionally best-effort and does not take
+      # apid down when S3 is unavailable. These rules turn its existing
+      # failure/spool signals into an actionable alert instead of relying on
+      # log inspection alone.
+      - alert: FaasLogArchiveShipperDegraded
+        expr: |
+          sum(rate(apid_log_archive_failures_total[5m])) > 0
+          or (
+            sum(apid_log_archive_local_bytes) > 0
+            and sum(rate(apid_log_archive_files_uploaded_total{status="ok"}[30m])) == 0
+          )
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: log_archive
+        annotations:
+          summary: "Log archive shipper is not making progress"
+          description: "The apid log archive shipper has recorded failures or has pending local spool data without a successful upload for 30m. Check failure reasons, S3 credentials, bucket reachability, and the local spool."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
+
+      - alert: FaasLogArchiveSpoolNearCap
+        expr: |
+          sum(apid_log_archive_local_bytes)
+            / sum(apid_log_archive_local_bytes_max) > 0.8
+        for: 15m
+        labels:
+          severity: page
+          component: apid
+          family: log_archive
+        annotations:
+          summary: "Log archive local spool is above 80% capacity"
+          description: "The apid log archive spool has exceeded 80% of its configured capacity for 15m. Resolve the bucket or credentials outage before new archive lines are dropped."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
 
       # ─────────────────────────────────────────────────────────────────
       # Resident GB per paying customer (meterd / metrics endpoint)

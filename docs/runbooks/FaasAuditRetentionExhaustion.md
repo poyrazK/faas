@@ -119,19 +119,19 @@ verification when the dashboard isn't available.
 
 ```bash
 # Is the loop alive? — gauge present + non-NaN AND recent (staleness)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=apid_audit_events_retention_lag_seconds'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=apid_audit_events_retention_lag_seconds'
 
 # Is the loop running on schedule? — gauge staleness (PR-D20.4 primary signal)
 # Healthy: time() - timestamp(gauge) < 86400s (one cadence).
 # Page:    > 93600s (26h, one cadence + 2h slack).
 # Warn:    > 180000s (50h, 2x cadence + 2h slack).
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=time%28%29+-+timestamp%28apid_audit_events_retention_lag_seconds%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=time%28%29+-+timestamp%28apid_audit_events_retention_lag_seconds%29'
 
 # Is it pruning? — counter rate over 24h
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=rate%28apid_audit_events_deleted_total%5B24h%5D%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=rate%28apid_audit_events_deleted_total%5B24h%5D%29'
 
 # Volume by kind prefix (top 5)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=topk%285%2C+rate%28apid_audit_events_volume_total%5B5m%5D%29%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=topk%285%2C+rate%28apid_audit_events_volume_total%5B5m%5D%29%29'
 
 # Table size + delete/insert rate from postgres
 psql -At -c "SELECT n_tup_ins, n_tup_del, pg_size_pretty(pg_total_relation_size('events'))

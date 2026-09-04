@@ -49,6 +49,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/wire/otelinit"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 )
 
@@ -811,6 +813,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// in unit tests that don't wire a real pgxpool; the probe
 	// short-circuits to "pg pool nil (test path)" in that case.
 	scheddProbe, scheddBound := BuildReadinessProbe(ctx, pool, 5*time.Second)
+	scheddProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("schedd", ready, reason)
+	})
 	// NOTE: scheddBound.MarkBound() is intentionally NOT called
 	// here — see cmd/schedd/readiness.go for why. The flip must
 	// fire inside the serve goroutine, just before gsrv.Serve,
@@ -831,10 +836,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
 		mux := http.NewServeMux()
-		mux.Handle(metricsPath, ops.Handler())
-		// Mount the §12 dashboard gauges on a sibling path so a
-		// `curl /metrics` scrape returns the canonical schedd ops
-		// series; Prometheus hits both paths.
+		// The canonical scrape combines the wire metrics and the dashboard
+		// gauges. Keep the sibling endpoint below for existing operators.
+		mux.Handle(metricsPath, promhttp.HandlerFor(
+			prometheus.Gatherers{ops.Registry(), dashGauges.Registry()},
+			promhttp.HandlerOpts{Registry: ops.Registry()},
+		))
 		mux.Handle(metricsPath+"/fcvm", dashGauges.Handler())
 		// Issue #571 PR-A2: /healthz + /readyz on the metrics mux
 		// (operator-side, loopback-only). Source of truth is the

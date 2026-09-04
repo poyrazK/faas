@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	builderdpkg "github.com/onebox-faas/faas/pkg/builderd"
@@ -123,6 +124,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
+	traceShutdown, traceErr := trace.InitTracer(ctx, "builderd", wire.Version, log)
+	if traceErr != nil {
+		return fmt.Errorf("builderd: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("builderd: trace shutdown failed", "err", err)
+		}
+	}()
 
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
@@ -190,6 +202,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("builderd")
 	wire.BootStamps(ctx, "builderd", ops)
 	wire.RegisterDefaultOps(ops)
+	builderdProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("builderd", ready, reason)
+	})
 	// issue #517 / PR-C / ADR-064: thread the events Platform
 	// so markSucceeded / markFailed emit
 	// wake.build_succeeded / wake.build_failed on the events

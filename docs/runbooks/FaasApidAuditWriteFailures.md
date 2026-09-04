@@ -24,11 +24,11 @@ audit trail has gaps.
 ## Verify
 
 ```bash
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum%28rate%28apid_audit_write_failures_total%5B5m%5D%29%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum%28rate%28apid_audit_write_failures_total%5B5m%5D%29%29'
 
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=topk%2810%2C+sum+by+%28account_id%29+%28rate%28apid_audit_write_failures_total%5B5m%5D%29%29%29'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=topk%2810%2C+sum+by+%28account_id%29+%28rate%28apid_audit_write_failures_total%5B5m%5D%29%29%29'
 
-curl -fsS 'http://127.0.0.1:9100/metrics' | grep -E '^apid_audit_write_failures_total'
+curl -fsS 'http://127.0.0.1:9101/metrics' | grep -E '^apid_audit_write_failures_total'
 ```
 
 The third call reads apid's loopback metrics endpoint directly. The
@@ -49,16 +49,16 @@ ACCOUNT_ID="<paste from /v1/account>"
 
 # Their audit-write failure rate
 curl -fsS --data-urlencode "query=rate(apid_audit_write_failures_total{account_id=\"${ACCOUNT_ID}\"}[5m])" \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 # Their request-failure stream (companion counter, same label;
 # code="err" is the invariant — see ADR-039 §Consequences)
 curl -fsS --data-urlencode "query=sum by (route) (rate(apid_request_failures_total{account_id=\"${ACCOUNT_ID}\",code=\"err\"}[5m]))" \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 
 # Their audit-write latency p95
 curl -fsS --data-urlencode "query=histogram_quantile(0.95, sum by (le) (rate(apid_audit_write_failures_duration_seconds_bucket{result=\"failed\"}[5m])))" \
-  'http://127.0.0.1:9090/api/v1/query'
+  'http://127.0.0.1:9095/api/v1/query'
 ```
 
 ### Daemon-side evidence
@@ -124,7 +124,7 @@ The alert clears automatically once the rolling 5m rate falls below
 5/min and the `for: 5m` window expires. Recovery actions, in order:
 
 1. **Confirm the metric is zero**:
-   `curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=apid_audit_write_failures_total'`
+   `curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=apid_audit_write_failures_total'`
 2. **Confirm new audit rows are landing** for a known successful
    action (e.g. the customer's next API key mint should produce an
    `auth.*` event row visible in `pg_get_recent_events`).

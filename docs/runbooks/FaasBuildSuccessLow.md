@@ -1,7 +1,8 @@
 # FaasBuildSuccessLow
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
-Metric: `builderd_ops_total{op="build",code!="user_error"}` vs total.
+Metric: successful `builderd_ops_total{op="build",code=~"ok|cache_hit"}`
+vs non-user-error builds.
 Spec: §12 (build success 99%, non-user_error).
 Severity: warn.
 
@@ -19,7 +20,9 @@ commonly a runner image that doesn't match a pinned dependency
 
 ```bash
 curl -fsS http://127.0.0.1:9105/metrics | grep builderd_ops_total
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m]))/sum(rate(builderd_ops_total{op="build"}[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m]))/sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m]))'
+# Multi-window burn-rate check (14.4x / 6x of the 99% monthly budget).
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(builderd_ops_total{op="build",code!~"ok|cache_hit|user_error"}[1h]))/sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h]))'
 ```
 
 ## Check
@@ -37,7 +40,7 @@ rebuild, not a per-tenant debug.
 
 ```bash
 amtool silence add \
-  --matchers='alertname=FaasBuildSuccessLow' \
+  --matchers='alertname=~"FaasBuildSuccess(Low|BurnRateHigh)"' \
   --duration=1h \
   --comment='runner image rebuild scheduled'
 ```

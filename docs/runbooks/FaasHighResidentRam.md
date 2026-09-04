@@ -16,7 +16,7 @@ of the 47,600 MB tenant budget, has crossed the §12 threshold.
 
 ```bash
 curl -fsS http://127.0.0.1:9103/metrics/fcvm | grep fcvm_resident_ram_pct
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=fcvm_resident_ram_pct'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=fcvm_resident_ram_pct'
 ```
 
 `fcvm_resident_ram_pct` should track the per-app instance RAM + 8 MB

@@ -18,7 +18,9 @@ operator's leading indicator for the monthly SLO.
 ## Verify
 
 ```bash
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=sum(rate(gateway_requests_total{code=~"2.."}[5m]))/sum(rate(gateway_requests_total[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(gateway_requests_total{code=~"2.."}[5m]))/sum(rate(gateway_requests_total[5m]))'
+# Multi-window burn-rate check (14.4x / 6x of the 99.5% monthly budget).
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(gateway_requests_total{code!~"2.."}[1h]))/sum(rate(gateway_requests_total[1h]))'
 curl -fsS https://apps.gregale.dev/status/slo.json | jq .
 ```
 
@@ -26,7 +28,7 @@ curl -fsS https://apps.gregale.dev/status/slo.json | jq .
 
 ```bash
 journalctl -u faas-gatewayd-public faas-gatewayd-internal --since '-15m' --no-pager | grep -iE '5xx|panic|overt'
-curl -fsS http://127.0.0.1:9090/api/v1/query?query='gateway_requests_total{code!~"2.."}' | head -100
+curl -fsS http://127.0.0.1:9095/api/v1/query?query='gateway_requests_total{code!~"2.."}' | head -100
 ```
 
 A spike in `503` from gatewayd-internal is the canonical sign of wake-queue
@@ -37,7 +39,7 @@ is upstream — apid, schedd, or vmmd refused the request.
 
 ```bash
 amtool silence add \
-  --matchers='alertname=FaasApiAvailabilityLow' \
+  --matchers='alertname=~"FaasApiAvailability(Low|BurnRateHigh)"' \
   --duration=15m \
   --comment='incident bridge open; investigating'
 ```

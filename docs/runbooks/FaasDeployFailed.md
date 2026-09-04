@@ -41,10 +41,10 @@ deployment_pipeline.go`):
 
 ```bash
 # What's the latest failure rate for this (account, app)?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=increase(meterd_deployment_failed_total{account_id%3D%22<acct>%22%2C+app_id%3D%22<app>%22}%5B1h%5D)'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=increase(meterd_deployment_failed_total{account_id%3D%22<acct>%22%2C+app_id%3D%22<app>%22}%5B1h%5D)'
 
 # Any deployments stuck in activating/pending?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_deployment_status_count{account_id%3D%22<acct>%22%2C+app_id%3D%22<app>%22%2C+status%3D~%22pending%7Cactivating%22}'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_deployment_status_count{account_id%3D%22<acct>%22%2C+app_id%3D%22<app>%22%2C+status%3D~%22pending%7Cactivating%22}'
 
 # The actual deployment audit log (SQL):
 sudo -u postgres psql -d faas -c "

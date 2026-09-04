@@ -46,28 +46,28 @@ Prometheus API queries:
 
 ```bash
 # Fleet-wide drill-down — what's the current vs 3d ratio per route?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=faas_apid_request_rate_ratio:by_route' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=faas_apid_request_rate_ratio:by_route' | jq .
 
 # Per-route error-rate ratio (current vs 3d)
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=faas_apid_error_rate_ratio:by_route' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=faas_apid_error_rate_ratio:by_route' | jq .
 
 # Per-account anomaly score — how many accounts are above 2x?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=count(faas_apid_anomaly_score:by_account > 2)' | jq .
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=count(faas_apid_anomaly_score:by_account > 2)' | jq .
 
 # Per-account drill-down — replace $ACCOUNT_ID with the offending uuid
 ACCOUNT_ID=<uuid>
 curl -fsS --data-urlencode "query=sum by (route) (rate(apid_request_total{account_id=\"${ACCOUNT_ID}\"}[5m]))" \
-  'http://127.0.0.1:9090/api/v1/query' | jq .
+  'http://127.0.0.1:9095/api/v1/query' | jq .
 ```
 
 ## Check
 
 ```bash
 # Sustained 5xx from a single op = upstream cause
-curl -fsS http://127.0.0.1:9090/api/v1/query?query='apid_ops_total{code="err"}' | head -200
+curl -fsS http://127.0.0.1:9095/api/v1/query?query='apid_ops_total{code="err"}' | head -200
 
 # Per-customer failure investigation
-curl -fsS http://127.0.0.1:9090/api/v1/query?query='apid_request_failures_total' | jq .
+curl -fsS http://127.0.0.1:9095/api/v1/query?query='apid_request_failures_total' | jq .
 
 # Recent daemon logs (search for the offending route or account_id)
 journalctl -u apid --since '-15m' --no-pager | grep -iE '5xx|panic|overt|account_id='

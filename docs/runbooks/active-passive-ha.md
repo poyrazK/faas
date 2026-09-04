@@ -74,11 +74,11 @@ dashboard:
 
 | Gate | Metric / Signal | Operator command |
 |---|---|---|
-| Leader is elected | `<prefix>_gateway_standby_state == 2` on exactly one node | `curl -s http://node-X:9100/metrics \| grep standby_state` |
-| Standbys are warm | All other nodes show `standby_state == 2` | `curl -s http://node-X:9100/metrics \| grep standby_state` for each peer |
-| DNS flips on drain | `<prefix>_gateway_active_passive_failovers_total{outcome="dns_flipped"} >= 1` on new leader | `curl -s http://new-leader:9100/metrics \| grep active_passive_failovers_total` |
+| Leader is elected | `<prefix>_gateway_standby_state == 2` on exactly one node | `curl -s http://node-X:9092/metrics \| grep standby_state` |
+| Standbys are warm | All other nodes show `standby_state == 2` | `curl -s http://node-X:9092/metrics \| grep standby_state` for each peer |
+| DNS flips on drain | `<prefix>_gateway_active_passive_failovers_total{outcome="dns_flipped"} >= 1` on new leader | `curl -s http://new-leader:9092/metrics \| grep active_passive_failovers_total` |
 | No 5xx during flip | Customer app's error rate stays ≤ baseline | `curl -s https://<app>.example.com/healthz` over the drain window |
-| `StandbyState → warming → warm` completes ≤ 60 s | `FaasStandbyStateWarmingTooLong` does NOT fire | `curl -s http://node-X:9100/metrics \| grep standby_state` |
+| `StandbyState → warming → warm` completes ≤ 60 s | `FaasStandbyStateWarmingTooLong` does NOT fire | `curl -s http://node-X:9092/metrics \| grep standby_state` |
 
 ## Rollback
 

@@ -56,16 +56,22 @@ func startHAComponents(
 	pgStore *state.PgStore,
 	inflight *gateway.ConnStateTracker,
 	nodeName, nodeIP string,
+	metrics ...*wire.OpsMetrics,
 ) error {
 	var wg sync.WaitGroup
-	// Construct a fresh OpsMetrics with the "gatewayd_public"
-	// prefix so the orchestrator's StandbyState +
-	// ActivePassiveFailovers + the WarmupLoop's
-	// WarmupErrors land on this daemon's /metrics scrape target
-	// (mirrors cmd/gatewayd-internal/run.go:610).
-	ops := wire.NewOpsMetrics("gatewayd_public")
-	wire.BootStamps(ctx, "gatewayd_public", ops)
-	wire.RegisterDefaultOps(ops)
+	// Reuse the registry mounted by gatewayd-public's control mux. A second
+	// registry here made HA state invisible because the mux only served the
+	// main process registry. The variadic form keeps old test seams source
+	// compatible; production always passes the served registry.
+	var ops *wire.OpsMetrics
+	if len(metrics) > 0 {
+		ops = metrics[0]
+	}
+	if ops == nil {
+		ops = wire.NewOpsMetrics("gatewayd_public")
+		wire.BootStamps(ctx, "gatewayd-public", ops)
+		wire.RegisterDefaultOps(ops)
+	}
 
 	// DNSHandoff. Gated on FAAS_DNS_PROVIDER (no provider → no
 	// DNS to flip → subscriber is a no-op).

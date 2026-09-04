@@ -40,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -97,6 +98,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
+	traceShutdown, traceErr := trace.InitTracer(ctx, "githubd", wire.Version, log)
+	if traceErr != nil {
+		return fmt.Errorf("githubd: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("githubd: trace shutdown failed", "err", err)
+		}
+	}()
 
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
@@ -416,6 +428,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		func() bool { return realSvc != nil },
 		func() bool { return secretResolver != nil },
 	)
+	githubdProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("githubd", ready, reason)
+	})
 
 	srv := &githubd.Server{
 		Service:        webhookSvc,

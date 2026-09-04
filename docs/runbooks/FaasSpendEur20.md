@@ -28,13 +28,13 @@ authoritative billing signal.
 
 ```bash
 # What is the customer actually spending?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_account_spend_eur{account_id%3D%22<acct>%22}'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_account_spend_eur{account_id%3D%22<acct>%22}'
 
 # How many invocations in the last 24h?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_invocations_billed_total{account_id%3D%22<acct>%22}'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_invocations_billed_total{account_id%3D%22<acct>%22}'
 
 # Cross-check per-account rate-limit — are they being throttled?
-curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=meterd_account_rate_limit_rejected_total{account_id%3D%22<acct>%22}'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_account_rate_limit_rejected_total{account_id%3D%22<acct>%22}'
 ```
 
 Common causes:
