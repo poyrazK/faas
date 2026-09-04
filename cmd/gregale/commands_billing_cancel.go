@@ -1,4 +1,4 @@
-// commands_billing_cancel.go — `faas billing cancel` (issue #242).
+// commands_billing_cancel.go — `gregale billing cancel` (issue #242).
 //
 // Sets cancel_at_period_end on the active subscription. Account
 // keeps running until period end, then downgrades to Free
@@ -23,7 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const billingSubCancelUsage = `usage: faas billing cancel [--yes]
+const billingSubCancelUsage = `usage: gregale billing cancel [--yes]
 
   Set cancel_at_period_end on the active subscription. Account
   keeps running until period end, then downgrades to Free

@@ -15,7 +15,7 @@ jobs:
       - uses: poyrazK/faas/.github/actions/deploy@v1
         with:
           api-key: ${{ secrets.GREGALE_API_KEY }}
-          api-base: https://api.faas.example
+          api-base: https://api.gregale.dev
           app: my-app
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
           wait: "true"

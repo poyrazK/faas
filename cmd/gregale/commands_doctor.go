@@ -1,4 +1,4 @@
-// Customer `gregale doctor` — source-side preflight for the 9
+// Customer `gregale doctor` — source-side preflight for the
 // error-explanations cluster failure modes. Scans the local cwd for
 // bind-address, env-var, arch, and dependency-install signals that
 // the platform's runtime detectors (commit 7-13) would otherwise
@@ -11,15 +11,17 @@
 // (default, so the deploy pipeline can pre-cache the prose via
 // `gregale doctor` in CI).
 //
-// Each check returns one of: ok | warn | error with the same
+// Each check returns one of: ok | warn | error | skipped with the same
 // shape as the operator doctor (commands_inspect.go:99-103).
 // The whycopy.Decorate path is reused so the hint/why/fix prose
 // is identical to what the runtime would surface after a failed
 // wake — single source of truth, single tripwire.
 //
-// 8 checks (one per non-already-shipped code):
+// 8 checks (one per non-already-shipped code). Four checks are local
+// source checks; four require deployed-app telemetry and are marked
+// skipped rather than reported as false positives:
 //
-//   1. port-bind         scans source for $PORT reference + listener bind
+//   1. port-bind         requires a live listener probe
 //   2. loopback-bind     scans for app.listen("127.0.0.1"...) patterns
 //   3. arch              detects target/host arch mismatch
 //   4. env-required      scans source for env-var references; flags undeclared
@@ -56,9 +58,10 @@ import (
 // dashboard panel can lift the same JSON for the cluster's
 // dedicated surface (commit 20, separate PR).
 type doctorCheck struct {
-	Name    string   `json:"name"`           // e.g. "port-bind"
-	Status  string   `json:"status"`         // "ok" | "warn" | "error"
-	Code    string   `json:"code,omitempty"` // RFC 7807 code when status != "ok"
+	Name    string   `json:"name"`             // e.g. "port-bind"
+	Status  string   `json:"status"`           // "ok" | "warn" | "error" | "skipped"
+	Code    string   `json:"code,omitempty"`   // RFC 7807 code when status != "ok"
+	Reason  string   `json:"reason,omitempty"` // why a check was skipped
 	Hint    string   `json:"hint,omitempty"`
 	Why     string   `json:"why,omitempty"`
 	Fix     string   `json:"fix,omitempty"`
@@ -148,7 +151,7 @@ func cmdDoctor(args []string) int {
 	if report.HasErrors() || (*strict && report.HasWarnings()) {
 		exit = 1
 	}
-	if *jsonOut {
+	if *jsonOut || jsonOutput {
 		_ = writeJSON(report)
 		return exit
 	}
@@ -163,35 +166,31 @@ func cmdDoctor(args []string) int {
 // here would block the deploy on infrastructure noise.
 func runDoctorChecks(path string) doctorReport {
 	rep := doctorReport{Path: path}
-	rep.Checks = append(rep.Checks, doctorCheckPortBind(path))
+	rep.Checks = append(rep.Checks, doctorCheckPortBind())
 	rep.Checks = append(rep.Checks, doctorCheckLoopbackBind(path))
 	rep.Checks = append(rep.Checks, doctorCheckArch(path))
 	rep.Checks = append(rep.Checks, doctorCheckEnvRequired(path))
 	rep.Checks = append(rep.Checks, doctorCheckStatelessOnly(path))
-	// runtime-oom + dep-install + startup-timeout need the server
-	// (metered RAM reading + build dry-run + cold-boot probe).
-	// For those we emit an ok row so the JSON shape is consistent
-	// and customers see "ok" — the runtime check fires when the
-	// app actually runs. The cluster's catalog already covers
-	// the post-failure prose; preflight can't substitute for it.
+	// The remaining checks need the server (listener probe, metered
+	// RAM reading, build dry-run, and cold-boot probe). Preserve their
+	// names in the stable JSON shape, but report them as skipped: an
+	// unconditional "ok" is a false positive because no observation
+	// was made locally.
 	rep.Checks = append(rep.Checks, doctorCheckRuntimeOOM())
 	rep.Checks = append(rep.Checks, doctorCheckDepInstall())
 	rep.Checks = append(rep.Checks, doctorCheckStartupTimeout())
 	return rep
 }
 
-// doctorCheckPortBind scans for source references to PORT
-// (process.env.PORT, os.Getenv("PORT"), $PORT). If found, we
-// can't tell whether the customer's framework reads it
-// (Express/Python/Go) so we always emit ok — the runtime
-// detector catches the missing-listener case via
-// app_not_listening. This is a placeholder check so the JSON
-// shape is symmetric; the load-bearing check is loopback-bind
-// below, which IS detectable pre-deploy.
-func doctorCheckPortBind(path string) doctorCheck {
+// doctorCheckPortBind requires a live app to verify that the process
+// actually listens on the platform-provided port. Source inspection
+// cannot prove that, so it is explicitly skipped rather than shown as
+// ok. The loopback-bind check below remains locally detectable.
+func doctorCheckPortBind() doctorCheck {
 	return doctorCheck{
 		Name:   "port-bind",
-		Status: "ok",
+		Status: "skipped",
+		Reason: "requires a deployed app listener probe",
 	}
 }
 
@@ -314,26 +313,22 @@ func doctorCheckStatelessOnly(path string) doctorCheck {
 	}
 }
 
-// doctorCheckRuntimeOOM is a server-side check; preflight emits
-// ok unconditionally. The cluster's catalog covers the post-failure
-// path; runtime RAM telemetry lives in meterd (read by the
-// dashboard's RAM-usage panel).
+// doctorCheckRuntimeOOM is a server-side check. Runtime RAM telemetry
+// lives in meterd, so a local preflight cannot evaluate it.
 func doctorCheckRuntimeOOM() doctorCheck {
-	return doctorCheck{Name: "runtime-oom", Status: "ok"}
+	return doctorCheck{Name: "runtime-oom", Status: "skipped", Reason: "requires deployed-app RAM telemetry"}
 }
 
-// doctorCheckDepInstall is a build-time check; preflight emits
-// ok unconditionally. The cluster's catalog covers the post-failure
-// path with the pkg discriminator (npm/pip/go mod).
+// doctorCheckDepInstall is a build-time check. The actual resolver
+// runs in the platform build environment, not in this source scan.
 func doctorCheckDepInstall() doctorCheck {
-	return doctorCheck{Name: "dep-install", Status: "ok"}
+	return doctorCheck{Name: "dep-install", Status: "skipped", Reason: "requires the platform build environment"}
 }
 
-// doctorCheckStartupTimeout is a runtime check; preflight emits
-// ok unconditionally. The cold-boot probe window is per-app
-// config (`startup_timeout_s`).
+// doctorCheckStartupTimeout is a runtime check. The cold-boot probe
+// window is evaluated only after the app is deployed.
 func doctorCheckStartupTimeout() doctorCheck {
-	return doctorCheck{Name: "startup-timeout", Status: "ok"}
+	return doctorCheck{Name: "startup-timeout", Status: "skipped", Reason: "requires a deployed-app cold-boot probe"}
 }
 
 // scanSource walks path looking for files matching re. The match
@@ -574,12 +569,15 @@ func scanStatelessShape(path string) []string {
 }
 
 // renderDoctorHuman emits the human-readable report. One line
-// per check: ok ✓, warn !, error ✗. When a check is warn/error
-// the whycopy hint follows on the next line (indented, no glyph).
+// per check: ok ✓, warn !, error ✗, or skipped. When a check is
+// warn/error the whycopy hint follows on the next line (indented,
+// no glyph). Skipped checks carry their reason so the summary never
+// implies that an unperformed check passed.
 func renderDoctorHuman(w io.Writer, rep doctorReport) {
 	_, _ = fmt.Fprintf(w, "gregale doctor — %s\n", rep.Path)
 	_, _ = fmt.Fprintln(w, strings.Repeat("─", 60))
 	hasFinding := false
+	hasSkipped := false
 	for _, c := range rep.Checks {
 		switch c.Status {
 		case "ok":
@@ -614,11 +612,21 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 			if len(c.Sources) > 0 {
 				_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(c.Sources, ", "))
 			}
+		case "skipped":
+			hasSkipped = true
+			_, _ = fmt.Fprintf(w, "  %s — skipped\n", c.Name)
+			if c.Reason != "" {
+				_, _ = fmt.Fprintf(w, "    reason: %s\n", c.Reason)
+			}
 		}
 	}
 	if !hasFinding {
 		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "All checks passed. Run `gregale deploy` to ship.")
+		if hasSkipped {
+			_, _ = fmt.Fprintln(w, "No local findings. Some checks require a deployed app and were skipped.")
+		} else {
+			_, _ = fmt.Fprintln(w, "All checks passed. Run `gregale deploy` to ship.")
+		}
 	} else {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy, or run with --strict to fail in CI.")

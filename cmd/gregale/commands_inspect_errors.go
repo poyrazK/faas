@@ -7,8 +7,8 @@
 // remains).
 //
 // Sister to commands_inspect_upstreams.go (issue #952 / ADR-098
-// §9.A). Same per-leaf isolation: ≤50 LoC of dispatcher logic,
-// one HTTP call (ListDeployments), one shape render.
+// §9.A). The leaf first resolves the app, then scans the account's
+// deployment list while applying an app-ID predicate before rendering.
 //
 // Wire shape: the apid's DeploymentResponse carries the 4 fields
 // added by commit 6 (pkg/api/dto.go::DeploymentResponse). The
@@ -20,17 +20,16 @@
 //
 //	0  found a failed deployment, rendered the explanation
 //	1  no failed deployment for the app (nothing to show)
-//	2  server error (auth/network)
+//	2  auth error
+//	3  platform/transport error
 package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"os"
+	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -61,6 +60,11 @@ func cmdInspectErrors(slug string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	ctx := context.Background()
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return printErr("Could not load app", err)
+	}
 	// Walk deployments until we find a failed one with a typed
 	// error_code. The cursor protocol is RFC3339Nano on
 	// created_at DESC (per the apid's ListDeployments contract).
@@ -69,27 +73,28 @@ func cmdInspectErrors(slug string) int {
 	// pathological "every deploy failed" loop bounded. Past 50
 	// we tell the customer to use `gregale logs <slug> --explain`
 	// directly.
-	dep, err := findLatestFailedDeployment(client, slug, 50)
+	dep, err := findLatestFailedDeployment(client, app.ID, 50)
 	if err != nil {
-		var ae *APIError
-		if errors.As(err, &ae) {
-			renderAPIError(os.Stderr, ae)
-			return exitCodeForStatus(ae.Problem.Status)
-		}
 		return printErr("Could not reach the API", err)
 	}
 	if dep == nil {
-		PrintFail(os.Stderr, "no failed deployment for %s — try `gregale logs %s --explain` if the live build is failing", slug, slug)
+		message := fmt.Sprintf("no failed deployment for %s — try `gregale logs %s --explain` if the live build is failing", slug, slug)
+		if jsonOutput || *asJSON {
+			problem := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "No failed deployment", message)
+			_ = writeJSONProblem(*problem)
+			return 1
+		}
+		PrintFail(osStderr, "%s", message)
 		return 1
 	}
-	if *asJSON {
-		return jsonOut(jsonRawMust(dep))
+	if jsonOutput || *asJSON {
+		return jsonOut(writeJSON(dep))
 	}
 	renderInspectErrorsHuman(osStdout, slug, *dep)
 	return 0
 }
 
-// findLatestFailedDeployment walks the deployments list for slug
+// findLatestFailedDeployment walks the deployments list for appID
 // and returns the first row with status=failed AND error_code
 // non-empty. Returns (nil, nil) when no such row exists within
 // the cap. Errors propagate to the caller.
@@ -97,9 +102,9 @@ func cmdInspectErrors(slug string) int {
 // Why we walk the cursor instead of a targeted query: the apid
 // doesn't expose a "latest failed deployment for app" endpoint
 // (no routing-tag need justifies the addition yet). The walk is
-// bounded (maxPages) and the result is cached at the SDK layer
-// for the duration of one call.
-func findLatestFailedDeployment(client *Client, slug string, maxPages int) (*api.DeploymentResponse, error) {
+// bounded (maxPages), and the app-ID predicate prevents a failed
+// deployment from another app in the same account from being shown.
+func findLatestFailedDeployment(client *Client, appID string, maxPages int) (*api.DeploymentResponse, error) {
 	ctx := context.Background()
 	before := ""
 	pages := 0
@@ -114,7 +119,7 @@ func findLatestFailedDeployment(client *Client, slug string, maxPages int) (*api
 		}
 		for i := range resp.Items {
 			d := &resp.Items[i]
-			if d.Status == "failed" && d.ErrorCode != "" {
+			if d.AppID == appID && d.Status == "failed" && d.ErrorCode != "" {
 				return d, nil
 			}
 		}
@@ -163,15 +168,4 @@ func renderInspectErrorsHuman(w io.Writer, slug string, dep api.DeploymentRespon
 	if dep.CreatedAt != "" {
 		_, _ = fmt.Fprintf(w, "  failed_at: %s\n", dep.CreatedAt)
 	}
-}
-
-// jsonRawMust marshals v to JSON. Used only when the caller has
-// already gated on --json and any marshal failure would be a
-// programming error (the structs are all plain types). Lifted
-// from the rest of the package's --json paths to keep this leaf
-// isolated.
-func jsonRawMust(v any) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
 }

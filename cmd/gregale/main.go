@@ -5,13 +5,14 @@
 // Exit codes follow docs/faas_ux_spec.md §3.2: 0 ok, 1 user error, 2 auth,
 // 3 platform/infra. See also the brand-residue sweep that landed in the
 // same PR as the rename — every string in this file should say `gregale`,
-// not `faas`, and any new dispatcher arm must add a matching entry to the
-// usage block below so `gregale help` lists it.
+// not `faas`. Top-level help is rendered from cli_meta.go, so a new
+// dispatcher arm must add a matching manifest entry.
 package main
 
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -19,85 +20,32 @@ import (
 // docsURL is the canonical link printed at the bottom of the usage string.
 var docsURL = docsSiteURL
 
-var usage = `gregale — deploy apps and functions that scale to zero.
+func topLevelUsage() string {
+	var b strings.Builder
+	b.WriteString("gregale — deploy apps and functions that scale to zero.\n\n")
+	b.WriteString("Usage:\n  gregale <command> [flags]\n\nCommands:\n")
+	for _, command := range cliCommands {
+		fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
+	}
+	b.WriteString("  help                   Show this help message\n")
+	b.WriteString("\nRun 'gregale <command> --help' for command details.\n\n")
+	b.WriteString("Global flags:\n")
+	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
+	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
+	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
+	b.WriteString("                         Interactive-only commands retain human prompts.\n")
+	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
+	return b.String()
+}
 
-Usage:
-  gregale <command> [flags]
-
-Commands:
-  account      Manage the local account (account export|delete|restore|status|dpa|slo)
-  admin        Operator-only billing ops (admin credit|refund|consume-credits)
-  alerts       Per-app alert rules (alerts list|add|info|update|rm|rotate-secret --app <slug>)
-  audit-events Audit-log query (audit-events list|get <id>)
-  apps         List your apps
-  apps ls      Alias for 'gregale apps'
-  apps routes  List admitted per-route labels for one app (ADR-093)
-  apps streaming-cap  Per-app streaming classification probe (ADR-102 D6)
-  apps -q      Delete an app
-  app          Get/update one app (gregale app <slug> [scale|rename <new>|--ram N|…])
-  billing      Manage billing (gregale billing portal)
-  build        Build provenance + sbom (build provenance <id>|build sbom <id>)
-  connect      Connect a third-party service (github)
-  crons        Manage scheduled requests
-  completion   Print shell completion script (bash|zsh|fish|powershell)
-  dashboard    Open the account dashboard in your browser
-  delayed-task Schedule a deferred invocation (delayed-task add|get|cancel)
-  deployments  List deployments (--limit N | --before C | --all)
-  deployment   Get one deployment (<id> | set-min-instances <id> --min N)
-  deploys      Read-only deploy drill-downs (deploys show <id>)
-  deploy       Deploy (--image REF | --tarball PATH | --repo OWNER/NAME | --template NAME)
-  domains      Manage custom domains
-  edge-rules   Per-app edge rules (route|rewrite|redirect|headers|cors|jwt|ip; ADR-089)
-  env          Pull/push .env <-> sealed secrets (--app <slug>)
-  init         Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy])
-  inspect      Read-only operator surface (inspect <slug> --upstreams [--scope <scope>] [--json])
-  invoke       Functional smoke test (invoke [--async] <slug> [--payload J|@file|-])
-  invocations  Per-account invocation ledger (invocations list|get <id> [--replay])
-  invitations  Standalone invitation actions (invitations peek <token>|accept <token>)
-  invoices     List issued invoices
-  jobs         Manage jobs (jobs list|add|info|update|rm|run|runs|cancel|tasks|logs)
-  keys         Manage API keys (keys list|add|rm|rotate|grace-window)
-  login        Authenticate this machine (--token for CI)
-  logout       Remove the stored token
-  signup       Create a new account (signup [--email-only EMAIL])
-  man          Print the gregale(1) man page (or gregale-<command>(1) with one arg)
-  logs         Tail app or deployment logs (--follow); logs tail <slug> is an alias that always follows
-  metrics      Per-app or account-wide metrics (gregale metrics <slug> [--range 5m] | --account)
-  mirror       Manage traffic mirroring (issue #72 / ADR-124; Pro/Scale only)
-  throttle-suggestions  Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions <slug> [--range 5m] [--dry-run --candidate-rps N --candidate-burst N])
-  mfa          Manage account MFA (mfa enroll|confirm|verify|recover|disable)
-  open         Open the app's URL (or its dashboard page) in your browser
-  orgs         Manage orgs + members (orgs ls|create|info|rm|members ...|keys ...|transfer-ownership|seat-usage|invitations ...|me)
-  overage-cap  Set / clear the account's overage cap (--clear | <cents>)
-  park         Park an app cold (kill all live instances)
-  plan         Change plan (free|hobby|pro|scale)
-  ps           Show live instances + state for an app
-  queue        Inspect the wake-queue depth (queue tail|send|receive|state|peek|dead-letter|ack)
-  registry     Per-app private container registry credentials (registry list|set|rm --app <slug>)
-  rollback     Re-promote the previous deployment
-  scan         Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
-  secrets      Manage env secrets (secrets list|set|unset|list-all)
-  slo          Per-app SLO panel (gregale slo <slug> [--window 24h])
-  status       Personal SLO numbers (availability, wake p95, build success)
-  tail         Live tail of the unified event stream (--app <slug> | --include-stateless)
-  traffic      Manage deployment traffic split (issue #556; Pro/Scale only)
-  trusted-publishers  Per-app cosign trusted-publisher list (admin; trusted-publishers add|remove|list)
-  usage        Show this month's usage (gregale usage [--month YYYY-MM]|daily [--day YYYY-MM-DD]|storage [--day YYYY-MM-DD]|summary)
-  version      Print the CLI version
-  wake-timeline Walk the per-wake event stream (wake-timeline <slug> <wake-id> [--since RFC3339] [--limit N] [--all])
-  wake         Wake a parked app (pulls out of snapshot)
-  webhooks     Manage outbound webhooks (webhooks list|add|info|update|rm|deliveries|retry|rotate-secret)
-  whoami       Show the authenticated account
-
-Run 'gregale <command> --help' for command details.
-
-Global flags:
-  --json         Machine-readable output on every command. Slices emit
-                 NDJSON (one JSON object per line, jq -c '.'); scalars
-                 emit indented JSON; errors print raw RFC 7807 to stderr.
-                 Equivalent env: FAAS_JSON=1. Negate with --json=false.
-Docs: ` + docsURL + `
-`
+func hasHelpFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return true
+		}
+	}
+	return false
+}
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -111,13 +59,23 @@ func init() {
 	gregaleVersion = wire.Version
 }
 
-func run(args []string) int {
+func run(args []string) (status int) {
+	helpRequested := hasHelpFlag(args)
+	defer func() {
+		// The standard flag package returns flag.ErrHelp, which legacy
+		// command handlers historically mapped to exit 1. Help is a
+		// successful request at the process boundary.
+		if helpRequested && status != 0 {
+			status = 0
+		}
+	}()
+
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
 	if len(args) == 0 {
-		fmt.Print(usage)
+		fmt.Print(topLevelUsage())
 		return 0
 	}
 	switch args[0] {
@@ -132,7 +90,7 @@ func run(args []string) int {
 		fmt.Printf("gregale %s\n", wire.Version)
 		return 0
 	case "help", "--help", "-h":
-		fmt.Print(usage)
+		fmt.Print(topLevelUsage())
 		return 0
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
@@ -321,6 +279,8 @@ func run(args []string) int {
 		return cmdCors(args[1:])
 	case "crons":
 		return cmdCrons(args[1:])
+	case "triggers":
+		return cmdTriggers(args[1:])
 	case "delayed-task":
 		// Tier D: scheduled-at deferred invocations (issue #557 /
 		// ADR-072 sibling). Mirrors crons for dispatcher shape

@@ -110,7 +110,7 @@ cmd_deploy() {
         # the annotate step. The bearer token is NEVER in this
         # output — pkg/api/client.go sets the Authorization header,
         # and the server doesn't echo it back.
-        echo "$dep_json" > "${RUNNER_TEMP:-/tmp}/faas-deploy-action.stderr"
+        echo "$dep_json" > "${RUNNER_TEMP:-/tmp}/gregale-deploy-action.stderr"
         die "deploy failed (see annotations for details)"
     fi
 
@@ -128,7 +128,7 @@ cmd_deploy() {
     # the concatenation is robust to either form. The output is
     # informational — customers use it to link back to the
     # deployment row in the control-plane dashboard.
-    local api_base="${FAAS_API:-https://api.faas.example}"
+    local api_base="${FAAS_API:-https://api.gregale.dev}"
     api_base="${api_base%/}"
     echo "url=${api_base}/v1/apps/${INPUT_APP}/deployments/${dep_id}" >> "$GITHUB_OUTPUT"
 

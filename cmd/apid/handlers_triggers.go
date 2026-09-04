@@ -418,18 +418,50 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 
 // --- listTriggers ----------------------------------------------------------
 
+func validTriggerKind(kind api.TriggerKind) bool {
+	switch kind {
+	case api.TriggerKindCron, api.TriggerKindKafka, api.TriggerKindNATS,
+		api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue:
+		return true
+	default:
+		return false
+	}
+}
+
 // listTriggers handles GET /v1/triggers.
 //
-// Walks every app the account owns and unions their triggers. The
-// trigger store has no ListByAccount helper today; creating one is
-// PR-B scope (the dashboard supports both shapes). The cron path
-// uses the same fan-out pattern (listCrons) so this is the canonical
-// one for now.
+// Walks every app the account owns and unions their triggers. Optional
+// app_id and kind query parameters are applied before the fan-out so
+// the SDK's documented filters are real filters rather than a client-
+// side hint. An app_id is resolved through the account-owned app lookup
+// so a cross-account probe has the same not-found response as the
+// item endpoint.
 func (s *server) listTriggers(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	apps, err := s.store.ListApps(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list triggers"))
+	query := r.URL.Query()
+	appID := query.Get("app_id")
+	kind := api.TriggerKind(query.Get("kind"))
+	if kind != "" && !validTriggerKind(kind) {
+		// The public list contract treats an unknown filter value as
+		// an empty result, preserving the same semantics as a valid
+		// filter that currently matches no rows.
+		writeJSON(w, http.StatusOK, []api.Trigger{})
 		return
+	}
+	var apps []state.App
+	var err error
+	if appID != "" {
+		app, appErr := s.store.AppByID(r.Context(), appID)
+		if appErr != nil || app.AccountID != acct.ID {
+			s.notFound(w, "no such app")
+			return
+		}
+		apps = []state.App{app}
+	} else {
+		apps, err = s.store.ListApps(r.Context(), acct.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list triggers"))
+			return
+		}
 	}
 	out := make([]api.Trigger, 0)
 	for _, app := range apps {
@@ -438,6 +470,9 @@ func (s *server) listTriggers(w http.ResponseWriter, r *http.Request, acct state
 			continue
 		}
 		for _, t := range ts {
+			if kind != "" && api.TriggerKind(t.Kind) != kind {
+				continue
+			}
 			out = append(out, triggerResponse(t))
 		}
 	}

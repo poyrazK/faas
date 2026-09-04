@@ -1,5 +1,5 @@
 // commands_billing_reconcile_paddle.go —
-// `faas billing reconcile-paddle-overage` (B4 / Tier 1).
+// `gregale billing reconcile-paddle-overage` (B4 / Tier 1).
 //
 // Operator-side pre-flight for the Paddle overage pusher's
 // per-window claim state machine. Drives GET
@@ -19,7 +19,7 @@
 //	paddle_overage_dedupe: pending=<n> completed=<n> table=missing
 //
 // machine-friendly for shell composition (echo/grep/awk) and the
-// same shape as `faas billing reconcile`. Operators who want JSON
+// same shape as `gregale billing reconcile`. Operators who want JSON
 // can pipe through `jq`; we keep the default plain-text because
 // that is what shell history shows.
 //
@@ -54,7 +54,7 @@ const billingSubReconcilePaddleOverage = "reconcile-paddle-overage"
 // distinguish "you forgot to migrate" from "the apid is down".
 func cmdBillingReconcilePaddleOverage(args []string) int {
 	if len(args) != 0 {
-		fmt.Fprintf(os.Stderr, "usage: faas billing reconcile-paddle-overage\n")
+		fmt.Fprintf(os.Stderr, "usage: gregale billing reconcile-paddle-overage\n")
 		return 1
 	}
 	client, err := authedClient()

@@ -49,19 +49,30 @@ func TestRunDoctorChecks_LoopbackBindError(t *testing.T) {
 	}
 }
 
-// TestRunDoctorChecks_CleanRepo pins the ok path: a repo with
-// no bad patterns → every check ok. The shape matters: the JSON
-// output must be deterministic for snapshot consumers.
+// TestRunDoctorChecks_CleanRepo pins the clean local path: source
+// checks are ok, while checks that require deployed telemetry are
+// explicitly skipped. The shape matters: JSON output must be
+// deterministic without claiming an unperformed check passed.
 func TestRunDoctorChecks_CleanRepo(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte("app.listen(process.env.PORT);\n"), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 	rep := runDoctorChecks(dir)
+	skipped := map[string]bool{
+		"port-bind": true, "runtime-oom": true, "dep-install": true, "startup-timeout": true,
+	}
 	for _, c := range rep.Checks {
-		if c.Status != "ok" {
-			t.Errorf("check %s expected ok, got %q (code=%s, hint=%s)",
-				c.Name, c.Status, c.Code, c.Hint)
+		want := "ok"
+		if skipped[c.Name] {
+			want = "skipped"
+			if c.Reason == "" {
+				t.Errorf("check %s is skipped without a reason", c.Name)
+			}
+		}
+		if c.Status != want {
+			t.Errorf("check %s expected %s, got %q (code=%s, hint=%s)",
+				c.Name, want, c.Status, c.Code, c.Hint)
 		}
 	}
 }
@@ -158,8 +169,8 @@ func TestRenderDoctorHuman_HasAllChecks(t *testing.T) {
 			t.Errorf("render missing check %q in:\n%s", name, out)
 		}
 	}
-	if !strings.Contains(out, "All checks passed") {
-		t.Errorf("render missing 'All checks passed' trailer in:\n%s", out)
+	if !strings.Contains(out, "No local findings") || !strings.Contains(out, "were skipped") {
+		t.Errorf("render missing skipped-check summary in:\n%s", out)
 	}
 }
 

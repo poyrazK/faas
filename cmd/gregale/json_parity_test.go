@@ -37,11 +37,9 @@ var nonJSONAllowList = map[string]string{
 	"cmdAccount":    "delegate leaves; cmdAccountStatus is the only JSON leaf (covered)",
 	"cmdInit":       "file writes + human template table",
 	"cmdLogin":      "interactive paste-code flow",
-	"cmdLogout":     "side-effect only; no body",
 	"cmdMfa":        "enroll is the only JSON leaf (covered); others are write-only",
 	"cmdOverageCap": "side-effect (set/clear both write-only)",
 	"cmdRestore":    "side-effect only; no body",
-	"cmdWhoami":     "shell-sourceable plaintext exports",
 }
 
 // cmdTrustedPublishers and other operator-side verbs (cmdBackup,

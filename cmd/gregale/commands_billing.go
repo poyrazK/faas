@@ -1,16 +1,16 @@
-// commands_billing.go — `faas billing …` family (issue #253).
+// commands_billing.go — `gregale billing …` family (issue #253).
 //
-//   faas billing                       dispatch help (prints subcommand list)
-//   faas billing portal                open the active billing provider's portal
+//   gregale billing                    dispatch help (prints subcommand list)
+//   gregale billing portal             open the active billing provider's portal
 //                                      (or print the URL when --print is set / DISPLAY
 //                                      is unavailable)
-//   faas billing status                read the active billing Provider's cached
+//   gregale billing status             read the active billing Provider's cached
 //                                      catalog (PR-P3)
-//   faas billing status --watch N     re-poll the catalog every 5 s for N seconds (PR-P4)
-//   faas billing price-catalog         list | sync | reset the Paddle catalog (PR-P3)
-//   faas billing reconcile             run a single-account reconcile via the active
+//   gregale billing status --watch N  re-poll the catalog every 5 s for N seconds (PR-P4)
+//   gregale billing price-catalog     list | sync | reset the Paddle catalog (PR-P3)
+//   gregale billing reconcile         run a single-account reconcile via the active
 //                                      billing Provider (PR-P3)
-//   faas billing webhook-test          signed round-trip POST to a webhook URL (PR-P4,
+//   gregale billing webhook-test      signed round-trip POST to a webhook URL (PR-P4,
 //                                      operator-only; mirrors the production signer)
 //
 // This is the CLI companion to GET /dashboard/billing's provider-neutral
@@ -42,8 +42,8 @@ const (
 	flagHelpShort           = "-h"
 )
 
-// cmdBilling dispatches `faas billing <subcommand>` to the right
-// handler. Bare `faas billing` and `faas billing help` print the
+// cmdBilling dispatches `gregale billing <subcommand>` to the right
+// handler. Bare `gregale billing` and `gregale billing help` print the
 // subcommand list (POSIX-style). Unknown subcommands return 1 (user
 // error per UX §3.2), not 2 (auth), because no token was attempted.
 func cmdBilling(args []string) int {
@@ -77,7 +77,7 @@ func cmdBilling(args []string) int {
 		return 0
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "faas billing: unknown subcommand %q\n\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale billing: unknown subcommand %q\n\n", args[0])
 		printBillingUsage(os.Stderr)
 		maybeSuggestSub(sug)
 		return 1
@@ -85,7 +85,7 @@ func cmdBilling(args []string) int {
 }
 
 func printBillingUsage(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "usage: faas billing <subcommand>\n\n"+
+	_, _ = fmt.Fprintf(w, "usage: gregale billing <subcommand>\n\n"+
 		"  portal              open the active billing provider's portal in your browser\n"+
 		"                      (--print  print URL to stdout only; --no-open  skip browser)\n"+
 		"  payment-method      show the card-on-file summary; open the portal to update\n"+
@@ -100,9 +100,9 @@ func printBillingUsage(w io.Writer) {
 		"  reconcile-paddle-overage\n"+
 		"                      pre-flight the paddle_overage_dedupe schema for migration 00041\n"+
 		"  webhook-test        signed round-trip POST to a webhook URL (operator-only)\n"+
-		"                      (faas billing webhook-test paddle --url … --secret …)\n"+
+		"                      (gregale billing webhook-test paddle --url … --secret …)\n"+
 		"\n"+
-		"Run 'faas billing help' for this message.\n")
+		"Run 'gregale billing help' for this message.\n")
 }
 
 // cmdBillingPortal fetches the operator-configured billing portal URL
@@ -118,7 +118,7 @@ func printBillingUsage(w io.Writer) {
 // "open the URL, fall back gracefully"): we print the URL on stderr
 // with a friendly hint and exit 0. CI scripts and `&&`-chained shell
 // commands should not treat a missing $DISPLAY as a hard failure —
-// that would break `faas billing portal && faas plan <new>` flows on
+// that would break `gregale billing portal && gregale plan <new>` flows on
 // headless boxes.
 func cmdBillingPortal(args []string) int {
 	fs := flag.NewFlagSet("billing portal", flag.ContinueOnError)

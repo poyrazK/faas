@@ -674,7 +674,7 @@ func TestExitCodeForStatus(t *testing.T) {
 	cases := map[int]int{
 		200: 1, // unexpected success path; never called here, but default is 1
 		401: 2,
-		402: 2,
+		402: 1,
 		403: 1,
 		404: 1,
 		409: 1,
