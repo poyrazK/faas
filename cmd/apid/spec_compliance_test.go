@@ -157,6 +157,14 @@ var routeExclude = map[string]bool{
 	"GET /readyz":                                   true, // loopback dependency-aware readiness probe (PR #1038 pre-release-readiness-gates)
 	"GET /v1/orgs/me":                               true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
 	"GET /v1/traces/{trace_id}":                     true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
+
+	// ADR-081 Durable Execution Workflows (Step Functions)
+	"GET /v1/apps/{slug}/workflows/runs":         true,
+	"GET /v1/workflows/runs/{id}":                true,
+	"GET /v1/workflows/runs/{id}/steps":          true,
+	"POST /v1/apps/{slug}/workflows/{name}/runs": true,
+	"POST /v1/workflows/runs/{id}/cancel":        true,
+	"POST /v1/workflows/runs/{id}/events":        true,
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
 	// "Starting template" dropdown. Cookie-session-authenticated

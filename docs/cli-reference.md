@@ -17,6 +17,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`crons`](#crons) | Manage scheduled requests |
 | [`triggers`](#triggers) | Manage unified event triggers (broker mappings + cron-linked rows) |
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
+| [`workflows`](#workflows) | Manage durable execution workflows |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight: scan local source; deployed-only checks are reported as skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
@@ -523,6 +524,37 @@ List tasks for one run
 ### jobs logs
 
 Tail logs for one task
+
+
+## workflows
+
+Manage durable execution workflows
+
+`gregale workflows [<subcommand>]`
+
+### workflows list
+
+List workflow runs for an app
+
+### workflows run
+
+Trigger a new workflow run
+
+### workflows status
+
+Show details of a workflow run
+
+### workflows steps
+
+List steps for a workflow run
+
+### workflows cancel
+
+Cancel an active workflow run
+
+### workflows events
+
+Send external event to a workflow run
 
 
 ## dashboard

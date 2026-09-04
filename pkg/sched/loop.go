@@ -149,6 +149,12 @@ type Loop struct {
 	// default), both tickers are skipped and queued job_tasks
 	// stay in the DB (Mega-1 cluster-wide gate).
 	jobsDispatched bool
+
+	// workflowsDispatched is the FAAS_WORKFLOWS_ENABLED opt-in for the
+	// workflow dispatch tick (ADR-081).
+	workflowsDispatched bool
+	workflowOrch        *WorkflowOrchestrator
+	workflowRetention   *WorkflowRetention
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -166,6 +172,24 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 // and queued job_tasks just sit in DB (the operator chose this).
 func (l *Loop) WithJobsDispatched(enabled bool) *Loop {
 	l.jobsDispatched = enabled
+	return l
+}
+
+// WithWorkflowsDispatched opts the Loop into the workflow dispatch ticker (ADR-081).
+func (l *Loop) WithWorkflowsDispatched(enabled bool) *Loop {
+	l.workflowsDispatched = enabled
+	return l
+}
+
+// WithWorkflowOrchestrator sets the orchestrator instance for workflow dispatch.
+func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
+	l.workflowOrch = o
+	return l
+}
+
+// WithWorkflowRetention attaches the workflow retention cleaner.
+func (l *Loop) WithWorkflowRetention(r *WorkflowRetention) *Loop {
+	l.workflowRetention = r
 	return l
 }
 
@@ -805,6 +829,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		jobsReaperT = time.NewTicker(5 * time.Second)
 		defer jobsReaperT.Stop()
 	}
+	var workflowsDispatchT *time.Ticker
+	if l.workflowsDispatched {
+		workflowsDispatchT = time.NewTicker(time.Second)
+		defer workflowsDispatchT.Stop()
+	}
 	// Trigger dispatch ticker (issue #757 / ADR-100, commit #14).
 	// 1 s cadence matches runCronTick and the §6.1 watchdog — a
 	// trigger record sitting in `pending` for >1 tick before
@@ -863,6 +892,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runJobsDispatchTick(ctx)
 		case <-jobsTick(jobsReaperT):
 			l.runJobsReaperTick(ctx)
+		case <-jobsTick(workflowsDispatchT):
+			l.runWorkflowsDispatchTick(ctx)
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
@@ -2704,6 +2735,15 @@ func (l *Loop) runJobsDispatchTick(ctx context.Context) {
 func (l *Loop) runJobsReaperTick(ctx context.Context) {
 	if _, err := l.engine.JobReaperTick(ctx); err != nil {
 		l.log.Warn("schedd: stuck-job reaper tick failed", "err", err)
+	}
+}
+
+func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
+	if l.workflowOrch == nil {
+		l.workflowOrch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+	}
+	if err := l.workflowOrch.DispatchTick(ctx); err != nil {
+		l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
 	}
 }
 

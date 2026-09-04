@@ -13838,6 +13838,79 @@ components:
           items:
             $ref: '#/components/schemas/WorkflowStepSpec'
 
+    WorkflowRunResponse:
+      description: "A persisted durable workflow run (ADR-081)."
+      type: object
+      required: [id, app_id, workflow_name, status, scheduled_for, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        status:
+          type: string
+          enum: [pending, running, awaiting_event, succeeded, failed, dead]
+        current_step: { type: [string, 'null'] }
+        input: {}
+        output: {}
+        scheduled_for: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        last_error: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ListWorkflowRunsResponse:
+      description: "A paginated list of durable workflow runs."
+      type: object
+      required: [runs, total]
+      properties:
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        total: { type: integer, minimum: 0 }
+
+    WorkflowStepResponse:
+      description: "A step attempt within a durable workflow run."
+      type: object
+      required: [step_name, status, attempt, created_at]
+      properties:
+        step_name: { type: string }
+        status:
+          type: string
+          enum: [pending, running, awaiting_event, succeeded, failed, dead, skipped]
+        attempt: { type: integer, minimum: 0 }
+        input: {}
+        output: {}
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        error: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+
+    ListWorkflowStepsResponse:
+      description: "The ordered steps for a durable workflow run."
+      type: object
+      required: [steps]
+      properties:
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowStepResponse' }
+
+    InjectWorkflowEventResponse:
+      description: "Acknowledgement that an external workflow event was recorded."
+      type: object
+      required: [status, event_name]
+      properties:
+        status: { type: string, enum: [received] }
+        event_name: { type: string }
+
+    InjectWorkflowEventRequest:
+      description: "An external event supplied to resume an awaiting workflow step."
+      type: object
+      required: [event_name]
+      properties:
+        event_name: { type: string }
+        payload: {}
+
     CreateDeploymentRequest:
       description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The override field list is FROZEN — six fields, no more — and any extra field on the override object 400s the request (the handler's decoder rejects unknown keys; see ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068) attaches up to 2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a metrics scraper as `sidecar`. nil/omitted = no sidecars."
       type: object
