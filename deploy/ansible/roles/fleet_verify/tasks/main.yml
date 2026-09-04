@@ -1,0 +1,85 @@
+---
+- name: fleet_verify — load the daemon topology
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/daemons.yml"
+
+- name: fleet_verify — select the allowed daemon set for this host role
+  ansible.builtin.set_fact:
+    faas_verify_units: >-
+      {{ faas_control_plane_units if faas_box_role == 'control-plane'
+         else faas_compute_only_units }}
+
+- name: fleet_verify — read enablement state  # noqa: command-instead-of-module (read-only query / no module equivalent)
+  ansible.builtin.command: "systemctl is-enabled {{ item }}"
+  loop: "{{ faas_verify_units }}"
+  register: faas_verify_enabled
+  changed_when: false
+  failed_when: false
+
+- name: fleet_verify — fail on a disabled daemon in strict mode
+  ansible.builtin.assert:
+    that: item.rc == 0
+    fail_msg: "{{ item.item }} is not enabled on {{ faas_node_name }} (strict verify)"
+  loop: "{{ faas_verify_enabled.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: faas_verify_strict | bool
+
+- name: fleet_verify — collect the units that must be active
+  ansible.builtin.set_fact:
+    faas_verify_active_units: >-
+      {{ faas_verify_enabled.results | selectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
+
+- name: fleet_verify — note units skipped on a first bootstrap
+  ansible.builtin.debug:
+    msg: >-
+      {{ faas_verify_units | difference(faas_verify_active_units) }} not yet
+      enabled on {{ faas_node_name }}; activation is the operator's
+      `gregalectl secrets init` + `systemctl enable --now` step, and
+      `make verify-fleet` proves it afterwards.
+  when: (faas_verify_units | difference(faas_verify_active_units)) | length > 0
+
+- name: fleet_verify — read active state  # noqa: command-instead-of-module (read-only query / no module equivalent)
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  loop: "{{ faas_verify_active_units }}"
+  register: faas_verify_active
+  changed_when: false
+  failed_when: false
+
+- name: fleet_verify — fail on an enabled daemon that is not active
+  ansible.builtin.assert:
+    that: item.rc == 0
+    fail_msg: >-
+      {{ item.item }} is enabled but {{ item.stdout | default('inactive') }} on
+      {{ faas_node_name }}. `journalctl -u {{ item.item }} -n 200` first.
+  loop: "{{ faas_verify_active.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: fleet_verify — probe unix-socket daemons
+  ansible.builtin.wait_for:
+    path: "{{ faas_daemon_probes[item].target }}"
+    timeout: "{{ faas_verify_probe_timeout_s }}"
+  loop: "{{ faas_verify_active_units }}"
+  when: faas_daemon_probes[item].probe == 'unix'
+
+- name: fleet_verify — probe tcp daemons
+  ansible.builtin.wait_for:
+    host: "{{ faas_daemon_probes[item].target.split(':')[0] }}"
+    port: "{{ faas_daemon_probes[item].target.split(':')[1] | int }}"
+    timeout: "{{ faas_verify_probe_timeout_s }}"
+  loop: "{{ faas_verify_active_units }}"
+  when: faas_daemon_probes[item].probe == 'tcp'
+
+- name: fleet_verify — stat the doctor binary
+  ansible.builtin.stat:
+    path: "{{ faas_verify_gregalectl }}"
+  register: faas_verify_doctor_bin
+  when: faas_verify_run_doctor | bool
+
+- name: fleet_verify — run gregalectl doctor
+  ansible.builtin.command: "{{ faas_verify_gregalectl }} doctor"
+  changed_when: false
+  when:
+    - faas_verify_run_doctor | bool
+    - faas_verify_doctor_bin.stat.exists | default(false)

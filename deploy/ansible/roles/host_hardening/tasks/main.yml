@@ -1,0 +1,143 @@
+---
+# host_hardening — see defaults/main.yml. Order matters: the sshd lockout
+# guard runs before anything touches sshd, and sshd is validated with
+# `sshd -t` before the reload handler fires.
+
+- name: host_hardening — install packages
+  ansible.builtin.apt:
+    name: "{{ faas_hardening_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  vars:
+    faas_hardening_packages: >-
+      {{ (['fail2ban'] if faas_hardening_fail2ban | bool else [])
+         + (['unattended-upgrades'] if faas_hardening_unattended_upgrades | bool else [])
+         + (['auditd', 'audispd-plugins'] if faas_hardening_auditd | bool else []) }}
+  when: faas_hardening_packages | length > 0
+
+# --- sshd -------------------------------------------------------------------
+
+# Lockout guard. With become=true, ansible_user_id is root; the account
+# that actually holds the SSH session is SUDO_USER (or root itself). Its
+# home comes from passwd, not from a guess.
+- name: host_hardening — resolve the connecting user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ ansible_env.SUDO_USER | default('root') }}"
+  when: faas_hardening_sshd | bool
+
+- name: host_hardening — stat the connecting user's authorized_keys
+  ansible.builtin.stat:
+    path: "{{ ansible_facts.getent_passwd[ansible_env.SUDO_USER | default('root')][4] }}/.ssh/authorized_keys"
+  register: faas_hardening_authkeys
+  when: faas_hardening_sshd | bool
+
+- name: host_hardening — refuse to disable password auth without a key on the box
+  ansible.builtin.assert:
+    that:
+      - not (faas_hardening_sshd_password_auth | bool == false) or
+        (faas_hardening_authkeys.stat.exists and faas_hardening_authkeys.stat.size > 0)
+    fail_msg: >-
+      faas_hardening_sshd_password_auth=false but {{ faas_hardening_authkeys.stat.path | default('~/.ssh/authorized_keys') }}
+      is missing or empty for the connecting user. Add a key first or set
+      faas_hardening_sshd_password_auth=true; this role will not lock you out.
+  when: faas_hardening_sshd | bool
+
+- name: host_hardening — render the sshd hardening drop-in
+  ansible.builtin.template:
+    src: 99-faas-hardening.conf.j2
+    dest: "{{ faas_hardening_sshd_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_hardening_sshd_dropin_result
+  when: faas_hardening_sshd | bool
+
+- name: host_hardening — validate the full sshd configuration before reloading
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  when: faas_hardening_sshd | bool
+
+- name: host_hardening — reload sshd when the drop-in changed
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: reloaded
+  when:
+    - faas_hardening_sshd | bool
+    - faas_hardening_sshd_dropin_result is changed
+
+# --- fail2ban ---------------------------------------------------------------
+
+- name: host_hardening — render the fail2ban sshd jail
+  ansible.builtin.template:
+    src: fail2ban-faas-sshd.local.j2
+    dest: /etc/fail2ban/jail.d/faas-sshd.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart fail2ban
+  when: faas_hardening_fail2ban | bool
+
+- name: host_hardening — enable fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    enabled: true
+    state: started
+  when: faas_hardening_fail2ban | bool
+
+# --- unattended-upgrades ----------------------------------------------------
+
+- name: host_hardening — render unattended-upgrades policy (security pocket only)
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: 50unattended-upgrades.j2, dest: /etc/apt/apt.conf.d/50unattended-upgrades }
+    - { src: 20auto-upgrades.j2, dest: /etc/apt/apt.conf.d/20auto-upgrades }
+  when: faas_hardening_unattended_upgrades | bool
+
+- name: host_hardening — enable the unattended-upgrades timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  when: faas_hardening_unattended_upgrades | bool
+
+# --- auditd -----------------------------------------------------------------
+
+- name: host_hardening — install the platform audit rules
+  ansible.builtin.template:
+    src: faas.rules.j2
+    dest: /etc/audit/rules.d/faas.rules
+    owner: root
+    group: root
+    mode: "0640"
+  notify: reload auditd rules
+  when: faas_hardening_auditd | bool
+
+- name: host_hardening — enable auditd
+  ansible.builtin.systemd_service:
+    name: auditd
+    enabled: true
+    state: started
+  when: faas_hardening_auditd | bool
+
+# --- sysctl -----------------------------------------------------------------
+
+- name: host_hardening — apply kernel hardening sysctls
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/98-faas-hardening.conf
+    sysctl_set: true
+    reload: true
+    state: present
+  loop: "{{ faas_hardening_sysctl | dict2items }}"
+  when: faas_hardening_sysctl_enabled | bool

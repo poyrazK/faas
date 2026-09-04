@@ -1,0 +1,63 @@
+---
+# host_hardening (spec §11, ADR-143) — the OS-level items the spec calls
+# ship-blocking but no role implemented: sshd posture, fail2ban, security
+# auto-updates, auditd, and the kernel sysctls not owned by the grub role.
+#
+# Every sub-feature has its own switch so an operator can bisect a
+# regression, but the production default is ON for all of them.
+faas_hardening_sshd: true
+faas_hardening_fail2ban: true
+faas_hardening_unattended_upgrades: true
+faas_hardening_auditd: true
+faas_hardening_sysctl_enabled: true
+
+# sshd. Applied as a drop-in so the distro file stays untouched and a
+# provider-rendered Port= line (spec §7: non-standard port, operator-owned)
+# is never overwritten. PasswordAuthentication is only turned off after the
+# role has proven the connecting user has an authorized_keys file — losing
+# SSH to the only control-plane node is the one failure this role must
+# never cause.
+faas_hardening_sshd_dropin: /etc/ssh/sshd_config.d/99-faas-hardening.conf
+faas_hardening_sshd_password_auth: false
+faas_hardening_sshd_permit_root_login: prohibit-password
+faas_hardening_sshd_max_auth_tries: 4
+faas_hardening_sshd_client_alive_interval: 300
+faas_hardening_sshd_client_alive_count_max: 2
+
+# fail2ban — sshd jail only; the platform's own abuse controls live in
+# gatewayd (ADR-040/041), not here.
+faas_hardening_fail2ban_bantime: 1h
+faas_hardening_fail2ban_findtime: 10m
+faas_hardening_fail2ban_maxretry: 5
+
+# unattended-upgrades — security pocket only, never auto-reboot: a reboot
+# destroys every parked snapshot's tmpfs jail (spec Gotchas) and must be an
+# operator-driven drain (ADR-066 live migration).
+faas_hardening_unattended_reboot: false
+
+# auditd — watch the trust roots and the privileged tools. Kept small on
+# purpose: audit volume is a page-quality signal, not a firehose.
+faas_hardening_auditd_rules:
+  - "-w /etc/faas/ -p wa -k faas_config"
+  - "-w /etc/faas/secrets/ -p rwa -k faas_secrets"
+  - "-w /etc/systemd/system/ -p wa -k faas_units"
+  - "-w /etc/nftables.conf -p wa -k faas_nft"
+  - "-w /usr/local/bin/firecracker -p x -k faas_vmm"
+  - "-w /usr/local/bin/jailer -p x -k faas_vmm"
+  - "-w /etc/sudoers -p wa -k sudo"
+  - "-w /etc/sudoers.d/ -p wa -k sudo"
+  - "-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=4294967295 -k root_exec"
+
+# sysctl — kernel information-leak and hardlink/symlink protections. The
+# cgroup/userns/bpf knobs stay in the grub role (spec §11, ADR-008); network
+# knobs stay out of here entirely because the netns/NAT design (ADR-009)
+# depends on forwarding and rp_filter semantics the nftables role owns.
+faas_hardening_sysctl:
+  kernel.kptr_restrict: 2
+  kernel.dmesg_restrict: 1
+  kernel.yama.ptrace_scope: 1
+  fs.protected_hardlinks: 1
+  fs.protected_symlinks: 1
+  fs.protected_fifos: 2
+  fs.protected_regular: 2
+  fs.suid_dumpable: 0

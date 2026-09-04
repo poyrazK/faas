@@ -1,54 +1,23 @@
 [Unit]
 Description=onebox-faas builderd — build orchestrator + ephemeral builder microVMs (spec §4.5, ADR-003, ADR-005)
 Documentation=https://docs.gregale.dev/ops/builderd
-After=network.target faas-cp.slice faas-vmmd.service faas-apid.service
-Wants=faas-cp.slice faas-vmmd.service faas-apid.service
+After=network.target faas-cp.slice faas-vmmd.service
+Wants=faas-cp.slice faas-vmmd.service
 
 [Service]
 Type=simple
-# builderd is a non-root daemon (mirror imaged's User=/Group=). KVM
-# access is not direct — builderd's ephemeral VMs are spawned through
-# vmmd (ADR-003), so no /dev/kvm from this unit. The user identity
-# matches the daemonunit constructor for builderd
-# (pkg/daemonunitspec/builderd.go).
 User=faas-builderd
 Group=faas
-# builderd reads FAAS_BUILDERD_CONFIG env var (cmd/builderd/main.go:66)
-# — no --config flag. The role drop-in and runtime environment files carry
-# the canonical production configuration.
 ExecStart=/opt/faas/current/bin/builderd
 Restart=on-failure
 RestartSec=2s
-# PR #1082 review-fix #2: surface the per-unit restart count to the
-# daemon via $SYSTEMD_RESTARTS_ON_FAILURE (systemd 254+
-# RestartCountExport). pkg/wire/daemon.go::Daemon() reads the env var
-# at boot and records it on daemon_restart_count so the
-# FaasRestartLoop / FaasRepeatedRestart / FaasStuckActivating alerts
-# (ADR-128) have a real-time signal.
 RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
-
 Slice=faas-cp.slice
 MemoryMax=512M
-
-# ADR-003 + ADR-005 — builds run inside ephemeral builder microVMs
-# (never host containers, never buildkit). The microVM boundary IS
-# the resource cap and the sandbox. The /srv/fc/builder dir is the
-# staging root for the build artifact; ReadWritePaths= below
-# whitelists exactly the paths the daemon writes to.
-# FAAS_BUILDERD_CONFIG set via the 99-faas-role.conf drop-in (Mega-PR-C);
-# The old monolithic sealed.env is no longer read (issue #585 / ADR-127 —
-# apid-only).
-# compute-db.env is kept for the optional DATABASE_URL the TOML config
-# references on OCI-backed storage backends.
 EnvironmentFile=-/etc/faas/compute-db.env
-# Shared OCI storage contract. Optional for single-box/local deployments;
-# required on a multi-box fleet and identical on every storage consumer.
 EnvironmentFile=-/etc/faas/storage.env
-# Runtime base contract. Named compute nodes must provision the populated
-# digest-pinned file before enabling this unit; the application resolver also
-# fails closed if a runtime ref is absent or unpinned.
 EnvironmentFile=-/etc/faas/runtime-bases.env
-
+Environment=FAAS_BUILDERD_CONFIG=/etc/faas/builderd.toml
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

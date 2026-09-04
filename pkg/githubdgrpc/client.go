@@ -279,10 +279,10 @@ type StreamSourceRefResult struct {
 	// Body is the streaming tar.gz bytes. The caller MUST Close
 	// it; defer Close immediately after StreamSourceRef returns.
 	Body io.ReadCloser
-	// Stats is populated on Close. Until Close returns, Stats
-	// holds zero values — readers MUST NOT peek at it before
+	// Stats is populated on Close. Until Close returns, the pointed-to
+	// value holds zero values — readers MUST NOT peek at it before
 	// Body.Read returns io.EOF or Body.Close is called.
-	Stats StreamSourceRefStats
+	Stats *StreamSourceRefStats
 }
 
 // StreamSourceRefStats captures the truncated/total fields the
@@ -296,6 +296,9 @@ type StreamSourceRefStats struct {
 	// streamer forwarded to apid. Recorded on the deployment
 	// row's source_bytes column.
 	BytesStreamed int64
+	// ResolvedCommitSHA is the immutable commit selected for the
+	// requested branch, tag, or short SHA.
+	ResolvedCommitSHA string
 	// Err is the terminal stream error if the body ended
 	// prematurely (liftErr-preserved *api.Problem). nil on a
 	// clean EOF.
@@ -315,7 +318,8 @@ type StreamSourceRefStats struct {
 // caller can render the stable Code without re-walking the
 // stream.
 func (c *Client) StreamSourceRef(ctx context.Context, accountID string, installationID int64, repoFullName, ref string, maxArchiveBytes int64) (*StreamSourceRefResult, error) {
-	stream, err := c.cli.StreamSourceRef(ctx, &githubdpb.StreamSourceRefRequest{
+	streamCtx, cancel := context.WithCancel(ctx)
+	stream, err := c.cli.StreamSourceRef(streamCtx, &githubdpb.StreamSourceRefRequest{
 		AccountId:       accountID,
 		InstallationId:  installationID,
 		RepoFullName:    repoFullName,
@@ -323,6 +327,7 @@ func (c *Client) StreamSourceRef(ctx context.Context, accountID string, installa
 		MaxArchiveBytes: maxArchiveBytes,
 	})
 	if err != nil {
+		cancel()
 		return nil, liftErr(err)
 	}
 	pr, pw := io.Pipe()
@@ -332,12 +337,13 @@ func (c *Client) StreamSourceRef(ctx context.Context, accountID string, installa
 		stream:     stream,
 		stats:      StreamSourceRefStats{},
 		pumpExited: make(chan struct{}),
+		cancel:     cancel,
 	}
 	// Single producer goroutine drains the gRPC stream into the
 	// pipe. Close-on-error surfaces to Read; Close-on-EOF cleanly
 	// terminates the reader.
 	go res.pump()
-	return &StreamSourceRefResult{Body: res}, nil
+	return &StreamSourceRefResult{Body: res, Stats: &res.stats}, nil
 }
 
 // streamSourceRefConn is the io.ReadCloser + terminal-stats bundle
@@ -352,6 +358,7 @@ type streamSourceRefConn struct {
 	stream     grpc.ServerStreamingClient[githubdpb.StreamSourceRefChunk]
 	stats      StreamSourceRefStats
 	pumpExited chan struct{}
+	cancel     context.CancelFunc
 	closeOnce  sync.Once
 	closeErr   error
 }
@@ -359,6 +366,11 @@ type streamSourceRefConn struct {
 // pump drains Recv into the pipe. It is the single writer of pw.
 func (s *streamSourceRefConn) pump() {
 	defer close(s.pumpExited)
+	defer func() {
+		if s.cancel != nil {
+			s.cancel()
+		}
+	}()
 	defer func() { _ = s.pw.Close() }()
 	for {
 		chunk, rerr := s.stream.Recv()
@@ -376,6 +388,9 @@ func (s *streamSourceRefConn) pump() {
 		if chunk.GetBytesStreamed() > 0 {
 			s.stats.BytesStreamed = chunk.GetBytesStreamed()
 		}
+		if chunk.GetResolvedCommitSha() != "" {
+			s.stats.ResolvedCommitSHA = chunk.GetResolvedCommitSha()
+		}
 		if n := len(chunk.GetData()); n > 0 {
 			if _, werr := s.pw.Write(chunk.GetData()); werr != nil {
 				// Reader went away (Close before EOF). The
@@ -392,11 +407,17 @@ func (s *streamSourceRefConn) Read(p []byte) (int, error) {
 	return s.pr.Read(p)
 }
 
-// Close shuts down the read side and waits for the pump to
-// return, then hands the caller the terminal stats + error.
-// Idempotent and safe to defer; double-close is a no-op.
+// Close cancels the child RPC context, shuts down the read side,
+// and waits for the pump to return before handing the caller the
+// terminal stats + error. Cancelling first is important when the
+// caller stops at the archive cap: Recv may otherwise remain blocked
+// on a still-streaming githubd response. Idempotent and safe to defer;
+// double-close is a no-op.
 func (s *streamSourceRefConn) Close() error {
 	s.closeOnce.Do(func() {
+		if s.cancel != nil {
+			s.cancel()
+		}
 		_ = s.pr.Close()
 		<-s.pumpExited
 		s.closeErr = s.stats.Err

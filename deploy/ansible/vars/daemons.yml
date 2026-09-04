@@ -1,0 +1,36 @@
+---
+# Daemon topology + readiness probes, shared by role_convergence and
+# fleet_verify. GENERATED-BY-HAND but LOCKSTEP-TESTED: pkg/daemonunitspec
+# is the source of truth and TestDaemonsYAML_LockstepWithRegistry
+# (pkg/daemonunitspec/ansible_lockstep_test.go) fails CI when this file
+# and Registry / Lifecycle disagree (ADR-143).
+faas_control_plane_units:
+  - faas-apid.service
+  - faas-schedd.service
+  - faas-meterd.service
+  - faas-gatewayd-public.service
+  - faas-githubd.service
+
+faas_compute_only_units:
+  - faas-vmmd.service
+  - faas-gatewayd-internal.service
+  - faas-builderd.service
+  - faas-imaged.service
+
+faas_legacy_units:
+  - faas-gatewayd.service
+  - faas-spool-sync.service
+
+# probe: systemd (is-active is the whole answer) | unix (socket path must
+# exist) | tcp (host:port must accept a connection). Mirrors
+# daemonunitspec.Lifecycle.{Probe,ProbeTarget}.
+faas_daemon_probes:
+  faas-vmmd.service: { probe: unix, target: /run/faas/vmmd.sock }
+  faas-apid.service: { probe: systemd, target: "" }
+  faas-schedd.service: { probe: unix, target: /run/faas/schedd.sock }
+  faas-gatewayd-internal.service: { probe: tcp, target: "127.0.0.1:9090" }
+  faas-gatewayd-public.service: { probe: tcp, target: "127.0.0.1:8080" }
+  faas-meterd.service: { probe: systemd, target: "" }
+  faas-githubd.service: { probe: systemd, target: "" }
+  faas-imaged.service: { probe: tcp, target: "127.0.0.1:9102" }
+  faas-builderd.service: { probe: unix, target: /run/faas/builderd.sock }

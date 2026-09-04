@@ -20,7 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // stubStore satisfies the canary.Store interface for tests.
@@ -150,5 +153,71 @@ func TestProgressionOnce_WallClockSkipsWhenNotElapsed(t *testing.T) {
 	}
 	if len(apid.advances) != 0 {
 		t.Errorf("apid advances = %d, want 0 (must not advance when not yet elapsed)", len(apid.advances))
+	}
+}
+
+// TestProgressionOnce_AdvancedTotalLabeledPerPreset — SAFE-RELEASES-OBS
+// PR-A: pin the canary_preset label pass-through. Pre-PR the
+// canary_progression_advanced_total counter was unlabelled (operators
+// could only see fleet-wide rollup). PR-A re-labels it with the
+// row's CanaryPreset value (closed-set: none/slow/balanced/
+// aggressive/1-10-50-100/custom; unknown presets drop to the no-op
+// closure so cardinality stays bounded). This test asserts:
+//
+//	(a) a valid preset name lands on the labeled series;
+//	(b) an unknown preset name (e.g. a typo'd column write) drops to
+//	    the no-op path so the closed-vocab gate is honored.
+//
+// Reads the counter via testutil.ToFloat64 on the per-label
+// counter returned from OpsMetrics.CanaryProgressionAdvancedTotal(preset).
+func TestProgressionOnce_AdvancedTotalLabeledPerPreset(t *testing.T) {
+	now := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
+	store := &stubStore{
+		rows: []CanaryRow{
+			{
+				ID:                "00000000-0000-0000-0000-000000000001",
+				AppID:             "00000000-0000-0000-0000-000000000002",
+				CanaryPreset:      "balanced",
+				CanaryStep:        0,
+				CanaryTotalSteps:  3,
+				CanaryStepStarted: now.Add(-1 * time.Hour), // elapsed > balanced step-0 duration
+				RolloutState:      "rolling_out",
+			},
+		},
+	}
+	apid := &stubAPID{}
+	ops := wire.NewOpsMetrics("canary_test_obs_pr_a_balanced")
+	prog := NewProgression(store, apid, ops, slog.Default())
+	prog.Now = func() time.Time { return now }
+
+	stats, err := prog.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.Advanced != 1 {
+		t.Fatalf("stats.Advanced = %d, want 1", stats.Advanced)
+	}
+
+	// Balanced preset → labeled series bumps by 1.
+	c := ops.CanaryProgressionAdvancedTotal("balanced")
+	if c == nil {
+		t.Fatal("CanaryProgressionAdvancedTotal returned nil for valid preset 'balanced'")
+	}
+	if got := testutil.ToFloat64(c); got != 1 {
+		t.Errorf("canary_progression_advanced_total{canary_preset=balanced} = %v, want 1", got)
+	}
+}
+
+// TestProgressionOnce_AdvancedTotalUnknownPresetDrops pins the
+// closed-vocabulary gate at the accessor level. When a row has a
+// typo'd preset name (the schema CHECK doesn't gate canary_preset —
+// migration 00480 leaves the column as TEXT), the accessor must
+// return nil so the Inc() call is a no-op AND Prometheus cardinality
+// stays bounded. No panic, no silent series inflation.
+func TestProgressionOnce_AdvancedTotalUnknownPresetDrops(t *testing.T) {
+	ops := wire.NewOpsMetrics("canary_test_obs_pr_a_unknown")
+	c := ops.CanaryProgressionAdvancedTotal("unknown_preset_name")
+	if c != nil {
+		t.Errorf("expected nil counter for unknown preset; got %v", testutil.ToFloat64(c))
 	}
 }

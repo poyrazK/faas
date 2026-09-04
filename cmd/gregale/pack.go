@@ -988,6 +988,8 @@ func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
+	capBytes := int64(capMB) * 1024 * 1024
+	var totalUncompressed int64
 
 	for _, e := range entries {
 		hdr, herr := tar.FileInfoHeader(e.info, "")
@@ -1016,21 +1018,37 @@ func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][
 		// destinations — the secret-scan pass is per-archive.
 		if data, ok := envOverride[e.rel]; ok {
 			hdr.Size = int64(len(data))
+			if totalUncompressed > capBytes-hdr.Size {
+				return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
+			}
 			if err := tw.WriteHeader(hdr); err != nil {
 				return 0, fmt.Errorf("write header %s: %w", hdr.Name, err)
 			}
 			if _, err := tw.Write(data); err != nil {
 				return 0, fmt.Errorf("write body %s: %w", hdr.Name, err)
 			}
+			totalUncompressed += hdr.Size
 			delete(envOverride, e.rel)
 			regularFileCount++
 			continue
 		}
+		if e.info.Size() > capBytes-totalUncompressed {
+			if e.info.Size() > capBytes {
+				return 0, fmt.Errorf("refusing to pack %s: %d bytes > %d MB per-file cap (untracked large file? pass --tarball of a hand-built archive)",
+					filepath.Base(e.abs), e.info.Size(), capMB)
+			}
+			return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
+		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return 0, fmt.Errorf("write header %s: %w", hdr.Name, err)
 		}
-		if err := copyRegular(tw, e.abs, capMB); err != nil {
+		written, err := copyRegular(tw, e.abs, capMB)
+		if err != nil {
 			return 0, err
+		}
+		totalUncompressed += written
+		if totalUncompressed > capBytes {
+			return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
 		}
 		regularFileCount++
 	}
@@ -1048,7 +1066,6 @@ func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][
 	if err != nil {
 		return 0, fmt.Errorf("stat packed tarball: %w", err)
 	}
-	capBytes := int64(capMB) * 1024 * 1024
 	if st.Size() > capBytes {
 		return 0, fmt.Errorf("packed cwd is %d MB, over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive",
 			st.Size()/(1024*1024), capMB)
@@ -1067,10 +1084,10 @@ func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][
 // error instead of streaming gigabytes through gzip→tar. capMB is the
 // per-plan upload cap resolved by the caller from
 // api.MustLimitsFor(plan).SourceTarballMaxMB.
-func copyRegular(tw *tar.Writer, abs string, capMB int) error {
+func copyRegular(tw *tar.Writer, abs string, capMB int) (int64, error) {
 	f, err := openCustomerFile(abs)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", abs, err)
+		return 0, fmt.Errorf("open %s: %w", abs, err)
 	}
 	defer func() { _ = f.Close() }()
 	// Wrap the source in a LimitReader so a runaway file (a 2 GB raw
@@ -1085,13 +1102,13 @@ func copyRegular(tw *tar.Writer, abs string, capMB int) error {
 	lr := io.LimitReader(f, capBytes+1)
 	n, err := io.Copy(tw, lr)
 	if err != nil {
-		return fmt.Errorf("copy %s: %w", abs, err)
+		return n, fmt.Errorf("copy %s: %w", abs, err)
 	}
 	if n > capBytes {
-		return fmt.Errorf("refusing to pack %s: %d bytes > %d MB per-file cap (untracked large file? pass --tarball of a hand-built archive)",
+		return n, fmt.Errorf("refusing to pack %s: %d bytes > %d MB per-file cap (untracked large file? pass --tarball of a hand-built archive)",
 			filepath.Base(abs), n, capMB)
 	}
-	return nil
+	return n, nil
 }
 
 // buildCreateRequest stamps the issue #737 / ADR-083 fields onto the
@@ -1520,10 +1537,13 @@ func scanAndRedactEnvFiles(srcDir string, mode secretScanMode) (overrides map[st
 			errs = append(errs, fmt.Errorf("open %s: %w", relSlash, ferr))
 			return nil
 		}
-		data, rerr := io.ReadAll(f)
+		data, rerr := io.ReadAll(io.LimitReader(f, treeScanMaxBytes+1))
 		_ = f.Close()
 		if rerr != nil {
 			errs = append(errs, fmt.Errorf("read %s: %w", relSlash, rerr))
+			return nil
+		}
+		if int64(len(data)) > treeScanMaxBytes {
 			return nil
 		}
 		fileFindings := secretscan.ScanEnvContent(relSlash, data)

@@ -1,0 +1,15 @@
+# {{ ansible_managed }} — host_hardening role (spec §11, ADR-143).
+# Port= is deliberately NOT set here: it is provider/operator-owned.
+PasswordAuthentication {{ 'yes' if faas_hardening_sshd_password_auth | bool else 'no' }}
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PermitRootLogin {{ faas_hardening_sshd_permit_root_login }}
+PermitEmptyPasswords no
+PubkeyAuthentication yes
+MaxAuthTries {{ faas_hardening_sshd_max_auth_tries }}
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+ClientAliveInterval {{ faas_hardening_sshd_client_alive_interval }}
+ClientAliveCountMax {{ faas_hardening_sshd_client_alive_count_max }}
+LoginGraceTime 30

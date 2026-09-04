@@ -407,10 +407,10 @@ message StreamSourceRefRequest {
   // repo_full_name is "owner/name". Validated against the same
   // shape pkg/gitfetch/http.go::isValidRepoPath enforces.
   string repo_full_name   = 3;
-  // ref is the pinned commit SHA, branch, or tag. apid resolves
-  // branches/tags to a SHA via api.github.com/repos/<repo>/commits/<ref>
-  // BEFORE calling this RPC, so the streamer only sees 7–40 char
-  // lowercase hex SHAs (pkg/gitfetch/http.go::isValidCommitSHA).
+  // ref is the requested commit SHA, branch, or tag. githubd resolves
+  // branches/tags to a canonical SHA via the authenticated GitHub API
+  // BEFORE fetching codeload, so the terminal chunk can carry immutable
+  // provenance back to apid.
   string ref              = 4;
   // max_archive_bytes is the per-plan cap (Free 100 MB / Hobby 100 /
   // Pro 250 / Scale 250 × 1024²). Applied as
@@ -438,4 +438,8 @@ message StreamSourceRefChunk {
   // the apid handler can record source_bytes on the deployment
   // row without summing the data fields.
   int64  bytes_streamed   = 3;
+  // resolved_commit_sha is the canonical 40-character commit SHA
+  // selected for the requested ref. It is repeated on the terminal
+  // metadata frame so apid can stamp immutable provenance.
+  string resolved_commit_sha = 4;
 }

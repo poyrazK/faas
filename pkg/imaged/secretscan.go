@@ -57,13 +57,11 @@ import (
 // truncating.
 const imagedLayerSecretScanMaxBytes = 1 << 20
 
-// imagedLayerSecretScanExcludedDirs is the imaged-side analogue of
-// cmd/apid/secretscan.go::serverSecretScanExcludeDirs. Same skip set
-// as the source-tree path; the imaged walk runs against a clean
-// per-app ext4 (not a customer's working tree) so the typical
-// build-artifact directories (.git, node_modules, target) should
-// already be absent — but the skip list is defensive against
-// images that DO contain them.
+// imagedLayerSecretScanExcludedDirs is intentionally limited to the
+// post-build image walk. Unlike the source-ingress scan, this pass runs
+// against a clean per-app ext4 after the customer archive has crossed the
+// trust boundary; skipping common build-artifact directories keeps image
+// scanning bounded while the source scan remains exhaustive.
 func imagedLayerSecretScanIsExcludedDir(name string) bool {
 	switch name {
 	case ".git", "node_modules", "vendor", "__pycache__",

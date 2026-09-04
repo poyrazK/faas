@@ -1314,6 +1314,7 @@ func cmdDeployTarball(args []string) int {
 	// --function/--app outside the cwd pack also write to
 	// resolvedShape via this variable in the same branch.
 	var resolvedShape = shapeApp
+	var gitArchivePath string
 	// Issue #737 / ADR-083: explicit --function / --app on a
 	// --tarball / --template path skips the cwd detector (no cwd
 	// pack happens), but still flips resolvedShape so CreateApp
@@ -1435,8 +1436,8 @@ func cmdDeployTarball(args []string) int {
 			if err := gitArchiveHEAD(provVal.Root, tmpPath); err != nil {
 				return printErr("Could not archive git HEAD", err)
 			}
-			*tarball = tmpPath
-			PrintProgress(os.Stderr, "packing HEAD (%s) from %s",
+			gitArchivePath = tmpPath
+			PrintProgress(os.Stderr, "archiving HEAD (%s) from %s",
 				provVal.SHA[:7], filepath.Base(cwd))
 			// Auto-capture `git config user.name` as deployed_by
 			// unless the operator explicitly passed --deployed-by.
@@ -1487,6 +1488,20 @@ func cmdDeployTarball(args []string) int {
 			cancel()
 		} else {
 			PrintWarn(osStderr, "authed client for Whoami round-trip failed (%v); using %d MB Free/Hobby floor", werr, planCapMB)
+		}
+		if gitArchivePath != "" {
+			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode)
+			if packErr != nil {
+				return printErr("Could not pack committed HEAD", packErr)
+			}
+			if n == 0 {
+				return printErr("No deployable source found in "+filepath.Base(cwd),
+					errors.New("the committed HEAD contains no regular source files after deploy exclusions"))
+			}
+			defer func() { _ = os.Remove(path) }()
+			renderSecretScanWarnings(scanFindings, osStderr)
+			PrintProgress(os.Stderr, "packing %d file(s) from committed HEAD", n)
+			*tarball = path
 		}
 		// Issue #1182 §3.3: only run the cwd auto-detect + auto-pack
 		// switch when no tarball was set by the git-archive branch

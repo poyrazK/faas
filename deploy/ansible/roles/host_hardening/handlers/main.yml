@@ -1,0 +1,9 @@
+---
+- name: restart fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted
+
+- name: reload auditd rules
+  ansible.builtin.command: augenrules --load
+  changed_when: true

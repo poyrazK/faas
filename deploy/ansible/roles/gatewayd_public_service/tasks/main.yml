@@ -14,6 +14,7 @@
 #   - run the daemon (Caddy reverse-proxy upstream is the trigger)
 
 - name: gatewayd_public_service — install systemd unit
+  notify: restart faas-gatewayd-public
   ansible.builtin.copy:
     src: faas-gatewayd-public.service
     dest: /etc/systemd/system/faas-gatewayd-public.service
@@ -22,7 +23,7 @@
     mode: "0644"
   register: gatewayd_public_unit
 
-- name: gatewayd_public_service — systemctl daemon-reload (idempotent, after new unit file)
+- name: gatewayd_public_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
   when: gatewayd_public_unit.changed
@@ -41,6 +42,7 @@
 # templates/99-faas-node-name.conf.j2 — body is identical across
 # roles.
 - name: gatewayd_public_service — install FAAS_NODE_NAME drop-in (Mega-PR-A)
+  notify: restart faas-gatewayd-public
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-node-name.conf.j2
     dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-node-name.conf
@@ -56,6 +58,7 @@
 # roles/gatewayd_public_service/templates/99-faas-role.conf.j2
 # for the full rationale.
 - name: gatewayd_public_service — install FAAS_GATEWAYD_PUBLIC_ROLE drop-in (Mega-PR-C)
+  notify: restart faas-gatewayd-public
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
     dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-role.conf

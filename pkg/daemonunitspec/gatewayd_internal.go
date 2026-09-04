@@ -50,8 +50,13 @@ func UnitGatewaydInternal() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 split, ADR-070)",
 		Documentation: "https://docs.gregale.dev/ops/gatewayd-internal",
-		After:         []string{"faas-cp.slice", "network-online.target", "faas-apid.service", "faas-schedd.service", "faas-vmmd.service"},
-		Wants:         []string{"faas-cp.slice", "faas-apid.service", "faas-schedd.service", "faas-vmmd.service"},
+		// ADR-143: gatewayd-internal runs on compute-only nodes where
+		// apid + schedd are masked (role_convergence); ordering on them
+		// only produced "Unit is masked" noise at every start. It dials
+		// both over the split-box mTLS transport, so vmmd is the only
+		// local dependency.
+		After: []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service"},
+		Wants: []string{"faas-cp.slice", "faas-vmmd.service"},
 
 		Type:               "simple",
 		User:               "faas",
@@ -74,9 +79,17 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},
+			// Security review A4 (mirrors faas-apid.service): the session
+			// key reaches the daemon as a LoadCredential= path, never as
+			// inherited env content. cmd/gatewayd-internal/session_key.go
+			// accepts both the PATH-shaped (%d/<id>) and CONTENT-shaped
+			// forms; the unit pins the path form so the raw key is only
+			// ever readable inside the service's credential tmpfs.
+			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},
 			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},
 

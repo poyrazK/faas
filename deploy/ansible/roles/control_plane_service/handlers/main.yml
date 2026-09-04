@@ -1,6 +1,33 @@
 ---
-- name: restart faas-meterd
-  ansible.builtin.systemd:
-    name: faas-meterd
-    state: restarted
+# ADR-143: every unit, drop-in and config change must reach the running
+# daemon. `systemctl try-restart` only restarts an ACTIVE unit, so the first
+# bootstrap (before the operator's `gregalectl secrets init` + `systemctl
+# enable --now`) stays a no-op and an unconfigured daemon is never started
+# into a crash loop. The daemon-reload handler is listed first because
+# handlers run in file order and a drop-in change is invisible to systemd
+# until the manager reloads.
+- name: control_plane_service — daemon-reload after unit or drop-in changes
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen:
+    - restart faas-apid
+    - restart faas-schedd
+    - restart faas-meterd
+
+- name: control_plane_service — try-restart faas-apid
+  ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-apid
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: control_plane_service — try-restart faas-schedd
+  ansible.builtin.command: systemctl try-restart faas-schedd.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-schedd
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: control_plane_service — try-restart faas-meterd
+  ansible.builtin.command: systemctl try-restart faas-meterd.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
   listen: restart faas-meterd
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

@@ -18,6 +18,14 @@ apps_domain = "{{ gatewayd_apps_domain }}"
 # downgrade with -e gatewayd_route_metrics_enabled=false.
 route_metrics_enabled = {{ gatewayd_route_metrics_enabled | default(true) | string | lower }}
 
+# ADR-047 / ADR-143 operator gate for streaming responses. The code default
+# is FALSE (cmd/gatewayd-internal/config.go), and until ADR-143 no deploy
+# path set it, so every Hobby+ app that paid for streaming — and every SSE,
+# LLM or MCP endpoint — was silently buffered fleet-wide. Production is
+# default-on here; operators downgrade with -e gatewayd_streaming_enabled=false.
+# FAAS_GATEWAY_STREAMING remains the emergency env override.
+streaming_enabled = {{ gatewayd_streaming_enabled | default(true) | string | lower }}
+
 # In a single-box deployment this remains apid's loopback listener. The
 # generated split-box inventory overrides it with the control-plane address
 # so compute-only gatewayd-internal does not dial its own box.

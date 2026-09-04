@@ -4742,7 +4742,17 @@ func (e *Engine) Park(ctx context.Context, instanceID string) error {
 		return err
 	}
 	defer e.unlockApp(ins.AppID)
-	return e.snapshotAndPark(ctx, *ins)
+	if err := e.snapshotAndPark(ctx, *ins); err != nil {
+		return err
+	}
+	// Park is also used by operator and quota paths, not only the request
+	// reaper. A service replica that reaches PARKED through one of those paths
+	// must still trigger the desired-count reconciler; otherwise the service
+	// can remain below its configured floor without another lifecycle event.
+	if ins.Mode == string(state.InstanceModeService) {
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	}
+	return nil
 }
 
 // ParkWithReason is the meterd-triggered variant (M7, spec §4.7). It

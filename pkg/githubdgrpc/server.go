@@ -70,7 +70,7 @@ type Service interface {
 	// validateAndSpool. The truncated flag surfaces when the cap
 	// is hit; bytesStreamed is the post-cap cumulative count for
 	// the deployment row's source_bytes column.
-	StreamSourceRef(ctx context.Context, accountID string, installationID int64, repoFullName, ref string, maxArchiveBytes int64) (rc io.ReadCloser, truncated bool, bytesStreamed int64, err error)
+	StreamSourceRef(ctx context.Context, accountID string, installationID int64, repoFullName, ref string, maxArchiveBytes int64) (rc io.ReadCloser, resolvedCommitSHA string, truncated bool, bytesStreamed int64, err error)
 }
 
 // Server implements githubdpb.GithubdServer. It wraps a Service so
@@ -309,7 +309,7 @@ func (s *Server) MintInstallationToken(ctx context.Context, req *githubdpb.MintI
 func (s *Server) StreamSourceRef(req *githubdpb.StreamSourceRefRequest, stream grpc.ServerStreamingServer[githubdpb.StreamSourceRefChunk]) error {
 	const op = "StreamSourceRef"
 	start := time.Now()
-	rc, truncated, total, err := s.svc.StreamSourceRef(
+	rc, resolvedCommitSHA, serviceTruncated, _, err := s.svc.StreamSourceRef(
 		stream.Context(),
 		req.GetAccountId(),
 		req.GetInstallationId(),
@@ -321,23 +321,43 @@ func (s *Server) StreamSourceRef(req *githubdpb.StreamSourceRefRequest, stream g
 	if err != nil {
 		return toStatusErr(err)
 	}
+	if rc == nil {
+		return status.Error(codes.Unavailable, "githubd: source-ref streamer returned nil body")
+	}
 	defer func() { _ = rc.Close() }()
 
 	const chunkSize = 32 * 1024
 	buf := make([]byte, chunkSize)
+	var streamed int64
 	for {
 		n, rerr := rc.Read(buf)
 		if n > 0 {
+			streamed += int64(n)
 			chunk := &githubdpb.StreamSourceRefChunk{
 				Data:          append([]byte(nil), buf[:n]...),
-				BytesStreamed: total,
-				Truncated:     truncated && rerr == io.EOF,
+				BytesStreamed: streamed,
+				Truncated: (serviceTruncated ||
+					(req.GetMaxArchiveBytes() > 0 && streamed > req.GetMaxArchiveBytes())) &&
+					rerr == io.EOF,
+				ResolvedCommitSha: resolvedCommitSHA,
 			}
 			if serr := stream.Send(chunk); serr != nil {
 				return toStatusErr(serr)
 			}
 		}
 		if rerr == io.EOF {
+			if n == 0 {
+				// A metadata-only terminal frame is needed for empty
+				// archives and for streams whose final read returned
+				// no data. It also carries the canonical SHA.
+				if serr := stream.Send(&githubdpb.StreamSourceRefChunk{
+					BytesStreamed:     streamed,
+					Truncated:         serviceTruncated || (req.GetMaxArchiveBytes() > 0 && streamed > req.GetMaxArchiveBytes()),
+					ResolvedCommitSha: resolvedCommitSHA,
+				}); serr != nil {
+					return toStatusErr(serr)
+				}
+			}
 			return nil
 		}
 		if rerr != nil {
@@ -436,6 +456,6 @@ func (UnimplementedService) MintInstallationToken(string, int64) (string, time.T
 // The slice-1 / test build keeps returning Unimplemented so the
 // round-trip exercises the gRPC plumbing without committing to
 // the codeload-streaming shape before PR-A lands.
-func (UnimplementedService) StreamSourceRef(context.Context, string, int64, string, string, int64) (io.ReadCloser, bool, int64, error) {
-	return nil, false, 0, status.Error(codes.Unimplemented, "githubd: StreamSourceRef not yet wired (DEPLOY-PROV-4)")
+func (UnimplementedService) StreamSourceRef(context.Context, string, int64, string, string, int64) (io.ReadCloser, string, bool, int64, error) {
+	return nil, "", false, 0, status.Error(codes.Unimplemented, "githubd: StreamSourceRef not yet wired (DEPLOY-PROV-4)")
 }

@@ -919,6 +919,32 @@ makes Gregale match that posture for newly-created apps.
 
 ADR-080 / issue #695 / migration 00156.
 
+## M8 — Deploy configuration contract (ADR-143). ✅
+
+The "read but never set" outage class (PR #1286 function runner paths, PR
+#1287 AppErrors listener) is closed at the root:
+
+- **One unit source.** `deployctl generate` now emits every service role's
+  `files/faas-*.service` (8 roles) + `deploy/systemd/`; the retired
+  `deploy/controlplane/` tombstone is deleted (ADR-110 Phase 2). vmmd,
+  gatewayd-internal, gatewayd-public and builderd copies had drifted.
+- **Declared environment.** `pkg/daemonunitspec/envcontract.go` +
+  `envcontract_test.go`: every `FAAS_*` a daemon reads is declared with a
+  delivery source and the test proves delivery both ways; table rendered
+  to `docs/ops/env-contract.md`. Found and fixed three more silently-off
+  gates: streaming (`streaming_enabled=true` in gatewayd-internal.toml),
+  jobs dispatch (explicit `FAAS_JOBS_DISPATCH=0` until Mega-1.5), GeoIP
+  database (new `geoip` role, pinned DB-IP release).
+- **Restart handlers** on every service role (`daemon-reload` +
+  `try-restart`), notify on every unit/drop-in/config task.
+- **Verified convergence.** `vars/daemons.yml` topology (lockstep-tested),
+  `fleet_verify` role at the end of both bootstrap plays, strict
+  `verify.yml` / `make verify-fleet`; CI runs `scale_check.yml` for real
+  and `ansible-lint` (production profile).
+- **Spec §11 host posture** as `host_hardening` (sshd drop-in with lockout
+  guard, fail2ban, unattended security upgrades without reboot, auditd,
+  kernel sysctls).
+
 ## What's next
 
 M0 → M8 are the spec-defined milestones (spec §14, lines 444–461).
