@@ -12437,12 +12437,7 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		node.Region, node.Zone, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
-		node.Role, node.Generation,
-		// $20 — the staleness window that separates "reaped because it
-		// stopped heartbeating" from "drained by an operator while
-		// alive". Matches sched.DefaultHeartbeatStaleness; kept as a
-		// literal here because pkg/state must not import pkg/sched.
-		VmmdReregisterStaleWindow.String())
+		node.Role, node.Generation)
 	n, err := scanComputeNode(row)
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node %q: %w", node.Name, err)
@@ -12650,7 +12645,12 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
-		node.Role, node.Generation)
+		node.Role, node.Generation,
+		// $20 — the staleness window that separates "reaped because it
+		// stopped heartbeating" from "drained by an operator while
+		// alive". Matches sched.DefaultHeartbeatStaleness; kept as a
+		// literal here because pkg/state must not import pkg/sched.
+		VmmdReregisterStaleWindow.String())
 	n, err := scanComputeNode(row)
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node (vmmd) %q: %w", node.Name, err)
