@@ -20,6 +20,7 @@ from .admin_refund_response import AdminRefundResponse
 from .admin_refund_response_provider import AdminRefundResponseProvider
 from .admin_set_github_webhook_secret_request import AdminSetGithubWebhookSecretRequest
 from .admin_set_github_webhook_secret_response import AdminSetGithubWebhookSecretResponse
+from .advance_canary_request import AdvanceCanaryRequest
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_status import AlertDeliveryResponseStatus
 from .alert_preset_response import AlertPresetResponse
@@ -134,6 +135,7 @@ from .build_response import BuildResponse
 from .build_response_failure_class import BuildResponseFailureClass
 from .build_response_kind import BuildResponseKind
 from .build_response_status import BuildResponseStatus
+from .canary_advance_response import CanaryAdvanceResponse
 from .canary_preset_spec import CanaryPresetSpec
 from .canary_preset_spec_preset import CanaryPresetSpecPreset
 from .cancel_deployment_request import CancelDeploymentRequest
@@ -701,6 +703,7 @@ __all__ = (
     "AdminRefundResponseProvider",
     "AdminSetGithubWebhookSecretRequest",
     "AdminSetGithubWebhookSecretResponse",
+    "AdvanceCanaryRequest",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseStatus",
     "AlertPresetResponse",
@@ -815,6 +818,7 @@ __all__ = (
     "BuildResponseFailureClass",
     "BuildResponseKind",
     "BuildResponseStatus",
+    "CanaryAdvanceResponse",
     "CanaryPresetSpec",
     "CanaryPresetSpecPreset",
     "CancelDeploymentRequest",

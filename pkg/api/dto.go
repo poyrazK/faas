@@ -1831,6 +1831,22 @@ type UpdateDeploymentTrafficRequest struct {
 	TrafficPercent int `json:"traffic_percent"`
 }
 
+// AdvanceCanaryRequest is the compare-and-swap body for
+// POST /v1/deployments/{id}/canary/advance. The server derives the next
+// traffic percentage from the deployment's persisted canary preset; the
+// caller only supplies the step it observed, so a stale or concurrent worker
+// cannot choose an arbitrary traffic value.
+type AdvanceCanaryRequest struct {
+	ExpectedStep int `json:"expected_step"`
+}
+
+// CanaryAdvanceResponse carries the atomically advanced deployment and the
+// deployment_audit row id written in the same transaction.
+type CanaryAdvanceResponse struct {
+	Deployment DeploymentResponse `json:"deployment"`
+	AuditID    string             `json:"audit_id"`
+}
+
 // CreateMirrorRuleRequest is the body for
 // POST /v1/apps/{slug}/mirrors (issue #72 / ADR-125 traffic
 // mirroring PR-A2). The (SourceDeploymentID, MirrorDeploymentID)

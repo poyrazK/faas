@@ -4412,6 +4412,31 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		}
 		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
+	if d.CanaryTotalSteps <= 0 {
+		// Stable creation may end an active canary, so lock the whole
+		// live set in deterministic id order before the prior-row
+		// lookup. This preserves the lock ordering used by traffic
+		// updates and avoids a create-vs-rebalance deadlock.
+		rows, err := tx.Query(ctx,
+			`select id from deployments
+			  where app_id = $1 and status = 'live'
+			  order by id for update`, d.AppID)
+		if err != nil {
+			return Deployment{}, fmt.Errorf("state: lock live deployments: %w", err)
+		}
+		for rows.Next() {
+			var ignored string
+			if err := rows.Scan(&ignored); err != nil {
+				rows.Close()
+				return Deployment{}, fmt.Errorf("state: scan live deployment lock: %w", err)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return Deployment{}, fmt.Errorf("state: iterate live deployment locks: %w", err)
+		}
+		rows.Close()
+	}
 
 	// 2. Lock + supersede the prior live/pending row, if any. PR-B: the
 	//    supersede is in-tx so a failed INSERT below rolls it back too.
@@ -4454,7 +4479,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 			return Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
 		}
 		// pgx.ErrNoRows → no prior; that's fine. Move on.
-	} else {
+	} else if d.CanaryTotalSteps <= 0 {
 		// Issue #556 PR-A: zero the prior row's traffic_percent in
 		// the same tx so Σ over live rows remains 100 by construction
 		// (the new INSERT defaults traffic_percent to 100 below).
@@ -4469,6 +4494,23 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 			  where id = $1`,
 			priorID); err != nil {
 			return Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
+		}
+	} else {
+		// A canary needs the prior live revision as its residual
+		// traffic bucket. Keep it live until the canary reaches its
+		// terminal stage; MarkDeploymentLive will rebalance both rows.
+	}
+	if d.CanaryTotalSteps <= 0 {
+		// A stable deployment terminates any active canary overlap as
+		// well as the newest prior row. The app-level partial unique
+		// index requires every other live revision to be gone before
+		// this deployment is activated.
+		if _, err := tx.Exec(ctx,
+			`update deployments
+			    set status = 'superseded', traffic_percent = 0
+			  where app_id = $1 and status = 'live'`,
+			d.AppID); err != nil {
+			return Deployment{}, fmt.Errorf("state: supersede live canary siblings: %w", err)
 		}
 	}
 
@@ -4499,14 +4541,13 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	// schema layer; the explicit write here mirrors the
 	// operator-supplied case.
 	//
-	// Defensive default: if a caller hands us d.TrafficPercent=0
-	// (Go zero value, the wire-omitted case from a test or a
-	// future handler that forgets to set the field), stamp 100
-	// here so we never INSERT a row at 0 that would then receive
-	// no traffic. Mirrors memstore.CreateDeployment (the unit-test
-	// suite that exercises MemStore stays aligned with PgStore),
-	// and matches the schema NOT NULL DEFAULT 100 contract.
-	if d.TrafficPercent == 0 {
+	// Defensive default for stable deployments: if a caller hands us
+	// d.TrafficPercent=0 (the Go zero value, or the wire-omitted case),
+	// stamp 100 here. A canary's zero can be a meaningful custom first
+	// stage, and the APID handler has already copied that stage onto the
+	// row. Mirrors memstore.CreateDeployment while preserving the schema
+	// NOT NULL DEFAULT 100 contract for non-canary rows.
+	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 {
 		d.TrafficPercent = 100
 	}
 	row := tx.QueryRow(ctx,
@@ -4622,16 +4663,14 @@ func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment,
 	return scanDeploymentWithRootfs(row)
 }
 
-// LiveDeploymentForScope (ADR-091 / PR-D) returns the unique live
-// deployment for the (app_id, scope) pair. Backed by the partial
-// UNIQUE index deployments_app_scope_live_uniq added in migration
-// 00213: at most one live row per (app_id, scope), so the LIMIT 1
-// is belt-and-suspenders and the result is deterministic. Returns
-// ErrNotFound when no live row exists for the scope — the wake
-// path converts that into a 404 via the ErrNoDeployment sentinel
-// already used by LiveDeployment. The query plan uses the partial
-// index (index-only on app_id, scope via INCLUDE-less btree; the
-// rootfs columns are heap-fetched, identical to LiveDeployment).
+// LiveDeploymentForScope (ADR-091 / PR-D) returns the newest live
+// deployment for the (app_id, scope) pair. Stable deployments remain
+// unique in Postgres, while an active canary deliberately overlaps its
+// predecessor (issue #976); ordering keeps the wake path deterministic
+// and selects the canary revision for new capacity. Returns ErrNotFound
+// when no live row exists for the scope — the wake path converts that
+// into a 404 via the ErrNoDeployment sentinel already used by
+// LiveDeployment.
 func (s *PgStore) LiveDeploymentForScope(ctx context.Context, appID, scope string) (Deployment, error) {
 	row := s.pool.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
@@ -5157,6 +5196,138 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	return d, nil
 }
 
+// AdvanceCanary atomically commits one automatic canary step. The expected
+// step is checked while the deployment row is locked; traffic redistribution,
+// terminal promotion, sibling supersede, and the audit row all share the same
+// transaction.
+func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
+	if params.ExpectedStep < 0 || params.TrafficPercent < 0 || params.TrafficPercent > 100 {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+`
+		   from deployments where id = $1 for update`, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrNotFound) {
+			return Deployment{}, 0, ErrNotFound
+		}
+		return Deployment{}, 0, fmt.Errorf("state: advance canary load: %w", err)
+	}
+	if dep.Status != DeployLive || (dep.RolloutState != "pending" && dep.RolloutState != "rolling_out") ||
+		dep.CanaryTotalSteps <= 0 || params.ExpectedStep >= dep.CanaryTotalSteps {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	if dep.CanaryStep != params.ExpectedStep {
+		return Deployment{}, 0, ErrCanaryStepConflict
+	}
+	if _, err := uuid.Parse(dep.ID); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary deployment id %q: %w", dep.ID, err)
+	}
+
+	rows, err := tx.Query(ctx,
+		`select id, traffic_percent
+		   from deployments
+		  where app_id = $1 and status = 'live' and id != $2
+		  order by id
+		  for update`, dep.AppID, dep.ID)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary lock siblings: %w", err)
+	}
+	var siblings []struct {
+		ID    string
+		Prior int
+	}
+	for rows.Next() {
+		var sibling struct {
+			ID    string
+			Prior int
+		}
+		if err := rows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+			rows.Close()
+			return Deployment{}, 0, fmt.Errorf("state: advance canary scan sibling: %w", err)
+		}
+		siblings = append(siblings, sibling)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary iterate siblings: %w", err)
+	}
+
+	now := time.Now().UTC()
+	newStep := params.ExpectedStep + 1
+	terminal := newStep >= dep.CanaryTotalSteps-1
+	persistedStep := newStep
+	if terminal {
+		params.TrafficPercent = 100
+		// Keep the established terminal sentinel: in-flight stages are
+		// zero-indexed, while a completed rollout stores step=total.
+		persistedStep = dep.CanaryTotalSteps
+	} else if len(siblings) == 0 {
+		return Deployment{}, 0, ErrTrafficPercentSumInvalid
+	}
+	newWeights := RedistributeTraffic(siblings, 100-params.TrafficPercent)
+	if terminal {
+		if _, err := tx.Exec(ctx,
+			`update deployments set status = 'superseded', traffic_percent = 0
+			  where app_id = $1 and status = 'live' and id != $2`, dep.AppID, dep.ID); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: advance canary supersede siblings: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`update deployments set
+			canary_step = $2,
+			canary_step_started_at = $3,
+			traffic_percent = $4,
+			rollout_state = case when $2 >= canary_total_steps then 'complete' else rollout_state end,
+			rollout_started_at = coalesce(rollout_started_at, $3),
+			rollout_completed_at = case when $2 >= canary_total_steps then $3 else rollout_completed_at end
+		 where id = $1`, dep.ID, persistedStep, now, params.TrafficPercent); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary update: %w", err)
+	}
+	if !terminal {
+		for i, sibling := range siblings {
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = $2 where id = $1`,
+				sibling.ID, newWeights[i]); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: advance canary sibling %s: %w", sibling.ID, err)
+			}
+		}
+	}
+
+	auditAt := params.Audit.At
+	if auditAt.IsZero() {
+		auditAt = now
+	}
+	auditKind := params.Audit.Kind
+	if auditKind == "" {
+		auditKind = DeployTrafficChanged
+	}
+	var auditID int64
+	if err := tx.QueryRow(ctx,
+		`insert into deployment_audit
+		    (deployment_id, account_id, kind, actor, at, data)
+		 values ($1::uuid, $2, $3, $4, $5, $6::jsonb)
+		 returning id`, dep.ID, params.Audit.AccountID, string(auditKind), params.Audit.Actor, auditAt, []byte(params.Audit.Data)).Scan(&auditID); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary audit: %w", err)
+	}
+	updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+`
+		   from deployments where id = $1`, dep.ID))
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary readback: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: advance canary commit: %w", err)
+	}
+	return updated, auditID, nil
+}
+
 // RedistributeTraffic assigns weights to N siblings that sum to
 // residual (typically 100 - newPercent from UpdateDeploymentTraffic)
 // using the largest-remainder method. The returned slice is in the
@@ -5673,7 +5844,100 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 }
 
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
-	return s.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: mark deployment live begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+`
+		   from deployments where id = $1 for update`, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrNotFound) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: mark deployment live load: %w", err)
+	}
+	if dep.Status == DeployLive || dep.CanaryTotalSteps <= 0 {
+		if _, err := tx.Exec(ctx,
+			`update deployments set status = $2, error = '' where id = $1`, id, string(DeployLive)); err != nil {
+			return fmt.Errorf("state: mark deployment live update: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("state: mark deployment live commit: %w", err)
+		}
+		return nil
+	}
+
+	rows, err := tx.Query(ctx,
+		`select id, traffic_percent
+		   from deployments
+		  where app_id = $1 and status = 'live'
+		  for update`, dep.AppID)
+	if err != nil {
+		return fmt.Errorf("state: mark canary live lock siblings: %w", err)
+	}
+	var siblings []struct {
+		ID    string
+		Prior int
+	}
+	for rows.Next() {
+		var sibling struct {
+			ID    string
+			Prior int
+		}
+		if err := rows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+			rows.Close()
+			return fmt.Errorf("state: mark canary live scan sibling: %w", err)
+		}
+		if sibling.ID != id {
+			siblings = append(siblings, sibling)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("state: mark canary live iterate siblings: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if len(siblings) == 0 && dep.TrafficPercent != 100 {
+		// A first deployment has no residual bucket. Complete it at
+		// 100% rather than exposing an invalid one-row split.
+		if _, err := tx.Exec(ctx,
+			`update deployments set
+				status = 'live', error = '',
+				traffic_percent = 100,
+				canary_step = canary_total_steps,
+				canary_step_started_at = $2,
+				rollout_state = 'complete',
+				rollout_completed_at = $2
+			 where id = $1`, id, now); err != nil {
+			return fmt.Errorf("state: mark first canary live: %w", err)
+		}
+	} else {
+		if _, err := tx.Exec(ctx,
+			`update deployments set
+				status = 'live', error = '',
+				rollout_state = 'rolling_out',
+				rollout_started_at = $2,
+				canary_step_started_at = $2
+			 where id = $1`, id, now); err != nil {
+			return fmt.Errorf("state: mark canary live: %w", err)
+		}
+		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
+		for i, sibling := range siblings {
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = $2 where id = $1`,
+				sibling.ID, newWeights[i]); err != nil {
+				return fmt.Errorf("state: mark canary sibling %s: %w", sibling.ID, err)
+			}
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: mark deployment live commit: %w", err)
+	}
+	return nil
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)

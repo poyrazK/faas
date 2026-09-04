@@ -793,9 +793,8 @@ type OpsMetrics struct {
 	canaryProgressionAdvancedTotal prometheus.Counter
 	// canaryProgressionErrorsTotal (issue #976 / ADR-122 /
 	// SAFE-RELEASES-A) counts every per-row error inside the
-	// canary_progression tick (PATCH traffic failure, audit
-	// append failure, etc.). Labelled by reason ∈
-	// {patch_traffic, append_audit, list_in_flight}. Closed
+	// canary_progression tick (atomic APID advance failure, etc.).
+	// Labelled by reason ∈ {advance, list_in_flight}. Closed
 	// vocabulary — unknown reasons drop to the no-op closure.
 	canaryProgressionErrorsTotal *prometheus.CounterVec
 	// canaryProgressionZeroTimestampTotal (SAFE-RELEASES code-review
@@ -2486,17 +2485,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// meterd tick counters. Single-registry: registered on every
 	// daemon's OpsMetrics; only meterd increments. Unlabelled
 	// advanced counter (fleet rollup) + errors counter labelled by
-	// reason ∈ {patch_traffic, append_audit, list_in_flight}
-	// (closed vocabulary, cardinality budget = 3).
+	// reason ∈ {advance, list_in_flight}
+	// (closed vocabulary, cardinality budget = 2).
 	canaryProgressionAdvancedTotal := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_advanced_total",
-		Help: "Count of canary step boundaries crossed by the meterd canary_progression tick (canary_step bumped AND PATCH /v1/deployments/{id}/traffic accepted). Unlabelled — fleet-level rollup. A non-zero rate is the heartbeat; a stalled rate combined with canaryProgressionErrorsTotal('patch_traffic') is the §12 dashboard tripwire for an APID outage.",
+		Help: "Count of canary step boundaries crossed by the meterd canary_progression tick (the atomic APID canary advance accepted). Unlabelled — fleet-level rollup. A non-zero rate is the heartbeat; a stalled rate combined with canaryProgressionErrorsTotal('advance') is the §12 dashboard tripwire for an APID outage.",
 	})
 	canaryProgressionErrorsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_errors_total",
-		Help: "Count of per-row errors inside the canary_progression tick, labelled by reason ∈ {patch_traffic, append_audit, list_in_flight} (closed vocabulary). patch_traffic is the dominant reason (APID 5xx / network blip); append_audit is rare (the audit write is best-effort, the patch already landed); list_in_flight signals a Postgres SELECT failure (fleet-wide tripwire).",
+		Help: "Count of per-row errors inside the canary_progression tick, labelled by reason ∈ {advance, list_in_flight} (closed vocabulary). advance covers atomic APID transition failures; list_in_flight signals a Postgres SELECT failure (fleet-wide tripwire).",
 	}, []string{"reason"})
-	for _, reason := range []string{"patch_traffic", "append_audit", "list_in_flight"} {
+	for _, reason := range []string{"advance", "list_in_flight"} {
 		canaryProgressionErrorsTotal.WithLabelValues(reason)
 	}
 	// SAFE-RELEASES code-review hardening (migration 00517):
@@ -6312,15 +6311,14 @@ func (m *OpsMetrics) CanaryProgressionZeroTimestampTotal() func() {
 
 // CanaryProgressionErrorsTotal (issue #976 / ADR-122 /
 // SAFE-RELEASES-A) increments the canary-progression error counter
-// labelled by reason ∈ {patch_traffic, append_audit,
-// list_in_flight}. Closed vocabulary; unknown reasons drop to the
+// labelled by reason ∈ {advance, list_in_flight}. Closed vocabulary; unknown reasons drop to the
 // no-op closure (matches AlertDeliveryAttemptsTotal).
 func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) func() {
 	if m == nil {
 		return func() {}
 	}
 	switch reason {
-	case "patch_traffic", "append_audit", "list_in_flight":
+	case "advance", "list_in_flight":
 		// admitted
 	default:
 		return func() {}

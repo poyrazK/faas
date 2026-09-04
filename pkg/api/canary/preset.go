@@ -11,12 +11,11 @@
 // CLI ergonomic alias and the canonical name are first-class.
 //
 // Each preset is a list of Stages. Stage N is reached when
-// canary_step_started_at + Stage[N].Duration has elapsed. Stage N
-// sends Stage[N].Percent traffic to the new deployment via the
-// existing PATCH /v1/deployments/{id}/traffic handler (apid-authoritative;
-// meterd never writes the deployment row directly per CLAUDE.md
-// ownership rules). The final stage always has Duration 0 — it's
-// "stay at this percent indefinitely until complete/aborted".
+// canary_step_started_at + Stage[N].Duration has elapsed. The progression
+// worker asks APID's atomic canary endpoint to apply Stage[N].Percent
+// (meterd never writes the deployment row directly per CLAUDE.md ownership
+// rules). The final stage always has Duration 0 — it is entered as the
+// terminal 100% state.
 package canary
 
 import (

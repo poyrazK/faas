@@ -260,6 +260,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/deployments/{id}/secret-scan":                    "GetDeploymentSecretScan",        // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
 	"GET /v1/deployments/{id}/stages":                         "GetDeploymentStages",            // ADR-117 follow-on; post-stream closed-stage summary for `gregale deploys show <id>`
 	"GET /v1/deployments/{id}/audit":                          "ListDeploymentAudit",            // issue #976 / ADR-122 SAFE-RELEASES-E.2 + production-leveling Stream A; per-deployment audit timeline drill-down
+	"POST /v1/deployments/{id}/canary/advance":                "AdvanceCanary",                  // issue #976 / ADR-122; APID-owned atomic canary CAS + traffic + audit
 	"POST /v1/deployments/{id}/retry":                         "RetryDeploymentFromStage",       // ADR-117 §Production-ready follow-on C2; per-stage retry
 	"GET /v1/deployments/{id}/url":                            "GetDeploymentURL",               // issue #976 / ADR-122 SAFE-RELEASES-C.2; per-deployment preview URL (deploy-N.slug.gregale.dev)
 	"GET /v1/apps/{slug}/deployments/{deployment}/openapi":    "GetAppsDeploymentOpenAPIDoc",    // issue #975 item #1 / ADR-122 — captured OpenAPI doc per deployment

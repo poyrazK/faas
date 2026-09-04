@@ -4635,6 +4635,49 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/canary/advance:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [deployments]
+      operationId: advanceDeploymentCanary
+      summary: Advance one persisted canary stage.
+      description: |
+        Atomically advances the deployment's canary ladder by one stage.
+        The caller supplies the canary_step it observed; APID resolves the
+        next percentage from the deployment's persisted preset and rejects
+        stale workers with `409 canary_step_conflict`. The state transition,
+        sibling traffic rebalance, terminal promotion, and deployment audit
+        row are committed together. Pro/Scale only — Free/Hobby are rejected
+        at 403 `plan_traffic_split_not_allowed`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdvanceCanaryRequest'
+      responses:
+        '200':
+          description: The atomically advanced deployment and audit row id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CanaryAdvanceResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Plan tier gate tripped (Hobby / Free).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Stale canary step, invalid rollout state, or traffic sum conflict.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/deployments/{id}/logs:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -13154,6 +13197,29 @@ components:
           maximum: 100
           description: "Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment."
           example: 25
+
+    AdvanceCanaryRequest:
+      description: "Body for POST /v1/deployments/{id}/canary/advance (issue #976 / ADR-122). expected_step is the persisted canary step observed by the progression worker; APID derives the next traffic percentage and rejects stale observations."
+      type: object
+      required: [expected_step]
+      properties:
+        expected_step:
+          type: integer
+          minimum: 0
+          description: "The canary_step the caller read before requesting the next stage."
+          example: 1
+
+    CanaryAdvanceResponse:
+      description: "The atomic canary transition result and the deployment_audit row id."
+      type: object
+      required: [deployment, audit_id]
+      properties:
+        deployment:
+          $ref: '#/components/schemas/DeploymentResponse'
+        audit_id:
+          type: string
+          description: "The deployment_audit row id, stringified for SDK portability."
+          example: "42"
 
     RollbackRequest:
       description: "Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G, issue #976). All fields optional. Without a body the handler falls back to rolling back to the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler validates that the named deployment belongs to this app AND has status='superseded'."
