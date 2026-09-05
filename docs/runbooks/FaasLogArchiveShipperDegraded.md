@@ -1,14 +1,18 @@
 # FaasLogArchiveShipperDegraded
 
-Source: `pkg/logarchive/shipper.go` (apid in-process shipper) +
+Source: `pkg/fcvm/logbuf` eviction → `cmd/vmmd/log_archive.go` (compute-side
+producer + shipper) and `pkg/logarchive/shipper.go` (apid in-process shipper) +
 `cmd/gatewayd-internal/app_logs_archive.go` (PR-B read-back handler).
-Metrics: `apid_log_archive_files_uploaded_total{status}`,
-`apid_log_archive_bytes_uploaded_total`,
-`apid_log_archive_failures_total{reason}`,
-`apid_log_archive_local_bytes`,
-`apid_log_archive_local_bytes_max`,
-`apid_log_archive_flush_duration_seconds`,
-`apid_log_archive_upload_duration_seconds` (apid `/metrics`).
+Metrics use the daemon prefix (`apid_` or `vmmd_`):
+`<daemon>_log_archive_files_uploaded_total{status}`,
+`<daemon>_log_archive_bytes_uploaded_total`,
+`<daemon>_log_archive_failures_total{reason}`,
+`<daemon>_log_archive_local_bytes`,
+`<daemon>_log_archive_local_bytes_max`,
+`<daemon>_log_archive_flush_duration_seconds`,
+`<daemon>_log_archive_upload_duration_seconds`.
+For control-plane checks use the `apid` prefix and `apid` service below; on a
+compute host substitute the `vmmd` prefix and `faas-vmmd` service.
 Issue: #562.
 Severity: page (ticket-tier at warn; page at critical when local
 spool approaches `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX`).
@@ -21,20 +25,21 @@ Three failure shapes show up first:
 1. **No new objects in the bucket.** The apid shipper writes
    gzip+JSONL objects under `faas-logs/{instance}/{YYYY}/{MM}/
    {DD}.jsonl.gz`. A quiet bucket with non-zero
-   `apid_log_archive_local_bytes` (the on-disk spool is
+   `*_log_archive_local_bytes` (the on-disk spool is
    growing) is the canonical sign of a bucket outage.
-2. **`apid_log_archive_failures_total{reason="auth"}` spiking.**
+2. **`*_log_archive_failures_total{reason="auth"}` spiking.**
    SigV4 signing failed — usually the unsealed creds envelope
    at `/etc/faas/secrets/storage-box/archive-creds.json` is
    stale or rotated. Customers get no archive back-fill and
    the read-back handler returns 503
    `log_archive_unconfigured` once the bucket falls out of
    sync.
-3. **`apid_log_archive_local_bytes` near the cap
+3. **`*_log_archive_local_bytes` near the cap
    (`FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX`, default 10 GB).**
    Spool is full; the shipper is now in back-pressure mode
    and new per-instance rings will spill to the local
-   filesystem (`reason="spool_full"`).
+   filesystem (`reason="spool_full"`). `reason="queue_full"` means
+   vmmd's bounded eviction-to-disk queue is saturated.
 
 A fourth shape is observable through the `FaasLogArchiveShipperDegraded`
 alert: `reason="throttle"` means the vendor is rate-limiting the
@@ -80,7 +85,7 @@ The shipper emits structured slog lines under `logarchive.*`.
 The two operators actually need are:
 
 - `logarchive.upload_failed err=<reason>` — single-object
-  upload failed; the file is left as `.partial` for retry.
+  upload failed; the sealed file is left as `.upload` for retry.
 - `logarchive.purged files=N retention_days=N` — local
   purger swept the spool. **No objects past retention days
   should still be on disk**; if they are, the in-process
@@ -165,7 +170,7 @@ In order — each step assumes the previous didn't help:
    is a single long-running loop
    (`pkg/logarchive/shipper.go:Run`); a SIGTERM closes the
    iterator and a SIGKILL during a PutObject leaves the
-   `.partial` file on disk for the next boot to retry.
+   `.upload` file on disk for the next boot to retry.
    ```bash
    sudo systemctl restart apid
    ```

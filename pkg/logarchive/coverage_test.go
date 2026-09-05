@@ -301,7 +301,7 @@ func TestNewMetrics_NonNilRegistryRegistersAndPreTouches(t *testing.T) {
 	}
 	// Gather and confirm every metric name surfaces — including
 	// the pre-touched CounterVec rows for status ∈ {ok, err} and
-	// the seven closed-set failure reasons.
+	// the closed-set failure reasons.
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatalf("Gather: %v", err)
@@ -325,7 +325,7 @@ func TestNewMetrics_NonNilRegistryRegistersAndPreTouches(t *testing.T) {
 		}
 	}
 	// Pre-touched rows: confirm the two file-uploaded rows and
-	// the seven failure-reason rows each surface as a metric with
+	// the closed-set failure-reason rows each surface as a metric with
 	// zero value (the registry init pattern).
 	filesSeen := map[string]bool{}
 	for _, mf := range mfs {
@@ -342,6 +342,32 @@ func TestNewMetrics_NonNilRegistryRegistersAndPreTouches(t *testing.T) {
 	for _, want := range []string{"ok", "err"} {
 		if !filesSeen[want] {
 			t.Errorf("filesUploaded pre-touch missing status=%q: %v", want, filesSeen)
+		}
+	}
+}
+
+func TestNewMetricsWithPrefix_UsesDaemonPrefix(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	NewMetricsWithPrefix(reg, "vmmd")
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	for _, mf := range mfs {
+		if strings.HasPrefix(mf.GetName(), "apid_log_archive_") {
+			t.Fatalf("unexpected apid metric %q in vmmd registry", mf.GetName())
+		}
+	}
+	for _, want := range []string{"vmmd_log_archive_files_uploaded_total", "vmmd_log_archive_failures_total", "vmmd_log_archive_local_bytes"} {
+		found := false
+		for _, mf := range mfs {
+			if mf.GetName() == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("metric %q not registered", want)
 		}
 	}
 }
@@ -414,7 +440,7 @@ func TestPromMetrics_UnknownStatusAndReasonRejected(t *testing.T) {
 }
 
 func isKnownReason(s string) bool {
-	for _, r := range []string{FailureReasonNetwork, FailureReasonAuth, FailureReasonThrottle, FailureReasonSize, FailureReasonSpoolFull, FailureReasonBodyLength, FailureReasonOther} {
+	for _, r := range []string{FailureReasonNetwork, FailureReasonAuth, FailureReasonThrottle, FailureReasonSize, FailureReasonSpoolFull, FailureReasonSpoolWrite, FailureReasonQueueFull, FailureReasonBodyLength, FailureReasonOther} {
 		if r == s {
 			return true
 		}

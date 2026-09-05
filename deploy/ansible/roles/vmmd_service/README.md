@@ -35,6 +35,10 @@ component and runs only on the EX44 hardware. The operator runs
 - Ensures `/etc/faas` exists (mode 0750 root:faas).
 - Ensures `/srv/fc/parent` exists (ADR-053 mount scratch, mode 0750
   root:faas).
+- Loads the optional archive credential through systemd and prepares
+  `/var/log/faas/vmmd-archive` for the bounded Firecracker-log eviction
+  spool. vmmd exposes archive health as `vmmd_log_archive_*`; the
+  `log_archive` role owns the directory permission checks.
 - Asserts the vmmd PKI leaves exist at `/etc/faas/tls/vmmd/{server,
   schedd-client, apid-client}.crt` (Tier 1 control-plane mTLS, ADR-052).
   Failing this stat-assert surfaces a missing bootstrap before vmmd

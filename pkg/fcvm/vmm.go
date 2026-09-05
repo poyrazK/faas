@@ -82,6 +82,10 @@ type JailerVMM struct {
 	// WithSlowSubscriberCallback. The field is read under
 	// v.mu inside registerRing so a swap is safe at runtime.
 	slowSubscriber func()
+	// evictedLine receives lines that cross the per-instance ring byte
+	// budget. Production supplies a bounded async archive sink; the callback
+	// must not perform disk or network I/O while the ring mutex is held.
+	evictedLine func(instance string, line logbuf.Line)
 	// processExitSink receives the fact that a tracked Firecracker
 	// process has exited. Manager owns the lifecycle decision; the
 	// VMM only reports the reaped child. Kept outside the VMM
@@ -213,6 +217,12 @@ func (v *JailerVMM) registerRing(instance string) *logbuf.Ring {
 	if v.slowSubscriber != nil {
 		r.SetSlowSubscriberCallback(v.slowSubscriber)
 	}
+	if v.evictedLine != nil {
+		evictedLine := v.evictedLine
+		r.SetEvictCallback(func(line logbuf.Line) {
+			evictedLine(instance, line)
+		})
+	}
 	v.rings[instance] = r
 	return r
 }
@@ -238,6 +248,16 @@ func (v *JailerVMM) registerRing(instance string) *logbuf.Ring {
 func (v *JailerVMM) WithSlowSubscriberCallback(cb func()) *JailerVMM {
 	v.mu.Lock()
 	v.slowSubscriber = cb
+	v.mu.Unlock()
+	return v
+}
+
+// WithLogEvictionCallback installs the per-line callback every future ring
+// invokes when a line leaves the in-memory byte budget. The callback runs
+// under the ring mutex, so callers should enqueue to a bounded async sink.
+func (v *JailerVMM) WithLogEvictionCallback(cb func(instance string, line logbuf.Line)) *JailerVMM {
+	v.mu.Lock()
+	v.evictedLine = cb
 	v.mu.Unlock()
 	return v
 }

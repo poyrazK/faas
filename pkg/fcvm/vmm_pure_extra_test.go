@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 )
 
 // --- Pure path helpers (chrootRoot / socketPath / vsockUDSSock) ----
@@ -79,6 +81,20 @@ func TestJailerVMM_RegisterRing_WiresSlowSubscriberCallback(t *testing.T) {
 		t.Error("WithSlowSubscriberCallback(nil): not chainable")
 	}
 	_ = calls
+}
+
+func TestJailerVMM_RegisterRing_WiresLogEvictionCallback(t *testing.T) {
+	v := NewJailerVMM("/srv/faas/jail", 30*time.Second)
+	v.WithLogEvictionCallback(func(instance string, line logbuf.Line) {
+		_ = instance
+		_ = line
+	})
+	if v.evictedLine == nil {
+		t.Fatal("evictedLine callback not installed")
+	}
+	if got := v.WithLogEvictionCallback(nil); got != v {
+		t.Error("WithLogEvictionCallback(nil): not chainable")
+	}
 }
 
 func TestJailerVMM_UnregisterRing_Idempotent(t *testing.T) {

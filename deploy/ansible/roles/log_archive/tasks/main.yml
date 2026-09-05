@@ -1,7 +1,7 @@
 # log_archive — operator wiring for the issue #562 log archive pipeline.
 #
 # This role is the *post-PR-A* half of issue #562: the in-process
-# shipper (apid, pkg/logarchive) and the bucket-proxy read-back
+# shippers (apid and vmmd, pkg/logarchive) and the bucket-proxy read-back
 # (gatewayd-internal, cmd/gatewayd-internal/app_logs_archive.go) are
 # already wired at the Go level. What ships here is the operator
 # surface that lets those two daemons share a single unsealed
@@ -12,9 +12,9 @@
 #   1. Fail-closed asserts on the operator-provisioned
 #      /etc/faas/secrets/storage-box/archive-creds.json envelope
 #      (mode/owner/group must match the canonical pattern).
-#   2. Creates the local spool root /var/log/faas/archive
-#      (faas:faas, 0750) so the apid shipper has somewhere to
-#      drop .partial files before the upload lands. Spec §11.
+#   2. Creates the local spool roots /var/log/faas/archive and
+#      /var/log/faas/vmmd-archive (faas:faas, 0750) so both
+#      shippers have somewhere to retain files before upload. Spec §11.
 #   3. Removes the legacy gatewayd-internal archive drop-in. The
 #      gatewayd-internal base unit now owns the optional credential
 #      declaration, keeping the source of truth independent of whether
@@ -80,7 +80,7 @@
       0400 root:root (issue #562). Re-run `gregalectl backup
       unseal-archive-creds` (PR-A CLI leaf) to repopulate from
       the host.age-sealed form. systemd reads the source as root
-      and stages it privately for apid and gatewayd-internal.
+      and stages it privately for apid, vmmd, and gatewayd-internal.
   when: log_archive_creds_stat.stat.exists
 
 # Spec §11: /var/log/faas/archive is the spool root the apid
@@ -98,6 +98,18 @@
     group: faas
     mode: "0750"
   failed_when: false  # chroot/CI may not have the faas user yet
+
+# vmmd is the durable producer for Firecracker ring evictions. It uses a
+# separate root so a single-box apid shipper cannot race the compute-side
+# shipper over the same daily files.
+- name: log_archive — create vmmd producer spool root
+  ansible.builtin.file:
+    path: /var/log/faas/vmmd-archive
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0750"
+  failed_when: false
 
 # Spec §11 sanity check — refuse to claim success if the spool
 # root is world-readable. Same shape as the postgres_backup
@@ -117,6 +129,21 @@
       - log_archive_spool_stat.stat.gr_name == "faas"
     fail_msg: "/var/log/faas/archive must be 0750 or tighter, faas:faas (spec §11)"
   when: log_archive_spool_stat.stat.exists
+
+- name: log_archive — verify vmmd producer spool root mode
+  ansible.builtin.stat:
+    path: /var/log/faas/vmmd-archive
+  register: log_archive_vmmd_spool_stat
+  failed_when: false
+- name: log_archive — assert vmmd spool root mode ≤ 0750
+  ansible.builtin.assert:
+    that:
+      - log_archive_vmmd_spool_stat.stat.exists
+      - log_archive_vmmd_spool_stat.stat.mode in ["0750", "0700"]
+      - log_archive_vmmd_spool_stat.stat.pw_name == "faas"
+      - log_archive_vmmd_spool_stat.stat.gr_name == "faas"
+    fail_msg: "/var/log/faas/vmmd-archive must be 0750 or tighter, faas:faas"
+  when: log_archive_vmmd_spool_stat.stat.exists
 
 # The gatewayd-internal base unit owns the optional LoadCredential= line.
 # Remove the old role-owned drop-in from previously provisioned hosts so

@@ -6,7 +6,7 @@
 //
 // Mirrors pkg/eventretention.Params: required fields are explicit,
 // optional fields have zero-value fallbacks, and the New constructor
-// is the single entry point the apid bgBefore closure uses. Tests
+// is the single entry point the daemon lifecycle uses. Tests
 // drive RunOnce directly with explicit durations.
 
 package logarchive
@@ -19,7 +19,7 @@ import (
 )
 
 // DefaultFlushInterval is the cadence the shipper scans the spool
-// dir and pushes any .jsonl.partial files to S3. 5 minutes matches
+// dir and pushes any .jsonl.partial or retry .jsonl.upload files to S3. 5 minutes matches
 // the issue #562 acceptance criterion 4 ("no log loss in 5-min
 // window between flushes"). The interval is overridable via
 // FAAS_LOG_ARCHIVE_INTERVAL for tests + the per-deploy drop-in.
@@ -100,6 +100,11 @@ const EnvLocalBytesMax = "FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX"
 // already grants /var/log/faas).
 const EnvSpoolRoot = "FAAS_LOG_ARCHIVE_SPOOL_ROOT"
 
+// EnvVMMDSpoolRoot is an optional vmmd-only override. vmmd uses a
+// separate default root from apid because both daemons may run on a
+// single-box host and must not race over the same spool files.
+const EnvVMMDSpoolRoot = "FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT"
+
 // EnvCredentialsPath is the systemd-staged archive credential path. It is
 // separate from the S3 value env vars because the file is loaded by PID 1
 // and exposed to each daemon as a credential-directory path.
@@ -113,6 +118,12 @@ const DefaultCredentialsPath = "/etc/faas/secrets/storage-box/archive-creds.json
 // owns. Matches the apid systemd unit's ReadWritePaths entry
 // (/var/log/faas). Tests override via Params.SpoolRoot.
 const DefaultSpoolRoot = "/var/log/faas/archive"
+
+// DefaultVMMDSpoolRoot keeps the compute-side producer and control-plane
+// shipper independent on single-box deployments. The bucket key remains
+// unchanged, so the gateway read-back path does not need to know which
+// daemon produced the object.
+const DefaultVMMDSpoolRoot = "/var/log/faas/vmmd-archive"
 
 // Config is the runtime configuration the Shipper reads from.
 // All fields are public so tests construct directly without
