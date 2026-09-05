@@ -485,10 +485,10 @@ message AppSpec {
   //
   // The wire is intentionally narrow: name + image digest + type +
   // ram_mb + drive_slot (the per-sidecar slot name, e.g.
-  // "layer-sidecar-1") + storage_key. cmd/env/port are read by
-  // guest-init from the workload.json written to the sidecar's
-  // drive1 (ADR-069 §Sidecar staging) — they are NOT on the wire
-  // because vmmd never reads them; guest-init does.
+  // "layer-sidecar-1") + storage_key + dependency gates. cmd/env/port
+  // are read by guest-init from the workload.json written to the
+  // sidecar's drive1 (ADR-069 §Sidecar staging) — they are NOT on the
+  // wire because vmmd never reads them; guest-init does.
   //
   // Tag 13 (not 12) — issue #470 / PR #470-FU-B reserved tag 12
   // for `runtime`. Renumbered post-rebase to preserve both
@@ -557,6 +557,10 @@ message SidecarSpec {
   // writable main layer before boot; plaintext never enters the wire
   // or the shared immutable sidecar image.
   repeated SealedSecret sealed_env = 9;
+  // depends_on gates guest-init startup on another workload's lifecycle
+  // state. An omitted condition means started. The dependency graph is
+  // validated by apid and re-checked defensively by guest-init.
+  repeated WorkloadDependency depends_on = 10;
 }
 
 // SealedSecret is one (key, ciphertext) pair from an app or sidecar env
@@ -581,6 +585,14 @@ message SealedSecret {
 message APIEnvEntry {
   string key   = 1;
   string value = 2;
+}
+
+// WorkloadDependency is the compact gRPC representation of
+// api.WorkloadDependency. Name is "main" or another sidecar name; condition
+// is started, healthy, or completed_successfully.
+message WorkloadDependency {
+  string name = 1;
+  string condition = 2;
 }
 
 // SnapshotRef points at the snapshot a caller wants to restore from. The

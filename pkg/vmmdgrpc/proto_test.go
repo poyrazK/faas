@@ -492,6 +492,7 @@ func TestSidecarsFromProto(t *testing.T) {
 			StorageKey: "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4",
 			DriveSlot:  "layer-sidecar-0",
 			SealedEnv:  []*vmmdpb.SealedSecret{{Key: "TOKEN", Ciphertext: []byte("age-ciphertext")}},
+			DependsOn:  []*vmmdpb.WorkloadDependency{{Name: "main", Condition: "started"}},
 		},
 		{
 			Name: "scraper", Image: "ghcr.io/org/s@sha256:01", Type: "sidecar",
@@ -521,6 +522,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	}
 	if len(got[0].SealedEnv) != 1 || got[0].SealedEnv[0].Key != "TOKEN" || string(got[0].SealedEnv[0].Ciphertext) != "age-ciphertext" {
 		t.Errorf("entry 0 sealed env wrong: got %+v", got[0].SealedEnv)
+	}
+	if len(got[0].DependsOn) != 1 || got[0].DependsOn[0].Name != "main" || got[0].DependsOn[0].Condition != api.WorkloadDependencyStarted {
+		t.Errorf("entry 0 dependencies wrong: got %+v", got[0].DependsOn)
 	}
 	if got[1].Name != "scraper" || got[1].Type != "sidecar" {
 		t.Errorf("entry 1 name/type: got %+v", got[1])

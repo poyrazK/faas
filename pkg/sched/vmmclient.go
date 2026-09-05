@@ -1024,6 +1024,13 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 				Ciphertext: entry.Ciphertext,
 			})
 		}
+		dependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(sc.DependsOn))
+		for _, dep := range sc.DependsOn {
+			dependsOn = append(dependsOn, &vmmdpb.WorkloadDependency{
+				Name:      dep.Name,
+				Condition: string(dep.Condition),
+			})
+		}
 		sidecars = append(sidecars, &vmmdpb.SidecarSpec{
 			Name:       sc.Name,
 			Type:       sc.Type,
@@ -1034,6 +1041,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			StorageKey: sc.StorageKey,
 			DriveSlot:  sc.DriveID,
 			SealedEnv:  sealedSidecarEnv,
+			DependsOn:  dependsOn,
 		})
 	}
 	return &vmmdpb.AppSpec{

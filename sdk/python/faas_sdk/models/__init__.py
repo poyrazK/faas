@@ -741,6 +741,8 @@ from .workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
 from .workflow_step_spec_method import WorkflowStepSpecMethod
 from .workflow_trigger_spec import WorkflowTriggerSpec
 from .workflow_trigger_spec_type import WorkflowTriggerSpecType
+from .workload_dependency import WorkloadDependency
+from .workload_dependency_condition import WorkloadDependencyCondition
 
 __all__ = (
     "AccountAppSecretResponse",
@@ -1468,4 +1470,6 @@ __all__ = (
     "WorkflowStepSpecMethod",
     "WorkflowTriggerSpec",
     "WorkflowTriggerSpecType",
+    "WorkloadDependency",
+    "WorkloadDependencyCondition",
 )

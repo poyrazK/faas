@@ -12,17 +12,15 @@
 //      Main is the main workload's spec and Sidecars is the
 //      per-sidecar array (or empty when there are no sidecars).
 //
-//   2. Run init sidecars sequentially. type=="init" workloads run
-//      before main; non-zero exit fails the deploy with
-//      failure_class: user_error (AC #1). The supervisor's Max=0
-//      policy (no restarts for init — a failed init is a hard fail)
-//      is enforced by newSupervisorFor's Max=0 branch.
+//   2. Resolve the dependency graph and start each workload once its
+//      dependencies reach started, healthy, or completed_successfully.
+//      Init workloads are implicit completed_successfully prerequisites
+//      of main and long-running sidecars, preserving the original order.
 //
-//   3. Run main + long-running sidecars in parallel. type=="main"
-//      and type=="sidecar" workloads run concurrently, each under
-//      its own Supervisor. A non-essential sidecar crash does NOT
-//      fail the deploy; an essential sidecar or main workload crash
-//      restarts per the supervisor's Max policy (MaxRestarts).
+//   3. Each workload runs under its own Supervisor. A non-essential
+//      sidecar crash does NOT fail the deploy; an essential sidecar or
+//      main workload crash stops the workload set after its restart policy
+//      is exhausted.
 //
 //   4. Characterize the main workload only. The bind-detection
 //      probe (characterize_linux.go) reads AppPID() from the MAIN
@@ -58,6 +56,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,13 +95,14 @@ import (
 // pkg/fcvm/vmm.go::workloadManifest for the rationale and the
 // round-trip test that pins the parsed-equivalence contract.
 type workloadSpec struct {
-	Cmd        []string `json:"cmd,omitempty"`
-	Entrypoint []string `json:"entrypoint,omitempty"`
-	Essential  bool     `json:"essential"`
-	Name       string   `json:"name"`
-	Port       int      `json:"port"`
-	RamMB      int      `json:"ram_mb"`
-	Type       string   `json:"type"` // "main" | "init" | "sidecar"
+	Cmd        []string                 `json:"cmd,omitempty"`
+	DependsOn  []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint []string                 `json:"entrypoint,omitempty"`
+	Essential  bool                     `json:"essential"`
+	Name       string                   `json:"name"`
+	Port       int                      `json:"port"`
+	RamMB      int                      `json:"ram_mb"`
+	Type       string                   `json:"type"` // "main" | "init" | "sidecar"
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -287,149 +287,128 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	if log == nil {
 		log = slog.Default()
 	}
-
-	// Defensive cap-2 enforcement (issue #463 / ADR-069 / PR-B
-	// review finding #2). The migrations 00118 + 00119 cap the
-	// per-deployment sidecar count at 2 server-side; guest-init
-	// re-asserts the same limit so a malformed /etc/faas/
-	// workloads.json (e.g. one stamped by an older vmmd, or a
-	// hand-crafted fixture in a metal test) can't trick the
-	// orchestrator into supervising more than 2 sidecars.
-	// Matches SidecarCapMax in pkg/api/limits.go — if the cap
-	// is ever raised, raise both constants together and update
-	// the unit test guest/init/workload_linux_test.go.
 	if len(roster.Sidecars) > 2 {
 		return fmt.Errorf("workload roster: deployment has %d sidecars; cap is 2 (ADR-069 §Decision 1)", len(roster.Sidecars))
 	}
-
-	// Step 1: run init sidecars sequentially (AC #1).
-	for i := range roster.Sidecars {
-		sc := roster.Sidecars[i]
-		if sc.Type != "init" {
-			continue
-		}
-		log.Info("runWorkloads: init sidecar starting",
-			"name", sc.Name, "essential", sc.Essential)
-		// Issue #463 / ADR-069 / ADR-071 / PR-C §3: stamp the
-		// wall-clock start so the sidecar_init_exit envelope
-		// (init_ok / init_failed) carries a meaningful
-		// duration_ms. The start is captured INSIDE the loop
-		// (not above it) so each init sidecar's duration is
-		// per-sidecar, not cumulative across the roster.
-		startedAt := time.Now()
-		sup := newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy)
-		runErr := sup.Run()
-		elapsedMs := time.Since(startedAt).Milliseconds()
-		// Translate the supervisor's terminal error into the
-		// status the audit needs. The supervisor's Run returns
-		// nil on a clean exit; a non-nil error wraps the
-		// sidecar's exit or restart-budget exhaustion (AC #1's
-		// hard fail). We attempt to surface the underlying
-		// exec.ExitError code for the audit so operators see
-		// the real shell exit rather than the supervisor's
-		// "crash-looped after N restart(s)" wrapper. A non
-		//-ExitError (e.g. supervisor-internal panic-recovered)
-		// falls back to -1 and gets recorded as such.
-		exitCode := 0
-		status := "init_ok"
-		if runErr != nil {
-			status = "init_failed"
-			var ee *exec.ExitError
-			if errors.As(runErr, &ee) {
-				exitCode = ee.ExitCode()
-			} else {
-				exitCode = -1
-			}
-		}
-		// Send the sidecar_init_exit envelope AFTER the
-		// supervisor returns, so the audit captures the
-		// terminal state. A send error is logged + ignored
-		// (the supervisor's terminal state remains the
-		// source of truth for "did the deploy succeed"); we
-		// never silently fail a deploy because the audit
-		// signal didn't make it home.
-		if sendErr := sidecarProxy.SendInitExit(sc.Name, status, exitCode, elapsedMs); sendErr != nil {
-			log.Warn("runWorkloads: sidecar init_exit send failed",
-				"name", sc.Name, "status", status, "err", sendErr)
-		}
-		if runErr != nil {
-			// AC #1: init non-zero exit → user_error.
-			log.Error("runWorkloads: init sidecar failed",
-				"name", sc.Name, "essential", sc.Essential,
-				"exit_code", exitCode, "duration_ms", elapsedMs, "err", runErr)
-			return fmt.Errorf("init sidecar %q failed: %w", sc.Name, runErr)
-		}
-		log.Info("runWorkloads: init sidecar ok",
-			"name", sc.Name, "duration_ms", elapsedMs)
+	deps, err := normalizeWorkloadDependencies(roster)
+	if err != nil {
+		return err
 	}
 
-	// Step 2: spawn main + type="sidecar" workloads in parallel.
+	type workloadRuntime struct {
+		spec  workloadSpec
+		sup   *Supervisor
+		state *workloadDependencyState
+	}
+	runtimes := make(map[string]*workloadRuntime, 1+len(roster.Sidecars))
 	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log)
-	supervisors := []*Supervisor{mainSup}
-	for i := range roster.Sidecars {
-		sc := roster.Sidecars[i]
-		if sc.Type != "sidecar" {
-			continue
-		}
-		supervisors = append(supervisors, newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy))
+	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
+	for _, sc := range roster.Sidecars {
+		runtimes[sc.Name] = &workloadRuntime{spec: sc, sup: newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy), state: newWorkloadDependencyState()}
+	}
+	orderedNames, err := workloadStartOrder(roster, deps)
+	if err != nil {
+		return err
+	}
+	for _, rt := range runtimes {
+		rt := rt
+		rt.sup.onStart = func() { close(rt.state.started) }
+		rt.sup.onHealthy = func() { close(rt.state.healthy) }
 	}
 
-	// ADR-051 Phase 4 (Slice A PR-B / issue #463 / ADR-069):
-	// characterize the main workload only. A sidecar's TCP listener
-	// would mis-classify the boot class (e.g. an init sidecar that
-	// binds :8080 would be observed as the main app's listener). The
-	// probe (characterize_linux.go) reads AppPID() / WaitForExit /
-	// RingBufferTail from the main supervisor; sidecar supervisors
-	// carry their own atomic state but the characterize probe never
-	// reads them. The probe goroutine races the supervisor goroutines
-	// so the bind-walk finds the customer's listener without blocking
-	// the boot.
+	// The characterization probe observes only the main workload's PID.
 	go runCharacterizationForSup(mainSup, mainManifest)
 
-	// Step 3: run every long-running supervisor in its own
-	// goroutine and wait for all of them to exit. A
-	// non-essential sidecar crash is contained by its
-	// supervisor (Max=0 policy); an essential sidecar or
-	// main workload crash triggers the supervisor's restart
-	// policy and eventually a non-zero Run() return.
-	//
-	// Panic-safety (PR-B review finding #4): `defer wg.Done()`
-	// is the FIRST defer so it runs even if a later recover()
-	// re-panics. A bare recover turns a supervisor-panic into
-	// a non-fatal log line so one bad sidecar doesn't take
-	// down WaitGroup.Wait() — the rest of the workloads keep
-	// running. mainSup is intentionally NOT recovered: a
-	// panic in the main supervisor is the deploy's terminal
-	// failure and must propagate to the orchestrator's
-	// return value.
+	coordCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var wg sync.WaitGroup
-	wg.Add(len(supervisors))
-	for i, sup := range supervisors {
-		sup := sup
-		isMain := i == 0 // supervisors[0] is mainSup (see Step 2)
+	var resultMu sync.Mutex
+	var mainErr error
+	stopAll := func() {
+		for _, rt := range runtimes {
+			rt.sup.RequestStop()
+			if err := rt.sup.ForwardSignal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				log.Debug("runWorkloads: stop signal forwarding failed", "name", rt.spec.Name, "err", err)
+			}
+		}
+	}
+	for _, name := range orderedNames {
+		rt := runtimes[name]
+		name, rt := name, rt
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if isMain {
-				_ = sup.Run()
-				return
-			}
-			defer func() {
-				if r := recover(); r != nil {
-					log.Error("runWorkloads: sidecar supervisor panicked",
-						"index", i, "recover", fmt.Sprintf("%v", r))
+			for _, dep := range deps[name] {
+				if depErr := waitForWorkloadDependency(coordCtx, dep, runtimes[dep.Name].state); depErr != nil {
+					rt.state.setResult(fmt.Errorf("workload %q cannot start: %w", name, depErr))
+					if name == "main" || rt.spec.Essential {
+						resultMu.Lock()
+						if mainErr == nil {
+							mainErr = rt.state.result()
+						}
+						resultMu.Unlock()
+						cancel()
+						stopAll()
+					}
+					return
 				}
-			}()
-			_ = sup.Run()
+			}
+			select {
+			case <-coordCtx.Done():
+				rt.state.setResult(coordCtx.Err())
+				return
+			default:
+			}
+			startedAt := time.Now()
+			log.Info("runWorkloads: workload starting", "name", name, "type", rt.spec.Type, "essential", rt.spec.Essential)
+			var runErr error
+			if name == "main" {
+				runErr = rt.sup.Run()
+			} else {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							runErr = fmt.Errorf("workload supervisor panicked: %v", r)
+							log.Error("runWorkloads: sidecar supervisor panicked", "name", name, "recover", fmt.Sprintf("%v", r))
+						}
+					}()
+					runErr = rt.sup.Run()
+				}()
+			}
+			rt.state.setResult(runErr)
+			if rt.spec.Type == "init" {
+				status, exitCode := "init_ok", 0
+				if runErr != nil {
+					status, exitCode = "init_failed", -1
+					var ee *exec.ExitError
+					if errors.As(runErr, &ee) {
+						exitCode = ee.ExitCode()
+					}
+				}
+				if sidecarProxy != nil {
+					if sendErr := sidecarProxy.SendInitExit(name, status, exitCode, time.Since(startedAt).Milliseconds()); sendErr != nil {
+						log.Warn("runWorkloads: sidecar init_exit send failed", "name", name, "status", status, "err", sendErr)
+					}
+				}
+			}
+			if runErr != nil {
+				critical := name == "main" || rt.spec.Essential
+				log.Error("runWorkloads: workload exited with error", "name", name, "essential", rt.spec.Essential, "err", runErr)
+				if critical {
+					resultMu.Lock()
+					if mainErr == nil {
+						mainErr = runErr
+					}
+					resultMu.Unlock()
+					cancel()
+					stopAll()
+				}
+			}
 		}()
 	}
 	wg.Wait()
-
-	// The main workload's exit code is the deploy's exit
-	// code; non-essential sidecar exits are logged but
-	// ignored. The supervisor's lastErr() surfaces the
-	// terminal error from Run().
-	if lastErr := mainSup.lastErr(); lastErr != nil {
-		return lastErr
+	if mainErr != nil {
+		return mainErr
 	}
 	return nil
 }
@@ -455,9 +434,9 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 // (issue #463 / ADR-069 / PR-B + PR-C §4). New sidecar layers
 // carry the image's effective command in a name-scoped manifest;
 // older layers fall back to the image's /usr/local/bin/start.sh
-// convention or the roster command. The essential flag drives
-// the restart policy: non-essential = Max=0 (no restart,
-// log-and-continue); essential = Max=MaxRestarts (restart
+// convention or the roster command. Init workloads run once;
+// non-essential sidecars use Max=0 (log-and-continue), and
+// essential long-running sidecars use Max=MaxRestarts (restart
 // per the platform contract). PR-C §4 wires the supervisor's
 // OnCrash hook to call SendRestart on the proxy so vmmd
 // can increment vmmd_sidecar_restart_total{app, sidecar}.
@@ -465,8 +444,8 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 // keeps the OnCrash hook log-only.
 func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy) *Supervisor {
 	maxRestarts := MaxRestarts
-	if !spec.Essential {
-		maxRestarts = 0 // non-essential sidecar: log crash, do not restart
+	if spec.Type == "init" || !spec.Essential {
+		maxRestarts = 0 // init and non-essential sidecars do not restart
 	}
 	supRef := &Supervisor{Max: maxRestarts, Policy: api.RestartPolicyOnFailure}
 	supRef.Start = func() error { return runSidecar(spec, secrets, apiEnv, supRef) }
@@ -629,6 +608,21 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 	// code via trackExit and decides whether to restart.
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
+	}
+	if sup != nil {
+		sup.markStarted()
+		if sup.onHealthy != nil && manifestErr == nil {
+			uid := lookupUID(baked.EffectiveUser())
+			if directRoot != "" {
+				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+			}
+			if err := runStartupHealthcheck(baked, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
+			}
+		}
+		sup.markHealthy()
 	}
 	// Issue #463 / ADR-069 / PR-B AC #4: place the
 	// forked child into the cgroup leaf so the OOM

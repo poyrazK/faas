@@ -446,6 +446,24 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 			Port:       int(p.GetPort()),
 			Essential:  p.GetEssential(),
 			SealedEnv:  sealedEnv,
+			DependsOn:  workloadDependenciesFromProto(p.GetDependsOn()),
+		})
+	}
+	return out
+}
+
+func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.WorkloadDependency {
+	if len(pbs) == 0 {
+		return nil
+	}
+	out := make([]api.WorkloadDependency, 0, len(pbs))
+	for _, p := range pbs {
+		if p == nil {
+			continue
+		}
+		out = append(out, api.WorkloadDependency{
+			Name:      p.GetName(),
+			Condition: api.WorkloadDependencyCondition(p.GetCondition()),
 		})
 	}
 	return out
