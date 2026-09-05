@@ -33,6 +33,16 @@ type RegistryClient struct {
 	scheme string // "https" in production; the test seam sets "http"
 	host   string // "" = derive from the reference; tests pin an httptest host
 	ua     string
+	// pullSlots bounds concurrent registry request setup per client. A slot is
+	// held through response headers, then released before the body is returned;
+	// PullLayers can therefore expose arbitrarily many streaming layer readers
+	// without deadlocking while it builds the result slice.
+	pullSlots chan struct{}
+	// pullRetries and pullRetryBase bound transient registry retries. Only
+	// 429 and 5xx responses are retried; authentication and client errors keep
+	// their existing immediate-failure semantics.
+	pullRetries   int
+	pullRetryBase time.Duration
 	// blobCache is optional so existing callers and hermetic tests retain
 	// the direct registry-streaming behaviour. Production imaged wires a
 	// DiskBlobCache to make immutable config/layer blobs reusable across
@@ -49,6 +59,52 @@ var (
 
 // Option configures a RegistryClient.
 type Option func(*RegistryClient)
+
+const (
+	// DefaultPullConcurrency is the maximum number of registry request/response
+	// header exchanges a client performs in parallel. It is deliberately
+	// modest: one imaged process can serve many deployments, and each layer
+	// response may remain open while BuildKit consumes it.
+	DefaultPullConcurrency = 8
+	// DefaultPullRetries is the number of retries after the initial request
+	// for a transient registry response.
+	DefaultPullRetries = 3
+	// DefaultPullRetryBase is the first exponential backoff delay. The
+	// backoff is capped by pullRetryMaxDelay below and always observes the
+	// caller's context.
+	DefaultPullRetryBase = 100 * time.Millisecond
+	pullRetryMaxDelay    = 2 * time.Second
+)
+
+// WithPullConcurrency limits concurrent registry request setup performed by
+// the client. Values <= 0 disable the limit, which is useful for narrowly
+// scoped callers that already provide their own connection budget.
+func WithPullConcurrency(max int) Option {
+	return func(c *RegistryClient) {
+		if max <= 0 {
+			c.pullSlots = nil
+			return
+		}
+		c.pullSlots = make(chan struct{}, max)
+	}
+}
+
+// WithPullRetry configures bounded retries for transient registry responses.
+// maxRetries counts attempts after the initial request. A non-positive base
+// keeps DefaultPullRetryBase so callers cannot accidentally create a busy
+// retry loop.
+func WithPullRetry(maxRetries int, base time.Duration) Option {
+	return func(c *RegistryClient) {
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
+		if base <= 0 {
+			base = DefaultPullRetryBase
+		}
+		c.pullRetries = maxRetries
+		c.pullRetryBase = base
+	}
+}
 
 // WithHTTPClient injects the HTTP client (timeouts, egress-policy transport).
 func WithHTTPClient(hc *http.Client) Option {
@@ -107,9 +163,12 @@ func WithBlobCache(cache BlobCache) Option {
 // WithHTTPClient(NewEgressHTTPClient()) for the §11 egress guard.
 func NewRegistryClient(opts ...Option) *RegistryClient {
 	c := &RegistryClient{
-		hc:     &http.Client{Timeout: time.Duration(api.OCIPullTimeoutSeconds) * time.Second},
-		scheme: "https",
-		ua:     "faas-imaged/1 (+https://" + wire.PlatformHost + ")",
+		hc:            &http.Client{Timeout: time.Duration(api.OCIPullTimeoutSeconds) * time.Second},
+		scheme:        "https",
+		ua:            "faas-imaged/1 (+https://" + wire.PlatformHost + ")",
+		pullSlots:     make(chan struct{}, DefaultPullConcurrency),
+		pullRetries:   DefaultPullRetries,
+		pullRetryBase: DefaultPullRetryBase,
 	}
 	for _, o := range opts {
 		o(c)
@@ -527,7 +586,7 @@ func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := c.hc.Do(req)
+	resp, err := c.doPullRequest(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("oci: fetch blob: %w", err)
 	}
@@ -621,11 +680,107 @@ func (c *RegistryClient) getManifest(ctx context.Context, url, token string) (*h
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := c.hc.Do(req)
+	resp, err := c.doPullRequest(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("oci: fetch manifest: %w", err)
 	}
 	return resp, nil
+}
+
+// doPullRequest executes one registry GET under the client's concurrency
+// budget and retries only transient upstream responses. The slot covers the
+// request/response-header exchange. It is released before returning a body so
+// PullLayers can open every layer stream before the caller starts consuming
+// them; holding slots until Close would deadlock images with more layers than
+// the configured concurrency.
+func (c *RegistryClient) doPullRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
+	if c == nil || c.hc == nil {
+		return nil, errors.New("oci: registry client is not initialized")
+	}
+	for attempt := 0; ; attempt++ {
+		if err := c.acquirePullSlot(ctx); err != nil {
+			return nil, err
+		}
+		resp, err := c.hc.Do(req.Clone(ctx))
+		if err != nil {
+			c.releasePullSlot()
+			if attempt >= c.pullRetries || !retryablePullError(err) {
+				return nil, err
+			}
+			if err := c.waitPullRetry(ctx, attempt); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if retryablePullStatus(resp.StatusCode) && attempt < c.pullRetries {
+			if resp.Body != nil {
+				_, _ = io.CopyN(io.Discard, resp.Body, 512)
+				_ = resp.Body.Close()
+			}
+			c.releasePullSlot()
+			if err := c.waitPullRetry(ctx, attempt); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		c.releasePullSlot()
+		return resp, nil
+	}
+}
+
+func (c *RegistryClient) acquirePullSlot(ctx context.Context) error {
+	if c.pullSlots == nil {
+		return nil
+	}
+	select {
+	case c.pullSlots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *RegistryClient) releasePullSlot() {
+	if c.pullSlots == nil {
+		return
+	}
+	<-c.pullSlots
+}
+
+func (c *RegistryClient) waitPullRetry(ctx context.Context, attempt int) error {
+	delay := c.pullRetryBase
+	if delay <= 0 {
+		delay = DefaultPullRetryBase
+	}
+	for i := 0; i < attempt; i++ {
+		if delay >= pullRetryMaxDelay/2 {
+			delay = pullRetryMaxDelay
+			break
+		}
+		delay *= 2
+	}
+	if delay > pullRetryMaxDelay {
+		delay = pullRetryMaxDelay
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func retryablePullStatus(status int) bool {
+	return status == http.StatusTooManyRequests || (status >= 500 && status < 600)
+}
+
+// Transport errors are usually connection resets or temporary upstream
+// failures. Retry them within the same bounded budget, but leave context
+// cancellation and deadline errors to the caller immediately.
+func retryablePullError(err error) bool {
+	return err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
 }
 
 // fetchToken performs the anonymous Bearer-token GET the WWW-Authenticate
