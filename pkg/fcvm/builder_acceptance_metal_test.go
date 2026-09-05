@@ -105,7 +105,7 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 			source := acceptanceSource(t, tmp, tc.root, acceptanceSourceOptions{node: tc.node, cancel: tc.cancel, fail: tc.fail})
 			runtimeBaseRef := ""
 			if tc.root != "" {
-				runtimeBaseRef = acceptanceRuntimeBase(t, tc.node)
+				runtimeBaseRef = acceptanceRuntimeBase(tc.node)
 			}
 			handle, err := driver.Spawn(ctx, builderd.VMRequest{BuildID: tc.name, TenantID: "metal", DeploymentID: tc.name, SourcePath: source, SourceRoot: tc.root, Framework: tc.framework, RuntimeBaseRef: runtimeBaseRef, Plan: string(api.PlanPro), TimeoutSec: buildTimeoutSeconds})
 			mustAcceptance(t, err)
@@ -292,7 +292,7 @@ func acceptanceSource(t *testing.T, tmp, workspace string, opts acceptanceSource
 			// Use Railpack's real shell provider and a small pinned build base.
 			// This exercises prepare/frontend/RUN/export without downloading a
 			// complete language toolchain for the default correctness gate.
-			files[workspace+"/railpack.json"] = []byte(fmt.Sprintf(`{"provider":"shell","steps":{"build":{"inputs":[{"image":%q},{"local":true,"include":["."]}]}}}`, acceptanceRuntimeBase(t, false)))
+			files[workspace+"/railpack.json"] = []byte(fmt.Sprintf(`{"provider":"shell","steps":{"build":{"inputs":[{"image":%q},{"local":true,"include":["."]}]}}}`, acceptanceRuntimeBase(false)))
 		}
 	} else {
 		busybox, err := exec.LookPath("busybox")
@@ -336,23 +336,12 @@ func (a acceptanceSignalAdapter) SignalAndKill(ctx context.Context, id string, s
 	return a.Manager.SignalAndKill(ctx, id, syscall.Signal(signal), time.Duration(grace)*time.Second)
 }
 
-// Public multi-arch fixtures use the repository's upstream image pins.
-// The Node fixture includes its required shared libraries. Neither fixture
-// claims to validate the production runtime-base image or scanner admission.
-func acceptanceRuntimeBase(t *testing.T, node bool) string {
-	t.Helper()
-	path, prefix := "../../images/base-minimal.Dockerfile", "debian:"
+// Multi-arch parent indexes containing the repository's amd64 child pins in
+// runner-node24.Dockerfile and base-minimal.Dockerfile, respectively. The shell
+// fixture needs Bash because Railpack's frontend emits a /bin/bash entrypoint.
+func acceptanceRuntimeBase(node bool) string {
 	if node {
-		path, prefix = "../../images/runner-node24.Dockerfile", "node:"
+		return "node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e"
 	}
-	data, err := os.ReadFile(path)
-	mustAcceptance(t, err)
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "FROM" && strings.HasPrefix(fields[1], prefix) && strings.Contains(fields[1], "@sha256:") {
-			return fields[1]
-		}
-	}
-	t.Fatalf("%s has no pinned %s fixture base", path, prefix)
-	return ""
+	return "debian:12-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"
 }

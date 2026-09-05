@@ -66,8 +66,8 @@ can override the test request's deadline without changing production limits.
   and an HTTP response from a cold boot of the resulting app layer.
 - Railpack selecting `apps/api` inside an archive whose repository-root build
   deliberately fails. Its shell provider builds a BusyBox static-file server;
-  `railpack.json` selects the repository's pinned Debian upstream image for the
-  build and runtime bases. The exported image is converted and booted too.
+  `railpack.json` selects the pinned multi-arch Debian upstream image (including
+  Bash) for the build and runtime bases. The exported image is converted and booted too.
 - A deliberate Dockerfile failure, including its guest result and no nonempty image.
 - Cancellation after the long-running Dockerfile starts and the Destroy RPC
   owns export; interrupt plus teardown must finish within 15 seconds. An
@@ -91,6 +91,9 @@ repository context. App destruction kills the running VM immediately; the builde
 completion wait applies only to builder records. Guest-init stops and reaps the
 BuildKit daemon before its final sync and poweroff so it cannot keep writing
 metadata while the host begins export.
+Railpack emits `/bin/bash -c` entrypoints, so `base-minimal` and the Alpine
+runners include Bash. The runtime image contract executes it in every base to
+catch missing binaries or shared libraries before publication.
 
 For a narrower iteration inside Lima, use the same runner with a subtest filter:
 
@@ -100,7 +103,7 @@ sudo env FAAS_METAL_BUILD_ACCEPTANCE=1 RUN_GREGALE_RELEASE_INSTALL=0 \
 ```
 
 The full Node workspace case is opt-in with `FAAS_METAL_NODE_ACCEPTANCE=1`.
-It uses the repository's pinned public Node 24 runtime fixture, including its
+It uses the pinned public Node 24 multi-arch runtime fixture, including its
 shared libraries. **This is an outstanding slow-path gate:** on this ARM64
 nested-KVM host, the cold Node build exceeded both 15- and 30-minute budgets
 while importing/copying the upstream toolchain. The lightweight gate does not

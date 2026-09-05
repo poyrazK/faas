@@ -81,4 +81,8 @@ done
 # contract is checked by the runtime smoke script below.
 docker run --rm --platform "${expected_platform}" --entrypoint /bin/sh "${image_ref}" \
   -ceu 'test -x /bin/sh && test -r /etc/passwd'
+# Railpack emits /bin/bash -c entrypoints, including for its shell provider.
+# Execute Bash to check its loader and shared libraries as well as its path.
+docker run --rm --platform "${expected_platform}" --entrypoint /bin/bash "${image_ref}" \
+  -ceu 'test -n "${BASH_VERSION}"'
 echo "OK: ${image_ref} contains the ${runtime_image} rootfs contract"

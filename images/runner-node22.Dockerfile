@@ -13,6 +13,7 @@ FROM node:22-alpine@sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac3044
 # already reserves uid 1000 for `node`; reuse that identity under the
 # platform's canonical `app` name instead of attempting a duplicate uid.
 RUN apk upgrade --no-cache && \
+    apk add --no-cache bash && \
     rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack && \
     rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack && \
     if id app >/dev/null 2>&1; then :; \
