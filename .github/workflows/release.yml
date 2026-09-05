@@ -500,7 +500,7 @@ jobs:
           (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
 
       - name: Upload canonical release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release/
