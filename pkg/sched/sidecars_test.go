@@ -18,7 +18,7 @@ import (
 func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 	falseValue := false
 	raw, err := json.Marshal(api.Sidecars{
-		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:01", Type: api.SidecarTypeSidecar, Port: 9090},
+		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:01", Type: api.SidecarTypeSidecar, Port: 9090, DependsOn: []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}}},
 		{Name: "migrate", Type: api.SidecarTypeInit, Essential: &falseValue, RamMB: 64},
 	})
 	if err != nil {
@@ -39,6 +39,7 @@ func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 		{
 			Name: "metrics", Type: "sidecar", Image: "ghcr.io/org/metrics@sha256:01", StorageKey: "apps/a/d-metrics.ext4",
 			DriveID: fcvm.DriveSidecarPrefix + "0", Port: 9090, Essential: true,
+			DependsOn: []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}},
 		},
 		{
 			Name: "migrate", Type: "init", StorageKey: "apps/a/d-migrate.ext4",

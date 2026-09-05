@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.sidecar_env import SidecarEnv
+    from ..models.workload_dependency import WorkloadDependency
 
 
 T = TypeVar("T", bound="Sidecar")
@@ -47,10 +48,16 @@ class Sidecar:
       any log, audit, or error.
     - `port` ∈ {0, 1..65535}. 0 = absent.
     - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
-    - `essential` defaults to true. If true and the sidecar
-      exits non-zero: type=init → fail the deploy
-      (`failure_class=user_error`); type=sidecar → restart-
-      loop. If false: warn + restart-cap (PR-B's runtime).
+    - `essential` defaults to true. If true and the workload
+      exits non-zero, the dependency set fails
+      (`failure_class=user_error`) and essential long-running
+      sidecars restart-loop. If false, the failure is logged
+      and the other workloads continue.
+    - `depends_on` optionally gates this workload on `main` or
+      another sidecar. Conditions are `started`, `healthy`, and
+      `completed_successfully`; omitted condition means `started`.
+      Init workloads are implicit prerequisites of main and long-running
+      sidecars. Cycles and unknown workload names are rejected.
 
     """
 
@@ -70,8 +77,10 @@ class Sidecar:
     ram_mb: int | Unset = UNSET
     """Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API."""
     essential: bool | Unset = UNSET
-    """Defaults to true. type=init non-zero exit → fail deploy; type=sidecar non-zero exit → restart-loop. PR-B's
-    runtime."""
+    """Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."""
+    depends_on: list[WorkloadDependency] | Unset = UNSET
+    """Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running
+    sidecars."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,6 +104,13 @@ class Sidecar:
 
         essential = self.essential
 
+        depends_on: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.depends_on, Unset):
+            depends_on = []
+            for depends_on_item_data in self.depends_on:
+                depends_on_item = depends_on_item_data.to_dict()
+                depends_on.append(depends_on_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -114,12 +130,15 @@ class Sidecar:
             field_dict["ram_mb"] = ram_mb
         if essential is not UNSET:
             field_dict["essential"] = essential
+        if depends_on is not UNSET:
+            field_dict["depends_on"] = depends_on
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.sidecar_env import SidecarEnv
+        from ..models.workload_dependency import WorkloadDependency
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -143,6 +162,15 @@ class Sidecar:
 
         essential = d.pop("essential", UNSET)
 
+        _depends_on = d.pop("depends_on", UNSET)
+        depends_on: list[WorkloadDependency] | Unset = UNSET
+        if _depends_on is not UNSET:
+            depends_on = []
+            for depends_on_item_data in _depends_on:
+                depends_on_item = WorkloadDependency.from_dict(depends_on_item_data)
+
+                depends_on.append(depends_on_item)
+
         sidecar = cls(
             name=name,
             image=image,
@@ -152,6 +180,7 @@ class Sidecar:
             port=port,
             ram_mb=ram_mb,
             essential=essential,
+            depends_on=depends_on,
         )
 
         sidecar.additional_properties = d

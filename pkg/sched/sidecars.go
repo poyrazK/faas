@@ -82,6 +82,7 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 			Port:       sc.Port,
 			Essential:  essential,
 			SealedEnv:  sealedEnv,
+			DependsOn:  append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			// Cmd is retained as a legacy fallback for guest-init
 			// versions that predate baked sidecar manifests. Current
 			// guest-init prefers the immutable per-sidecar manifest,

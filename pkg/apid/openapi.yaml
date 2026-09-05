@@ -15121,6 +15121,20 @@ components:
             renders "—" on null.
           items: { type: string }
 
+    WorkloadDependency:
+      description: "Dependency on another workload in the same deployment."
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Workload name: main or another sidecar name."
+        condition:
+          type: string
+          enum: [started, healthy, completed_successfully]
+          default: started
+          description: "Lifecycle condition required before the dependent workload starts."
+
     Sidecar:
       description: |
         One entry in the deploy request's `sidecars` array
@@ -15152,10 +15166,16 @@ components:
           any log, audit, or error.
         - `port` ∈ {0, 1..65535}. 0 = absent.
         - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
-        - `essential` defaults to true. If true and the sidecar
-          exits non-zero: type=init → fail the deploy
-          (`failure_class=user_error`); type=sidecar → restart-
-          loop. If false: warn + restart-cap (PR-B's runtime).
+        - `essential` defaults to true. If true and the workload
+          exits non-zero, the dependency set fails
+          (`failure_class=user_error`) and essential long-running
+          sidecars restart-loop. If false, the failure is logged
+          and the other workloads continue.
+        - `depends_on` optionally gates this workload on `main` or
+          another sidecar. Conditions are `started`, `healthy`, and
+          `completed_successfully`; omitted condition means `started`.
+          Init workloads are implicit prerequisites of main and long-running
+          sidecars. Cycles and unknown workload names are rejected.
       type: object
       required: [name, image, type]
       properties:
@@ -15193,7 +15213,13 @@ components:
           description: "Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API."
         essential:
           type: boolean
-          description: "Defaults to true. type=init non-zero exit → fail deploy; type=sidecar non-zero exit → restart-loop. PR-B's runtime."
+          description: "Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."
+        depends_on:
+          type: array
+          maxItems: 3
+          description: "Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running sidecars."
+          items:
+            $ref: '#/components/schemas/WorkloadDependency'
 
     # ─── Deployments (PR-E1 / SAFE-RELEASES-C.2) ──────────────────────────
 

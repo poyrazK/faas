@@ -80,6 +80,57 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 	}
 }
 
+func TestSidecars_Validate_Dependencies(t *testing.T) {
+	limits := testSidecarLimits()
+	image := "ghcr.io/me/x@sha256:" + strings.Repeat("a", 64)
+	cases := []struct {
+		name string
+		ss   Sidecars
+		want string
+	}{
+		{
+			name: "valid-main-and-init",
+			ss:   Sidecars{{Name: "migrate", Image: image, Type: SidecarTypeInit}, {Name: "metrics", Image: image, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "migrate", Condition: WorkloadDependencyCompletedSuccessfully}}}},
+		},
+		{
+			name: "unknown",
+			ss:   Sidecars{{Name: "metrics", Image: image, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "missing"}}}},
+			want: "unknown workload",
+		},
+		{
+			name: "cycle-through-init-compatibility-edge",
+			ss:   Sidecars{{Name: "migrate", Image: image, Type: SidecarTypeInit, DependsOn: []WorkloadDependency{{Name: "metrics"}}}, {Name: "metrics", Image: image, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "migrate"}}}},
+			want: "cycle",
+		},
+		{
+			name: "invalid-condition",
+			ss:   Sidecars{{Name: "metrics", Image: image, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "main", Condition: "ready"}}}},
+			want: "condition",
+		},
+		{
+			name: "dependency-cap",
+			ss: Sidecars{{Name: "metrics", Image: image, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{
+				{Name: "main"}, {Name: "a"}, {Name: "b"}, {Name: "c"},
+			}}},
+			want: "max is",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tc.ss.Validate(limits)
+			if tc.want == "" {
+				if p != nil {
+					t.Fatalf("Validate() = %v, want nil", p)
+				}
+				return
+			}
+			if p == nil || !strings.Contains(strings.ToLower(p.Title+" "+p.Detail), tc.want) {
+				t.Fatalf("Validate() = %v, want detail containing %q", p, tc.want)
+			}
+		})
+	}
+}
+
 func TestSidecar_Validate_Rejects(t *testing.T) {
 	limits := testSidecarLimits()
 	essTrue := true
@@ -104,6 +155,11 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			name:    "name-leading-dash",
 			s:       Sidecar{Name: "-migrator", Image: goodImage, Type: SidecarTypeInit},
 			wantSub: "sidecar name",
+		},
+		{
+			name:    "name-main-reserved",
+			s:       Sidecar{Name: "main", Image: goodImage, Type: SidecarTypeSidecar},
+			wantSub: "reserved",
 		},
 		{
 			name:    "name-too-long",

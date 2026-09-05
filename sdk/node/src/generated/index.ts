@@ -387,6 +387,7 @@ export type { WorkflowSpec } from './models/WorkflowSpec.js';
 export type { WorkflowStepResponse } from './models/WorkflowStepResponse.js';
 export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';
+export type { WorkloadDependency } from './models/WorkloadDependency.js';
 
 export { AccountService } from './services/AccountService.js';
 export { AdminService } from './services/AdminService.js';

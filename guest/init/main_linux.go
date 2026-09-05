@@ -398,6 +398,18 @@ func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
+	if sup != nil {
+		sup.markStarted()
+		if sup.onHealthy != nil {
+			uid := lookupUID(m.EffectiveUser())
+			if err := runStartupHealthcheck(m, env, cmd.Dir, "", uid, cmd.SysProcAttr, slog.Default()); err != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return fmt.Errorf("run %v: %w", argv, err)
+			}
+		}
+		sup.markHealthy()
+	}
 	// Place the forked child into the leaf. Same race
 	// posture as runSidecar — see placeIntoLeaf's doc.
 	if mainLeaf != "" {
