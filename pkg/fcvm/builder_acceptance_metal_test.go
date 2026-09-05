@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -63,6 +64,14 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Fatal(err)
 	}
+	buildTimeoutSeconds := api.BuildTimeoutSeconds
+	if raw := os.Getenv("FAAS_METAL_BUILD_TIMEOUT_SECONDS"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 3600 {
+			t.Fatal("FAAS_METAL_BUILD_TIMEOUT_SECONDS must be between 1 and 3600")
+		}
+		buildTimeoutSeconds = value
+	}
 	for _, tc := range []struct {
 		name         string
 		framework    builderd.Framework
@@ -87,14 +96,14 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 			driver, err := builderd.NewVMMDriver(sock, os.Getenv("FAAS_BUILDER_BASE_PATH"), filepath.Join(tmp, "drives"), filepath.Join(tmp, "exports"))
 			mustAcceptance(t, err)
 			t.Cleanup(func() { _ = driver.Close() })
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(api.BuildTimeoutSeconds+120)*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(buildTimeoutSeconds+600)*time.Second)
 			defer cancel()
 			source := acceptanceSource(t, tmp, tc.root, tc.cancel, tc.fail)
 			runtimeBaseRef := ""
 			if tc.root != "" {
 				runtimeBaseRef = acceptanceRuntimeBase(t)
 			}
-			handle, err := driver.Spawn(ctx, builderd.VMRequest{BuildID: tc.name, TenantID: "metal", DeploymentID: tc.name, SourcePath: source, SourceRoot: tc.root, Framework: tc.framework, RuntimeBaseRef: runtimeBaseRef, Plan: string(api.PlanPro), TimeoutSec: api.BuildTimeoutSeconds})
+			handle, err := driver.Spawn(ctx, builderd.VMRequest{BuildID: tc.name, TenantID: "metal", DeploymentID: tc.name, SourcePath: source, SourceRoot: tc.root, Framework: tc.framework, RuntimeBaseRef: runtimeBaseRef, Plan: string(api.PlanPro), TimeoutSec: buildTimeoutSeconds})
 			mustAcceptance(t, err)
 			t.Cleanup(func() {
 				cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
@@ -255,7 +264,7 @@ func acceptanceSource(t *testing.T, tmp, workspace string, cancel, fail bool) st
 	files := map[string][]byte{}
 	if workspace != "" {
 		files["package.json"] = []byte(`{"name":"wrong-root","scripts":{"build":"exit 91"}}`)
-		files[workspace+"/package.json"] = []byte(`{"name":"acceptance-api","version":"1.0.0","engines":{"node":"22"},"scripts":{"start":"node server.js"}}`)
+		files[workspace+"/package.json"] = []byte(`{"name":"acceptance-api","version":"1.0.0","engines":{"node":"24"},"scripts":{"start":"node server.js"}}`)
 		files[workspace+"/server.js"] = []byte(`require('http').createServer((q,s)=>s.end('acceptance-ok')).listen(8080,'0.0.0.0')`)
 	} else {
 		busybox, err := exec.LookPath("busybox")
@@ -299,19 +308,19 @@ func (a acceptanceSignalAdapter) SignalAndKill(ctx context.Context, id string, s
 	return a.Manager.SignalAndKill(ctx, id, syscall.Signal(signal), time.Duration(grace)*time.Second)
 }
 
-// The registry-backed base is a public multi-arch fixture using the same Debian
-// pin as base-minimal. This test does not require private GHCR credentials or
+// The registry-backed base is a public multi-arch fixture using the same Node
+// pin as runner-node24. This test does not require private GHCR credentials or
 // claim to validate the production runtime-base image itself.
 func acceptanceRuntimeBase(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile("../../images/base-minimal.Dockerfile")
+	data, err := os.ReadFile("../../images/runner-node24.Dockerfile")
 	mustAcceptance(t, err)
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "FROM" && strings.HasPrefix(fields[1], "debian:") && strings.Contains(fields[1], "@sha256:") {
+		if len(fields) >= 2 && fields[0] == "FROM" && strings.HasPrefix(fields[1], "node:") && strings.Contains(fields[1], "@sha256:") {
 			return fields[1]
 		}
 	}
-	t.Fatal("base-minimal has no pinned Debian fixture base")
+	t.Fatal("runner-node24 has no pinned Node fixture base")
 	return ""
 }

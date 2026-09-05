@@ -56,7 +56,11 @@ Buildx caches platform-image stages across runs. The first run also compiles a
 checksum-pinned ARM64 kernel with built-in FUSE, overlayfs, user namespaces and
 static IP autoconfiguration. The stock Firecracker CI kernel lacks the FUSE
 support required by the builder's snapshotter. Subsequent runs verify/reuse the
-kernel until the kernel recipe or pinned defaults change.
+kernel until the kernel recipe or pinned defaults change. Lima sets a 30-minute
+build budget for this correctness fixture because cold extraction exceeds the
+production 15-minute limit under nested KVM. Override it with
+`FAAS_METAL_BUILD_TIMEOUT_SECONDS` (1–3600). Direct metal invocations retain the
+production default; this test does not establish a production latency SLO.
 
 `TestMetalBuilderAcceptance` covers:
 
@@ -64,7 +68,8 @@ kernel until the kernel recipe or pinned defaults change.
   and an HTTP response from a cold boot of the resulting app layer.
 - Railpack selecting `apps/api` inside an archive whose repository-root build
   deliberately fails; its exported image is also converted and booted. The public
-  Debian runtime fixture uses the repository’s base-minimal upstream digest.
+  Node runtime fixture uses the repository’s runner-node24 upstream digest,
+  including the shared libraries required by Node.
 - A deliberate Dockerfile failure, including its guest result and no nonempty image.
 - Cancellation after the long-running Dockerfile starts and the Destroy RPC
   owns export; interrupt plus teardown must finish within 15 seconds.

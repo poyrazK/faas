@@ -36,6 +36,9 @@ CGO_ENABLED=0 go build -trimpath -o "$METAL_WORK/vmmd" ./cmd/vmmd
 export FAAS_TEST_VMMD_BINARY="$METAL_WORK/vmmd"
 export FAAS_GUEST_INIT=/usr/local/bin/faas-guest-init
 if [[ "${FAAS_METAL_BUILD_ACCEPTANCE:-0}" == 1 ]]; then
+  # Nested-KVM cold layer extraction is slower than the production host.
+  # This is a correctness gate; keep the production build limit unchanged.
+  export FAAS_METAL_BUILD_TIMEOUT_SECONDS="${FAAS_METAL_BUILD_TIMEOUT_SECONDS:-1800}"
   export FAAS_BUILDER_BASE_PATH="${FAAS_BUILDER_BASE_PATH:-/srv/fc/base/runner-builder-$(go env GOARCH).ext4}"
 fi
 
