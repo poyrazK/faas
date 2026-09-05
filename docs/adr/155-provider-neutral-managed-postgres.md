@@ -1,6 +1,6 @@
 # ADR-155 · Provider-neutral managed PostgreSQL foundation
 
-- **Status:** accepted as a control-plane foundation; no public entitlement until a provider adapter, billing guardrails, backups, and support runbook are qualified.
+- **Status:** accepted as a control-plane foundation with a dark-wired Neon adapter; no public entitlement until billing guardrails, backups, live provider qualification, and a support runbook are complete.
 - **Date:** 2026-09-05
 - **Decision:** make managed PostgreSQL an account resource with app-scoped bindings, behind a provider-neutral lifecycle and metering boundary.
 
@@ -36,7 +36,7 @@ app the owner of the database and permits credentials to be rotated or revoked
 per binding.
 
 `managedpostgres.Provider` is the vendor boundary. It covers capabilities,
-provision/inspect/update/delete, credential issuance, and usage. Resource IDs
+provision/inspect/update/delete, credential issuance and revocation, and usage. Resource IDs
 are opaque. Provision and delete operations use stable idempotency keys and may
 complete asynchronously. Provider errors are normalized and sanitized.
 Adapters must never return a secret in an error.
@@ -104,6 +104,39 @@ provider resource ID survives a process crash so recovery inspects the accepted
 resource instead of provisioning another one. Provisioning discovery remains
 disabled by default; deletion intents are still recovered while disabled so a
 rollout switch cannot leak paid upstream resources.
+
+## First provider adapter follow-up
+
+The first adapter maps one Gregale database to one Neon project. Provider
+projects use a deterministic hashed name so a retry can discover an accepted
+project before issuing another create request; the adapter never transport-
+retries Neon's non-idempotent create-project POST. An ambiguous discovery fails
+closed. The returned Neon project ID is persisted before asynchronous readiness
+polling. Delete requests also carry Gregale's stable resource ID, allowing the
+adapter to discover and remove an accepted project when the create response was
+lost before its opaque ID could be persisted.
+
+The adapter advertises PostgreSQL 14–18, pooled connections, scale-to-zero,
+single-zone availability, and operator-configured storage and restore ceilings.
+It deliberately does not translate Neon's internal redundancy into Gregale's
+portable high-availability promise. Service classes map only inside the adapter
+to 0.25–1 CU (`development`), 0.25–2 CU (`burstable`), and 1–4 CU
+(`production`). Updates remain unsupported until the neutral lifecycle has a
+durable multi-step update state machine.
+
+Binding credentials map to deterministic Neon roles. The neutral provider
+contract includes explicit revocation so deleting a binding can remove its
+upstream login rather than only deleting Gregale's sealed secret. Usage maps
+compute-unit seconds and public plus private network transfer. Neon storage is
+reported in byte-months, so it is not exposed as Gregale storage byte-seconds
+until a reviewed canonical conversion and accounting checkpoint exist.
+
+`apid` loads the registry and recovery worker when
+`FAAS_MANAGED_POSTGRES_CONFIG` is present. The config-level
+`provisioning_enabled` switch defaults false; deletion recovery runs regardless.
+The lifecycle service enforces the same switch, preventing a future direct API
+call from bypassing the reconciler gate. There is still no customer route or
+plan entitlement in this follow-up.
 
 ## Consequences
 

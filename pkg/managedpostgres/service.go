@@ -17,23 +17,25 @@ const (
 )
 
 type ServiceOptions struct {
-	LeaseDuration   time.Duration
-	ProviderTimeout time.Duration
-	PollInterval    time.Duration
-	Now             func() time.Time
-	NewID           func() string
-	NewLeaseToken   func() string
+	LeaseDuration       time.Duration
+	ProviderTimeout     time.Duration
+	PollInterval        time.Duration
+	ProvisioningEnabled func() bool
+	Now                 func() time.Time
+	NewID               func() string
+	NewLeaseToken       func() string
 }
 
 type Service struct {
-	registry        *Registry
-	store           Store
-	leaseDuration   time.Duration
-	providerTimeout time.Duration
-	pollInterval    time.Duration
-	now             func() time.Time
-	newID           func() string
-	newLeaseToken   func() string
+	registry            *Registry
+	store               Store
+	leaseDuration       time.Duration
+	providerTimeout     time.Duration
+	pollInterval        time.Duration
+	provisioningEnabled func() bool
+	now                 func() time.Time
+	newID               func() string
+	newLeaseToken       func() string
 }
 
 type CreateRequest struct {
@@ -55,6 +57,9 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 	if options.PollInterval == 0 {
 		options.PollInterval = defaultPollInterval
 	}
+	if options.ProvisioningEnabled == nil {
+		options.ProvisioningEnabled = func() bool { return false }
+	}
 	if options.LeaseDuration < time.Second || options.ProviderTimeout < time.Second || options.PollInterval < time.Second {
 		return nil, ErrInvalid
 	}
@@ -68,18 +73,22 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		options.NewLeaseToken = uuid.NewString
 	}
 	return &Service{
-		registry:        registry,
-		store:           store,
-		leaseDuration:   options.LeaseDuration,
-		providerTimeout: options.ProviderTimeout,
-		pollInterval:    options.PollInterval,
-		now:             options.Now,
-		newID:           options.NewID,
-		newLeaseToken:   options.NewLeaseToken,
+		registry:            registry,
+		store:               store,
+		leaseDuration:       options.LeaseDuration,
+		providerTimeout:     options.ProviderTimeout,
+		pollInterval:        options.PollInterval,
+		provisioningEnabled: options.ProvisioningEnabled,
+		now:                 options.Now,
+		newID:               options.NewID,
+		newLeaseToken:       options.NewLeaseToken,
 	}, nil
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, error) {
+	if !s.provisioningEnabled() {
+		return Database{}, ErrUnavailable
+	}
 	if request.AccountID == "" || !ValidName(request.Name) {
 		return Database{}, ErrInvalid
 	}
@@ -142,6 +151,9 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	case StateDeleting, StateDeleted:
 		return Database{}, ErrConflict
 	case StateProvisioning, StateFailed:
+		if !s.provisioningEnabled() {
+			return Database{}, ErrUnavailable
+		}
 	default:
 		return Database{}, ErrConflict
 	}
@@ -221,9 +233,6 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 	if err != nil {
 		return Database{}, err
 	}
-	if database.ProviderResourceID == "" {
-		return s.finishDelete(ctx, database.ID, leaseToken)
-	}
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {
 		return Database{}, s.releaseKnownError(ctx, database, StateDeleting, "backend_unavailable", ErrUnavailable, time.Hour)
@@ -231,6 +240,7 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
 	result, err := backend.Provider.Delete(providerContext, DeleteRequest{
+		ResourceID:         database.ID,
 		ProviderResourceID: database.ProviderResourceID,
 		IdempotencyKey:     "delete-" + database.ID,
 	})

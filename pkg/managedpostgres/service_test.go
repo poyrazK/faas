@@ -18,6 +18,7 @@ type fakeProvider struct {
 	provisionCalls  int
 	inspectCalls    int
 	deleteCalls     int
+	lastDelete      DeleteRequest
 }
 
 func (p *fakeProvider) Capabilities() Capabilities { return p.capabilities }
@@ -43,13 +44,18 @@ func (*fakeProvider) Update(_ context.Context, _ UpdateRequest) (ObservedDatabas
 	return ObservedDatabase{}, ErrUnsupported
 }
 
-func (p *fakeProvider) Delete(_ context.Context, _ DeleteRequest) (DeleteResult, error) {
+func (p *fakeProvider) Delete(_ context.Context, request DeleteRequest) (DeleteResult, error) {
 	p.deleteCalls++
+	p.lastDelete = request
 	return DeleteResult{Done: p.deleteDone}, nil
 }
 
 func (*fakeProvider) IssueCredentials(_ context.Context, _ CredentialRequest) (CredentialMaterial, error) {
 	return CredentialMaterial{}, ErrUnsupported
+}
+
+func (*fakeProvider) RevokeCredentials(_ context.Context, _ CredentialRequest) error {
+	return ErrUnsupported
 }
 
 func (*fakeProvider) Usage(_ context.Context, _ string, window UsageWindow) (Usage, error) {
@@ -109,11 +115,23 @@ func testRegistry(t *testing.T, provider Provider, mutate func(*Config)) *Regist
 	return registry
 }
 
+func TestRegistryProvisioningFlagDefaultsOffAndRequiresExplicitOptIn(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities()}
+	if registry := testRegistry(t, provider, nil); registry.ProvisioningEnabled {
+		t.Fatal("provisioning enabled by default")
+	}
+	registry := testRegistry(t, provider, func(config *Config) { config.ProvisioningEnabled = true })
+	if !registry.ProvisioningEnabled {
+		t.Fatal("explicit provisioning opt-in was discarded")
+	}
+}
+
 func testService(t *testing.T, registry *Registry, store Store) *Service {
 	t.Helper()
 	sequence := 0
 	service, err := NewService(registry, store, ServiceOptions{
-		PollInterval: time.Second,
+		PollInterval:        time.Second,
+		ProvisioningEnabled: func() bool { return true },
 		Now: func() time.Time {
 			sequence++
 			return time.Date(2026, 9, 5, 12, 0, sequence, 0, time.UTC)
@@ -131,6 +149,37 @@ func testService(t *testing.T, registry *Registry, store Store) *Service {
 		t.Fatalf("NewService: %v", err)
 	}
 	return service
+}
+
+func TestProvisioningRequiresExplicitServiceOptIn(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	registry := testRegistry(t, provider, nil)
+	store := NewMemoryStore()
+	service, err := NewService(registry, store, ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "dark", Spec: testSpec()})
+	if !errors.Is(err, ErrUnavailable) || provider.provisionCalls != 0 {
+		t.Fatalf("dark create = %v, provider calls = %d", err, provider.provisionCalls)
+	}
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	database, _, err := store.Reserve(context.Background(), Database{
+		ID: "pending-database", AccountID: "account-a", Name: "pending", Spec: testSpec(),
+		BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+		State: StateProvisioning, DesiredGeneration: 1, CreatedAt: now, UpdatedAt: now,
+	}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Reconcile(context.Background(), database.AccountID, database.ID)
+	if !errors.Is(err, ErrUnavailable) || provider.provisionCalls != 0 {
+		t.Fatalf("dark reconcile = %v, provider calls = %d", err, provider.provisionCalls)
+	}
 }
 
 func TestCreateIsIdempotentAndPersistsPlacement(t *testing.T) {
@@ -255,6 +304,33 @@ func TestDeleteSupportsAsynchronousProviders(t *testing.T) {
 	}
 	if deleted.State != StateDeleted || deleted.DeletedAt == nil || provider.deleteCalls != 2 {
 		t.Fatalf("deleted = %+v; calls=%d", deleted, provider.deleteCalls)
+	}
+}
+
+func TestDeleteLetsProviderDiscoverAnUnpersistedUpstreamResource(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), deleteDone: true}
+	registry := testRegistry(t, provider, nil)
+	store := NewMemoryStore()
+	service := testService(t, registry, store)
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 5, 13, 0, 0, 0, time.UTC)
+	database, _, err := store.Reserve(context.Background(), Database{
+		ID: "ambiguous-create", AccountID: "account-a", Name: "ambiguous", Spec: testSpec(),
+		BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+		State: StateProvisioning, DesiredGeneration: 1, CreatedAt: now, UpdatedAt: now,
+	}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := service.Delete(context.Background(), database.AccountID, database.ID)
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if deleted.State != StateDeleted || provider.deleteCalls != 1 || provider.lastDelete.ResourceID != database.ID || provider.lastDelete.ProviderResourceID != "" {
+		t.Fatalf("deleted = %+v; request = %+v; calls = %d", deleted, provider.lastDelete, provider.deleteCalls)
 	}
 }
 
