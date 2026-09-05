@@ -956,7 +956,7 @@ func TestLintTripwire_DoctorStrictMutex(t *testing.T) {
 	// documented declaration would silently disable the tripwire
 	// on the legitimate --strict).
 	allowedFuncs := map[string]bool{
-		"cmdDeployTarball":            true, // --strict (--diff pair, commands2.go:838)
+		"cmdDeployTarballToExisting":  true, // --strict (--diff pair; shared deploy/dev implementation)
 		"cmdDoctorWithImageInspector": true, // --strict (gregale doctor source/image dispatcher)
 	}
 
