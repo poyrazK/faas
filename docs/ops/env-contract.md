@@ -135,7 +135,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GITHUB_APP_INSTALL_URL` | apid | `secrets-env` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
 | `FAAS_GITHUB_APP_KEY_PATH` | githubd, shared | `unit` |  |
 | `FAAS_GITHUB_APP_REDIRECT_URI` | apid | `secrets-env` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
-| `FAAS_GITHUB_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` | the same GitHub App webhook secret must be delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
+| `FAAS_GITHUB_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` | the same GitHub App webhook secret is delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
 | `FAAS_GRACE_INTERVAL` | apid | `default` |  |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |
@@ -317,5 +317,5 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMM_TLS_CA_PATH` | imaged | `dropin` |  |
 | `FAAS_VMM_TLS_CERT_PATH` | imaged | `dropin` |  |
 | `FAAS_VMM_TLS_KEY_PATH` | imaged | `dropin` |  |
-| `FAAS_WEBHOOK_SECRET` | gatewayd-internal | `secrets-env` | delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal) |
+| `FAAS_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` | deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
 | `FAAS_WORKFLOWS_ENABLED` | schedd | `unit` | explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch |
