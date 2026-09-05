@@ -2862,13 +2862,7 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 
 func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	// IAM-5 (issue #189): DELETE is now a soft revoke. The row
-	// stays in the table for audit lineage (rotated_from_id chain
-	// preserves the predecessor's id; revoced_at marks the kill).
-	// Repeated DELETE on a revoked key is idempotent — MarkAPIKeyRevoked
-	// is a "update if not revoked" and returns the row either way.
-	updated, err := s.store.MarkAPIKeyRevoked(r.Context(), acct.ID, id)
-	if err != nil {
+	if _, err := s.revokeAPIKey(r.Context(), acct, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")
 			return
@@ -2876,19 +2870,36 @@ func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not revoke key"))
 		return
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"revoked","account":"`+acct.ID+`"}`)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// revokeAPIKey is the shared mutation core for the REST and dashboard key
+// revocation surfaces. Keeping notification and audit emission here ensures
+// both entry points produce the same authentication-cache invalidation and
+// key.revoked event.
+func (s *server) revokeAPIKey(ctx context.Context, acct state.Account, id string) (state.APIKey, error) {
+	// IAM-5 (issue #189): DELETE is now a soft revoke. The row
+	// stays in the table for audit lineage (rotated_from_id chain
+	// preserves the predecessor's id; revoced_at marks the kill).
+	// Repeated DELETE on a revoked key is idempotent — MarkAPIKeyRevoked
+	// is a "update if not revoked" and returns the row either way.
+	updated, err := s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
+	if err != nil {
+		return state.APIKey{}, err
+	}
+	_ = s.notif.Notify(ctx, db.NotifyKeyChanged, `{"kind":"revoked","account":"`+acct.ID+`"}`)
 	// IAM-4 + IAM-1 (ADR-034 rev2 / ADR-035): record the key
 	// revocation carrying the dismissed scopes so an operator can
 	// answer "what did this key allow before it died?" without
 	// re-deriving it from logs. The `reason` field is "manual"
 	// (this path) vs "rotation" (rotateKey) vs "expired" (lazy
 	// auth-time gate). Dashboard filters by reason.
-	s.audit.Emit(r.Context(), "key.revoked", &acct.ID, map[string]any{
+	s.audit.Emit(ctx, "key.revoked", &acct.ID, map[string]any{
 		"key_id": updated.ID,
 		"scopes": updated.Scopes,
 		"reason": "manual",
 	})
-	w.WriteHeader(http.StatusNoContent)
+	return updated, nil
 }
 
 // rotateKey mints a new key and demotes the old key in a single

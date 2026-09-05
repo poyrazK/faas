@@ -1283,11 +1283,17 @@ type APIKeyItem struct {
 	Scopes     []string
 	CreatedAt  string
 	LastUsedAt string // empty until first use
+	CanRevoke  bool
 }
 
 // AccountData is the /dashboard/account page payload.
 type AccountData struct {
 	Keys []APIKeyItem
+	// KeyDeleteConfirmToken is shared by the account page's key-revoke
+	// forms. Its sidecar uses a dedicated cookie name so it can coexist
+	// with the account-delete and GitHub-connect CSRF tokens rendered on
+	// the same page.
+	KeyDeleteConfirmToken string
 	// ShowDelete + DeleteConfirmToken drive the "Danger zone" partial
 	// in templates/account.html. The token is a sealed envelope bound
 	// to (action="delete", account_id) that the POST handler verifies

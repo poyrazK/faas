@@ -62,9 +62,18 @@
                 <td>{{.CreatedAt}}</td>
                 <td>{{.LastUsedAt}}</td>
                 <td>
-                  <form class="inline" method="POST" action="/dashboard/account/keys/{{.ID}}/delete">
-                    <button type="submit">Delete</button>
-                  </form>
+                  {{if .CanRevoke}}
+                    <form method="POST" action="/dashboard/account/keys/{{.ID}}/delete">
+                      <input type="hidden" name="csrf_token" value="{{$d.KeyDeleteConfirmToken}}">
+                      <label>
+                        Type <code>{{.Prefix}}</code> to confirm:
+                        <input type="text" name="confirmation" required autocomplete="off" aria-label="Type {{.Prefix}} to confirm API key deletion">
+                      </label>
+                      <button type="submit">Delete</button>
+                    </form>
+                  {{else}}
+                    Revoked
+                  {{end}}
                 </td>
               </tr>
             {{end}}
