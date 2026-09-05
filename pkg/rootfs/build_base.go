@@ -705,7 +705,9 @@ func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsI
 	if err := b.run.Run(ctx, MkfsCommand(staging, tmpPath, sizeMB)); err != nil {
 		return fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
 	}
-	f, err := os.Open(tmpPath)
+	// tmpPath was created in the builder-owned temporary directory above;
+	// it is not a customer-controlled path.
+	f, err := os.Open(tmpPath) //nolint:forbidigo
 	if err != nil {
 		return fmt.Errorf("rootfs: open full-rootfs mkfs output: %w", err)
 	}
