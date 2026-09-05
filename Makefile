@@ -12,7 +12,7 @@ GOARCH  ?= $(shell $(GO) env GOARCH)
 export GOOS GOARCH
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid gatewayd-public gatewayd-internal schedd vmmd vmmd-raw-bridge vmmd-stream-bridge builderd imaged meterd githubd hostage-gen
+DAEMONS := apid gatewayd-public gatewayd-internal schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-stream-bridge builderd imaged meterd githubd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).

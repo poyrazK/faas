@@ -197,10 +197,7 @@ func (g *WakeGate) WaitWithPolicy(
 	// (a peer's wake just finished and we observe it here). shouldWake runs
 	// synchronously under no lock; the Backend must serialize state itself.
 	if !shouldWake() {
-		g.mu.Lock()
-		call.completed = true
-		g.mu.Unlock()
-		close(call.done)
+		g.complete(appID, call, nil)
 		// Treat the leader itself as a waiter so release() can drop the
 		// entry; a follower that arrives later increments waiters to 2 then
 		// drops to 1 after await; both leader and follower call release().
@@ -290,11 +287,7 @@ func (g *WakeGate) WaitWithPolicy(
 			// leader has the result"; the poller is an internal
 			// orphan-detector, not a gate observer. Reap at
 			// ectx.Done() via a separate drain below.
-			g.mu.Lock()
-			call.err = err
-			call.completed = true
-			g.mu.Unlock()
-			close(call.done)
+			g.complete(appID, call, err)
 		case <-abortCh:
 			if onAbort != nil {
 				onAbort("queue_empty_no_instance")
@@ -303,11 +296,7 @@ func (g *WakeGate) WaitWithPolicy(
 			// the orphan: it'll exit on ectx.Done() (the TTL).
 			// The follower-facing contract is satisfied.
 			<-pollerDone
-			g.mu.Lock()
-			call.err = ErrBootstrapAborted
-			call.completed = true
-			g.mu.Unlock()
-			close(call.done)
+			g.complete(appID, call, ErrBootstrapAborted)
 		case <-ectx.Done():
 			// TTL hit before either fired. The poller has exited
 			// on the same ectx; reap it. ensure is still running
@@ -317,11 +306,7 @@ func (g *WakeGate) WaitWithPolicy(
 				<-pollerDone
 			}
 			err := <-ensureDone
-			g.mu.Lock()
-			call.err = err
-			call.completed = true
-			g.mu.Unlock()
-			close(call.done)
+			g.complete(appID, call, err)
 		}
 	}()
 
@@ -332,6 +317,21 @@ func (g *WakeGate) WaitWithPolicy(
 		observed = false
 	}
 	return err
+}
+
+// complete publishes the result and drops a wake whose waiters already left.
+// release handles the opposite ordering: completion before the last departure.
+// Keeping both under mu prevents a later request from inheriting an orphaned
+// wake's result while preserving coalescing until its remaining waiters drain.
+func (g *WakeGate) complete(appID string, call *wakeCall, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	call.err = err
+	call.completed = true
+	if call.waiters == 0 && g.inflight[appID] == call {
+		delete(g.inflight, appID)
+	}
+	close(call.done)
 }
 
 // InflightWaiters returns the current waiter count for appID (0 if none). For

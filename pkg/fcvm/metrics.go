@@ -224,10 +224,9 @@ func (m *FrameworkReadyMetrics) ObserveWarmup(runtime, app string, seconds float
 // netns_tap_ms / guest_ready_ms — match the typed scalars on
 // api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse (tags 11,
 // 12, 13). Stays on a dedicated per-vmmd registry so the vmmd's
-// own /metrics surfaces the wake-phase breakdown alongside the
-// shared wire.OpsMetrics.wakePhaseDur vector (the schedd-side 15
-// phases from pkg/wire/metrics.go are a superset; vmmd populates
-// the three vmmd-side phases and stays quiet on the rest).
+// own /metrics surfaces execution timings alongside the event-store write
+// timings in wire.OpsMetrics. The latter uses
+// vmmd_wake_event_write_duration_seconds; it does not measure VM execution.
 //
 // Nil-safe — Manager.Wake calls Observe* on a nil-check so unit
 // tests can construct a Manager without wiring metrics.

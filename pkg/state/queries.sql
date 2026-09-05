@@ -1994,3 +1994,13 @@ SELECT snapshot_miss_count, snapshot_miss_backoff_until
 FROM deployments
 WHERE id = $1
   AND snapshot_miss_backoff_until IS NOT NULL;
+
+-- name: SnapshotLocalityNodes :many
+SELECT node_id::text AS node_id, true AS is_origin
+FROM snapshot_origins
+WHERE snapshot_id = $1::uuid AND node_id IS NOT NULL
+UNION ALL
+SELECT node_id::text AS node_id, false AS is_origin
+FROM snapshot_replicas
+WHERE snapshot_id = $1::uuid AND state = 'ready'
+ORDER BY node_id, is_origin DESC;

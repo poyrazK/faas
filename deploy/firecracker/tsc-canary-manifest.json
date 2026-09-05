@@ -1,0 +1,11 @@
+{
+  "base_commit": "76542f598b7a7fd59559949070aa6b0c4e68523d",
+  "source_archive_sha256": "70850ecf389dadda4be418ccb389e83e98531e6621050eb32c96b35572908837",
+  "firecracker_sha256": "3a4e6b19da96ce3e24b099f08d3eba27da2f57195cab6636c18e0c42a81c1667",
+  "rust_version": "1.76.0",
+  "patch_sha256": "c5402d36de7cfd6bc28d468da83ebc075a6f05a7dac8da80341fc1d9ac576118",
+  "changes": [
+    "Restore TSC_DEADLINE after all other MSRs, including legacy snapshots"
+  ],
+  "seccomp": "unchanged"
+}

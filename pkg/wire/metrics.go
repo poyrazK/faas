@@ -3098,8 +3098,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_wake_phase_emitted_total",
 		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 13-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
 	}, []string{"phase", "result"})
+	// vmmd already exports execution timings under wake_phase_duration_seconds.
+	// Event-store latency is a different family (and has different labels).
+	wakeEventDurationName := prefix + "_wake_phase_duration_seconds"
+	if prefix == "vmmd" {
+		wakeEventDurationName = prefix + "_wake_event_write_duration_seconds"
+	}
 	wakePhaseDur := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: prefix + "_wake_phase_duration_seconds",
+		Name: wakeEventDurationName,
 		Help: "Latency of pkg/events.Platform.Emit (the AppendEvent round-trip), labelled by phase and result (issue #517 / PR-C, ADR-064). Sized for the wake envelope: queue→admit <100ms; boot <30s; readiness <60s; proxy <5s; the 60s tail catches pathological stalls.",
 		Buckets: []float64{
 			0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60,

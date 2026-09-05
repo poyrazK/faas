@@ -18,6 +18,7 @@ var supportBinaryNames = []string{
 	"gregalectl",
 	"init",
 	"schedd-brokerq-apply",
+	"vmmd-jail-helper",
 	"vmmd-raw-bridge",
 	"vmmd-stream-bridge",
 	// vmlinux is the release-pinned Firecracker guest kernel. It is kept in

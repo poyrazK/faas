@@ -154,6 +154,14 @@ Two new pre-instantiated collectors in `pkg/wire.NewOpsMetrics`:
   0.5, 1, 2.5, 5, 10, 30, 60}` — sized for the wake envelope
   (queue → admit <100ms; boot <30s; readiness <60s; proxy <5s).
 
+The vmmd event-write histogram is named
+`vmmd_wake_event_write_duration_seconds{phase,result}`. Its historical
+`vmmd_wake_phase_duration_seconds` name collided with fcvm's execution-phase
+histogram, which has different help text, labels, and buckets. Combining those
+registries made the canonical scrape fail. The execution metric retains its
+name; vmmd event-write queries must use the new name. Other daemons retain
+their existing event-write metric names.
+
 ### 6. Best-effort emit semantics
 
 The events Platform.Emit is best-effort (mirrors

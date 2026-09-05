@@ -546,6 +546,11 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 // `textproto.MIMEHeader.Set` canonical form (Title-Case header
 // names, no trailing whitespace on values).
 func writeH1RequestHead(w io.Writer, method, url, host, hostIP string, hostPort uint16, headers []headerEntry) error {
+	// Coalesce the request line and headers before writing to the guest TCP
+	// socket. Small unbuffered writes otherwise create many packets and guest
+	// virtio-net wakeups before the HTTP parser can see a complete head.
+	buffered := bufio.NewWriter(w)
+	w = buffered
 	if _, err := fmt.Fprintf(w, "%s %s HTTP/1.1\r\n", method, url); err != nil {
 		return fmt.Errorf("write request line: %w", err)
 	}
@@ -597,7 +602,7 @@ func writeH1RequestHead(w io.Writer, method, url, host, hostIP string, hostPort 
 	if _, err := fmt.Fprintf(w, "\r\n"); err != nil {
 		return fmt.Errorf("write header terminator: %w", err)
 	}
-	return nil
+	return buffered.Flush()
 }
 
 // writeChunkedBody copies src to the chunked-encoded dst, emitting

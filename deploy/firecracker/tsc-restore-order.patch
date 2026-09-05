@@ -1,0 +1,104 @@
+--- a/src/vmm/src/vstate/vcpu/x86_64.rs
++++ b/src/vmm/src/vstate/vcpu/x86_64.rs
+@@ -447,6 +447,34 @@
+         self.fd.set_tsc_khz(tsc_freq).map_err(SetTscError)
+     }
+ 
++    /// Preserve legacy snapshot contents while deferring timer deadlines until
++    /// all CPU clock registers have been restored (upstream Firecracker #4666).
++    fn ordered_restore_msrs(chunks: &[Msrs]) -> Result<Vec<Msrs>, KvmVcpuError> {
++        use crate::arch_gen::x86::msr_index::MSR_IA32_TSC_DEADLINE;
++
++        let mut ordered = Vec::with_capacity(chunks.len() + 1);
++        let mut deferred = Vec::new();
++        for chunk in chunks {
++            let mut regular = Vec::with_capacity(chunk.as_slice().len());
++            for entry in chunk.as_slice() {
++                if entry.index == MSR_IA32_TSC_DEADLINE {
++                    deferred.push(*entry);
++                } else {
++                    regular.push(*entry);
++                }
++            }
++            if !regular.is_empty() {
++                ordered.push(Msrs::from_entries(&regular)?);
++            }
++        }
++        // Keep every KVM_SET_MSRS batch within the original kernel limit,
++        // including malformed legacy inputs containing repeated deadlines.
++        for chunk in deferred.chunks(KVM_MAX_MSR_ENTRIES) {
++            ordered.push(Msrs::from_entries(chunk)?);
++        }
++        Ok(ordered)
++    }
++
+     /// Use provided state to populate KVM internal state.
+     pub fn restore_state(&self, state: &VcpuState) -> Result<(), KvmVcpuError> {
+         // Ordering requirements:
+@@ -494,7 +522,10 @@
+         self.fd
+             .set_lapic(&state.lapic)
+             .map_err(KvmVcpuError::VcpuSetLapic)?;
+-        for msrs in &state.saved_msrs {
++        // KVM uses the restored TSC to arm TSC_DEADLINE. Old snapshots did
++        // not guarantee this order; repair it without changing their format.
++        let ordered = Self::ordered_restore_msrs(&state.saved_msrs)?;
++        for msrs in &ordered {
+             let nmsrs = self.fd.set_msrs(msrs).map_err(KvmVcpuError::VcpuSetMsrs)?;
+             if nmsrs < msrs.as_fam_struct_ref().nmsrs as usize {
+                 return Err(KvmVcpuError::VcpuSetMsrsIncomplete);
+@@ -943,3 +974,54 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod legacy_restore_msr_tests {
++    use super::*;
++    use crate::arch_gen::x86::msr_index::{MSR_IA32_TSC, MSR_IA32_TSC_DEADLINE};
++
++    fn chunk(values: &[(u32, u64)]) -> Msrs {
++        let entries: Vec<_> = values.iter().map(|&(index, data)| kvm_bindings::kvm_msr_entry {
++            index, data, ..Default::default()
++        }).collect();
++        Msrs::from_entries(&entries).unwrap()
++    }
++
++    fn values(chunks: &[Msrs]) -> Vec<(u32, u64)> {
++        chunks.iter().flat_map(|c| c.as_slice().iter().map(|e| (e.index, e.data))).collect()
++    }
++
++    #[test]
++    fn deadline_follows_tsc_across_legacy_chunk_orders() {
++        for input in [
++            vec![chunk(&[(MSR_IA32_TSC_DEADLINE, 42), (MSR_IA32_TSC, 30), (0x123, 7)])],
++            vec![chunk(&[(MSR_IA32_TSC_DEADLINE, 42)]), chunk(&[(MSR_IA32_TSC, 30), (0x123, 7)])],
++            vec![chunk(&[(MSR_IA32_TSC, 30), (0x123, 7)]), chunk(&[(MSR_IA32_TSC_DEADLINE, 42)])],
++        ] {
++            let original = values(&input);
++            let ordered = KvmVcpu::ordered_restore_msrs(&input).unwrap();
++            assert_eq!(values(&ordered), vec![(MSR_IA32_TSC, 30), (0x123, 7), (MSR_IA32_TSC_DEADLINE, 42)]);
++            assert_eq!(values(&input), original, "must not mutate the snapshot");
++            assert_eq!(ordered.last().unwrap().as_slice().len(), 1);
++        }
++    }
++
++    #[test]
++    fn preserves_zero_deadlines_and_unrelated_register_values() {
++        let input = vec![chunk(&[(MSR_IA32_TSC_DEADLINE, 0), (0x123, u64::MAX)]), chunk(&[])];
++        let ordered = KvmVcpu::ordered_restore_msrs(&input).unwrap();
++        assert_eq!(values(&ordered), vec![(0x123, u64::MAX), (MSR_IA32_TSC_DEADLINE, 0)]);
++        assert!(KvmVcpu::ordered_restore_msrs(&[]).unwrap().is_empty());
++        let plain = vec![chunk(&[(0x456, 2), (MSR_IA32_TSC, 4)])];
++        assert_eq!(values(&KvmVcpu::ordered_restore_msrs(&plain).unwrap()), values(&plain));
++    }
++
++    #[test]
++    fn deferred_batches_respect_kvm_limit_without_losing_entries() {
++        let entries = vec![(MSR_IA32_TSC_DEADLINE, 3); KVM_MAX_MSR_ENTRIES];
++        let input = vec![chunk(&entries), chunk(&entries)];
++        let ordered = KvmVcpu::ordered_restore_msrs(&input).unwrap();
++        assert_eq!(values(&ordered), values(&input));
++        assert!(ordered.iter().all(|c| c.as_slice().len() <= KVM_MAX_MSR_ENTRIES));
++    }
++}

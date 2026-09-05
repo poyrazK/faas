@@ -33,22 +33,14 @@ var openapiYAML []byte
 // listener).
 func OpenAPIYAML() []byte { return openapiYAML }
 
-// openapiJSON is the embedded spec re-emitted as JSON, computed once at
-// process start. The endpoint is anonymous (no s.auth, no rate-limit) and
-// amplifiable — SDK generators and curl users hit it freely — so we
-// avoid paying YAML→map→JSON cost per request. spec_compliance_test.go
-// catches a malformed YAML before deploy, so reaching the error path
-// here is a build-time invariant violation.
+// Convert the embedded spec only when the JSON endpoint is requested, then
+// share the result across requests. This package is also linked into vmmd's
+// jail mount helper: eager YAML conversion added about 82 ms to every helper
+// process on the SSD compute node, even though it never serves this endpoint.
 var (
 	openapiJSONOnce sync.Once
 	openapiJSON     []byte
 )
-
-func init() {
-	openapiJSONOnce.Do(func() {
-		openapiJSON = mustMarshalJSON(openapiYAML)
-	})
-}
 
 func mustMarshalJSON(yamlBytes []byte) []byte {
 	var doc any
@@ -77,7 +69,7 @@ func ServeOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ServeOpenAPISpecJSON handles GET /v1/openapi.json. Anonymous; serves
-// the pre-marshalled JSON bytes computed in init(). SDK generators
+// JSON bytes computed once on first use. SDK generators
 // (`openapi-generator`, `oapi-codegen`) prefer JSON, and the endpoint
 // is amplifiable, so caching the body matters.
 //
@@ -87,6 +79,9 @@ func ServeOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
 // equivalent JSON. See openapi_handler_test.go for the locked-in
 // round-trip property.
 func ServeOpenAPISpecJSON(w http.ResponseWriter, _ *http.Request) {
+	openapiJSONOnce.Do(func() {
+		openapiJSON = mustMarshalJSON(openapiYAML)
+	})
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)

@@ -553,8 +553,9 @@ type Instance struct {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	alloc *Allocator
-	run   Runner
+	alloc            *Allocator
+	preparedNetworks *preparedNetworkPool
+	run              Runner
 	// captureRunner (tier-2 PR-B) is the optional stdout-aware
 	// handle used by captureAllowlistHandles to read `nft -a list
 	// chain` output and resolve the freshly-added allowlist
@@ -3018,7 +3019,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		}
 	}()
 
-	lease, err := m.alloc.Acquire(req.Instance)
+	lease, preparedNetwork, err := m.acquireWakeNetwork(req) //nolint:contextcheck // Failed cache claims use bounded daemon-owned cleanup, independent of a canceled Wake RPC.
 	if err != nil {
 		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
 	}
@@ -3234,7 +3235,9 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// sudden spike is a host-level signal not a workload signal.
 	phases.mark("pre_network")
 	netnsStart := time.Now()
-	if err = m.setupNetwork(ctx, nc); err != nil {
+	preparedHit, networkErr := m.setupWakeNetwork(ctx, nc, preparedNetwork)
+	err = networkErr
+	if err != nil {
 		// Issue #1059 / ADR-127: closed-reason counter on the
 		// setupNetwork path. The error wrap "network setup: %w"
 		// surfaces every netns / TAP / nft failure under one
@@ -3253,6 +3256,16 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
 	}
 	timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
+	if m.preparedNetworks != nil {
+		m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
+		defer func() {
+			if err == nil {
+				if policy, ok := m.preparedPolicy(req); ok {
+					m.preparedNetworks.observe(policy)
+				}
+			}
+		}()
+	}
 
 	phases.mark("setup_network")
 	method, err = m.bringUp(ctx, lease, nc, req, &timings)
@@ -3537,7 +3550,9 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	}
 	m.mu.Unlock()
 	m.log.Info("wake ok", "instance", req.Instance, "method", method.String(),
-		"uid", lease.UID, "host_ip", lease.HostIP.String())
+		"uid", lease.UID, "host_ip", lease.HostIP.String(),
+		"setup_network_ms", timings.netnsTapMs, "restore_ms", timings.restoreMs,
+		"total_ms", time.Since(phases.start).Milliseconds())
 	// Issue #554 / ADR-078 / PR review fix: start the per-instance
 	// liveness probe loop after the live map insert so the cmd/vmmd
 	// helper can read Lease.Slot via the same instance id. No-op
@@ -3802,14 +3817,9 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	m.cancelLivenessLoop(instance)
 
 	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
-	if err != nil {
-		// The VM may be in an unknown state; destroy it so nothing leaks. The
-		// caller keeps the app cold-bootable (its rootfs is intact).
-		_ = m.Destroy(ctx, instance)
-		return SnapshotInfo{}, fmt.Errorf("park %s: snapshot: %w", instance, err)
-	}
-	// Snapshot already destroyed the VM process; release network + lease. cleanup
-	// also calls Kill, which is an idempotent no-op on the already-gone VM.
+	// Release resources on both outcomes. A failed capture can leave a paused
+	// VM, which cannot exit on its own. DestroyWithExport waits for a builder
+	// to finish and must not delay cleanup of this failed app snapshot.
 	m.mu.Lock()
 	delete(m.live, instance)
 	// Park drops the VM and releases its CID (the lease is freed by
@@ -3819,7 +3829,11 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	// whose Lease.Slot was just freed.
 	delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	m.mu.Unlock()
-	m.cleanup(ctx, inst.Lease, inst.Net, inst.WorkloadNames)
+	// An upload deadline must not cancel the cleanup owed by Park.
+	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("park %s: snapshot: %w", instance, err)
+	}
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -4939,35 +4953,20 @@ func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
 				"instance", nc.Instance, "veth", nc.VethHost, "err", err)
 		}
 	}
-	if err := m.runCommands(ctx, nc.SetupCommands()); err != nil {
+	if err := m.runIPSetupCommands(ctx, nc.SetupCommands()); err != nil {
 		return err
 	}
 
-	// tc egress cap. Best-effort reset (errors expected on fresh veth);
-	// strict add runs only when the plan carries a cap. EgressMbit == 0
-	// keeps legacy callers (existing fakeRunner tests, debug paths)
-	// working without forcing every caller to set a non-zero rate.
-	for _, argv := range nc.TcResetCommands() {
-		if err := m.run.Run(ctx, argv); err != nil {
-			m.log.Debug("tc reset (best-effort, expected on fresh veth)",
-				"instance", nc.Instance, "argv", argv, "err", err)
-		}
-	}
+	// SetupCommands strictly creates a new namespace and veth after the
+	// stale-object cleanup above. Their old nft tables and qdisc cannot
+	// belong to these new objects. If creation fails, stop before policy;
+	// otherwise install the complete policy without resetting empty state.
 	if nc.EgressMbit > 0 {
 		if err := m.runCommands(ctx, nc.TcCommands()); err != nil {
 			return fmt.Errorf("tc egress cap: %w", err)
 		}
 	}
 
-	// nft ruleset reset + strict add. See NftCommands / NftResetCommands
-	// doc comments for the established/related ordering that makes
-	// published replies survive the lateral-movement deny.
-	for _, argv := range nc.NftResetCommands() {
-		if err := m.run.Run(ctx, argv); err != nil {
-			m.log.Debug("nft reset (best-effort, expected on fresh netns)",
-				"instance", nc.Instance, "argv", argv, "err", err)
-		}
-	}
 	return m.runNftCommands(ctx, nc.Netns, nc.NftCommands())
 }
 

@@ -471,6 +471,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
+			recordForwardedFirstByte(r.Context())
 			for _, h := range init.GetHeaders() {
 				w.Header().Add(h.GetName(), h.GetValue())
 			}
@@ -782,6 +783,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
+			recordForwardedFirstByte(r.Context())
 			for _, h := range init.GetHeaders() {
 				w.Header().Add(h.GetName(), h.GetValue())
 			}

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -80,11 +81,11 @@ const VsockResumeBindCID = 0xffffffff
 // closes. Production Restore dials exactly once; a re-dial re-runs the hook,
 // which is harmless on a healthy guest and useful for operator debugging.
 //
-// Idempotency: acceptResumeConns loops forever; on a syscall error (typically
-// the VM exiting) it logs at Debug and returns. The boot() caller does not
+// Idempotency: acceptResumeConns retries interrupted and aborted accepts. A
+// terminal error closes the listener and is logged. The boot() caller does not
 // wait on this goroutine.
 func listenResumeHook(log *slog.Logger) error {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
+	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
 	}
@@ -105,10 +106,20 @@ func listenResumeHook(log *slog.Logger) error {
 // goroutine running handleResumeConn. Sequential accepts; each handle runs in
 // its own goroutine so a slow hook does not back up the listener.
 func acceptResumeConns(fd int, log *slog.Logger) {
+	acceptResumeConnsWith(fd, log, unix.Accept4)
+}
+
+// Own the listening descriptor for the lifetime of the accept loop. A terminal
+// error must not leave a listening socket with no goroutine to service it.
+func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error)) {
+	defer func() { _ = unix.Close(fd) }()
 	for {
-		raw, _, err := unix.Accept(fd)
+		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
+		if errors.Is(err, unix.EINTR) || errors.Is(err, unix.ECONNABORTED) {
+			continue
+		}
 		if err != nil {
-			log.Debug("vsock accept ended", "err", err)
+			log.Warn("vsock accept ended", "err", err)
 			return
 		}
 		f := os.NewFile(uintptr(raw), "vsock")

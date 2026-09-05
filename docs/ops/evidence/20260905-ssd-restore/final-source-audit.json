@@ -1,0 +1,6 @@
+{
+  "changed_source_files": [
+    "src/vmm/src/vstate/vcpu/x86_64.rs"
+  ],
+  "source_archive_sha256": "70850ecf389dadda4be418ccb389e83e98531e6621050eb32c96b35572908837"
+}
