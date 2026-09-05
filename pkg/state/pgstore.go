@@ -21035,6 +21035,12 @@ func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc
 	return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, s.pool, arg)
 }
 
+// RequestTelemetryAnalyticsTimeseries backs the zero-filled hourly customer
+// analytics chart. The SQL query weights collapsed telemetry rows by count.
+func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, s.pool, arg)
+}
+
 // --- ADR-127 PR-B — regression observation persistence + dashboard reads ---
 
 // UpsertRegressionObservation writes (or refreshes) the regression

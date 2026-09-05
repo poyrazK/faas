@@ -2271,9 +2271,15 @@ paths:
           in: query
           required: false
           schema: { type: string, default: 24h }
-          description: "Lookback duration (`24h`, `3d`, `7d`). Defaults to `24h` and is retention-clamped."
+          description: "Lookback duration (`24h`, `3d`, `7d`) or RFC3339 start timestamp. Defaults to `24h` and is retention-clamped."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Optional RFC3339 upper-bound timestamp for the historical window."
       x-since: 2026-09
       responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '200':
           description: Aggregated request analytics.
           content:
@@ -2283,6 +2289,7 @@ paths:
               example:
                 slug: my-api
                 since: 24h
+                from: "2026-09-04T13:00:00.123456Z"
                 until: "2026-09-05T13:00:00.123456Z"
                 window_clamped: false
                 requests: 8421
@@ -2305,6 +2312,48 @@ paths:
                 routes_limit: 50
                 routes_truncated: false
                 as_of: "2026-09-05T13:00:00.123456Z"
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/analytics/timeseries:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRequestAnalyticsTimeseries
+      summary: Request analytics time series by hour.
+      description: |
+        Returns zero-filled UTC hourly buckets for customer request analytics.
+        Each bucket contains request and error counts, error rate, cold boots,
+        and weighted p50/p95/p99 latency. The window is half-open [since, until)
+        and is clamped to the plan's DebugTelemetryRetentionDays.
+
+        `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+        timestamp. `until` is an optional RFC3339 exclusive upper bound and
+        defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+        by `DebugTelemetryEnabled`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Lookback duration or RFC3339 start timestamp. Defaults to `24h`."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive end timestamp; omitted means current server time."
+      x-since: 2026-09
+      responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '200':
+          description: Zero-filled hourly request analytics buckets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestAnalyticsTimeseriesResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -19722,11 +19771,12 @@ components:
       description: |
         Bounded historical request analytics for
         `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
-        `[now-since, now)`, and the route list is capped at 50 rows.
-      required: [slug, since, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, routes, routes_limit, routes_truncated, as_of]
+        `[from, until)`, and the route list is capped at 50 rows.
+      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, routes, routes_limit, routes_truncated, as_of]
       properties:
         slug: { type: string }
         since: { type: string, description: "Effective lookback duration after retention clamping." }
+        from: { type: string, format: date-time, description: "Inclusive lower bound of the analytics window." }
         until: { type: string, format: date-time, description: "Exclusive upper bound of the analytics window." }
         window_clamped: { type: boolean, description: "True when the requested lookback exceeded plan retention." }
         requests: { type: integer, format: int64, minimum: 0 }
@@ -19742,6 +19792,39 @@ components:
         routes_limit: { type: integer, minimum: 1, description: "Maximum number of route rows returned." }
         routes_truncated: { type: boolean, description: "True when more route rows matched than routes_limit." }
         as_of: { type: string, format: date-time, description: "RFC3339Nano UTC assembly timestamp." }
+
+    RequestAnalyticsTimeseriesPoint:
+      type: object
+      description: "One UTC-aligned hourly request analytics bucket."
+      required: [start, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
+      properties:
+        start: { type: string, format: date-time, description: "Inclusive UTC start of the one-hour bucket." }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+
+    RequestAnalyticsTimeseriesResponse:
+      type: object
+      description: |
+        Zero-filled UTC hourly request analytics for
+        `GET /v1/apps/{slug}/analytics/timeseries`. The effective window is
+        half-open [from, until) and bounded by plan retention.
+      required: [slug, since, from, until, window_clamped, bucket, points, as_of]
+      properties:
+        slug: { type: string }
+        since: { type: string, description: "Effective series lookback after retention clamping." }
+        from: { type: string, format: date-time, description: "First instant represented by the hourly series." }
+        until: { type: string, format: date-time, description: "Exclusive end instant represented by the hourly series." }
+        window_clamped: { type: boolean, description: "Indicates the series start was limited by plan retention." }
+        bucket: { type: string, enum: [1h], description: "UTC bucket size." }
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
+        as_of: { type: string, format: date-time, description: "UTC time when the series response was assembled." }
 
     AppSLOResponse:
       description: |

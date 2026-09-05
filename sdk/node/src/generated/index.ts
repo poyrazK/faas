@@ -296,6 +296,8 @@ export type { RenameAppRequest } from './models/RenameAppRequest.js';
 export type { RepoResponse } from './models/RepoResponse.js';
 export type { RequestAnalyticsResponse } from './models/RequestAnalyticsResponse.js';
 export type { RequestAnalyticsRoute } from './models/RequestAnalyticsRoute.js';
+export type { RequestAnalyticsTimeseriesPoint } from './models/RequestAnalyticsTimeseriesPoint.js';
+export type { RequestAnalyticsTimeseriesResponse } from './models/RequestAnalyticsTimeseriesResponse.js';
 export type { RetryDeploymentRequest } from './models/RetryDeploymentRequest.js';
 export type { RetryPolicyDTO } from './models/RetryPolicyDTO.js';
 export type { RollbackOperatorRuntimeConfigRequest } from './models/RollbackOperatorRuntimeConfigRequest.js';

@@ -475,6 +475,25 @@
             · <a href="/v1/apps/{{.Data.App.Slug}}/analytics?since={{.Data.RequestAnalytics.Since}}">JSON</a>
           </h2>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          {{if .Data.RequestAnalytics.LatencySparklineHTML}}
+            <h3>Hourly trend <small style="font-weight:normal;color:#888">({{.Data.RequestAnalytics.Bucket}} buckets · {{.Data.RequestAnalytics.From}} to {{.Data.RequestAnalytics.Until}})</small></h3>
+            <table aria-label="Hourly request analytics trends">
+              <tbody>
+                <tr>
+                  <td>Latency p50 / p95 / p99</td>
+                  <td>{{.Data.RequestAnalytics.LatencySparklineHTML}}</td>
+                </tr>
+                <tr>
+                  <td>Error rate</td>
+                  <td>{{.Data.RequestAnalytics.ErrorSparklineHTML}}</td>
+                </tr>
+                <tr>
+                  <td>Cold-boot rate</td>
+                  <td>{{.Data.RequestAnalytics.ColdBootSparklineHTML}}</td>
+                </tr>
+              </tbody>
+            </table>
+          {{end}}
           {{if eq .Data.RequestAnalytics.Requests 0}}
             <p>No requests in the last {{.Data.RequestAnalytics.Since}}.</p>
           {{else}}

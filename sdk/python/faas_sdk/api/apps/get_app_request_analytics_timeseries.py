@@ -8,7 +8,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
-from ...models.request_analytics_response import RequestAnalyticsResponse
+from ...models.request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from ...types import UNSET, Response, Unset
 
 
@@ -32,7 +32,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/apps/{slug}/analytics".format(
+        "url": "/v1/apps/{slug}/analytics/timeseries".format(
             slug=quote(str(slug), safe=""),
         ),
         "params": params,
@@ -43,9 +43,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Problem | RequestAnalyticsResponse | None:
+) -> Problem | RequestAnalyticsTimeseriesResponse | None:
     if response.status_code == 200:
-        response_200 = RequestAnalyticsResponse.from_dict(response.json())
+        response_200 = RequestAnalyticsTimeseriesResponse.from_dict(response.json())
 
         return response_200
 
@@ -82,7 +82,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Problem | RequestAnalyticsResponse]:
+) -> Response[Problem | RequestAnalyticsTimeseriesResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -97,25 +97,18 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
-) -> Response[Problem | RequestAnalyticsResponse]:
-    """Aggregated historical request analytics.
+) -> Response[Problem | RequestAnalyticsTimeseriesResponse]:
+    """Request analytics time series by hour.
 
-     Returns an aggregate request overview for one app: total requests,
-    errors, cold boots, weighted p50/p95/p99 latency, and the top
-    route/method combinations. This is the customer analytics surface;
-    request identifiers and trace payloads remain on the debugger routes.
+     Returns zero-filled UTC hourly buckets for customer request analytics.
+    Each bucket contains request and error counts, error rate, cold boots,
+    and weighted p50/p95/p99 latency. The window is half-open [since, until)
+    and is clamped to the plan's DebugTelemetryRetentionDays.
 
-    `since` accepts a duration such as `24h` or `7d` and defaults to
-    `24h`. The effective window is clamped to the plan's
-    `DebugTelemetryRetentionDays` (Hobby 3d, Pro 7d, Scale 14d).
-    `window_clamped` tells callers when the requested lookback was wider
-    than the retained telemetry. The response contains at most 50 route
-    rows; `routes_truncated` indicates that more routes matched.
-
-    Counts and percentiles include the recorder's collapsed row `count`,
-    so the result represents original requests rather than stored rows.
-    The endpoint is read-only, IDOR-safe, and plan-gated by
-    `DebugTelemetryEnabled`.
+    `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+    timestamp. `until` is an optional RFC3339 exclusive upper bound and
+    defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+    by `DebugTelemetryEnabled`.
 
     Args:
         slug (str):
@@ -127,7 +120,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | RequestAnalyticsResponse]
+        Response[Problem | RequestAnalyticsTimeseriesResponse]
     """
 
     kwargs = _get_kwargs(
@@ -149,25 +142,18 @@ def sync(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
-) -> Problem | RequestAnalyticsResponse | None:
-    """Aggregated historical request analytics.
+) -> Problem | RequestAnalyticsTimeseriesResponse | None:
+    """Request analytics time series by hour.
 
-     Returns an aggregate request overview for one app: total requests,
-    errors, cold boots, weighted p50/p95/p99 latency, and the top
-    route/method combinations. This is the customer analytics surface;
-    request identifiers and trace payloads remain on the debugger routes.
+     Returns zero-filled UTC hourly buckets for customer request analytics.
+    Each bucket contains request and error counts, error rate, cold boots,
+    and weighted p50/p95/p99 latency. The window is half-open [since, until)
+    and is clamped to the plan's DebugTelemetryRetentionDays.
 
-    `since` accepts a duration such as `24h` or `7d` and defaults to
-    `24h`. The effective window is clamped to the plan's
-    `DebugTelemetryRetentionDays` (Hobby 3d, Pro 7d, Scale 14d).
-    `window_clamped` tells callers when the requested lookback was wider
-    than the retained telemetry. The response contains at most 50 route
-    rows; `routes_truncated` indicates that more routes matched.
-
-    Counts and percentiles include the recorder's collapsed row `count`,
-    so the result represents original requests rather than stored rows.
-    The endpoint is read-only, IDOR-safe, and plan-gated by
-    `DebugTelemetryEnabled`.
+    `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+    timestamp. `until` is an optional RFC3339 exclusive upper bound and
+    defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+    by `DebugTelemetryEnabled`.
 
     Args:
         slug (str):
@@ -179,7 +165,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | RequestAnalyticsResponse
+        Problem | RequestAnalyticsTimeseriesResponse
     """
 
     return sync_detailed(
@@ -196,25 +182,18 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
-) -> Response[Problem | RequestAnalyticsResponse]:
-    """Aggregated historical request analytics.
+) -> Response[Problem | RequestAnalyticsTimeseriesResponse]:
+    """Request analytics time series by hour.
 
-     Returns an aggregate request overview for one app: total requests,
-    errors, cold boots, weighted p50/p95/p99 latency, and the top
-    route/method combinations. This is the customer analytics surface;
-    request identifiers and trace payloads remain on the debugger routes.
+     Returns zero-filled UTC hourly buckets for customer request analytics.
+    Each bucket contains request and error counts, error rate, cold boots,
+    and weighted p50/p95/p99 latency. The window is half-open [since, until)
+    and is clamped to the plan's DebugTelemetryRetentionDays.
 
-    `since` accepts a duration such as `24h` or `7d` and defaults to
-    `24h`. The effective window is clamped to the plan's
-    `DebugTelemetryRetentionDays` (Hobby 3d, Pro 7d, Scale 14d).
-    `window_clamped` tells callers when the requested lookback was wider
-    than the retained telemetry. The response contains at most 50 route
-    rows; `routes_truncated` indicates that more routes matched.
-
-    Counts and percentiles include the recorder's collapsed row `count`,
-    so the result represents original requests rather than stored rows.
-    The endpoint is read-only, IDOR-safe, and plan-gated by
-    `DebugTelemetryEnabled`.
+    `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+    timestamp. `until` is an optional RFC3339 exclusive upper bound and
+    defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+    by `DebugTelemetryEnabled`.
 
     Args:
         slug (str):
@@ -226,7 +205,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | RequestAnalyticsResponse]
+        Response[Problem | RequestAnalyticsTimeseriesResponse]
     """
 
     kwargs = _get_kwargs(
@@ -246,25 +225,18 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
-) -> Problem | RequestAnalyticsResponse | None:
-    """Aggregated historical request analytics.
+) -> Problem | RequestAnalyticsTimeseriesResponse | None:
+    """Request analytics time series by hour.
 
-     Returns an aggregate request overview for one app: total requests,
-    errors, cold boots, weighted p50/p95/p99 latency, and the top
-    route/method combinations. This is the customer analytics surface;
-    request identifiers and trace payloads remain on the debugger routes.
+     Returns zero-filled UTC hourly buckets for customer request analytics.
+    Each bucket contains request and error counts, error rate, cold boots,
+    and weighted p50/p95/p99 latency. The window is half-open [since, until)
+    and is clamped to the plan's DebugTelemetryRetentionDays.
 
-    `since` accepts a duration such as `24h` or `7d` and defaults to
-    `24h`. The effective window is clamped to the plan's
-    `DebugTelemetryRetentionDays` (Hobby 3d, Pro 7d, Scale 14d).
-    `window_clamped` tells callers when the requested lookback was wider
-    than the retained telemetry. The response contains at most 50 route
-    rows; `routes_truncated` indicates that more routes matched.
-
-    Counts and percentiles include the recorder's collapsed row `count`,
-    so the result represents original requests rather than stored rows.
-    The endpoint is read-only, IDOR-safe, and plan-gated by
-    `DebugTelemetryEnabled`.
+    `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+    timestamp. `until` is an optional RFC3339 exclusive upper bound and
+    defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+    by `DebugTelemetryEnabled`.
 
     Args:
         slug (str):
@@ -276,7 +248,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | RequestAnalyticsResponse
+        Problem | RequestAnalyticsTimeseriesResponse
     """
 
     return (

@@ -6630,6 +6630,7 @@ type RequestAnalyticsRoute struct {
 type RequestAnalyticsResponse struct {
 	Slug            string                  `json:"slug"`
 	Since           string                  `json:"since"`
+	From            string                  `json:"from"`
 	Until           string                  `json:"until"`
 	WindowClamped   bool                    `json:"window_clamped"`
 	Requests        int64                   `json:"requests"`
@@ -6643,6 +6644,34 @@ type RequestAnalyticsResponse struct {
 	RoutesLimit     int                     `json:"routes_limit"`
 	RoutesTruncated bool                    `json:"routes_truncated"`
 	AsOf            string                  `json:"as_of"`
+}
+
+// RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
+// by GET /v1/apps/{slug}/analytics/timeseries. Counts include collapsed
+// request-telemetry row weights, and latency percentiles use the same weights.
+type RequestAnalyticsTimeseriesPoint struct {
+	Start         string  `json:"start"`
+	Requests      int64   `json:"requests"`
+	ErrorRequests int64   `json:"error_requests"`
+	ErrorRatePct  float64 `json:"error_rate_pct"`
+	ColdBoots     int64   `json:"cold_boots"`
+	P50MS         int     `json:"p50_ms"`
+	P95MS         int     `json:"p95_ms"`
+	P99MS         int     `json:"p99_ms"`
+}
+
+// RequestAnalyticsTimeseriesResponse is the zero-filled hourly series used
+// for customer-facing request analytics charts. The effective window is
+// bounded by the account's telemetry retention.
+type RequestAnalyticsTimeseriesResponse struct {
+	Slug          string                            `json:"slug"`
+	Since         string                            `json:"since"`
+	From          string                            `json:"from"`
+	Until         string                            `json:"until"`
+	WindowClamped bool                              `json:"window_clamped"`
+	Bucket        string                            `json:"bucket"`
+	Points        []RequestAnalyticsTimeseriesPoint `json:"points"`
+	AsOf          string                            `json:"as_of"`
 }
 
 // DebugRegressionItem is one row of debug_regression_observations

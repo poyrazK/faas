@@ -570,6 +570,9 @@ from .repo_response import RepoResponse
 from .request_analytics_response import RequestAnalyticsResponse
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
+from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
+from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
+from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
@@ -1288,6 +1291,9 @@ __all__ = (
     "RequestAnalyticsResponse",
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteMethod",
+    "RequestAnalyticsTimeseriesPoint",
+    "RequestAnalyticsTimeseriesResponse",
+    "RequestAnalyticsTimeseriesResponseBucket",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",
