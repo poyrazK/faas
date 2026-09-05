@@ -3149,70 +3149,19 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		// PR-P1 of the pluggable-billing rollout). The txID == "" check
 		// stays as a defensive fallback for any provider wired before
 		// the capability introspection was introduced.
-		if acct.StripeSubscriptionItem == "" && s.billingProvider != nil && s.billingProvider.Capabilities().Has(billing.CapHostedCheckout) {
-			// PR-P3: Paddle's CreateUpgradeTransaction requires an
-			// existing Paddle customer (ctm_…) to attach the
-			// subscription to. Stripe's path does not need this
-			// sidecar (cus_… is created lazily on the first
-			// Stripe-side subscription POST), so the guard is
-			// capability-scoped — only providers that opt into
-			// CapHostedCheckout pay the extra round-trip.
-			//
-			// Idempotent: if acct.ProviderCustomerID is already set
-			// the call is a no-op. A second changePlan request from
-			// the same browser session reuses the existing ID and
-			// does not POST a duplicate customer to Paddle.
-			upgradeAcct := acct
-			if upgradeAcct.ProviderCustomerID == "" {
-				custID, cerr := s.billingProvider.CreateCustomer(r.Context(), acct)
-				if cerr != nil {
-					s.log.Error("create_customer",
-						"account", acct.ID,
-						"target_plan", logsanitize.Field(string(plan)),
-						"err", cerr)
-					api.WriteProblem(w, api.ErrCapacity("upgrade unavailable"))
-					return
-				}
-				if err := s.store.UpdateAccountProviderCustomerID(r.Context(), acct.ID, custID); err != nil {
-					// PR-P4 review finding #1: at this point a
-					// Paddle customer has been created on Paddle's
-					// side (custID is the ctm_… handle) but the DB
-					// stamp failed — the customer is orphaned with
-					// no row binding it to acct. On retry the
-					// sidecar fires again because
-					// upgradeAcct.ProviderCustomerID is still "",
-					// creating a second orphan on Paddle's
-					// dashboard.
-					//
-					// Compensating action (DELETE on
-					// /customers/{custID} via Paddle's REST API)
-					// is out of scope for this PR — it requires a
-					// new paddle.Provider.ArchiveCustomer method +
-					// a tx-scoped defer in this handler. Filed
-					// for PR-P5. For now we surface the orphan via
-					// a structured field so an operator can grep
-					// `orphan_paddle_customer=true` and reconcile
-					// by hand on the Paddle dashboard.
-					s.log.Error("stamp_customer_id",
-						"account", acct.ID,
-						"customer_id", custID,
-						"orphan_paddle_customer", true,
-						"err", err)
-					api.WriteProblem(w, api.ErrCapacity("upgrade unavailable"))
-					return
-				}
-				upgradeAcct.ProviderCustomerID = custID
-			}
-			txID, checkoutURL, err := s.billingProvider.CreateUpgradeTransaction(r.Context(), upgradeAcct, plan)
-			if err != nil {
-				s.log.Error("create_upgrade_tx",
-					"account", acct.ID,
-					"target_plan", logsanitize.Field(string(plan)),
-					"err", err)
+		if s.hostedCheckoutAvailable(acct, plan) {
+			// beginHostedCheckout (billing_checkout.go) owns the
+			// customer-ensure + checkout-create pair and is shared with
+			// POST /dashboard/upgrade. errNoHostedCheckout means the
+			// provider answered with the no-checkout sentinel — fall
+			// through to the portal URL; any other error is a provider
+			// or store failure the customer should retry.
+			txID, checkoutURL, err := s.beginHostedCheckout(r.Context(), acct, plan)
+			if err != nil && !errors.Is(err, errNoHostedCheckout) {
 				api.WriteProblem(w, api.ErrCapacity("upgrade unavailable"))
 				return
 			}
-			if txID != "" {
+			if err == nil {
 				prob.CheckoutURL = checkoutURL
 				if providerName(s.billingProvider) != "polar" {
 					// Keep the legacy field for existing hosted-checkout SDK
@@ -3743,8 +3692,12 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// MFA is explicitly opt-in. Billing events must never change
 		// an account's MFA policy or force an enrolled-session prompt.
 	case billing.EventSubscriptionCanceled:
-		if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountSuspended); err != nil {
-			return fmt.Errorf("store canceled status: %w", err)
+		// Spec §4.7 / §10: a cancelled subscription downgrades to Free
+		// at period end. See applySubscriptionEnded
+		// (billing_subscription_end.go) for the stale-event guard and
+		// the dunning-status contract.
+		if err := s.applySubscriptionEnded(ctx, ev, acct, asyncBillingMail); err != nil {
+			return err
 		}
 	case billing.EventPaymentFailed:
 		// Apps keep serving; deploys blocked at the auth gate (handlers

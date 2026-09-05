@@ -2325,6 +2325,10 @@ func (s *server) handler() http.Handler {
 	// ADR-077) cannot silently disable the customer's cap. The 5-minute
 	// TTL is the standard sensitive-op window (review finding #10).
 	mux.Handle("POST /dashboard/raise-overage-cap", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardRaiseOverageCap)))))
+	// Free → paid hosted-checkout hand-off (dashboard_upgrade.go). Same
+	// step-up posture as PATCH /v1/account/plan: starting a checkout is
+	// a billing mutation even though the plan only flips on the webhook.
+	mux.Handle("POST /dashboard/upgrade", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardUpgrade)))))
 	// Issue #791 PR-E / ADR-090 closure — fire-now from the
 	// dashboard's cron section. Same CSRF-envelope shape as the
 	// form POSTs above (the form-render path in renderAppDetail

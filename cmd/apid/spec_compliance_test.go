@@ -135,6 +135,7 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/account/export":                           true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/dpa":                              true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                       true, // HTML form (issue #561)
+	"POST /dashboard/upgrade":                                 true, // HTML form (hosted-checkout hand-off)
 	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":         true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":      true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable": true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset

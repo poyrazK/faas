@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+    .notice { padding: 0.6rem 0.8rem; border: 1px solid #c90; border-radius: 4px; }
+    .btn { display: inline-block; padding: 0.5rem 1rem; border: 1px solid #888; border-radius: 4px; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/pricing">Pricing</a>
+      <a href="/dashboard/invoices">Invoices</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{if .Data}}
+      {{if .Data.Notice}}<p class="notice">{{.Data.Notice}}</p>{{end}}
+      {{if .Data.Target}}
+        <h1>Upgrade to {{.Data.Target.Plan}}</h1>
+        <p>Current plan: {{.Data.CurrentPlan}}</p>
+        <table>
+          <tr><th>Monthly price</th><td>{{.Data.Target.PriceFormatted}}</td></tr>
+          <tr><th>Included GB-hours / month</th><td>{{.Data.Target.IncludedGBHours}}</td></tr>
+          <tr><th>Overage</th><td>€0.01 per GB-hour above the included allowance, billed monthly</td></tr>
+          <tr><th>Max app memory (RAM MB)</th><td>{{.Data.Target.RAMMB}}</td></tr>
+          <tr><th>Max concurrent instances</th><td>{{.Data.Target.MaxConcurrency}}</td></tr>
+          <tr><th>Max deployed apps</th><td>{{.Data.Target.DeployedApps}}</td></tr>
+        </table>
+        {{if .Data.Available}}
+          <form method="POST" action="/dashboard/upgrade" style="margin-top:1rem">
+            <input type="hidden" name="csrf_token" value="{{.Data.ConfirmToken}}">
+            <input type="hidden" name="plan" value="{{.Data.Target.Plan}}">
+            <button type="submit">Continue to secure checkout ({{.Data.ProviderLabel}})</button>
+          </form>
+          <p style="margin-top:0.5rem; font-size:0.9em; color:#666">
+            You will be redirected to {{.Data.ProviderLabel}}, which handles payment and VAT as merchant of record.
+            No card data touches this server. Your plan changes as soon as the payment is confirmed —
+            usually within a minute of finishing checkout.
+          </p>
+        {{else}}
+          <p>{{.Data.Reason}}</p>
+          {{if .Data.PortalURL}}
+            <p><a class="btn" href="{{.Data.PortalURL}}" rel="noopener">Open {{.Data.ProviderLabel}} portal</a></p>
+          {{end}}
+        {{end}}
+      {{else}}
+        <h1>Upgrade</h1>
+        <p>Current plan: {{.Data.CurrentPlan}}</p>
+        {{if .Data.Options}}
+          <p>Choose the plan to upgrade to:</p>
+          <ul>
+            {{range .Data.Options}}
+              <li><a class="btn" href="/dashboard/upgrade?plan={{.Plan}}">{{.Plan}}</a> — {{.PriceFormatted}} / month, {{.IncludedGBHours}} GB-hours included</li>
+            {{end}}
+          </ul>
+        {{else}}
+          <p>{{.Data.Reason}}</p>
+          {{if .Data.PortalURL}}
+            <p><a class="btn" href="{{.Data.PortalURL}}" rel="noopener">Open {{.Data.ProviderLabel}} portal</a></p>
+          {{end}}
+        {{end}}
+      {{end}}
+      <p><a href="/dashboard/pricing">Compare plans</a> · <a href="/dashboard/billing">Back to billing</a></p>
+    {{end}}
+  </main>
+  <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>
+</body>
+</html>

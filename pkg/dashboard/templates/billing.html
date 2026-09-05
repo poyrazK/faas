@@ -104,8 +104,20 @@
           <p>No invoices yet. Invoices appear after your first provider-side billing cycle.</p>
         {{end}}
       {{else}}
-        <h2>Upgrade</h2>
-        <p>You're on the Free plan. To unlock paid features, see <a href="/dashboard/pricing">plan comparison</a> or change plan via the CLI: <code>faas plan &lt;plan&gt;</code>.</p>
+        <h2 id="upgrade">Upgrade</h2>
+        {{if .Data.UpgradeNotice}}<p class="notice">{{.Data.UpgradeNotice}}</p>{{end}}
+        <p>You're on the Free plan.</p>
+        {{if .Data.CanCheckout}}
+          <ul>
+            {{range .Data.UpgradeOptions}}
+              <li><a class="btn" href="/dashboard/upgrade?plan={{.Plan}}">Upgrade to {{.Plan}}</a> — {{.PriceFormatted}} / month, {{.IncludedGBHours}} GB-hours included, up to {{.RAMMB}} MB RAM per app</li>
+            {{end}}
+          </ul>
+          <p>Checkout is hosted by the billing provider; no card data touches this server. Your plan changes as soon as the payment is confirmed.</p>
+        {{else}}
+          <p>Hosted checkout is not available on this deployment. Change plan via the CLI: <code>faas plan &lt;plan&gt;</code>.</p>
+        {{end}}
+        <p>See the <a href="/dashboard/pricing">plan comparison</a> for the full table.</p>
       {{end}}
     {{end}}
   </main>

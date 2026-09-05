@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -797,6 +798,14 @@ func cmdPlan(args []string) int {
 	}
 	updated, err := client.ChangePlan(context.Background(), string(target))
 	if err != nil {
+		// 402 with a checkout / portal URL is not a failure: the provider
+		// must confirm the paid upgrade, and the URL is where the customer
+		// does that. Hand off instead of printing a bare error.
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Problem.Status == http.StatusPaymentRequired &&
+			(ae.Problem.CheckoutURL != "" || ae.Problem.BillingPortalURL != "") {
+			return renderPlanCheckoutHandoff(ae, target)
+		}
 		return printErr("Plan change failed", err)
 	}
 	if updated.PlanChangeStatus == "pending_provider_confirmation" {

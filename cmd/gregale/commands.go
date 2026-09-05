@@ -562,6 +562,15 @@ func renderAPIError(w io.Writer, e *APIError) {
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
 	}
+	// Billing hand-off URLs (402 CodePayment). The provider-neutral
+	// checkout_url wins; the portal URL is the fallback for accounts
+	// that already hold a subscription. Without these rows a customer
+	// on a Free plan had no way to reach checkout from the terminal.
+	if p.CheckoutURL != "" {
+		_, _ = fmt.Fprintf(w, "  Checkout: %s\n", p.CheckoutURL)
+	} else if p.BillingPortalURL != "" {
+		_, _ = fmt.Fprintf(w, "  Billing portal: %s\n", p.BillingPortalURL)
+	}
 	// Error-explanations cluster (spec §6.4 amendment 1): surface
 	// the customer-facing hint / why / fix / relevant_logs block
 	// in the same order the whycopy catalog row lists them. Each

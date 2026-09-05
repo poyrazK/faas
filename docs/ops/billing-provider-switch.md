@@ -57,10 +57,27 @@ wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
 - Polar checkout creates/reuses a customer using Gregale’s external account ID.
 - Customer portal sessions are created on demand for payment-method and
   subscription management.
-- Plan upgrades use hosted checkout when no subscription exists.
+- Plan upgrades use hosted checkout when no subscription exists. Three
+  surfaces hand the customer to that checkout and share one apid routine
+  (`beginHostedCheckout`): `PATCH /v1/account/plan` answers 402 with
+  `checkout_url`; `gregale plan <plan>` prints and opens that URL in text
+  mode (exit 0 — the plan flips on the webhook) and emits the RFC 7807
+  problem under `--json`; the dashboard billing page links Free accounts
+  to `/dashboard/upgrade?plan=…`, a one-form confirmation page whose POST
+  redirects to the provider checkout. The local plan changes only when the
+  provider webhook confirms payment.
 - Paid-to-paid downgrades are scheduled with the provider for the next period;
   the local entitlement remains active until a subscription webhook confirms
   the change. Free is represented by cancellation at period end.
+- When the provider then ends the subscription (`subscription.revoked`, or
+  `subscription.canceled` with a non-active status; Paddle
+  `subscription.canceled`; Stripe `customer.subscription.deleted`), apid
+  clears the subscription binding and sets the plan to Free (spec §4.7). An
+  active account stays active and receives one "subscription ended" email; a
+  `past_due` or `suspended` account keeps its dunning stamp so the
+  non-payment ladder continues. A revoke for a subscription that is no
+  longer the account's current one is ignored. The customer can upgrade
+  again through hosted checkout immediately.
 - `meterd` pushes completed UTC-hour net overage events and replays a durable
   30-day lookback after restart or provider outage. Usage is not marked
   complete until the provider call succeeds.
