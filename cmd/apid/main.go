@@ -54,6 +54,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -577,6 +578,32 @@ func run(ctx context.Context, log *slog.Logger) error {
 				log.Error("runtime_config subscriber exited", "err", err)
 			}
 		}()
+		// Runtime-config canary safety: daemon acknowledgements and the
+		// fleet SLO signals are evaluated independently of the subscriber.
+		// Missing Prometheus data is fail-safe (the worker leaves the canary
+		// live), while an explicit daemon rejection can still roll back.
+		if rolloutStore, ok := srv.store.(runtimeconfig.RolloutStore); ok {
+			health := runtimeconfig.PrometheusHealthProvider{
+				Client: srv.promqlClient,
+				Policy: runtimeconfig.DefaultHealthPolicy,
+			}
+			rolloutController := runtimeconfig.NewRolloutController(
+				rolloutStore,
+				health,
+				srv.notif,
+				func(ctx context.Context, kind string, fields map[string]any) {
+					if srv.audit != nil {
+						srv.audit.Emit(ctx, kind, nil, fields)
+					}
+				},
+				log,
+			)
+			go func() {
+				if err := rolloutController.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Error("runtime_config rollout safety controller exited", "err", err)
+				}
+			}()
+		}
 		// ADR-089 PR-C — background re-seal runner. The runner is
 		// nil when FAAS_REKEY_ENABLED is unset (or when identities
 		// failed to load); we skip the goroutine launch in that

@@ -18,6 +18,7 @@ type OperatorRuntimeConfig struct {
 	Scope             string                     `json:"scope"`
 	ScopeID           string                     `json:"scope_id,omitempty"`
 	RolloutPercent    int                        `json:"rollout_percent"`
+	RolloutState      string                     `json:"rollout_state"`
 	Source            string                     `json:"source"`
 	ApplyMode         string                     `json:"apply_mode"`
 	ControllerEnabled bool                       `json:"controller_enabled"`

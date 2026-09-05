@@ -41,6 +41,20 @@ const (
 	RuntimeConfigBlocked RuntimeConfigStatus = "blocked"
 )
 
+// RuntimeConfigRolloutState describes the operator's rollout lifecycle. It is
+// deliberately separate from RuntimeConfigStatus: an applied value may still
+// be an active canary, and a rolled-back value remains effective after the
+// controller restores the last stable revision.
+type RuntimeConfigRolloutState string
+
+const (
+	RuntimeConfigRolloutStable     RuntimeConfigRolloutState = "stable"
+	RuntimeConfigRolloutCanary     RuntimeConfigRolloutState = "canary"
+	RuntimeConfigRolloutPromoting  RuntimeConfigRolloutState = "promoting"
+	RuntimeConfigRolloutPaused     RuntimeConfigRolloutState = "paused"
+	RuntimeConfigRolloutRolledBack RuntimeConfigRolloutState = "rolled_back"
+)
+
 // RuntimeConfigAckStatus records the result observed by one daemon/node for a
 // specific desired configuration version. It is deliberately separate from
 // RuntimeConfigStatus, whose row is the control-plane aggregate state.
@@ -104,6 +118,7 @@ type RuntimeConfig struct {
 	// matching consumer; lower values are useful for canarying a daemon-scoped
 	// or global flag while the lower-precedence value remains available.
 	RolloutPercent int
+	RolloutState   RuntimeConfigRolloutState
 	ApplyMode      RuntimeConfigApplyMode
 	Status         RuntimeConfigStatus
 	LastError      string

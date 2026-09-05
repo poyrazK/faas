@@ -11140,7 +11140,7 @@ components:
       description: "One entry from the closed operator runtime-configuration catalog."
       type: object
       required: [key, label, description, category, kind, default_value,
-                 desired_value, effective_value, scope, rollout_percent, source, apply_mode,
+                 desired_value, effective_value, scope, rollout_percent, rollout_state, source, apply_mode,
                  controller_enabled, mutable, sensitive, status, version]
       properties:
         key: { type: string }
@@ -11154,6 +11154,7 @@ components:
         scope: { type: string, enum: [global, control_plane, daemon, node] }
         scope_id: { type: string }
         rollout_percent: { type: integer, minimum: 0, maximum: 100 }
+        rollout_state: { type: string, enum: [stable, canary, promoting, paused, rolled_back] }
         source: { type: string, enum: [default_or_environment, operator] }
         apply_mode: { type: string, enum: [hot, graceful, rolling, break_glass] }
         controller_enabled: { type: boolean }

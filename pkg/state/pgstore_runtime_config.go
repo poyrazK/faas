@@ -15,7 +15,7 @@ func (s *PgStore) ListRuntimeConfigs(ctx context.Context, scope RuntimeConfigSco
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, config_key, scope, scope_id, desired_value,
 		       COALESCE(effective_value, 'null'::jsonb), version,
-		       rollout_percent,
+		       rollout_percent, rollout_state,
 		       apply_mode, status, COALESCE(last_error, ''),
 		       COALESCE(actor_id::text, ''), COALESCE(reason, ''),
 		       updated_at, applied_at
@@ -45,7 +45,7 @@ func (s *PgStore) GetRuntimeConfig(ctx context.Context, key string, scope Runtim
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, config_key, scope, scope_id, desired_value,
 		       COALESCE(effective_value, 'null'::jsonb), version,
-		       rollout_percent,
+		       rollout_percent, rollout_state,
 		       apply_mode, status, COALESCE(last_error, ''),
 		       COALESCE(actor_id::text, ''), COALESCE(reason, ''),
 		       updated_at, applied_at
@@ -109,10 +109,13 @@ func (s *PgStore) UpsertRuntimeConfig(ctx context.Context, update RuntimeConfigU
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO runtime_config_entries
 			    (id, config_key, scope, scope_id, desired_value,
-			     effective_value, version, rollout_percent, apply_mode, status, actor_id, reason)
-			VALUES ($1, $2, $3, $4, $5::jsonb, NULL, $6, $7, $8, 'pending', NULLIF($9, '')::uuid, $10)`,
+			     effective_value, version, rollout_percent, rollout_state,
+			     apply_mode, status, actor_id, reason)
+			VALUES ($1, $2, $3, $4, $5::jsonb, NULL, $6, $7, $8, $9,
+			        'pending', NULLIF($10, '')::uuid, $11)`,
 			id, update.Key, string(update.Scope), update.ScopeID,
-			string(update.DesiredValue), currentVersion, rolloutPercent, string(update.ApplyMode),
+			string(update.DesiredValue), currentVersion, rolloutPercent,
+			runtimeConfigRolloutState(rolloutPercent), string(update.ApplyMode),
 			update.ActorID, update.Reason); err != nil {
 			return RuntimeConfig{}, fmt.Errorf("state: insert runtime config: %w", err)
 		}
@@ -138,15 +141,17 @@ func (s *PgStore) UpsertRuntimeConfig(ctx context.Context, update RuntimeConfigU
 			    effective_value = NULL,
 			    version = $3,
 			    rollout_percent = $4,
-			    apply_mode = $5,
+			    rollout_state = $5,
+			    apply_mode = $6,
 			    status = 'pending',
 			    last_error = NULL,
-			    actor_id = NULLIF($6, '')::uuid,
-			    reason = $7,
+			    actor_id = NULLIF($7, '')::uuid,
+			    reason = $8,
 			    updated_at = now(),
 			    applied_at = NULL
 			WHERE id = $1`,
-			id, string(update.DesiredValue), currentVersion, rolloutPercent, string(update.ApplyMode),
+			id, string(update.DesiredValue), currentVersion, rolloutPercent,
+			runtimeConfigRolloutState(rolloutPercent), string(update.ApplyMode),
 			update.ActorID, update.Reason); err != nil {
 			return RuntimeConfig{}, fmt.Errorf("state: update runtime config: %w", err)
 		}
@@ -194,6 +199,33 @@ func (s *PgStore) MarkRuntimeConfigApplied(ctx context.Context, key string, scop
 		string(effectiveValue), status, applyErr, appliedAt)
 	if err != nil {
 		return fmt.Errorf("state: mark runtime config applied: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrRuntimeConfigConflict
+	}
+	return nil
+}
+
+// MarkRuntimeConfigRolloutState updates the operator-facing rollout lifecycle
+// without changing the desired/effective value. It is used by the safety
+// controller after an automatic rollback so the configuration screen shows
+// why the canary stopped while the restored value remains applied.
+func (s *PgStore) MarkRuntimeConfigRolloutState(ctx context.Context, key string, scope RuntimeConfigScope, scopeID string, version int64, rolloutState RuntimeConfigRolloutState, lastError string) error {
+	if !validRuntimeConfigRolloutState(rolloutState) {
+		return fmt.Errorf("state: invalid runtime config rollout state %q", rolloutState)
+	}
+	if len(lastError) > 1024 {
+		lastError = lastError[:1024]
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE runtime_config_entries
+		SET rollout_state = $5,
+		    last_error = NULLIF($6, ''),
+		    updated_at = now()
+		WHERE config_key = $1 AND scope = $2 AND scope_id = $3 AND version = $4`,
+		key, string(scope), scopeID, version, string(rolloutState), lastError)
+	if err != nil {
+		return fmt.Errorf("state: mark runtime config rollout state: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrRuntimeConfigConflict
@@ -270,20 +302,21 @@ type runtimeConfigScanner interface {
 
 func scanRuntimeConfig(row runtimeConfigScanner) (RuntimeConfig, error) {
 	var (
-		config                     RuntimeConfig
-		scope, mode, status        string
-		desired, effective         []byte
-		actorID, reason, lastError string
+		config                            RuntimeConfig
+		scope, rolloutState, mode, status string
+		desired, effective                []byte
+		actorID, reason, lastError        string
 	)
 	err := row.Scan(
 		&config.ID, &config.Key, &scope, &config.ScopeID,
-		&desired, &effective, &config.Version, &config.RolloutPercent, &mode, &status,
+		&desired, &effective, &config.Version, &config.RolloutPercent, &rolloutState, &mode, &status,
 		&lastError, &actorID, &reason, &config.UpdatedAt, &config.AppliedAt,
 	)
 	if err != nil {
 		return RuntimeConfig{}, err
 	}
 	config.Scope = RuntimeConfigScope(scope)
+	config.RolloutState = RuntimeConfigRolloutState(rolloutState)
 	config.ApplyMode = RuntimeConfigApplyMode(mode)
 	config.Status = RuntimeConfigStatus(status)
 	config.DesiredValue = json.RawMessage(desired)

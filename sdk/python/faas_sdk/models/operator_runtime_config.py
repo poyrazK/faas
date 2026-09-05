@@ -12,6 +12,10 @@ from ..models.operator_runtime_config_apply_mode import (
     check_operator_runtime_config_apply_mode,
 )
 from ..models.operator_runtime_config_kind import OperatorRuntimeConfigKind, check_operator_runtime_config_kind
+from ..models.operator_runtime_config_rollout_state import (
+    OperatorRuntimeConfigRolloutState,
+    check_operator_runtime_config_rollout_state,
+)
 from ..models.operator_runtime_config_scope import OperatorRuntimeConfigScope, check_operator_runtime_config_scope
 from ..models.operator_runtime_config_source import OperatorRuntimeConfigSource, check_operator_runtime_config_source
 from ..models.operator_runtime_config_status import OperatorRuntimeConfigStatus, check_operator_runtime_config_status
@@ -38,6 +42,7 @@ class OperatorRuntimeConfig:
     effective_value: Any
     scope: OperatorRuntimeConfigScope
     rollout_percent: int
+    rollout_state: OperatorRuntimeConfigRolloutState
     source: OperatorRuntimeConfigSource
     apply_mode: OperatorRuntimeConfigApplyMode
     controller_enabled: bool
@@ -73,6 +78,8 @@ class OperatorRuntimeConfig:
         scope: str = self.scope
 
         rollout_percent = self.rollout_percent
+
+        rollout_state: str = self.rollout_state
 
         source: str = self.source
 
@@ -121,6 +128,7 @@ class OperatorRuntimeConfig:
                 "effective_value": effective_value,
                 "scope": scope,
                 "rollout_percent": rollout_percent,
+                "rollout_state": rollout_state,
                 "source": source,
                 "apply_mode": apply_mode,
                 "controller_enabled": controller_enabled,
@@ -167,6 +175,8 @@ class OperatorRuntimeConfig:
         scope = check_operator_runtime_config_scope(d.pop("scope"))
 
         rollout_percent = d.pop("rollout_percent")
+
+        rollout_state = check_operator_runtime_config_rollout_state(d.pop("rollout_state"))
 
         source = check_operator_runtime_config_source(d.pop("source"))
 
@@ -220,6 +230,7 @@ class OperatorRuntimeConfig:
             effective_value=effective_value,
             scope=scope,
             rollout_percent=rollout_percent,
+            rollout_state=rollout_state,
             source=source,
             apply_mode=apply_mode,
             controller_enabled=controller_enabled,
