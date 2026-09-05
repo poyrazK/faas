@@ -15,6 +15,14 @@ The CLI detects the application shape, uploads the current working tree
 (including uncommitted changes), waits for the real build, prints a stable URL,
 and watches deployable files for the next change.
 
+Railpack developer builds keep their Firecracker VM isolation but reuse a
+tenant- and workspace-scoped BuildKit dependency cache between syncs. When the
+runtime and lockfiles are unchanged, matching install layers are restored; a
+dependency or runtime change is validated by BuildKit and rebuilds only the
+invalidated layers. The CLI prints whether the dependency cache was restored
+and the total time until the new version is live. Dockerfile builds remain on
+the cold path for now.
+
 ```sh
 gregale dev --once             # sync once, do not watch
 gregale dev --path apps/api    # select one workspace application
@@ -36,5 +44,5 @@ immediately.
 
 Developer environments currently consume the same deployed-app quota as pull
 request previews. Separate development quotas and incremental source transfer
-are follow-up improvements; this first slice deliberately reuses the existing
+remain follow-up improvements. Source archives still use the existing
 deployment path end to end.

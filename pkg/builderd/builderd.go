@@ -516,18 +516,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	vmCtx, cancel := context.WithTimeout(ctx, timeout)
 
 	handle, err := b.vm.Spawn(vmCtx, VMRequest{
-		BuildID:        build.ID,
-		TenantID:       app.AccountID,
-		DeploymentID:   dep.ID,
-		SourcePath:     dep.SourcePath,
-		SourceRoot:     dep.SourceRoot,
-		Framework:      fw,
-		Runtime:        runtimeName,
-		RuntimeBaseRef: runtimeBaseRef,
-		LogPath:        dep.LogPath,
-		RAMMB:          api.BuildVMRAMMB,
-		TimeoutSec:     b.cfg.BuildTimeoutSeconds,
-		Plan:           string(acct.Plan),
+		BuildID:            build.ID,
+		TenantID:           app.AccountID,
+		DeploymentID:       dep.ID,
+		SourcePath:         dep.SourcePath,
+		SourceRoot:         dep.SourceRoot,
+		Framework:          fw,
+		Runtime:            runtimeName,
+		RuntimeBaseRef:     runtimeBaseRef,
+		DependencyCacheKey: dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef),
+		LogPath:            dep.LogPath,
+		RAMMB:              api.BuildVMRAMMB,
+		TimeoutSec:         b.cfg.BuildTimeoutSeconds,
+		Plan:               string(acct.Plan),
 	})
 	if err != nil {
 		// Translate a context-deadline to timeout-class; everything else is infra.
@@ -544,6 +545,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// allowed to use its export headroom to collect build-done.json and the OCI
 	// tarball after the in-guest build reaches its own timeout.
 	cancel()
+	if handle.DependencyCacheKey != "" {
+		if handle.DependencyCacheRestored {
+			b.emitBuildLog(ctx, build.ID, "dependency cache restored — reusing matching install layers\n")
+		} else {
+			b.emitBuildLog(ctx, build.ID, "dependency cache cold — installing dependencies\n")
+		}
+	}
 
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	watchDone := make(chan struct{})
@@ -583,6 +591,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
+	}
+	if out.DependencyCacheStoreError != "" {
+		b.log.Warn("builderd: dependency cache store failed (continuing)", "build", build.ID, "err", out.DependencyCacheStoreError)
+		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next sync may reinstall dependencies\n")
+	} else if out.DependencyCacheStored {
+		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next developer sync\n")
 	}
 	if out.ExitCode != 0 {
 		// Prefer the failure class the guest-init captured in build-done.json

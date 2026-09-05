@@ -983,6 +983,17 @@ func runBuild(m api.BuildManifest) error {
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
 	stopBuildkit()
+	if m.DependencyCache {
+		cachePath := filepath.Join(m.OutDir, "cache")
+		removed, cacheErr := removeOversizedDependencyCache(cachePath, api.MaxExportedLayerBytes)
+		switch {
+		case cacheErr != nil:
+			fmt.Fprintf(os.Stderr, "guest-init: dependency cache discarded: %v\n", cacheErr)
+			_ = os.RemoveAll(cachePath)
+		case removed:
+			fmt.Fprintf(os.Stderr, "guest-init: dependency cache exceeded %d bytes and was discarded\n", api.MaxExportedLayerBytes)
+		}
+	}
 	fmt.Printf("guest-init: build command finished, err=%v, output bytes=%d\n", err, buf.Len())
 	if buf.Len() > 0 {
 		fmt.Printf("--- build output ---\n%s\n--- end build output ---\n", buf.String())
@@ -1006,6 +1017,41 @@ func runBuild(m api.BuildManifest) error {
 		}
 	}
 	return finish(err, combined.String())
+}
+
+func removeOversizedDependencyCache(root string, maxBytes int64) (bool, error) {
+	var total int64
+	oversized := false
+	err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, os.ErrNotExist) {
+			return fs.SkipAll
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			if maxBytes > 0 && info.Size() > maxBytes-total {
+				oversized = true
+				return fs.SkipAll
+			}
+			total += info.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if oversized {
+		return true, os.RemoveAll(root)
+	}
+	return false, nil
 }
 
 // stopBuildDaemon stops writers before syncing the export drive. Bound the wait
@@ -1295,9 +1341,14 @@ func buildArgv(m api.BuildManifest) []string {
 		"--opt", "filename=railpack-plan.json",
 		"--local", "context=" + shellQuote(contextDir),
 		"--local", "dockerfile=" + shellQuote(planDir),
-		"--output", "type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")),
-		"--progress", "plain",
 	}, " ")
+	if m.DependencyCacheImport {
+		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
+	}
+	if m.DependencyCache {
+		build += " --export-cache " + shellQuote("type=local,dest=/build/out/cache,mode=max")
+	}
+	build += " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build}
 }
 

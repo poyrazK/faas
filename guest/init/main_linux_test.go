@@ -395,6 +395,64 @@ func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 	}
 }
 
+func TestBuildArgv_DeveloperDependencyCache(t *testing.T) {
+	got := buildArgv(api.BuildManifest{
+		Framework:             api.FrameworkRailpackNode,
+		Workdir:               "/build/src",
+		OutDir:                "/build/out",
+		DependencyCache:       true,
+		DependencyCacheImport: true,
+	})
+	joined := strings.Join(got, " ")
+	for _, want := range []string{
+		"--import-cache 'type=local,src=/build/cache'",
+		"--export-cache 'type=local,dest=/build/out/cache,mode=max'",
+		"--output type=oci,dest='/build/out/image.tar'",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("developer cache argv missing %q: %s", want, joined)
+		}
+	}
+
+	cold := strings.Join(buildArgv(api.BuildManifest{
+		Framework:       api.FrameworkRailpackNode,
+		Workdir:         "/build/src",
+		OutDir:          "/build/out",
+		DependencyCache: true,
+	}), " ")
+	if strings.Contains(cold, "--import-cache") || !strings.Contains(cold, "--export-cache") {
+		t.Fatalf("cold developer cache argv = %s", cold)
+	}
+}
+
+func TestRemoveOversizedDependencyCache(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cache")
+	if err := os.MkdirAll(filepath.Join(root, "blobs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "blobs", "one"), []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := removeOversizedDependencyCache(root, 32)
+	if err != nil || removed {
+		t.Fatalf("under budget: removed=%v err=%v", removed, err)
+	}
+	removed, err = removeOversizedDependencyCache(root, 3)
+	if err != nil || !removed {
+		t.Fatalf("over budget: removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("oversized cache remains: %v", err)
+	}
+	removed, err = removeOversizedDependencyCache(filepath.Join(t.TempDir(), "missing"), 3)
+	if err != nil || removed {
+		t.Fatalf("missing cache: removed=%v err=%v", removed, err)
+	}
+}
+
 func TestManifestBuildContextFallsBackToWorkdir(t *testing.T) {
 	if got := manifestBuildContext(api.BuildManifest{Workdir: "/build/src"}); got != "/build/src" {
 		t.Fatalf("manifestBuildContext legacy fallback = %q, want /build/src", got)

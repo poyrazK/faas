@@ -77,34 +77,42 @@ const (
 // empty drive1 would silently boot guest-init into `tar -xaf /build/src.tar`
 // against a missing file and produce a no-op build.
 func CreateBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, sourcePath string) error {
+	_, err := createBuildDrive1(ctx, dest, m, sourcePath, "")
+	return err
+}
+
+// createBuildDrive1 optionally seeds BuildKit's local cache into /build/cache.
+// Cache errors degrade to a cold build: source integrity and drive creation are
+// still authoritative, while the cache is explicitly disposable.
+func createBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, sourcePath, dependencyCache string) (bool, error) {
 	if dest == "" {
-		return fmt.Errorf("builderd: empty drive1 path")
+		return false, fmt.Errorf("builderd: empty drive1 path")
 	}
 	if m.BuildID == "" {
-		return fmt.Errorf("builderd: empty build_id")
+		return false, fmt.Errorf("builderd: empty build_id")
 	}
 	if sourcePath == "" {
-		return fmt.Errorf("builderd: empty source_path for build %s (image deploys must not reach builderd)", m.BuildID)
+		return false, fmt.Errorf("builderd: empty source_path for build %s (image deploys must not reach builderd)", m.BuildID)
 	}
 	srcSum, err := fileSHA256(sourcePath)
 	if err != nil {
-		return fmt.Errorf("builderd: stat source %s: %w", sourcePath, err)
+		return false, fmt.Errorf("builderd: stat source %s: %w", sourcePath, err)
 	}
 	if err := checkBuildDriveCapacity(dest); err != nil {
-		return err
+		return false, err
 	}
 
 	// 1. Truncate the host file to BuildDriveSizeBytes.
 	f, err := os.Create(dest)
 	if err != nil {
-		return fmt.Errorf("builderd: create drive1: %w", err)
+		return false, fmt.Errorf("builderd: create drive1: %w", err)
 	}
 	if err := f.Truncate(BuildDriveSizeBytes); err != nil {
 		_ = f.Close()
-		return fmt.Errorf("builderd: truncate drive1: %w", err)
+		return false, fmt.Errorf("builderd: truncate drive1: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("builderd: close drive1: %w", err)
+		return false, fmt.Errorf("builderd: close drive1: %w", err)
 	}
 
 	// 2. Stage the guest-visible tree as plain files. This avoids a loopback
@@ -112,43 +120,54 @@ func CreateBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, so
 	// hardened faas-builderd systemd unit.
 	mp, err := os.MkdirTemp("", "faas-buildstage-")
 	if err != nil {
-		return fmt.Errorf("builderd: mktemp staging: %w", err)
+		return false, fmt.Errorf("builderd: mktemp staging: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(mp) }()
 
+	cacheRestored := false
+	m.DependencyCacheImport = false
+	if m.DependencyCache && dependencyCache != "" {
+		cacheTarget := filepath.Join(mp, "build", "cache")
+		if cacheErr := copyDependencyCache(dependencyCache, cacheTarget, dependencyCacheMaxBytes); cacheErr == nil {
+			cacheRestored = true
+			m.DependencyCacheImport = true
+		} else {
+			_ = os.RemoveAll(cacheTarget)
+		}
+	}
 	if err := writeBuildManifest(mp, m); err != nil {
-		return fmt.Errorf("builderd: write manifest: %w", err)
+		return false, fmt.Errorf("builderd: write manifest: %w", err)
 	}
 	if err := copySourceTarball(mp, sourcePath); err != nil {
-		return fmt.Errorf("builderd: copy source: %w", err)
+		return false, fmt.Errorf("builderd: copy source: %w", err)
 	}
 	if err := writeBuildEntropy(mp); err != nil {
-		return fmt.Errorf("builderd: write entropy seed: %w", err)
+		return false, fmt.Errorf("builderd: write entropy seed: %w", err)
 	}
 	// guest-init mounts drive1 at /overlay and uses /overlay/upper as the
 	// overlay upperdir. Put the build manifest and source below upper/ so they
 	// are visible from the merged root inside the builder VM.
 	if err := wrapBuildUpper(mp); err != nil {
-		return fmt.Errorf("builderd: wrap drive1 upper: %w", err)
+		return false, fmt.Errorf("builderd: wrap drive1 upper: %w", err)
 	}
 	// Sanity: confirm the bytes that landed on disk match the host source.
 	// Catches a torn copy / quota-hit / ENOSPC that would otherwise surface
 	// as a silent truncated tarball inside the VM.
 	gotSum, err := fileSHA256(filepath.Join(mp, "upper", "build", "src.tar"))
 	if err != nil {
-		return fmt.Errorf("builderd: re-stat staged tarball: %w", err)
+		return false, fmt.Errorf("builderd: re-stat staged tarball: %w", err)
 	}
 	if gotSum != srcSum {
-		return fmt.Errorf("builderd: staged tarball sha256 mismatch: got %s, want %s", gotSum, srcSum)
+		return false, fmt.Errorf("builderd: staged tarball sha256 mismatch: got %s, want %s", gotSum, srcSum)
 	}
 
 	// 3. Build the ext4 image directly from the staged tree. mke2fs creates
 	// the filesystem and copies the tree in one operation; the image remains
 	// sparse and keeps the existing 28 GiB builder scratch budget.
 	if out, err := exec.CommandContext(ctx, buildMkfs, "-L", buildLabel, "-F", "-d", mp, dest).CombinedOutput(); err != nil {
-		return fmt.Errorf("builderd: mkfs: %w (%s)", err, string(out))
+		return false, fmt.Errorf("builderd: mkfs: %w (%s)", err, string(out))
 	}
-	return nil
+	return cacheRestored, nil
 }
 
 func checkBuildDriveCapacity(dest string) error {

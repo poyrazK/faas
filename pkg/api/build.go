@@ -57,8 +57,13 @@ type BuildManifest struct {
 	// the pinned Gregale runner base used during image materialisation.
 	Runtime        string `json:"runtime,omitempty"`
 	RuntimeBaseRef string `json:"runtime_base_ref,omitempty"`
-	TimeoutSec     int    `json:"timeout_sec"`
-	LogTailBytes   int    `json:"log_tail_bytes"` // default 64 KiB
+	// DependencyCache enables the developer-session BuildKit cache exporter.
+	// Import is set only when builderd successfully staged a prior cache into
+	// this otherwise-ephemeral builder VM. Production builds leave both false.
+	DependencyCache       bool `json:"dependency_cache,omitempty"`
+	DependencyCacheImport bool `json:"dependency_cache_import,omitempty"`
+	TimeoutSec            int  `json:"timeout_sec"`
+	LogTailBytes          int  `json:"log_tail_bytes"` // default 64 KiB
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init

@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -56,6 +57,10 @@ type VMMDriver struct {
 	// exportDir is the parent of all build artifact exports: vmmd writes
 	// <exportDir>/<build_id>/build-done.json and /build/out/* here.
 	exportDir string
+
+	// dependencyCacheMu serializes seed-copy and atomic publication. Only
+	// developer sessions use it; the platform has at most two builder slots.
+	dependencyCacheMu sync.Mutex
 }
 
 // NewVMMDriver opens a lazy gRPC connection to vmmd's socket.
@@ -173,9 +178,28 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		TimeoutSec:     timeoutSec,
 		LogTailBytes:   64 * 1024,
 	}
-	if err := CreateBuildDrive1(ctx, drive1Path, bManifest, req.SourcePath); err != nil {
+	cachePath := ""
+	if req.DependencyCacheKey != "" {
+		var cachePathErr error
+		cachePath, cachePathErr = dependencyCachePath(d.driveDir, req.DependencyCacheKey)
+		if cachePathErr != nil {
+			_ = os.Remove(drive1Path)
+			return BuildHandle{}, fmt.Errorf("builderd: dependency cache: %w", cachePathErr)
+		}
+		bManifest.DependencyCache = true
+	}
+	var cacheRestored bool
+	var driveErr error
+	if cachePath == "" {
+		cacheRestored, driveErr = createBuildDrive1(ctx, drive1Path, bManifest, req.SourcePath, "")
+	} else {
+		d.dependencyCacheMu.Lock()
+		cacheRestored, driveErr = createBuildDrive1(ctx, drive1Path, bManifest, req.SourcePath, cachePath)
+		d.dependencyCacheMu.Unlock()
+	}
+	if driveErr != nil {
 		os.Remove(drive1Path)
-		return BuildHandle{}, fmt.Errorf("builderd: create drive1: %w", err)
+		return BuildHandle{}, fmt.Errorf("builderd: create drive1: %w", driveErr)
 	}
 
 	// 2. Cold-boot. BuildSpec carries the export dir; vmmd's Destroy will
@@ -213,12 +237,14 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	}
 
 	return BuildHandle{
-		Instance:   instance,
-		HostDrive1: drive1Path,
-		ExportDir:  buildExportDir,
-		BuildID:    req.BuildID,
-		TimeoutSec: timeoutSec,
-		StartedAt:  time.Now(),
+		Instance:                instance,
+		HostDrive1:              drive1Path,
+		ExportDir:               buildExportDir,
+		BuildID:                 req.BuildID,
+		TimeoutSec:              timeoutSec,
+		StartedAt:               time.Now(),
+		DependencyCacheKey:      req.DependencyCacheKey,
+		DependencyCacheRestored: cacheRestored,
 	}, nil
 }
 
@@ -290,6 +316,26 @@ func (d *VMMDriver) WaitForCompletion(ctx context.Context, h BuildHandle) (Build
 		res.FailurePkg = done.FailurePkg
 	}
 	if exitCode == 0 {
+		if h.DependencyCacheKey != "" {
+			cachePath, pathErr := dependencyCachePath(d.driveDir, h.DependencyCacheKey)
+			cacheSource := filepath.Join(h.ExportDir, "build", "out", "cache")
+			if pathErr != nil {
+				res.DependencyCacheStoreError = pathErr.Error()
+			} else {
+				d.dependencyCacheMu.Lock()
+				cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes)
+				if cacheErr == nil {
+					cacheErr = sweepDependencyCaches(d.driveDir, time.Now())
+				}
+				d.dependencyCacheMu.Unlock()
+				_ = os.RemoveAll(cacheSource)
+				if cacheErr != nil {
+					res.DependencyCacheStoreError = cacheErr.Error()
+				} else {
+					res.DependencyCacheStored = true
+				}
+			}
+		}
 		res.FailureClass = ""
 		return res, nil
 	}
@@ -354,6 +400,9 @@ func (d *VMMDriver) runJanitor() {
 			_ = os.Remove(filepath.Join(d.driveDir, e.Name()))
 		}
 	}
+	d.dependencyCacheMu.Lock()
+	_ = sweepDependencyCaches(d.driveDir, time.Now())
+	d.dependencyCacheMu.Unlock()
 }
 
 // classifyBuildFailure resolves the failure class for a non-zero build exit.
