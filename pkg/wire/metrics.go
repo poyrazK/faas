@@ -4381,7 +4381,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		ociEgressDeny:                                         ociEgressDeny,
 		ownershipClamp:                                        ownershipClamp,
 		layerEntrySkipped:                                     layerEntrySkipped,
-		passwdEntries:                                          passwdEntries,
+		passwdEntries:                                         passwdEntries,
 		provenanceWrites:                                      provenanceWrites,
 		imageScanVulns:                                        imageScanVulns,
 		deployScanDuration:                                    deployScanDuration,

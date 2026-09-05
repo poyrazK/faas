@@ -134,9 +134,9 @@ var UserUIDOverrideMax = map[Plan]int{
 // a 4 GB full-rootfs image that would push them onto the
 // Scale-plan billing rate.
 var MaxFullRootfsLayerBytes = map[Plan]int64{
-	PlanHobby: 256 << 20,  // 256 MB
-	PlanPro:   1 << 30,    // 1 GB
-	PlanScale: 4 << 30,    // 4 GB
+	PlanHobby: 256 << 20, // 256 MB
+	PlanPro:   1 << 30,   // 1 GB
+	PlanScale: 4 << 30,   // 4 GB
 }
 
 // FullRootfsAllowAutoDefault (M-3 / ADR-141 §Decision 2) is the
