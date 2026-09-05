@@ -31,6 +31,8 @@ import (
 // image-config blob. Pointer-to-nested lets us distinguish "absent"
 // from "present-but-empty" for the OCI `config` envelope.
 type rawConfig struct {
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
 	// Flat fields (Docker v2 schema).
 	Cmd         []string        `json:"Cmd"`
 	Env         []string        `json:"Env"`
@@ -54,6 +56,7 @@ type rawConfig struct {
 
 // rawNestedConfig is the inner envelope of an OCI image-config.
 type rawNestedConfig struct {
+	Volumes      map[string]struct{} `json:"Volumes"`
 	Cmd          []string            `json:"Cmd"`
 	Env          []string            `json:"Env"`
 	WorkingDir   string              `json:"WorkingDir"`

@@ -404,8 +404,11 @@ var cliCommands = []cliCommand{
 		// post-deploy. Auth not required (local source only).
 		Name:    dispatchDoctor,
 		DocSlug: "doctor",
-		Short:   "Preflight: scan local source; deployed-only checks are reported as skipped",
+		Short:   "Preflight local source or OCI image metadata; runtime checks are skipped",
 		Flags: []cliFlag{
+			{Name: "image", Value: "REF", Short: "inspect a single-platform OCI image without downloading layers"},
+			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
+			{Name: "registry-password-stdin", Short: "read registry password/token from stdin; requires --image and --registry-user"},
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},
 			{Name: "json", Short: "machine output (default: human prose)"},
 		},
