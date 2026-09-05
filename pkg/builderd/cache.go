@@ -65,12 +65,6 @@ func (c *Cache) Lookup(sourceHash string, fw Framework, plan api.Plan) (CacheEnt
 	return c.lookupKey(sourceHash, fw, plan)
 }
 
-// LookupWithBase looks up an archive-root build in the versioned recipe
-// namespace. Call LookupBuild when selecting a workspace member.
-func (c *Cache) LookupWithBase(sourceHash string, fw Framework, plan api.Plan, runtimeBaseRef string) (CacheEntry, bool) {
-	return c.LookupBuild(BuildCacheRecipe{SourceSHA256: sourceHash, Framework: fw, Plan: plan, RuntimeBaseRef: runtimeBaseRef})
-}
-
 func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (CacheEntry, bool) {
 	if c == nil || c.root == "" {
 		return CacheEntry{}, false
@@ -156,12 +150,6 @@ func (c *Cache) checksumPath(sourceHash string, fw Framework, plan api.Plan) str
 //     writers should produce identical bytes; the existing copy is fine.
 func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {
 	return c.storeKey(sourceHash, fw, plan, layerPath, bytes)
-}
-
-// StoreWithBase publishes an archive-root build in the versioned recipe
-// namespace. Call StoreBuild when selecting a workspace member.
-func (c *Cache) StoreWithBase(sourceHash string, fw Framework, plan api.Plan, runtimeBaseRef, layerPath string, bytes int64) error {
-	return c.StoreBuild(BuildCacheRecipe{SourceSHA256: sourceHash, Framework: fw, Plan: plan, RuntimeBaseRef: runtimeBaseRef}, layerPath, bytes)
 }
 
 func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {

@@ -45,13 +45,38 @@ func (f *fakeNotifier) Notify(_ context.Context, channel, payload string) error 
 // failing. The result's OCIImage is what ProcessOne stamps onto the
 // deployment row.
 type fakeVM struct {
-	out        BuildOutcome
-	spawnErr   error
-	waitErr    error
-	waitHook   func()
-	spawnCalls int
-	waitCalls  int
-	handle     BuildHandle
+	out            BuildOutcome
+	spawnErr       error
+	waitErr        error
+	waitHook       func()
+	environment    BuildEnvironment
+	environmentErr error
+	spawnCalls     int
+	waitCalls      int
+	handle         BuildHandle
+}
+
+var testBuildEnvironment = BuildEnvironment{
+	BuilderBaseIdentity: "sha256:test-builder-base",
+	TargetPlatform:      "linux/amd64",
+}
+
+func (f *fakeVM) BuildEnvironment() (BuildEnvironment, error) {
+	if f.environment == (BuildEnvironment{}) && f.environmentErr == nil {
+		return testBuildEnvironment, nil
+	}
+	return f.environment, f.environmentErr
+}
+
+func testBuildCacheRecipe(sourceHash string, framework Framework, plan api.Plan, runtimeBaseRef string) BuildCacheRecipe {
+	return BuildCacheRecipe{
+		SourceSHA256:        sourceHash,
+		Framework:           framework,
+		Plan:                plan,
+		RuntimeBaseRef:      runtimeBaseRef,
+		BuilderBaseIdentity: testBuildEnvironment.BuilderBaseIdentity,
+		TargetPlatform:      testBuildEnvironment.TargetPlatform,
+	}
 }
 
 func (f *fakeVM) Spawn(_ context.Context, _ VMRequest) (BuildHandle, error) {
@@ -168,7 +193,7 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreWithBase(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal, layerPath, 18); err != nil {
+	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), layerPath, 18); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,7 +289,7 @@ func TestProcessOne_VMSpawnSucceedsAndStamps(t *testing.T) {
 	}
 	// Cache should have been populated.
 	hash, _ := hashFile(srcTar)
-	if _, ok := c.LookupWithBase(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal); !ok {
+	if _, ok := c.LookupBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal)); !ok {
 		t.Error("expected cache populated after successful build")
 	}
 }
@@ -319,7 +344,7 @@ func TestProcessOne_CancelledCompletionDoesNotPublishArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cache.LookupWithBase(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal); ok {
+	if _, ok := cache.LookupBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal)); ok {
 		t.Fatal("cancelled build populated the cache")
 	}
 }
@@ -1216,7 +1241,7 @@ func TestProcessNext_FairnessWindow_ZeroDisablesFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreWithBase(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal, srcCopy, 17); err != nil {
+	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), srcCopy, 17); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1274,7 +1299,7 @@ func TestProcessNext_FairnessWindow_PreferQuietAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreWithBase(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal, srcCopy, 17); err != nil {
+	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), srcCopy, 17); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1331,7 +1356,7 @@ func TestProcessNext_RecordRecentBuildClaim_FailureDoesNotFailBuild(t *testing.T
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreWithBase(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal, srcCopy, 17); err != nil {
+	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), srcCopy, 17); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1375,7 +1400,7 @@ func TestProcessOne_CacheHitPersistsProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreWithBase(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal, layerPath, 18); err != nil {
+	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), layerPath, 18); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1469,7 +1494,7 @@ func TestProcessOne_ProvenanceCopiesDeploymentSourceFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreWithBase(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal, layerPath, 18); err != nil {
+	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), layerPath, 18); err != nil {
 		t.Fatal(err)
 	}
 

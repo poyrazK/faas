@@ -112,6 +112,12 @@ func (d *VMMDriver) Close() error {
 	return d.conn.Close()
 }
 
+// BuildEnvironment binds deployment-cache reuse to the staged builder image,
+// its injected boot contract, and the architecture selected by this binary.
+func (d *VMMDriver) BuildEnvironment() (BuildEnvironment, error) {
+	return readBuildEnvironment(d.builderBase, runtime.GOOS+"/"+runtime.GOARCH)
+}
+
 // Spawn materialises the per-VM drive1, cold-boots the VM, and returns a
 // BuildHandle the caller can pass to WaitForCompletion. The VM base is
 // d.builderBase; drive1 is a throwaway 28 GiB ext4 that carries BuildManifest

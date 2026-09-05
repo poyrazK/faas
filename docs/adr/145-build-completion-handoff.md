@@ -48,6 +48,12 @@ a database error, or a lost notification could leave contradictory state.
   base reference. Workspace members sharing an archive must not share output
   unless their selected roots also match. Empty and `.` roots are equivalent.
   Never fall back to unversioned entries: their producing root is unknown.
+- Partition cache entries by the staged builder base identity and target
+  platform. Hash the builder base digest sidecar so the OCI config, base layout,
+  and injected guest-init contract all participate without reading the full
+  ext4 for every build. If the sidecar is missing, malformed, older than the
+  base, or changes during a build, continue the build but do not reuse or
+  publish a cache entry.
 
 ## Consequences and limits
 
@@ -57,9 +63,9 @@ interruption during export. Checksumming cache hits adds an artifact read.
 The recipe namespace causes a one-time cache miss for old entries; existing GC
 continues to collect them. The source digest in provenance remains the archive
 SHA-256, separate from the cache recipe digest. Changes to build semantics or
-recipe encoding require a recipe version bump. Builder/toolchain digests and
-platform partitioning remain follow-ups; the recipe does not yet promise full
-build reproducibility.
+recipe encoding require a recipe version bump. The v2 recipe closes builder
+toolchain and platform reuse, but external package registries can still make a
+fresh build non-reproducible without dependency lockfiles.
 
 Recovery covers the committed build-to-imaged handoff before imaging starts.
 It does not resume an imaged process that crashes partway through conversion.
