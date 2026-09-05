@@ -17,9 +17,9 @@
 //
 // The writer buffers 64 KiB via bufio so a chatty app doesn't
 // burn a syscall per eviction. The buffer is flushed on every
-// Close and on every rotateBoundary crossing (the shipper's
-// flushOnce renames the file, after which the next eviction
-// opens a fresh .partial in the new day's directory).
+// Close and before the shipper rotates a file into its
+// .upload state; subsequent evictions open a fresh .partial
+// while the sealed file is uploaded.
 //
 // Threading: the ring's OnEvict callback runs under r.mu.
 // The spool holds its own per-instance mu so concurrent
@@ -34,8 +34,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,15 +56,20 @@ const DefaultBufferBytes = 64 * 1024
 const MaxInstanceIDLen = 128
 
 // spoolFileName is the .partial suffix the shipper looks for at
-// flush time. Renaming to .jsonl.gz signals "shipped" once the
-// gzipped object lands in the bucket; the purger sweeps
-// .jsonl.gz files older than the retention boundary.
+// flush time. The shipper rotates it to .upload before reading,
+// then leaves a .jsonl.gz marker after the object lands in the
+// bucket; the purger sweeps .jsonl.gz files older than retention.
 //
 // The prefix is the day (YYYY-MM-DD) so FilesSnapshot can recover
 // the day after CloseAll drains the in-memory map — the spool
 // directory layout has year/month above, but the day is also
 // encoded in the file name to keep the on-disk parse unambiguous.
 const spoolFilePrefix = "log-"
+
+const (
+	spoolPartialSuffix = ".jsonl.partial"
+	spoolUploadSuffix  = ".jsonl.upload"
+)
 
 // spoolLine is the on-disk JSON shape. Fields are kept stable
 // across versions; `seq` is the monotonic ring seq the line was
@@ -121,15 +128,33 @@ func NewSpool(root string, maxBytes int64) *Spool {
 		maxBytes: maxBytes,
 		bufBytes: DefaultBufferBytes,
 		files:    make(map[spoolKey]*fileHandle),
+		written:  existingUnshippedBytes(root),
 	}
+}
+
+func existingUnshippedBytes(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(name, spoolPartialSuffix) && !strings.HasSuffix(name, spoolUploadSuffix) {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // Write persists one evicted logbuf.Line to disk. Safe for
 // concurrent calls from many ring goroutines. Returns the byte
 // count written (so the caller can update a metric) and any
-// error. Errors are surfaced to the ring via the apid
-// apid_log_archive_failures_total{reason="spool_write"} counter
-// (cmd/apid/main.go).
+// error. The daemon-side eviction sink records write failures in
+// {daemon}_log_archive_failures_total{reason="spool_write"}.
 //
 // When the spool is at maxBytes (FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX)
 // the write is refused and ErrSpoolFull is returned — the ring
@@ -195,7 +220,6 @@ func (s *Spool) openLocked(key spoolKey) (*fileHandle, error) {
 	bw := bufio.NewWriterSize(f, s.bufBytes)
 	fh := &fileHandle{bw: bw, file: f, path: path, size: stat.Size()}
 	s.files[key] = fh
-	s.written += stat.Size()
 	return fh, nil
 }
 
@@ -219,9 +243,8 @@ func (s *Spool) CloseAll() error {
 }
 
 // LocalBytes returns the current local-spool size. Read under
-// s.mu; safe for concurrent reads from the apid background
-// sampler (used to populate the apid_log_archive_local_bytes
-// gauge).
+// s.mu; safe for concurrent reads from the daemon background
+// sampler (used to populate the *_log_archive_local_bytes gauge).
 func (s *Spool) LocalBytes() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -244,7 +267,7 @@ func (s *Spool) FilesSnapshot() []FileInfo {
 	s.mu.Lock()
 	root := s.root
 	s.mu.Unlock()
-	out := []FileInfo{}
+	byKey := make(map[string]FileInfo)
 	//nolint:nilerr // Best-effort snapshot — see the docstring above.
 	// Per-entry errors (walkErr, filepath.Rel, d.Info) are swallowed
 	// so a single unreadable .partial file doesn't poison the whole
@@ -257,12 +280,15 @@ func (s *Spool) FilesSnapshot() []FileInfo {
 			return nil
 		}
 		name := d.Name()
-		if !strings.HasPrefix(name, spoolFilePrefix) || !strings.HasSuffix(name, ".jsonl.partial") {
+		if !strings.HasPrefix(name, spoolFilePrefix) ||
+			(!strings.HasSuffix(name, spoolPartialSuffix) && !strings.HasSuffix(name, spoolUploadSuffix)) {
 			return nil
 		}
 		// {prefix}{YYYY-MM-DD}{suffix}. The day sits between
 		// the fixed prefix and suffix.
-		day := strings.TrimSuffix(strings.TrimPrefix(name, spoolFilePrefix), ".jsonl.partial")
+		day := strings.TrimPrefix(name, spoolFilePrefix)
+		day = strings.TrimSuffix(day, spoolPartialSuffix)
+		day = strings.TrimSuffix(day, spoolUploadSuffix)
 		if len(day) != 10 { // YYYY-MM-DD
 			return nil
 		}
@@ -278,17 +304,34 @@ func (s *Spool) FilesSnapshot() []FileInfo {
 		if err != nil {
 			return nil
 		}
-		out = append(out, FileInfo{
+		candidate := FileInfo{
 			Instance: parts[0],
 			Day:      day,
 			Path:     path,
 			Size:     info.Size(),
-		})
+		}
+		key := candidate.Instance + "\x00" + candidate.Day
+		// Prefer a sealed retry fragment over the active partial. The
+		// shipper can then merge any newer partial into the retry file once,
+		// avoiding two uploads to the same daily object in one pass.
+		if existing, ok := byKey[key]; !ok || strings.HasSuffix(name, spoolUploadSuffix) || !strings.HasSuffix(existing.Path, spoolUploadSuffix) {
+			byKey[key] = candidate
+		}
 		return nil
 	})
 	if err != nil {
-		return out
+		return nil
 	}
+	out := make([]FileInfo, 0, len(byKey))
+	for _, f := range byKey {
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Instance != out[j].Instance {
+			return out[i].Instance < out[j].Instance
+		}
+		return out[i].Day < out[j].Day
+	})
 	return out
 }
 
@@ -304,10 +347,115 @@ type FileInfo struct {
 
 // ErrSpoolFull is the typed sentinel the spool returns when
 // FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX would be exceeded. The
-// shipper increments apid_log_archive_failures_total{reason=
-// "spool_full"} on this branch so the operator sees the
+// daemon archive metrics increment the spool_full failure series
+// on this branch so the operator sees the
 // degraded state in /metrics.
 var ErrSpoolFull = errors.New("logarchive: spool full")
+
+// PrepareUpload seals the current partial file for (instance, day) and
+// returns a stable upload path. New writes go to a fresh .partial file while
+// the shipper uploads the sealed .upload file. If a prior upload is still
+// pending, the active partial is merged into it so one daily object remains
+// complete instead of allowing retries to overwrite earlier lines.
+func (s *Spool) PrepareUpload(instance, day string) (string, error) {
+	if instance == "" || len(instance) > MaxInstanceIDLen || strings.ContainsAny(instance, "/\\\x00") {
+		return "", fmt.Errorf("logarchive: invalid instance id")
+	}
+	if len(day) != 10 {
+		return "", fmt.Errorf("logarchive: invalid day %q", day)
+	}
+	key := spoolKey{instance: instance, day: day}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if fh, ok := s.files[key]; ok {
+		if err := fh.bw.Flush(); err != nil {
+			return "", fmt.Errorf("logarchive: flush %s: %w", fh.path, err)
+		}
+		if err := fh.file.Close(); err != nil {
+			return "", fmt.Errorf("logarchive: close %s: %w", fh.path, err)
+		}
+		delete(s.files, key)
+	}
+
+	dir := filepath.Join(s.root, instance, day[:4], day[5:7])
+	partial := filepath.Join(dir, spoolFilePrefix+day+spoolPartialSuffix)
+	upload := filepath.Join(dir, spoolFilePrefix+day+spoolUploadSuffix)
+	partialInfo, partialErr := os.Stat(partial)
+	if partialErr != nil && !errors.Is(partialErr, os.ErrNotExist) {
+		return "", fmt.Errorf("logarchive: stat %s: %w", partial, partialErr)
+	}
+	uploadInfo, uploadErr := os.Stat(upload)
+	if uploadErr != nil && !errors.Is(uploadErr, os.ErrNotExist) {
+		return "", fmt.Errorf("logarchive: stat %s: %w", upload, uploadErr)
+	}
+	if uploadInfo == nil && partialInfo == nil {
+		return "", nil
+	}
+	if uploadInfo == nil {
+		if err := os.Rename(partial, upload); err != nil {
+			return "", fmt.Errorf("logarchive: seal %s: %w", partial, err)
+		}
+		return upload, nil
+	}
+	if partialInfo == nil {
+		return upload, nil
+	}
+
+	// A previous upload failed while new lines were arriving. Append the
+	// newer partial after the sealed backlog, then remove the partial so the
+	// next retry has one complete daily object.
+	src, err := os.Open(partial)
+	if err != nil {
+		return "", fmt.Errorf("logarchive: open %s: %w", partial, err)
+	}
+	dst, err := os.OpenFile(upload, os.O_WRONLY|os.O_APPEND, 0o640)
+	if err != nil {
+		_ = src.Close()
+		return "", fmt.Errorf("logarchive: open %s for merge: %w", upload, err)
+	}
+	_, copyErr := io.Copy(dst, src)
+	closeDstErr := dst.Close()
+	closeSrcErr := src.Close()
+	if copyErr != nil {
+		return "", fmt.Errorf("logarchive: merge %s into %s: %w", partial, upload, copyErr)
+	}
+	if closeDstErr != nil {
+		return "", fmt.Errorf("logarchive: close merged %s: %w", upload, closeDstErr)
+	}
+	if closeSrcErr != nil {
+		return "", fmt.Errorf("logarchive: close %s: %w", partial, closeSrcErr)
+	}
+	if err := os.Remove(partial); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("logarchive: remove merged %s: %w", partial, err)
+	}
+	return upload, nil
+}
+
+// CompleteUpload removes a successfully uploaded sealed file and updates the
+// unshipped-byte tally. The compressed .gz marker is retained for local
+// retention purging, but it is not part of the retry-capacity budget.
+func (s *Spool) CompleteUpload(path string) error {
+	if path == "" || !strings.HasSuffix(path, spoolUploadSuffix) {
+		return fmt.Errorf("logarchive: invalid upload path %q", path)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	info, err := os.Stat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("logarchive: stat completed upload %s: %w", path, err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("logarchive: remove completed upload %s: %w", path, err)
+	}
+	if info != nil {
+		s.written -= info.Size()
+		if s.written < 0 {
+			s.written = 0
+		}
+	}
+	return nil
+}
 
 // FlushKey flushes the bufio buffer for the (instance, day) key
 // without closing the file. The shipper calls this AFTER

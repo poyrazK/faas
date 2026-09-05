@@ -763,6 +763,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the With*Stamper chain shares one receiver rather than
 	// allocating two equivalent adapters.
 	tailStamper := stamperFromStore(store, log)
+	archiveSink, stopArchive := startVMMDLogArchive(ctx, log, ops)
+	if stopArchive != nil {
+		defer stopArchive()
+	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithStorage(storageBackend).
 		// Issue #309 / tier-2 DX: install the per-VMM
@@ -782,6 +786,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithSlowSubscriberCallback(func() {
 			ops.IncLogDropped("slow_subscriber")
 		})
+	if archiveSink != nil {
+		jailer.WithLogEvictionCallback(archiveSink.Enqueue)
+	}
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
 	// stats surface and the liveness loop so load-correlated probe misses

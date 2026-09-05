@@ -40,8 +40,8 @@ import (
 var ErrAuthMissing = errors.New("logarchive: s3client credentials missing")
 
 // ErrPermanent is the wrapper for terminal (4xx) S3 responses.
-// The shipper increments apid_log_archive_failures_total{reason}
-// on a Permanent to give the operator a clear signal that retry
+// The shipper increments *_log_archive_failures_total{reason} on
+// a Permanent to give the operator a clear signal that retry
 // is futile (e.g. 403 AccessDenied, 404 NoSuchBucket, 400
 // InvalidArgument). Transient (5xx, network) errors return
 // their plain error.

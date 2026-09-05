@@ -356,6 +356,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMMD_CONFIG", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMMD_DBURL", Owners: []string{"vmmd"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_VMMD_LISTEN_ADDR", Owners: []string{"vmmd"}, Source: EnvSourceDropin},
+	{Name: "FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional compute-side spool override; defaults to /var/log/faas/vmmd-archive so vmmd and apid do not share active files on single-box hosts"},
 	{Name: "FAAS_VMMD_NODE_KEY_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMMD_RAW_BRIDGE_PATH", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMMD_ROLE", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin},

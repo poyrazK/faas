@@ -302,6 +302,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_CONFIG` | vmmd | `default` |  |
 | `FAAS_VMMD_DBURL` | vmmd | `envfile` |  |
 | `FAAS_VMMD_LISTEN_ADDR` | vmmd | `dropin` |  |
+| `FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT` | vmmd, shared | `default` | optional compute-side spool override; defaults to /var/log/faas/vmmd-archive so vmmd and apid do not share active files on single-box hosts |
 | `FAAS_VMMD_NODE_KEY_PATH` | vmmd | `default` |  |
 | `FAAS_VMMD_RAW_BRIDGE_PATH` | shared | `default` |  |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |

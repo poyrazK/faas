@@ -158,8 +158,8 @@ func TestSpool_ConcurrentSameKey(t *testing.T) {
 
 // TestSpool_Full refuses writes once the cap is exceeded.
 // The ring's OnEvict callback continues to fire; the spool
-// drops and returns ErrSpoolFull so the shipper can increment
-// apid_log_archive_failures_total{reason="spool_full"}.
+// drops and returns ErrSpoolFull so the daemon sink can increment
+// *_log_archive_failures_total{reason="spool_full"}.
 func TestSpool_Full(t *testing.T) {
 	root := t.TempDir()
 	const cap = 256
@@ -197,7 +197,7 @@ func TestSpool_PathTraversal(t *testing.T) {
 
 // TestSpool_LocalBytes tracks the running byte count.
 // The shipper exposes this via LocalBytes() and feeds the
-// apid_log_archive_local_bytes gauge from it.
+// daemon-specific *_log_archive_local_bytes gauge from it.
 func TestSpool_LocalBytes(t *testing.T) {
 	root := t.TempDir()
 	s := NewSpool(root, 1<<20)
@@ -215,6 +215,45 @@ func TestSpool_LocalBytes(t *testing.T) {
 	}
 	if s.LocalBytes() != int64(n1+n2) {
 		t.Errorf("after 2 writes: LocalBytes=%d, want %d", s.LocalBytes(), n1+n2)
+	}
+}
+
+func TestSpool_PrepareUploadRotatesAndMergesRetry(t *testing.T) {
+	root := t.TempDir()
+	s := NewSpool(root, 1<<20)
+	ts := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	if _, err := s.Write("inst", 1, "stdout", ts, "first"); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+	path, err := s.PrepareUpload("inst", "2026-08-08")
+	if err != nil {
+		t.Fatalf("PrepareUpload: %v", err)
+	}
+	if !strings.HasSuffix(path, ".jsonl.upload") {
+		t.Fatalf("upload path = %q, want .jsonl.upload", path)
+	}
+	if _, err := s.Write("inst", 2, "stdout", ts, "second"); err != nil {
+		t.Fatalf("second Write: %v", err)
+	}
+	merged, err := s.PrepareUpload("inst", "2026-08-08")
+	if err != nil {
+		t.Fatalf("PrepareUpload merge: %v", err)
+	}
+	if merged != path {
+		t.Fatalf("merged path = %q, want %q", merged, path)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read merged upload: %v", err)
+	}
+	if got := strings.Count(string(body), "\n"); got != 2 {
+		t.Fatalf("merged lines = %d, want 2: %s", got, body)
+	}
+	if err := s.CompleteUpload(path); err != nil {
+		t.Fatalf("CompleteUpload: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("upload file still exists: %v", err)
 	}
 }
 

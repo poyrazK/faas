@@ -7,20 +7,18 @@
 //
 // Lifecycle:
 //
-//  1. Shipper.Run(ctx) is started by apid's bgBefore closure.
+//  1. Shipper.Run(ctx) is started by the owning daemon's lifecycle.
 //  2. Run calls RunOnce(ctx) immediately, then on every
 //     FlushInterval tick.
 //  3. SIGTERM/SIGINT cancels ctx → Run returns nil; the
 //     underlying ticker is drained via defer ticker.Stop().
-//  4. The flushOnce path calls Spool.CloseAll on the spool it
-//     owns so the bufio buffers are flushed to disk before exit.
+//  4. The flush path rotates active files before upload so the
+//     eviction producer can keep writing without racing a delete.
+//     Shutdown calls Spool.CloseAll after the producer drains.
 //
-// The Shipper OWNS the Spool — apid's wire-up constructs the
-// Spool in bgBefore and hands it to NewShipper; subsequent
-// callers (the vmmd-side OnEvict closure) get the spool via a
-// package-private setter. The apid wire-up is the only one that
-// exercises this seam in production; tests drive NewShipper
-// directly with a t.TempDir() spool.
+// The Shipper owns the Spool. Daemon-specific producers may write
+// through the spool directly or through a bounded async bridge;
+// tests drive NewShipper with a t.TempDir() spool.
 
 package logarchive
 
@@ -68,7 +66,7 @@ type Shipper struct {
 // NewShipper constructs a Shipper. Required fields: cfg (with
 // cfg.Bucket non-empty for the enabled path; empty Bucket = the
 // Shipper.Run disabled-mode branch that returns nil on ctx
-// cancel), spool (the on-disk sink the OnEvict closure writes
+// cancel), spool (the on-disk sink the eviction callback writes
 // to), and s3 (the S3-compatible client). Nil metrics falls
 // back to noopMetrics so tests without a registry keep working.
 //
@@ -117,10 +115,8 @@ func NewShipper(cfg Config, spool *Spool, s3 *S3Client, log *slog.Logger, metric
 	}, nil
 }
 
-// Spool returns the per-process Spool so the vmmd-side OnEvict
-// closure can write evicted lines into it. The Shipper owns the
-// spool's lifetime — the apid wire-up calls CloseAll from the
-// daemon shutdown path.
+// Spool returns the per-process Spool. The caller owns shutdown ordering and
+// must stop producers before calling CloseAll.
 func (s *Shipper) Spool() *Spool { return s.spool }
 
 // Run drives the shipper loop. The first pass runs immediately
@@ -129,7 +125,7 @@ func (s *Shipper) Spool() *Spool { return s.spool }
 // cadence (default 24h). Returns nil on graceful ctx cancel.
 //
 // On error from RunOnce: logs WARN with op context
-// ("logarchive.flush_failed") and continues. The apid pattern
+// ("logarchive.flush_failed") and continues. The daemon pattern
 // mirrors pkg/eventretention.Run: a stuck flush never crashes
 // the daemon; the next tick retries.
 func (s *Shipper) Run(ctx context.Context) error {
@@ -172,14 +168,14 @@ func (s *Shipper) Run(ctx context.Context) error {
 
 // RunOnce performs a single flush pass. Returns the (files
 // shipped, bytes shipped, error) tuple. The shipped-count is
-// the number of .partial files that successfully landed in the
-// bucket; failed uploads are NOT counted (the file stays
-// .partial and the next tick retries). Bytes shipped is the
+// the number of spool files that successfully landed in the
+// bucket; failed uploads are NOT counted (the sealed .upload file
+// remains and the next tick retries). Bytes shipped is the
 // compressed (gzip) byte count.
 //
 // Failures are surfaced as typed errors so the caller can
 // distinguish transient (network) from terminal (4xx). The
-// apid log captures the reason via the slog WARN; the metric
+// daemon log captures the reason via the slog WARN; the metric
 // counter increments the right {reason} bucket.
 func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 	if !s.cfg.Enabled() {
@@ -209,31 +205,32 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 	return shipped, bytes, nil
 }
 
-// uploadFile gzips f.Path to a sibling .jsonl.gz file, PUTs the
-// gzipped bytes to s3://bucket/faas-logs/{instance}/{YYYY}/{MM}/
-// {DD}.jsonl.gz, and renames the local file on success. The
-// .partial suffix is preserved on failure so the next tick
-// retries; the .jsonl.gz rename signals "shipped" so the
-// purger can sweep it after the retention boundary.
+// uploadFile rotates the active spool file before reading it, gzips the
+// sealed upload fragment to a sibling .jsonl.gz file, and PUTs the compressed
+// bytes to s3://bucket/faas-logs/{instance}/{YYYY}/{MM}/{DD}.jsonl.gz. New
+// evictions can continue into a fresh .partial file while the upload runs;
+// failed .upload files remain for the next retry.
 func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
-	// Force the bufio buffer to disk before reading — a partial
-	// flush would lose lines that landed after the FilesSnapshot
-	// read.
-	if err := s.spool.FlushKey(f.Instance, f.Day); err != nil {
-		return 0, fmt.Errorf("flush %s: %w", f.Path, err)
+	path, err := s.spool.PrepareUpload(f.Instance, f.Day)
+	if err != nil {
+		return 0, fmt.Errorf("prepare %s: %w", f.Path, err)
+	}
+	if path == "" {
+		return 0, nil
 	}
 
-	//nolint:forbidigo // vetted path — f.Path is the .partial file
-	// the shipper just renamed from /var/log/faas/archive/{instance}/
-	// {day}.partial (spool.go:Spool.Append) and was just stat'd at
-	// the top of this function; no untrusted input crosses the gate.
-	src, err := os.Open(f.Path)
+	//nolint:forbidigo // vetted path — PrepareUpload returned a spool-owned
+	// sealed file under the configured archive root; no untrusted input crosses
+	// the path gate.
+	src, err := os.Open(path)
 	if err != nil {
-		return 0, fmt.Errorf("open %s: %w", f.Path, err)
+		return 0, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer func() { _ = src.Close() }()
 
-	gzPath := strings.TrimSuffix(f.Path, ".partial") + ".gz"
+	basePath := strings.TrimSuffix(path, spoolUploadSuffix)
+	basePath = strings.TrimSuffix(basePath, spoolPartialSuffix)
+	gzPath := basePath + ".jsonl.gz"
 	gz, err := os.Create(gzPath)
 	if err != nil {
 		return 0, fmt.Errorf("create %s: %w", gzPath, err)
@@ -283,14 +280,12 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 		return 0, fmt.Errorf("put %s: %w", key, err)
 	}
 	s.metrics.ObserveUploadDuration(s.now().Sub(uploadStart).Seconds())
-	// Success: rename the local file to .jsonl.gz (the
-	// shipped-marker). The .partial file is removed because
-	// every byte has been uploaded; the gz file is the
-	// shipped-form. The purger sweeps .jsonl.gz files older
-	// than the retention boundary.
-	if err := os.Remove(f.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	// Success: remove the sealed upload fragment. The .jsonl.gz file is the
+	// shipped marker retained for local purge; any newer evictions are already
+	// in the independent .partial file and remain untouched.
+	if err := s.spool.CompleteUpload(path); err != nil {
 		s.log.Warn("logarchive.remove_partial_failed",
-			"path", f.Path, "err", err)
+			"path", path, "err", err)
 	}
 	return n, nil
 }

@@ -756,39 +756,38 @@ groups:
           description: "{{ $labels.daemon }} on {{ $labels.instance }} has been running for more than 7 days. Verify its deployed build identity and include the host in the next controlled rollout."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonUptimeStale.md"
 
-      # The archive shipper is intentionally best-effort and does not take
-      # apid down when S3 is unavailable. These rules turn its existing
-      # failure/spool signals into an actionable alert instead of relying on
-      # log inspection alone.
+      # The archive shipper is intentionally best-effort and does not take a
+      # daemon down when S3 is unavailable. Match both the control-plane apid
+      # shipper and the compute-side vmmd producer/shipper.
       - alert: FaasLogArchiveShipperDegraded
         expr: |
-          sum(rate(apid_log_archive_failures_total[5m])) > 0
+          sum(rate({__name__=~"^(apid|vmmd)_log_archive_failures_total$"}[5m])) > 0
           or (
-            sum(apid_log_archive_local_bytes) > 0
-            and sum(rate(apid_log_archive_files_uploaded_total{status="ok"}[30m])) == 0
+            sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"}) > 0
+            and sum(rate({__name__=~"^(apid|vmmd)_log_archive_files_uploaded_total$",status="ok"}[30m])) == 0
           )
         for: 10m
         labels:
           severity: warn
-          component: apid
+          component: platform
           family: log_archive
         annotations:
           summary: "Log archive shipper is not making progress"
-          description: "The apid log archive shipper has recorded failures or has pending local spool data without a successful upload for 30m. Check failure reasons, S3 credentials, bucket reachability, and the local spool."
+          description: "The apid or vmmd log archive shipper has recorded failures or has pending local spool data without a successful upload for 30m. Check failure reasons, S3 credentials, bucket reachability, and the local spool."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
 
       - alert: FaasLogArchiveSpoolNearCap
         expr: |
-          sum(apid_log_archive_local_bytes)
-            / sum(apid_log_archive_local_bytes_max) > 0.8
+          sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"})
+            / sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes_max$"}) > 0.8
         for: 15m
         labels:
           severity: page
-          component: apid
+          component: platform
           family: log_archive
         annotations:
           summary: "Log archive local spool is above 80% capacity"
-          description: "The apid log archive spool has exceeded 80% of its configured capacity for 15m. Resolve the bucket or credentials outage before new archive lines are dropped."
+          description: "The apid or vmmd log archive spool has exceeded 80% of its configured capacity for 15m. Resolve the bucket or credentials outage before new archive lines are dropped."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
 
       # ─────────────────────────────────────────────────────────────────
