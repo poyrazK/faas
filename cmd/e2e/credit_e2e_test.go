@@ -64,6 +64,11 @@ func TestE2E_CreditIssue_AdminKey(t *testing.T) {
 	if _, err := rand.Read(keyBytes); err != nil {
 		t.Fatalf("session key: %v", err)
 	}
+	// NewManager deliberately zeroes the caller-owned key slice after
+	// copying it into the manager. Preserve the encoded value before
+	// construction so the apid subprocess receives the same key used to
+	// mint the test cookie.
+	keyHex := hex.EncodeToString(keyBytes)
 	sessionMgr, err := session.NewManager(keyBytes, 7*24*time.Hour)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
@@ -73,7 +78,7 @@ func TestE2E_CreditIssue_AdminKey(t *testing.T) {
 		e2etest.APID,
 		[]string{
 			"FAAS_ADMIN_EMAILS=" + adminEmail,
-			"FAAS_SESSION_KEY=" + hex.EncodeToString(keyBytes),
+			"FAAS_SESSION_KEY=" + keyHex,
 		})
 
 	store := state.NewPgStore(pool)
