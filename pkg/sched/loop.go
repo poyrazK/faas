@@ -2719,6 +2719,21 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		return inv, 0, fmt.Errorf("sched: invocation request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Durable workflow steps are an authenticated internal delivery
+	// surface even when the customer app's public_auth_mode is open. The
+	// synth socket is DAC-protected, but the workflow contract also needs a
+	// short-lived signed token so gatewayd-internal can distinguish a fresh
+	// schedd delivery from a forged or replayed envelope.
+	if inv.Source == state.InvocationSource("workflow") {
+		if h.mintInternalSvcToken == nil {
+			return inv, 0, errors.New("sched: workflow invocation requires internal service token minter")
+		}
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return inv, 0, fmt.Errorf("sched: workflow invocation mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// ADR-119 — schedd's move-1 dial is now gated by the same
 	// internal_only mode check SynthesizeRequest uses. Without
 	// this attachment, a forged schedd (or anything else in the
@@ -2737,7 +2752,9 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 				if mErr != nil {
 					return inv, 0, fmt.Errorf("sched: invocation mint: %w", mErr)
 				}
-				req.Header.Set("Authorization", "Bearer "+tok)
+				if req.Header.Get("Authorization") == "" {
+					req.Header.Set("Authorization", "Bearer "+tok)
+				}
 			}
 		}
 	}

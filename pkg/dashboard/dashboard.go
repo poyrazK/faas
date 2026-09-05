@@ -333,6 +333,10 @@ type AppDetailData struct {
 	Manifest    ManifestView
 	Deployments []DeploymentItem
 	Crons       []CronItem
+	// Workflows is the bounded recent-run view for the app detail page.
+	// It intentionally carries step status and operator-facing errors, but
+	// never the workflow input/output payloads.
+	Workflows []WorkflowRunItem
 	// Previews (ADR-095 PR-C / issue #272) lists every preview app
 	// whose preview_of_slug matches this app's slug. Empty when
 	// this app is itself a preview (or a production app with no
@@ -399,6 +403,30 @@ type AppDetailData struct {
 	// render with an "upgrade to <plan>" hint so a Hobby customer
 	// sees what api_down would do without a clickable Enable.
 	Presets []AlertPresetItem
+}
+
+// WorkflowRunItem is the dashboard projection of one durable workflow run.
+// Timestamps are pre-formatted at the handler edge so the template remains
+// a pure renderer and does not need date helpers.
+type WorkflowRunItem struct {
+	ID           string
+	WorkflowName string
+	Status       string
+	CurrentStep  string
+	CreatedAt    string
+	StartedAt    string
+	FinishedAt   string
+	LastError    string
+	Steps        []WorkflowStepItem
+}
+
+// WorkflowStepItem is the safe, compact projection of one workflow step.
+// Input and output are deliberately omitted from the dashboard surface.
+type WorkflowStepItem struct {
+	Name    string
+	Status  string
+	Attempt int
+	Error   string
 }
 
 // DeploymentDetailData is the dashboard-facing payload for

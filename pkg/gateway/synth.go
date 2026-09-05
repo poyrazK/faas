@@ -120,6 +120,10 @@ type SynthServer struct {
 	// takes a context so the request's ctx (with timeout /
 	// cancel chain) flows into the per-app store call.
 	appPublicAuthMode func(ctx context.Context, appID string) string
+	// workflowAdmission authenticates and replay-checks workflow invocations
+	// before they reach the customer instance. Production wires this to the
+	// gatewayd-internal Postgres store; nil is fail-closed for workflow traffic.
+	workflowAdmission WorkflowAdmissionFunc
 }
 
 // NewSynthServer wires the unix-socket listener on socketPath with the
@@ -410,6 +414,11 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	if req.AppID == "" || req.InvocationID == "" {
 		http.Error(w, "app_id + invocation_id required", http.StatusBadRequest)
 		return
+	}
+	if req.Source == "workflow" {
+		if s.applyWorkflowAdmission(w, r, req.AppID, req.Headers) {
+			return
+		}
 	}
 	// ADR-119 — per-app 'internal_only' gate runs BEFORE
 	// dispatcher.Invoke so a forged schedd (or anything else in
