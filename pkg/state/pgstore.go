@@ -17524,6 +17524,9 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "app_has_object_buckets" {
+				return ErrConflict
+			}
 			// CHECK violations surface as ErrInvalidArgument ONLY
 			// for the constraints named in
 			// checkViolationMappedToInvalid — the rest bubble the
@@ -18110,6 +18113,18 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		return fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	activeBuckets, err := sqlc.New().ObjectBucketCountForAccount(ctx, tx, mustPgUUID(id))
+	if err != nil {
+		return fmt.Errorf("state: count account object buckets: %w", err)
+	}
+	if activeBuckets != 0 {
+		return ErrConflict
+	}
+	// Only metadata for confirmed-deleted upstream buckets may be purged.
+	// Active-bucket FKs also guard against a concurrent reservation.
+	if err := sqlc.New().ObjectBucketPruneTombstones(ctx, tx, mustPgUUID(id)); err != nil {
+		return fmt.Errorf("state: prune deleted object bucket metadata: %w", err)
+	}
 
 	// Capture email at copy-time for the audit_log row (issue #755 /
 	// PR-6). The audit_log table is FK-free; the row outlives the

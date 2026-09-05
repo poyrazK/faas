@@ -3,6 +3,11 @@
 This platform is stateless. Your code runs in an ephemeral microVM
 that wakes, executes, parks, and forgets. Bring your own state.
 
+An opt-in [customer object-storage preview](object-storage.md) now lets Gregale
+manage private buckets on external S3 services (ADR-147). This does not add
+persistent VM disks or change runtime storage billing. Bring-your-own providers
+remain supported; native customer S3 keys are not part of the preview.
+
 ## Why stateless
 
 Scale-to-zero economics is the load-bearing reason: an instance

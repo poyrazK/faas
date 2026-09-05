@@ -1290,6 +1290,17 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	if st, ok := s.store.(state.ObjectBucketStore); ok {
+		buckets, err := st.ListObjectBuckets(r.Context(), acct.ID, app.ID)
+		if err != nil {
+			bucketProblem(w, err)
+			return
+		}
+		if len(buckets) != 0 {
+			api.WriteProblem(w, api.NewProblem(409, "app_has_buckets", "Conflict", "Delete this app's object storage buckets before deleting the app."))
+			return
+		}
+	}
 	// Move 2: GC pending invocations for this app BEFORE the row goes
 	// away. Without this, a delayed_task can fire after deleteApp and
 	// the drain is forced to log a permanent-wake error on a row the

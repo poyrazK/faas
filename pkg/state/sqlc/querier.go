@@ -648,6 +648,16 @@ type Querier interface {
 	//                             successful drain) OR NULL when called
 	//                             from the heartbeat reactivator
 	NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLifecycleParams) (int64, error)
+	ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBucketByNameParams) (ObjectBucket, error)
+	ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBucketClaimParams) (ObjectBucket, error)
+	ObjectBucketCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	ObjectBucketCountForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBucketFinishParams) (int64, error)
+	ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucketGetParams) (ObjectBucket, error)
+	ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBucketInsertParams) (ObjectBucket, error)
+	ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucketListParams) ([]ObjectBucket, error)
+	ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBucketLockAppParams) (pgtype.UUID, error)
+	ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)
