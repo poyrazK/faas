@@ -3345,6 +3345,11 @@ const (
 	// PR can grow this to a per-plan matrix if telemetry shows
 	// demand — the constant is the single source of truth.
 	SidecarCapMax = 2
+	// WorkloadDependencyCapMax bounds the dependency list for one workload.
+	// With one main workload and at most two sidecars, three unique targets
+	// are the complete set; keeping the cap explicit limits malformed roster
+	// growth before graph validation.
+	WorkloadDependencyCapMax = SidecarCapMax + 1
 
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps
 	// the wall-clock spent inside pkg/gateway.(*Handler).applyEdgeRuleJWT

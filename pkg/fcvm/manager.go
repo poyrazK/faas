@@ -5295,6 +5295,7 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			Essential:       sc.Essential,
 			Cmd:             append([]string(nil), sc.Cmd...),
 			Entrypoint:      append([]string(nil), sc.Entrypoint...),
+			DependsOn:       append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			SealedEnv:       append([]SealedEnvEntry(nil), sc.SealedEnv...),
 			preparedEnvJSON: append([]byte(nil), sc.preparedEnvJSON...),
 		})

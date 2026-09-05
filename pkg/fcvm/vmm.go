@@ -2261,6 +2261,7 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 		Essential:  w.Essential,
 		Cmd:        w.Cmd,
 		Entrypoint: w.Entrypoint,
+		DependsOn:  w.DependsOn,
 		// StorageKey is omitted: the guest doesn't need to know
 		// the host-side path; it just reads the workload spec
 		// from the manifest and ignores the storage key. ADR-069
@@ -2298,7 +2299,7 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 // Layout:
 //
 //	{"essential":BOOL,"name":"...","port":INT,"ram_mb":INT,"type":"...",
-//	 "cmd":[...],"entrypoint":[...]}
+//	 "cmd":[...],"entrypoint":[...],"depends_on":[...]}
 //
 // Braces, colons, commas, and quoted keys/values dominate the
 // fixed overhead; Name + Cmd + Entrypoint contribute variable bytes.
@@ -2325,6 +2326,10 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	for _, e := range w.Entrypoint {
 		entrypointBytes += int64(len(e)) * 2
 	}
+	dependencyBytes := int64(0)
+	for _, dep := range w.DependsOn {
+		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
+	}
 	// Two int fields (port, ram_mb) and a bool + 2 array
 	// fields. 11 bytes per int is the worst case for a 32-bit
 	// value; 5 bytes for "false". The 5 quoted keys + 2 numeric
@@ -2332,7 +2337,7 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	// overhead; we over-estimate at 128 to absorb the new
 	// cmd/entrypoint keys.
 	const fixedOverhead = 128
-	return nameBytes + cmdBytes + entrypointBytes + fixedOverhead
+	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + fixedOverhead
 }
 
 // projectedWorkloadRosterBytes (issue #463 / ADR-069 / PR-B
@@ -2366,7 +2371,8 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // partition (PR-B's primary OOM isolation), Port for the port-normalization
 // wiring (ADR-053), and Essential for the restart policy. Cmd/Entrypoint
 // override the per-workload image's baked entrypoint (the sidecar
-// image's /usr/local/bin/start.sh, the main workload's app.json).
+// image's /usr/local/bin/start.sh, the main workload's app.json), and
+// DependsOn for dependency-aware startup.
 //
 // Both fields are omitempty so the legacy PR-B path (no customer
 // override) writes the same byte shape as before — dashboards
@@ -2386,13 +2392,14 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // must be a single PR that updates both sides + the projection
 // helper.
 type workloadManifest struct {
-	Cmd        []string `json:"cmd,omitempty"`
-	Entrypoint []string `json:"entrypoint,omitempty"`
-	Essential  bool     `json:"essential"`
-	Name       string   `json:"name"`
-	Port       int      `json:"port"`
-	RamMB      int      `json:"ram_mb"`
-	Type       string   `json:"type"`
+	Cmd        []string                 `json:"cmd,omitempty"`
+	DependsOn  []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint []string                 `json:"entrypoint,omitempty"`
+	Essential  bool                     `json:"essential"`
+	Name       string                   `json:"name"`
+	Port       int                      `json:"port"`
+	RamMB      int                      `json:"ram_mb"`
+	Type       string                   `json:"type"`
 }
 
 // workloadRosterPath is the in-guest location guest-init reads
@@ -2462,6 +2469,7 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 			RamMB:     main.RamMB,
 			Port:      main.Port,
 			Essential: main.Essential,
+			DependsOn: main.DependsOn,
 		},
 	}
 	for _, sc := range sidecars {
@@ -2473,6 +2481,7 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 			Essential:  sc.Essential,
 			Cmd:        sc.Cmd,
 			Entrypoint: sc.Entrypoint,
+			DependsOn:  sc.DependsOn,
 		})
 	}
 	blob, err := json.Marshal(roster)

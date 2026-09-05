@@ -149,6 +149,29 @@ func healthcheckDefaults(hc *api.AppManifestHealthcheck) (interval, timeout, sta
 	return interval, timeout, startPeriod, retries
 }
 
+// runStartupHealthcheck performs the first bounded probe for a workload that
+// has a declared OCI HEALTHCHECK. A workload without a check is considered
+// started-and-ready for dependency purposes; the host's existing readiness
+// probe remains authoritative for admitting traffic to the main workload.
+func runStartupHealthcheck(manifest api.AppManifest, env []string, dir, root string, uid int, procAttr *syscall.SysProcAttr, log *slog.Logger) error {
+	if manifest.Healthcheck == nil {
+		return nil
+	}
+	argv, _ := parseHealthcheckTest(manifest.Healthcheck.Test)
+	if len(argv) == 0 {
+		return nil
+	}
+	if root != "" {
+		argv[0] = resolveSidecarCommandPath(root, argv[0], env)
+	}
+	_, timeout, _, _ := healthcheckDefaults(manifest.Healthcheck)
+	report := execHealthcheckWithOptions(context.Background(), argv, timeout, uid, env, dir, procAttr, log)
+	if report.Status != healthcheckStatusPass {
+		return fmt.Errorf("startup healthcheck failed for %q", argv[0])
+	}
+	return nil
+}
+
 // runHealthcheckPoll (M-2 / ADR-139 §Decision 1) is the in-guest
 // HEALTHCHECK executor. It opens an AF_VSOCK DGRAM socket on
 // VsockHealthcheckPort, spawns a poll goroutine, and ships a
@@ -266,12 +289,33 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 // Pulled out so the unit test exercises the decision tree
 // without spawning a goroutine.
 func execHealthcheck(ctx context.Context, argv []string, timeout time.Duration, uid int, log *slog.Logger) HealthcheckReport {
+	return execHealthcheckWithOptions(ctx, argv, timeout, uid, nil, "", nil, log)
+}
+
+// execHealthcheckWithOptions is the startup-gate variant used for sidecar
+// dependencies. It preserves the regular healthcheck environment and working
+// directory, and can enter a full-rootfs sidecar through SysProcAttr.
+func execHealthcheckWithOptions(ctx context.Context, argv []string, timeout time.Duration, uid int, env []string, dir string, procAttr *syscall.SysProcAttr, log *slog.Logger) HealthcheckReport {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(probeCtx, argv[0], argv[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{}
-	if uid > 0 {
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
+	if env != nil {
+		cmd.Env = env
+	}
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if procAttr != nil {
+		attr := *procAttr
+		if attr.Credential == nil && uid > 0 {
+			attr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
+		}
+		cmd.SysProcAttr = &attr
+	} else {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+		if uid > 0 {
+			cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
+		}
 	}
 	out, err := cmd.CombinedOutput()
 	status := healthcheckStatusPass
