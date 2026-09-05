@@ -113,6 +113,21 @@ func TestRuntimeConfigManagerVersionOrdering(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigManagerScopedPrecedenceIgnoresCrossTargetVersions(t *testing.T) {
+	m := newRuntimeConfigManager(func(string) string { return "" })
+	global := state.RuntimeConfig{Key: runtimeConfigHSTS, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: json.RawMessage(`false`), Version: 3}
+	controlPlane := state.RuntimeConfig{Key: runtimeConfigHSTS, Scope: state.RuntimeConfigScopeControlPlane, ScopeID: "apid", DesiredValue: json.RawMessage(`true`), Version: 1}
+	if applied, err := m.applyScopedVersion(global); err != nil || !applied {
+		t.Fatalf("apply global v3 = applied %v, err %v; want applied", applied, err)
+	}
+	if applied, err := m.applyScopedVersion(controlPlane); err != nil || !applied {
+		t.Fatalf("apply control-plane v1 = applied %v, err %v; want applied despite lower cross-target version", applied, err)
+	}
+	if got := m.Bool(runtimeConfigHSTS, false); !got {
+		t.Fatal("higher-precedence control-plane value did not override global value")
+	}
+}
+
 func TestRuntimeConfigManagerConcurrentVersionedApply(t *testing.T) {
 	m := newRuntimeConfigManager(func(string) string { return "" })
 	const updates = 100

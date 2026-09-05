@@ -15,6 +15,9 @@ type OperatorRuntimeConfig struct {
 	DefaultValue      json.RawMessage            `json:"default_value"`
 	DesiredValue      json.RawMessage            `json:"desired_value"`
 	EffectiveValue    json.RawMessage            `json:"effective_value"`
+	Scope             string                     `json:"scope"`
+	ScopeID           string                     `json:"scope_id,omitempty"`
+	RolloutPercent    int                        `json:"rollout_percent"`
 	Source            string                     `json:"source"`
 	ApplyMode         string                     `json:"apply_mode"`
 	ControllerEnabled bool                       `json:"controller_enabled"`
@@ -63,16 +66,17 @@ type OperatorRuntimeConfigOperation struct {
 }
 
 type OperatorRuntimeConfigRevision struct {
-	ID        int64           `json:"id"`
-	Key       string          `json:"key"`
-	Scope     string          `json:"scope"`
-	ScopeID   string          `json:"scope_id"`
-	Version   int64           `json:"version"`
-	OldValue  json.RawMessage `json:"old_value"`
-	NewValue  json.RawMessage `json:"new_value"`
-	ActorID   string          `json:"actor_id,omitempty"`
-	Reason    string          `json:"reason"`
-	CreatedAt string          `json:"created_at"`
+	ID             int64           `json:"id"`
+	Key            string          `json:"key"`
+	Scope          string          `json:"scope"`
+	ScopeID        string          `json:"scope_id"`
+	Version        int64           `json:"version"`
+	RolloutPercent int             `json:"rollout_percent"`
+	OldValue       json.RawMessage `json:"old_value"`
+	NewValue       json.RawMessage `json:"new_value"`
+	ActorID        string          `json:"actor_id,omitempty"`
+	Reason         string          `json:"reason"`
+	CreatedAt      string          `json:"created_at"`
 }
 
 // RollbackOperatorRuntimeConfigRequest is the body for

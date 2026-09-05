@@ -29,6 +29,29 @@ the operations UI a durable basis for reporting partial fleet convergence.
 Missing acknowledgement rows mean that a consumer has not observed that
 version yet; they are not treated as successful application.
 
+## Scope and canary targeting
+
+The admin API accepts a `scope` and optional `scope_id` on PATCH, rollback, and
+history reads. `global` is the fleet default; `control_plane` currently targets
+the `apid` singleton; `daemon` targets a consumer name such as
+`gatewayd-internal`; and `node` targets an exact `FAAS_NODE_NAME`/hostname.
+Daemon watchers resolve values in this order:
+
+1. matching node override;
+2. matching daemon override;
+3. global value.
+
+Each row also carries `rollout_percent` (0–100). Percentage rollout is limited
+to daemon-scoped rows in this slice. Matching daemons are selected by a stable
+hash of the setting, target scope, and daemon identity, so widening a canary
+does not reshuffle nodes. A daemon outside the canary keeps the lower-precedence
+value and does not write an acknowledgement for the skipped override.
+
+Use an exact node override (`rollout_percent: 100`) for a one-node emergency
+test. Use a daemon override with 1–100% for a gradual fleet rollout. The
+control-plane row is marked effective when it is persisted; the `acks` array is
+the source of truth for whether each selected daemon has actually applied it.
+
 ## Apply modes
 
 `hot` settings are validated, swapped into the process snapshot, acknowledged,

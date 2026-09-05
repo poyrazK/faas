@@ -12,12 +12,14 @@ from ..models.operator_runtime_config_apply_mode import (
     check_operator_runtime_config_apply_mode,
 )
 from ..models.operator_runtime_config_kind import OperatorRuntimeConfigKind, check_operator_runtime_config_kind
+from ..models.operator_runtime_config_scope import OperatorRuntimeConfigScope, check_operator_runtime_config_scope
 from ..models.operator_runtime_config_source import OperatorRuntimeConfigSource, check_operator_runtime_config_source
 from ..models.operator_runtime_config_status import OperatorRuntimeConfigStatus, check_operator_runtime_config_status
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operator_runtime_config_ack import OperatorRuntimeConfigAck
+
 
 T = TypeVar("T", bound="OperatorRuntimeConfig")
 
@@ -34,6 +36,8 @@ class OperatorRuntimeConfig:
     default_value: Any
     desired_value: Any
     effective_value: Any
+    scope: OperatorRuntimeConfigScope
+    rollout_percent: int
     source: OperatorRuntimeConfigSource
     apply_mode: OperatorRuntimeConfigApplyMode
     controller_enabled: bool
@@ -41,6 +45,7 @@ class OperatorRuntimeConfig:
     sensitive: bool
     status: OperatorRuntimeConfigStatus
     version: int
+    scope_id: str | Unset = UNSET
     last_error: str | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
     applied_at: datetime.datetime | Unset = UNSET
@@ -65,6 +70,10 @@ class OperatorRuntimeConfig:
 
         effective_value = self.effective_value
 
+        scope: str = self.scope
+
+        rollout_percent = self.rollout_percent
+
         source: str = self.source
 
         apply_mode: str = self.apply_mode
@@ -78,6 +87,8 @@ class OperatorRuntimeConfig:
         status: str = self.status
 
         version = self.version
+
+        scope_id = self.scope_id
 
         last_error = self.last_error
 
@@ -108,6 +119,8 @@ class OperatorRuntimeConfig:
                 "default_value": default_value,
                 "desired_value": desired_value,
                 "effective_value": effective_value,
+                "scope": scope,
+                "rollout_percent": rollout_percent,
                 "source": source,
                 "apply_mode": apply_mode,
                 "controller_enabled": controller_enabled,
@@ -117,6 +130,8 @@ class OperatorRuntimeConfig:
                 "version": version,
             }
         )
+        if scope_id is not UNSET:
+            field_dict["scope_id"] = scope_id
         if last_error is not UNSET:
             field_dict["last_error"] = last_error
         if updated_at is not UNSET:
@@ -149,6 +164,10 @@ class OperatorRuntimeConfig:
 
         effective_value = d.pop("effective_value")
 
+        scope = check_operator_runtime_config_scope(d.pop("scope"))
+
+        rollout_percent = d.pop("rollout_percent")
+
         source = check_operator_runtime_config_source(d.pop("source"))
 
         apply_mode = check_operator_runtime_config_apply_mode(d.pop("apply_mode"))
@@ -162,6 +181,8 @@ class OperatorRuntimeConfig:
         status = check_operator_runtime_config_status(d.pop("status"))
 
         version = d.pop("version")
+
+        scope_id = d.pop("scope_id", UNSET)
 
         last_error = d.pop("last_error", UNSET)
 
@@ -197,6 +218,8 @@ class OperatorRuntimeConfig:
             default_value=default_value,
             desired_value=desired_value,
             effective_value=effective_value,
+            scope=scope,
+            rollout_percent=rollout_percent,
             source=source,
             apply_mode=apply_mode,
             controller_enabled=controller_enabled,
@@ -204,6 +227,7 @@ class OperatorRuntimeConfig:
             sensitive=sensitive,
             status=status,
             version=version,
+            scope_id=scope_id,
             last_error=last_error,
             updated_at=updated_at,
             applied_at=applied_at,

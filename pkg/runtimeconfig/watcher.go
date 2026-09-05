@@ -10,6 +10,7 @@ package runtimeconfig
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,8 +64,13 @@ type Watcher struct {
 	// apid control-plane subscriber.
 	Interval time.Duration
 
-	mu       sync.Mutex
+	mu sync.Mutex
+	// versions is keyed by the complete selected target (key + scope + id),
+	// while selected remembers which target won precedence for each key. A
+	// scoped override can have the same version as a global row, so a single
+	// per-key watermark would incorrectly skip that transition.
 	versions map[string]int64
+	selected map[string]string
 }
 
 // New builds a watcher for the supplied keys. A nil logger is replaced with
@@ -88,6 +94,7 @@ func New(store state.Store, pool *pgxpool.Pool, keys []string, apply ApplyFunc, 
 		Log:      log,
 		Interval: 5 * time.Second,
 		versions: make(map[string]int64),
+		selected: make(map[string]string),
 	}
 }
 
@@ -178,22 +185,32 @@ func (w *Watcher) Reconcile(ctx context.Context) error {
 	if w == nil || w.Store == nil || w.Apply == nil || len(w.Keys) == 0 {
 		return nil
 	}
-	rows, err := w.Store.ListRuntimeConfigs(ctx, state.RuntimeConfigScopeGlobal, "")
+	// Read every scope in one query. The selected value is resolved locally so
+	// a daemon can move between global, daemon, and node overrides without a
+	// second control-plane round trip.
+	rows, err := w.Store.ListRuntimeConfigs(ctx, "", "")
 	if err != nil {
 		return fmt.Errorf("list runtime config: %w", err)
 	}
 	var firstErr error
-	for _, row := range rows {
-		if _, ok := w.Keys[row.Key]; !ok || row.Status != state.RuntimeConfigApplied {
+	for key := range w.Keys {
+		row, ok := w.selectTarget(rows, key)
+		if !ok {
 			continue
 		}
+		targetKey := runtimeConfigTargetKey(row)
 		w.mu.Lock()
-		lastVersion := w.versions[row.Key]
+		lastVersion := w.versions[targetKey]
+		lastTarget := w.selected[row.Key]
 		w.mu.Unlock()
-		if row.Version <= lastVersion {
+		if lastTarget == targetKey && row.Version <= lastVersion {
 			continue
 		}
-		if err := w.Apply(ctx, row.Key, append(json.RawMessage(nil), row.EffectiveValue...), row.Version); err != nil {
+		value := append(json.RawMessage(nil), row.EffectiveValue...)
+		if len(value) == 0 || string(value) == "null" {
+			value = append(json.RawMessage(nil), row.DesiredValue...)
+		}
+		if err := w.Apply(ctx, row.Key, value, row.Version); err != nil {
 			if ackErr := w.acknowledge(ctx, row, state.RuntimeConfigAckFailed, nil, err.Error()); ackErr != nil {
 				w.Log.Warn("runtime_config failed acknowledgement", "key", row.Key, "version", row.Version, "err", ackErr)
 			}
@@ -202,19 +219,85 @@ func (w *Watcher) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := w.acknowledge(ctx, row, state.RuntimeConfigAckApplied, row.EffectiveValue, ""); err != nil {
+		if err := w.acknowledge(ctx, row, state.RuntimeConfigAckApplied, value, ""); err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("acknowledge %s v%d: %w", row.Key, row.Version, err)
 			}
 			continue
 		}
 		w.mu.Lock()
-		if row.Version > w.versions[row.Key] {
-			w.versions[row.Key] = row.Version
-		}
+		w.versions[targetKey] = row.Version
+		w.selected[row.Key] = targetKey
 		w.mu.Unlock()
 	}
 	return firstErr
+}
+
+// selectTarget resolves the highest-precedence applied row visible to this
+// daemon. Node overrides win over daemon overrides, which win over global
+// defaults. A canary that does not include this identity is skipped so the
+// lower-precedence value remains live as the safe fallback.
+func (w *Watcher) selectTarget(rows []state.RuntimeConfig, key string) (state.RuntimeConfig, bool) {
+	var selected state.RuntimeConfig
+	selectedRank := -1
+	for _, row := range rows {
+		if row.Key != key || row.Status != state.RuntimeConfigApplied || !w.matchesScope(row) || !w.inRollout(row) {
+			continue
+		}
+		rank := runtimeConfigScopeRank(row.Scope)
+		if rank > selectedRank {
+			selected = row
+			selectedRank = rank
+		}
+	}
+	return selected, selectedRank >= 0
+}
+
+func (w *Watcher) matchesScope(row state.RuntimeConfig) bool {
+	switch row.Scope {
+	case state.RuntimeConfigScopeGlobal:
+		return row.ScopeID == ""
+	case state.RuntimeConfigScopeDaemon:
+		return w.Consumer != "" && row.ScopeID == w.Consumer
+	case state.RuntimeConfigScopeNode:
+		return w.NodeID != "" && row.ScopeID == w.NodeID
+	default:
+		// control_plane values are consumed by apid, not edge watchers.
+		return false
+	}
+}
+
+func (w *Watcher) inRollout(row state.RuntimeConfig) bool {
+	percent := row.RolloutPercent
+	if percent >= 100 {
+		return true
+	}
+	if percent <= 0 || (w.Consumer == "" && w.NodeID == "") {
+		return false
+	}
+	identity := w.Consumer + "\x00" + w.NodeID
+	// The identity hash is stable across versions. Increasing the percentage
+	// therefore expands a canary monotonically instead of reshuffling nodes.
+	sum := sha256.Sum256([]byte(string(row.Key) + "\x00" + string(row.Scope) + "\x00" + row.ScopeID + "\x00" + identity))
+	bucket := int(sum[0]) % 100
+	return bucket < percent
+}
+
+func runtimeConfigScopeRank(scope state.RuntimeConfigScope) int {
+	switch scope {
+	case state.RuntimeConfigScopeNode:
+		return 3
+	case state.RuntimeConfigScopeDaemon:
+		return 2
+	case state.RuntimeConfigScopeGlobal:
+		return 1
+	default:
+		return -1
+	}
+}
+
+func runtimeConfigTargetKey(row state.RuntimeConfig) string {
+	return row.Key + "\x00" + string(row.Scope) + "\x00" + row.ScopeID
 }
 
 func (w *Watcher) acknowledge(ctx context.Context, row state.RuntimeConfig, status state.RuntimeConfigAckStatus, value json.RawMessage, applyErr string) error {

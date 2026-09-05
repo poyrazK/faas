@@ -7,9 +7,9 @@ import (
 )
 
 // RuntimeConfigScope identifies the blast-radius boundary of a runtime
-// configuration value. The control plane currently applies global values to
-// apid; the narrower scopes are persisted now so rolling fleet application can
-// converge without changing the API contract later.
+// configuration value. Global values are the fleet default; daemon and node
+// overrides can narrow the blast radius without changing the setting's value
+// shape. Control-plane overrides target the apid singleton.
 type RuntimeConfigScope string
 
 const (
@@ -99,6 +99,11 @@ type RuntimeConfig struct {
 	DesiredValue   json.RawMessage
 	EffectiveValue json.RawMessage
 	Version        int64
+	// RolloutPercent is the deterministic percentage of matching daemon
+	// identities that should receive this value. A value of 100 targets every
+	// matching consumer; lower values are useful for canarying a daemon-scoped
+	// or global flag while the lower-precedence value remains available.
+	RolloutPercent int
 	ApplyMode      RuntimeConfigApplyMode
 	Status         RuntimeConfigStatus
 	LastError      string
@@ -112,10 +117,14 @@ type RuntimeConfig struct {
 // ExpectedVersion is optimistic concurrency: nil means last-write-wins, while
 // a pointer requires that exact version (zero means the row must not exist).
 type RuntimeConfigUpdate struct {
-	Key             string
-	Scope           RuntimeConfigScope
-	ScopeID         string
-	DesiredValue    json.RawMessage
+	Key          string
+	Scope        RuntimeConfigScope
+	ScopeID      string
+	DesiredValue json.RawMessage
+	// RolloutPercent is nil for the default (100%). A pointer preserves the
+	// meaningful zero value, which disables this override for every target and
+	// allows the watcher to fall back to a lower-precedence setting.
+	RolloutPercent  *int
 	ApplyMode       RuntimeConfigApplyMode
 	ActorID         string
 	Reason          string
@@ -152,14 +161,15 @@ type RuntimeConfigOperation struct {
 // exact old/new JSON values and optimistic version without joining opaque
 // audit payloads.
 type RuntimeConfigRevision struct {
-	ID        int64
-	Key       string
-	Scope     RuntimeConfigScope
-	ScopeID   string
-	Version   int64
-	OldValue  json.RawMessage
-	NewValue  json.RawMessage
-	ActorID   string
-	Reason    string
-	CreatedAt time.Time
+	ID             int64
+	Key            string
+	Scope          RuntimeConfigScope
+	ScopeID        string
+	Version        int64
+	RolloutPercent int
+	OldValue       json.RawMessage
+	NewValue       json.RawMessage
+	ActorID        string
+	Reason         string
+	CreatedAt      time.Time
 }

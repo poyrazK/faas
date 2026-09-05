@@ -9,5 +9,7 @@ export type RollbackOperatorRuntimeConfigRequest = {
   version: number;
   reason: string;
   expected_version?: number;
+  scope?: 'global' | 'control_plane' | 'daemon' | 'node';
+  scope_id?: string;
 };
 
