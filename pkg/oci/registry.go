@@ -33,6 +33,11 @@ type RegistryClient struct {
 	scheme string // "https" in production; the test seam sets "http"
 	host   string // "" = derive from the reference; tests pin an httptest host
 	ua     string
+	// blobCache is optional so existing callers and hermetic tests retain
+	// the direct registry-streaming behaviour. Production imaged wires a
+	// DiskBlobCache to make immutable config/layer blobs reusable across
+	// deployments on the same compute node.
+	blobCache BlobCache
 }
 
 // compile-time assertion the client satisfies the puller seam imaged consumes.
@@ -84,6 +89,15 @@ func WithEndpoint(scheme, host string) Option {
 	return func(c *RegistryClient) {
 		c.scheme = scheme
 		c.host = host
+	}
+}
+
+// WithBlobCache attaches a content-addressed OCI blob cache. Cache keys are
+// digests, so private-registry credentials are used only on a miss and are
+// never persisted or included in the key.
+func WithBlobCache(cache BlobCache) Option {
+	return func(c *RegistryClient) {
+		c.blobCache = cache
 	}
 }
 
@@ -463,6 +477,22 @@ func (c *RegistryClient) fetchBlobStreamWithAuth(ctx context.Context, r Referenc
 // openBlobWithAuth is the AuthPuller variant. The `auth` value is
 // forwarded to the realm endpoint on a 401 challenge (issue #461).
 func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) (string, io.ReadCloser, error) {
+	if c.blobCache == nil {
+		return c.openBlobNetworkWithAuth(ctx, r, digest, auth)
+	}
+	rc, err := c.blobCache.Open(ctx, digest, func(fetchCtx context.Context) (io.ReadCloser, error) {
+		_, body, err := c.openBlobNetworkWithAuth(fetchCtx, r, digest, auth)
+		return body, err
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	// The content type is advisory and no caller consumes it. Returning an
+	// empty value for cached readers keeps the cache seam independent of HTTP.
+	return "", rc, nil
+}
+
+func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) (string, io.ReadCloser, error) {
 	url := c.baseURL(r) + "/v2/" + r.Repository + "/blobs/" + digest
 	resp, err := c.getBlob(ctx, url, "")
 	if err != nil {
