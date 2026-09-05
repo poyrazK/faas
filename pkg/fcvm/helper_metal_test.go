@@ -14,12 +14,12 @@ import (
 )
 
 // A test executable neither implements vmmd's helper modes nor necessarily
-// links statically. Use the same checkout's real vmmd, built by run-metal.sh.
+// links statically. Use the same checkout's real vmmd, built by make test-metal.
 func newMetalVMM(t *testing.T, timeout time.Duration) *JailerVMM {
 	t.Helper()
 	path := os.Getenv("FAAS_TEST_VMMD_BINARY")
 	if path == "" {
-		t.Fatal("set FAAS_TEST_VMMD_BINARY to a static vmmd built from this checkout (deploy/lima/run-metal.sh does this)")
+		t.Fatal("set FAAS_TEST_VMMD_BINARY to a static vmmd built from this checkout (make test-metal does this)")
 	}
 	f, err := elf.Open(path)
 	if err != nil {

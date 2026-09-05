@@ -44,7 +44,7 @@ import (
 // gates. No fake VM or prebuilt customer output is used here.
 func TestMetalBuilderAcceptance(t *testing.T) {
 	if os.Getenv("FAAS_METAL_BUILD_ACCEPTANCE") != "1" {
-		t.Skip("run make metal-lima-build for real builder acceptance")
+		t.Skip("run make test-metal-builder on the native KVM acceptance host")
 	}
 	for _, name := range []string{"FAAS_TEST_KERNEL", "FAAS_TEST_BASE_ROOTFS", "FAAS_TEST_VMMD_BINARY", "FAAS_GUEST_INIT", "FAAS_BUILDER_BASE_PATH"} {
 		if _, err := os.Stat(os.Getenv(name)); err != nil {

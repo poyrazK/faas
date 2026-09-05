@@ -4,12 +4,9 @@
 # VM boundary. Never run builds in a host container.
 #
 # Multi-arch: TARGETARCH is set automatically by `docker buildx build`. The
-# EX44 builds --platform=linux/amd64 (production target). The Lima dev loop
-# builds --platform=linux/arm64 so the local metal-lima path can exercise a
-# real builder VM end-to-end. The arm64 build does NOT replace the §14 M6
-# acceptance gates — those still need the EX44 — but it does prove the
-# spawn → runBuild → DestroyWithExport path works against a real artifact
-# producing engine rather than a busybox stub.
+# Production and acceptance use linux/amd64. The image remains multi-arch so
+# CI can verify that the cross-compiled guest binaries and upstream assets stay
+# complete for every published platform.
 #
 # Railpack is pulled as an upstream release tarball (it is not packaged in
 # Alpine). BuildKit and runc are compiled from their checksum-pinned sources
@@ -55,8 +52,8 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # so each arch's binary lands in its own image. The Go builder base is
 # digest-pinned via images/Dockerfile.lock just like alpine:3.22 below.
 # Issue #938: building guest-init inside the image (instead of in the
-# workflow) also lets the Lima local-build path stage a multi-arch rootfs
-# via buildx without per-arch file juggling.
+# workflow) also keeps each published architecture self-contained without
+# per-arch files in the build context.
 # Note: the version is intentionally baked into the FROM line (no ARG)
 # so images/Dockerfile.lock has a literal "golang:1.26.6" alias to
 # match against. Bumping the Go version is a two-step: change this

@@ -24,115 +24,76 @@ sudo ./deploy/lima/run-metal.sh -run TestMetalBoot50Concurrent  # a specific tes
 
 Tear down with `limactl delete -f faas-metal`.
 
-## Fixtures and checkout selection
+## What the provisioner stages (`faas-metal.yaml`)
 
-The Lima provisioner installs the host tools: Go, Firecracker/jailer v1.7.0,
-PostgreSQL, BusyBox, Docker/buildx, and kernel build dependencies. It does not
-search guessed paths under the user's home. `run-metal.sh` resolves the checkout
-from its own location; `FAAS_REPO_ROOT` explicitly selects another checkout.
+- Ubuntu 24.04 arm64, `vz` backend, `nestedVirtualization: true`, host `~`
+  mounted read-write (so the repo checkout is reachable).
+- A `probe` that fails fast with a clear message if `/dev/kvm` never appears.
+- Go 1.25.7 (matches `go.mod`), `build-essential`, `e2fsprogs` (`mkfs.ext4`),
+  `iproute2`/`iptables`, `busybox-static` (the M0 rootfs fallback), and the
+  default user added to the `kvm` group.
+- aarch64 Firecracker + jailer **v1.7.0** on `PATH`, and the aarch64 guest
+  kernel `vmlinux-6.1.128` in `/srv/fc/base/`.
+- **V6 acceptance rootfs** staged at `/srv/fc/base/v6-base.ext4` (PID 1 =
+  the real `faas-guest-init` built from the mounted repo checkout, so the
+  AF_VSOCK resume listener is wired) and `/srv/fc/base/v6-layer.ext4`
+  (writable overlay upper). Built once per `limactl start`; the M0/M1/M3
+  tests reuse the same image as their `FAAS_TEST_BASE_ROOTFS` /
+  `FAAS_TEST_LAYER_ROOTFS`, and `TestMetalTwoRestoresDistinctUUID`
+  (spec §14 V6, ADR-022) consumes it via `FAAS_TEST_V6_BASE` / `_LAYER`.
 
-Each run builds a static `vmmd` from that checkout for the jailed mount-helper
-commands. Metal tests must not use their own Go test executable as that helper.
-`FAAS_TEST_VMMD_BINARY` names the static binary for direct test invocations.
+  To rebuild after a `guest/init` source change:
+  `limactl delete -f faas-metal && limactl start deploy/lima/faas-metal.yaml`.
+- **M6 builder base rootfs** staged at `/srv/fc/base/runner-builder-<arch>.ext4`
+  (label `faas-builder-bas`, mkfs `^has_journal` to match the two-drive
+  read-only drive0 contract). Built by the third provisioner block from
+  `images/builder-base.Dockerfile` via `docker buildx build
+  --platform=linux/arm64 --output type=local,dest=…` followed by
+  `mkfs.ext4 -d`. Required by issue #57's M6 orchestrator e2e test —
+  `builderd`'s cold-boot path (`pkg/builderd/vm_metal.go`) reads this
+  image as drive0 for every builder VM. Idempotent: re-provisioning skips
+  if the file is present, labelled correctly, and > 100 MB (a 16 MB
+  `applayer`-labelled stub from a prior run is treated as stale and
+  overwritten).
+  `run-metal.sh` sets `FAAS_TEST_KERNEL` / `FAAS_TEST_BASE_ROOTFS` /
+`FAAS_TEST_LAYER_ROOTFS` / `FAAS_TEST_V6_BASE` / `FAAS_TEST_V6_LAYER` /
+`FAAS_TEST_FC_VERSION` for the tests (see `pkg/fcvm/manager_metal_test.go`
+and `pkg/fcvm/v6_resume_ext4_metal_test.go`).
 
-`stage-metal.sh` builds guest-init and refreshes the V6 base/layer fixtures when
-the binary or fixture recipe changes. There is no need to delete the Lima VM to
-pick up guest-init edits. The base includes the mountpoints guest-init needs
-before it can pivot off its read-only root. The runner provides the tenant
-bridge, scoped outbound NAT/forwarding rules, and ARM64 CPU-cache compatibility
-setup. These are local development prerequisites; production uses host policy.
+## What runs here today
 
-## Focused builder acceptance
+Driving `TestMetalHelloBoot` (M0) on nested KVM exercises the whole
+jailer → firecracker → tap → netns → nftables-DNAT path. It was the first time the
+metal suite had actually run (the M0 asset checksums are still `REPLACE_`
+placeholders), which surfaced a chain of latent bugs — most now fixed:
 
-```sh
-make metal-lima-build
-```
+- Firecracker boots a full guest under nested KVM; the netns + per-instance
+  nftables DNAT make the guest reachable at its host identity (proven: a root-ns
+  probe to `10.100.x.y:8080` returns 200/404 through the DNAT). ✅
+- jailer launches firecracker as the unprivileged uid in the correct chroot
+  (`--exec-file` + resolved-symlink chroot basename fixes). ✅
+- The jailed uid can read its config + drives and create its API socket: `vmmd`
+  stages read-only images `o+r` and copies + chowns the writable drive1 to the
+  jailer uid (jail resource ownership, [ADR-019](../../docs/adr/019-jailer-invocation-and-jail-resource-ownership.md)). ✅
+- **V6 (post-restore resume hook):** `TestMetalTwoRestoresDistinctUUID`
+  cold-boots a guest from the V6 rootfs, parks it, then restores the same
+  snapshot into two distinct leases and asserts the served UUIDs diverge.
+  This is the §11 ship-blocker test that wires
+  `pkg/fcvm/vmm.go::TriggerResumeHook` →
+  `guest/init/listen_resume_linux.go::handleResumeConn`. ✅
 
-This starts an existing stopped VM or provisions one, builds the current
-platform builder base using `images/builder-base.Dockerfile`, and stages the
-canonical `runner-builder-arm64.ext4`. Docker builds only that platform fixture;
-the customer test sources are built by BuildKit/Railpack inside Firecracker.
-Buildx caches platform-image stages across runs. The first run also compiles a
-checksum-pinned ARM64 kernel with built-in FUSE, overlayfs, user namespaces and
-static IP autoconfiguration. The stock Firecracker CI kernel lacks the FUSE
-support required by the builder's snapshotter. Subsequent runs verify/reuse the
-kernel until the kernel recipe or pinned defaults change. The default suite
-uses the production build deadline. `FAAS_METAL_BUILD_TIMEOUT_SECONDS` (1–3600)
-can override the test request's deadline without changing production limits.
+**M0 and V6 boot end-to-end here.** Remember the arch caveat below: this is the
+arm64 nested-KVM guest, so a green run validates the VM lifecycle and boot path —
+a **bare-metal x86_64 control-plane node remains the source of truth for the
+§14 acceptance gates** on the pinned x86_64 kernel (CLAUDE.md).
 
-`TestMetalBuilderAcceptance` covers:
+Two **arm64-Lima shims** live in `run-metal.sh` (never needed on the x86_64 reference node):
+the `br-tenants` bridge (host-prep the box does via ansible) and a CPU-cache
+sysfs shim (jailer reads cache sizes the arm64 nested guest doesn't expose).
 
-- Dockerfile source executable permissions, OCI export, real imaged conversion,
-  and an HTTP response from a cold boot of the resulting app layer.
-- Railpack selecting `apps/api` inside an archive whose repository-root build
-  deliberately fails. Its shell provider builds a BusyBox static-file server;
-  `railpack.json` selects the pinned multi-arch Debian upstream image (including
-  Bash) for the build and runtime bases. The exported image is converted and booted too.
-- A deliberate Dockerfile failure, including its guest result and no nonempty image.
-- Cancellation after the long-running Dockerfile starts and the Destroy RPC
-  owns export; interrupt plus teardown must finish within 15 seconds. An
-  interrupted filesystem may fail artifact export; the process, drives, leases,
-  and VM resources must still be gone before fallback test cleanup.
-- Removed scratch drives, released leases, versioned jail directories and
-  tenant/builder cgroups. The final shell check also checks Firecracker processes
-  and jail/export mounts, including after a test failure.
-
-This suite uses the real builderd driver and vmmd gRPC server. Store and
-notification transport are in memory. It does not exercise apid upload,
-PostgreSQL, scanner admission, scheduler snapshotting, or release deployment.
-Those remain separate acceptance/CI gates. BuildKit startup has a bounded
-one-minute readiness window for cold nested-KVM workers; ready workers proceed
-immediately. The pinned BuildKit source also has a tested patch that waits for
-its private frontend pipe to become ready before starting HTTP/2’s ten-second
-handshake timer. That startup wait is bounded to one minute and honors cancellation.
-Railpack’s local build context matches its selected workdir so plan-relative
-COPY paths resolve to the selected workspace. Dockerfiles keep their explicit
-repository context. App destruction kills the running VM immediately; the builder
-completion wait applies only to builder records. Guest-init stops and reaps the
-BuildKit daemon before its final sync and poweroff so it cannot keep writing
-metadata while the host begins export.
-Railpack emits `/bin/bash -c` entrypoints, so `base-minimal` and the Alpine
-runners include Bash. The runtime image contract executes it in every base to
-catch missing binaries or shared libraries before publication.
-
-For a narrower iteration inside Lima, use the same runner with a subtest filter:
-
-```sh
-sudo env FAAS_METAL_BUILD_ACCEPTANCE=1 RUN_GREGALE_RELEASE_INSTALL=0 \
-  ./deploy/lima/run-metal.sh -run '^TestMetalBuilderAcceptance$/dockerfile-executable$'
-```
-
-The full Node workspace case is opt-in with `FAAS_METAL_NODE_ACCEPTANCE=1`.
-It uses the pinned public Node 24 multi-arch runtime fixture, including its
-shared libraries. **This is an outstanding slow-path gate:** on this ARM64
-nested-KVM host, the cold Node build exceeded both 15- and 30-minute budgets
-while importing/copying the upstream toolchain. The lightweight gate does not
-validate that Node path or establish a production latency SLO. Run the Node
-case on the dedicated x86_64 acceptance host before treating it as accepted:
-
-```sh
-sudo env FAAS_METAL_BUILD_ACCEPTANCE=1 FAAS_METAL_NODE_ACCEPTANCE=1 \
-  RUN_GREGALE_RELEASE_INSTALL=0 ./deploy/lima/run-metal.sh \
-  -run '^TestMetalBuilderAcceptance$/railpack-node-workspace$'
-```
-
-For a dedicated Linux x86_64 acceptance host, stage the matching platform
-builder base at `/srv/fc/base/runner-builder-amd64.ext4`, use the production
-kernel and host network/cgroup setup, and run from the checkout:
-
-```sh
-CGO_ENABLED=0 go build -trimpath -o /tmp/faas-metal-vmmd ./cmd/vmmd
-# Set FAAS_TEST_KERNEL, FAAS_TEST_BASE_ROOTFS, FAAS_TEST_FC_VERSION,
-# FAAS_GUEST_INIT and FAAS_BUILDER_BASE_PATH to the staged host assets.
-sudo -E env FAAS_TEST_VMMD_BINARY=/tmp/faas-metal-vmmd \
-  FAAS_METAL_BUILD_ACCEPTANCE=1 FAAS_METAL_NODE_ACCEPTANCE=1 \
-  go test -tags metal -count=1 -v -timeout 60m ./pkg/fcvm -run '^TestMetalBuilderAcceptance$'
-sudo make leakcheck
-```
-
-Run this only on an otherwise idle acceptance host: the leak check expects zero
-running tenant/builder VMs. A green ARM64 Lima run validates the lifecycle and
-build path; the pinned x86_64 kernel and hardware remain the production §14 gate.
+The **M1** (50× concurrent) and **M3** (park→wake latency) tests also pass
+here against the V6 rootfs (it's a full guest-init, just with a busybox
+httpd entrypoint instead of a real app).
 
 ## M5 §14 acceptance: `TestDeployWakeMetal`
 
@@ -143,10 +104,9 @@ then a real HTTP request through gatewayd-public) and asserts the served body
 matches the OCI-fixture bytes byte-for-byte.
 
 It boots the V6 rootfs as both `basePath("")` (no runtime) and
-`basePath("node22")`, so `stage-metal.sh` retains the BusyBox base/runtime fixture aliases (including
-the architecture-qualified storage keys) and builds the function-runner shims
-from the selected checkout. These aliases are test fixtures, not full language
-runtime images.
+`basePath("node22")`, so the Lima provisioner stages `/srv/fc/base/base.ext4`
+and `/srv/fc/base/runner-node22.ext4` from the same `v6-base.ext4` image —
+no extra setup step is needed.
 
 The test registers a fake OCI registry on loopback and configures
 `imaged` to pull from it via `FAAS_OCI_INSECURE=1` +
@@ -165,10 +125,9 @@ in the test output.
   does **not** produce production x86_64 snapshots or exercise the pinned
   x86_64 kernel. **A bare-metal x86_64 control-plane node remains the source of truth for
   the metal acceptance gates (spec §14).**
-- **Supply chain:** the provisioner’s Firecracker and stock M0 kernel downloads
-  still lack production’s checksum enforcement. The builder kernel source and
-  config are checksum-pinned separately by `stage-kernel.sh`. Keep this setup
-  in a disposable development VM.
+- **Supply chain:** firecracker + kernel are fetched here **without** the pinned
+  SHA-256 discipline the ansible `firecracker` role enforces on the box. Fine
+  for a throwaway dev VM; never do this on a production node.
 - **Nested virt requires M3+ / macOS 15+.** Older chips or macOS won't grant
   `/dev/kvm`; the provisioner's probe reports this and you fall back to another
   bare-metal x86_64 box or a cloud KVM host.
