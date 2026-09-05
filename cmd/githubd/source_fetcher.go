@@ -57,6 +57,18 @@ type installsLookup interface {
 	ForAccount(ctx context.Context, accountID string) (state.GitHubInstall, error)
 }
 
+type scopedInstallsLookup interface {
+	ForAccountInstallation(ctx context.Context, accountID string, installationID int64) (state.GitHubInstall, error)
+}
+
+// installTokenProvider is implemented by githubd.TokenCache. Production source
+// fetches must obtain a fresh, installation-scoped token at request time; the
+// durable sealed token is only a restart seed and expires after about an hour.
+type installTokenProvider interface {
+	Token(ctx context.Context, installationID int64) (string, error)
+	Invalidate(installationID int64)
+}
+
 // installationSourceFetcher implements githubd.SourceFetcher
 // against the durable install row + the package-level fetcher.
 // One instance per daemon; it is safe for concurrent use
@@ -66,7 +78,13 @@ type installationSourceFetcher struct {
 	installs installsLookup
 	fetcher  gitfetch.Fetcher
 	identity *age.X25519Identity
+	tokens   installTokenProvider
 	log      *slog.Logger
+}
+
+func (s *installationSourceFetcher) WithTokenProvider(tokens installTokenProvider) *installationSourceFetcher {
+	s.tokens = tokens
+	return s
 }
 
 // newInstallationSourceFetcher wires the four dependencies. The
@@ -106,7 +124,13 @@ func (s *installationSourceFetcher) Fetch(ctx context.Context, accountID string,
 	// 1. Resolve the install row. state.ErrNotFound surfaces as
 	// ErrNoBinding so the webhook handler renders the ignored
 	// payload instead of a 500.
-	inst, err := s.installs.ForAccount(ctx, accountID)
+	var inst state.GitHubInstall
+	var err error
+	if scoped, ok := s.installs.(scopedInstallsLookup); ok {
+		inst, err = scoped.ForAccountInstallation(ctx, accountID, installID)
+	} else {
+		inst, err = s.installs.ForAccount(ctx, accountID)
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return nil, githubd.ErrNoBinding
@@ -134,23 +158,40 @@ func (s *installationSourceFetcher) Fetch(ctx context.Context, accountID string,
 		return nil, githubd.ErrNoBinding
 	}
 
-	// 3. Unseal the install token. secretbox.Open returns an
-	// Envelope map; the install-token key is the same
-	// installTokenSealKey constant the oauth handshake writes
-	// at mint time.
-	env, err := secretbox.Open(s.identity, inst.SealedToken)
-	if err != nil {
-		return nil, fmt.Errorf("githubd: source fetcher: unseal install token: %w", err)
-	}
-	raw, ok := env[installTokenSealKey]
-	if !ok || raw == "" {
-		return nil, fmt.Errorf("githubd: source fetcher: sealed install token missing key %q", installTokenSealKey)
+	// 3. Resolve a current install token. Production wires TokenCache, which
+	// refreshes expiring tokens and coalesces concurrent refreshes. The sealed
+	// row fallback keeps store-only test rigs and recovery tooling compatible.
+	var raw string
+	if s.tokens != nil {
+		raw, err = s.tokens.Token(ctx, installID)
+		if err != nil {
+			return nil, fmt.Errorf("githubd: source fetcher: refresh install token: %w", err)
+		}
+	} else {
+		env, openErr := secretbox.Open(s.identity, inst.SealedToken)
+		if openErr != nil {
+			return nil, fmt.Errorf("githubd: source fetcher: unseal install token: %w", openErr)
+		}
+		var ok bool
+		raw, ok = env[installTokenSealKey]
+		if !ok || raw == "" {
+			return nil, fmt.Errorf("githubd: source fetcher: sealed install token missing key %q", installTokenSealKey)
+		}
 	}
 
 	// 4. Fetch. The token is scoped to this single call; the
 	// underlying httpFetcher uses it for exactly one
 	// Authorization header and never persists it.
 	gitTree, err := s.fetcher.Fetch(ctx, repoFullName, commitSHA, raw)
+	if err != nil && s.tokens != nil && errors.Is(err, gitfetch.ErrUnauthorized) {
+		// A token may be revoked before its advertised expiry. Drop it and retry
+		// exactly once with a newly exchanged installation token.
+		s.tokens.Invalidate(installID)
+		raw, err = s.tokens.Token(ctx, installID)
+		if err == nil {
+			gitTree, err = s.fetcher.Fetch(ctx, repoFullName, commitSHA, raw)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("githubd: source fetcher: archive fetch: %w", err)
 	}

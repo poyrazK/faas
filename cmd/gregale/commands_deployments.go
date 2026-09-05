@@ -35,6 +35,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -302,14 +303,73 @@ func cmdDeploymentsAll(ctx context.Context, client *api.Client, wide bool) int {
 // The 3-word verb shape mirrors cmdWebhookRotateSecret (commands_webhooks.go:361).
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment wait <id> [--timeout SECONDS] | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
 	case "set-min-instances":
 		return cmdDeploymentSetMinInstances(args[1:])
+	case "wait":
+		return cmdDeploymentWait(args[1:])
 	}
 	return cmdDeploymentGet(args)
+}
+
+// cmdDeploymentWait polls a deployment until it is live or terminal. It is
+// intentionally a separate verb so CI callers do not have to reconstruct the
+// platform's status vocabulary (or mistake an HTTP 200 for a successful
+// deployment). --timeout is expressed in seconds to keep the GitHub Action
+// input and CLI contract identical.
+func cmdDeploymentWait(args []string) int {
+	flags, pos := splitArgsForFlags(args)
+	fs := flag.NewFlagSet("deployment wait", flag.ContinueOnError)
+	timeoutSeconds := fs.Int("timeout", 600, "maximum seconds to wait")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(pos) != 1 || *timeoutSeconds <= 0 || !deploymentIDPattern.MatchString(pos[0]) {
+		PrintUsage(os.Stderr, "usage: gregale deployment wait <id> [--timeout SECONDS]", "deployment")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSeconds)*time.Second)
+	defer cancel()
+
+	for {
+		d, getErr := client.GetDeployment(ctx, pos[0])
+		if getErr != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become live within %ds", pos[0], *timeoutSeconds))
+			}
+			return printErr("Could not fetch deployment", getErr)
+		}
+		switch d.Status {
+		case "live":
+			if jsonOutput {
+				return jsonOut(writeJSON(d))
+			}
+			PrintOK(osStdout, "Deployment %s is live.", d.ID)
+			return 0
+		case "failed", "superseded", "cancelled":
+			if jsonOutput {
+				_ = writeJSON(d)
+			}
+			return printErr("Deployment did not become live", fmt.Errorf("deployment %s reached terminal status %s: %s", d.ID, d.Status, d.Error))
+		}
+
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become live within %ds", d.ID, *timeoutSeconds))
+		case <-timer.C:
+		}
+	}
 }
 
 // cmdDeploymentGet implements

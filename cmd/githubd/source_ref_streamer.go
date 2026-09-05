@@ -66,6 +66,10 @@ type sourceRefInstallsLookup interface {
 	ForAccount(ctx context.Context, accountID string) (state.GitHubInstall, error)
 }
 
+type sourceRefScopedInstallsLookup interface {
+	ForAccountInstallation(ctx context.Context, accountID string, installationID int64) (state.GitHubInstall, error)
+}
+
 // sourceRefStreamer implements githubd.SourceRefStreamer against
 // the durable install row + TokenCache + a stdlib http.Client.
 // One instance per daemon; safe for concurrent use (http.Client
@@ -132,7 +136,13 @@ func newSourceRefStreamer(installs sourceRefInstallsLookup, tokens sourceRefToke
 func (s *sourceRefStreamer) Stream(ctx context.Context, accountID string, installID int64, repoFullName, ref string, maxArchiveBytes int64) (githubd.SourceRefStream, error) {
 	// 1. Resolve the install row. ErrNoBinding on
 	// state.ErrNotFound so the gRPC handler can return 404.
-	inst, err := s.installs.ForAccount(ctx, accountID)
+	var inst state.GitHubInstall
+	var err error
+	if scoped, ok := s.installs.(sourceRefScopedInstallsLookup); ok {
+		inst, err = scoped.ForAccountInstallation(ctx, accountID, installID)
+	} else {
+		inst, err = s.installs.ForAccount(ctx, accountID)
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return githubd.SourceRefStream{}, githubd.ErrNoBinding

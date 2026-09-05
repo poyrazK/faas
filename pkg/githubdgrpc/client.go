@@ -104,8 +104,8 @@ func (c *Client) ExchangeOAuthCode(ctx context.Context, accountID, code, state s
 
 // ListInstallableRepos returns the catalog of repos the installation
 // has access to.
-func (c *Client) ListInstallableRepos(ctx context.Context, accountID string) ([]Repo, error) {
-	resp, err := c.cli.ListInstallableRepos(ctx, &githubdpb.ListInstallableReposRequest{AccountId: accountID})
+func (c *Client) ListInstallableRepos(ctx context.Context, accountID string, installationID int64) ([]Repo, error) {
+	resp, err := c.cli.ListInstallableRepos(ctx, &githubdpb.ListInstallableReposRequest{AccountId: accountID, InstallationId: installationID})
 	if err != nil {
 		return nil, liftErr(err)
 	}
@@ -122,10 +122,11 @@ func (c *Client) ListInstallableRepos(ctx context.Context, accountID string) ([]
 
 // BindAppRepo associates an app with a repo. Idempotent on
 // (app_id, repo).
-func (c *Client) BindAppRepo(ctx context.Context, appID, accountID, repoFullName, productionBranch string) (string, error) {
+func (c *Client) BindAppRepo(ctx context.Context, appID, accountID string, installationID int64, repoFullName, productionBranch string) (string, error) {
 	resp, err := c.cli.BindAppRepo(ctx, &githubdpb.BindAppRepoRequest{
 		AppId:            appID,
 		AccountId:        accountID,
+		InstallationId:   installationID,
 		RepoFullName:     repoFullName,
 		ProductionBranch: productionBranch,
 	})

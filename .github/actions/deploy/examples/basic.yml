@@ -10,11 +10,10 @@ jobs:
     environment: production             # opt-in; remove if not using GitHub Environments
     permissions:
       contents: read
-      id-token: none                    # OIDC is out of scope for the first action
+      id-token: write                   # Gregale exchanges the job JWT for a 5-minute bearer
     steps:
       - uses: poyrazK/faas/.github/actions/deploy@v1
         with:
-          api-key: ${{ secrets.GREGALE_API_KEY }}
           api-base: https://api.gregale.dev
           app: my-app
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}

@@ -88,7 +88,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	installID, p := s.resolveInstallToken(r.Context(), acct)
+	installID, p := s.resolveInstallToken(r.Context(), acct, app, req.Repo)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -232,8 +232,18 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 // githubd repeats the account/install binding check and owns token
 // minting inside StreamSourceRef, so the raw token never crosses
 // the apid process boundary.
-func (s *server) resolveInstallToken(ctx context.Context, acct state.Account) (int64, *api.Problem) {
-	inst, err := s.store.GitHubInstallForAccount(ctx, acct.ID)
+func (s *server) resolveInstallToken(ctx context.Context, acct state.Account, app state.App, repoFullName string) (int64, *api.Problem) {
+	installationID := int64(0)
+	if binding, err := s.store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID); err == nil && binding.RepoFullName == repoFullName {
+		installationID = binding.InstallID
+	}
+	var inst state.GitHubInstall
+	var err error
+	if installationID > 0 {
+		inst, err = s.store.GitHubInstallForAccountInstallation(ctx, acct.ID, installationID)
+	} else {
+		inst, err = s.store.GitHubInstallForAccount(ctx, acct.ID)
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return 0, api.ErrGitHubInstallNotFound()

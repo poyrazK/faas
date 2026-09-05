@@ -343,8 +343,8 @@ func TestHandlePullRequest_HappyPath_Opened(t *testing.T) {
 	if c.repo != "octo/api" || c.sha != "deadbeef00000000000000000000000000000000" {
 		t.Errorf("WritePreviewCheck args = (%q, %q)", c.repo, c.sha)
 	}
-	if c.previewURL != "pr-42-demo-app.gregale.dev" {
-		t.Errorf("previewURL = %q, want pr-42-demo-app.gregale.dev", c.previewURL)
+	if c.previewURL != "https://pr-42-demo-app.gregale.dev" {
+		t.Errorf("previewURL = %q, want https://pr-42-demo-app.gregale.dev", c.previewURL)
 	}
 	if !strings.Contains(c.summary, "PR #42") || !strings.Contains(c.summary, "demo-app") {
 		t.Errorf("summary = %q, want it to mention PR #42 + demo-app", c.summary)

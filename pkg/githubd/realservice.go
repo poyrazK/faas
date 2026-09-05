@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -229,10 +230,9 @@ func (s *RealService) GetInstallState(accountID string) (githubdgrpc.InstallStat
 //
 //  1. POST /login/oauth/access_token with client_id+secret+code
 //     → user-to-server access token.
-//  2. GET /user/installations with the user token → list of
-//     installs visible to the user. We pick the first one
-//     (PR-C's single-install-per-account assumption; widening to
-//     multi-install is a future migration).
+//  2. GET /user/installations with the user token → list of installs visible
+//     to the user. Select the installation bound into the verified OAuth state;
+//     reconnects without a selector retain the account's current installation.
 //  3. Re-verify the install via /app/installations/{id} as a
 //     defense-in-depth §11 check, defensively in case the user's
 //     access token has scopes that include an install they don't
@@ -284,9 +284,10 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	if len(installs) == 0 {
 		return "", "", fmt.Errorf("githubd: user has no app installations")
 	}
-	// Single-install assumption: pick the first. Multi-install is
-	// a future migration.
-	pick := installs[0]
+	pick, err := s.selectOAuthInstallation(context.Background(), accountID, stateStr, installs)
+	if err != nil {
+		return "", "", err
+	}
 	// Defense-in-depth §11 re-verify.
 	instPayload, verified, err := s.Auth.VerifyInstallation(context.Background(), pick.ID, pick.Account.Login)
 	if err != nil {
@@ -391,17 +392,47 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	return strconv.FormatInt(pick.ID, 10), branch, nil
 }
 
+// selectOAuthInstallation binds the OAuth proof to the installation selected
+// during the GitHub App setup callback. The state cookie is already compared
+// by apid before this call; a `.N` suffix therefore cannot be forged. For a
+// reconnect without a suffix, preserve the account's current installation.
+func (s *RealService) selectOAuthInstallation(ctx context.Context, accountID, stateStr string, installs []UserInstallation) (UserInstallation, error) {
+	desired := int64(0)
+	if dot := strings.LastIndexByte(stateStr, '.'); dot >= 0 && dot+1 < len(stateStr) {
+		if parsed, err := strconv.ParseInt(stateStr[dot+1:], 10, 64); err == nil && parsed > 0 {
+			desired = parsed
+		}
+	}
+	if desired == 0 && s.Installs != nil {
+		if current, err := s.Installs.ForAccount(ctx, accountID); err == nil {
+			desired = current.InstallationID
+		}
+	}
+	if desired != 0 {
+		for _, installation := range installs {
+			if installation.ID == desired {
+				return installation, nil
+			}
+		}
+		return UserInstallation{}, fmt.Errorf("githubd: selected installation %d is not accessible to this GitHub user", desired)
+	}
+	if len(installs) == 1 {
+		return installs[0], nil
+	}
+	return UserInstallation{}, fmt.Errorf("githubd: multiple GitHub App installations are available; choose an installation before connecting")
+}
+
 // ListInstallableRepos returns the repos the installation can see.
 // Requires a non-nil Auth + Tokens. PR-C: rehydrate path goes
 // through ensureInstallToken so the cold-start case (TokenCache
 // miss after a kill -TERM) is handled: the sealed token is
 // unsealed from the durable row instead of returning the
 // pre-PR-C "no installation for account" error.
-func (s *RealService) ListInstallableRepos(accountID string) ([]githubdgrpc.Repo, error) {
+func (s *RealService) ListInstallableRepos(accountID string, installationID int64) ([]githubdgrpc.Repo, error) {
 	if s.Auth == nil || s.Tokens == nil {
 		return nil, fmt.Errorf("githubd: OAuth not configured")
 	}
-	_, token, err := s.ensureInstallToken(context.Background(), accountID)
+	_, token, err := s.ensureInstallTokenForInstallation(context.Background(), accountID, installationID)
 	if err != nil {
 		return nil, err
 	}
@@ -432,16 +463,16 @@ func (s *RealService) ListInstallableRepos(accountID string) ([]githubdgrpc.Repo
 //
 // PR-C: installID lookup goes through lookupInstall (cache →
 // StoreInstalls) so a kill -TERM doesn't break the bind path.
-func (s *RealService) BindAppRepo(appID, accountID, repoFullName, productionBranch string) (string, error) {
-	if appID == "" || accountID == "" || repoFullName == "" {
-		return "", fmt.Errorf("githubd: appID, accountID, repoFullName required")
+func (s *RealService) BindAppRepo(appID, accountID string, installationID int64, repoFullName, productionBranch string) (string, error) {
+	if appID == "" || accountID == "" || installationID <= 0 || repoFullName == "" {
+		return "", fmt.Errorf("githubd: appID, accountID, installationID, repoFullName required")
 	}
 	if productionBranch == "" {
 		productionBranch = defaultProductionBranch
 	}
 	bindingID := fmt.Sprintf("bind-%s-%s", appID, repoFullName)
 
-	installID, err := s.lookupInstall(context.Background(), accountID)
+	inst, err := s.installForAccount(context.Background(), accountID, installationID)
 	if err != nil {
 		return "", err
 	}
@@ -453,7 +484,7 @@ func (s *RealService) BindAppRepo(appID, accountID, repoFullName, productionBran
 	bid, err := s.Store.Upsert(context.Background(), state.GitHubBinding{
 		AppID:            appID,
 		AccountID:        accountID,
-		InstallID:        installID,
+		InstallID:        inst.InstallationID,
 		RepoFullName:     repoFullName,
 		ProductionBranch: productionBranch,
 		BindingID:        bindingID,
@@ -470,7 +501,7 @@ func (s *RealService) BindAppRepo(appID, accountID, repoFullName, productionBran
 	s.bindingsCache[accountID][appID] = state.GitHubBinding{
 		AppID:            appID,
 		AccountID:        accountID,
-		InstallID:        installID,
+		InstallID:        inst.InstallationID,
 		RepoFullName:     repoFullName,
 		ProductionBranch: productionBranch,
 		BindingID:        bid,
@@ -520,6 +551,25 @@ func (s *RealService) lookupInstall(ctx context.Context, accountID string) (int6
 	return inst.InstallationID, nil
 }
 
+func (s *RealService) installForAccount(ctx context.Context, accountID string, installationID int64) (state.GitHubInstall, error) {
+	if s.Installs == nil {
+		return state.GitHubInstall{}, state.ErrNotFound
+	}
+	if installationID > 0 {
+		if scoped, ok := s.Installs.(ScopedStoreInstalls); ok {
+			return scoped.ForAccountInstallation(ctx, accountID, installationID)
+		}
+	}
+	inst, err := s.Installs.ForAccount(ctx, accountID)
+	if err != nil {
+		return state.GitHubInstall{}, err
+	}
+	if installationID > 0 && inst.InstallationID != installationID {
+		return state.GitHubInstall{}, state.ErrNotFound
+	}
+	return inst, nil
+}
+
 // ensureInstallToken is the unified warm + cold path that returns
 // (installationID, installToken, err) for an account. Order:
 //
@@ -539,12 +589,20 @@ func (s *RealService) lookupInstall(ctx context.Context, accountID string) (int6
 // restart returns the same install token api.github.com issued
 // pre-restart, not a freshly-minted replacement.
 func (s *RealService) ensureInstallToken(ctx context.Context, accountID string) (int64, string, error) {
+	return s.ensureInstallTokenForInstallation(ctx, accountID, 0)
+}
+
+func (s *RealService) ensureInstallTokenForInstallation(ctx context.Context, accountID string, requestedInstallationID int64) (int64, string, error) {
 	if s.Tokens == nil {
 		return 0, "", fmt.Errorf("githubd: install token cache not configured")
 	}
-	installID, err := s.lookupInstall(ctx, accountID)
-	if err != nil {
-		return 0, "", err
+	installID := requestedInstallationID
+	if installID <= 0 {
+		var err error
+		installID, err = s.lookupInstall(ctx, accountID)
+		if err != nil {
+			return 0, "", err
+		}
 	}
 	// Step 1: try to rehydrate from durable. This is what
 	// a freshly-restarted process does — TokenCache is empty,
@@ -561,7 +619,7 @@ func (s *RealService) ensureInstallToken(ctx context.Context, accountID string) 
 		identities = []*age.X25519Identity{s.Identity}
 	}
 	if s.Installs != nil && len(identities) > 0 {
-		inst, ierr := s.Installs.ForAccount(ctx, accountID)
+		inst, ierr := s.installForAccount(ctx, accountID, installID)
 		switch {
 		case ierr == nil:
 			now := time.Now()
@@ -772,7 +830,7 @@ func (s *RealService) MintInstallationToken(accountID string, installationID int
 	}
 	// Resolve the durable install row. ErrNoBinding on
 	// state.ErrNotFound so the gRPC handler maps to NotFound.
-	inst, err := s.Installs.ForAccount(context.Background(), accountID)
+	inst, err := s.installForAccount(context.Background(), accountID, installationID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return "", time.Time{}, ErrNoBinding

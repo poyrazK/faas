@@ -70,7 +70,7 @@ type BindingsStore interface {
 // Implementations MUST be safe for concurrent use.
 type StoreInstalls interface {
 	// Upsert persists the OAuth handshake state for one account's
-	// install. Idempotent on (AccountID) via the table's PK +
+	// install. Idempotent on (AccountID, InstallationID) via the table's PK +
 	// ON CONFLICT DO UPDATE; the OAuth flow can retry without
 	// crashing on the unique constraint. SealedToken is the
 	// age-encrypted install token (the "ghs_…" form, sealed by
@@ -83,4 +83,11 @@ type StoreInstalls interface {
 	// SealedToken only if TokenExpiresAt > now()+30s; otherwise the
 	// cold path mints a fresh install token and re-seals.
 	ForAccount(ctx context.Context, accountID string) (state.GitHubInstall, error)
+}
+
+// ScopedStoreInstalls is implemented by multi-install stores. Paths that
+// already know an installation ID use this contract to avoid substituting a
+// different personal or organization installation owned by the same account.
+type ScopedStoreInstalls interface {
+	ForAccountInstallation(ctx context.Context, accountID string, installationID int64) (state.GitHubInstall, error)
 }

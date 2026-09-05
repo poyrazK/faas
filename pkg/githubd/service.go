@@ -53,19 +53,43 @@ type AppBindingStore interface {
 	GetAppBinding(ctx context.Context, repoFullName, branch string) (state.GitHubBinding, error)
 }
 
+type InstallationAppBindingStore interface {
+	GetAppBindingForInstallation(ctx context.Context, repoFullName, branch string, installationID int64) (state.GitHubBinding, error)
+}
+
+func appBindingForEvent(ctx context.Context, bindings AppBindingStore, repoFullName, branch string, installationID int64) (state.GitHubBinding, error) {
+	if installationID > 0 {
+		if scoped, ok := bindings.(InstallationAppBindingStore); ok {
+			return scoped.GetAppBindingForInstallation(ctx, repoFullName, branch, installationID)
+		}
+	}
+	return bindings.GetAppBinding(ctx, repoFullName, branch)
+}
+
 // InstallsLookup is the read seam githubd uses to resolve a
 // GitHub App installation row by account ID. The store-backed
 // adapter (stateInstallsAdapter.ForAccount) is the production
 // implementation; tests inject a stub that returns a fixed
 // GitHubInstall with a sealed token.
 //
-// The lookup is keyed on AccountID (not installation_id) because
-// the webhook handler knows the binding's account — and from
-// there the install row is one round-trip. Resolving the install
-// first and threading its ID through the binding would require
-// the webhook handler to scan every binding for a match.
+// Legacy implementations are keyed on AccountID. Production also implements
+// ScopedInstallsLookup and resolves the exact installation carried by the
+// authenticated webhook and binding.
 type InstallsLookup interface {
 	ForAccount(ctx context.Context, accountID string) (state.GitHubInstall, error)
+}
+
+type ScopedInstallsLookup interface {
+	ForAccountInstallation(ctx context.Context, accountID string, installationID int64) (state.GitHubInstall, error)
+}
+
+func installForAccount(ctx context.Context, installs InstallsLookup, accountID string, installationID int64) (state.GitHubInstall, error) {
+	if installationID > 0 {
+		if scoped, ok := installs.(ScopedInstallsLookup); ok {
+			return scoped.ForAccountInstallation(ctx, accountID, installationID)
+		}
+	}
+	return installs.ForAccount(ctx, accountID)
 }
 
 // WriteCheck is the seam githubd uses to push build-phase updates
@@ -73,6 +97,8 @@ type InstallsLookup interface {
 // slice 7 leaves it as a stub that records the call into the log
 // so the smoke test can assert on the order.
 type WriteCheck func(ctx context.Context, repoFullName, commitSHA string, phase githubdgrpc.CheckPhase) error
+
+type WriteAppCheckFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, summary string) error
 
 // WritePreviewCheck is the seam githubd uses to push PR-preview
 // Check Run updates back to GitHub (issue #272 / ADR-094). Wired
@@ -122,14 +148,15 @@ type WritePreviewDestroyComment = WritePreviewDestroyCommentFunc
 // mode="error" / mode="breaker_open" metric labels rather than
 // silently downgrading to full fan-out.
 type Service struct {
-	Log          *slog.Logger
-	Bindings     AppBindingStore
-	Installs     InstallsLookup
-	Source       SourceFetcher
-	Reconcile    *reconcile.Service
-	Enqueuer     BuildEnqueuer
-	ChangedFiles ChangedFilesClient
-	WriteCheck   WriteCheck
+	Log           *slog.Logger
+	Bindings      AppBindingStore
+	Installs      InstallsLookup
+	Source        SourceFetcher
+	Reconcile     *reconcile.Service
+	Enqueuer      BuildEnqueuer
+	ChangedFiles  ChangedFilesClient
+	WriteCheck    WriteCheck
+	WriteAppCheck WriteAppCheckFunc
 	// Ops is the per-daemon Prometheus facade. Used by the
 	// push-dispatch path to increment
 	// githubd_path_filter_total{mode} after lookupChangedFiles
@@ -143,11 +170,13 @@ type Service struct {
 	// (issue #272 / ADR-094). Wired to ChecksAPI.WritePreviewCheck
 	// in cmd/githubd/main.go; nil-safe (handlePullRequest logs
 	// + proceeds when nil).
-	WritePreviewCheck WritePreviewCheck
+	WritePreviewCheck                WritePreviewCheck
+	WritePreviewCheckForInstallation WritePreviewCheckForInstallationFunc
 	// WritePreviewCheckForkRefused is the D3 fork-refused
 	// neutral Check Run writer. Same nil-safe posture as
 	// WritePreviewCheck.
-	WritePreviewCheckForkRefused WritePreviewCheckForkRefused
+	WritePreviewCheckForkRefused                WritePreviewCheckForkRefused
+	WritePreviewCheckForkRefusedForInstallation WritePreviewCheckForkRefusedForInstallationFunc
 	// WritePreviewDestroyComment is the one-time PR-thread
 	// destroy-hint writer (issue #961 Mega-C PR-1, leaf 3).
 	// Same nil-safe posture as WritePreviewCheck. The dedupe
@@ -174,6 +203,36 @@ func NewService(log *slog.Logger) *Service {
 		log = slog.Default()
 	}
 	return &Service{Log: log}
+}
+
+// HandleWebhookEvent routes the standard X-GitHub-Event value. Keeping the
+// router beside the business service prevents the HTTP transport and durable
+// worker from drifting into push-only behavior.
+func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body []byte) error {
+	switch eventType {
+	case "push":
+		event, err := DecodePush(body)
+		if err != nil {
+			return err
+		}
+		if event.Installation.ID <= 0 {
+			return errors.New("githubd: push missing installation.id")
+		}
+		_, err = s.HandlePushRequest(ctx, body)
+		return err
+	case "pull_request":
+		event, err := DecodePullRequest(body)
+		if err != nil {
+			return err
+		}
+		if event.Installation.ID <= 0 {
+			return errors.New("githubd: pull_request missing installation.id")
+		}
+		_, err = s.handlePullRequest(ctx, body)
+		return err
+	default:
+		return fmt.Errorf("githubd: unsupported webhook event %q", eventType)
+	}
 }
 
 // HandlePushRequest is the HTTP webhook entry point. It verifies
@@ -220,11 +279,14 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// 1. Resolve the (repo, branch) binding. An empty BindingID
 	// is the canonical "no row" shape; ErrNoBinding covers both
 	// "store said not-found" and "store returned an empty row".
-	binding, err := s.Bindings.GetAppBinding(ctx, ev.Repository.FullName, branch)
+	binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, branch, ev.Installation.ID)
 	if err != nil {
 		return reconcile.Result{}, ErrNoBinding
 	}
 	if binding.BindingID == "" || binding.AccountID == "" {
+		return reconcile.Result{}, ErrNoBinding
+	}
+	if ev.Installation.ID > 0 && binding.InstallID != ev.Installation.ID {
 		return reconcile.Result{}, ErrNoBinding
 	}
 
@@ -232,7 +294,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// is one-to-one (every account has at most one GitHub App
 	// install). state.ErrNotFound surfaces as ErrNoBinding so the
 	// webhook handler renders the same ignored shape.
-	install, err := s.Installs.ForAccount(ctx, binding.AccountID)
+	install, err := installForAccount(ctx, s.Installs, binding.AccountID, binding.InstallID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return reconcile.Result{}, ErrNoBinding
@@ -376,8 +438,22 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	s.ObserveFilterMode(filterMode)
 	toEnqueue, skipped := s.filterByPath(touched, changedFiles, filterMode)
 
+	// Legacy embeddings expose one repository-wide check. Production uses the
+	// per-app writer below so monorepo workloads do not overwrite one another.
+	if s.WriteAppCheck == nil && s.WriteCheck != nil && len(toEnqueue) > 0 {
+		if werr := s.WriteCheck(ctx, ev.Repository.FullName, ev.After, githubdgrpc.CheckPhaseQueued); werr != nil {
+			s.Log.Warn("githubd: write queued check", "err", werr, "repo", ev.Repository.FullName, "sha", ev.After)
+		}
+	}
+
 	buildIDs := make([]string, 0, len(toEnqueue))
 	for _, app := range toEnqueue {
+		if s.WriteAppCheck != nil {
+			if werr := s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+				app.Slug, githubdgrpc.CheckPhaseQueued, "Deployment queued."); werr != nil {
+				s.Log.Warn("githubd: write queued app check", "app_id", app.ID, "err", werr)
+			}
+		}
 		// Stage the per-app source subtree into the githubd
 		// workdir before the enqueue call. The apidEnqueuer
 		// passes the staged path to the apid bridge as the
@@ -388,6 +464,10 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		sourcePath, sourceBytes, sourceURL, stageErr := s.stageAppSource(ctx, tree, app, project, ev.After, branch)
 		if stageErr != nil {
 			s.Log.Warn("githubd: stage app source", "app_id", app.ID, "err", stageErr, "repo", ev.Repository.FullName, "sha", ev.After)
+			if s.WriteAppCheck != nil {
+				_ = s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, githubdgrpc.CheckPhaseFailed, "Source staging failed: "+stageErr.Error())
+			}
 			continue
 		}
 		build, err := enqueuer.Enqueue(ctx, BuildSpec{
@@ -413,6 +493,10 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			// 50 builds was rejected is worse for the
 			// customer.
 			s.Log.Warn("githubd: enqueue build", "app_id", app.ID, "err", err, "repo", ev.Repository.FullName, "sha", ev.After)
+			if s.WriteAppCheck != nil {
+				_ = s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, githubdgrpc.CheckPhaseFailed, "Build enqueue failed: "+err.Error())
+			}
 			continue
 		}
 		buildIDs = append(buildIDs, build.ID)
@@ -427,13 +511,6 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	}
 	result.BuildIDs = buildIDs
 
-	// 7. Best-effort: queue the queued check on GitHub. Errors
-	// here don't block the deploy from being recorded locally.
-	if s.WriteCheck != nil {
-		if werr := s.WriteCheck(ctx, ev.Repository.FullName, ev.After, githubdgrpc.CheckPhaseQueued); werr != nil {
-			s.Log.Warn("githubd: write check", "err", werr, "repo", ev.Repository.FullName, "sha", ev.After)
-		}
-	}
 	s.Log.Info("githubd push → reconcile",
 		"repo", ev.Repository.FullName, "branch", branch,
 		"sha", ev.After, "binding", binding.BindingID,
@@ -788,10 +865,34 @@ func (s *Service) stampPreviewPrState(ctx context.Context, appID, prState string
 // a full ChecksAPI.
 type WritePreviewCheckFunc func(ctx context.Context, repoFullName, commitSHA string, phase githubdgrpc.CheckPhase, previewURL, summary string) error
 
+type WritePreviewCheckForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA string, phase githubdgrpc.CheckPhase, previewURL, summary string) error
+
 // WritePreviewCheckForkRefusedFunc is the seam HandlePullRequest
 // uses for the D3 fork-refused neutral Check Run. Same func-
 // typed shape as WritePreviewCheckFunc.
 type WritePreviewCheckForkRefusedFunc func(ctx context.Context, repoFullName, commitSHA, summary string) error
+
+type WritePreviewCheckForkRefusedForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error
+
+func (s *Service) writePreviewCheck(ctx context.Context, installationID int64, repoFullName, commitSHA string, phase githubdgrpc.CheckPhase, previewURL, summary string) error {
+	if s.WritePreviewCheckForInstallation != nil {
+		return s.WritePreviewCheckForInstallation(ctx, installationID, repoFullName, commitSHA, phase, previewURL, summary)
+	}
+	if s.WritePreviewCheck != nil {
+		return s.WritePreviewCheck(ctx, repoFullName, commitSHA, phase, previewURL, summary)
+	}
+	return nil
+}
+
+func (s *Service) writeForkRefusedCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
+	if s.WritePreviewCheckForkRefusedForInstallation != nil {
+		return s.WritePreviewCheckForkRefusedForInstallation(ctx, installationID, repoFullName, commitSHA, summary)
+	}
+	if s.WritePreviewCheckForkRefused != nil {
+		return s.WritePreviewCheckForkRefused(ctx, repoFullName, commitSHA, summary)
+	}
+	return nil
+}
 
 // WritePreviewDestroyCommentFunc is the seam HandlePullRequest
 // uses for the one-time PR-comment destroy hint (issue #961
@@ -801,11 +902,8 @@ type WritePreviewDestroyCommentFunc func(ctx context.Context, repoFullName strin
 
 // handlePullRequest is the HTTP webhook entry point for the
 // pull_request event family (issue #272 / ADR-094). It provisions
-// a preview apps row and posts a `gregale-preview` Check Run.
-// The actual source-ref build enqueue is staged in a follow-up
-// PR — PR-A's spine focuses on app creation + Checks + fork
-// refusal + quota-exhausted paths so each PR in the cluster
-// stays reviewable in ~10 min.
+// a preview app row, stages and enqueues its source build, and updates a
+// `gregale-preview` Check Run through the deployment lifecycle.
 //
 // Differences from HandlePushRequest:
 //
@@ -843,14 +941,12 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	// The neutral Check Run is the only outbound signal — no
 	// apps row, no deployment row, no Slack/audit notifications.
 	if ev.IsFork() {
-		if s.WritePreviewCheckForkRefused != nil {
-			if werr := s.WritePreviewCheckForkRefused(ctx,
-				ev.Repository.FullName, ev.PullRequest.HeadSHA,
-				"Fork PR refused — head repo differs from base repo "+
-					"(security policy; ADR-094 D3)"); werr != nil {
-				s.Log.Warn("githubd: write fork-refused preview check", "err", werr,
-					"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
-			}
+		if werr := s.writeForkRefusedCheck(ctx, ev.Installation.ID,
+			ev.Repository.FullName, ev.PullRequest.HeadSHA,
+			"Fork PR refused — head repo differs from base repo "+
+				"(security policy; ADR-094 D3)"); werr != nil {
+			s.Log.Warn("githubd: write fork-refused preview check", "err", werr,
+				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
 		}
 		s.Log.Info("githubd pull_request: fork refused",
 			"repo", ev.Repository.FullName,
@@ -867,7 +963,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	//    preview provisioning for the parent app. The empty-
 	//    branch argument is the canonical "match any branch"
 	//    shape for AppBindingStore.GetAppBinding.
-	binding, err := s.Bindings.GetAppBinding(ctx, ev.Repository.FullName, "")
+	binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, "", ev.Installation.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) || IsNoBinding(err) {
 			return reconcile.Result{}, ErrNoBinding
@@ -880,9 +976,12 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		// but a manual SQL edit could.
 		return reconcile.Result{}, ErrNoBinding
 	}
+	if ev.Installation.ID > 0 && binding.InstallID != ev.Installation.ID {
+		return reconcile.Result{}, ErrNoBinding
+	}
 
 	// 2. Resolve the install row (same shape as HandlePushRequest).
-	install, err := s.Installs.ForAccount(ctx, binding.AccountID)
+	install, err := installForAccount(ctx, s.Installs, binding.AccountID, binding.InstallID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return reconcile.Result{}, ErrNoBinding
@@ -934,6 +1033,17 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: derive preview slug: %w", err)
 	}
+	if ev.Action == PullRequestActionClosed {
+		if _, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal); lookupErr != nil {
+			if errors.Is(lookupErr, state.ErrNotFound) {
+				// GitHub can deliver a close after retention already removed the
+				// preview (or without a prior open). Teardown is an idempotent no-op;
+				// never create a quota-consuming closed app just to delete it later.
+				return reconcile.Result{}, nil
+			}
+			return reconcile.Result{}, fmt.Errorf("githubd: resolve closing preview: %w", lookupErr)
+		}
+	}
 
 	// Closed-event teardown is dispatched to PR-C's janitor —
 	// the dispatcher just stamps preview_pr_state='closed' on
@@ -953,51 +1063,61 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		AccountID:        parentApp.AccountID,
 		Slug:             previewSlugVal,
 		Type:             parentApp.Type,
+		Runtime:          parentApp.Runtime,
 		RAMMB:            parentApp.RAMMB,
 		MaxConcurrency:   parentApp.MaxConcurrency,
 		IdleTimeoutS:     parentApp.IdleTimeoutS,
+		RootDir:          parentApp.RootDir,
+		WorkloadClass:    parentApp.WorkloadClass,
+		StartCommand:     parentApp.StartCommand,
+		Manifest:         parentApp.Manifest,
+		AppProtocol:      parentApp.AppProtocol,
 		Status:           state.AppActive,
 		PreviewOfSlug:    parentApp.Slug,
 		PreviewPrNumber:  ev.Number,
 		PreviewPrState:   previewState,
 		PreviewExpiresAt: &expiresAt,
 	}
-	// ADR-094 D4: previews count against DeployedAppMax but
-	// the dispatcher doesn't have an apid-side session to
-	// resolve a Plan at webhook time. Pass a generous limit
-	// here so the per-account quota check never trips in the
-	// dispatcher; the dashboard's onboarding flow + the
-	// applier-side cap reader are the real enforcement point.
-	// (Future PR: thread the resolved plan through so the
-	// webhook path enforces the same cap as the dashboard.)
-	previewLimits := api.Limits{DeployedApps: 10000}
+	// ADR-094 D4: previews are apps and consume the account's real plan quota.
+	// Resolve the account server-side instead of using a synthetic high ceiling
+	// that lets webhook traffic bypass the customer-facing quota boundary.
+	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("githubd: resolve preview account limits: %w", err)
+	}
+	previewLimits := api.MustLimitsFor(account.Plan)
 	created, err := s.Reconcile.Store.CreateAppIfUnderQuota(ctx, previewApp, previewLimits)
 	if err != nil {
-		// Quota exhausted is the customer-visible failure mode:
-		// post a Check Run that announces the limit + an upgrade
-		// hint, then return ErrIgnored so the HTTP handler
-		// renders 200-ignored (no GitHub retry).
 		var qe *state.QuotaError
 		if errors.As(err, &qe) {
-			if s.WritePreviewCheck != nil {
-				previewURL := previewHostnameForSlug(previewSlugVal)
-				if werr := s.WritePreviewCheck(ctx,
+			// Rebuilding an existing preview does not consume another slot. The
+			// quota guard runs before the uniqueness check, so resolve that
+			// idempotent path before reporting the account as full.
+			existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal)
+			if lookupErr == nil && existing.AccountID == parentApp.AccountID &&
+				existing.PreviewOfSlug == parentApp.Slug {
+				created = existing
+				err = nil
+			} else {
+				previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
+				if werr := s.writePreviewCheck(ctx, install.InstallationID,
 					ev.Repository.FullName, ev.PullRequest.HeadSHA,
-					githubdgrpc.CheckPhaseFailed,
-					previewURL,
+					githubdgrpc.CheckPhaseFailed, previewURL,
 					"Preview skipped: account has reached its deployed app limit. "+
 						"Close an existing app or upgrade your plan."); werr != nil {
 					s.Log.Warn("githubd: write quota preview check", "err", werr,
 						"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
 				}
+				s.Log.Info("githubd pull_request: quota exhausted",
+					"repo", ev.Repository.FullName, "pr_number", ev.Number,
+					"sender", ev.Sender.Login)
+				result := reconcile.Result{}
+				result.WasIgnored = true
+				return result, ErrIgnored
 			}
-			s.Log.Info("githubd pull_request: quota exhausted",
-				"repo", ev.Repository.FullName, "pr_number", ev.Number,
-				"sender", ev.Sender.Login)
-			result := reconcile.Result{}
-			result.WasIgnored = true
-			return result, ErrIgnored
 		}
+	}
+	if err != nil {
 		// Pre-existing row on (account_id, slug) → ErrConflict.
 		// That's the idempotent path: a 2nd synchronize /
 		// reopened / closed event for the same PR. We treat it as
@@ -1045,6 +1165,8 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			"err", err, "app_id", created.ID, "state", previewState)
 	}
 
+	result := reconcile.Result{Added: []state.App{created}}
+
 	// 5c. On a closed PR, post a one-time destroy-hint comment
 	//     on the PR thread (issue #961 Mega-C PR-1, leaf 3).
 	//     previewCommentOnce dedupes via the new
@@ -1069,6 +1191,11 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			}
 		}
 	}
+	if ev.Action == PullRequestActionClosed {
+		// Closing a PR advances only the preview lifecycle. It must not enqueue a
+		// fresh build for a revision that is being torn down.
+		return result, nil
+	}
 
 	// 6. Write the queued Check Run with the preview URL. The
 	//    URL is derived from the preview slug; routing (PR-B)
@@ -1076,18 +1203,56 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	//    the PR UI shows the spinner; the subsequent build
 	//    pipeline (a follow-up PR-A.1) will transition it to
 	//    `in_progress` / `completed`.
-	previewURL := previewHostnameForSlug(previewSlugVal)
-	if s.WritePreviewCheck != nil {
-		if werr := s.WritePreviewCheck(ctx,
-			ev.Repository.FullName, ev.PullRequest.HeadSHA,
-			githubdgrpc.CheckPhaseQueued,
-			previewURL,
-			fmt.Sprintf("Preview provisioned for PR #%d against %q",
-				ev.Number, parentApp.Slug)); werr != nil {
-			s.Log.Warn("githubd: write queued preview check", "err", werr,
-				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA,
-				"preview_slug", previewSlugVal)
+	previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
+	if werr := s.writePreviewCheck(ctx, install.InstallationID,
+		ev.Repository.FullName, ev.PullRequest.HeadSHA,
+		githubdgrpc.CheckPhaseQueued, previewURL,
+		fmt.Sprintf("Preview provisioned for PR #%d against %q",
+			ev.Number, parentApp.Slug)); werr != nil {
+		s.Log.Warn("githubd: write queued preview check", "err", werr,
+			"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA,
+			"preview_slug", previewSlugVal)
+	}
+
+	// Fetch, stage, and enqueue the preview's head revision. Older unit rigs
+	// intentionally omit these production dependencies; production always wires
+	// all three and therefore turns every open/synchronize/reopen event into a
+	// real DeploymentKindPreview build.
+	if s.Source != nil && s.Enqueuer != nil && s.WorkDir != "" {
+		tree, fetchErr := s.Source.Fetch(ctx, binding.AccountID, install.InstallationID,
+			ev.Repository.FullName, ev.PullRequest.HeadSHA)
+		if fetchErr != nil {
+			return result, fmt.Errorf("githubd: fetch preview source: %w", fetchErr)
 		}
+		defer func() { _ = tree.Close() }()
+		project := state.Project{
+			AccountID:        binding.AccountID,
+			RepoFullName:     ev.Repository.FullName,
+			ProductionBranch: ev.PullRequest.HeadRef,
+		}
+		sourcePath, sourceBytes, sourceURL, stageErr := s.stageAppSource(ctx, tree, created,
+			project, ev.PullRequest.HeadSHA, ev.PullRequest.HeadRef)
+		if stageErr != nil {
+			return result, fmt.Errorf("githubd: stage preview source: %w", stageErr)
+		}
+		build, enqueueErr := s.Enqueuer.Enqueue(ctx, BuildSpec{
+			App:          created,
+			CommitSHA:    ev.PullRequest.HeadSHA,
+			RepoFullName: ev.Repository.FullName,
+			Ref:          "refs/heads/" + ev.PullRequest.HeadRef,
+			Branch:       ev.PullRequest.HeadRef,
+			Pusher:       ev.Sender.Login,
+			SourcePath:   sourcePath,
+			SourceURL:    sourceURL,
+			SourceBytes:  sourceBytes,
+			PRNumber:     int32(ev.Number),
+			SenderLogin:  ev.Sender.Login,
+			EventKind:    githubdpb.EnqueueBuildEventKind_EVENT_KIND_PULL_REQUEST,
+		})
+		if enqueueErr != nil {
+			return result, fmt.Errorf("githubd: enqueue preview build: %w", enqueueErr)
+		}
+		result.BuildIDs = []string{build.ID}
 	}
 
 	s.Log.Info("githubd pull_request → preview",
@@ -1098,8 +1263,6 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		"sender", ev.Sender.Login,
 		"sha", ev.PullRequest.HeadSHA)
 
-	result := reconcile.Result{}
-	result.Added = []state.App{created}
 	return result, nil
 }
 

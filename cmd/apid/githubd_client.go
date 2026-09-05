@@ -34,8 +34,8 @@ type GithubdClient interface {
 	// to the right "Connect GitHub" success page without an extra
 	// round-trip.
 	ExchangeOAuthCode(ctx context.Context, accountID, code, state string) (string, string, error)
-	ListInstallableRepos(ctx context.Context, accountID string) ([]Repo, error)
-	BindAppRepo(ctx context.Context, appID, accountID, repoFullName, productionBranch string) (string, error)
+	ListInstallableRepos(ctx context.Context, accountID string, installationID int64) ([]Repo, error)
+	BindAppRepo(ctx context.Context, appID, accountID string, installationID int64, repoFullName, productionBranch string) (string, error)
 	UnbindAppRepo(ctx context.Context, appID, accountID string) error
 	GetAppBinding(ctx context.Context, appID, accountID string) (AppBinding, error)
 	CreateDeploymentFromPush(ctx context.Context, repoFullName, ref, commitSHA, pusher string) (string, string, error)
@@ -132,12 +132,12 @@ func (stubGithubdClient) ExchangeOAuthCode(context.Context, string, string, stri
 }
 
 // ListInstallableRepos returns the not-ready problem. Slice 8 replaces this.
-func (stubGithubdClient) ListInstallableRepos(context.Context, string) ([]Repo, error) {
+func (stubGithubdClient) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
 	return nil, errGithubdNotReady
 }
 
 // BindAppRepo returns the not-ready problem. Slice 8 replaces this.
-func (stubGithubdClient) BindAppRepo(context.Context, string, string, string, string) (string, error) {
+func (stubGithubdClient) BindAppRepo(context.Context, string, string, int64, string, string) (string, error) {
 	return "", errGithubdNotReady
 }
 
@@ -226,13 +226,13 @@ func (l *liveClient) ExchangeOAuthCode(ctx context.Context, accountID, code, sta
 }
 
 // ListInstallableRepos passes through to githubdgrpc.Client.ListInstallableRepos.
-func (l *liveClient) ListInstallableRepos(ctx context.Context, accountID string) ([]Repo, error) {
-	return l.c.ListInstallableRepos(ctx, accountID)
+func (l *liveClient) ListInstallableRepos(ctx context.Context, accountID string, installationID int64) ([]Repo, error) {
+	return l.c.ListInstallableRepos(ctx, accountID, installationID)
 }
 
 // BindAppRepo passes through to githubdgrpc.Client.BindAppRepo.
-func (l *liveClient) BindAppRepo(ctx context.Context, appID, accountID, repoFullName, productionBranch string) (string, error) {
-	return l.c.BindAppRepo(ctx, appID, accountID, repoFullName, productionBranch)
+func (l *liveClient) BindAppRepo(ctx context.Context, appID, accountID string, installationID int64, repoFullName, productionBranch string) (string, error) {
+	return l.c.BindAppRepo(ctx, appID, accountID, installationID, repoFullName, productionBranch)
 }
 
 // UnbindAppRepo passes through to githubdgrpc.Client.UnbindAppRepo.

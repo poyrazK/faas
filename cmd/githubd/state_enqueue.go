@@ -150,9 +150,13 @@ func (a *apidEnqueuer) Enqueue(ctx context.Context, spec githubd.BuildSpec) (sta
 	if resp == nil {
 		return state.Build{}, errors.New("apid enqueuer: nil response on success")
 	}
+	kind := state.DeploymentKindGitHub
+	if spec.EventKind == githubdpb.EnqueueBuildEventKind_EVENT_KIND_PULL_REQUEST {
+		kind = state.DeploymentKindPreview
+	}
 	return state.Build{
 		ID:           resp.BuildId,
 		DeploymentID: resp.DeploymentId,
-		Kind:         state.DeploymentKindGitHub,
+		Kind:         kind,
 	}, nil
 }

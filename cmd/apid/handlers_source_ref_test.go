@@ -127,10 +127,10 @@ func (f *sourceRefFake) GetInstallState(context.Context, string) (InstallState, 
 func (f *sourceRefFake) ExchangeOAuthCode(context.Context, string, string, string) (string, string, error) {
 	return "", "", nil
 }
-func (f *sourceRefFake) ListInstallableRepos(context.Context, string) ([]Repo, error) {
+func (f *sourceRefFake) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
 	return nil, nil
 }
-func (f *sourceRefFake) BindAppRepo(context.Context, string, string, string, string) (string, error) {
+func (f *sourceRefFake) BindAppRepo(context.Context, string, string, int64, string, string) (string, error) {
 	return "", nil
 }
 func (f *sourceRefFake) UnbindAppRepo(context.Context, string, string) error { return nil }

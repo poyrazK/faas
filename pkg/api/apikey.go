@@ -342,6 +342,11 @@ var (
 	// Granted by admin or apps:read.
 	ScopesReadSurface = []string{ScopeAdmin, ScopeAppsRead}
 
+	// ScopesDeploymentReadSurface: read one deployment by opaque ID.
+	// deploy:write is admitted so a least-privilege CI token can poll the
+	// deployment it just created without receiving account-wide apps:read.
+	ScopesDeploymentReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite}
+
 	// ScopesUsageReadSurface: the two narrow usage endpoints.
 	// Granted by admin or usage:read.
 	ScopesUsageReadSurface = []string{ScopeAdmin, ScopeUsageRead}

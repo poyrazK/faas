@@ -1329,9 +1329,9 @@ type GitHubBinding struct {
 // 502s the moment githubd restarted. PR-C moves the source of truth
 // to the github_installations table (migration 00059).
 //
-// AccountID is the PK (a uuid, references accounts(id) ON DELETE
-// CASCADE — GDPR §17 G2 path deletes the row when the owning account
-// goes away). InstallationID is GitHub's int64. DefaultBranch is
+// AccountID and InstallationID form the PK (the account UUID references
+// accounts(id) ON DELETE CASCADE — GDPR §17 G2 path deletes all rows when the
+// owning account goes away). InstallationID is GitHub's int64. DefaultBranch is
 // captured at the OAuth handshake so the bind picker doesn't need a
 // re-fetch. SealedToken holds the age-encrypted install token (the
 // "ghs_…" form, minted via AppAuth.ExchangeInstallationToken and

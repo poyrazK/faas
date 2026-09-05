@@ -42,15 +42,22 @@ import (
 // so tests can drive different sub values without rebuilding the
 // canned claims.
 type fakeVerifier struct {
-	mu     sync.Mutex
-	claims *Claims
-	calls  int
+	mu         sync.Mutex
+	claims     *Claims
+	calls      int
+	lastPolicy *OIDCTrustPolicy
 }
 
 func (f *fakeVerifier) Verify(_ context.Context, rawToken string, p *OIDCTrustPolicy) (*Claims, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	if p != nil {
+		cp := *p
+		cp.Audience = append([]string(nil), p.Audience...)
+		cp.Algorithms = append([]string(nil), p.Algorithms...)
+		f.lastPolicy = &cp
+	}
 	if p != nil && p.IssuerURL == "err" {
 		return nil, errors.New("fake: simulated bad signature")
 	}
@@ -344,7 +351,7 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 
 func TestServeHTTP_FirstUse_AutoCreate(t *testing.T) {
 	t.Parallel()
-	h, policies, _, audit, _ := newHarness(t, nil)
+	h, policies, _, audit, verifier := newHarness(t, nil)
 
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
@@ -366,6 +373,18 @@ func TestServeHTTP_FirstUse_AutoCreate(t *testing.T) {
 	if pol.AuditLogin != "auto" {
 		t.Errorf("AuditLogin: got %q, want %q", pol.AuditLogin, "auto")
 	}
+	if pol.JWKSURL != "https://idp.example.com/.well-known/jwks" {
+		t.Errorf("JWKSURL: got %q", pol.JWKSURL)
+	}
+	if len(pol.Audience) != 1 || pol.Audience[0] != "faas.example.com" {
+		t.Errorf("Audience: got %v", pol.Audience)
+	}
+	if pol.SubjectPattern != "^repo:octocat/hello:ref:refs/heads/main$" {
+		t.Errorf("SubjectPattern: got %q", pol.SubjectPattern)
+	}
+	if verifier.lastPolicy == nil || verifier.lastPolicy.SubjectPattern != pol.SubjectPattern {
+		t.Errorf("verifier did not receive the candidate restricted policy: %+v", verifier.lastPolicy)
+	}
 	// The oidc.trust_policy.created audit kind was emitted.
 	var found bool
 	for _, e := range audit.events {
@@ -375,6 +394,31 @@ func TestServeHTTP_FirstUse_AutoCreate(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected %q audit event, got %+v", KindOIDCTrustPolicyCreated, audit.events)
+	}
+}
+
+func TestServeHTTP_RequestedAudienceMustBeInVerifiedClaims(t *testing.T) {
+	t.Parallel()
+	h, policies, tokens, _, verifier := newHarness(t, nil)
+	verifier.claims.Aud = []string{"another-audience"}
+
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github",
+		Token:    makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com",
+	})
+	req := httptest.NewRequest("POST", "/v1/auth/oidc/exchange", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(tokens.tokens) != 0 {
+		t.Fatalf("minted %d tokens for an audience mismatch", len(tokens.tokens))
+	}
+	if _, err := policies.Get(context.Background(), testAcctID, testIssuer); !errors.Is(err, ErrTrustPolicyNotFound) {
+		t.Fatalf("candidate policy persisted before verification: %v", err)
 	}
 }
 

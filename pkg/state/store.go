@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,27 @@ import (
 
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
+
+const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
+
+// githubActionsRepositoryFromSubject extracts OWNER/REPO from GitHub's
+// `repo:OWNER/REPO:...` subject form. It is used only as a first-use bridge
+// from an already OAuth-verified repository binding to an OIDC trust policy.
+func githubActionsRepositoryFromSubject(issuerURL, subject string) (string, bool) {
+	if strings.TrimRight(issuerURL, "/") != githubActionsOIDCIssuer || !strings.HasPrefix(subject, "repo:") {
+		return "", false
+	}
+	rest := strings.TrimPrefix(subject, "repo:")
+	colon := strings.IndexByte(rest, ':')
+	if colon <= 0 {
+		return "", false
+	}
+	repo := rest[:colon]
+	if strings.Count(repo, "/") != 1 || strings.HasPrefix(repo, "/") || strings.HasSuffix(repo, "/") {
+		return "", false
+	}
+	return repo, true
+}
 
 // ErrCertFingerprintDrift is returned by UpsertComputeNodeFromVmmd
 // when the cert_fingerprint on the existing compute_nodes row
@@ -1986,10 +2008,9 @@ type Store interface {
 	// checks.go needs to mint the right per-install access token for
 	// the repo's push, not the hardcoded installation_id=1 placeholder
 	// that shipped with M7.5. Returns ErrNotFound if no app is bound
-	// to (repo). When two apps are bound to the same (install_id,
-	// repo) — impossible per the migration unique index — the first
-	// hit wins; apid is the canonical owner of bindings so this is
-	// not a contention point in practice.
+	// to (repo), or when the repository resolves to more than one
+	// installation. Ambiguity fails closed so one tenant can never use
+	// another tenant's installation token.
 	InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error)
 	// UpsertGithubInstallBinding persists the (account → app →
 	// installation, repo, branch) edge with a deterministic
@@ -2017,6 +2038,10 @@ type Store interface {
 	// Returns ErrNotFound when no app is bound to (repo, branch).
 	// Uses the (repo, branch) partial index added in 00047.
 	GithubInstallBindingForRepoBranch(ctx context.Context, repoFullName, productionBranch string) (GitHubBinding, error)
+	// GithubInstallBindingForRepoBranchInstallation is the webhook-safe
+	// lookup when GitHub supplied installation.id. It prevents an identical
+	// repo name bound in another tenant from winning an arbitrary LIMIT 1.
+	GithubInstallBindingForRepoBranchInstallation(ctx context.Context, repoFullName, productionBranch string, installationID int64) (GitHubBinding, error)
 	// ListGithubInstallBindingsForAccount is the dashboard's hydrate
 	// path: given an account_id, return every bind the account
 	// currently owns. The map is keyed by appID so the dashboard's
@@ -2025,8 +2050,8 @@ type Store interface {
 	ListGithubInstallBindingsForAccount(ctx context.Context, accountID string) (map[string]GitHubBinding, error)
 
 	// UpsertGitHubInstall persists the OAuth handshake state for one
-	// account's GitHub App install (PR-C). Idempotent on (AccountID)
-	// via ON CONFLICT (account_id) DO UPDATE so a retry of the OAuth
+	// account's GitHub App install (PR-C). Idempotent on
+	// (AccountID, InstallationID) so a retry of the OAuth
 	// flow doesn't crash on the unique-PK constraint. The account row
 	// itself must exist (the FK enforces this); pre-CASCADE deletes
 	// of an account surface as ErrNotFound here so the caller can
@@ -2043,6 +2068,10 @@ type Store interface {
 	// dashboard's bind picker hydrates off this signal to decide
 	// whether to render the "Connect GitHub" button vs the bind list.
 	GitHubInstallForAccount(ctx context.Context, accountID string) (GitHubInstall, error)
+	// GitHubInstallForAccountInstallation resolves the exact installation a
+	// bind or webhook named. This is the multi-install-safe path; callers must
+	// not silently substitute another installation owned by the account.
+	GitHubInstallForAccountInstallation(ctx context.Context, accountID string, installationID int64) (GitHubInstall, error)
 
 	// UpsertGithubWebhookSecret installs or rotates the per-tenant
 	// webhook secret for one GitHub App installation (PR-D / ADR-012

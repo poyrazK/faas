@@ -1,83 +1,35 @@
-# GithubWebhookSecretRotation
+# GitHub webhook secret rotation
 
-Source: PR-D / ADR-012 §7 amendment
-(`docs/adr/012-githubd.md` §7).
+GitHub signs every delivery for a GitHub App with one App-level webhook
+secret. The same `FAAS_GITHUB_WEBHOOK_SECRET` must therefore be present in
+both `gatewayd-internal` and `githubd`; it is not scoped per customer or
+installation.
 
-When the per-tenant GitHub App webhook secret for one
-`installation_id` needs to rotate. Three trigger paths:
+## Rotate
 
-1. **Operator-driven rotation.** A tenant requests a rotation
-   through the dashboard / CLI; the operator runs
-   `gregale github-webhook-secret set` and updates the GitHub
-   App setting on github.com (the two sides of the rotation).
-2. **Leaked secret.** The tenant's webhook secret leaked (CI
-   log, browser extension, exfil). Treat as a §11 incident:
-   rotate immediately and audit `githubd.webhook_secret_set`
-   events.
-3. **Routine key hygiene.** The tenant is on the §11 90-day
-   rotation cadence (same shape as the Faas host age key).
+1. Generate a 32-byte random secret and stage it in both daemon secret files:
+   `/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env` and
+   `/etc/faas/secrets/githubd/githubd.env`.
+2. Set the same value in the GitHub App's webhook settings.
+3. Restart both daemons together.
+4. Use the GitHub App delivery log to redeliver a recent `ping`, `push`, or
+   `pull_request` event and confirm a `2xx` response.
 
-## Symptom / detect
+GitHub exposes only one active webhook secret. Coordinate steps 2 and 3 in a
+short maintenance window; deliveries rejected during the switch remain in
+GitHub's delivery log and can be redelivered after both daemons are healthy.
 
-The Prometheus counter
-`githubd_webhook_secret_total{status="set"}` is emitted by the
-apid admin route on every successful rotation; the rate should
-track the expected rotation cadence. An unexpected spike is a
-leak signal — page on `rate > 0.5/h` for 1h.
+## Verify
 
-The fail-closed counter
-`githubd_webhook_secret_total{status="db_error"}` is emitted by
-`pkg/githubd/webhook_secret.go::Resolve` when the per-tenant
-DB read fails. Page after 5m of non-zero rate — a partial DB
-outage is silently rejecting webhooks for installs that
-*migrated* off the platform secret.
+- `gatewayd-internal` must accept the HMAC before proxying the request.
+- `githubd` must accept the same HMAC, durably insert the delivery, and return
+  `202 Accepted`.
+- A duplicate redelivery with the same `X-GitHub-Delivery` value must return
+  `202` without creating duplicate builds.
+- The delivery should advance from `pending` to `succeeded` in
+  `github_webhook_deliveries`; repeated processing failures eventually move it
+  to `dead` with `last_error` populated.
 
-## Rotate (operator path)
-
-```sh
-# 1. Generate a new secret. 32 bytes is the GitHub recommendation;
-#    the server accepts 16..64 bytes.
-SECRET=$(openssl rand -hex 32)
-
-# 2. Write the per-tenant row (admin-scoped API key required).
-echo -n "$SECRET" | gregale github-webhook-secret set \
-    --installation-id <INSTALLATION_ID> \
-    --from-stdin
-
-# 3. Set the new secret on the GitHub App side (the customer does
-#    this; the operator's job is just the per-tenant row + the
-#    audit row).
-
-# 4. Verify the resolver picks up the new value. The resolver
-#    invalidates the cache on every `set` call, so the next
-#    inbound webhook uses the new row.
-```
-
-## Fall back to the platform secret (rollback)
-
-The per-tenant row is additive; deleting it falls back to
-`FAAS_GITHUB_WEBHOOK_SECRET` for that install. If the tenant
-cannot complete the rotation, drop the row so the install is
-not stranded on a stale value:
-
-```sql
-DELETE FROM github_webhook_secrets
-WHERE installation_id = <INSTALLATION_ID>;
-```
-
-The resolver cache invalidates within 60s (TTL). The next
-inbound webhook uses the platform secret.
-
-## Audit
-
-The `githubd.webhook_secret_set` audit event carries the
-operator's `account_id` + `installation_id`. Cross-reference
-with the GitHub App's webhook delivery log to confirm the
-secret on github.com was actually rotated.
-
-## Related
-
-- ADR-012 §7 — the per-tenant secret decision + rationale.
-- `pkg/githubd/webhook_secret.go` — the resolver implementation.
-- `pkg/githubd/webhook.go::VerifyPushSignature` — the verifier
-  (unchanged; the resolver only swaps the secret bytes).
+The installation-scoped secret table and admin command are retained only for
+legacy non-GitHub senders that add an explicit installation header. Do not use
+them to rotate the GitHub App's normal webhook secret.
