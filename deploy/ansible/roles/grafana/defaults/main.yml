@@ -51,3 +51,12 @@ gv_prom_url: "http://127.0.0.1:9095"
 # and the systemd service start. dev/CI hosts set this to true so
 # `make bootstrap` completes without operator-provisioned secrets.
 gv_dev_mode: false
+
+# Optional off-host Loki datasource. The URL and server name are provider-
+# owned because the Loki host is outside the control-plane inventory shipped
+# with the repository. The TLS PEM values are loaded from the provider-owned
+# EnvironmentFile below; they never enter Ansible vars or Git.
+gv_loki_url: ""
+gv_loki_tenant_id: gregale
+gv_loki_server_name: ""
+gv_loki_credentials_file: /etc/grafana/secrets/loki.env

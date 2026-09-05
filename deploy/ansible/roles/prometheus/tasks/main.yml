@@ -65,6 +65,45 @@
       must remain the loopback apid HTTP-SD endpoint. Promtail target
       metadata must not be fetched over a public or provider-specific URL.
 
+- name: prometheus — require Loki meta-monitoring transport (when configured)
+  ansible.builtin.assert:
+    that:
+      - prom_loki_metrics_target | length > 0
+      - prom_loki_metrics_target is not match('^(127\\.|localhost$|::1$)')
+      - prom_loki_metrics_port | int > 0
+      - prom_loki_metrics_port | int < 65536
+      - prom_loki_metrics_server_name | length > 0
+    fail_msg: >-
+      prom_loki_metrics_target must be the dedicated observability host (not
+      loopback), and prom_loki_metrics_server_name must match its certificate.
+  when: prom_loki_metrics_target | length > 0
+
+- name: prometheus — stat Loki meta-monitoring mTLS material
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop:
+    - { name: ca, path: "{{ prom_loki_metrics_ca_file }}" }
+    - { name: cert, path: "{{ prom_loki_metrics_client_cert_file }}" }
+    - { name: key, path: "{{ prom_loki_metrics_client_key_file }}" }
+  register: prom_loki_tls_stats
+  when: prom_loki_metrics_target | length > 0
+  no_log: true
+
+- name: prometheus — require Loki meta-monitoring mTLS material
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - (item.stat.mode | default('0000')) in ['0400', '0440', '0444', '0640', '0644']
+    fail_msg: >-
+      Loki meta-monitoring TLS {{ item.item.name }} is missing or has an
+      unsupported mode; provision the provider-owned bundle for Prometheus.
+  loop: "{{ prom_loki_tls_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: prom_loki_metrics_target | length > 0
+  no_log: true
+
 - name: prometheus — create system user `prometheus`
   ansible.builtin.user:
     name: prometheus

@@ -1,5 +1,6 @@
-# Datasource provisioning — single Prometheus on the local management
-# bridge. editable=false: an operator who wants a second datasource must
+# Datasource provisioning — Prometheus on the local management bridge plus an
+# optional off-host Loki backend. editable=false: an operator who wants a
+# second datasource must
 # change the ansible role (the role owns the file surface, not the
 # Grafana admin API). timeInterval=15s matches Prometheus' default
 # scrape interval so the dashboard panels don't render at a cadence
@@ -17,3 +18,27 @@ datasources:
     jsonData:
       timeInterval: 15s
       httpMethod: POST
+{% if gv_loki_url | length > 0 %}
+  # Loki is enabled only when the provider supplies the dedicated backend
+  # endpoint and the provider-owned EnvironmentFile. The TLS values below
+  # are expanded by Grafana from the service environment; certificate
+  # contents never pass through Ansible templating.
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: "{{ gv_loki_url }}"
+    editable: false
+    jsonData:
+      maxLines: 1000
+      timeout: 60
+      httpHeaderName1: X-Scope-OrgID
+      tlsAuth: true
+      tlsAuthWithCACert: true
+      serverName: "{{ gv_loki_server_name }}"
+    secureJsonData:
+      httpHeaderValue1: "{{ gv_loki_tenant_id }}"
+      tlsCACert: "$FAAS_LOKI_TLS_CA_CERT"
+      tlsClientCert: "$FAAS_LOKI_TLS_CLIENT_CERT"
+      tlsClientKey: "$FAAS_LOKI_TLS_CLIENT_KEY"
+{% endif %}

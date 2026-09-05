@@ -9,6 +9,7 @@ User=grafana
 Group=grafana
 Type=simple
 Environment=GF_SECURITY_ADMIN_PASSWORD__FILE=/etc/grafana/secrets/admin_password
+EnvironmentFile=-{{ gv_loki_credentials_file }}
 ExecStart=/usr/sbin/grafana-server \
     --homepath=/usr/share/grafana \
     --config=/etc/grafana/grafana.ini \

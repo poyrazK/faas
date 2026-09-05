@@ -9,7 +9,7 @@
 #      defence-in-depth principle as the alertmanager role's assert.
 #   2. Admin password is read at process start by Grafana via the
 #      GF_SECURITY_ADMIN_PASSWORD__FILE env var (see
-#      files/grafana-server.service). The role only asserts the file
+#      templates/grafana-server.service.j2). The role only asserts the file
 #      exists with mode 0400 owned by grafana:grafana — nothing is
 #      slurped, base64-decoded, or templated into grafana.ini. Same
 #      precedent as the alertmanager *_file secrets (gap G2 lean §17,
@@ -142,7 +142,7 @@
 
 # Secret file: assert existence + perms before systemd enable. We do NOT
 # slurp or template the secret bytes — Grafana reads it at start via
-# GF_SECURITY_ADMIN_PASSWORD__FILE (see files/grafana-server.service).
+# GF_SECURITY_ADMIN_PASSWORD__FILE (see templates/grafana-server.service.j2).
 # dev_mode: skip the assert so dev / CI hosts without secrets still
 # bootstrap (and Grafana isn't enabled in that case — see below).
 - name: grafana — assert admin password file perms (production)
@@ -157,6 +157,36 @@
     - not gv_dev_mode | bool
     - gv_admin_password_file | length > 0
   no_log: true   # paths flow through stat; defensive even though they're not the bytes
+
+- name: grafana — require HTTPS Loki datasource endpoint (when configured)
+  ansible.builtin.assert:
+    that:
+      - gv_loki_url is match('^https://')
+      - gv_loki_server_name | length > 0
+    fail_msg: >-
+      gv_loki_url must be a private HTTPS endpoint and gv_loki_server_name
+      must match the provider-issued Loki certificate.
+  when: gv_loki_url | length > 0
+
+- name: grafana — stat Loki datasource credential environment file
+  ansible.builtin.stat:
+    path: "{{ gv_loki_credentials_file }}"
+  register: gv_loki_secret_stat
+  when: gv_loki_url | length > 0
+  no_log: true
+
+- name: grafana — require Loki datasource credential environment file
+  ansible.builtin.assert:
+    that:
+      - gv_loki_secret_stat.stat.exists
+      - gv_loki_secret_stat.stat.isreg
+      - (gv_loki_secret_stat.stat.mode | default('0000')) in ['0400', '0440']
+    fail_msg: >-
+      {{ gv_loki_credentials_file }} is missing or too permissive. Provision
+      the provider-owned Loki PEM environment file as root-only or
+      root:grafana 0440 before enabling the datasource.
+  when: gv_loki_url | length > 0
+  no_log: true
 
 - name: grafana — render grafana.ini
   ansible.builtin.template:
@@ -336,8 +366,8 @@
     - reload grafana provisioning
 
 - name: grafana — install systemd unit
-  ansible.builtin.copy:
-    src: grafana-server.service
+  ansible.builtin.template:
+    src: grafana-server.service.j2
     dest: /etc/systemd/system/grafana-server.service
     owner: root
     group: root

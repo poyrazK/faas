@@ -13,7 +13,20 @@ make ANSIBLE_INVENTORY=/path/to/inventory.ini bootstrap-observability
 ```
 
 Set `promtail_loki_url` and the Loki/Promtail mTLS file paths in provider-owned
-inventory variables. Secret contents are never stored in this repository.
+inventory variables. For backend meta-monitoring, also set
+`prom_loki_metrics_target`, `prom_loki_metrics_server_name`, and the three
+`prom_loki_metrics_*_file` paths on the control plane. The Prometheus role then
+scrapes Loki's `/metrics` endpoint over mTLS and enables the Loki backend
+alerts.
+
+To enable Grafana log queries, set `gv_loki_url`, `gv_loki_server_name`, and
+`gv_loki_tenant_id`. Provision the provider-owned
+`/etc/grafana/secrets/loki.env` as mode `0400` or `0440` before the Grafana
+role runs. It must provide the PEM values as `FAAS_LOKI_TLS_CA_CERT`,
+`FAAS_LOKI_TLS_CLIENT_CERT`, and `FAAS_LOKI_TLS_CLIENT_KEY`; the role passes
+these to Grafana through its systemd environment without reading or storing
+the certificate contents. Secret contents are never stored in this
+repository.
 
 ## What it does
 
