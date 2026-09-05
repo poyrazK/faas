@@ -124,7 +124,7 @@ func TestPackExcludesExplicitDeveloperEnvFile(t *testing.T) {
 	if _, err := packDirToTarGz(dir, archivePath, defaultZeroConfigSourceCapMB, nil, envPath); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Open(archivePath)
+	f, err := openCustomerFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
