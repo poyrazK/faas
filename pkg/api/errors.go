@@ -2195,6 +2195,76 @@ func ErrSourceInvalid(reason string) *Problem {
 		WithDocs(docsBase + "/build/source")
 }
 
+// ErrUploadSessionNotFound is returned by the upload-session endpoints
+// when the supplied upload_id does not resolve. cmd/apid/
+// handlers_upload_session.go emits this on PATCH / POST-commit / DELETE
+// against an unknown id. The CLI (PR-2) maps this to "session vanished"
+// and surfaces a fresh upload prompt.
+func ErrUploadSessionNotFound(uploadID string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeUploadSessionNotFound,
+		"Upload session not found",
+		fmt.Sprintf("No open upload session with id %q; it may have been committed, cancelled, or reaped.", uploadID)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionOffsetConflict is returned when the atomic CAS in
+// AppendUploadBytes fails. currentOffset is the row's actual
+// received_bytes at the moment of the UPDATE; the message body carries
+// the value so the CLI can resume from the right byte without an
+// extra header.
+func ErrUploadSessionOffsetConflict(uploadID string, expected, current int64) *Problem {
+	return NewProblem(http.StatusConflict, CodeUploadSessionOffsetConflict,
+		"Upload session offset conflict",
+		fmt.Sprintf("Upload session %q expected offset %d but server is at %d; resume from current offset.", uploadID, expected, current)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionExpired is returned when the reaper has marked the
+// row expired (or the request arrives after its TTL before the next
+// sweep). The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
+// this code (cmd/gregale/upload_session.go, PR-2). 410 Gone so the
+// CLI can distinguish from 404 NotFound (id never existed).
+func ErrUploadSessionExpired(uploadID string) *Problem {
+	return NewProblem(http.StatusGone, CodeUploadSessionExpired,
+		"Upload session expired",
+		fmt.Sprintf("Upload session %q expired (24h TTL) and was reaped.", uploadID)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionTooMany is returned by POST /v1/uploads when the
+// per-(account_id, app_slug) open-session cap (5) or the per-account
+// open-spool budget (4 × SourceTarballMaxMB) is exceeded. limitBytes
+// and observedBytes flow into the body via WithLimit so the dashboard
+// can render the same shape as CodePlanLimitApps.
+func ErrUploadSessionTooMany(detail string, limitBytes, observedBytes int64) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeUploadSessionTooMany,
+		"Too many upload sessions",
+		detail).
+		WithLimit(limitBytes, observedBytes).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionAlreadyCommitted is returned by POST /v1/uploads/{id}/commit
+// on retry-after-success. The handler reads upload_commit_outcomes
+// for the original deployment_id and returns it in the message body;
+// the CLI treats this as a successful 201 (no retry needed).
+func ErrUploadSessionAlreadyCommitted(uploadID, deploymentID string) *Problem {
+	return NewProblem(http.StatusConflict, CodeUploadSessionAlreadyCommitted,
+		"Upload session already committed",
+		fmt.Sprintf("Upload session %q was already committed as deployment %s.", uploadID, deploymentID)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionAlreadyCancelled is returned by DELETE on a session
+// that is no longer open. The .part file is already gone; the operator's
+// fix is to start a fresh upload session.
+func ErrUploadSessionAlreadyCancelled(uploadID string) *Problem {
+	return NewProblem(http.StatusConflict, CodeUploadSessionAlreadyCancelled,
+		"Upload session not open",
+		fmt.Sprintf("Upload session %q is not in 'open' status; the .part file is gone.", uploadID)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
 // ErrStatelessOnlyViolation is returned when a deploy shape (or resolved
 // base image) requires persistent state — VOLUME in Dockerfile, mkfs/mount
 // of a block device, a top-level data/ or db/ directory in the tarball, or
@@ -2916,6 +2986,46 @@ const (
 	// apid-validate pipeline uses it for any future surface that
 	// accepts a lifecycle payload from the operator UI.
 	CodeNodeLifecycleInvalid = "node_lifecycle_invalid"
+	// CodeUploadSessionNotFound (issue #1182 §P1 packaging
+	// follow-up, PR-1 of 3) is the 404 the upload-session
+	// endpoints emit when the supplied upload_id does not
+	// resolve. Distinct from CodeNotFound because the legacy
+	// deployment endpoints still use CodeNotFound; the new
+	// resumable surface needs its own wire-stable sentinel so
+	// the CLI can branch on a 404 from POST /v1/uploads vs
+	// 404 from POST /v1/apps/{slug}/deployments/{id} without
+	// inspecting the URL.
+	CodeUploadSessionNotFound = "upload_session_not_found"
+	// CodeUploadSessionOffsetConflict is the 409 the PATCH
+	// /v1/uploads/{id} handler emits when the atomic CAS in
+	// AppendUploadBytes fails (received_bytes has already
+	// advanced). Body carries the actual current received_bytes
+	// in extra.current_offset so the CLI knows where to resume.
+	CodeUploadSessionOffsetConflict = "upload_session_offset_conflict"
+	// CodeUploadSessionExpired is the 410 the upload-session
+	// endpoints emit when the reaper has deleted the row. The
+	// CLI auto-rolls to a fresh POST /v1/uploads and restarts
+	// from byte 0 (cmd/gregale/upload_session.go, PR-2).
+	CodeUploadSessionExpired = "upload_session_expired"
+	// CodeUploadSessionTooMany is the 429 emitted by POST
+	// /v1/uploads when the per-(account_id, app_slug) open-
+	// session cap (5) or the per-account open-spool budget
+	// (4 × SourceTarballMaxMB) is exceeded. Distinct from
+	// CodePlanLimitApps so the dashboard can render a "cancel
+	// an in-progress upload" CTA rather than a generic 429.
+	CodeUploadSessionTooMany = "upload_session_too_many"
+	// CodeUploadSessionAlreadyCommitted is the 409 emitted by
+	// POST /v1/uploads/{id}/commit on retry-after-success.
+	// Handled via the upload_commit_outcomes companion table:
+	// the handler reads the original deployment_id and returns
+	// the stored outcome with this code, NOT a fresh 201.
+	CodeUploadSessionAlreadyCommitted = "upload_session_already_committed"
+	// CodeUploadSessionAlreadyCancelled is the 409 emitted by
+	// DELETE /v1/uploads/{id} when the session is already
+	// committed / cancelled / expired. The .part file is
+	// already gone; the operator's fix is to start a fresh
+	// upload session.
+	CodeUploadSessionAlreadyCancelled = "upload_session_already_cancelled"
 )
 
 // ErrPlanCronsNotAllowed is returned by apid's createCron handler
