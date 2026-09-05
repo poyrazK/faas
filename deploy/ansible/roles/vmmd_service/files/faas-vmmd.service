@@ -30,7 +30,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=no
 ProtectKernelModules=yes
-ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/log/faas/vmmd-archive /var/lib/faas/cache
+ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/lib/faas/cache
 
 [Install]
 WantedBy=multi-user.target

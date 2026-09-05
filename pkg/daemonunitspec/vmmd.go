@@ -52,6 +52,7 @@ func UnitVmmd() daemonunit.Unit {
 		ExecStartPre: []string{
 			`/usr/bin/install -d -o root -g faas -m 0775 /run/faas`,
 			`/usr/bin/chmod 0775 /run/faas`,
+			`/usr/bin/install -d -o root -g faas -m 0750 /var/log/faas/vmmd-archive`,
 		},
 		// Re-assert the shared host-directory ownership after startup.
 		// This keeps a hand-edited or manually repaired /run tree safe for
@@ -138,6 +139,12 @@ func UnitVmmd() daemonunit.Unit {
 			// retained so future age-sealed payloads don't require a
 			// restart with a fresh sealed.env — see ADR-057).
 			{Key: "FAAS_HOST_AGE_RECIPIENT_PATH", Value: "/etc/faas/secrets/host.age.pub"},
+			// The archive envelope is optional: vmmd keeps serving live logs
+			// when the host has not provisioned durable object storage.
+			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
+		},
+		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},
 
 		AmbientCapabilities: []string{"CAP_NET_BIND_SERVICE"},

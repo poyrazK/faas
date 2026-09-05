@@ -8,6 +8,7 @@ Wants=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice
 Type=simple
 ExecStartPre=/usr/bin/install -d -o root -g faas -m 0775 /run/faas
 ExecStartPre=/usr/bin/chmod 0775 /run/faas
+ExecStartPre=/usr/bin/install -d -o root -g faas -m 0750 /var/log/faas/vmmd-archive
 ExecStart=/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml
 ExecStartPost=/usr/bin/chown root:faas /run/faas
 ExecStartPost=/usr/bin/chmod 0775 /run/faas
@@ -22,6 +23,8 @@ EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/storage.env
 Environment=TMPDIR=/srv/fc/base
 Environment=FAAS_HOST_AGE_RECIPIENT_PATH=/etc/faas/secrets/host.age.pub
+Environment=FAAS_LOG_ARCHIVE_CREDS_PATH=%d/faas_archive_creds
+LoadCredential=faas_archive_creds:-/etc/faas/secrets/storage-box/archive-creds.json
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
