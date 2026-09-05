@@ -52,12 +52,9 @@ var cgroupRoot = "/sys/fs/cgroup"
 // cpu.max is a direct file write (not a jailer --cgroup arg) because
 // jailer v1.7 only exposes cpu.weight and memory.max through --cgroup;
 // the quota must land in cpu.max so the kernel enforces it.
-func writePlanCgroup(instance string, plan api.Plan, planMB int) error {
-	return writeAppCgroup(instance, plan, planMB, 0)
-}
-
-// writeAppCgroup applies the app's memory and sustained CPU settings. A zero
-// CPU value is accepted for legacy callers and resolves to the plan quota.
+//
+// A zero CPU value is accepted for legacy callers and resolves to the plan
+// quota.
 func writeAppCgroup(instance string, plan api.Plan, planMB, cpuMillicores int) error {
 	if planMB < 1 {
 		return fmt.Errorf("fcvm: cgroup: planMB %d < 1", planMB)
@@ -67,14 +64,6 @@ func writeAppCgroup(instance string, plan api.Plan, planMB, cpuMillicores int) e
 	}
 	return writeAppCgroupAt(ParentCgroupFor(plan), instance, plan, planMB, cpuMillicores)
 }
-
-// writePlanCgroupAt applies the plan fence at an already-resolved parent
-// cgroup. Builders use the same memory accounting shape but live under
-// faas-cp-build.slice, so their parent cannot be derived from the tenant plan.
-func writePlanCgroupAt(parent, instance string, plan api.Plan, planMB int) error {
-	return writeAppCgroupAt(parent, instance, plan, planMB, 0)
-}
-
 func writeAppCgroupAt(parent, instance string, plan api.Plan, planMB, cpuMillicores int) error {
 	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(instance))
 	if err := writeMemoryMaxTo(scope, planMB); err != nil {
@@ -160,7 +149,7 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 	}, nil
 }
 
-// writeCPUMaxTo writes cpu.max (in microseconds) into the given
+// writeAppCPUMaxTo writes cpu.max (in microseconds) into the given
 // fully-resolved scope path. Idempotent. Same Newline-terminated
 // format as systemd-run — matches the kernel parser's expectation.
 //
@@ -168,10 +157,6 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 // row would write "0 100000" which the kernel treats as "no quota"
 // (an unconstrained slice); we validate the plan above so this
 // branch is unreachable in production.
-func writeCPUMaxTo(scope string, plan api.Plan) error {
-	return writeAppCPUMaxTo(scope, plan, 0)
-}
-
 func writeAppCPUMaxTo(scope string, plan api.Plan, cpuMillicores int) error {
 	quota := plan.CPUQuotaUS()
 	period := plan.CPUPeriodUS()
