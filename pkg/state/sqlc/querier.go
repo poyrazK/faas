@@ -728,6 +728,10 @@ type Querier interface {
 	// all request/error/cold-boot totals and percentiles must expand that
 	// weight rather than treating each stored row as one request.
 	RequestTelemetryAnalyticsSummary(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsSummaryParams) (RequestTelemetryAnalyticsSummaryRow, error)
+	// Zero-filled UTC hourly request analytics for customer charts. The
+	// recorder collapses rows by count, so all totals and percentile ranks
+	// expand that weight rather than counting stored rows.
+	RequestTelemetryAnalyticsTimeseries(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsTimeseriesParams) ([]RequestTelemetryAnalyticsTimeseriesRow, error)
 	// Per-route p50/p95/p99 latency + row count for the
 	// compare endpoint and the regression detector (ADR-127 PR-B
 	// cron + PR Debugger UX v1 compare handler). Single index scan

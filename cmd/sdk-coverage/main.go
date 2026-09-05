@@ -553,9 +553,10 @@ var methodRouteMap = map[string]string{
 	// to match the sibling per-app family (GetAppMetrics,
 	// GetAppSLO, GetAppRoutes) and use the DTO type name
 	// (AppUsageSummary) for the noun.
-	"GET /v1/apps/{slug}/wake-timeline": "GetAppWakeTimeline",
-	"GET /v1/apps/{slug}/usage":         "GetAppUsageSummary",
-	"GET /v1/apps/{slug}/analytics":     "GetAppRequestAnalytics",
+	"GET /v1/apps/{slug}/wake-timeline":        "GetAppWakeTimeline",
+	"GET /v1/apps/{slug}/usage":                "GetAppUsageSummary",
+	"GET /v1/apps/{slug}/analytics":            "GetAppRequestAnalytics",
+	"GET /v1/apps/{slug}/analytics/timeseries": "GetAppRequestAnalyticsTimeseries",
 
 	// ADR-127 / PR-A — production debugger data plane. The
 	// auto-derivation would produce GetAppsSlugDebugRequests

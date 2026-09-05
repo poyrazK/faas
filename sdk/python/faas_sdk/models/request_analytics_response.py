@@ -18,13 +18,15 @@ T = TypeVar("T", bound="RequestAnalyticsResponse")
 class RequestAnalyticsResponse:
     """Bounded historical request analytics for
     `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
-    `[now-since, now)`, and the route list is capped at 50 rows.
+    `[from, until)`, and the route list is capped at 50 rows.
 
     """
 
     slug: str
     since: str
     """Effective lookback duration after retention clamping."""
+    from_: datetime.datetime
+    """Inclusive lower bound of the analytics window."""
     until: datetime.datetime
     """Exclusive upper bound of the analytics window."""
     window_clamped: bool
@@ -49,6 +51,8 @@ class RequestAnalyticsResponse:
         slug = self.slug
 
         since = self.since
+
+        from_ = self.from_.isoformat()
 
         until = self.until.isoformat()
 
@@ -85,6 +89,7 @@ class RequestAnalyticsResponse:
             {
                 "slug": slug,
                 "since": since,
+                "from": from_,
                 "until": until,
                 "window_clamped": window_clamped,
                 "requests": requests,
@@ -111,6 +116,8 @@ class RequestAnalyticsResponse:
         slug = d.pop("slug")
 
         since = d.pop("since")
+
+        from_ = datetime.datetime.fromisoformat(d.pop("from"))
 
         until = datetime.datetime.fromisoformat(d.pop("until"))
 
@@ -146,6 +153,7 @@ class RequestAnalyticsResponse:
         request_analytics_response = cls(
             slug=slug,
             since=since,
+            from_=from_,
             until=until,
             window_clamped=window_clamped,
             requests=requests,

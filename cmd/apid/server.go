@@ -1721,6 +1721,7 @@ func (s *server) handler() http.Handler {
 	// receiver → sqlc INSERT) lands in PR-B; this GET exists so
 	// customers can already hit the endpoint and see rows once a
 	// row source is configured. Plan-gated by DebugTelemetryEnabled.
+	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryGetHandler))))

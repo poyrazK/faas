@@ -2890,10 +2890,57 @@ func (c *Client) GetAppUsageSummary(ctx context.Context, slug string, opts AppUs
 // clamps it to the plan's request-telemetry retention and reports that fact
 // in WindowClamped. Free accounts receive the normal plan-gated response.
 func (c *Client) GetAppRequestAnalytics(ctx context.Context, slug, since string) (RequestAnalyticsResponse, error) {
+	return c.GetAppRequestAnalyticsOpts(ctx, slug, AppRequestAnalyticsOptions{Since: since})
+}
+
+// AppRequestAnalyticsOptions carries the optional historical analytics
+// window. Since accepts a duration (24h, 7d) or an RFC3339 start timestamp;
+// Until is an optional RFC3339 exclusive upper bound.
+type AppRequestAnalyticsOptions struct {
+	Since string
+	Until string
+}
+
+// GetAppRequestAnalyticsOpts returns the bounded historical request analytics
+// overview for slug. The server clamps the effective window to plan retention.
+func (c *Client) GetAppRequestAnalyticsOpts(ctx context.Context, slug string, opts AppRequestAnalyticsOptions) (RequestAnalyticsResponse, error) {
 	var out RequestAnalyticsResponse
 	path := "/v1/apps/" + slug + "/analytics"
-	if since != "" {
-		path += "?since=" + url.QueryEscape(since)
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		q.Set("until", opts.Until)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// AppRequestAnalyticsTimeseriesOptions carries the optional historical
+// analytics window for the zero-filled hourly series.
+type AppRequestAnalyticsTimeseriesOptions struct {
+	Since string
+	Until string
+}
+
+// GetAppRequestAnalyticsTimeseries returns the zero-filled hourly request
+// analytics series for slug. The effective window is bounded by plan
+// retention and echoed in the response.
+func (c *Client) GetAppRequestAnalyticsTimeseries(ctx context.Context, slug string, opts AppRequestAnalyticsTimeseriesOptions) (RequestAnalyticsTimeseriesResponse, error) {
+	var out RequestAnalyticsTimeseriesResponse
+	path := "/v1/apps/" + slug + "/analytics/timeseries"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		q.Set("until", opts.Until)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

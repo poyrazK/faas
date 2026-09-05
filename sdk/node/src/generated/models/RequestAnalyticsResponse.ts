@@ -6,7 +6,7 @@ import type { RequestAnalyticsRoute } from './RequestAnalyticsRoute.js';
 /**
  * Bounded historical request analytics for
  * `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
- * `[now-since, now)`, and the route list is capped at 50 rows.
+ * `[from, until)`, and the route list is capped at 50 rows.
  *
  */
 export type RequestAnalyticsResponse = {
@@ -15,6 +15,10 @@ export type RequestAnalyticsResponse = {
    * Effective lookback duration after retention clamping.
    */
   since: string;
+  /**
+   * Inclusive lower bound of the analytics window.
+   */
+  from: string;
   /**
    * Exclusive upper bound of the analytics window.
    */
