@@ -24,6 +24,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 158 | [Per-action CSRF cookies on multi-form dashboard pages](158-dashboard-multi-form-csrf.md): additive named-cookie issue/verify helpers; first consumer is typed-confirmed dashboard API-key revocation | accepted | issue #248 slice A; establishes the secure pattern for plan change and deployment rollback |
+| 157 | [Named container resource profiles](157-container-resource-profiles.md): stable micro-to-xlarge RAM/CPU shapes mapped to existing cgroup enforcement | accepted | Container predictability milestone |
 | 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting milestone; live usage feed and paid pricing remain launch gates |
 | 157 | [Developer config parity](157-developer-config-parity.md): explicit `gregale dev --env-file` secret sync with key-only output and archive exclusion | accepted | `gregale dev` DX follow-up to ADR-156 |
 | 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |

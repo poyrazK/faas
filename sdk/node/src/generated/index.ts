@@ -305,6 +305,7 @@ export type { RequestAnalyticsResponse } from './models/RequestAnalyticsResponse
 export type { RequestAnalyticsRoute } from './models/RequestAnalyticsRoute.js';
 export type { RequestAnalyticsTimeseriesPoint } from './models/RequestAnalyticsTimeseriesPoint.js';
 export type { RequestAnalyticsTimeseriesResponse } from './models/RequestAnalyticsTimeseriesResponse.js';
+export type { ResourceProfile } from './models/ResourceProfile.js';
 export type { RetryDeploymentRequest } from './models/RetryDeploymentRequest.js';
 export type { RetryPolicyDTO } from './models/RetryPolicyDTO.js';
 export type { RollbackOperatorRuntimeConfigRequest } from './models/RollbackOperatorRuntimeConfigRequest.js';

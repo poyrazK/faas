@@ -24,13 +24,14 @@ import (
 
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug           string `json:"slug"`
-	Type           string `json:"type,omitempty"`           // "app" (default) | "function"
-	Runtime        string `json:"runtime,omitempty"`        // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB          int    `json:"ram_mb,omitempty"`         // 0 => plan default
-	CPUMillicores  int    `json:"cpu_millicores,omitempty"` // 0 => 1000; allowed: 250, 500, 1000
-	MaxConcurrency int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
+	Slug            string `json:"slug"`
+	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
+	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB           int    `json:"ram_mb,omitempty"`           // 0 => plan default
+	CPUMillicores   int    `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
+	ResourceProfile string `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
+	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
+	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
@@ -152,10 +153,11 @@ type DevSessionResponse struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
-	RAMMB          *int `json:"ram_mb,omitempty"`
-	CPUMillicores  *int `json:"cpu_millicores,omitempty"`
-	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+	RAMMB           *int    `json:"ram_mb,omitempty"`
+	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
+	ResourceProfile *string `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
+	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
 	// replaces the full policy; use min=max=desired=0 to scale a service to
 	// zero. desired must fit the app's max_concurrency; include both fields
@@ -568,13 +570,14 @@ type AppConfiguredResources struct {
 
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID             string `json:"id"`
-	Slug           string `json:"slug"`
-	Type           string `json:"type"`
-	Runtime        string `json:"runtime,omitempty"`
-	RAMMB          int    `json:"ram_mb"`
-	CPUMillicores  int    `json:"cpu_millicores"`
-	MaxConcurrency int    `json:"max_concurrency"`
+	ID              string          `json:"id"`
+	Slug            string          `json:"slug"`
+	Type            string          `json:"type"`
+	Runtime         string          `json:"runtime,omitempty"`
+	RAMMB           int             `json:"ram_mb"`
+	CPUMillicores   int             `json:"cpu_millicores"`
+	ResourceProfile ResourceProfile `json:"resource_profile,omitempty"`
+	MaxConcurrency  int             `json:"max_concurrency"`
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
 	// MaxConcurrency (the per-app instance cap, spec §6.2-1) — this

@@ -24,6 +24,8 @@ type (
 	AppResponse            = api.AppResponse
 	AppEffectiveLimits     = api.AppEffectiveLimits
 	AppConfiguredResources = api.AppConfiguredResources
+	ResourceProfile        = api.ResourceProfile
+	ResourceProfileSpec    = api.ResourceProfileSpec
 
 	// Deployments.
 	CreateDeploymentRequest = api.CreateDeploymentRequest
@@ -130,4 +132,12 @@ type (
 	// RaiseOverageCap).
 	SetAccountEgressAllowlistExtraRequest = api.SetAccountEgressAllowlistExtraRequest
 	AccountEgressAllowlistExtraResponse   = api.AccountEgressAllowlistExtraResponse
+)
+
+const (
+	ResourceProfileMicro  = api.ResourceProfileMicro
+	ResourceProfileSmall  = api.ResourceProfileSmall
+	ResourceProfileMedium = api.ResourceProfileMedium
+	ResourceProfileLarge  = api.ResourceProfileLarge
+	ResourceProfileXLarge = api.ResourceProfileXLarge
 )

@@ -219,15 +219,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    appSlugFallback,
 		DocSlug: "apps",
-		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|--ram N|…])",
+		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|--profile NAME|--ram N|…])",
 		Subcommands: []cliSub{
-			{Name: "scale", Short: "Set max_concurrency / RAM / CPU"},
+			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
 			{Name: "security", Short: "Toggle require_signed on deploys"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
 		},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
+			{Name: "profile", Short: "set a named RAM/CPU profile", Value: "micro|small|medium|large|xlarge"},
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
 			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
@@ -497,6 +498,7 @@ var cliCommands = []cliCommand{
 			{Name: "runtime", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313"}},
 			{Name: "handler", Short: "function handler", Value: "HANDLER"},
 			{Name: "name", Short: "app name (default: selected source directory, or current directory)", Value: "SLUG"},
+			{Name: "profile", Short: "named app resource profile", Value: "PROFILE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},

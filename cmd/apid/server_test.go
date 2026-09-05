@@ -227,6 +227,34 @@ func TestCreateAppSuccess(t *testing.T) {
 	}
 }
 
+func TestResourceProfileResolvesAndUpdates(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "profile-app", ResourceProfile: "small"}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create profile app: %d %s", rec.Code, rec.Body)
+	}
+	var created api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.RAMMB != 256 || created.CPUMillicores != 500 || created.ResourceProfile != api.ResourceProfileSmall {
+		t.Fatalf("resolved profile = %+v, want small 256MB/500mCPU", created)
+	}
+	rec = e.do(t, "PATCH", "/v1/apps/profile-app", api.UpdateAppRequest{ResourceProfile: strPtr("large")}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update profile app: %d %s", rec.Code, rec.Body)
+	}
+	var updated api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.RAMMB != 768 || updated.CPUMillicores != 1000 || updated.ResourceProfile != api.ResourceProfileLarge {
+		t.Fatalf("updated profile = %+v, want large 768MB/1000mCPU", updated)
+	}
+	rec = e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "profile-conflict", ResourceProfile: "small", RAMMB: 512}, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeInvalidResourceProfile)
+}
+
 func TestCreateAppInvalidSlug(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	for _, slug := range []string{"AB", "x", "has space", "-lead", "trail-", "UPPER"} {

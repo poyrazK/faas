@@ -25,6 +25,7 @@ from ..models.create_app_request_restart_policy import (
 )
 from ..models.create_app_request_runtime import CreateAppRequestRuntime, check_create_app_request_runtime
 from ..models.create_app_request_type import CreateAppRequestType, check_create_app_request_type
+from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -47,6 +48,9 @@ class CreateAppRequest:
     ram_mb: int | Unset = UNSET
     cpu_millicores: CreateAppRequestCpuMillicores | Unset = 1000
     """Sustained CPU allowance per instance. Omit for 1000 millicores."""
+    resource_profile: ResourceProfile | Unset = UNSET
+    """Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
+    and placement controls."""
     max_concurrency: int | Unset = UNSET
     idle_timeout_s: int | Unset = UNSET
     execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
@@ -116,6 +120,10 @@ class CreateAppRequest:
         if not isinstance(self.cpu_millicores, Unset):
             cpu_millicores = self.cpu_millicores
 
+        resource_profile: str | Unset = UNSET
+        if not isinstance(self.resource_profile, Unset):
+            resource_profile = self.resource_profile
+
         max_concurrency = self.max_concurrency
 
         idle_timeout_s = self.idle_timeout_s
@@ -177,6 +185,8 @@ class CreateAppRequest:
             field_dict["ram_mb"] = ram_mb
         if cpu_millicores is not UNSET:
             field_dict["cpu_millicores"] = cpu_millicores
+        if resource_profile is not UNSET:
+            field_dict["resource_profile"] = resource_profile
         if max_concurrency is not UNSET:
             field_dict["max_concurrency"] = max_concurrency
         if idle_timeout_s is not UNSET:
@@ -246,6 +256,13 @@ class CreateAppRequest:
         else:
             cpu_millicores = check_create_app_request_cpu_millicores(_cpu_millicores)
 
+        _resource_profile = d.pop("resource_profile", UNSET)
+        resource_profile: ResourceProfile | Unset
+        if isinstance(_resource_profile, Unset):
+            resource_profile = UNSET
+        else:
+            resource_profile = check_resource_profile(_resource_profile)
+
         max_concurrency = d.pop("max_concurrency", UNSET)
 
         idle_timeout_s = d.pop("idle_timeout_s", UNSET)
@@ -313,6 +330,7 @@ class CreateAppRequest:
             runtime=runtime,
             ram_mb=ram_mb,
             cpu_millicores=cpu_millicores,
+            resource_profile=resource_profile,
             max_concurrency=max_concurrency,
             idle_timeout_s=idle_timeout_s,
             execution_mode=execution_mode,
