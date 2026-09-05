@@ -49,7 +49,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`orgs`](#orgs) | Manage orgs + members (orgs ls\|create\|info\|rm\|members ...\|keys ...\|transfer-ownership\|seat-usage\|invitations ...\|me) |
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
-| [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale) |
+| [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
@@ -1145,7 +1145,7 @@ Park an app cold (kill all live instances)
 
 ## plan
 
-Change plan (free|hobby|pro|scale)
+Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 `gregale plan`
 

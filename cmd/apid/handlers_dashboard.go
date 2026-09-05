@@ -134,6 +134,9 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderUsage(w, r, log, acct)
 		case path == "/dashboard/billing":
 			s.renderBilling(w, r, log, acct)
+		case path == "/dashboard/upgrade":
+			// Hosted-checkout confirmation page (dashboard_upgrade.go).
+			s.renderUpgrade(w, r, log, acct)
 		case path == "/dashboard/pricing":
 			s.renderPricing(w, r, log, acct)
 		case path == "/dashboard/invoices":
@@ -1192,6 +1195,12 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		OverageUsedCents:          overageCents,
 		OverageUsedThisMBCap:      overageRatio,
 	}
+	// Free → paid hand-off (dashboard_upgrade.go): per-plan links to the
+	// /dashboard/upgrade confirmation page when the provider has hosted
+	// checkout and the account has no subscription yet.
+	data.CanCheckout = s.canStartCheckout(acct)
+	data.UpgradeOptions = upgradeOptionsFor(acct)
+	data.UpgradeNotice = upgradeNoticeFor(r.URL.Query().Get("upgrade"))
 
 	// Issue #561 CSRF envelope for the raise-cap form. Mirrors the
 	// renderAccount pattern at line 792 (delete + restore tokens). The

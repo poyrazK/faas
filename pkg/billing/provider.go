@@ -308,9 +308,11 @@ const (
 	// apid syncs accounts.plan from the provider's payload.
 	EventSubscriptionUpdated
 
-	// EventSubscriptionCanceled is fired when the customer or the
-	// provider cancels the subscription. apid flips the account to
-	// suspended.
+	// EventSubscriptionCanceled is fired when the subscription ends —
+	// the customer cancelled at period end or the provider revoked it
+	// after failed dunning. apid clears the subscription binding and
+	// downgrades the plan to Free (spec §4.7); the account's dunning
+	// status is left to the dunning state machine.
 	EventSubscriptionCanceled
 
 	// EventSubscriptionPastDue is fired when the provider marks the

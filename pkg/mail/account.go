@@ -194,6 +194,42 @@ sort it out.
 	return
 }
 
+// SubscriptionEndedBody is the voluntary-cancellation notice (spec §4.7
+// "downgrade at period end"). Sent once, when the billing provider
+// confirms the subscription has ended and apid moves the account to
+// Free. It is deliberately not sent on the non-payment path — that
+// customer already received the past_due / suspended emails.
+func SubscriptionEndedBody(email, fromPlan string, endedAt time.Time) (subject, body string) {
+	email = safeRecipient(email)
+	atStr := endedAt.UTC().Format("2006-01-02 15:04 UTC")
+	subject = "Your faas subscription has ended — you are now on the Free plan"
+	body = fmt.Sprintf(`Hi,
+
+Your billing provider confirmed at %s that the %s subscription for your
+faas account (%s) has ended. Your account is now on the Free plan.
+
+What changes:
+
+  - The Free plan includes 1 deployed app, 128 MB RAM per app, and
+    5 GB-hours per calendar month. Apps above those limits keep running
+    until the Free allowance is used up, then park until next month.
+  - New deploys must fit the Free limits.
+
+To upgrade again at any time, run one of:
+
+    faas plan hobby
+    faas plan pro
+    faas plan scale
+
+or open the billing page in the dashboard.
+
+If you did not expect this, contact support@gregale.dev.
+
+— onebox faas
+`, atStr, fromPlan, email)
+	return
+}
+
 // QuotaWarningBody is the paid-tier overage notice (spec §4.7). Sent
 // at most once per UTC day via the LoadAndStampLastQuotaWarning dedupe
 // gate (migration 00013). Distinct subject from the dunning emails so

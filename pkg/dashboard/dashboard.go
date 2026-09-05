@@ -1060,6 +1060,59 @@ type BillingData struct {
 	// state change. Same shape as the dashboard delete/restore
 	// forms.
 	RaiseCapConfirmToken string
+
+	// CanCheckout is true when the active billing provider exposes a
+	// hosted checkout and the account has no subscription yet — the
+	// Free → paid path. The template then renders one
+	// /dashboard/upgrade?plan=… link per UpgradeOptions entry; otherwise
+	// it points at the CLI / portal. UpgradeNotice is the one-line
+	// outcome banner after a POST /dashboard/upgrade redirect
+	// (?upgrade=error|unavailable).
+	CanCheckout    bool
+	UpgradeOptions []UpgradeOption
+	UpgradeNotice  string
+}
+
+// UpgradeOption is one paid plan the account can upgrade to. Money is
+// formatted at the handler boundary (formatPriceEuros) so the template
+// never touches integer millicents.
+type UpgradeOption struct {
+	Plan            string
+	PriceFormatted  string
+	IncludedGBHours int64
+	RAMMB           int
+	MaxConcurrency  int
+	DeployedApps    int
+}
+
+// UpgradeData is the /dashboard/upgrade page payload — the one-form
+// confirmation step in front of the provider's hosted checkout. The
+// page exists because the dashboard CSRF cookie carries exactly one
+// sealed token per response, so the checkout form gets its own page
+// (mirrors the account delete confirmation) instead of sharing the
+// billing page with the spend-cap form.
+type UpgradeData struct {
+	CurrentPlan string
+	// Target is nil when ?plan= is missing or not an eligible upgrade;
+	// the template then renders Options as a chooser.
+	Target  *UpgradeOption
+	Options []UpgradeOption
+	// Available is true when POST /dashboard/upgrade can start a hosted
+	// checkout for Target. Reason explains a false value.
+	Available bool
+	Reason    string
+	// Notice is the outcome banner after a failed POST redirect.
+	Notice string
+	// Provider is the closed provider name; ProviderLabel the
+	// customer-facing brand ("Polar").
+	Provider      string
+	ProviderLabel string
+	// PortalURL is the fallback for accounts that already have a
+	// subscription (the provider portal owns product changes).
+	PortalURL string
+	// ConfirmToken is the (action="upgrade_plan", account_id) CSRF
+	// envelope minted by renderUpgrade.
+	ConfirmToken string
 }
 
 // PricingData is the /dashboard/pricing page payload (issue #259).

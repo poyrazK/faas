@@ -81,6 +81,30 @@ func TestAccountRestoredBody(t *testing.T) {
 	}
 }
 
+// TestSubscriptionEndedBody pins the voluntary-cancellation email
+// (spec §4.7 "downgrade at period end"): names the old plan, the
+// timestamp, the Free limits the customer is now under, and the CLI
+// path back to a paid plan — without naming a provider.
+func TestSubscriptionEndedBody(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	subject, body := mail.SubscriptionEndedBody("alice@example.com", "pro", at)
+
+	if !strings.Contains(subject, "Free plan") {
+		t.Errorf("subject = %q, want it to mention the Free plan", subject)
+	}
+	for _, want := range []string{"alice@example.com", "2026-09-05 10:00 UTC", "pro subscription", "5 GB-hours", "faas plan"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"Polar", "Paddle", "Stripe", "<"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("body contains %q:\n%s", forbidden, body)
+		}
+	}
+}
+
 // TestQuotaWarningBody pins the paid-tier overage email. Plan name
 // lands in subject + body so a customer receiving the email for a
 // Pro account sees "Pro" not "plan". Used/quota render with 2 dp so

@@ -804,7 +804,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:      "plan",
 		DocSlug:   "plan",
-		Short:     "Change plan (free|hobby|pro|scale)",
+		Short:     "Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout",
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
 	},
 	{
