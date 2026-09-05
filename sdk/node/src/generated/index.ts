@@ -230,6 +230,10 @@ export type { MirrorRuleListResponse } from './models/MirrorRuleListResponse.js'
 export type { MirrorRuleResponse } from './models/MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './models/MirrorSummaryResponse.js';
 export type { OAuthProviderCapability } from './models/OAuthProviderCapability.js';
+export type { ObjectBucket } from './models/ObjectBucket.js';
+export type { ObjectBucketList } from './models/ObjectBucketList.js';
+export type { ObjectSignedRequest } from './models/ObjectSignedRequest.js';
+export type { ObjectSignRequest } from './models/ObjectSignRequest.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';
 export type { OIDCExchangeResponse } from './models/OIDCExchangeResponse.js';
@@ -407,6 +411,7 @@ export { QueuesService } from './services/QueuesService.js';
 export { RegistryService } from './services/RegistryService.js';
 export { SecretsService } from './services/SecretsService.js';
 export { SecurityService } from './services/SecurityService.js';
+export { StorageService } from './services/StorageService.js';
 export { TelemetryService } from './services/TelemetryService.js';
 export { TemplatesService } from './services/TemplatesService.js';
 export { TenantSurfacesService } from './services/TenantSurfacesService.js';

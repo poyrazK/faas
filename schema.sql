@@ -7930,4 +7930,99 @@ ALTER TABLE ONLY public.usage_minutes
 
 --
 --
+--
+-- Name: guard_app_object_buckets(); Type: FUNCTION; Schema: public; Owner: -
+--
 
+CREATE FUNCTION public.guard_app_object_buckets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'deleted' AND EXISTS (SELECT 1 FROM object_buckets WHERE app_id = NEW.id AND state <> 'deleted') THEN
+        RAISE EXCEPTION 'app has object buckets' USING ERRCODE = '23514', CONSTRAINT = 'app_has_object_buckets';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: object_buckets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_buckets (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    scope text NOT NULL,
+    region text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    state text DEFAULT 'provisioning'::text NOT NULL,
+    lease_token text,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
+    CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
+    CONSTRAINT object_buckets_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
+    CONSTRAINT object_buckets_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'deleting'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: object_buckets object_buckets_physical_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_physical_name_key UNIQUE (physical_name);
+
+
+--
+-- Name: object_buckets object_buckets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_buckets_account_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_buckets_account_app_idx ON public.object_buckets USING btree (account_id, app_id);
+
+
+--
+-- Name: object_buckets_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX object_buckets_name_idx ON public.object_buckets USING btree (app_id, scope, name) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: apps app_object_buckets_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_object_buckets_guard BEFORE UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_app_object_buckets();
+
+
+--
+-- Name: object_buckets object_buckets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: object_buckets object_buckets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);

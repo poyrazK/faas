@@ -36,6 +36,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: storage
+    description: Private customer object-storage preview, separate from runtime snapshots and image layers.
   - name: account
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
@@ -275,6 +277,160 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/apps/{slug}/buckets:
+    parameters:
+      - { name: slug, description: App whose bucket catalog is being managed., in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listObjectBuckets
+      summary: List private object buckets and configured creation capabilities
+      tags: [storage]
+      responses:
+        '200':
+          description: Buckets across this app's environment scopes; backend credentials are never exposed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketList' }
+        default:
+          description: Authentication, authorization, or storage error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createObjectBucket
+      summary: Create a private bucket on the region's current default backend
+      description: |
+        Requires deploy:write or admin. Idempotent by app, scope and name, not
+        by Idempotency-Key. Retry provisioning by submitting the same name and
+        scope. Existing buckets retain their backend when the default changes.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+                scope: { type: string, default: default }
+                region: { type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.' }
+      responses:
+        '201':
+          description: Bucket created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucket' }
+        '200':
+          description: Existing ready bucket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucket' }
+        default:
+          description: Invalid request, access denied, bucket limit/conflict, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}:
+    parameters:
+      - { name: slug, description: App that owns the bucket to remove., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the empty bucket to delete., in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      operationId: deleteObjectBucket
+      summary: Delete an empty bucket
+      description: Requires deploy:write or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat after successful deletion returns 404.
+      tags: [storage]
+      responses:
+        '204': { description: Bucket deleted }
+        default:
+          description: Access denied, bucket missing/nonempty/busy, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/objects:
+    parameters:
+      - { name: slug, description: App containing the objects being managed., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the bucket whose objects are being managed., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listBucketObjects
+      summary: List objects with opaque cursor pagination
+      tags: [storage]
+      parameters:
+        - { name: prefix, description: Only return keys starting with this prefix., in: query, schema: { type: string, maxLength: 1024 } }
+        - { name: cursor, description: Opaque next_cursor from the preceding page., in: query, schema: { type: string, maxLength: 8192 } }
+        - { name: limit, description: Maximum objects in this page., in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 100 } }
+      responses:
+        '200':
+          description: One page, not a bucket-wide usage or billing total
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, size_bytes, last_modified]
+                      properties:
+                        key: { type: string }
+                        size_bytes: { type: integer, format: int64 }
+                        last_modified: { type: string, format: date-time }
+                  next_cursor: { type: string }
+        default:
+          description: Invalid request, access denied, bucket unavailable, or provider error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteBucketObject
+      summary: Delete one object by exact key
+      description: Requires deploy:write or admin. With provider-side versioning this may create a delete marker; version management is not part of this preview.
+      tags: [storage]
+      parameters:
+        - { name: key, description: Exact object key to delete; URL-encode it., in: query, required: true, schema: { type: string, minLength: 1, maxLength: 1024 } }
+      responses:
+        '204': { description: Object deleted }
+        default:
+          description: Invalid request, access denied, or provider error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/signed-url:
+    parameters:
+      - { name: slug, description: App authorizing the requested object capability., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the bucket containing the authorized object., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: signBucketObject
+      summary: Issue a short-lived direct upload or download URL
+      description: |
+        GET requires apps:read or admin; PUT requires deploy:write or admin.
+        PUT must declare size_bytes, enforced by signed length (or an empty-body
+        digest for zero bytes). These reusable bearer URLs expire within 15
+        minutes and are not retained by the API idempotency cache. Send only
+        returned headers to the URL, never Gregale credentials. In browsers,
+        Content-Length is set by fetch from the File body, not manually.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectSignRequest' }
+      responses:
+        '200':
+          description: Temporary capability; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectSignedRequest' }
+        default:
+          description: Invalid request, access denied, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/admin/config:
     get:
       tags: [operator]
@@ -11157,6 +11313,48 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    ObjectBucket:
+      description: Private logical bucket metadata without upstream credentials or placement details.
+      type: object
+      required: [id, name, scope, region, state, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        scope: { type: string }
+        region: { type: string }
+        state: { type: string, enum: [provisioning, ready, deleting] }
+        created_at: { type: string, format: date-time }
+    ObjectBucketList:
+      description: App bucket catalog and operator-configured preview capabilities.
+      type: object
+      required: [items, enabled, regions, default_region, max_upload_bytes, max_buckets_per_app]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectBucket' } }
+        enabled: { type: boolean }
+        regions: { type: array, items: { type: string } }
+        default_region: { type: string }
+        max_upload_bytes: { type: integer, format: int64 }
+        max_buckets_per_app: { type: integer }
+    ObjectSignRequest:
+      description: Exact object operation to authorize for a short time.
+      type: object
+      additionalProperties: false
+      required: [method, key]
+      properties:
+        method: { type: string, enum: [GET, PUT] }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
+        size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
+        content_type: { type: string, maxLength: 255, description: PUT only. }
+    ObjectSignedRequest:
+      description: Temporary bearer capability for a direct provider request. Do not log or persist it.
+      type: object
+      required: [url, method, headers, expires_at]
+      properties:
+        url: { type: string, format: uri }
+        method: { type: string, enum: [GET, PUT] }
+        headers: { type: object, additionalProperties: { type: string } }
+        expires_at: { type: string, format: date-time }
 
     OperatorRuntimeConfig:
       description: "One entry from the closed operator runtime-configuration catalog."

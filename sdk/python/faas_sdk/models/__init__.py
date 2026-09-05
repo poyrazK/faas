@@ -192,6 +192,7 @@ from .create_job_run_request_env_overrides import CreateJobRunRequestEnvOverride
 from .create_key_request import CreateKeyRequest
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
 from .create_mirror_rule_request import CreateMirrorRuleRequest
+from .create_object_bucket_body import CreateObjectBucketBody
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
@@ -415,6 +416,8 @@ from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
+from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
 from .list_cron_runs_response import ListCronRunsResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_instances_response import ListInstancesResponse
@@ -450,6 +453,14 @@ from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
 from .o_auth_provider_capability import OAuthProviderCapability
+from .object_bucket import ObjectBucket
+from .object_bucket_list import ObjectBucketList
+from .object_bucket_state import ObjectBucketState
+from .object_sign_request import ObjectSignRequest
+from .object_sign_request_method import ObjectSignRequestMethod
+from .object_signed_request import ObjectSignedRequest
+from .object_signed_request_headers import ObjectSignedRequestHeaders
+from .object_signed_request_method import ObjectSignedRequestMethod
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
@@ -900,6 +911,7 @@ __all__ = (
     "CreateKeyRequest",
     "CreateKeyRequestScopesItem",
     "CreateMirrorRuleRequest",
+    "CreateObjectBucketBody",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
@@ -1115,6 +1127,8 @@ __all__ = (
     "KafkaTriggerConfig",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListBucketObjectsResponse200",
+    "ListBucketObjectsResponse200ItemsItem",
     "ListCronRunsResponse",
     "ListDeploymentAuditResponse",
     "ListInstancesResponse",
@@ -1150,6 +1164,14 @@ __all__ = (
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
     "OAuthProviderCapability",
+    "ObjectBucket",
+    "ObjectBucketList",
+    "ObjectBucketState",
+    "ObjectSignedRequest",
+    "ObjectSignedRequestHeaders",
+    "ObjectSignedRequestMethod",
+    "ObjectSignRequest",
+    "ObjectSignRequestMethod",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",

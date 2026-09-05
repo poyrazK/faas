@@ -1117,6 +1117,23 @@ type OauthLink struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ObjectBucket struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Scope              string
+	Region             string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	State              string
+	LeaseToken         pgtype.Text
+	LeaseUntil         pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type OidcExchangedToken struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

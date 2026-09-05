@@ -407,12 +407,18 @@ var methodRouteMap = map[string]string{
 	// as alerts/edge-rules/webhooks above. The PUT route is the
 	// upsert/create verb (the spec writes a single row per (kind, host,
 	// port) tuple, with the response carrying the persisted id).
-	"GET /v1/apps/{slug}/upstreams":         "ListAppDataUpstreams",
-	"GET /v1/apps/{slug}/upstreams/{id}":    "GetAppDataUpstream",
-	"PUT /v1/apps/{slug}/upstreams":         "CreateAppDataUpstream",
-	"DELETE /v1/apps/{slug}/upstreams/{id}": "DeleteAppDataUpstream",
-	"GET /v1/keys":                          "ListKeys",
-	"POST /v1/keys":                         "CreateKey",
+	"GET /v1/apps/{slug}/upstreams":                    "ListAppDataUpstreams",
+	"GET /v1/apps/{slug}/upstreams/{id}":               "GetAppDataUpstream",
+	"PUT /v1/apps/{slug}/upstreams":                    "CreateAppDataUpstream",
+	"DELETE /v1/apps/{slug}/upstreams/{id}":            "DeleteAppDataUpstream",
+	"GET /v1/keys":                                     "ListKeys",
+	"GET /v1/apps/{slug}/buckets":                      "ListObjectBuckets",
+	"POST /v1/apps/{slug}/buckets":                     "CreateObjectBucket",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}":          "DeleteObjectBucket",
+	"GET /v1/apps/{slug}/buckets/{bucket}/objects":     "ListBucketObjects",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/objects":  "DeleteBucketObject",
+	"POST /v1/apps/{slug}/buckets/{bucket}/signed-url": "SignBucketObject",
+	"POST /v1/keys":                                    "CreateKey",
 	// Move 2 routes — the auto-derivation produces names with literal
 	// hyphens (e.g. "DeleteDelayed-tasksId") because the spec path uses
 	// the k8s-style hyphen; the explicit map below drops the hyphen and

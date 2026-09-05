@@ -99,11 +99,12 @@ type auditEventOutboxRow struct {
 // (unique email, unique slug, unique key hash) so tests exercise real error
 // paths. It is NOT durable — production uses the Postgres store.
 type MemStore struct {
-	mu        sync.Mutex
-	accounts  map[string]Account
-	keys      map[string]APIKey
-	keyByHash map[string]APIKey
-	apps      map[string]App
+	objectBuckets map[string]ObjectBucket
+	mu            sync.Mutex
+	accounts      map[string]Account
+	keys          map[string]APIKey
+	keyByHash     map[string]APIKey
+	apps          map[string]App
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -4008,6 +4009,11 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return App{}, ErrConflict
+		}
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
@@ -13453,6 +13459,16 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	// grace timer gets ErrNotFound and swallows it.
 	if a.Status != AccountDeletedPending {
 		return ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AccountID == id && b.State != "deleted" {
+			return ErrConflict
+		}
+	}
+	for bucketID, b := range m.objectBuckets {
+		if b.AccountID == id {
+			delete(m.objectBuckets, bucketID)
+		}
 	}
 	// Drop children first so the parent's final delete is the sentinel.
 	for k := range m.secrets {

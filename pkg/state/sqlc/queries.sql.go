@@ -5070,6 +5070,278 @@ func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLife
 	return result.RowsAffected(), nil
 }
 
+const objectBucketByName = `-- name: ObjectBucketByName :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
+`
+
+type ObjectBucketByNameParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Name      string
+	Scope     string
+}
+
+func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBucketByNameParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectBucketByName,
+		arg.AppID,
+		arg.AccountID,
+		arg.Name,
+		arg.Scope,
+	)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketClaim = `-- name: ObjectBucketClaim :one
+UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now()
+WHERE account_id = $4 AND app_id = $5 AND id = $6 AND state <> 'deleted' AND (lease_until IS NULL OR lease_until < now())
+AND ($1 = 'deleting' OR state = 'provisioning') RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at
+`
+
+type ObjectBucketClaimParams struct {
+	State      string
+	LeaseToken pgtype.Text
+	Column3    int32
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	ID         pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBucketClaimParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectBucketClaim,
+		arg.State,
+		arg.LeaseToken,
+		arg.Column3,
+		arg.AccountID,
+		arg.AppID,
+		arg.ID,
+	)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketCount = `-- name: ObjectBucketCount :one
+SELECT count(*) FROM object_buckets WHERE app_id = $1 AND state <> 'deleted'
+`
+
+func (q *Queries) ObjectBucketCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectBucketCount, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectBucketCountForAccount = `-- name: ObjectBucketCountForAccount :one
+SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted'
+`
+
+func (q *Queries) ObjectBucketCountForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectBucketCountForAccount, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectBucketFinish = `-- name: ObjectBucketFinish :execrows
+UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now() WHERE id = $2 AND lease_token = $3
+`
+
+type ObjectBucketFinishParams struct {
+	State      string
+	ID         pgtype.UUID
+	LeaseToken pgtype.Text
+}
+
+func (q *Queries) ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBucketFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketFinish, arg.State, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectBucketGet = `-- name: ObjectBucketGet :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
+`
+
+type ObjectBucketGetParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucketGetParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectBucketGet, arg.AccountID, arg.AppID, arg.ID)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketInsert = `-- name: ObjectBucketInsert :one
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at
+`
+
+type ObjectBucketInsertParams struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Scope              string
+	Region             string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBucketInsertParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectBucketInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Scope,
+		arg.Region,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketList = `-- name: ObjectBucketList :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
+`
+
+type ObjectBucketListParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucketListParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectBucketList, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectBucketLockApp = `-- name: ObjectBucketLockApp :one
+SELECT id FROM apps WHERE id = $1 AND account_id = $2 AND status <> 'deleted' FOR UPDATE
+`
+
+type ObjectBucketLockAppParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBucketLockAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectBucketLockApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectBucketPruneTombstones = `-- name: ObjectBucketPruneTombstones :exec
+DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted'
+`
+
+func (q *Queries) ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectBucketPruneTombstones, accountID)
+	return err
+}
+
 const orgByID = `-- name: OrgByID :one
 select
     id, slug, name, personal_org,

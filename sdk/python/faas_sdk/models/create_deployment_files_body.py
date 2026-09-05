@@ -28,6 +28,9 @@ class CreateDeploymentFilesBody:
     dockerfile: bool | Unset = UNSET
     kind: CreateDeploymentFilesBodyKind | Unset = UNSET
     runtime: CreateDeploymentFilesBodyRuntime | Unset = UNSET
+    source_root: str | Unset = UNSET
+    """Optional repository-relative directory to build from when source contains a workspace context. Empty or
+    omitted means the archive root."""
     workflows: str | Unset = UNSET
     """JSON array of workflow definitions (plan-gated)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -47,6 +50,8 @@ class CreateDeploymentFilesBody:
         if not isinstance(self.runtime, Unset):
             runtime = self.runtime
 
+        source_root = self.source_root
+
         workflows = self.workflows
 
         field_dict: dict[str, Any] = {}
@@ -60,6 +65,8 @@ class CreateDeploymentFilesBody:
             field_dict["kind"] = kind
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
+        if source_root is not UNSET:
+            field_dict["source_root"] = source_root
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
 
@@ -79,6 +86,9 @@ class CreateDeploymentFilesBody:
 
         if not isinstance(self.runtime, Unset):
             files.append(("runtime", (None, str(self.runtime).encode(), "text/plain")))
+
+        if not isinstance(self.source_root, Unset):
+            files.append(("source_root", (None, str(self.source_root).encode(), "text/plain")))
 
         if not isinstance(self.workflows, Unset):
             files.append(("workflows", (None, str(self.workflows).encode(), "text/plain")))
@@ -114,6 +124,8 @@ class CreateDeploymentFilesBody:
         else:
             runtime = check_create_deployment_files_body_runtime(_runtime)
 
+        source_root = d.pop("source_root", UNSET)
+
         workflows = d.pop("workflows", UNSET)
 
         create_deployment_files_body = cls(
@@ -121,6 +133,7 @@ class CreateDeploymentFilesBody:
             dockerfile=dockerfile,
             kind=kind,
             runtime=runtime,
+            source_root=source_root,
             workflows=workflows,
         )
 

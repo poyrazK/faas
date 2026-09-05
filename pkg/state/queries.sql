@@ -1995,6 +1995,39 @@ FROM deployments
 WHERE id = $1
   AND snapshot_miss_backoff_until IS NOT NULL;
 
+-- name: ObjectBucketLockApp :one
+SELECT id FROM apps WHERE id = $1 AND account_id = $2 AND status <> 'deleted' FOR UPDATE;
+
+-- name: ObjectBucketByName :one
+SELECT * FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted';
+
+-- name: ObjectBucketCount :one
+SELECT count(*) FROM object_buckets WHERE app_id = $1 AND state <> 'deleted';
+
+-- name: ObjectBucketCountForAccount :one
+SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted';
+
+-- name: ObjectBucketPruneTombstones :exec
+DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
+
+-- name: ObjectBucketInsert :one
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
+
+-- name: ObjectBucketList :many
+SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;
+
+-- name: ObjectBucketGet :one
+SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted';
+
+-- name: ObjectBucketClaim :one
+UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now()
+WHERE account_id = $4 AND app_id = $5 AND id = $6 AND state <> 'deleted' AND (lease_until IS NULL OR lease_until < now())
+AND ($1 = 'deleting' OR state = 'provisioning') RETURNING *;
+
+-- name: ObjectBucketFinish :execrows
+UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now() WHERE id = $2 AND lease_token = $3;
+
 -- name: SnapshotLocalityNodes :many
 SELECT node_id::text AS node_id, true AS is_origin
 FROM snapshot_origins

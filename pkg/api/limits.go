@@ -19,6 +19,15 @@ import (
 	"time"
 )
 
+// Operator-configurable object-storage preview safeguards, not plan allowances
+// or billable storage entitlements. Metering/pricing need a separate decision.
+const (
+	DefaultObjectBucketsPerApp       = 10
+	MaxObjectBucketsPerApp           = 100
+	DefaultObjectUploadBytes   int64 = 100 << 20
+	MaxObjectUploadBytes       int64 = 5 << 30
+)
+
 // Plan is a customer subscription tier. The zero value is intentionally invalid
 // so an unset plan never silently reads as Free.
 type Plan string
