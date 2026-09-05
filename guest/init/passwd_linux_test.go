@@ -3,7 +3,7 @@
 // Tests for the binary /etc/faas/app_passwd reader. The
 // table-lookup core is testable without a real /etc mount —
 // searchPasswdTable takes the file body as a []byte.
-package init
+package main
 
 import (
 	"encoding/binary"

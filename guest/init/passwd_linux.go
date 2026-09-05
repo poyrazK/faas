@@ -23,7 +23,7 @@
 // binary-search. No mmap, no sysfs, no vsock. Falls back to
 // DefaultAppUID on any error so a misbuilt / corrupt table
 // degrades to today's behavior.
-package init
+package main
 
 import (
 	"bytes"
