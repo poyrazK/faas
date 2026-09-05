@@ -2358,6 +2358,10 @@ func (s *server) handler() http.Handler {
 	// notification side-effects match the REST API path bit-for-bit.
 	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardDelete)))))
 	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
+	// Issue #248 slice A: revoke an account-owned API key from the
+	// dashboard. The handler verifies its dedicated named CSRF cookie and
+	// a typed key-prefix confirmation before calling the REST revocation core.
+	mux.Handle("POST /dashboard/account/keys/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteKey))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).
 	// Step-up gate matches dashboardDelete: a hostile actor with a

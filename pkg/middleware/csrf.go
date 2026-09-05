@@ -114,6 +114,18 @@ func IssueForAuthenticated(manager *session.Manager, action, accountID string) (
 	return issue(manager, action, accountID, DefaultCSRFTTL)
 }
 
+// IssueForAuthenticatedNamed is the multi-form-page variant of
+// IssueForAuthenticated. The caller supplies the cookie name that its matching
+// verifier will read, allowing independently action-bound tokens to coexist on
+// one rendered page. Existing single-form callers keep using
+// CookieNameAuthenticated through IssueForAuthenticated.
+func IssueForAuthenticatedNamed(manager *session.Manager, action, accountID, cookieName string) (string, error) {
+	if err := validateCSRFCookieName(cookieName); err != nil {
+		return "", err
+	}
+	return issue(manager, action, accountID, DefaultCSRFTTL)
+}
+
 // IssueForAnonymous is the anonymous-form equivalent: bound to action +
 // deviceCode instead of an account. The CLI authorization page uses
 // IssueForAuthenticated so its code claim is tied to the signed-in account.
@@ -164,14 +176,35 @@ func issue(manager *session.Manager, action, subject string, ttl time.Duration) 
 // the handler's downstream JSON decoder sees the original payload
 // intact).
 func VerifyAuthenticated(manager *session.Manager, r *http.Request, action, accountID string) error {
+	return VerifyAuthenticatedNamed(manager, r, action, accountID, CookieNameAuthenticated)
+}
+
+// VerifyAuthenticatedNamed verifies an authenticated token against the named
+// sidecar cookie. This preserves per-action envelopes while allowing several
+// protected forms to be rendered on the same page without overwriting the
+// single faas_csrf cookie.
+func VerifyAuthenticatedNamed(manager *session.Manager, r *http.Request, action, accountID, cookieName string) error {
 	if manager == nil {
 		return fmt.Errorf("%w: nil session manager", ErrCSRFInvalid)
 	}
-	c, err := r.Cookie(CookieNameAuthenticated)
+	if err := validateCSRFCookieName(cookieName); err != nil {
+		return fmt.Errorf("%w: %w", ErrCSRFInvalid, err)
+	}
+	c, err := r.Cookie(cookieName)
 	if err != nil || c.Value == "" {
-		return fmt.Errorf("%w: missing %s cookie", ErrCSRFInvalid, CookieNameAuthenticated)
+		return fmt.Errorf("%w: missing %s cookie", ErrCSRFInvalid, cookieName)
 	}
 	return verifyAgainstRequest(manager, r, action, accountID, c.Value)
+}
+
+func validateCSRFCookieName(cookieName string) error {
+	if cookieName == "" {
+		return errors.New("csrf: empty cookie name")
+	}
+	if err := (&http.Cookie{Name: cookieName, Value: "csrf"}).Valid(); err != nil {
+		return fmt.Errorf("csrf: invalid cookie name: %w", err)
+	}
+	return nil
 }
 
 // VerifyAnonymous verifies an anonymous form token whose subject is a

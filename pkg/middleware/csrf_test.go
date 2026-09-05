@@ -49,6 +49,41 @@ func TestIssueForAuthenticated_Roundtrip(t *testing.T) {
 	}
 }
 
+func TestIssueForAuthenticatedNamed_Roundtrip(t *testing.T) {
+	const cookieName = "faas_csrf_key_delete"
+	m := newTestManager(t)
+	tok, err := IssueForAuthenticatedNamed(m, "key_delete", "acct-123", cookieName)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	req := buildPost(t, cookieName, tok, FormFieldName+"="+tok)
+	if err := VerifyAuthenticatedNamed(m, req, "key_delete", "acct-123", cookieName); err != nil {
+		t.Fatalf("VerifyAuthenticatedNamed: %v", err)
+	}
+}
+
+func TestVerifyAuthenticatedNamed_DoesNotFallBackToDefaultCookie(t *testing.T) {
+	const cookieName = "faas_csrf_key_delete"
+	m := newTestManager(t)
+	tok, err := IssueForAuthenticatedNamed(m, "key_delete", "acct-123", cookieName)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	req := buildPost(t, CookieNameAuthenticated, tok, FormFieldName+"="+tok)
+	if err := VerifyAuthenticatedNamed(m, req, "key_delete", "acct-123", cookieName); err == nil {
+		t.Fatal("named verifier accepted the default CSRF cookie")
+	}
+}
+
+func TestIssueForAuthenticatedNamed_RejectsInvalidCookieName(t *testing.T) {
+	m := newTestManager(t)
+	for _, cookieName := range []string{"", "contains a space"} {
+		if _, err := IssueForAuthenticatedNamed(m, "key_delete", "acct-123", cookieName); err == nil {
+			t.Errorf("cookie name %q: expected error", cookieName)
+		}
+	}
+}
+
 func TestVerify_MissingCookie(t *testing.T) {
 	m := newTestManager(t)
 	tok, _ := IssueForAuthenticated(m, "delete", "acct-1")
