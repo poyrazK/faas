@@ -30,7 +30,8 @@ import (
 // (vda) as the shared read-only base and drive1 (vdb) as the per-app writable
 // layer. Full-rootfs artifacts also use drive1 for wire compatibility, but
 // carry a trusted marker and are pivoted into directly without the shared-base
-// overlay.
+// overlay. When the roster declares sidecars, drive2+ are mounted as their own
+// read-only roots below /run/faas/sidecars after the pivot.
 const (
 	layerDevice        = "/dev/vdb"
 	layerMount         = "/overlay"
@@ -75,6 +76,16 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 	guestStage("pivot")
+	if fullRootfs, markerErr := fullRootfsMarkerPresent("/"); markerErr != nil {
+		return fmt.Errorf("inspect full-rootfs marker after pivot: %w", markerErr)
+	} else if fullRootfs {
+		// Mount sidecar roots after pivot so image-provided absolute symlinks
+		// such as /run -> /var/run are resolved inside the image root rather
+		// than against the pre-pivot guest filesystem.
+		if err := mountFullRootfsSidecars("/"); err != nil {
+			return fmt.Errorf("mount full-rootfs sidecars: %w", err)
+		}
+	}
 	mode, buildManifest, err := decideMode(os.DirFS("/"))
 	if err != nil {
 		return err
@@ -1640,18 +1651,10 @@ func assembleOverlay() (string, error) {
 	// pkg/rootfs.BuildFullRootfs. They use the existing layer device slot for
 	// wire compatibility, but must become the pivot root directly; stacking
 	// them as an overlay upper would leave the shared base visible underneath.
-	marker := filepath.Join(layerMount, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
-	if _, err := os.Stat(marker); err == nil {
-		content, readErr := os.ReadFile(marker)
-		if readErr != nil {
-			return "", fmt.Errorf("read full-rootfs marker: %w", readErr)
-		}
-		if string(content) != api.FullRootfsMarkerValue {
-			return "", fmt.Errorf("invalid full-rootfs marker payload")
-		}
-		return layerMount, nil
-	} else if !isNotExist(err) {
+	if fullRootfs, err := fullRootfsMarkerPresent(layerMount); err != nil {
 		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
+	} else if fullRootfs {
+		return layerMount, nil
 	}
 	for _, d := range []string{"upper", "work", "merged"} {
 		if err := os.MkdirAll(layerMount+"/"+d, 0o755); err != nil {
@@ -1703,8 +1706,9 @@ func assembleOverlay() (string, error) {
 // virtio-blk names. If a future caller needs a different layout,
 // the device field is the only thing to override.
 type sidecarDevice struct {
-	name   string // "sidecar-0", "sidecar-1", ...
-	device string // "/dev/vdc", "/dev/vdd", ...
+	name         string // "sidecar-0", "sidecar-1", ...
+	device       string // "/dev/vdc", "/dev/vdd", ...
+	workloadName string // validated deployment name, e.g. "metrics"
 }
 
 // discoverSidecarDevices reads the roster file from drive1 (the
@@ -1718,11 +1722,11 @@ type sidecarDevice struct {
 // the function returns nil and assembleOverlay emits the legacy
 // 2-drive overlay.
 //
-// A missing or malformed roster file is the legacy path: the
-// function logs and returns nil. A roster file that lists more
-// sidecars than the underlying device count can support (e.g.
-// 3 sidecars but no vde) is caught at mount time by the syscall
-// in assembleOverlay's loop; this helper never touches devices.
+// A missing roster file is the legacy path and returns nil. A malformed
+// roster, invalid sidecar name, or sidecar count above the hard cap fails the
+// boot rather than silently starting a partial deployment. Device availability
+// is checked by the mount syscall in the caller; this helper never touches
+// devices.
 func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 	rosterPath := mountRoot + "/" + workloadRosterPath
 	data, err := os.ReadFile(rosterPath)
@@ -1739,18 +1743,136 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 	if len(roster.Sidecars) == 0 {
 		return nil, nil // present but empty — legacy supervisor shape
 	}
+	if len(roster.Sidecars) > api.SidecarCapMax {
+		return nil, fmt.Errorf("roster has %d sidecars; cap is %d", len(roster.Sidecars), api.SidecarCapMax)
+	}
 	out := make([]sidecarDevice, 0, len(roster.Sidecars))
+	seenNames := make(map[string]struct{}, len(roster.Sidecars))
 	for i := range roster.Sidecars {
+		workloadName := roster.Sidecars[i].Name
+		if !validSidecarWorkloadName(workloadName) {
+			return nil, fmt.Errorf("sidecar %d has invalid workload name %q", i, roster.Sidecars[i].Name)
+		}
+		if _, exists := seenNames[workloadName]; exists {
+			return nil, fmt.Errorf("sidecar workload name %q appears more than once", workloadName)
+		}
+		seenNames[workloadName] = struct{}{}
 		// Device naming: /dev/vda = drive0 (base), /dev/vdb =
 		// drive1 (main, the per-app rw upper). Sidecar 0 starts
 		// at /dev/vdc (drive2) and increments. The cap of 2
 		// sidecars per deployment (ADR-068) caps this at vdd.
 		out = append(out, sidecarDevice{
-			name:   fmt.Sprintf("sidecar-%d", i),
-			device: fmt.Sprintf("/dev/vd%c", 'c'+i),
+			name:         fmt.Sprintf("sidecar-%d", i),
+			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),
+			workloadName: workloadName,
 		})
 	}
 	return out, nil
+}
+
+// mountFullRootfsSidecars attaches each sidecar artifact below the trusted
+// full-rootfs main image. Sidecar artifacts built by pkg/rootfs use the
+// optimized two-drive layout, so their complete image tree is under /upper;
+// runSidecar chroots into that directory while the main workload continues to
+// use the direct pivot root.
+func mountFullRootfsSidecars(mainRoot string) error {
+	devices, err := discoverSidecarDevices(mainRoot)
+	if err != nil {
+		return err
+	}
+	if len(devices) == 0 {
+		return nil
+	}
+	// A fresh mount namespace normally copies the guest's mount tree, but
+	// shared propagation would still let a privileged sidecar alter mounts
+	// visible to the main workload. Make the PID-1 tree private before adding
+	// any sidecar mounts; each child then gets an isolated copy via CLONE_NEWNS.
+	if err := syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
+		return fmt.Errorf("make guest mount tree private: %w", err)
+	}
+	mountRoot := filepath.Join(mainRoot, strings.TrimPrefix(api.FullRootfsSidecarMountPath, "/"))
+	if err := ensureMountDirectory(mountRoot); err != nil {
+		return fmt.Errorf("sidecar mount root: %w", err)
+	}
+	for _, dev := range devices {
+		if !validSidecarWorkloadName(dev.workloadName) {
+			return fmt.Errorf("sidecar %q has invalid workload name", dev.workloadName)
+		}
+		mountpoint := filepath.Join(mountRoot, dev.workloadName)
+		if err := ensureMountDirectory(mountpoint); err != nil {
+			return fmt.Errorf("sidecar %q mountpoint: %w", dev.workloadName, err)
+		}
+		if err := syscall.Mount(dev.device, mountpoint, "ext4", syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV, ""); err != nil {
+			return fmt.Errorf("mount %s at %s: %w", dev.device, mountpoint, err)
+		}
+		sidecarRoot := filepath.Join(mountpoint, "upper")
+		info, statErr := os.Lstat(sidecarRoot)
+		if statErr != nil {
+			return fmt.Errorf("sidecar %q root %s: %w", dev.workloadName, sidecarRoot, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("sidecar %q root %s is a symlink", dev.workloadName, sidecarRoot)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("sidecar %q root %s is not a directory", dev.workloadName, sidecarRoot)
+		}
+		if err := mountSidecarRuntimeFilesystems(sidecarRoot); err != nil {
+			return fmt.Errorf("sidecar %q runtime mounts: %w", dev.workloadName, err)
+		}
+	}
+	return nil
+}
+
+// ensureMountDirectory creates a platform-owned mount target and rejects a
+// pre-existing symlink or non-directory at the final component. The main
+// full-rootfs builder reserves the parent path, while the workload name has
+// already passed the strict sidecar-name validator.
+func ensureMountDirectory(path string) error {
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("mount target is a symlink")
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("mount target is not a directory")
+		}
+		return nil
+	} else if !isNotExist(err) {
+		return err
+	}
+	return os.MkdirAll(path, 0o755)
+}
+
+// mountSidecarRuntimeFilesystems supplies the pseudo-filesystems expected by
+// ordinary OCI processes after runSidecar chroots into its image root. The
+// mounts are inherited by the workload's private mount namespace; /tmp is a
+// per-sidecar tmpfs, while /proc, /sys, and /dev are the guest's already-
+// mounted views. /run remains image-provided so common /run -> /var/run
+// symlinks keep their OCI semantics.
+func mountSidecarRuntimeFilesystems(root string) error {
+	for _, name := range []string{"proc", "sys", "dev"} {
+		target := filepath.Join(root, name)
+		if err := ensureMountDirectory(target); err != nil {
+			return fmt.Errorf("%s target: %w", name, err)
+		}
+		if err := syscall.Mount("/"+name, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+			return fmt.Errorf("bind %s: %w", name, err)
+		}
+	}
+	for _, mount := range []struct {
+		name string
+		mode string
+	}{
+		{name: "tmp", mode: "mode=1777"},
+	} {
+		target := filepath.Join(root, mount.name)
+		if err := ensureMountDirectory(target); err != nil {
+			return fmt.Errorf("%s target: %w", mount.name, err)
+		}
+		if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, mount.mode); err != nil {
+			return fmt.Errorf("tmpfs %s: %w", mount.name, err)
+		}
+	}
+	return nil
 }
 
 // pivotInto makes root the new root filesystem.
@@ -1807,6 +1929,9 @@ func pivotInto(root string) error {
 func lookupUID(user string) int {
 	if user == api.DefaultAppUser {
 		return api.DefaultAppUID
+	}
+	if uid, ok := numericUID(user); ok {
+		return uid
 	}
 	if uid, ok := readPasswdTable(user); ok {
 		return uid

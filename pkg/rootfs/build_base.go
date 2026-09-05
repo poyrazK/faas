@@ -346,6 +346,13 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	if err := writeFullRootfsMarker(staging); err != nil {
 		return BuildResult{}, err
 	}
+	// Full-rootfs deployments may attach sidecar image drives beneath the
+	// main root. Reserve the platform-owned mount tree while the image is
+	// still in the trusted staging directory so a customer layer cannot turn
+	// it into a file or an escaping symlink.
+	if err := ensureRuntimeDirectory(staging, strings.TrimPrefix(api.FullRootfsSidecarMountPath, "/")); err != nil {
+		return BuildResult{}, fmt.Errorf("rootfs: full-rootfs sidecar mount root: %w", err)
+	}
 	// Function-deploy path (spec §4.9, M7). Same semantics as Build;
 	// the cap is the plan's AppLayerMaxMB — full-rootfs deployments
 	// still respect the per-plan storage envelope.
