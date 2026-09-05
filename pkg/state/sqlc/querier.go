@@ -718,6 +718,14 @@ type Querier interface {
 	// $6 = expires_at (nullable — null means suppression is permanent
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
+	// Top route/method rows for the customer analytics overview. `count` is
+	// weighted throughout the same way as RequestTelemetryAnalyticsSummary.
+	RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteParams) ([]RequestTelemetryAnalyticsByRouteRow, error)
+	// Customer-facing request analytics over a bounded retention window.
+	// The recorder collapses identical requests into rows with `count`, so
+	// all request/error/cold-boot totals and percentiles must expand that
+	// weight rather than treating each stored row as one request.
+	RequestTelemetryAnalyticsSummary(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsSummaryParams) (RequestTelemetryAnalyticsSummaryRow, error)
 	// Per-route p50/p95/p99 latency + row count for the
 	// compare endpoint and the regression detector (ADR-127 PR-B
 	// cron + PR Debugger UX v1 compare handler). Single index scan

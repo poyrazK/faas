@@ -6609,6 +6609,42 @@ type DebugTelemetryListResponse struct {
 	Requests []DebugTelemetryRequestItem `json:"requests"`
 }
 
+// RequestAnalyticsRoute is one aggregated route/method row returned by
+// GET /v1/apps/{slug}/analytics. Counts include the request_telemetry row's
+// collapsed count, while latency percentiles are weighted by that count.
+type RequestAnalyticsRoute struct {
+	Route         string  `json:"route"`
+	Method        string  `json:"method"`
+	Requests      int64   `json:"requests"`
+	ErrorRequests int64   `json:"error_requests"`
+	ErrorRatePct  float64 `json:"error_rate_pct"`
+	ColdBoots     int64   `json:"cold_boots"`
+	P50MS         int     `json:"p50_ms"`
+	P95MS         int     `json:"p95_ms"`
+	P99MS         int     `json:"p99_ms"`
+}
+
+// RequestAnalyticsResponse is the bounded historical request analytics
+// envelope for one app. Since/Until are the effective half-open window; a
+// longer requested since value is represented by WindowClamped=true.
+type RequestAnalyticsResponse struct {
+	Slug            string                  `json:"slug"`
+	Since           string                  `json:"since"`
+	Until           string                  `json:"until"`
+	WindowClamped   bool                    `json:"window_clamped"`
+	Requests        int64                   `json:"requests"`
+	ErrorRequests   int64                   `json:"error_requests"`
+	ErrorRatePct    float64                 `json:"error_rate_pct"`
+	ColdBoots       int64                   `json:"cold_boots"`
+	P50MS           int                     `json:"p50_ms"`
+	P95MS           int                     `json:"p95_ms"`
+	P99MS           int                     `json:"p99_ms"`
+	Routes          []RequestAnalyticsRoute `json:"routes"`
+	RoutesLimit     int                     `json:"routes_limit"`
+	RoutesTruncated bool                    `json:"routes_truncated"`
+	AsOf            string                  `json:"as_of"`
+}
+
 // DebugRegressionItem is one row of debug_regression_observations
 // (ADR-127 / PR-B) returned by GET /v1/apps/{slug}/debug/regressions.
 // Factor is a NUMERIC(5,2) so the wire serialises as a JSON

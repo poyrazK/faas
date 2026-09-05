@@ -21022,6 +21022,19 @@ func (s *PgStore) RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sq
 	return s.appErrorsQueries().RequestTelemetryBaselineP95ByRoute(ctx, s.pool, arg)
 }
 
+// RequestTelemetryAnalyticsSummary backs the customer-facing aggregated
+// request analytics summary. The SQL weights collapsed telemetry rows by
+// their count column and is bounded by the caller's retention window.
+func (s *PgStore) RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, s.pool, arg)
+}
+
+// RequestTelemetryAnalyticsByRoute backs the bounded top-route portion of
+// the customer-facing request analytics response.
+func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, s.pool, arg)
+}
+
 // --- ADR-127 PR-B — regression observation persistence + dashboard reads ---
 
 // UpsertRegressionObservation writes (or refreshes) the regression

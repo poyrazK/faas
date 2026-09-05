@@ -5514,6 +5514,13 @@ type Store interface {
 	// Go-side composition in pkg/state/pgstore.go).
 	RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error)
 
+	// RequestTelemetryAnalyticsSummary and RequestTelemetryAnalyticsByRoute
+	// back the customer-facing aggregated request analytics endpoint. Both
+	// queries are retention-windowed and weight collapsed telemetry rows by
+	// their count column.
+	RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error)
+	RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error)
+
 	// --- ADR-127 PR-B — regression observation persistence + dashboard reads ---
 
 	// UpsertRegressionObservation writes (or refreshes) the

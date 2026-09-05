@@ -390,6 +390,10 @@ type AppDetailData struct {
 	// pre-formatted at the handler edge so the template stays
 	// a pure renderer.
 	SLODuration views.SLOStamp
+	// RequestAnalytics is the durable request_telemetry rollup shown below
+	// the live Prometheus panels. nil means the plan does not include the
+	// telemetry retention feature or the best-effort read failed.
+	RequestAnalytics *RequestAnalyticsView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -906,6 +910,37 @@ type AppMetricsView struct {
 	ErrorRatePct float64
 	ColdStartPct float64
 	WakeP95MS    float64
+}
+
+// RequestAnalyticsView is the dashboard-facing projection of the customer
+// request analytics API. It deliberately mirrors only aggregate fields;
+// request IDs and trace data belong to the debugger surface.
+type RequestAnalyticsView struct {
+	Since           string
+	WindowClamped   bool
+	Requests        int64
+	ErrorRequests   int64
+	ErrorRatePct    float64
+	ColdBoots       int64
+	P50MS           int
+	P95MS           int
+	P99MS           int
+	Routes          []RequestAnalyticsRouteView
+	RoutesLimit     int
+	RoutesTruncated bool
+	AsOf            string
+}
+
+type RequestAnalyticsRouteView struct {
+	Route         string
+	Method        string
+	Requests      int64
+	ErrorRequests int64
+	ErrorRatePct  float64
+	ColdBoots     int64
+	P50MS         int
+	P95MS         int
+	P99MS         int
 }
 
 // RecentInstanceItem is one row of the Recent Wakes table on the

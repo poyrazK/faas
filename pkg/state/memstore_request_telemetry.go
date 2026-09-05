@@ -57,6 +57,18 @@ func (m *MemStore) RequestTelemetryBaselineP95ByRoute(_ context.Context, _ sqlc.
 	return nil, errMemStoreRequestTelemetry
 }
 
+// RequestTelemetryAnalyticsSummary (customer request analytics) — MemStore
+// stub. Postgres-only because request_telemetry is a partitioned SQL table.
+func (m *MemStore) RequestTelemetryAnalyticsSummary(_ context.Context, _ sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
+	return sqlc.RequestTelemetryAnalyticsSummaryRow{}, errMemStoreRequestTelemetry
+}
+
+// RequestTelemetryAnalyticsByRoute (customer request analytics) — MemStore
+// stub. Postgres-only because request_telemetry is a partitioned SQL table.
+func (m *MemStore) RequestTelemetryAnalyticsByRoute(_ context.Context, _ sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
 // uuid.UUID import retained for consistency with the memstore_app_errors
 // stub pattern (future PRs may add an in-memory LRU helper).
 var _ = uuid.Nil

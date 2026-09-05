@@ -2242,6 +2242,74 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/analytics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRequestAnalytics
+      summary: Aggregated historical request analytics.
+      description: |
+        Returns an aggregate request overview for one app: total requests,
+        errors, cold boots, weighted p50/p95/p99 latency, and the top
+        route/method combinations. This is the customer analytics surface;
+        request identifiers and trace payloads remain on the debugger routes.
+
+        `since` accepts a duration such as `24h` or `7d` and defaults to
+        `24h`. The effective window is clamped to the plan's
+        `DebugTelemetryRetentionDays` (Hobby 3d, Pro 7d, Scale 14d).
+        `window_clamped` tells callers when the requested lookback was wider
+        than the retained telemetry. The response contains at most 50 route
+        rows; `routes_truncated` indicates that more routes matched.
+
+        Counts and percentiles include the recorder's collapsed row `count`,
+        so the result represents original requests rather than stored rows.
+        The endpoint is read-only, IDOR-safe, and plan-gated by
+        `DebugTelemetryEnabled`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Lookback duration (`24h`, `3d`, `7d`). Defaults to `24h` and is retention-clamped."
+      x-since: 2026-09
+      responses:
+        '200':
+          description: Aggregated request analytics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestAnalyticsResponse'
+              example:
+                slug: my-api
+                since: 24h
+                until: "2026-09-05T13:00:00.123456Z"
+                window_clamped: false
+                requests: 8421
+                error_requests: 37
+                error_rate_pct: 0.4394
+                cold_boots: 14
+                p50_ms: 12
+                p95_ms: 87
+                p99_ms: 412
+                routes:
+                  - route: /users
+                    method: GET
+                    requests: 4200
+                    error_requests: 12
+                    error_rate_pct: 0.2857
+                    cold_boots: 5
+                    p50_ms: 9
+                    p95_ms: 54
+                    p99_ms: 180
+                routes_limit: 50
+                routes_truncated: false
+                as_of: "2026-09-05T13:00:00.123456Z"
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/routes:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -19633,6 +19701,47 @@ components:
           type: string
           format: date-time
           description: "RFC3339Nano UTC stamping the envelope's authoritative 'as of' instant."
+
+    RequestAnalyticsRoute:
+      type: object
+      description: "Aggregated request analytics for one route and HTTP method. Counts include collapsed telemetry row weights."
+      required: [route, method, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
+      properties:
+        route: { type: string, description: "Route template, not an expanded URL." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+
+    RequestAnalyticsResponse:
+      type: object
+      description: |
+        Bounded historical request analytics for
+        `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
+        `[now-since, now)`, and the route list is capped at 50 rows.
+      required: [slug, since, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, routes, routes_limit, routes_truncated, as_of]
+      properties:
+        slug: { type: string }
+        since: { type: string, description: "Effective lookback duration after retention clamping." }
+        until: { type: string, format: date-time, description: "Exclusive upper bound of the analytics window." }
+        window_clamped: { type: boolean, description: "True when the requested lookback exceeded plan retention." }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsRoute' }
+        routes_limit: { type: integer, minimum: 1, description: "Maximum number of route rows returned." }
+        routes_truncated: { type: boolean, description: "True when more route rows matched than routes_limit." }
+        as_of: { type: string, format: date-time, description: "RFC3339Nano UTC assembly timestamp." }
 
     AppSLOResponse:
       description: |

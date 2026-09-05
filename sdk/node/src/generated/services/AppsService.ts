@@ -21,6 +21,7 @@ import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
+import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -367,6 +368,61 @@ export class AppsService {
         BEFORE \`loadApp\` so a Free customer probing a slug
         never gets a 404 (slug-leak guard).
         `,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Aggregated historical request analytics.
+   * Returns an aggregate request overview for one app: total requests,
+   * errors, cold boots, weighted p50/p95/p99 latency, and the top
+   * route/method combinations. This is the customer analytics surface;
+   * request identifiers and trace payloads remain on the debugger routes.
+   *
+   * `since` accepts a duration such as `24h` or `7d` and defaults to
+   * `24h`. The effective window is clamped to the plan's
+   * `DebugTelemetryRetentionDays` (Hobby 3d, Pro 7d, Scale 14d).
+   * `window_clamped` tells callers when the requested lookback was wider
+   * than the retained telemetry. The response contains at most 50 route
+   * rows; `routes_truncated` indicates that more routes matched.
+   *
+   * Counts and percentiles include the recorder's collapsed row `count`,
+   * so the result represents original requests rather than stored rows.
+   * The endpoint is read-only, IDOR-safe, and plan-gated by
+   * `DebugTelemetryEnabled`.
+   *
+   * @returns RequestAnalyticsResponse Aggregated request analytics.
+   * @throws ApiError
+   */
+  public static getAppRequestAnalytics({
+    slug,
+    since = '24h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lookback duration (`24h`, `3d`, `7d`). Defaults to `24h` and is retention-clamped.
+     */
+    since?: string,
+  }): CancelablePromise<RequestAnalyticsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/analytics',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
