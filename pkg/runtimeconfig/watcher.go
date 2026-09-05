@@ -24,15 +24,26 @@ import (
 )
 
 const (
-	KeyTenantSurfaces = "tenant_surfaces_enabled"
-	KeyHSTS           = "hsts_enabled"
-	KeyDataPlacement  = "data_placement_enabled"
+	KeyTenantSurfaces      = "tenant_surfaces_enabled"
+	KeyHSTS                = "hsts_enabled"
+	KeyDataPlacement       = "data_placement_enabled"
+	KeyGatewayStreaming    = "gateway_streaming_enabled"
+	KeyGatewayRouteMetrics = "gateway_route_metrics_enabled"
+	KeyGatewayRawStream    = "gateway_raw_stream_enabled"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.
 // It must be idempotent: a reconnect or a second notification may replay the
 // same version.
 type ApplyFunc func(ctx context.Context, key string, value json.RawMessage, version int64) error
+
+// Acknowledger is implemented by stores that have the optional convergence
+// table. Keeping it separate from state.Store lets older test doubles and
+// rolling deployments continue to run while the acknowledgement migration is
+// being applied.
+type Acknowledger interface {
+	AcknowledgeRuntimeConfig(ctx context.Context, ack state.RuntimeConfigAck) error
+}
 
 // Watcher consumes global runtime configuration rows for one daemon. Keys not
 // listed in Keys are ignored, which lets each daemon subscribe to the same
@@ -43,6 +54,10 @@ type Watcher struct {
 	Keys  map[string]struct{}
 	Apply ApplyFunc
 	Log   *slog.Logger
+	// Consumer and NodeID identify the daemon instance in the optional
+	// runtime_config_acks table. Empty Consumer disables acknowledgement writes.
+	Consumer string
+	NodeID   string
 
 	// Interval is the repair cadence. Zero uses five seconds, matching the
 	// apid control-plane subscriber.
@@ -74,6 +89,16 @@ func New(store state.Store, pool *pgxpool.Pool, keys []string, apply ApplyFunc, 
 		Interval: 5 * time.Second,
 		versions: make(map[string]int64),
 	}
+}
+
+// WithIdentity enables per-daemon convergence acknowledgements. NodeID may be
+// empty for single-box deployments; Consumer remains the stable daemon name.
+func (w *Watcher) WithIdentity(consumer, nodeID string) *Watcher {
+	if w != nil {
+		w.Consumer = consumer
+		w.NodeID = nodeID
+	}
+	return w
 }
 
 // Run keeps the daemon's local snapshot converged until ctx is cancelled.
@@ -145,9 +170,10 @@ func (w *Watcher) runSubscription(ctx context.Context, notifications <-chan db.N
 	}
 }
 
-// Reconcile applies every acknowledged row for this daemon. Rows with a
-// pending/failed/blocked status are intentionally ignored; desired state is
-// not effective state.
+// Reconcile applies every control-plane row whose effective state is marked
+// applied. Rows with a pending/failed/blocked status are intentionally
+// ignored; desired state is not effective state. A per-daemon acknowledgement
+// is written only after the local ApplyFunc succeeds.
 func (w *Watcher) Reconcile(ctx context.Context) error {
 	if w == nil || w.Store == nil || w.Apply == nil || len(w.Keys) == 0 {
 		return nil
@@ -168,8 +194,17 @@ func (w *Watcher) Reconcile(ctx context.Context) error {
 			continue
 		}
 		if err := w.Apply(ctx, row.Key, append(json.RawMessage(nil), row.EffectiveValue...), row.Version); err != nil {
+			if ackErr := w.acknowledge(ctx, row, state.RuntimeConfigAckFailed, nil, err.Error()); ackErr != nil {
+				w.Log.Warn("runtime_config failed acknowledgement", "key", row.Key, "version", row.Version, "err", ackErr)
+			}
 			if firstErr == nil {
 				firstErr = fmt.Errorf("apply %s v%d: %w", row.Key, row.Version, err)
+			}
+			continue
+		}
+		if err := w.acknowledge(ctx, row, state.RuntimeConfigAckApplied, row.EffectiveValue, ""); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("acknowledge %s v%d: %w", row.Key, row.Version, err)
 			}
 			continue
 		}
@@ -180,6 +215,33 @@ func (w *Watcher) Reconcile(ctx context.Context) error {
 		w.mu.Unlock()
 	}
 	return firstErr
+}
+
+func (w *Watcher) acknowledge(ctx context.Context, row state.RuntimeConfig, status state.RuntimeConfigAckStatus, value json.RawMessage, applyErr string) error {
+	if w == nil || w.Consumer == "" {
+		return nil
+	}
+	ackStore, ok := w.Store.(Acknowledger)
+	if !ok {
+		return nil
+	}
+	var appliedAt *time.Time
+	if status == state.RuntimeConfigAckApplied {
+		now := time.Now().UTC()
+		appliedAt = &now
+	}
+	return ackStore.AcknowledgeRuntimeConfig(ctx, state.RuntimeConfigAck{
+		Key:            row.Key,
+		Scope:          row.Scope,
+		ScopeID:        row.ScopeID,
+		Consumer:       w.Consumer,
+		NodeID:         w.NodeID,
+		Version:        row.Version,
+		Status:         status,
+		EffectiveValue: append(json.RawMessage(nil), value...),
+		Error:          applyErr,
+		AppliedAt:      appliedAt,
+	})
 }
 
 // Bool decodes the JSON boolean shape used by feature flags. It is kept here

@@ -674,10 +674,9 @@ type Handler struct {
 	// dispatches inbound Connection: Upgrade + Upgrade: <token>
 	// requests through it instead of proxyByNode — the raw
 	// forwarder opens ForwardRawStream and pumps bytes verbatim
-	// into the guest's netns TCP socket. nil = the raw path is
-	// disabled (default for tests and the e2e harness without a
-	// vmmd overlay; production wires ForwardingRawReverseProxy in
-	// cmd/gatewayd-internal/main.go alongside proxyByNode).
+	// into the guest's netns TCP socket. The separate
+	// rawForwardingEnabledFunc is the runtime kill switch; nil
+	// remains the disabled path for tests without a vmmd overlay.
 	//
 	// Detection happens BEFORE proxyByNode is invoked: see the
 	// isUpgradeRequest branch at the proxyByNode call site in
@@ -685,6 +684,10 @@ type Handler struct {
 	// gate (Free defaults off; Hobby/Pro/Scale default on via
 	// Plan.WebSocketEnabled / WebSocketResponseAllowed).
 	rawByNode func(t Target) http.Handler
+	// rawForwardingEnabledFunc is the optional durable operator kill switch.
+	// The forwarder remains constructed while disabled so a later enable does
+	// not require rebuilding the handler or reconnecting the node cache.
+	rawForwardingEnabledFunc func() bool
 	// topNSample is the per-request bump for the gateway-side
 	// top-N sampler (cmd/gatewayd-internal/topn.go, issue #300). Set via
 	// SetTopNSample from cmd/gatewayd-internal/main.go. nil in unit
@@ -716,6 +719,9 @@ type Handler struct {
 	// cmd/gatewayd-internal/main.go so production defaults to off and operators
 	// opt in per-cluster after PR-B ships.
 	streamingEnabled bool
+	// streamingEnabledFunc is the optional durable runtime gate. It is nil in
+	// tests and legacy callers, which continue to use streamingEnabled.
+	streamingEnabledFunc func() bool
 	// streamingWarned is the once-per-process log dedup for the
 	// buffered-fallback deprecation. Keyed on (appID, content-type) so
 	// the first instance of an SSE-emitting app under the flag-off
@@ -764,6 +770,9 @@ type Handler struct {
 	// enabled` field via WithRouteMetricsEnabled. Default false
 	// so existing deployments are unaffected.
 	routeMetricsEnabled bool
+	// routeMetricsEnabledFunc is the optional durable runtime gate. It is nil
+	// in tests and legacy callers, which continue to use routeMetricsEnabled.
+	routeMetricsEnabledFunc func() bool
 	// requireAuthnAuthn is the bearer-key verifier the
 	// per-deployment authz branch uses (issue #560). nil =
 	// authz branch disabled (default; matches the pre-issue
@@ -1168,6 +1177,20 @@ func (h *Handler) WithRawForwarding(fn func(t Target) http.Handler) *Handler {
 	return h
 }
 
+// WithRawForwardingEnabledFunc installs a request-time gate for new upgrade
+// sessions. Existing hijacked sessions are independent of this callback.
+func (h *Handler) WithRawForwardingEnabledFunc(enabled func() bool) *Handler {
+	h.rawForwardingEnabledFunc = enabled
+	return h
+}
+
+func (h *Handler) rawForwardingEnabledNow() bool {
+	if h.rawForwardingEnabledFunc != nil {
+		return h.rawForwardingEnabledFunc()
+	}
+	return true
+}
+
 // WithStreamingEnabled flips the per-app streaming response path on
 // or off (issue #471 / ADR-047). Production default is false; the
 // e2e harness + metal tests opt in per-process so PR-B's Flusher
@@ -1182,6 +1205,15 @@ func (h *Handler) WithStreamingEnabled(enabled bool) *Handler {
 	return h
 }
 
+// WithStreamingEnabledFunc installs a request-time operator gate. The
+// function must be safe for concurrent calls; runtimeconfig.BoolFlag.Load is
+// the production implementation. Existing tests can continue using
+// WithStreamingEnabled with no function installed.
+func (h *Handler) WithStreamingEnabledFunc(enabled func() bool) *Handler {
+	h.streamingEnabledFunc = enabled
+	return h
+}
+
 // WithRouteMetricsEnabled (ADR-093) arms the operator kill-switch
 // for the per-route observability surface. When false, every
 // per-app routeSetFor lookup returns nil regardless of
@@ -1193,6 +1225,27 @@ func (h *Handler) WithStreamingEnabled(enabled bool) *Handler {
 func (h *Handler) WithRouteMetricsEnabled(enabled bool) *Handler {
 	h.routeMetricsEnabled = enabled
 	return h
+}
+
+// WithRouteMetricsEnabledFunc installs a request-time operator gate for the
+// per-route metrics surface.
+func (h *Handler) WithRouteMetricsEnabledFunc(enabled func() bool) *Handler {
+	h.routeMetricsEnabledFunc = enabled
+	return h
+}
+
+func (h *Handler) streamingEnabledNow() bool {
+	if h.streamingEnabledFunc != nil {
+		return h.streamingEnabledFunc()
+	}
+	return h.streamingEnabled
+}
+
+func (h *Handler) routeMetricsEnabledNow() bool {
+	if h.routeMetricsEnabledFunc != nil {
+		return h.routeMetricsEnabledFunc()
+	}
+	return h.routeMetricsEnabled
 }
 
 // WithRequireAuthn (issue #560) arms the per-deployment token
@@ -3045,7 +3098,7 @@ type streamingDecision struct {
 func decideStreaming(h *Handler, r *http.Request, app App) (streamingDecision, bool) {
 	planCap := app.Plan.MaxResponseBodyBytes()
 
-	if !h.streamingEnabled {
+	if !h.streamingEnabledNow() {
 		return streamingDecision{Status: api.StreamingStatusOperatorDisabled, Cap: planCap, CapKind: "plan"}, false
 	}
 	if !app.StreamingEnabled {
@@ -4795,7 +4848,7 @@ haveApp:
 	// (routeSetFor returns nil) — Handler.observe short-circuits
 	// the per-route emission on "".
 	routeLabel := ""
-	if set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled); set != nil {
+	if set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabledNow()); set != nil {
 		preLabel := r.Method + " " + r.URL.Path
 		routeLabel = set.admit(preLabel)
 		r = withRouteLabel(r, routeLabel)
@@ -5548,7 +5601,7 @@ haveApp:
 			h.writeWebSocketNotAllowed(w, app.ID, false)
 			return
 		}
-		if h.rawByNode == nil {
+		if h.rawByNode == nil || !h.rawForwardingEnabledNow() {
 			if h.metrics != nil {
 				h.metrics.IncWSUpgrade(string(app.Plan), WSOutcomeBridgeDisabled)
 			}

@@ -90,6 +90,31 @@ func TestStaticEgressIP_FlagOffBlocksAllHandlers(t *testing.T) {
 	}
 }
 
+// TestStaticEgressIP_RuntimeConfigOverridesEnv proves that the durable
+// runtime snapshot, once applied, wins over the bootstrap environment for
+// subsequent requests. This is the no-restart contract for the feature gate.
+func TestStaticEgressIP_RuntimeConfigOverridesEnv(t *testing.T) {
+	t.Setenv("FAAS_STATIC_EGRESS_IP_ENABLED", "true")
+	e := setup(t, api.PlanScale)
+	mustSeedApp(t, e, "runtime-config-app")
+
+	if err := e.s.runtimeConfig.apply(runtimeConfigStaticEgress, json.RawMessage(`false`)); err != nil {
+		t.Fatalf("disable static egress in runtime snapshot: %v", err)
+	}
+	rec := e.do(t, "GET", "/v1/apps/runtime-config-app/static-egress-ip", nil, nil)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("runtime-config disabled status = %d, want 402; body=%s", rec.Code, rec.Body.String())
+	}
+
+	if err := e.s.runtimeConfig.apply(runtimeConfigStaticEgress, json.RawMessage(`true`)); err != nil {
+		t.Fatalf("enable static egress in runtime snapshot: %v", err)
+	}
+	rec = e.do(t, "GET", "/v1/apps/runtime-config-app/static-egress-ip", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("runtime-config enabled status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestStaticEgressIP_GetHappyPath pins the read surface for a
 // Scale customer with no pin yet. ip/set_at are null,
 // plan_cap=1, plan_allowed=true.

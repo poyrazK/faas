@@ -492,6 +492,10 @@ type runDeps struct {
 	// false. The flag also drives the buffered-fallback deprecation
 	// log when an SSE-emitting app lands on the legacy buffered path.
 	streamingEnabled bool
+	// streamingEnabledFlag is the lock-free runtime value used by serving
+	// requests after the durable operator setting changes. It is nil in tests
+	// that exercise the legacy boolean seam.
+	streamingEnabledFlag *runtimeconfig.BoolFlag
 	// routeMetricsEnabled (ADR-093) is the per-process operator
 	// kill-switch for the per-route observability surface. When
 	// false (the production default), every Handler.routeSetFor
@@ -505,6 +509,11 @@ type runDeps struct {
 	// and a customer has to opt in per-app to use any of the
 	// surface.
 	routeMetricsEnabled bool
+	// routeMetricsFlag is the lock-free runtime value used by new requests.
+	routeMetricsFlag *runtimeconfig.BoolFlag
+	// rawStreamEnabledFlag gates new upgrade sessions while leaving the raw
+	// forwarder constructed for a later hot enable.
+	rawStreamEnabledFlag *runtimeconfig.BoolFlag
 	// synth is the internal unix-socket RPC server schedd dials for cron
 	// dispatch (spec §4.4, M7). nil in tests; production wires it after
 	// the schedd client is dialed.
@@ -874,6 +883,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
+	// Initialize every request-time flag before the watcher is started below.
+	// A persisted setting may be reconciled immediately at boot; leaving one
+	// of these holders nil until the later dependency wiring would turn a
+	// valid database row into a startup panic.
+	deps.streamingEnabled = cfg.StreamingEnabled || streamingEnabledFromEnv()
+	deps.streamingEnabledFlag = runtimeconfig.NewBoolFlag(deps.streamingEnabled)
+	deps.routeMetricsEnabled = cfg.RouteMetricsEnabled || routeMetricsEnabledFromEnv()
+	deps.routeMetricsFlag = runtimeconfig.NewBoolFlag(deps.routeMetricsEnabled)
+	deps.rawStreamEnabledFlag = runtimeconfig.NewBoolFlag(rawStreamEnabledFromEnv())
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	router := pgRouter{
 		store:                 pgStore,
@@ -1174,8 +1192,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if pool != nil {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
+		nodeID := cfg.NodeName
+		if nodeID == "" {
+			nodeID, _ = os.Hostname()
+		}
 		watcher := runtimeconfig.New(pgStore, pool,
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS},
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyGatewayStreaming, runtimeconfig.KeyGatewayRouteMetrics, runtimeconfig.KeyGatewayRawStream},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
@@ -1187,9 +1209,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 				case runtimeconfig.KeyHSTS:
 					hstsFlag.Store(enabled)
 					httpsec.SetHSTSEnabled(enabled)
+				case runtimeconfig.KeyGatewayStreaming:
+					deps.streamingEnabledFlag.Store(enabled)
+				case runtimeconfig.KeyGatewayRouteMetrics:
+					deps.routeMetricsFlag.Store(enabled)
+				case runtimeconfig.KeyGatewayRawStream:
+					deps.rawStreamEnabledFlag.Store(enabled)
 				}
 				return nil
-			}, log)
+			}, log).WithIdentity("gatewayd-internal", nodeID)
 		if err := watcher.Reconcile(runtimeCtx); err != nil {
 			log.Warn("gatewayd: initial runtime config reconcile failed", "err", err)
 		}
@@ -1644,11 +1672,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// — run()
 	// populates deps.streamingEnabled; tests inject the bit directly.
 	handler.WithStreamingEnabled(deps.streamingEnabled)
+	if deps.streamingEnabledFlag != nil {
+		handler.WithStreamingEnabledFunc(deps.streamingEnabledFlag.Load)
+	}
 	// ADR-093: arm the per-process routeMetricsEnabled kill-switch on
 	// the Handler so routeSetFor can AND the operator flag against the
 	// per-app flag (apps.route_metrics_enabled). Same merge point as
 	// WithStreamingEnabled above; both flags ride the same plumbing.
 	handler.WithRouteMetricsEnabled(deps.routeMetricsEnabled)
+	if deps.routeMetricsFlag != nil {
+		handler.WithRouteMetricsEnabledFunc(deps.routeMetricsFlag.Load)
+	}
+	if deps.rawStreamEnabledFlag != nil {
+		handler.WithRawForwardingEnabledFunc(deps.rawStreamEnabledFlag.Load)
+	}
 	// Issue #560: per-deployment require_authn. The adapter
 	// + auditor are nil-safe; the pre-issue public-by-default
 	// behaviour is preserved for unit tests + dev boxes that
@@ -1860,18 +1897,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// here BEFORE falling through to WithForwarding's
 		// ForwardHTTPStream bridge.
 		//
-		// Operator kill switch (issue #676 follow-up): when
-		// FAAS_GATEWAY_RAW_STREAM_ENABLED=false, the call is
-		// skipped — h.rawByNode stays nil, and the three-input
-		// gate at pkg/gateway/handler.go:2899 falls through to
-		// writeWebSocketNotAllowed(forwarderMissing=true),
-		// returning a deterministic 501 + x-faas-error-reason:
-		// websocket_not_on_plan. Default is true; see
-		// rawStreamEnabledFromEnv above.
-		if rawStreamEnabledFromEnv() {
-			handler.WithRawForwarding(deps.nodeCache.RawForwarding())
-		} else {
-			slog.Info("gatewayd-internal: raw-bytes Upgrade bridge disabled by FAAS_GATEWAY_RAW_STREAM_ENABLED=false",
+		// Keep the bridge constructed even when the operator gate is off. The
+		// request-time flag rejects new upgrades while disabled, allowing a hot
+		// enable without rebuilding the node-cache forwarder.
+		handler.WithRawForwarding(deps.nodeCache.RawForwarding())
+		if deps.rawStreamEnabledFlag != nil && !deps.rawStreamEnabledFlag.Load() {
+			slog.Info("gatewayd-internal: raw-bytes Upgrade bridge disabled by runtime config",
 				"fallthrough", "writeWebSocketNotAllowed(forwarderMissing=true)")
 		}
 	}

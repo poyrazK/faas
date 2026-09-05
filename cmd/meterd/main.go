@@ -988,6 +988,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// a hot enable is picked up on the next interval.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
+	nodeID := cfg.NodeName
+	if nodeID == "" {
+		nodeID, _ = os.Hostname()
+	}
 	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
@@ -999,7 +1003,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				probe.SetEnabled(enabled)
 			}
 			return nil
-		}, log)
+		}, log).WithIdentity("meterd", nodeID)
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("meterd: initial runtime config reconcile failed", "err", err)
 	}

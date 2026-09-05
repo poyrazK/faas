@@ -41,6 +41,32 @@ const (
 	RuntimeConfigBlocked RuntimeConfigStatus = "blocked"
 )
 
+// RuntimeConfigAckStatus records the result observed by one daemon/node for a
+// specific desired configuration version. It is deliberately separate from
+// RuntimeConfigStatus, whose row is the control-plane aggregate state.
+type RuntimeConfigAckStatus string
+
+const (
+	RuntimeConfigAckApplied RuntimeConfigAckStatus = "applied"
+	RuntimeConfigAckFailed  RuntimeConfigAckStatus = "failed"
+)
+
+// RuntimeConfigAck is the per-consumer convergence record written by daemon
+// watchers. A missing row means that consumer has not observed the version.
+type RuntimeConfigAck struct {
+	Key            string
+	Scope          RuntimeConfigScope
+	ScopeID        string
+	Consumer       string
+	NodeID         string
+	Version        int64
+	Status         RuntimeConfigAckStatus
+	EffectiveValue json.RawMessage
+	Error          string
+	UpdatedAt      time.Time
+	AppliedAt      *time.Time
+}
+
 // RuntimeConfigOperationStatus is the lifecycle of an asynchronous operator
 // configuration apply request. A row is never silently discarded: pending
 // means it is waiting for a daemon/deployment controller, running means a

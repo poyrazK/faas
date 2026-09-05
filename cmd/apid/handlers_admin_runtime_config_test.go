@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -88,4 +89,40 @@ func TestRuntimeConfigRollback_RejectsStaleExpectedVersion(t *testing.T) {
 	if row.Version != 2 || string(row.DesiredValue) != "true" {
 		t.Fatalf("stale rollback changed config = %#v, want unchanged v2 true", row)
 	}
+}
+
+func TestRuntimeConfigListIncludesDaemonAcknowledgements(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	if _, err := e.store.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{
+		Key: runtimeConfigGatewayStreaming, Scope: state.RuntimeConfigScopeGlobal,
+		DesiredValue: json.RawMessage(`true`), ApplyMode: state.RuntimeConfigApplyHot,
+	}); err != nil {
+		t.Fatalf("seed runtime config: %v", err)
+	}
+	if err := e.store.AcknowledgeRuntimeConfig(t.Context(), state.RuntimeConfigAck{
+		Key: runtimeConfigGatewayStreaming, Scope: state.RuntimeConfigScopeGlobal,
+		Consumer: "gatewayd-internal", NodeID: "node-a", Version: 1,
+		Status: state.RuntimeConfigAckApplied, EffectiveValue: json.RawMessage(`true`),
+	}); err != nil {
+		t.Fatalf("seed runtime config acknowledgement: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/admin/config", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list runtime config status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var response runtimeConfigListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode runtime config list: %v", err)
+	}
+	for _, item := range response.Items {
+		if item.Key != runtimeConfigGatewayStreaming {
+			continue
+		}
+		if len(item.Acks) != 1 || item.Acks[0].Consumer != "gatewayd-internal" || item.Acks[0].NodeID != "node-a" || item.Acks[0].Status != string(state.RuntimeConfigAckApplied) {
+			t.Fatalf("gateway streaming acknowledgements = %#v", item.Acks)
+		}
+		return
+	}
+	t.Fatalf("runtime config list did not include %q", runtimeConfigGatewayStreaming)
 }

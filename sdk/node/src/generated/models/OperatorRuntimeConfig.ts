@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperatorRuntimeConfigAck } from './OperatorRuntimeConfigAck.js';
 /**
  * One entry from the closed operator runtime-configuration catalog.
  */
@@ -24,5 +25,9 @@ export type OperatorRuntimeConfig = {
   version: number;
   updated_at?: string;
   applied_at?: string;
+  /**
+   * Per-daemon observations of the requested configuration version.
+   */
+  acks?: Array<OperatorRuntimeConfigAck>;
 };
 

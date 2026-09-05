@@ -555,6 +555,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// atomically when the acknowledged runtime value changes.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
+	nodeID := cfg.NodeName
+	if nodeID == "" {
+		nodeID, _ = os.Hostname()
+	}
 	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
@@ -570,7 +574,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 			return nil
-		}, log)
+		}, log).WithIdentity("schedd", nodeID)
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
 	}
