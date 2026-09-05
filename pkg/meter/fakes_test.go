@@ -70,13 +70,13 @@ func (f *fakeCPUSource) CPUUsageUsec(instanceID string) (uint64, bool) {
 // returns 0, 0, false — the legacy PR-1 contract).
 type fakeEgressSource struct {
 	mu      sync.Mutex
-	values  map[string][2]uint64
+	values  map[string]UsageDeltas
 	missing map[string]struct{}
 }
 
 func newFakeEgressSource() *fakeEgressSource {
 	return &fakeEgressSource{
-		values:  map[string][2]uint64{},
+		values:  map[string]UsageDeltas{},
 		missing: map[string]struct{}{},
 	}
 }
@@ -87,7 +87,14 @@ func newFakeEgressSource() *fakeEgressSource {
 func (f *fakeEgressSource) Set(instanceID string, tx, net uint64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.values[instanceID] = [2]uint64{tx, net}
+	f.values[instanceID] = UsageDeltas{TXBytes: tx, NetTXBytes: net}
+	delete(f.missing, instanceID)
+}
+
+func (f *fakeEgressSource) SetUsage(instanceID string, usage UsageDeltas) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.values[instanceID] = usage
 	delete(f.missing, instanceID)
 }
 
@@ -102,16 +109,16 @@ func (f *fakeEgressSource) SetMissing(instanceID string) {
 	f.missing[instanceID] = struct{}{}
 }
 
-// EgressBytes satisfies the meter.EgressSource interface.
-func (f *fakeEgressSource) EgressBytes(instanceID string) (uint64, uint64, bool) {
+// ReadUsageDeltas satisfies the meter.EgressSource interface.
+func (f *fakeEgressSource) ReadUsageDeltas(instanceID string) (UsageDeltas, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.missing[instanceID]; ok {
-		return 0, 0, false
+		return UsageDeltas{}, false
 	}
 	v, ok := f.values[instanceID]
 	if !ok {
-		return 0, 0, false
+		return UsageDeltas{}, false
 	}
-	return v[0], v[1], true
+	return v, true
 }

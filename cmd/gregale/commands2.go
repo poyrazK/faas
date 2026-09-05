@@ -194,12 +194,13 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--ram N] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
 	fs := flag.NewFlagSet("app", flag.ContinueOnError)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
+	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	// --min sets the per-app cold-wake floor (ux_spec §6.5).
@@ -357,6 +358,10 @@ func cmdApp(args []string) int {
 		v := *ram
 		req.RAMMB = &v
 	}
+	if explicit["cpu-millicores"] {
+		v := *cpuMillicores
+		req.CPUMillicores = &v
+	}
 	if explicit["max-concurrency"] {
 		v := *conc
 		req.MaxConcurrency = &v
@@ -480,7 +485,7 @@ func cmdApp(args []string) int {
 		req.OverflowNode = &v
 	}
 
-	if req.RAMMB == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.MinInstances == nil &&
+	if req.RAMMB == nil && req.CPUMillicores == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
@@ -495,6 +500,7 @@ func cmdApp(args []string) int {
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
 		fmt.Printf("%-30s %s\n", "url:", a.URL)
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
+		fmt.Printf("%-30s %d mCPU\n", "cpu:", a.CPUMillicores)
 		fmt.Printf("%-30s %d\n", "max concurrency:", a.MaxConcurrency)
 		// Issue #559: surface the platform-advertised per-VM
 		// concurrency bound for the app's plan. Distinct from
@@ -884,14 +890,36 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 // the runner wires up correctly without the customer having to know
 // those flags.
 func cmdDeployTarball(args []string) int {
-	return cmdDeployTarballToExisting(args, false)
+	return cmdDeployTarballToExisting(context.Background(), args, false)
+}
+
+// deployExecution lets long-lived CLI workflows own cancellation and observe
+// the deployment ID as soon as the upload has been accepted. Ordinary
+// `gregale deploy` calls leave both fields unset and retain the signal-driven
+// behavior below.
+type deployExecution struct {
+	onQueued        func(api.DeploymentResponse)
+	developerSource *devSourceSyncState
+}
+
+func (e deployExecution) notifyQueued(dep api.DeploymentResponse) {
+	if e.onQueued != nil {
+		e.onQueued(dep)
+	}
 }
 
 // cmdDeployTarballToExisting is the shared deploy implementation. `gregale
 // dev` has already reserved its preview app, so it skips the create-or-fetch
 // probe; this also avoids incorrectly tripping the app-count quota while
 // redeploying an existing developer environment.
-func cmdDeployTarballToExisting(args []string, existingApp bool) int {
+func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp bool, executions ...deployExecution) int {
+	execution := deployExecution{}
+	if len(executions) > 0 {
+		execution = executions[0]
+	}
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+	developerSync := execution.developerSource
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
@@ -1229,7 +1257,7 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
 			return 1
 		}
-		return cmdDeployRepoSourceRef(slug, *repo, *ref, api.DeployAnnotations{
+		return cmdDeployRepoSourceRefContext(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:     *reason,
 			Tag:        *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy),
@@ -1550,7 +1578,7 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 			// apid used to hang the CLI for the full HTTP timeout (30s)
 			// before falling back to the floor. Bound it explicitly so
 			// the zero-config deploy stays snappy on the unhappy path.
-			whoCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			whoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			if acct, werr := wcli.Whoami(whoCtx); werr == nil {
 				planCapMB = api.MustLimitsFor(api.Plan(acct.Plan)).SourceTarballMaxMB
 			} else {
@@ -1652,9 +1680,6 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	// Deploy-diff short-circuit (PR-0 of the deploy-diff cluster).
 	// Runs AFTER authedClient so the SDK reads can resolve, and
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
@@ -1800,7 +1825,16 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 			sourceSHA256  string
 			usedResumable bool
 		)
-		if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		if developerSync != nil {
+			var deployErr error
+			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann, developerSync)
+			if deployErr != nil {
+				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
+					return 130
+				}
+				return printErr("Bad --tarball", deployErr)
+			}
+		} else if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			var progress resumableUploadProgress
 			if !jsonOutput {
 				lastPercent := -1
@@ -1834,6 +1868,7 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 				return printErr("Bad --tarball", deployErr)
 			}
 		}
+		execution.notifyQueued(dep)
 		if jsonOutput {
 			// Legacy multipart uploads do not calculate the digest while
 			// streaming, so preserve the stable receipt field there by
@@ -1851,7 +1886,7 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 			return 0
 		}
-		return streamDeployLogs(client, dep)
+		return streamDeployLogsContext(ctx, client, dep)
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
 	// (CreateDeploymentRequest), so the annotation fields ride on the
@@ -1881,6 +1916,7 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 	if err != nil {
 		return printErr("Deploy failed", err)
 	}
+	execution.notifyQueued(dep)
 	if jsonOutput {
 		// Image deploy path: no source tarball bytes (the digest
 		// rides on dep.ImageDigest), no git detection (prov is
@@ -1896,7 +1932,7 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
 	}
-	return streamDeployLogs(client, dep)
+	return streamDeployLogsContext(ctx, client, dep)
 }
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
@@ -3392,11 +3428,13 @@ func topPatterns(patterns map[string]int, n int) []string {
 // short-circuits the constructor when the customer piped the
 // output (`gregale deploy … | tee /tmp/log`) — the static fallback
 // in renderStageSummary is the path that fires instead.
-func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
+func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentResponse) int {
 	PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
-	ctx := context.Background()
 	body, err := c.StreamDeploymentLogs(ctx, dep.ID, nil, 0, true)
 	if err != nil {
+		if ctx.Err() != nil {
+			return 130
+		}
 		// Stream unreachable up front — first try the new
 		// /v1/builds/{id} poller (DEPLOY-PROV-6 / ADR-089); only if
 		// the build is still queued/running OR the new endpoint is
@@ -3404,10 +3442,10 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 		// pollDeploymentFinal. A fast tarball deploy on a slow link
 		// is the canonical case where the stream never opened and
 		// the build row is already terminal.
-		if b, ok := pollBuildStatus(c, dep, 5*time.Second); ok {
+		if b, ok := pollBuildStatusContext(ctx, c, dep, 5*time.Second); ok {
 			return terminalExitForBuild(b, dep.AppID)
 		}
-		if final, ok := pollDeploymentFinal(c, dep); ok {
+		if final, ok := pollDeploymentFinalContext(ctx, c, dep); ok {
 			return terminalExitForDeployment(final)
 		}
 		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs --deployment %s", dep.ID)
@@ -3493,6 +3531,9 @@ streamLoop:
 				}
 			}
 		case err := <-dec.Errors():
+			if ctx.Err() != nil {
+				return 130
+			}
 			if errors.Is(err, io.EOF) {
 				break streamLoop
 			}
@@ -3500,13 +3541,16 @@ streamLoop:
 			return 3
 		}
 	}
+	if ctx.Err() != nil {
+		return 130
+	}
 	// Stream ended without a terminal frame — poll the new
 	// /v1/builds/{id} endpoint (DEPLOY-PROV-6 / ADR-089, issue
 	// #741) so a fast build that raced the SSE open isn't reported
 	// as "follow manually" when we actually have the answer. Only
 	// fall back to pollDeploymentFinal when the new poll reports
 	// the build is still queued or running.
-	if b, ok := pollBuildStatus(c, dep, 60*time.Second); ok {
+	if b, ok := pollBuildStatusContext(ctx, c, dep, 60*time.Second); ok {
 		return terminalExitForBuild(b, dep.AppID)
 	}
 	// Tarball/function deployments created by older API paths may not carry
@@ -3515,7 +3559,7 @@ streamLoop:
 	// while the scheduler is still priming and parking the VM.  Keep polling
 	// the deployment row through that recovery window so a healthy deployment
 	// is not reported as exit 3 merely because the SSE stream ended first.
-	if final, ok := pollDeploymentFinalUntil(c, dep, 5*time.Minute); ok {
+	if final, ok := pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute); ok {
 		return terminalExitForDeployment(final)
 	}
 	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs --deployment %s", dep.ID)
@@ -3532,8 +3576,8 @@ streamLoop:
 // pollDeploymentFinal stays as a last-ditch safety net so a server
 // where /v1/builds/{id} is unavailable still degrades gracefully;
 // streamDeployLogs prefers the new path.
-func pollDeploymentFinal(c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
-	got, err := c.GetDeployment(context.Background(), dep.ID)
+func pollDeploymentFinalContext(ctx context.Context, c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
+	got, err := c.GetDeployment(ctx, dep.ID)
 	if err != nil {
 		return api.DeploymentResponse{}, false
 	}
@@ -3548,25 +3592,24 @@ func pollDeploymentFinal(c *Client, dep api.DeploymentResponse) (api.DeploymentR
 // deployment status is the only durable terminal signal available to the CLI.
 // The first GET is immediate; subsequent requests use a small capped backoff
 // and are bounded by deadline.
-func pollDeploymentFinalUntil(c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.DeploymentResponse, bool) {
+func pollDeploymentFinalUntilContext(ctx context.Context, c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.DeploymentResponse, bool) {
 	if deadline <= 0 {
-		return pollDeploymentFinal(c, dep)
+		return pollDeploymentFinalContext(ctx, c, dep)
 	}
-	end := time.Now().Add(deadline)
+	pollCtx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
 	backoff := time.Second
 	for {
-		if final, ok := pollDeploymentFinal(c, dep); ok {
+		if final, ok := pollDeploymentFinalContext(pollCtx, c, dep); ok {
 			return final, true
 		}
-		remaining := time.Until(end)
-		if remaining <= 0 {
+		timer := time.NewTimer(backoff)
+		select {
+		case <-pollCtx.Done():
+			timer.Stop()
 			return api.DeploymentResponse{}, false
+		case <-timer.C:
 		}
-		wait := backoff
-		if wait > remaining {
-			wait = remaining
-		}
-		time.Sleep(wait)
 		if backoff < 5*time.Second {
 			backoff *= 2
 		}
@@ -3596,6 +3639,10 @@ func pollDeploymentFinalUntil(c *Client, dep api.DeploymentResponse, deadline ti
 // on deadline elapse or persistent transient error so the SSE caller
 // can fall back to the "follow manually" hint.
 func pollBuildStatus(c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.BuildResponse, bool) {
+	return pollBuildStatusContext(context.Background(), c, dep, deadline)
+}
+
+func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.BuildResponse, bool) {
 	if dep.BuildID == "" {
 		// No build_id on the deployment row — server pre-dates
 		// PROV-6, or the deployment was created via the fast-
@@ -3605,7 +3652,7 @@ func pollBuildStatus(c *Client, dep api.DeploymentResponse, deadline time.Durati
 	}
 	// parent context is the wall-clock deadline; per-iteration
 	// children derive from this so the loop honors the budget.
-	parent, cancelParent := context.WithTimeout(context.Background(), deadline)
+	parent, cancelParent := context.WithTimeout(ctx, deadline)
 	defer cancelParent()
 	end := time.Now().Add(deadline)
 	backoff := 1 * time.Second
@@ -3638,7 +3685,13 @@ func pollBuildStatus(c *Client, dep api.DeploymentResponse, deadline time.Durati
 			span = 1
 		}
 		jitter := time.Duration(time.Now().UnixNano()%span) - time.Duration(span/2)
-		time.Sleep(backoff + jitter)
+		timer := time.NewTimer(backoff + jitter)
+		select {
+		case <-parent.Done():
+			timer.Stop()
+			return api.BuildResponse{}, false
+		case <-timer.C:
+		}
 		if backoff < 5*time.Second {
 			backoff *= 2
 		}

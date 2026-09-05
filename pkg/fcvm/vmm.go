@@ -625,7 +625,7 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 		}
 		return nil
 	}
-	if err := writePlanCgroup(l.Instance, l.Plan, l.MemoryMaxMiB); err != nil {
+	if err := writeAppCgroup(l.Instance, l.Plan, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
 		return err
 	}
 	if len(workloads) <= 1 {

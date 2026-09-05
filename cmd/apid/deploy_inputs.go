@@ -29,8 +29,10 @@ import (
 // builderd via pg_notify('build_queued'). builderd (M6) is the actual
 // executor; in M5 the build row just sits in 'queued' state.
 
-// maxSourceFiles caps tarball entries at 10k (spec §9).
-const maxSourceFiles = 10_000
+// maxSourceFiles caps tarball entries at 10k (spec §9). The source of truth
+// lives with the platform limits because developer delta reconstruction must
+// enforce the identical archive shape.
+const maxSourceFiles = api.SourceArchiveMaxEntries
 
 // sourceSpoolRoot is where apid drops source tarballs before imaged /
 // builderd process them. The dir is host-configurable via env to keep tests
@@ -70,7 +72,7 @@ func spoolRoot() string {
 // prevents an orphan deployment row pointing at a soft-deleted app
 // lives inside store.CreateDeployment (PR-A: SELECT 1 FROM apps
 // WHERE id=$1 AND status='active' FOR UPDATE).
-func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) {
+func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, developerSource bool) {
 	limits := api.MustLimitsFor(acct.Plan)
 
 	// The body has already been wrapped in http.MaxBytesReader at the
@@ -95,6 +97,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		kind           state.DeploymentKind
 		sourceAccepted bool
 		workflows      []api.WorkflowSpec
+		devSource      devSourceMetadata
 	)
 	defer func() {
 		if sourcePath != "" && !sourceAccepted {
@@ -166,6 +169,15 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, prob)
 				return
 			}
+		case "dev_source_base", "dev_source_target", "dev_source_deleted":
+			if !developerSource {
+				_, _ = io.Copy(io.Discard, part)
+				break
+			}
+			if prob := devSource.readField(name, part); prob != nil {
+				api.WriteProblem(w, prob)
+				return
+			}
 		default:
 			// Ignore unknown fields so clients can ship extra metadata.
 			_, _ = io.Copy(io.Discard, part)
@@ -177,6 +189,18 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Source required", "multipart deploys require a 'source' file field"))
 		return
+	}
+	if developerSource {
+		preparedPath, preparedBytes, prob := s.prepareDevSource(acct, app, sourcePath, devSource, limits)
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		if preparedPath != sourcePath {
+			_ = os.Remove(sourcePath)
+			sourcePath = preparedPath
+		}
+		sourceBytes = preparedBytes
 	}
 	if sourceRoot != "" {
 		present, rootErr := archiveHasSourceRoot(sourcePath, sourceRoot)
@@ -269,6 +293,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 			return
+		}
+		if developerSource {
+			if err := s.publishDevSource(acct, app, sourcePath, devSource.target, limits); err != nil {
+				s.log.Warn("developer source cache publish failed", "app_id", app.ID, "error", err)
+			}
 		}
 		sourceAccepted = true
 		// Look up the durable deployment row to build the wire

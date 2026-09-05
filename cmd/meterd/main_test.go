@@ -659,7 +659,7 @@ func TestGatewayEgressAdapter_EgressBytes(t *testing.T) {
 	anchor := time.Date(2026, 7, 29, 12, 0, 30, 0, time.UTC)
 	a := &gatewayEgressAdapter{
 		now:  func() time.Time { return anchor },
-		data: make(map[string]map[int64]uint64),
+		data: make(map[string]map[int64]gatewayUsageBucket),
 	}
 
 	// 1. recordFrame(nil) is a no-op.
@@ -758,11 +758,64 @@ func TestGatewayEgressAdapter_EgressBytes(t *testing.T) {
 	}
 }
 
+func TestGatewayEgressAdapter_ReadUsageDeltasAccumulatesAndDrains(t *testing.T) {
+	anchor := time.Date(2026, 7, 29, 12, 0, 30, 0, time.UTC)
+	a := &gatewayEgressAdapter{
+		now:  func() time.Time { return anchor },
+		data: make(map[string]map[int64]gatewayUsageBucket),
+	}
+	for _, frame := range []*egresspb.BytesFrame{
+		{InstanceId: "inst-1", Minute: timestamppb.New(anchor.Add(-time.Minute)), Bytes: 100, Requests: 1},
+		{InstanceId: "inst-1", Minute: timestamppb.New(anchor), Bytes: 200, Requests: 2, ColdBoots: 1},
+		{InstanceId: "inst-1", Minute: timestamppb.New(anchor), Bytes: 300, Requests: 3},
+		{InstanceId: "inst-1", Minute: timestamppb.New(anchor.Add(time.Minute)), Bytes: 999, Requests: 9},
+	} {
+		a.recordFrame(frame)
+	}
+	got, ok := a.ReadUsageDeltas("inst-1")
+	if !ok || got.TXBytes != 600 || got.Requests != 6 || got.ColdBootCount != 1 {
+		t.Fatalf("usage deltas = %+v, %v", got, ok)
+	}
+	if _, ok := a.ReadUsageDeltas("inst-1"); ok {
+		t.Fatal("second read unexpectedly redelivered drained current buckets")
+	}
+	a.now = func() time.Time { return anchor.Add(time.Minute) }
+	got, ok = a.ReadUsageDeltas("inst-1")
+	if !ok || got.TXBytes != 999 || got.Requests != 9 {
+		t.Fatalf("future usage deltas = %+v, %v", got, ok)
+	}
+}
+
+func TestScheddEgressAdapterComputesCumulativeCounterDeltas(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 30, 0, time.UTC)
+	cpu := &scheddCPUAdapter{
+		now:     func() time.Time { return now },
+		fetched: now,
+		rows: map[string]scheddgrpc.InstanceStatsRow{
+			"inst-1": {InstanceID: "inst-1", NetTxBytes: 1000, NetRxBytes: 400},
+		},
+	}
+	a := &scheddEgressAdapter{cpu: cpu}
+	if first, ok := a.ReadUsageDeltas("inst-1"); !ok || first.NetTXBytes != 0 || first.NetRXBytes != 0 {
+		t.Fatalf("first baseline = %+v, %v", first, ok)
+	}
+	cpu.rows["inst-1"] = scheddgrpc.InstanceStatsRow{InstanceID: "inst-1", NetTxBytes: 1600, NetRxBytes: 700}
+	got, ok := a.ReadUsageDeltas("inst-1")
+	if !ok || got.NetTXBytes != 600 || got.NetRXBytes != 300 {
+		t.Fatalf("network delta = %+v, %v", got, ok)
+	}
+	cpu.rows["inst-1"] = scheddgrpc.InstanceStatsRow{InstanceID: "inst-1", NetTxBytes: 10, NetRxBytes: 5}
+	got, ok = a.ReadUsageDeltas("inst-1")
+	if !ok || got.NetTXBytes != 0 || got.NetRXBytes != 0 {
+		t.Fatalf("regression delta = %+v, %v", got, ok)
+	}
+}
+
 // TestGatewayEgressAdapter_Concurrent — race-safe concurrent
 // recordFrame + EgressBytes. 8 producers × 200 frames × 1 byte
-// = 1600 expected (last-writer-wins per bucket, since the
-// adapter replaces the per-(instance, minute) total on each
-// frame rather than summing). The adapter must hold the
+// = 1600 expected. Gateway frames are drain deltas, so the
+// adapter must sum every frame in a per-(instance, minute) bucket.
+// The adapter must hold the
 // (instance, minute) invariant under -race: every concurrent
 // recordFrame lands in exactly one bucket (no torn writes), and
 // EgressBytes reads the bucket monotonically.
@@ -775,7 +828,7 @@ func TestGatewayEgressAdapter_Concurrent(t *testing.T) {
 	anchor := time.Date(2026, 7, 29, 12, 0, 30, 0, time.UTC)
 	a := &gatewayEgressAdapter{
 		now:  func() time.Time { return anchor },
-		data: make(map[string]map[int64]uint64),
+		data: make(map[string]map[int64]gatewayUsageBucket),
 	}
 
 	const (
@@ -800,15 +853,14 @@ func TestGatewayEgressAdapter_Concurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Per-bucket replacement semantics: the final write wins;
-	// we expect exactly bytesPerFrm (1), not the sum.
+	// Per-bucket additive semantics: every drained frame contributes.
 	got, _, ok := a.EgressBytes("inst-1")
 	if !ok {
 		t.Fatalf("EgressBytes(inst-1) ok=false after concurrent writes; want true")
 	}
-	if got != bytesPerFrm {
-		t.Errorf("EgressBytes(inst-1) = %d, want %d (last-write-wins per (instance, minute) bucket)",
-			got, bytesPerFrm)
+	want := uint64(producers * framesEach * bytesPerFrm)
+	if got != want {
+		t.Errorf("EgressBytes(inst-1) = %d, want %d (sum of drained frames)", got, want)
 	}
 	if tracked := a.Tracked(); tracked != 1 {
 		t.Errorf("Tracked() = %d, want 1 (single instance, single minute)", tracked)
@@ -825,7 +877,7 @@ func TestGatewayEgressAdapter_Tracked(t *testing.T) {
 	anchor := time.Date(2026, 7, 29, 12, 0, 30, 0, time.UTC)
 	a := &gatewayEgressAdapter{
 		now:  func() time.Time { return anchor },
-		data: make(map[string]map[int64]uint64),
+		data: make(map[string]map[int64]gatewayUsageBucket),
 	}
 
 	if got := a.Tracked(); got != 0 {

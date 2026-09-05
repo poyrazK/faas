@@ -38,14 +38,15 @@ package fcvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -156,6 +157,7 @@ func TestMetalLifecycle_StartupFail(t *testing.T) {
 
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "lifecycle-startup-fail",
+		Plan:       "hobby",
 		BaseKey:    img,
 		LayerKey:   img,
 		VcpuCount:  2,
@@ -164,12 +166,11 @@ func TestMetalLifecycle_StartupFail(t *testing.T) {
 	if err == nil {
 		t.Fatalf("ColdBoot with no :8080 listener should time out (startup_fail), got nil err")
 	}
-	// Surface enough of the error to confirm it's the waitReady path,
-	// not e.g. a kernel panic. The exact wording can drift; the keyword
-	// "not ready" is stable across the four waitReady error sites in
-	// vmm.go:2744-2792.
-	if !strings.Contains(err.Error(), "not ready") {
-		t.Errorf("ColdBoot error %q does not look like a waitReady-timeout (ADR-138 §Decision 2 startup_fail)", err)
+	// Match the typed readiness failure so diagnostic wording can change
+	// without hiding a setup failure before the readiness probe.
+	var problem *api.Problem
+	if !errors.As(err, &problem) || (problem.Code != api.CodeAppNotListening && problem.Code != api.CodeAppStartupTimeout) {
+		t.Errorf("ColdBoot error %q is not a typed readiness failure (ADR-138 §Decision 2 startup_fail)", err)
 	}
 	if m.LiveCount() != 0 {
 		t.Errorf("LiveCount=%d after startup_fail, want 0 (Manager should tear down)", m.LiveCount())
@@ -189,7 +190,7 @@ func TestMetalLifecycle_StartupFail(t *testing.T) {
 // until the cgroup trips. busybox `dd` is not the most aggressive
 // allocator but it crosses 72 MiB inside the deadline on every
 // runner we've measured; if a future regression lands, the
-// assertion `if !strings.Contains(err.Error(), ...)` is the
+// typed readiness-error assertion is the
 // catching gate, not the test passing by chance.
 func TestMetalLifecycle_OOM(t *testing.T) {
 	kernel, _, _ := metalImages(t)
@@ -211,6 +212,7 @@ func TestMetalLifecycle_OOM(t *testing.T) {
 
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "lifecycle-oom",
+		Plan:       "hobby",
 		BaseKey:    img,
 		LayerKey:   img,
 		VcpuCount:  1,
@@ -222,8 +224,9 @@ func TestMetalLifecycle_OOM(t *testing.T) {
 	// Either waitReady times out (no :8080) OR the kernel reports the
 	// guest gone. Both are valid OOM-path surface; "not ready" is the
 	// common observation since /init never binds :8080.
-	if !strings.Contains(err.Error(), "not ready") {
-		t.Errorf("ColdBoot error %q does not look like a waitReady-timeout (ADR-138 §Decision 2 oom)", err)
+	var problem *api.Problem
+	if !errors.As(err, &problem) || (problem.Code != api.CodeAppNotListening && problem.Code != api.CodeAppStartupTimeout) {
+		t.Errorf("ColdBoot error %q is not a typed readiness failure (ADR-138 §Decision 2 oom)", err)
 	}
 	// After OOM, the per-VM cgroup scope must still be cleaned up —
 	// `m.LiveCount() == 0` is the substrate assertion. The Engine
@@ -262,6 +265,7 @@ func TestMetalLifecycle_CleanExit_Job(t *testing.T) {
 
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "lifecycle-clean-exit",
+		Plan:       "hobby",
 		BaseKey:    img,
 		LayerKey:   img,
 		VcpuCount:  1,
@@ -272,8 +276,9 @@ func TestMetalLifecycle_CleanExit_Job(t *testing.T) {
 	}
 	// Substrate observation: waitReady times out because :8080 is
 	// never bound. Engine adds the clean_exit transition on top.
-	if !strings.Contains(err.Error(), "not ready") {
-		t.Errorf("ColdBoot error %q does not look like a waitReady-timeout (ADR-138 §Decision 2 clean_exit substrate)", err)
+	var problem *api.Problem
+	if !errors.As(err, &problem) || (problem.Code != api.CodeAppNotListening && problem.Code != api.CodeAppStartupTimeout) {
+		t.Errorf("ColdBoot error %q is not a typed readiness failure (ADR-138 §Decision 2 clean_exit substrate)", err)
 	}
 	if m.LiveCount() != 0 {
 		t.Errorf("LiveCount=%d after clean-exit, want 0 (jailer should tear down)", m.LiveCount())

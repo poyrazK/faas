@@ -11,6 +11,10 @@ export type CreateAppRequest = {
   type?: 'app' | 'function';
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
   ram_mb?: number;
+  /**
+   * Sustained CPU allowance per instance. Omit for 1000 millicores.
+   */
+  cpu_millicores?: 250 | 500 | 1000;
   max_concurrency?: number;
   idle_timeout_s?: number;
   /**

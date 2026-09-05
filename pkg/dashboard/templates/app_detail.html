@@ -174,7 +174,7 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired" hx-get="/dashboard/apps/{{.Data.App.Slug}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
          with ?fired=1 (success) or ?fired=error (failure); the
@@ -208,8 +208,9 @@
       {{if .Data.EffectiveLimits.MemoryLimitMB}}
       <h2>Effective limits</h2>
       <table>
+        <tr><th>Configured shape</th><td>{{.Data.ConfiguredResources.MemoryMB}} MB · {{.Data.ConfiguredResources.CPUMillicores}}m CPU</td></tr>
         <tr><th>Memory</th><td>{{.Data.EffectiveLimits.MemoryLimitMB}} MB (plan ceiling {{.Data.EffectiveLimits.PlanMemoryMaxMB}} MB)</td></tr>
-        <tr><th>CPU</th><td>{{.Data.EffectiveLimits.GuestVCPUs}} guest vCPU · {{.Data.EffectiveLimits.CPULimitMillicores}}m sustained limit · scheduling weight {{.Data.EffectiveLimits.CPUWeight}}</td></tr>
+        <tr><th>CPU</th><td>{{.Data.EffectiveLimits.GuestVCPUs}} guest vCPU · {{.Data.EffectiveLimits.CPULimitMillicores}}m sustained limit (plan ceiling {{.Data.EffectiveLimits.PlanCPUMaxMillicores}}m) · scheduling weight {{.Data.EffectiveLimits.CPUWeight}}</td></tr>
         <tr><th>Scaling</th><td>up to {{.Data.EffectiveLimits.MaxInstances}} instances · {{.Data.EffectiveLimits.ConcurrencyPerInstance}} concurrent requests per instance</td></tr>
         <tr><th>App request rate</th><td>{{.Data.EffectiveLimits.AppRequestRateRPS}} requests/s · burst {{.Data.EffectiveLimits.AppRequestBurst}}</td></tr>
         <tr><th>Account request rate</th><td>{{.Data.EffectiveLimits.AccountRequestRateRPM}} requests/min across apps</td></tr>
@@ -473,8 +474,28 @@
           <h2>Request analytics
             <small style="font-weight:normal;color:#888">(last {{.Data.RequestAnalytics.Since}})</small>
             · <a href="/v1/apps/{{.Data.App.Slug}}/analytics?since={{.Data.RequestAnalytics.Since}}">JSON</a>
+            · <a href="{{.Data.RequestAnalytics.TimeseriesURL}}">Hourly JSON</a>
           </h2>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          {{if .Data.RequestAnalytics.LatencySparklineHTML}}
+            <h3>Hourly trend{{if .Data.RequestAnalytics.SelectedRoute}} · <code>{{.Data.RequestAnalytics.SelectedMethod}} {{.Data.RequestAnalytics.SelectedRoute}}</code> · <a href="/dashboard/apps/{{.Data.App.Slug}}">all traffic</a>{{end}} <small style="font-weight:normal;color:#888">({{.Data.RequestAnalytics.Bucket}} buckets · {{.Data.RequestAnalytics.From}} to {{.Data.RequestAnalytics.Until}})</small></h3>
+            <table aria-label="Hourly request analytics trends">
+              <tbody>
+                <tr>
+                  <td>Latency p50 / p95 / p99</td>
+                  <td>{{.Data.RequestAnalytics.LatencySparklineHTML}}</td>
+                </tr>
+                <tr>
+                  <td>Error rate</td>
+                  <td>{{.Data.RequestAnalytics.ErrorSparklineHTML}}</td>
+                </tr>
+                <tr>
+                  <td>Cold-boot rate</td>
+                  <td>{{.Data.RequestAnalytics.ColdBootSparklineHTML}}</td>
+                </tr>
+              </tbody>
+            </table>
+          {{end}}
           {{if eq .Data.RequestAnalytics.Requests 0}}
             <p>No requests in the last {{.Data.RequestAnalytics.Since}}.</p>
           {{else}}
@@ -487,7 +508,7 @@
             {{if .Data.RequestAnalytics.Routes}}
               <h3>Top routes</h3>
               <table>
-                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th></tr></thead>
+                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Trend</th></tr></thead>
                 <tbody>
                   {{range .Data.RequestAnalytics.Routes}}
                     <tr>
@@ -498,6 +519,7 @@
                       <td>{{.P50MS}} ms</td>
                       <td>{{.P95MS}} ms</td>
                       <td>{{.P99MS}} ms</td>
+                      <td><a href="{{.TrendURL}}">View</a></td>
                     </tr>
                   {{end}}
                 </tbody>

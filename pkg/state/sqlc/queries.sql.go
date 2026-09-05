@@ -6473,6 +6473,124 @@ func (q *Queries) RequestTelemetryAnalyticsSummary(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const requestTelemetryAnalyticsTimeseries = `-- name: RequestTelemetryAnalyticsTimeseries :many
+WITH buckets AS (
+    SELECT generate_series(
+        date_bin('1 hour', $3::timestamptz, 'epoch'::timestamptz),
+        date_bin('1 hour', $4::timestamptz - interval '1 microsecond', 'epoch'::timestamptz),
+        interval '1 hour'
+    )::timestamptz AS bucket_start
+), filtered AS (
+    SELECT date_bin('1 hour', received_at, 'epoch'::timestamptz) AS bucket_start,
+           latency_ms,
+           cold_boot,
+           status,
+           count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3::timestamptz
+      AND received_at <  $4::timestamptz
+      AND ($5::text = '' OR route = $5::text)
+      AND ($6::text = '' OR method = $6::text)
+), latency_values AS (
+    SELECT bucket_start,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY bucket_start, latency_ms
+), ranked AS (
+    SELECT bucket_start,
+           latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (PARTITION BY bucket_start ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY bucket_start) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT bucket_start,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY bucket_start
+), totals AS (
+    SELECT bucket_start,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+    GROUP BY bucket_start
+)
+SELECT b.bucket_start,
+       COALESCE(t.requests, 0)::bigint AS requests,
+       COALESCE(t.error_requests, 0)::bigint AS error_requests,
+       COALESCE(t.cold_boots, 0)::bigint AS cold_boots,
+       COALESCE(p.p50_ms, 0)::int AS p50_ms,
+       COALESCE(p.p95_ms, 0)::int AS p95_ms,
+       COALESCE(p.p99_ms, 0)::int AS p99_ms
+FROM buckets AS b
+LEFT JOIN totals AS t USING (bucket_start)
+LEFT JOIN percentiles AS p USING (bucket_start)
+ORDER BY b.bucket_start ASC
+`
+
+type RequestTelemetryAnalyticsTimeseriesParams struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	ReceivedAt  pgtype.Timestamptz
+	ReceivedAt2 pgtype.Timestamptz
+	Route       string
+	Method      string
+}
+
+type RequestTelemetryAnalyticsTimeseriesRow struct {
+	BucketStart   pgtype.Timestamptz
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	P50Ms         int32
+	P95Ms         int32
+	P99Ms         int32
+}
+
+// Zero-filled UTC hourly request analytics for customer charts. The
+// recorder collapses rows by count, so all totals and percentile ranks
+// expand that weight rather than counting stored rows.
+func (q *Queries) RequestTelemetryAnalyticsTimeseries(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsTimeseriesParams) ([]RequestTelemetryAnalyticsTimeseriesRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryAnalyticsTimeseries,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt2,
+		arg.Route,
+		arg.Method,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryAnalyticsTimeseriesRow{}
+	for rows.Next() {
+		var i RequestTelemetryAnalyticsTimeseriesRow
+		if err := rows.Scan(
+			&i.BucketStart,
+			&i.Requests,
+			&i.ErrorRequests,
+			&i.ColdBoots,
+			&i.P50Ms,
+			&i.P95Ms,
+			&i.P99Ms,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestTelemetryBaselineP95ByRoute = `-- name: RequestTelemetryBaselineP95ByRoute :many
 SELECT route,
        percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int AS p50_ms,

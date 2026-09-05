@@ -24,10 +24,10 @@ func TestUsageDailyPointsAggregatesTopAppAndSorts(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %+v, want two daily points", got)
 	}
-	if got[0].Date != "2026-09-01" || got[0].GBHours != 3 || got[0].TopAppSlug != "api" || got[0].TopAppGBHours != 2 {
+	if got[0].Date != "2026-09-01" || got[0].GBHours != 2.9296875 || got[0].TopAppSlug != "api" || got[0].TopAppGBHours != 1.953125 {
 		t.Fatalf("day one = %+v", got[0])
 	}
-	if got[1].Date != "2026-09-02" || got[1].GBHours != 1 || got[1].TopAppSlug != "worker" {
+	if got[1].Date != "2026-09-02" || got[1].GBHours != 0.9765625 || got[1].TopAppSlug != "worker" {
 		t.Fatalf("day two = %+v", got[1])
 	}
 }

@@ -2437,6 +2437,9 @@ func (m *MemStore) ApplyProjectPlan(
 		if a.Status == "" {
 			a.Status = AppActive
 		}
+		if a.CPUMillicores == 0 {
+			a.CPUMillicores = api.DefaultAppCPUMillicores
+		}
 		a.CreatedAt = now
 		m.apps[a.ID] = a
 		insertedApps = append(insertedApps, a)
@@ -2480,6 +2483,9 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	}
 	if app.Status == "" {
 		app.Status = AppActive
+	}
+	if app.CPUMillicores == 0 {
+		app.CPUMillicores = api.DefaultAppCPUMillicores
 	}
 	// Issue #475: snap empty Go zero to the schema DEFAULT 'best_effort'
 	// so the column reads as a real value right out of CreateApp. The
@@ -2542,6 +2548,9 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	}
 	if app.Status == "" {
 		app.Status = AppActive
+	}
+	if app.CPUMillicores == 0 {
+		app.CPUMillicores = api.DefaultAppCPUMillicores
 	}
 	// Issue #475: same snap-to-default as CreateApp above — the
 	// quota-gated path must round-trip 'best_effort' just like the
@@ -3704,6 +3713,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	}
 	if p.RAMMB != nil {
 		a.RAMMB = *p.RAMMB
+	}
+	if p.CPUMillicores != nil {
+		a.CPUMillicores = *p.CPUMillicores
 	}
 	if p.SetIdleTimeout {
 		a.IdleTimeoutS = intOrZero(p.IdleTimeoutS)

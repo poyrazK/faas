@@ -71,6 +71,20 @@ func TestRecordResponseBytes_AccumulatesPerBucket(t *testing.T) {
 	}
 }
 
+func TestRecordRequestAccumulatesRequestsAndColdBoots(t *testing.T) {
+	t.Parallel()
+	clock, _ := newClock(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
+	sink := NewEgressSinkWithClock(clock)
+
+	sink.RecordRequest("inst-1", false)
+	sink.RecordRequest("inst-1", true)
+	sink.RecordRequest("inst-1", false)
+	got := sink.DrainRecords()
+	if len(got) != 1 || got[0].Requests != 3 || got[0].ColdBoots != 1 {
+		t.Fatalf("drain = %+v, want requests=3 cold_boots=1", got)
+	}
+}
+
 func TestRecordResponseBytes_ZeroAndNegativeAreNoOp(t *testing.T) {
 	t.Parallel()
 	clock, _ := newClock(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))

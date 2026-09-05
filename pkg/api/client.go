@@ -860,6 +860,44 @@ func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string,
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
 
+// DeployDevSource uploads either a complete developer source snapshot
+// (baseRevision empty) or a delta against a previously accepted revision. The
+// server always reconstructs a complete archive before normal deploy
+// validation. A missing disposable base returns CodeDevSourceBaseMissing so
+// callers can transparently retry with the complete snapshot.
+func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations, baseRevision, targetRevision string, deleted []string) (DeploymentResponse, error) {
+	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("invalid source root: %w", err)
+	}
+	if targetRevision == "" {
+		return DeploymentResponse{}, errors.New("developer source target revision is required")
+	}
+	var b bytes.Buffer
+	w := newDevSourceMultipartWriter(&b, slug, dockerfile, runtime, handler, storedRoot, ann, baseRevision, targetRevision, deleted)
+	fw, err := w.CreateFormFile("source", sourceName)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := io.Copy(fw, source); err != nil {
+		return DeploymentResponse{}, fmt.Errorf("copy source: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return DeploymentResponse{}, fmt.Errorf("close multipart writer: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/apps/"+slug+"/deployments/dev-source", &b)
+	if err != nil {
+		return DeploymentResponse{}, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Idempotency-Key", newUUIDv4())
+	var out DeploymentResponse
+	return out, c.doReq(c.uploadHTTP(), req, &out)
+}
+
 // DeployFromSourceRef is the headless CI deploy path (issue #739 /
 // DEPLOY-PROV-4 / ADR-092). Caller supplies a GitHub repo slug and
 // the ref they want to deploy — branch, tag, or 40-char SHA — and
@@ -2890,10 +2928,67 @@ func (c *Client) GetAppUsageSummary(ctx context.Context, slug string, opts AppUs
 // clamps it to the plan's request-telemetry retention and reports that fact
 // in WindowClamped. Free accounts receive the normal plan-gated response.
 func (c *Client) GetAppRequestAnalytics(ctx context.Context, slug, since string) (RequestAnalyticsResponse, error) {
+	return c.GetAppRequestAnalyticsOpts(ctx, slug, AppRequestAnalyticsOptions{Since: since})
+}
+
+// AppRequestAnalyticsOptions carries the optional historical analytics
+// window. Since accepts a duration (24h, 7d) or an RFC3339 start timestamp;
+// Until is an optional RFC3339 exclusive upper bound.
+type AppRequestAnalyticsOptions struct {
+	Since string
+	Until string
+}
+
+// GetAppRequestAnalyticsOpts returns the bounded historical request analytics
+// overview for slug. The server clamps the effective window to plan retention.
+func (c *Client) GetAppRequestAnalyticsOpts(ctx context.Context, slug string, opts AppRequestAnalyticsOptions) (RequestAnalyticsResponse, error) {
 	var out RequestAnalyticsResponse
 	path := "/v1/apps/" + slug + "/analytics"
-	if since != "" {
-		path += "?since=" + url.QueryEscape(since)
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		q.Set("until", opts.Until)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// AppRequestAnalyticsTimeseriesOptions carries the optional historical
+// analytics window and exact route/method drill-down for the zero-filled
+// hourly series. Route and Method must be supplied together; empty values
+// request the app-wide series.
+type AppRequestAnalyticsTimeseriesOptions struct {
+	Since  string
+	Until  string
+	Route  string
+	Method string
+}
+
+// GetAppRequestAnalyticsTimeseries returns the zero-filled hourly request
+// analytics series for slug. The effective window is bounded by plan
+// retention and echoed in the response.
+func (c *Client) GetAppRequestAnalyticsTimeseries(ctx context.Context, slug string, opts AppRequestAnalyticsTimeseriesOptions) (RequestAnalyticsTimeseriesResponse, error) {
+	var out RequestAnalyticsTimeseriesResponse
+	path := "/v1/apps/" + slug + "/analytics/timeseries"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		q.Set("until", opts.Until)
+	}
+	if opts.Route != "" {
+		q.Set("route", opts.Route)
+	}
+	if opts.Method != "" {
+		q.Set("method", opts.Method)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

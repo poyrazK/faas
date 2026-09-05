@@ -1,3 +1,4 @@
+import datetime
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
@@ -15,11 +16,17 @@ def _get_kwargs(
     slug: str,
     *,
     since: str | Unset = "24h",
+    until: datetime.datetime | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["since"] = since
+
+    json_until: str | Unset = UNSET
+    if not isinstance(until, Unset):
+        json_until = until.isoformat()
+    params["until"] = json_until
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -41,6 +48,11 @@ def _parse_response(
         response_200 = RequestAnalyticsResponse.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -84,6 +96,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
+    until: datetime.datetime | Unset = UNSET,
 ) -> Response[Problem | RequestAnalyticsResponse]:
     """Aggregated historical request analytics.
 
@@ -107,6 +120,7 @@ def sync_detailed(
     Args:
         slug (str):
         since (str | Unset):  Default: '24h'.
+        until (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,6 +133,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         since=since,
+        until=until,
     )
 
     response = client.get_httpx_client().request(
@@ -133,6 +148,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
+    until: datetime.datetime | Unset = UNSET,
 ) -> Problem | RequestAnalyticsResponse | None:
     """Aggregated historical request analytics.
 
@@ -156,6 +172,7 @@ def sync(
     Args:
         slug (str):
         since (str | Unset):  Default: '24h'.
+        until (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,6 +186,7 @@ def sync(
         slug=slug,
         client=client,
         since=since,
+        until=until,
     ).parsed
 
 
@@ -177,6 +195,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
+    until: datetime.datetime | Unset = UNSET,
 ) -> Response[Problem | RequestAnalyticsResponse]:
     """Aggregated historical request analytics.
 
@@ -200,6 +219,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         since (str | Unset):  Default: '24h'.
+        until (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,6 +232,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         since=since,
+        until=until,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -224,6 +245,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
+    until: datetime.datetime | Unset = UNSET,
 ) -> Problem | RequestAnalyticsResponse | None:
     """Aggregated historical request analytics.
 
@@ -247,6 +269,7 @@ async def asyncio(
     Args:
         slug (str):
         since (str | Unset):  Default: '24h'.
+        until (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -261,5 +284,6 @@ async def asyncio(
             slug=slug,
             client=client,
             since=since,
+            until=until,
         )
     ).parsed

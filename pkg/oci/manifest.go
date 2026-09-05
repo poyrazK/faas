@@ -85,7 +85,9 @@ func (c *RegistryClient) PullManifestWithAuth(ctx context.Context, ref string, a
 // PullBlob streams the bytes of a blob (layer or config) referenced by
 // digest from repo. The caller MUST close the returned reader. The reader is
 // NOT decompressed — layers are still gzipped tarballs, callers feed them to
-// rootfs.ApplyLayerGz which handles the gunzip.
+// rootfs.ApplyLayerGz which handles the gunzip. As the reader reaches EOF,
+// it verifies the streamed bytes against digest and returns an
+// ErrImageManifestInvalid-wrapped error if they differ.
 //
 // PullBlob is the anonymous form (issue #461 / ADR-062); for
 // per-app private-registry Basic Auth use PullBlobWithAuth. The

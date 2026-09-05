@@ -218,7 +218,7 @@ Do not drop accounting tables while serving customer storage.
 
 No customer prices, included allowances or invoice lines are introduced.
 Compute billing is unchanged. This accounting milestone is not paid-launch
-approval; see [ADR-153](adr/153-object-storage-accounting.md).
+approval; see [ADR-156](adr/156-object-storage-accounting.md).
 
 ## Provider configuration
 

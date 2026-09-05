@@ -40,6 +40,8 @@ from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
+from .app_configured_resources import AppConfiguredResources
+from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
 from .app_effective_limits import AppEffectiveLimits
 from .app_env_list_response import AppEnvListResponse
 from .app_env_list_response_env_by_scope import AppEnvListResponseEnvByScope
@@ -71,6 +73,7 @@ from .app_registry_credential_list_response import AppRegistryCredentialListResp
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
+from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
 from .app_response_type import AppResponseType
@@ -160,6 +163,7 @@ from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
 from .create_app_request import CreateAppRequest
 from .create_app_request_app_protocol import CreateAppRequestAppProtocol
+from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
@@ -240,6 +244,8 @@ from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
+from .deploy_dev_source_body import DeployDevSourceBody
+from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
 from .deployment_healthcheck import DeploymentHealthcheck
@@ -267,6 +273,7 @@ from .deployment_response_tag import DeploymentResponseTag
 from .dev_session_response import DevSessionResponse
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
+from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
 from .diff_app_config_patch_eviction_priority import DiffAppConfigPatchEvictionPriority
 from .diff_break import DiffBreak
 from .diff_break_severity import DiffBreakSeverity
@@ -345,6 +352,7 @@ from .get_account_slo_window import GetAccountSLOWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
+from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
 from .get_app_slo_window import GetAppSLOWindow
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
@@ -574,6 +582,10 @@ from .repo_response import RepoResponse
 from .request_analytics_response import RequestAnalyticsResponse
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
+from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
+from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
+from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
+from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
@@ -667,6 +679,9 @@ from .update_alert_rule_request_metric import UpdateAlertRuleRequestMetric
 from .update_alert_rule_request_window_spec import UpdateAlertRuleRequestWindowSpec
 from .update_app_request import UpdateAppRequest
 from .update_app_request_app_protocol import UpdateAppRequestAppProtocol
+from .update_app_request_cpu_millicores_type_1 import UpdateAppRequestCpuMillicoresType1
+from .update_app_request_cpu_millicores_type_2_type_1 import UpdateAppRequestCpuMillicoresType2Type1
+from .update_app_request_cpu_millicores_type_3_type_1 import UpdateAppRequestCpuMillicoresType3Type1
 from .update_app_request_eviction_priority_type_1 import UpdateAppRequestEvictionPriorityType1
 from .update_app_request_eviction_priority_type_2_type_1 import UpdateAppRequestEvictionPriorityType2Type1
 from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequestEvictionPriorityType3Type1
@@ -772,6 +787,8 @@ __all__ = (
     "APIKeyResponse",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
+    "AppConfiguredResources",
+    "AppConfiguredResourcesCpuMillicores",
     "AppEffectiveLimits",
     "AppEnvListResponse",
     "AppEnvListResponseEnvByScope",
@@ -806,6 +823,7 @@ __all__ = (
     "AppRegistryCredentialResponse",
     "AppResponse",
     "AppResponseAppProtocol",
+    "AppResponseCpuMillicores",
     "AppResponseEvictionPriority",
     "AppResponseRuntime",
     "AppResponseType",
@@ -892,6 +910,7 @@ __all__ = (
     "CreateAlertRuleRequestWindowSpec",
     "CreateAppRequest",
     "CreateAppRequestAppProtocol",
+    "CreateAppRequestCpuMillicores",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
     "CreateAppRequestRestartPolicy",
@@ -968,6 +987,8 @@ __all__ = (
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
+    "DeployDevSourceBody",
+    "DeployDevSourceBodyRuntime",
     "DeploymentAuditResponse",
     "DeploymentAuditResponseKind",
     "DeploymentHealthcheck",
@@ -991,6 +1012,7 @@ __all__ = (
     "DevSessionResponse",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
+    "DiffAppConfigPatchCpuMillicores",
     "DiffAppConfigPatchEvictionPriority",
     "DiffBreak",
     "DiffBreakSeverity",
@@ -1069,6 +1091,7 @@ __all__ = (
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
+    "GetAppRequestAnalyticsTimeseriesMethod",
     "GetAppSLOWindow",
     "GetAppsMetricsRange",
     "GetBuildSbomResponse200",
@@ -1296,6 +1319,10 @@ __all__ = (
     "RequestAnalyticsResponse",
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteMethod",
+    "RequestAnalyticsTimeseriesPoint",
+    "RequestAnalyticsTimeseriesResponse",
+    "RequestAnalyticsTimeseriesResponseBucket",
+    "RequestAnalyticsTimeseriesResponseMethod",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",
@@ -1387,6 +1414,9 @@ __all__ = (
     "UpdateAlertRuleRequestWindowSpec",
     "UpdateAppRequest",
     "UpdateAppRequestAppProtocol",
+    "UpdateAppRequestCpuMillicoresType1",
+    "UpdateAppRequestCpuMillicoresType2Type1",
+    "UpdateAppRequestCpuMillicoresType3Type1",
     "UpdateAppRequestEvictionPriorityType1",
     "UpdateAppRequestEvictionPriorityType2Type1",
     "UpdateAppRequestEvictionPriorityType3Type1",

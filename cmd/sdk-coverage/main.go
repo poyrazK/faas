@@ -233,6 +233,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/rollback":               "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
 	"POST /v1/apps/{slug}/deployments":            "Deploy",
+	"POST /v1/apps/{slug}/deployments/dev-source": "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref": "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
 	"POST /v1/apps/{slug}/diff":                   "Diff",                // PR-1 of deploy-diff cluster; CI gate input
 	// Issue #961 / Mega-C PR-1 / leaf 3 — preview-destroy route.
@@ -555,9 +556,10 @@ var methodRouteMap = map[string]string{
 	// to match the sibling per-app family (GetAppMetrics,
 	// GetAppSLO, GetAppRoutes) and use the DTO type name
 	// (AppUsageSummary) for the noun.
-	"GET /v1/apps/{slug}/wake-timeline": "GetAppWakeTimeline",
-	"GET /v1/apps/{slug}/usage":         "GetAppUsageSummary",
-	"GET /v1/apps/{slug}/analytics":     "GetAppRequestAnalytics",
+	"GET /v1/apps/{slug}/wake-timeline":        "GetAppWakeTimeline",
+	"GET /v1/apps/{slug}/usage":                "GetAppUsageSummary",
+	"GET /v1/apps/{slug}/analytics":            "GetAppRequestAnalytics",
+	"GET /v1/apps/{slug}/analytics/timeseries": "GetAppRequestAnalyticsTimeseries",
 
 	// ADR-127 / PR-A — production debugger data plane. The
 	// auto-derivation would produce GetAppsSlugDebugRequests

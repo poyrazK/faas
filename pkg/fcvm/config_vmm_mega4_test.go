@@ -204,6 +204,10 @@ func TestParentCgroupFor_Mega4(t *testing.T) {
 		if !strings.HasPrefix(got, CgroupMountRoot) {
 			t.Errorf("plan %s: %q missing prefix %q", p, got, CgroupMountRoot)
 		}
+		want := CgroupMountRoot + "/faas-" + p.SliceName() + ".slice"
+		if got != want {
+			t.Errorf("plan %s: %q, want %q", p, got, want)
+		}
 	}
 	// Empty plan falls back to the neutral default.
 	if got := ParentCgroupFor(""); got != defaultParentCgroup {

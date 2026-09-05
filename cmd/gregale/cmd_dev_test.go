@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestDevSourceFingerprintTracksDeployableFiles(t *testing.T) {
@@ -103,18 +105,21 @@ func TestRunDevWatchLoopRetriesAfterFailedDeploy(t *testing.T) {
 	var deployments []devSourceConfig
 	var refreshed []devSourceConfig
 	var failures []int
+	failureObserved := make(chan struct{})
 	waitCalls := 0
 	exit := runDevWatchLoop(ctx, "project", first, initial, false, devLoopOps{
-		deploy: func(config devSourceConfig) int {
+		deploy: func(_ context.Context, config devSourceConfig, _ func(string)) int {
 			deployments = append(deployments, config)
 			if len(deployments) == 1 {
 				return 7
 			}
+			cancel()
 			return 0
 		},
-		waitForChange: func(_ context.Context, _ string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
+		waitForChange: func(watchCtx context.Context, _ string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
 			waitCalls++
 			if waitCalls == 1 {
+				<-failureObserved
 				if previous != first {
 					t.Fatalf("first previous fingerprint = %x, want %x", previous, first)
 				}
@@ -123,15 +128,18 @@ func TestRunDevWatchLoopRetriesAfterFailedDeploy(t *testing.T) {
 			if previous != second {
 				t.Fatalf("retry previous fingerprint = %x, want %x", previous, second)
 			}
-			cancel()
-			return second, context.Canceled
+			<-watchCtx.Done()
+			return second, watchCtx.Err()
 		},
 		resolve: func(string) (devSourceConfig, error) { return updated, nil },
 		refresh: func(config devSourceConfig) error {
 			refreshed = append(refreshed, config)
 			return nil
 		},
-		onDeployFailed: func(code int) { failures = append(failures, code) },
+		onDeployFailed: func(code int) {
+			failures = append(failures, code)
+			close(failureObserved)
+		},
 	})
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0", exit)
@@ -158,17 +166,17 @@ func TestRunDevWatchLoopSkipsUndeployableSnapshot(t *testing.T) {
 	resolveFailures := 0
 	waitCalls := 0
 	exit := runDevWatchLoop(ctx, "project", first, devSourceConfig{shape: shapeApp}, false, devLoopOps{
-		deploy: func(devSourceConfig) int {
+		deploy: func(context.Context, devSourceConfig, func(string)) int {
 			deployments++
 			return 0
 		},
-		waitForChange: func(_ context.Context, _ string, _ [sha256.Size]byte) ([sha256.Size]byte, error) {
+		waitForChange: func(watchCtx context.Context, _ string, _ [sha256.Size]byte) ([sha256.Size]byte, error) {
 			waitCalls++
 			if waitCalls == 1 {
 				return second, nil
 			}
-			cancel()
-			return second, context.Canceled
+			<-watchCtx.Done()
+			return second, watchCtx.Err()
 		},
 		resolve: func(string) (devSourceConfig, error) { return devSourceConfig{}, resolveErr },
 		refresh: func(devSourceConfig) error { t.Fatal("refresh called for invalid source"); return nil },
@@ -177,6 +185,7 @@ func TestRunDevWatchLoopSkipsUndeployableSnapshot(t *testing.T) {
 			if !errors.Is(err, resolveErr) {
 				t.Errorf("resolve error = %v", err)
 			}
+			cancel()
 		},
 	})
 	if exit != 0 {
@@ -187,6 +196,138 @@ func TestRunDevWatchLoopSkipsUndeployableSnapshot(t *testing.T) {
 	}
 	if resolveFailures != 1 {
 		t.Fatalf("resolve failures = %d, want 1", resolveFailures)
+	}
+}
+
+func TestRunDevWatchLoopSupersedesInFlightDeployment(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var first, second [sha256.Size]byte
+	second[0] = 1
+	initial := devSourceConfig{shape: shapeApp}
+	updated := devSourceConfig{shape: shapeFunction, runtime: runtimeNode22, handler: "handler.handler"}
+	firstQueued := make(chan struct{})
+
+	var deployments []devSourceConfig
+	var cancelled []string
+	deployFailures := 0
+	waitCalls := 0
+	exit := runDevWatchLoop(ctx, "project", first, initial, false, devLoopOps{
+		deploy: func(deployCtx context.Context, config devSourceConfig, queued func(string)) int {
+			deployments = append(deployments, config)
+			if len(deployments) == 1 {
+				queued("deployment-old")
+				close(firstQueued)
+				<-deployCtx.Done()
+				return 130
+			}
+			cancel()
+			return 0
+		},
+		cancelDeploy: func(_ context.Context, id string) error {
+			cancelled = append(cancelled, id)
+			return nil
+		},
+		waitForChange: func(watchCtx context.Context, _ string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
+			waitCalls++
+			if waitCalls == 1 {
+				<-firstQueued
+				if previous != first {
+					t.Fatalf("first previous fingerprint = %x, want %x", previous, first)
+				}
+				return second, nil
+			}
+			<-watchCtx.Done()
+			return second, watchCtx.Err()
+		},
+		resolve: func(string) (devSourceConfig, error) { return updated, nil },
+		refresh: func(devSourceConfig) error { return nil },
+		onDeployFailed: func(int) {
+			deployFailures++
+		},
+	})
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	if len(deployments) != 2 || deployments[0] != initial || deployments[1] != updated {
+		t.Fatalf("deployments = %+v, want initial then latest source", deployments)
+	}
+	if len(cancelled) != 1 || cancelled[0] != "deployment-old" {
+		t.Fatalf("cancelled = %v, want [deployment-old]", cancelled)
+	}
+	if deployFailures != 0 {
+		t.Fatalf("deploy failure callbacks = %d, want 0 for superseded deployment", deployFailures)
+	}
+}
+
+func TestRunDevWatchLoopCoalescesChangesDuringCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var first, second, third [sha256.Size]byte
+	second[0] = 1
+	third[0] = 2
+	initial := devSourceConfig{shape: shapeApp}
+	latest := devSourceConfig{shape: shapeFunction, runtime: runtimePython312, handler: "latest.handler"}
+	firstQueued := make(chan struct{})
+	thirdObserved := make(chan struct{})
+
+	var deployments []devSourceConfig
+	waitCalls := 0
+	exit := runDevWatchLoop(ctx, "project", first, initial, false, devLoopOps{
+		deploy: func(deployCtx context.Context, config devSourceConfig, queued func(string)) int {
+			deployments = append(deployments, config)
+			if len(deployments) == 1 {
+				queued("deployment-old")
+				close(firstQueued)
+				<-deployCtx.Done()
+				return 130
+			}
+			cancel()
+			return 0
+		},
+		cancelDeploy: func(context.Context, string) error {
+			// Hold cancellation long enough for another settled edit to reach
+			// the buffered watcher channel.
+			<-thirdObserved
+			return nil
+		},
+		waitForChange: func(watchCtx context.Context, _ string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
+			waitCalls++
+			switch waitCalls {
+			case 1:
+				<-firstQueued
+				return second, nil
+			case 2:
+				if previous != second {
+					t.Fatalf("second previous fingerprint = %x, want %x", previous, second)
+				}
+				close(thirdObserved)
+				return third, nil
+			default:
+				<-watchCtx.Done()
+				return third, watchCtx.Err()
+			}
+		},
+		resolve: func(string) (devSourceConfig, error) { return latest, nil },
+		refresh: func(devSourceConfig) error { return nil },
+	})
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	if len(deployments) != 2 || deployments[0] != initial || deployments[1] != latest {
+		t.Fatalf("deployments = %+v, want initial then newest coalesced source", deployments)
+	}
+}
+
+func TestDevDeploymentAlreadyTerminal(t *testing.T) {
+	for _, code := range []string{api.CodeDeploymentCancelLiveForbidden, api.CodeDeploymentCancelNotCancellable} {
+		err := &api.APIError{Problem: api.Problem{Code: code}}
+		if !devDeploymentAlreadyTerminal(err) {
+			t.Fatalf("code %q should be treated as terminal", code)
+		}
+	}
+	if devDeploymentAlreadyTerminal(errors.New("network unavailable")) {
+		t.Fatal("ordinary cancellation error should be reported")
 	}
 }
 

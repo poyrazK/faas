@@ -104,6 +104,8 @@ func TestListInstanceStats_NetTxBytesPopulatedWhenValid(t *testing.T) {
 			NodeID:     "node-1",
 			TXBytes:    4096,
 			TX:         instancestats.Valid,
+			RXBytes:    2048,
+			RX:         instancestats.Valid,
 		},
 	}}
 	cli := newServerWithStats(t, stats)
@@ -127,6 +129,9 @@ func TestListInstanceStats_NetTxBytesPopulatedWhenValid(t *testing.T) {
 	// wire.
 	if rows[0].GetTxValid() != uint32(0) {
 		t.Errorf("tx_valid = %d, want 0 (Valid)", rows[0].GetTxValid())
+	}
+	if rows[0].GetNetRxBytes() != 2048 || rows[0].GetRxValid() != uint32(0) {
+		t.Errorf("ingress = (%d, valid=%d), want (2048, 0)", rows[0].GetNetRxBytes(), rows[0].GetRxValid())
 	}
 }
 

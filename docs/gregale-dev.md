@@ -13,7 +13,17 @@ gregale dev
 
 The CLI detects the application shape, uploads the current working tree
 (including uncommitted changes), waits for the real build, prints a stable URL,
-and watches deployable files for the next change.
+and watches deployable files for the next change. Watching continues while a
+build is running. If another settled edit arrives, Gregale cancels the obsolete
+deployment and builds the newest source instead of letting old saves queue up.
+
+The first sync uploads a complete source snapshot. Later edits transfer only
+new, changed, and deleted archive entries when that is smaller than the full
+snapshot. The server reconstructs and validates the complete source before
+building, so incremental transfer does not create a second build path. Its
+source cache is disposable: after a restart, eviction, or cross-host request,
+the CLI automatically resends the complete snapshot. A new `gregale dev`
+invocation also starts safely with a complete sync.
 
 Railpack developer builds keep their Firecracker VM isolation but reuse a
 tenant- and workspace-scoped BuildKit dependency cache between syncs. When the
@@ -43,6 +53,4 @@ available—use `--stop` from the same source directory when it should be remove
 immediately.
 
 Developer environments currently consume the same deployed-app quota as pull
-request previews. Separate development quotas and incremental source transfer
-remain follow-up improvements. Source archives still use the existing
-deployment path end to end.
+request previews. Separate development quotas remain a follow-up improvement.

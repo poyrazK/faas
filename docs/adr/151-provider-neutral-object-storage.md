@@ -51,7 +51,7 @@ S3 protocol endpoint or a native S3 access-key service.
 
 ## Financial and launch boundaries
 
-Extended by [ADR-153](153-object-storage-accounting.md): durable capacity
+Extended by [ADR-156](156-object-storage-accounting.md): durable capacity
 reservations, provider usage ingestion and fail-closed budget checks now protect
 URL issuance. These are not customer prices or invoice integration.
 
@@ -62,7 +62,7 @@ Already-issued URLs expire normally; in-flight operations may finish.
 Enabling it is an operator opt-in to an unmetered
 preview, not an entitlement included in existing plans. Existing runtime
 storage rollups are not object-storage usage. Per-app bucket and per-upload
-limits alone are not a total quota or spending control; ADR-153 adds explicit
+limits alone are not a total quota or spending control; ADR-156 adds explicit
 capacity and reported-budget admission checks. Direct traffic cannot be billed
 from signed-URL counts, and reported costs are not customer invoice prices.
 

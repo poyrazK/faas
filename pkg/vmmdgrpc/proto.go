@@ -146,6 +146,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		LayerKey:         app.GetLayerKey(),
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
+		CPUMillicores:    int(app.GetCpuMillicores()),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: plaintext api_env channel. apid
@@ -299,6 +300,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		LayerKey:         app.GetLayerKey(),
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
+		CPUMillicores:    int(app.GetCpuMillicores()),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: see toWakeRequest's APIEnvEntries

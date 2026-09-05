@@ -129,7 +129,7 @@ type InstanceStat struct {
 	// across ticks (e.g. cumulative hour rollup) should
 	// store their own baseline.
 	CPUHour float64
-	// TXBytes (ADR-046, step 7) is the per-tick byte delta
+	// TXBytes (ADR-046) is the cumulative byte counter
 	// on root-side vethHost.rx_bytes for this instance,
 	// surfaced via the vmmd `net_tx_bytes` wire field.
 	// Unit is interface bytes (includes Ethernet framing);
@@ -148,14 +148,12 @@ type InstanceStat struct {
 	// per-minute accumulator does not double-count a
 	// baseline row.
 	TX Validity
-	// RXBytes (ADR-048) is the per-tick byte delta on
+	// RXBytes (ADR-048) is the cumulative byte counter on
 	// root-side vethHost.tx_bytes for this instance (root →
 	// guest = ingress), surfaced via the vmmd `net_rx_bytes`
 	// wire field. Unit is interface bytes; same kernel
 	// counter family as TXBytes. Valid only when RX ==
 	// Valid; 0 with RX=Unknown is the sentinel shape. Wire
-	// field awaits make proto regen (PR-A commit #2
-	// follow-up); today the field stays 0 end-to-end. The
 	// mirror field on scheddgrpc.InstanceStatsRow is
 	// NetRxBytes; the schedd poller populates it from the
 	// vmmd wire row once regen lands.

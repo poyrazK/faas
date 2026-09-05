@@ -25,9 +25,10 @@ import (
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug           string `json:"slug"`
-	Type           string `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime        string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB          int    `json:"ram_mb,omitempty"`  // 0 => plan default
+	Type           string `json:"type,omitempty"`           // "app" (default) | "function"
+	Runtime        string `json:"runtime,omitempty"`        // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB          int    `json:"ram_mb,omitempty"`         // 0 => plan default
+	CPUMillicores  int    `json:"cpu_millicores,omitempty"` // 0 => 1000; allowed: 250, 500, 1000
 	MaxConcurrency int    `json:"max_concurrency,omitempty"`
 	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
@@ -152,6 +153,7 @@ type DevSessionResponse struct {
 // "set to zero".
 type UpdateAppRequest struct {
 	RAMMB          *int `json:"ram_mb,omitempty"`
+	CPUMillicores  *int `json:"cpu_millicores,omitempty"`
 	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
 	MaxConcurrency *int `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
@@ -544,6 +546,7 @@ type AppEffectiveLimits struct {
 	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
 	GuestVCPUs             int   `json:"guest_vcpus"`
 	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
+	PlanCPUMaxMillicores   int   `json:"plan_cpu_max_millicores"`
 	CPUWeight              int   `json:"cpu_weight"`
 	MaxInstances           int   `json:"max_instances"`
 	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
@@ -555,6 +558,14 @@ type AppEffectiveLimits struct {
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
 }
 
+// AppConfiguredResources is the resource shape selected for an app. It is
+// separate from EffectiveLimits because guest topology and plan ceilings can
+// differ from the app's sustained CPU and memory settings.
+type AppConfiguredResources struct {
+	MemoryMB      int `json:"memory_mb"`
+	CPUMillicores int `json:"cpu_millicores"`
+}
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
 	ID             string `json:"id"`
@@ -562,6 +573,7 @@ type AppResponse struct {
 	Type           string `json:"type"`
 	Runtime        string `json:"runtime,omitempty"`
 	RAMMB          int    `json:"ram_mb"`
+	CPUMillicores  int    `json:"cpu_millicores"`
 	MaxConcurrency int    `json:"max_concurrency"`
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
@@ -577,8 +589,9 @@ type AppResponse struct {
 	ConcurrencyPerVMBound int `json:"concurrency_per_vm"`
 	// EffectiveLimits makes the complete resource and request envelope
 	// visible without requiring the customer to infer it from their plan.
-	EffectiveLimits AppEffectiveLimits `json:"effective_limits"`
-	IdleTimeoutS    int                `json:"idle_timeout_s,omitempty"`
+	EffectiveLimits     AppEffectiveLimits     `json:"effective_limits"`
+	ConfiguredResources AppConfiguredResources `json:"configured_resources"`
+	IdleTimeoutS        int                    `json:"idle_timeout_s,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
@@ -2542,8 +2555,8 @@ type UsageResponse struct {
 	// HTTP-response byte delta — informational only. Source:
 	// gateway statusRecorder.Bytes → meterd SampleAndRoll →
 	// usage_minutes.tx_bytes. Not billed (ADR-046 §6); the
-	// gateway-side producer lands in PR-2. 0 when no meterd
-	// sample has accumulated yet.
+	// gateway-side producer. 0 when no meterd sample has
+	// accumulated yet.
 	TXBytes int64 `json:"tx_bytes"`
 	// NetTxBytes (ADR-046, step 10) is the per-app monthly
 	// byte delta on root-side vethHost.rx_bytes —
@@ -2560,18 +2573,14 @@ type UsageResponse struct {
 	// instancestats.Poller → meterd SampleAndRoll →
 	// usage_minutes.net_rx_bytes. Informational only —
 	// not billed (ADR-048 §5). 0 when no meterd sample has
-	// accumulated yet or the wire regen that surfaces the
-	// ingress field has not yet landed (PR-A commit #2
-	// follow-up).
+	// accumulated yet.
 	NetRxBytes int64 `json:"net_rx_bytes"`
 	// ColdBootCount (ADR-048) is the per-app monthly
-	// count of WAKE_RESTORE → WAKE_COLD_BOOT transitions
-	// observed across this app's instances. Source:
-	// scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled
-	// by meterd SampleAndRoll → usage_minutes.
+	// count of customer requests whose authoritative wake outcome
+	// was WAKE_COLD_BOOT. Source: gatewayd's minute-bucketed
+	// usage stream → meterd SampleAndRoll → usage_minutes.
 	// cold_boot_count. Informational only — not billed.
-	// 0 when no meterd sample has accumulated yet or the
-	// wire regen has not yet landed.
+	// 0 when no meterd sample has accumulated yet.
 	ColdBootCount int64 `json:"cold_boots"`
 }
 
@@ -2881,10 +2890,10 @@ type DailyUsagePoint struct {
 // billed. The two egress columns (tx_bytes + net_tx_bytes) are
 // exposed separately at the per-app UsageResponse level; the
 // summary rolls them up for the dashboard's single-number
-// panel. The gateway-side tx_bytes producer lands in PR-2.
+// panel.
 type UsageSummaryResponse struct {
 	Month           string  `json:"month"`             // YYYY-MM
-	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
+	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 1024 / 3600
 	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
 	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
@@ -2908,8 +2917,8 @@ type UsageSummaryResponse struct {
 	// per-app breakdown lives at UsageResponse.NetRxBytes.
 	UsedIngressGB float64 `json:"used_ingress_gb"`
 	// ColdBootTotal (ADR-048) is the per-month Σ of
-	// WAKE_RESTORE → WAKE_COLD_BOOT transitions across
-	// every app on this account. Informational only — not
+	// customer requests whose wake outcome was WAKE_COLD_BOOT
+	// across every app on this account. Informational only — not
 	// billed. The dashboard's "this customer's cold-boot
 	// bill of health" panel reads this single number; the
 	// per-app breakdown lives at UsageResponse.ColdBootCount.
@@ -2934,6 +2943,16 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
 			WithDocs(docsBase + "/plans#concurrency")
 	}
 	return nil
+}
+
+// ValidateAppCPUMillicores validates the closed set supported by the first
+// configurable CPU release.
+func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
+	if ValidAppCPUMillicores(cpuMillicores) {
+		return nil
+	}
+	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppCPU,
+		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000")
 }
 
 // --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
@@ -6630,6 +6649,7 @@ type RequestAnalyticsRoute struct {
 type RequestAnalyticsResponse struct {
 	Slug            string                  `json:"slug"`
 	Since           string                  `json:"since"`
+	From            string                  `json:"from"`
 	Until           string                  `json:"until"`
 	WindowClamped   bool                    `json:"window_clamped"`
 	Requests        int64                   `json:"requests"`
@@ -6643,6 +6663,36 @@ type RequestAnalyticsResponse struct {
 	RoutesLimit     int                     `json:"routes_limit"`
 	RoutesTruncated bool                    `json:"routes_truncated"`
 	AsOf            string                  `json:"as_of"`
+}
+
+// RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
+// by GET /v1/apps/{slug}/analytics/timeseries. Counts include collapsed
+// request-telemetry row weights, and latency percentiles use the same weights.
+type RequestAnalyticsTimeseriesPoint struct {
+	Start         string  `json:"start"`
+	Requests      int64   `json:"requests"`
+	ErrorRequests int64   `json:"error_requests"`
+	ErrorRatePct  float64 `json:"error_rate_pct"`
+	ColdBoots     int64   `json:"cold_boots"`
+	P50MS         int     `json:"p50_ms"`
+	P95MS         int     `json:"p95_ms"`
+	P99MS         int     `json:"p99_ms"`
+}
+
+// RequestAnalyticsTimeseriesResponse is the zero-filled hourly series used
+// for customer-facing request analytics charts. The effective window is
+// bounded by the account's telemetry retention.
+type RequestAnalyticsTimeseriesResponse struct {
+	Slug          string                            `json:"slug"`
+	Route         string                            `json:"route,omitempty"`
+	Method        string                            `json:"method,omitempty"`
+	Since         string                            `json:"since"`
+	From          string                            `json:"from"`
+	Until         string                            `json:"until"`
+	WindowClamped bool                              `json:"window_clamped"`
+	Bucket        string                            `json:"bucket"`
+	Points        []RequestAnalyticsTimeseriesPoint `json:"points"`
+	AsOf          string                            `json:"as_of"`
 }
 
 // DebugRegressionItem is one row of debug_regression_observations

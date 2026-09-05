@@ -132,6 +132,8 @@ func (s *Server) StreamBytes(req *egresspb.StreamBytesRequest, stream grpc.Serve
 					InstanceId: rec.InstanceID,
 					Minute:     timestamppb.New(rec.Minute.UTC()),
 					Bytes:      rec.Bytes,
+					Requests:   rec.Requests,
+					ColdBoots:  rec.ColdBoots,
 				}); err != nil {
 					s.log.Warn("egressgrpc: send failed; closing stream", "err", err)
 					return nil

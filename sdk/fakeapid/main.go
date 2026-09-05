@@ -69,6 +69,8 @@ func appResponse(slug string) []byte {
 		"slug":                     slug,
 		"type":                     "app",
 		"ram_mb":                   256,
+		"cpu_millicores":           1000,
+		"configured_resources":     appConfiguredResources(),
 		"max_concurrency":          2,
 		"concurrency_per_vm":       5,
 		"effective_limits":         appEffectiveLimits(),
@@ -83,12 +85,17 @@ func appResponse(slug string) []byte {
 	})
 }
 
+func appConfiguredResources() map[string]any {
+	return map[string]any{"memory_mb": 256, "cpu_millicores": 1000}
+}
+
 func appEffectiveLimits() map[string]any {
 	return map[string]any{
 		"memory_limit_mb":          256,
 		"plan_memory_max_mb":       256,
 		"guest_vcpus":              2,
 		"cpu_limit_millicores":     1000,
+		"plan_cpu_max_millicores":  1000,
 		"cpu_weight":               4,
 		"max_instances":            2,
 		"concurrency_per_instance": 5,
@@ -251,6 +258,8 @@ func (f *fixture) handler() http.Handler {
 					"slug":                     "hello-world",
 					"type":                     "app",
 					"ram_mb":                   256,
+					"cpu_millicores":           1000,
+					"configured_resources":     appConfiguredResources(),
 					"max_concurrency":          2,
 					"concurrency_per_vm":       5,
 					"effective_limits":         appEffectiveLimits(),

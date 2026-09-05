@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -52,67 +53,212 @@ func (c devSourceConfig) deployArgs(slug, sourceDir string) []string {
 
 // devLoopOps keeps the watch-state machine independently testable. Production
 // closures below own the API client and terminal rendering; the loop itself
-// only decides when a failed sync may be retried and when source configuration
-// must be resolved again.
+// coordinates source changes, in-flight cancellation, retry, and config
+// resolution.
 type devLoopOps struct {
-	deploy          func(devSourceConfig) int
+	deploy          func(context.Context, devSourceConfig, func(string)) int
+	cancelDeploy    func(context.Context, string) error
 	waitForChange   func(context.Context, string, [sha256.Size]byte) ([sha256.Size]byte, error)
 	resolve         func(string) (devSourceConfig, error)
 	refresh         func(devSourceConfig) error
 	onWatching      func()
 	onChange        func()
+	onSuperseded    func()
 	onDeployFailed  func(int)
+	onCancelFailed  func(error)
 	onResolveFailed func(error)
 	onRefreshFailed func(error)
 	onWatchFailed   func(error) int
 }
 
+type devSourceChange struct {
+	err error
+}
+
+type devDeployResult struct {
+	code         int
+	deploymentID string
+}
+
+type activeDevDeploy struct {
+	cancel          context.CancelFunc
+	queued          <-chan string
+	done            <-chan devDeployResult
+	deploymentID    string
+	superseded      bool
+	cancelAttempted bool
+}
+
+func watchDevSource(ctx context.Context, sourceDir string, previous [sha256.Size]byte, waitForChange func(context.Context, string, [sha256.Size]byte) ([sha256.Size]byte, error)) <-chan devSourceChange {
+	changes := make(chan devSourceChange, 1)
+	go func() {
+		for {
+			next, err := waitForChange(ctx, sourceDir, previous)
+			event := devSourceChange{err: err}
+			select {
+			case changes <- event:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+			previous = next
+		}
+	}()
+	return changes
+}
+
+func startDevDeploy(ctx context.Context, config devSourceConfig, deploy func(context.Context, devSourceConfig, func(string)) int) *activeDevDeploy {
+	deployCtx, cancel := context.WithCancel(ctx)
+	queued := make(chan string, 1)
+	done := make(chan devDeployResult, 1)
+	go func() {
+		deploymentID := ""
+		code := deploy(deployCtx, config, func(id string) {
+			deploymentID = id
+			select {
+			case queued <- id:
+			case <-deployCtx.Done():
+			}
+		})
+		done <- devDeployResult{code: code, deploymentID: deploymentID}
+	}()
+	return &activeDevDeploy{cancel: cancel, queued: queued, done: done}
+}
+
 func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Size]byte, initial devSourceConfig, once bool, ops devLoopOps) int {
-	code := ops.deploy(initial)
 	if once {
-		return code
-	}
-	if code != 0 && ops.onDeployFailed != nil {
-		ops.onDeployFailed(code)
+		return ops.deploy(ctx, initial, nil)
 	}
 
-	for {
-		if ops.onWatching != nil {
-			ops.onWatching()
-		}
-		next, err := ops.waitForChange(ctx, sourceDir, previous)
-		if err != nil {
-			if ctx.Err() != nil {
-				return 0
-			}
-			if ops.onWatchFailed != nil {
-				return ops.onWatchFailed(err)
-			}
-			return 1
-		}
-		// A failed build is still a handled snapshot. Wait for another edit
-		// instead of repeatedly redeploying the same broken source.
-		previous = next
+	changes := watchDevSource(ctx, sourceDir, previous, ops.waitForChange)
+	if ops.onWatching != nil {
+		ops.onWatching()
+	}
+	current := startDevDeploy(ctx, initial, ops.deploy)
+	queued := current.queued
+	done := current.done
+	pending := false
 
+	cancelCurrent := func() {
+		if current == nil || current.cancelAttempted || current.deploymentID == "" {
+			return
+		}
+		current.cancelAttempted = true
+		if ops.cancelDeploy != nil {
+			if err := ops.cancelDeploy(ctx, current.deploymentID); err != nil && ops.onCancelFailed != nil {
+				ops.onCancelFailed(err)
+			}
+		}
+		current.cancel()
+	}
+
+	startPending := func() {
 		config, err := ops.resolve(sourceDir)
 		if err != nil {
 			if ops.onResolveFailed != nil {
 				ops.onResolveFailed(err)
 			}
-			continue
+			return
 		}
 		if err := ops.refresh(config); err != nil {
 			if ops.onRefreshFailed != nil {
 				ops.onRefreshFailed(err)
 			}
-			continue
+			return
 		}
 		if ops.onChange != nil {
 			ops.onChange()
 		}
-		code = ops.deploy(config)
-		if code != 0 && ops.onDeployFailed != nil {
-			ops.onDeployFailed(code)
+		current = startDevDeploy(ctx, config, ops.deploy)
+		queued = current.queued
+		done = current.done
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return 0
+
+		case change := <-changes:
+			if change.err != nil {
+				if ctx.Err() != nil {
+					return 0
+				}
+				if ops.onWatchFailed != nil {
+					return ops.onWatchFailed(change.err)
+				}
+				return 1
+			}
+			// A failed or superseded build is still a handled snapshot. Wait
+			// for another edit instead of repeatedly sending the same source.
+			if current == nil {
+				startPending()
+				continue
+			}
+			pending = true
+			if !current.superseded {
+				current.superseded = true
+				if ops.onSuperseded != nil {
+					ops.onSuperseded()
+				}
+			}
+			cancelCurrent()
+
+		case id := <-queued:
+			if current == nil {
+				continue
+			}
+			current.deploymentID = id
+			queued = nil
+			if current.superseded {
+				cancelCurrent()
+			}
+
+		case result := <-done:
+			if current == nil {
+				continue
+			}
+			if current.deploymentID == "" {
+				current.deploymentID = result.deploymentID
+			}
+			if current.superseded {
+				cancelCurrent()
+			} else if ctx.Err() == nil && result.code != 0 && ops.onDeployFailed != nil {
+				ops.onDeployFailed(result.code)
+			}
+			current.cancel()
+			current = nil
+			queued = nil
+			done = nil
+			if ctx.Err() != nil {
+				return 0
+			}
+			if !pending {
+				continue
+			}
+			pending = false
+			// Consume source events already waiting behind cancellation so
+			// the next upload is prepared from the newest settled tree.
+		drainChanges:
+			for {
+				select {
+				case change := <-changes:
+					if change.err != nil {
+						if ctx.Err() != nil {
+							return 0
+						}
+						if ops.onWatchFailed != nil {
+							return ops.onWatchFailed(change.err)
+						}
+						return 1
+					}
+				default:
+					break drainChanges
+				}
+			}
+			startPending()
 		}
 	}
 }
@@ -200,14 +346,31 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Could not watch developer source", err)
 	}
+	syncState := &devSourceSyncState{}
 	return runDevWatchLoop(ctx, sourceDir, lastSynced, config, *once, devLoopOps{
-		deploy: func(config devSourceConfig) int {
+		deploy: func(deployCtx context.Context, config devSourceConfig, queued func(string)) int {
 			started := time.Now()
-			code := cmdDeployTarballToExisting(config.deployArgs(session.App.Slug, sourceDir), true)
+			code := cmdDeployTarballToExisting(deployCtx, config.deployArgs(session.App.Slug, sourceDir), true, deployExecution{
+				developerSource: syncState,
+				onQueued: func(dep api.DeploymentResponse) {
+					if queued != nil {
+						queued(dep.ID)
+					}
+				},
+			})
 			if code == 0 && !jsonOutput {
 				PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
 			}
 			return code
+		},
+		cancelDeploy: func(cancelCtx context.Context, deploymentID string) error {
+			cancelCtx, cancel := context.WithTimeout(cancelCtx, 15*time.Second)
+			defer cancel()
+			_, cancelErr := client.CancelDeployment(cancelCtx, session.App.Slug, deploymentID, "user")
+			if devDeploymentAlreadyTerminal(cancelErr) {
+				return nil
+			}
+			return cancelErr
 		},
 		waitForChange: waitForDevSourceChange,
 		resolve:       resolveDevSourceConfig,
@@ -228,9 +391,19 @@ func cmdDev(args []string) int {
 				PrintProgress(osStdout, "change detected; syncing to %s", session.App.URL)
 			}
 		},
+		onSuperseded: func() {
+			if !jsonOutput {
+				PrintProgress(osStdout, "newer change detected; superseding in-flight sync")
+			}
+		},
 		onDeployFailed: func(_ int) {
 			if !jsonOutput {
 				PrintWarn(osStderr, "developer sync failed; fix the source and save to retry (environment remains available at %s)", session.App.URL)
+			}
+		},
+		onCancelFailed: func(cancelErr error) {
+			if !jsonOutput {
+				PrintWarn(osStderr, "could not cancel obsolete developer sync (%v); continuing with the latest source", cancelErr)
 			}
 		},
 		onResolveFailed: func(resolveErr error) {
@@ -249,6 +422,18 @@ func cmdDev(args []string) int {
 			return printErr("Could not watch developer source", waitErr)
 		},
 	})
+}
+
+func devDeploymentAlreadyTerminal(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Problem.Code == api.CodeDeploymentCancelLiveForbidden ||
+		apiErr.Problem.Code == api.CodeDeploymentCancelNotCancellable
 }
 
 func upsertDevSession(client *Client, project string, req api.UpsertDevSessionRequest) (api.DevSessionResponse, error) {

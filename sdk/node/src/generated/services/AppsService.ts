@@ -22,6 +22,7 @@ import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListRes
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
+import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -401,15 +402,20 @@ export class AppsService {
   public static getAppRequestAnalytics({
     slug,
     since = '24h',
+    until,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
     /**
-     * Lookback duration (`24h`, `3d`, `7d`). Defaults to `24h` and is retention-clamped.
+     * Lookback duration (`24h`, `3d`, `7d`) or RFC3339 start timestamp. Defaults to `24h` and is retention-clamped.
      */
     since?: string,
+    /**
+     * Optional RFC3339 upper-bound timestamp for the historical window.
+     */
+    until?: string,
   }): CancelablePromise<RequestAnalyticsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -419,8 +425,77 @@ export class AppsService {
       },
       query: {
         'since': since,
+        'until': until,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Request analytics time series by hour.
+   * Returns zero-filled UTC hourly buckets for customer request analytics.
+   * Each bucket contains request and error counts, error rate, cold boots,
+   * and weighted p50/p95/p99 latency. The window is half-open [since, until)
+   * and is clamped to the plan's DebugTelemetryRetentionDays.
+   *
+   * `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+   * timestamp. `until` is an optional RFC3339 exclusive upper bound and
+   * defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+   * by `DebugTelemetryEnabled`.
+   *
+   * @returns RequestAnalyticsTimeseriesResponse Zero-filled hourly request analytics buckets.
+   * @throws ApiError
+   */
+  public static getAppRequestAnalyticsTimeseries({
+    slug,
+    since = '24h',
+    until,
+    route,
+    method,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lookback duration or RFC3339 start timestamp. Defaults to `24h`.
+     */
+    since?: string,
+    /**
+     * Exclusive end timestamp; omitted means current server time.
+     */
+    until?: string,
+    /**
+     * Exact bounded route label to drill into (for example `GET /users/{id}`). Must be provided together with `method`; omitted means all routes.
+     */
+    route?: string,
+    /**
+     * Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods.
+     */
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+  }): CancelablePromise<RequestAnalyticsTimeseriesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/analytics/timeseries',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'route': route,
+        'method': method,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,

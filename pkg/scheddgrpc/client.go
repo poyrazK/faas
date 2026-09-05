@@ -436,7 +436,7 @@ type InstanceStatsRow struct {
 	// CPUValid mirrors instancestats.Validity (0 = Valid, 1 =
 	// Unknown). Callers MUST skip rows where CPUValid != 0.
 	CPUValid uint32
-	// NetTxBytes (ADR-046, step 7) is the per-tick byte delta
+	// NetTxBytes (ADR-046) is the cumulative byte counter
 	// on root-side vethHost.rx_bytes for this instance,
 	// surfaced via the vmmd `net_tx_bytes` wire field. Unit
 	// is interface bytes; same kernel counter the per-plan
@@ -446,15 +446,14 @@ type InstanceStatsRow struct {
 	// rows where TxValid != 0.
 	NetTxBytes uint64
 	TxValid    uint32
-	// NetRxBytes (ADR-048) is the per-tick byte delta on
+	// NetRxBytes (ADR-048) is the cumulative byte counter on
 	// root-side vethHost.tx_bytes for this instance — mirror of
 	// NetTxBytes but on the root→guest (= ingress) direction.
 	// Same kernel counter family (interface bytes, includes
 	// Ethernet framing); same TxValid gate as egress (a cache
 	// regression / first-sample state zeroes BOTH columns).
-	// Wire field awaits make proto regen (task A.3a follow-up);
-	// today the field stays at 0 end-to-end.
 	NetRxBytes uint64
+	RxValid    uint32
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is the
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Empty/nil when the
@@ -491,6 +490,8 @@ func (c *Client) ListInstanceStats(ctx context.Context) ([]InstanceStatsRow, err
 			CPUValid:     r.GetCpuValid(),
 			NetTxBytes:   r.GetNetTxBytes(),
 			TxValid:      r.GetTxValid(),
+			NetRxBytes:   r.GetNetRxBytes(),
+			RxValid:      r.GetRxValid(),
 		})
 	}
 	return out, nil

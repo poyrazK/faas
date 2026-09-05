@@ -112,6 +112,8 @@ type BytesFrame struct {
 	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	Minute        *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=minute,proto3" json:"minute,omitempty"`
 	Bytes         uint64                 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	Requests      uint64                 `protobuf:"varint,4,opt,name=requests,proto3" json:"requests,omitempty"`
+	ColdBoots     uint64                 `protobuf:"varint,5,opt,name=cold_boots,json=coldBoots,proto3" json:"cold_boots,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -167,18 +169,35 @@ func (x *BytesFrame) GetBytes() uint64 {
 	return 0
 }
 
+func (x *BytesFrame) GetRequests() uint64 {
+	if x != nil {
+		return x.Requests
+	}
+	return 0
+}
+
+func (x *BytesFrame) GetColdBoots() uint64 {
+	if x != nil {
+		return x.ColdBoots
+	}
+	return 0
+}
+
 var File_onebox_faas_egress_v1_egress_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_egress_v1_egress_proto_rawDesc = "" +
 	"\n" +
 	"\"onebox/faas/egress/v1/egress.proto\x12\x15onebox.faas.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x14\n" +
-	"\x12StreamBytesRequest\"w\n" +
+	"\x12StreamBytesRequest\"\xb2\x01\n" +
 	"\n" +
 	"BytesFrame\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x122\n" +
 	"\x06minute\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x06minute\x12\x14\n" +
-	"\x05bytes\x18\x03 \x01(\x04R\x05bytes2p\n" +
+	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\x12\x1a\n" +
+	"\brequests\x18\x04 \x01(\x04R\brequests\x12\x1d\n" +
+	"\n" +
+	"cold_boots\x18\x05 \x01(\x04R\tcoldBoots2p\n" +
 	"\x0fEgressTxService\x12]\n" +
 	"\vStreamBytes\x12).onebox.faas.egress.v1.StreamBytesRequest\x1a!.onebox.faas.egress.v1.BytesFrame0\x01BFZDgithub.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1;egresspbb\x06proto3"
 

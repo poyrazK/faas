@@ -2550,13 +2550,14 @@ type WakeRequest struct {
 	// 100). Empty = "anonymous" admission (matches the
 	// requestTotal overflow policy where missing account_id maps
 	// to "other" via pkg/wire/metrics.go's overflow label set).
-	AccountID  string
-	BaseKey    string // StorageBackend key for drive0 shared ro base rootfs for the app's runtime
-	LayerKey   string // StorageBackend key for drive1 per-app layer
-	VcpuCount  int
-	MemSizeMiB int
-	EgressMbit int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
-	Snapshot   *Snapshot // nil => cold boot
+	AccountID     string
+	BaseKey       string // StorageBackend key for drive0 shared ro base rootfs for the app's runtime
+	LayerKey      string // StorageBackend key for drive1 per-app layer
+	VcpuCount     int
+	MemSizeMiB    int
+	CPUMillicores int
+	EgressMbit    int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	Snapshot      *Snapshot // nil => cold boot
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Drives the parent-cgroup path (ParentCgroupFor) and the
 	// --cgroup cpu.weight=N jailer argv, plus the per-instance
@@ -2730,12 +2731,13 @@ type ColdBootRequest struct {
 	// AccountID is the apps row's owning account id (issue #301,
 	// ADR-044). Forwarded to WakeRequest.AccountID — see
 	// WakeRequest for the contract.
-	AccountID  string
-	BaseKey    string
-	LayerKey   string
-	VcpuCount  int
-	MemSizeMiB int
-	EgressMbit int // per-plan tc cap; 0 = no cap (legacy / disabled)
+	AccountID     string
+	BaseKey       string
+	LayerKey      string
+	VcpuCount     int
+	MemSizeMiB    int
+	CPUMillicores int
+	EgressMbit    int // per-plan tc cap; 0 = no cap (legacy / disabled)
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Forwarded to WakeRequest.Plan — see WakeRequest for the contract.
 	Plan api.Plan
@@ -2801,7 +2803,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 	return m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, AccountID: req.AccountID,
 		BaseKey: req.BaseKey, LayerKey: req.LayerKey,
-		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
+		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
 		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
 		APIEnvEntries:   req.APIEnvEntries,
@@ -3038,6 +3040,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
 	}
 	lease.MemoryMaxMiB = req.MemSizeMiB
+	lease.CPUMillicores = req.CPUMillicores
 	m.mu.Lock()
 	if m.waking == nil {
 		m.waking = make(map[string]struct{})
@@ -3370,7 +3373,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		if lease.IsBuilder {
 			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
-			err = writePlanCgroup(req.Instance, req.Plan, req.MemSizeMiB)
+			err = writeAppCgroup(req.Instance, req.Plan, req.MemSizeMiB, req.CPUMillicores)
 		}
 		if err != nil {
 			// Cgroup setup is a mandatory isolation boundary. The VM is already

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -168,7 +169,7 @@ func projectObsTenantUsage(r *http.Request, st state.Store, acct state.Account, 
 			ColdBoots:  row.ColdBootCount,
 		})
 	}
-	usage.UsedGBHours = float64(mbSeconds) / 3_600_000.0
+	usage.UsedGBHours = meter.GBHours(mbSeconds)
 	usage.UsedCPUHours = float64(cpuUsec) / 3_600_000_000.0
 	limits := api.MustLimitsFor(acct.Plan)
 	usage.IncludedGBHours = int64(limits.IncludedGBHours)

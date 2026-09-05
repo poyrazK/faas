@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -45,7 +46,11 @@ type server struct {
 	objectStorage *objectstorage.Registry
 	store         state.Store
 	log           *slog.Logger
-	domain        string // apps base domain for URLs
+	// devSourceCacheMu serializes reconstruction with best-effort cache
+	// replacement. The cache is node-local and disposable; this lock is not
+	// cross-node coordination and never guards customer-intent state.
+	devSourceCacheMu sync.Mutex
+	domain           string // apps base domain for URLs
 	// cliAuthURLBase is the public web origin used by the CLI device-code
 	// response. The public edge at this origin forwards /cli-auth to apid.
 	cliAuthURLBase string
@@ -1232,6 +1237,7 @@ func (s *server) handler() http.Handler {
 
 	// Deployments.
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDeployment)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/dev-source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.handleDevSourceDeploy)))))
 	// ADR-117 §Production-ready follow-on, C2 — per-stage retry.
 	// Same auth chain as createDeployment (authLimited → requireMFA
 	// → requireScope(ScopesDeployWriteSurface)). NOT wrapped in
@@ -1723,6 +1729,7 @@ func (s *server) handler() http.Handler {
 	// receiver → sqlc INSERT) lands in PR-B; this GET exists so
 	// customers can already hit the endpoint and see rows once a
 	// row source is configured. Plan-gated by DebugTelemetryEnabled.
+	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryGetHandler))))

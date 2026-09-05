@@ -653,6 +653,7 @@ type App struct {
 	Type           AppType
 	Runtime        string // node22|python312|go124|go124-alpine|node24|python313 for functions
 	RAMMB          int
+	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default
 	MaxConcurrency int
 	// MinInstances is the per-app floor the reaper honors when parking
@@ -3851,10 +3852,9 @@ type Usage struct {
 	// Sampler.SampleAndRoll → AppendUsage. ADR-048.
 	// Informational — not billed. Unit = interface bytes.
 	NetRxBytes int64
-	// ColdBootCount is the per-month sum of WAKE_RESTORE→
-	// WAKE_COLD_BOOT transitions observed across this app's
-	// instances. Source: scheddgrpc.InstanceStatsRow.
-	// LastWakeMethod, sampled by meterd Sampler.
+	// ColdBootCount is the per-month sum of customer requests whose
+	// wake outcome was WAKE_COLD_BOOT across this app's instances.
+	// Source: gatewayd's minute-bucketed usage stream.
 	// ADR-048. Informational — not billed.
 	ColdBootCount int64
 }
@@ -3992,6 +3992,7 @@ type CreditLedgerEntry struct {
 // existing resource and scaling settings.
 type UpdateAppParams struct {
 	RAMMB          *int
+	CPUMillicores  *int
 	IdleTimeoutS   *int // explicit 0 clears to plan default
 	SetIdleTimeout bool // distinguishes nil from zero
 	MaxConcurrency *int

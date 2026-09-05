@@ -16,6 +16,7 @@ type CreateAppRequest struct {
 	Type           string `json:"type,omitempty"`    // "app" (default) | "function"
 	Runtime        string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
 	RAMMB          int    `json:"ram_mb,omitempty"`  // 0 => plan default
+	CPUMillicores  int    `json:"cpu_millicores,omitempty"`
 	MaxConcurrency int    `json:"max_concurrency,omitempty"`
 	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
 	// Lifecycle fields are optional at create-time. Empty values preserve the
@@ -42,6 +43,7 @@ type CreateAppRequest struct {
 // "set to zero".
 type UpdateAppRequest struct {
 	RAMMB          *int `json:"ram_mb,omitempty"`
+	CPUMillicores  *int `json:"cpu_millicores,omitempty"`
 	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
 	MaxConcurrency *int `json:"max_concurrency,omitempty"`
 	// Lifecycle fields are tri-state: nil leaves the current value unchanged.
@@ -138,6 +140,7 @@ type AppEffectiveLimits struct {
 	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
 	GuestVCPUs             int   `json:"guest_vcpus"`
 	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
+	PlanCPUMaxMillicores   int   `json:"plan_cpu_max_millicores"`
 	CPUWeight              int   `json:"cpu_weight"`
 	MaxInstances           int   `json:"max_instances"`
 	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
@@ -149,6 +152,11 @@ type AppEffectiveLimits struct {
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
 }
 
+type AppConfiguredResources struct {
+	MemoryMB      int `json:"memory_mb"`
+	CPUMillicores int `json:"cpu_millicores"`
+}
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
 	ID             string `json:"id"`
@@ -156,6 +164,7 @@ type AppResponse struct {
 	Type           string `json:"type"`
 	Runtime        string `json:"runtime,omitempty"`
 	RAMMB          int    `json:"ram_mb"`
+	CPUMillicores  int    `json:"cpu_millicores"`
 	MaxConcurrency int    `json:"max_concurrency"`
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
@@ -168,8 +177,9 @@ type AppResponse struct {
 	// single-event-loop, Python asyncio, Go net/http are
 	// concurrency-safe; sync subprocess-per-request handlers are
 	// not).
-	ConcurrencyPerVMBound int                `json:"concurrency_per_vm"`
-	EffectiveLimits       AppEffectiveLimits `json:"effective_limits"`
+	ConcurrencyPerVMBound int                    `json:"concurrency_per_vm"`
+	EffectiveLimits       AppEffectiveLimits     `json:"effective_limits"`
+	ConfiguredResources   AppConfiguredResources `json:"configured_resources"`
 	// RequireAuthn (issue #560) is the per-deployment token-
 	// gate flag. When true, every incoming request to this
 	// app must carry a valid `Authorization: Bearer <token>`

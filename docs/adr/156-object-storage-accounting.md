@@ -1,4 +1,4 @@
-# ADR-153 · Direct object storage accounting and safety budgets
+# ADR-156 · Direct object storage accounting and safety budgets
 
 - **Status:** accepted for the accounting milestone; paid launch remains gated.
 - **Date:** 2026-09-05

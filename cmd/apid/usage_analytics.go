@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -24,7 +25,7 @@ func usageDailyPoints(rows []state.DailyUsage, apps []state.App) []api.DailyUsag
 	byDate := make(map[string]*aggregate)
 	for _, row := range rows {
 		date := row.Day.UTC().Format("2006-01-02")
-		gbHours := float64(row.MBSeconds) / 3_600_000.0
+		gbHours := meter.GBHours(row.MBSeconds)
 		item := byDate[date]
 		if item == nil {
 			item = &aggregate{point: api.DailyUsagePoint{Date: date}}

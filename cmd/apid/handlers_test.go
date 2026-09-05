@@ -171,6 +171,9 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 	if out.MaxConcurrency != 1 {
 		t.Errorf("MaxConcurrency default = %d, want 1", out.MaxConcurrency)
 	}
+	if out.CPUMillicores != api.DefaultAppCPUMillicores || out.ConfiguredResources.CPUMillicores != api.DefaultAppCPUMillicores {
+		t.Errorf("CPU default/configured resources = %+v, want %dm", out, api.DefaultAppCPUMillicores)
+	}
 }
 
 func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {
@@ -185,6 +188,22 @@ func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {
 	if out.RAMMB != 256 || out.MaxConcurrency != 4 {
 		t.Errorf("explicit values lost: %+v", out)
 	}
+}
+
+func TestCreateApp_ExplicitCPU(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cpu-shape", CPUMillicores: 500}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.CPUMillicores != 500 || out.EffectiveLimits.CPULimitMillicores != 500 {
+		t.Fatalf("CPU shape not reflected: %+v", out)
+	}
+
+	bad := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "bad-cpu", CPUMillicores: 750}, nil)
+	assertProblem(t, bad, http.StatusUnprocessableEntity, api.CodeInvalidAppCPU)
 }
 
 func TestCreateDeployment_AppNotOwned(t *testing.T) {

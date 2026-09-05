@@ -1300,6 +1300,12 @@ func seedBuildEntropy() error {
 	return nil
 }
 
+// railpackFrontendRef must match RAILPACK_VERSION in
+// images/builder-base.Dockerfile. Pin the multi-architecture index so the
+// builder's plan generator and BuildKit frontend cannot drift independently
+// when upstream moves the latest tag.
+const railpackFrontendRef = "ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec"
+
 // buildArgv constructs the build-engine argv for one BuildManifest. The
 // Dockerfile framework uses buildctl directly. Railpack first prepares its
 // BuildKit plan, then the Railpack frontend is invoked with buildctl and an
@@ -1337,7 +1343,7 @@ func buildArgv(m api.BuildManifest) []string {
 	build := strings.Join([]string{
 		"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
 		"--frontend", "gateway.v0",
-		"--opt", "source=ghcr.io/railwayapp/railpack-frontend:latest",
+		"--opt", "source=" + railpackFrontendRef,
 		"--opt", "filename=railpack-plan.json",
 		"--local", "context=" + shellQuote(contextDir),
 		"--local", "dockerfile=" + shellQuote(planDir),

@@ -30,11 +30,14 @@ func ResidentBytes() (map[string]int64, bool) {
 	if runtime.GOOS != "linux" {
 		return nil, false
 	}
-	scopes := listTenantScopes()
+	return residentBytesAt("/sys/fs/cgroup/faas.slice/faas-tenant.slice"), true
+}
+
+func residentBytesAt(root string) map[string]int64 {
+	scopes := listTenantScopesAt(root)
 	out := make(map[string]int64, len(scopes))
 	for _, scope := range scopes {
-		base := strings.TrimPrefix(scope, "/sys/fs/cgroup/faas-tenant.slice/")
-		name := strings.TrimPrefix(base, "/")
+		name := filepath.Base(scope)
 		cur := filepath.Join(scope, "memory.current")
 		b, err := readCgroupInt(cur)
 		if err != nil {
@@ -44,7 +47,7 @@ func ResidentBytes() (map[string]int64, bool) {
 		}
 		out[name] = b
 	}
-	return out, true
+	return out
 }
 
 // listTenantScopes enumerates only the cgroup leaves that jailer
@@ -67,8 +70,7 @@ func ResidentBytes() (map[string]int64, bool) {
 // deploy/ansible asserts this). Implemented in this file (not the
 // metal-only leakcheck.go) so the Stats handler can call it on every
 // Linux build, not only on metal.
-func listTenantScopes() []string {
-	const base = "/sys/fs/cgroup/faas-tenant.slice"
+func listTenantScopesAt(base string) []string {
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return nil
@@ -79,16 +81,27 @@ func listTenantScopes() []string {
 			continue
 		}
 		name := e.Name()
-		// systemd / kernel slices always contain a dot ("init.scope",
-		// "user.slice", "system.slice", "*.mount"). The vmm jailer's
-		// scope directory names — Lease.Instance — never do (the
-		// alloc enforces [a-z0-9-]+). Skipping dot-bearing names keeps
-		// us in sync with the production naming without a separate
-		// marker file.
-		if strings.Contains(name, ".") {
+		if !strings.Contains(name, ".") {
+			out = append(out, filepath.Join(base, name))
 			continue
 		}
-		out = append(out, filepath.Join(base, name))
+		// Per-plan scopes are systemd slice directories. Accept both
+		// the corrected faas-tenant-<plan>.slice spelling and the
+		// legacy double-prefixed faas-tenant-tenant-<plan>.slice during
+		// a rolling upgrade, but do not recurse into unrelated slices.
+		if !strings.HasPrefix(name, "faas-tenant-") || !strings.HasSuffix(name, ".slice") {
+			continue
+		}
+		planDir := filepath.Join(base, name)
+		planEntries, perr := os.ReadDir(planDir)
+		if perr != nil {
+			continue
+		}
+		for _, child := range planEntries {
+			if child.IsDir() && !strings.Contains(child.Name(), ".") {
+				out = append(out, filepath.Join(planDir, child.Name()))
+			}
+		}
 	}
 	return out
 }

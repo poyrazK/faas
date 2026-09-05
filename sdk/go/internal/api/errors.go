@@ -163,6 +163,7 @@ const (
 	CodePlanLimitApps   = "plan_limit_apps"
 	CodePlanLimitRAM    = "plan_limit_ram"
 	CodePlanLimitConcur = "plan_limit_concurrency"
+	CodeInvalidAppCPU   = "invalid_cpu_millicores"
 	CodeSourceTooLarge  = "source_too_large"
 	CodeSourceInvalid   = "source_invalid"
 	CodeAppLayerTooBig  = "app_layer_too_large"
@@ -433,7 +434,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
-	case CodeDeployFailed:
+	case CodeDeployFailed, CodeInvalidAppCPU:
 		return http.StatusUnprocessableEntity
 	case CodeImageNotFound, CodeImageManifestInvalid:
 		return http.StatusUnprocessableEntity
