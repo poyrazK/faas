@@ -6,37 +6,22 @@ from uuid import UUID
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.list_bucket_objects_response_200 import ListBucketObjectsResponse200
+from ...models.object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from ...models.problem import Problem
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
     slug: str,
     bucket: UUID,
-    *,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
 ) -> dict[str, Any]:
-
-    params: dict[str, Any] = {}
-
-    params["prefix"] = prefix
-
-    params["cursor"] = cursor
-
-    params["limit"] = limit
-
-    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/apps/{slug}/buckets/{bucket}/objects".format(
+        "url": "/v1/apps/{slug}/buckets/{bucket}/access-grants".format(
             slug=quote(str(slug), safe=""),
             bucket=quote(str(bucket), safe=""),
         ),
-        "params": params,
     }
 
     return _kwargs
@@ -44,9 +29,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ListBucketObjectsResponse200 | Problem:
+) -> ObjectBucketAccessGrantList | Problem:
     if response.status_code == 200:
-        response_200 = ListBucketObjectsResponse200.from_dict(response.json())
+        response_200 = ObjectBucketAccessGrantList.from_dict(response.json())
 
         return response_200
 
@@ -57,7 +42,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ListBucketObjectsResponse200 | Problem]:
+) -> Response[ObjectBucketAccessGrantList | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,36 +56,26 @@ def sync_detailed(
     bucket: UUID,
     *,
     client: AuthenticatedClient | Client,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
-) -> Response[ListBucketObjectsResponse200 | Problem]:
-    """List objects with opaque cursor pagination
+) -> Response[ObjectBucketAccessGrantList | Problem]:
+    """List API-key access grants for a bucket
 
-     Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+     Requires storage:manage or admin. Revoked keys remain visible until their key row is deleted.
 
     Args:
         slug (str):
         bucket (UUID):
-        prefix (str | Unset):
-        cursor (str | Unset):
-        limit (int | Unset):  Default: 100.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ListBucketObjectsResponse200 | Problem]
+        Response[ObjectBucketAccessGrantList | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
         bucket=bucket,
-        prefix=prefix,
-        cursor=cursor,
-        limit=limit,
     )
 
     response = client.get_httpx_client().request(
@@ -115,37 +90,27 @@ def sync(
     bucket: UUID,
     *,
     client: AuthenticatedClient | Client,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
-) -> ListBucketObjectsResponse200 | Problem | None:
-    """List objects with opaque cursor pagination
+) -> ObjectBucketAccessGrantList | Problem | None:
+    """List API-key access grants for a bucket
 
-     Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+     Requires storage:manage or admin. Revoked keys remain visible until their key row is deleted.
 
     Args:
         slug (str):
         bucket (UUID):
-        prefix (str | Unset):
-        cursor (str | Unset):
-        limit (int | Unset):  Default: 100.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ListBucketObjectsResponse200 | Problem
+        ObjectBucketAccessGrantList | Problem
     """
 
     return sync_detailed(
         slug=slug,
         bucket=bucket,
         client=client,
-        prefix=prefix,
-        cursor=cursor,
-        limit=limit,
     ).parsed
 
 
@@ -154,36 +119,26 @@ async def asyncio_detailed(
     bucket: UUID,
     *,
     client: AuthenticatedClient | Client,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
-) -> Response[ListBucketObjectsResponse200 | Problem]:
-    """List objects with opaque cursor pagination
+) -> Response[ObjectBucketAccessGrantList | Problem]:
+    """List API-key access grants for a bucket
 
-     Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+     Requires storage:manage or admin. Revoked keys remain visible until their key row is deleted.
 
     Args:
         slug (str):
         bucket (UUID):
-        prefix (str | Unset):
-        cursor (str | Unset):
-        limit (int | Unset):  Default: 100.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ListBucketObjectsResponse200 | Problem]
+        Response[ObjectBucketAccessGrantList | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
         bucket=bucket,
-        prefix=prefix,
-        cursor=cursor,
-        limit=limit,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -196,28 +151,21 @@ async def asyncio(
     bucket: UUID,
     *,
     client: AuthenticatedClient | Client,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
-) -> ListBucketObjectsResponse200 | Problem | None:
-    """List objects with opaque cursor pagination
+) -> ObjectBucketAccessGrantList | Problem | None:
+    """List API-key access grants for a bucket
 
-     Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+     Requires storage:manage or admin. Revoked keys remain visible until their key row is deleted.
 
     Args:
         slug (str):
         bucket (UUID):
-        prefix (str | Unset):
-        cursor (str | Unset):
-        limit (int | Unset):  Default: 100.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ListBucketObjectsResponse200 | Problem
+        ObjectBucketAccessGrantList | Problem
     """
 
     return (
@@ -225,8 +173,5 @@ async def asyncio(
             slug=slug,
             bucket=bucket,
             client=client,
-            prefix=prefix,
-            cursor=cursor,
-            limit=limit,
         )
     ).parsed

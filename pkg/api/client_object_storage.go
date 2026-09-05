@@ -57,6 +57,22 @@ func (c *Client) DeleteObjectBucket(ctx context.Context, slug, bucket string) er
 	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket), nil, nil)
 }
 
+func (c *Client) ListObjectBucketAccessGrants(ctx context.Context, slug, bucket string) (ObjectBucketAccessGrantList, error) {
+	var out ObjectBucketAccessGrantList
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/access-grants", nil, &out)
+	return out, err
+}
+
+func (c *Client) SetObjectBucketAccessGrant(ctx context.Context, slug, bucket, key string, req SetObjectBucketAccessGrantRequest) (ObjectBucketAccessGrant, error) {
+	var out ObjectBucketAccessGrant
+	err := c.do(ctx, http.MethodPut, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/access-grants/"+url.PathEscape(key), req, &out)
+	return out, err
+}
+
+func (c *Client) DeleteObjectBucketAccessGrant(ctx context.Context, slug, bucket, key string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/access-grants/"+url.PathEscape(key), nil, nil)
+}
+
 func (c *Client) ListBucketObjects(ctx context.Context, slug, bucket, prefix, cursor string, limit int) (BucketObjectPage, error) {
 	query := url.Values{"prefix": {prefix}, "cursor": {cursor}}
 	if limit != 0 {

@@ -53,8 +53,8 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Delete an empty bucket
 
-     Requires deploy:write or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat
-    after successful deletion returns 404.
+     Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409.
+    Repeat after successful deletion returns 404.
 
     Args:
         slug (str):
@@ -88,8 +88,8 @@ def sync(
 ) -> Any | Problem | None:
     """Delete an empty bucket
 
-     Requires deploy:write or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat
-    after successful deletion returns 404.
+     Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409.
+    Repeat after successful deletion returns 404.
 
     Args:
         slug (str):
@@ -118,8 +118,8 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Delete an empty bucket
 
-     Requires deploy:write or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat
-    after successful deletion returns 404.
+     Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409.
+    Repeat after successful deletion returns 404.
 
     Args:
         slug (str):
@@ -151,8 +151,8 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Delete an empty bucket
 
-     Requires deploy:write or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat
-    after successful deletion returns 404.
+     Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409.
+    Repeat after successful deletion returns 404.
 
     Args:
         slug (str):

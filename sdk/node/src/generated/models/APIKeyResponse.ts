@@ -17,9 +17,9 @@ export type APIKeyResponse = {
   prefix: string;
   label?: string | null;
   /**
-   * Permission set attached to the key. Closed vocabulary (IAM-1, ADR-034 rev2): admin is the legacy full-access scope; apps:read covers GETs across the apps/deployments/audit/secrets-list surface; deploy:write covers POST/PUT/PATCH/DELETE on apps+queues; secrets:write covers PUT/DELETE on /apps/{slug}/secrets/{key}; usage:read covers GET /v1/usage*.
+   * Closed permission set attached to the key. storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access.
    */
-  scopes: Array<'admin' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'apps:read' | 'env:read' | 'env:write'>;
+  scopes: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'storage:manage' | 'storage:read' | 'storage:write'>;
   last_used_at?: string | null;
   created_at: string;
   /**

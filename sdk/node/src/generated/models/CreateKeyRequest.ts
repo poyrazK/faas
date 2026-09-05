@@ -8,8 +8,8 @@
 export type CreateKeyRequest = {
   label?: string;
   /**
-   * Requested permission set. Server validates each entry against the closed vocabulary and rejects unknown scopes at mint time. `admin` is the legacy full-access scope; the other five cover narrower surfaces (see APIKeyResponse.scopes). See IAM-1, ADR-034 rev2.
+   * Requested permission set. The server rejects unknown scopes. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket.
    */
-  scopes?: Array<'admin' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'apps:read' | 'env:read' | 'env:write'>;
+  scopes?: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'storage:manage' | 'storage:read' | 'storage:write'>;
 };
 

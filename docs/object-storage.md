@@ -254,14 +254,28 @@ the operator/provider tools as well as this configuration.
 ## API quick reference
 
 All paths are under `/v1/apps/{slug}/buckets`, authenticated using existing
-Gregale sessions/API keys and MFA policy. Read operations require `apps:read` or
-`admin`; mutations require `deploy:write` or `admin`.
+Gregale sessions/API keys and MFA policy. Bucket lifecycle and grant management
+require `storage:manage`; object reads require `storage:read`; object writes
+require `storage:write`. `admin` and dashboard sessions retain full access.
+
+For a non-admin data key, a scope is necessary but not sufficient: the key must
+also have an explicit grant on the target bucket. A `read` grant permits object
+listing and GET URL issuance, `write` permits object deletion and PUT URL
+issuance, and `read_write` permits both when the key carries both scopes.
+`storage:manage` does not imply data access. A storage read/write key sees only
+its granted buckets in the bucket list; a management principal sees all buckets.
 
 - `GET /`: bucket list and configured limits/regions, across environment scopes.
 - `POST /`: `{ "name": "assets", "scope": "default", "region": "us-east-1" }`.
   Omit scope/region for defaults. Retry the same name/scope after failed setup.
 - `DELETE /{bucket-id}`: empty-only deletion. Nonempty returns 409; success 204;
   already deleted returns 404. Delete all buckets before deleting the app.
+- `GET /{bucket-id}/access-grants`: list the bucket's API-key grants.
+- `PUT /{bucket-id}/access-grants/{key-id}`: create or replace a grant with
+  `{ "permission": "read" }`, `write`, or `read_write`. The target key must
+  carry the corresponding storage scope(s). Admin keys do not need grants.
+- `DELETE /{bucket-id}/access-grants/{key-id}`: revoke the grant. Already-issued
+  URLs remain valid only until their short expiry.
 - `GET /{bucket-id}/objects?prefix=folder%2F&limit=100&cursor=...`: one page;
   pass `next_cursor` without interpreting it, keeping the same prefix.
 - `DELETE /{bucket-id}/objects?key=...`: URL-encode the entire exact key.
@@ -276,6 +290,12 @@ the File body; preserve other returned headers, including Content-MD5 for empty
 uploads. URLs default to five minutes and allow at most fifteen; they may be
 reused until expiry and PUT replaces an existing key. Do not log or persist them.
 Changing app permissions does not revoke previously issued URLs.
+
+Key rotation copies bucket grants to the successor so applications can switch
+credentials during the normal grace window. Store the resulting narrowly scoped
+Gregale key through the existing app-secret workflow when a workload needs to
+request signed URLs. Gregale does not inject it automatically and never gives a
+workload the operator's upstream S3 credential.
 
 ## Switch providers without rewriting the product
 

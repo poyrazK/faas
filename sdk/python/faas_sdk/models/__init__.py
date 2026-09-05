@@ -465,6 +465,10 @@ from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
 from .o_auth_provider_capability import OAuthProviderCapability
 from .object_bucket import ObjectBucket
+from .object_bucket_access_grant import ObjectBucketAccessGrant
+from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
+from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
+from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
 from .object_bucket_list import ObjectBucketList
 from .object_bucket_state import ObjectBucketState
 from .object_sign_request import ObjectSignRequest
@@ -622,6 +626,8 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
+from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
@@ -1204,6 +1210,10 @@ __all__ = (
     "MirrorSummaryResponse",
     "OAuthProviderCapability",
     "ObjectBucket",
+    "ObjectBucketAccessGrant",
+    "ObjectBucketAccessGrantKeyStatus",
+    "ObjectBucketAccessGrantList",
+    "ObjectBucketAccessGrantPermission",
     "ObjectBucketList",
     "ObjectBucketState",
     "ObjectSignedRequest",
@@ -1357,6 +1367,8 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
     "SetGraceWindowRequest",
+    "SetObjectBucketAccessGrantRequest",
+    "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
     "SeverityCounts",
     "Sidecar",

@@ -277,6 +277,7 @@ func TestIsValidScope_AcceptsClosedSet(t *testing.T) {
 		ScopeEnvRead, ScopeEnvWrite,
 		ScopeRegistryCredentialsRead, ScopeRegistryCredentialsWrite,
 		ScopeUpstreamsWrite,
+		ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite,
 	} {
 		if !IsValidScope(s) {
 			t.Errorf("IsValidScope(%q) = false, want true (closed-set member)", s)

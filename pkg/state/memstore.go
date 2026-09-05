@@ -105,6 +105,7 @@ type MemStore struct {
 	objectGrants         map[string]map[string]int64
 	objectReports        []api.ObjectStorageUsageReport
 	objectAuthorizations map[string]int64
+	objectAccessGrants   map[string]ObjectBucketAccessGrant
 	mu                   sync.Mutex
 	accounts             map[string]Account
 	keys                 map[string]APIKey
@@ -696,12 +697,13 @@ type builderUsageRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		accounts:       map[string]Account{},
-		keys:           map[string]APIKey{},
-		keyByHash:      map[string]APIKey{},
-		apps:           map[string]App{},
-		githubBindings: map[string]GitHubBinding{},
-		githubInstalls: map[string]GitHubInstall{},
+		objectAccessGrants: map[string]ObjectBucketAccessGrant{},
+		accounts:           map[string]Account{},
+		keys:               map[string]APIKey{},
+		keyByHash:          map[string]APIKey{},
+		apps:               map[string]App{},
+		githubBindings:     map[string]GitHubBinding{},
+		githubInstalls:     map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
@@ -1719,6 +1721,7 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
+	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -1746,6 +1749,7 @@ func (m *MemStore) DeleteAPIKey(_ context.Context, accountID, keyID string) erro
 	}
 	delete(m.keys, keyID)
 	delete(m.keyByHash, hex.EncodeToString(k.Hash))
+	m.deleteObjectBucketAccessGrantsForKeyLocked(keyID)
 	return nil
 }
 
@@ -1764,6 +1768,7 @@ func (m *MemStore) DeleteAPIKeyReturning(_ context.Context, accountID, keyID str
 	}
 	delete(m.keys, keyID)
 	delete(m.keyByHash, hex.EncodeToString(k.Hash))
+	m.deleteObjectBucketAccessGrantsForKeyLocked(keyID)
 	return k, nil
 }
 
@@ -1936,6 +1941,7 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
+	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -2126,6 +2132,7 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
+	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -13678,6 +13685,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.objectBuckets, bucketID)
 			delete(m.objectUsage, bucketID)
 			delete(m.objectGrants, bucketID)
+		}
+	}
+	for grantKey, grant := range m.objectAccessGrants {
+		if grant.AccountID == id {
+			delete(m.objectAccessGrants, grantKey)
 		}
 	}
 	reports := m.objectReports[:0]

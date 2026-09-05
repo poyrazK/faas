@@ -36,3 +36,28 @@ type ObjectSignedRequest struct {
 	Headers   map[string]string `json:"headers"`
 	ExpiresAt time.Time         `json:"expires_at"`
 }
+
+const (
+	ObjectBucketPermissionRead      = "read"
+	ObjectBucketPermissionWrite     = "write"
+	ObjectBucketPermissionReadWrite = "read_write"
+)
+
+// ObjectBucketAccessGrant binds one Gregale API key to one logical bucket.
+// No provider credential or physical bucket identifier is exposed.
+type ObjectBucketAccessGrant struct {
+	KeyID      string    `json:"key_id"`
+	KeyLabel   string    `json:"key_label"`
+	KeyStatus  string    `json:"key_status"`
+	Permission string    `json:"permission"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type ObjectBucketAccessGrantList struct {
+	Items []ObjectBucketAccessGrant `json:"items"`
+}
+
+type SetObjectBucketAccessGrantRequest struct {
+	Permission string `json:"permission"`
+}

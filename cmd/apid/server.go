@@ -952,12 +952,15 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listBuckets))))
-	mux.HandleFunc("POST /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createBucket))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteBucket))))
-	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listBucketObjects))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteBucketObject))))
-	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeAppsRead, api.ScopeDeployWrite)(s.signBucketObject))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.listBuckets))))
+	mux.HandleFunc("POST /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.createBucket))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.deleteBucket))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/access-grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.listBucketAccessGrants))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.setBucketAccessGrant))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.deleteBucketAccessGrant))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageReadSurface...)(s.listBucketObjects))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.deleteBucketObject))))
+	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeStorageRead, api.ScopeStorageWrite)(s.signBucketObject))))
 	// Account. The /v1/account/plan change is destructive across the
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).

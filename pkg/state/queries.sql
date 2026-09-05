@@ -2189,6 +2189,72 @@ SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 
 -- name: ObjectBucketGet :one
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted';
 
+-- name: ObjectBucketAccessGrantList :many
+SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
+       coalesce(k.label, '')::text AS key_label, k.status AS key_status,
+       g.created_at, g.updated_at
+FROM object_storage_access_grants g
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND b.state <> 'deleted'
+ORDER BY g.created_at, g.api_key_id;
+
+-- name: ObjectBucketAccessGrantGet :one
+SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
+       coalesce(k.label, '')::text AS key_label, k.status AS key_status,
+       g.created_at, g.updated_at
+FROM object_storage_access_grants g
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+  AND b.state <> 'deleted';
+
+-- name: ObjectBucketAccessGrantUpsert :execrows
+INSERT INTO object_storage_access_grants (account_id, bucket_id, api_key_id, permission)
+SELECT b.account_id, b.id, k.id, sqlc.arg(permission)::text
+FROM object_buckets b
+JOIN api_keys k ON k.account_id = b.account_id
+WHERE b.account_id = sqlc.arg(account_id) AND b.id = sqlc.arg(bucket_id)
+  AND b.state <> 'deleted' AND k.id = sqlc.arg(api_key_id)
+  AND k.status IN ('active', 'grace')
+  AND NOT ('admin' = ANY(k.scopes))
+  AND (sqlc.arg(permission)::text <> 'read' OR k.scopes @> ARRAY['storage:read']::text[])
+  AND (sqlc.arg(permission)::text <> 'write' OR k.scopes @> ARRAY['storage:write']::text[])
+  AND (sqlc.arg(permission)::text <> 'read_write' OR k.scopes @> ARRAY['storage:read', 'storage:write']::text[])
+ON CONFLICT (bucket_id, api_key_id) DO UPDATE
+SET permission = EXCLUDED.permission, updated_at = now();
+
+-- name: ObjectBucketAccessGrantDelete :execrows
+DELETE FROM object_storage_access_grants g
+USING object_buckets b, api_keys k
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+  AND b.id = g.bucket_id AND b.account_id = g.account_id AND b.state <> 'deleted'
+  AND k.id = g.api_key_id AND k.account_id = g.account_id;
+
+-- name: ObjectBucketAccessCheck :one
+SELECT EXISTS (
+    SELECT 1
+    FROM object_storage_access_grants g
+    JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+    JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+    WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+      AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+      AND (($4::text = 'read' AND g.permission IN ('read', 'read_write'))
+        OR ($4::text = 'write' AND g.permission IN ('write', 'read_write')))
+      AND (($4::text = 'read' AND k.scopes @> ARRAY['storage:read']::text[])
+        OR ($4::text = 'write' AND k.scopes @> ARRAY['storage:write']::text[]))
+) AS allowed;
+
+-- name: ObjectBucketListForKey :many
+SELECT b.*
+FROM object_buckets b
+JOIN object_storage_access_grants g
+  ON g.bucket_id = b.id AND g.account_id = b.account_id
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+WHERE b.account_id = $1 AND b.app_id = $2 AND g.api_key_id = $3
+  AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+ORDER BY b.created_at, b.id;
+
 -- name: ObjectBucketClaim :one
 UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now(),
 attempt_count = CASE WHEN state <> $1 THEN 1 ELSE least(attempt_count + 1, 30) END,

@@ -1029,7 +1029,7 @@ CREATE TABLE public.api_keys (
     created_ip inet,
     created_ua text,
     parent_key_id uuid,
-    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'apps:read'::text, 'env:read'::text, 'env:write'::text]) AND (cardinality(scopes) > 0))),
+    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );
 
@@ -7968,7 +7968,41 @@ ALTER TABLE ONLY public.usage_minutes
 
 
 --
+-- Name: copy_object_storage_grants_on_key_rotation(); Type: FUNCTION; Schema: public; Owner: -
 --
+
+CREATE FUNCTION public.copy_object_storage_grants_on_key_rotation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.rotated_from_id IS NOT NULL THEN
+        INSERT INTO object_storage_access_grants
+            (account_id, bucket_id, api_key_id, permission, created_at, updated_at)
+        SELECT account_id, bucket_id, NEW.id, permission, now(), now()
+          FROM object_storage_access_grants
+         WHERE api_key_id = NEW.rotated_from_id
+        ON CONFLICT (bucket_id, api_key_id) DO UPDATE
+            SET permission = EXCLUDED.permission, updated_at = now();
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: delete_object_storage_grants_on_bucket_delete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.delete_object_storage_grants_on_bucket_delete() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DELETE FROM object_storage_access_grants WHERE bucket_id = NEW.id;
+    RETURN NEW;
+END;
+$$;
+
+
 --
 -- Name: guard_app_object_buckets(); Type: FUNCTION; Schema: public; Owner: -
 --
@@ -8020,6 +8054,24 @@ CREATE TABLE public.object_buckets (
 
 
 --
+-- Name: object_storage_access_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_access_grants (
+    account_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    api_key_id uuid NOT NULL,
+    permission text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_storage_access_grants_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
+    CONSTRAINT object_storage_access_grants_pkey PRIMARY KEY (bucket_id, api_key_id)
+);
+
+CREATE INDEX object_storage_access_grants_key_idx ON public.object_storage_access_grants USING btree (account_id, api_key_id, bucket_id);
+
+
+--
 -- Name: object_buckets object_buckets_physical_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8033,6 +8085,30 @@ ALTER TABLE ONLY public.object_buckets
 
 ALTER TABLE ONLY public.object_buckets
     ADD CONSTRAINT object_buckets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_access_grants object_storage_access_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_access_grants
+    ADD CONSTRAINT object_storage_access_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_access_grants object_storage_access_grants_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_access_grants
+    ADD CONSTRAINT object_storage_access_grants_api_key_id_fkey FOREIGN KEY (api_key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_access_grants object_storage_access_grants_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_access_grants
+    ADD CONSTRAINT object_storage_access_grants_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --
@@ -8056,6 +8132,20 @@ CREATE UNIQUE INDEX object_buckets_name_idx ON public.object_buckets USING btree
 --
 
 CREATE TRIGGER app_object_buckets_guard BEFORE UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_app_object_buckets();
+
+
+--
+-- Name: api_keys api_key_rotation_copy_object_storage_grants; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_key_rotation_copy_object_storage_grants AFTER INSERT ON public.api_keys FOR EACH ROW WHEN ((new.rotated_from_id IS NOT NULL)) EXECUTE FUNCTION public.copy_object_storage_grants_on_key_rotation();
+
+
+--
+-- Name: object_buckets object_bucket_delete_access_grants; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_delete_access_grants AFTER UPDATE OF state ON public.object_buckets FOR EACH ROW WHEN (((new.state = 'deleted'::text) AND (old.state IS DISTINCT FROM new.state))) EXECUTE FUNCTION public.delete_object_storage_grants_on_bucket_delete();
 
 
 --

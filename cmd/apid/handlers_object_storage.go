@@ -90,7 +90,19 @@ func (s *server) listBuckets(w http.ResponseWriter, r *http.Request, acct state.
 	if !ok {
 		return
 	}
-	buckets, err := st.ListObjectBuckets(r.Context(), acct.ID, app.ID)
+	var buckets []state.ObjectBucket
+	var err error
+	p, principalOK := principalFrom(r)
+	access, hasAccessStore := s.store.(state.ObjectBucketAccessStore)
+	if principalOK && p.Key != nil && !apiKeyCarriesScope(*p.Key, api.ScopeAdmin) && !apiKeyCarriesScope(*p.Key, api.ScopeStorageManage) {
+		if !hasAccessStore {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
+		buckets, err = access.ListObjectBucketsForKey(r.Context(), acct.ID, app.ID, p.Key.ID)
+	} else {
+		buckets, err = st.ListObjectBuckets(r.Context(), acct.ID, app.ID)
+	}
 	if err != nil {
 		bucketProblem(w, err)
 		return
@@ -105,6 +117,33 @@ func (s *server) listBuckets(w http.ResponseWriter, r *http.Request, acct state.
 		maxBytes, maxBuckets = s.objectStorage.MaxUploadBytes, s.objectStorage.MaxBucketsPerApp
 	}
 	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorageEnabled(), Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
+}
+
+func apiKeyCarriesScope(key state.APIKey, want string) bool {
+	for _, scope := range key.Scopes {
+		if scope == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *server) loadBucketRecord(w http.ResponseWriter, r *http.Request, acct state.Account) (state.ObjectBucket, state.ObjectBucketStore, bool) {
+	app, st, ok := s.bucketStore(w, r, acct)
+	if !ok {
+		return state.ObjectBucket{}, nil, false
+	}
+	id := r.PathValue("bucket")
+	if _, err := uuid.Parse(id); err != nil {
+		bucketProblem(w, state.ErrNotFound)
+		return state.ObjectBucket{}, nil, false
+	}
+	bucket, err := st.GetObjectBucket(r.Context(), acct.ID, app.ID, id)
+	if err != nil {
+		bucketProblem(w, err)
+		return bucket, st, false
+	}
+	return bucket, st, true
 }
 
 type createBucketRequest struct {
@@ -207,17 +246,12 @@ func finishBucket(ctx context.Context, st state.ObjectBucketStore, id, token, ne
 }
 
 func (s *server) loadBucket(w http.ResponseWriter, r *http.Request, acct state.Account, ready bool) (state.ObjectBucket, state.ObjectBucketStore, objectstorage.Provider, bool) {
-	app, st, ok := s.bucketStore(w, r, acct)
+	b, st, ok := s.loadBucketRecord(w, r, acct)
 	if !ok {
 		return state.ObjectBucket{}, nil, nil, false
 	}
-	id := r.PathValue("bucket")
-	if _, err := uuid.Parse(id); err != nil {
-		bucketProblem(w, state.ErrNotFound)
-		return state.ObjectBucket{}, nil, nil, false
-	}
-	b, err := st.GetObjectBucket(r.Context(), acct.ID, app.ID, id)
-	if err == nil && ready && b.State != "ready" {
+	var err error
+	if ready && b.State != "ready" {
 		err = state.ErrConflict
 	}
 	if err != nil {
@@ -230,6 +264,32 @@ func (s *server) loadBucket(w http.ResponseWriter, r *http.Request, acct state.A
 		return b, st, nil, false
 	}
 	return b, st, backend.Provider, true
+}
+
+func (s *server) authorizeBucketData(w http.ResponseWriter, r *http.Request, bucket state.ObjectBucket, permission string) bool {
+	p, ok := principalFrom(r)
+	if !ok {
+		bucketProblem(w, objectstorage.ErrUnavailable)
+		return false
+	}
+	if p.Key == nil || apiKeyCarriesScope(*p.Key, api.ScopeAdmin) {
+		return true
+	}
+	access, ok := s.store.(state.ObjectBucketAccessStore)
+	if !ok {
+		bucketProblem(w, objectstorage.ErrUnavailable)
+		return false
+	}
+	allowed, err := access.ObjectBucketKeyCan(r.Context(), bucket.AccountID, bucket.ID, p.Key.ID, permission)
+	if err != nil {
+		bucketProblem(w, err)
+		return false
+	}
+	if !allowed {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "object_storage_access_denied", "Forbidden", "The API key has no matching grant for this bucket."))
+		return false
+	}
+	return true
 }
 
 func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -256,6 +316,9 @@ func (s *server) listBucketObjects(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
+	if !s.authorizeBucketData(w, r, b, state.ObjectBucketPermissionRead) {
+		return
+	}
 	prefix, cursor := r.URL.Query().Get("prefix"), r.URL.Query().Get("cursor")
 	limit := int64(100)
 	var err error
@@ -277,6 +340,9 @@ func (s *server) listBucketObjects(w http.ResponseWriter, r *http.Request, acct 
 func (s *server) deleteBucketObject(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	b, _, provider, ok := s.loadBucket(w, r, acct, true)
 	if !ok {
+		return
+	}
+	if !s.authorizeBucketData(w, r, b, state.ObjectBucketPermissionWrite) {
 		return
 	}
 	key := r.URL.Query().Get("key")
@@ -311,6 +377,13 @@ func (s *server) signBucketObject(w http.ResponseWriter, r *http.Request, acct s
 			bucketProblem(w, err)
 			return
 		}
+		permission := state.ObjectBucketPermissionRead
+		if req.Method == "PUT" {
+			permission = state.ObjectBucketPermissionWrite
+		}
+		if !s.authorizeBucketData(w, r, b, permission) {
+			return
+		}
 		// Commit capacity and authorization accounting before exposing a URL.
 		// Signer/network failures intentionally do not refund the reservation:
 		// a lost response is not proof that no usable capability was issued.
@@ -326,8 +399,115 @@ func (s *server) signBucketObject(w http.ResponseWriter, r *http.Request, acct s
 		writeJSON(w, 200, out)
 	}
 	if req.Method == "PUT" {
-		s.requireScope(api.ScopesDeployWriteSurface...)(handler)(w, r, acct)
+		s.requireScope(api.ScopesStorageWriteSurface...)(handler)(w, r, acct)
 		return
 	}
-	s.requireScope(api.ScopesReadSurface...)(handler)(w, r, acct)
+	s.requireScope(api.ScopesStorageReadSurface...)(handler)(w, r, acct)
+}
+
+func viewBucketAccessGrant(grant state.ObjectBucketAccessGrant) api.ObjectBucketAccessGrant {
+	return api.ObjectBucketAccessGrant{
+		KeyID: grant.APIKeyID, KeyLabel: grant.KeyLabel, KeyStatus: grant.KeyStatus,
+		Permission: grant.Permission, CreatedAt: grant.CreatedAt, UpdatedAt: grant.UpdatedAt,
+	}
+}
+
+func (s *server) bucketAccessStore(w http.ResponseWriter, r *http.Request, acct state.Account) (state.ObjectBucket, state.ObjectBucketAccessStore, bool) {
+	bucket, _, ok := s.loadBucketRecord(w, r, acct)
+	if !ok {
+		return state.ObjectBucket{}, nil, false
+	}
+	access, ok := s.store.(state.ObjectBucketAccessStore)
+	if !ok {
+		bucketProblem(w, objectstorage.ErrUnavailable)
+		return state.ObjectBucket{}, nil, false
+	}
+	return bucket, access, true
+}
+
+func (s *server) listBucketAccessGrants(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	bucket, access, ok := s.bucketAccessStore(w, r, acct)
+	if !ok {
+		return
+	}
+	grants, err := access.ListObjectBucketAccessGrants(r.Context(), acct.ID, bucket.ID)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	items := make([]api.ObjectBucketAccessGrant, 0, len(grants))
+	for _, grant := range grants {
+		items = append(items, viewBucketAccessGrant(grant))
+	}
+	writeJSON(w, http.StatusOK, api.ObjectBucketAccessGrantList{Items: items})
+}
+
+func (s *server) setBucketAccessGrant(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	bucket, access, ok := s.bucketAccessStore(w, r, acct)
+	if !ok {
+		return
+	}
+	keyID := r.PathValue("key")
+	if _, err := uuid.Parse(keyID); err != nil {
+		bucketProblem(w, state.ErrNotFound)
+		return
+	}
+	var req api.SetObjectBucketAccessGrantRequest
+	if !decodeBucketRequest(w, r, &req) {
+		return
+	}
+	key, err := s.store.GetAPIKey(r.Context(), acct.ID, keyID)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	if key.Status != string(state.APIKeyStatusActive) && key.Status != string(state.APIKeyStatusGrace) {
+		bucketProblem(w, state.ErrConflict)
+		return
+	}
+	valid := !apiKeyCarriesScope(key, api.ScopeAdmin)
+	switch req.Permission {
+	case api.ObjectBucketPermissionRead:
+		valid = valid && apiKeyCarriesScope(key, api.ScopeStorageRead)
+	case api.ObjectBucketPermissionWrite:
+		valid = valid && apiKeyCarriesScope(key, api.ScopeStorageWrite)
+	case api.ObjectBucketPermissionReadWrite:
+		valid = valid && apiKeyCarriesScope(key, api.ScopeStorageRead) && apiKeyCarriesScope(key, api.ScopeStorageWrite)
+	default:
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	if !valid {
+		bucketProblem(w, state.ErrConflict)
+		return
+	}
+	grant, err := access.SetObjectBucketAccessGrant(r.Context(), acct.ID, bucket.ID, keyID, req.Permission)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	s.audit.Emit(r.Context(), "object_storage.access_grant_set", &acct.ID, map[string]any{
+		"app_id": bucket.AppID, "bucket_id": bucket.ID, "key_id": keyID, "permission": req.Permission,
+	})
+	writeJSON(w, http.StatusOK, viewBucketAccessGrant(grant))
+}
+
+func (s *server) deleteBucketAccessGrant(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	bucket, access, ok := s.bucketAccessStore(w, r, acct)
+	if !ok {
+		return
+	}
+	keyID := r.PathValue("key")
+	if _, err := uuid.Parse(keyID); err != nil {
+		bucketProblem(w, state.ErrNotFound)
+		return
+	}
+	if err := access.DeleteObjectBucketAccessGrant(r.Context(), acct.ID, bucket.ID, keyID); err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	s.audit.Emit(r.Context(), "object_storage.access_grant_deleted", &acct.ID, map[string]any{
+		"app_id": bucket.AppID, "bucket_id": bucket.ID, "key_id": keyID,
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
