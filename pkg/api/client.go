@@ -860,6 +860,44 @@ func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string,
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
 
+// DeployDevSource uploads either a complete developer source snapshot
+// (baseRevision empty) or a delta against a previously accepted revision. The
+// server always reconstructs a complete archive before normal deploy
+// validation. A missing disposable base returns CodeDevSourceBaseMissing so
+// callers can transparently retry with the complete snapshot.
+func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations, baseRevision, targetRevision string, deleted []string) (DeploymentResponse, error) {
+	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("invalid source root: %w", err)
+	}
+	if targetRevision == "" {
+		return DeploymentResponse{}, errors.New("developer source target revision is required")
+	}
+	var b bytes.Buffer
+	w := newDevSourceMultipartWriter(&b, slug, dockerfile, runtime, handler, storedRoot, ann, baseRevision, targetRevision, deleted)
+	fw, err := w.CreateFormFile("source", sourceName)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := io.Copy(fw, source); err != nil {
+		return DeploymentResponse{}, fmt.Errorf("copy source: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return DeploymentResponse{}, fmt.Errorf("close multipart writer: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/apps/"+slug+"/deployments/dev-source", &b)
+	if err != nil {
+		return DeploymentResponse{}, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Idempotency-Key", newUUIDv4())
+	var out DeploymentResponse
+	return out, c.doReq(c.uploadHTTP(), req, &out)
+}
+
 // DeployFromSourceRef is the headless CI deploy path (issue #739 /
 // DEPLOY-PROV-4 / ADR-092). Caller supplies a GitHub repo slug and
 // the ref they want to deploy — branch, tag, or 40-char SHA — and

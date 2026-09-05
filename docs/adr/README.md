@@ -23,6 +23,8 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
+| 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |
 | 152 | [Configurable sustained CPU per app](152-configurable-app-cpu.md): 250m, 500m, and 1000m cgroup quotas with configured/effective API visibility | accepted | Cloud Run gap analysis |
 | 151 | [Provider-neutral customer object storage](151-provider-neutral-object-storage.md): opt-in managed S3 buckets with durable placement and provider-neutral APIs | accepted for preview | S3 preview milestone; public launch pending billing and backend qualification |
 | 001–010 | Locked v1 decisions | accepted | spec §3 |

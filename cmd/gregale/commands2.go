@@ -897,7 +897,7 @@ func cmdDeployTarball(args []string) int {
 // dev` has already reserved its preview app, so it skips the create-or-fetch
 // probe; this also avoids incorrectly tripping the app-count quota while
 // redeploying an existing developer environment.
-func cmdDeployTarballToExisting(args []string, existingApp bool) int {
+func cmdDeployTarballToExisting(args []string, existingApp bool, devSync ...*devSourceSyncState) int {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
@@ -1806,7 +1806,20 @@ func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 			sourceSHA256  string
 			usedResumable bool
 		)
-		if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		var developerSync *devSourceSyncState
+		if len(devSync) > 0 {
+			developerSync = devSync[0]
+		}
+		if developerSync != nil {
+			var deployErr error
+			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann, developerSync)
+			if deployErr != nil {
+				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
+					return 130
+				}
+				return printErr("Bad --tarball", deployErr)
+			}
+		} else if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			var progress resumableUploadProgress
 			if !jsonOutput {
 				lastPercent := -1

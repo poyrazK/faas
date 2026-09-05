@@ -75,6 +75,17 @@ func DeployTarballWithSourceRoot(c *Client, ctx context.Context, slug, path, run
 	return c.DeployMultipartWithSourceRoot(ctx, slug, f, filepath.Base(path), runtime, handler, dockerfile, sourceRoot, ann)
 }
 
+// DeployDevSourceTarball preserves the CLI's symlink-safe customer-file
+// boundary while calling the SDK's developer source transport.
+func DeployDevSourceTarball(c *Client, ctx context.Context, slug, sourcePath, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, baseRevision, targetRevision string, deleted []string) (api.DeploymentResponse, error) {
+	f, err := openCustomerFile(sourcePath)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	defer func() { _ = f.Close() }()
+	return c.DeployDevSource(ctx, slug, f, filepath.Base(sourcePath), runtime, handler, dockerfile, sourceRoot, ann, baseRevision, targetRevision, deleted)
+}
+
 // ExportAccountFile fetches the GDPR export bundle and writes the
 // raw JSON to outPath with mode 0600. includeSecrets=false drops the
 // ciphertext slice. The CLI owns file creation (mode + atomic rename)

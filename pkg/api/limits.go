@@ -26,6 +26,19 @@ const (
 	MaxObjectBucketsPerApp           = 100
 	DefaultObjectUploadBytes   int64 = 100 << 20
 	MaxObjectUploadBytes       int64 = 5 << 30
+	// SourceArchiveMaxEntries is shared by ordinary source validation and
+	// developer delta reconstruction so the optimization cannot accept an
+	// archive the canonical deployment path would reject.
+	SourceArchiveMaxEntries = 10_000
+	// DevSourceMetadataMaxBytes bounds base/target revision and deletion-list
+	// fields around the plan-capped source payload.
+	DevSourceMetadataMaxBytes int64 = 4 << 20
+	// DevSourceCacheTTL keeps the node-local reconstruction base disposable.
+	// Cache absence is a normal condition and makes the CLI resend a full tree.
+	DevSourceCacheTTL = 24 * time.Hour
+	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
+	// source bases are evicted first; eviction is always recoverable by resend.
+	DevSourceCacheMaxBytes int64 = 4 << 30
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
