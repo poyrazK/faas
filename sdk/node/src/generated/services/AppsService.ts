@@ -458,6 +458,8 @@ export class AppsService {
     slug,
     since = '24h',
     until,
+    route,
+    method,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -471,6 +473,14 @@ export class AppsService {
      * Exclusive end timestamp; omitted means current server time.
      */
     until?: string,
+    /**
+     * Exact bounded route label to drill into (for example `GET /users/{id}`). Must be provided together with `method`; omitted means all routes.
+     */
+    route?: string,
+    /**
+     * Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods.
+     */
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
   }): CancelablePromise<RequestAnalyticsTimeseriesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -481,6 +491,8 @@ export class AppsService {
       query: {
         'since': since,
         'until': until,
+        'route': route,
+        'method': method,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

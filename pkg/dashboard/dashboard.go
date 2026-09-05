@@ -934,6 +934,10 @@ type RequestAnalyticsView struct {
 	RoutesTruncated       bool
 	AsOf                  string
 	Bucket                string
+	SelectedRoute         string
+	SelectedMethod        string
+	SelectedQuery         string
+	TimeseriesURL         string
 	LatencySparkline      views.LatencySparklineView
 	LatencySparklineHTML  template.HTML
 	ErrorSparkline        []appmetrics.SparklinePoint
@@ -952,6 +956,7 @@ type RequestAnalyticsRouteView struct {
 	P50MS         int
 	P95MS         int
 	P99MS         int
+	TrendURL      string
 }
 
 // RecentInstanceItem is one row of the Recent Wakes table on the

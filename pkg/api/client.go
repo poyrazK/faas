@@ -2958,10 +2958,14 @@ func (c *Client) GetAppRequestAnalyticsOpts(ctx context.Context, slug string, op
 }
 
 // AppRequestAnalyticsTimeseriesOptions carries the optional historical
-// analytics window for the zero-filled hourly series.
+// analytics window and exact route/method drill-down for the zero-filled
+// hourly series. Route and Method must be supplied together; empty values
+// request the app-wide series.
 type AppRequestAnalyticsTimeseriesOptions struct {
-	Since string
-	Until string
+	Since  string
+	Until  string
+	Route  string
+	Method string
 }
 
 // GetAppRequestAnalyticsTimeseries returns the zero-filled hourly request
@@ -2976,6 +2980,12 @@ func (c *Client) GetAppRequestAnalyticsTimeseries(ctx context.Context, slug stri
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Route != "" {
+		q.Set("route", opts.Route)
+	}
+	if opts.Method != "" {
+		q.Set("method", opts.Method)
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()

@@ -6066,6 +6066,8 @@ WITH buckets AS (
       AND account_id = $2
       AND received_at >= $3::timestamptz
       AND received_at <  $4::timestamptz
+      AND ($5::text = '' OR route = $5::text)
+      AND ($6::text = '' OR method = $6::text)
 ), latency_values AS (
     SELECT bucket_start,
            latency_ms,
@@ -6112,6 +6114,8 @@ type RequestTelemetryAnalyticsTimeseriesParams struct {
 	AccountID   pgtype.UUID
 	ReceivedAt  pgtype.Timestamptz
 	ReceivedAt2 pgtype.Timestamptz
+	Route       string
+	Method      string
 }
 
 type RequestTelemetryAnalyticsTimeseriesRow struct {
@@ -6133,6 +6137,8 @@ func (q *Queries) RequestTelemetryAnalyticsTimeseries(ctx context.Context, db DB
 		arg.AccountID,
 		arg.ReceivedAt,
 		arg.ReceivedAt2,
+		arg.Route,
+		arg.Method,
 	)
 	if err != nil {
 		return nil, err

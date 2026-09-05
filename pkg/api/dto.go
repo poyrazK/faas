@@ -6688,6 +6688,8 @@ type RequestAnalyticsTimeseriesPoint struct {
 // bounded by the account's telemetry retention.
 type RequestAnalyticsTimeseriesResponse struct {
 	Slug          string                            `json:"slug"`
+	Route         string                            `json:"route,omitempty"`
+	Method        string                            `json:"method,omitempty"`
 	Since         string                            `json:"since"`
 	From          string                            `json:"from"`
 	Until         string                            `json:"until"`

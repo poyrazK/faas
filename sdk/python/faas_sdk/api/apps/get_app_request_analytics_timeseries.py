@@ -7,6 +7,9 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.get_app_request_analytics_timeseries_method import (
+    GetAppRequestAnalyticsTimeseriesMethod,
+)
 from ...models.problem import Problem
 from ...models.request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from ...types import UNSET, Response, Unset
@@ -17,6 +20,8 @@ def _get_kwargs(
     *,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    route: str | Unset = UNSET,
+    method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -27,6 +32,14 @@ def _get_kwargs(
     if not isinstance(until, Unset):
         json_until = until.isoformat()
     params["until"] = json_until
+
+    params["route"] = route
+
+    json_method: str | Unset = UNSET
+    if not isinstance(method, Unset):
+        json_method = method
+
+    params["method"] = json_method
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -97,6 +110,8 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    route: str | Unset = UNSET,
+    method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
 ) -> Response[Problem | RequestAnalyticsTimeseriesResponse]:
     """Request analytics time series by hour.
 
@@ -114,6 +129,8 @@ def sync_detailed(
         slug (str):
         since (str | Unset):  Default: '24h'.
         until (datetime.datetime | Unset):
+        route (str | Unset):
+        method (GetAppRequestAnalyticsTimeseriesMethod | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -127,6 +144,8 @@ def sync_detailed(
         slug=slug,
         since=since,
         until=until,
+        route=route,
+        method=method,
     )
 
     response = client.get_httpx_client().request(
@@ -142,6 +161,8 @@ def sync(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    route: str | Unset = UNSET,
+    method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
 ) -> Problem | RequestAnalyticsTimeseriesResponse | None:
     """Request analytics time series by hour.
 
@@ -159,6 +180,8 @@ def sync(
         slug (str):
         since (str | Unset):  Default: '24h'.
         until (datetime.datetime | Unset):
+        route (str | Unset):
+        method (GetAppRequestAnalyticsTimeseriesMethod | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,6 +196,8 @@ def sync(
         client=client,
         since=since,
         until=until,
+        route=route,
+        method=method,
     ).parsed
 
 
@@ -182,6 +207,8 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    route: str | Unset = UNSET,
+    method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
 ) -> Response[Problem | RequestAnalyticsTimeseriesResponse]:
     """Request analytics time series by hour.
 
@@ -199,6 +226,8 @@ async def asyncio_detailed(
         slug (str):
         since (str | Unset):  Default: '24h'.
         until (datetime.datetime | Unset):
+        route (str | Unset):
+        method (GetAppRequestAnalyticsTimeseriesMethod | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,6 +241,8 @@ async def asyncio_detailed(
         slug=slug,
         since=since,
         until=until,
+        route=route,
+        method=method,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -225,6 +256,8 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    route: str | Unset = UNSET,
+    method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
 ) -> Problem | RequestAnalyticsTimeseriesResponse | None:
     """Request analytics time series by hour.
 
@@ -242,6 +275,8 @@ async def asyncio(
         slug (str):
         since (str | Unset):  Default: '24h'.
         until (datetime.datetime | Unset):
+        route (str | Unset):
+        method (GetAppRequestAnalyticsTimeseriesMethod | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -257,5 +292,7 @@ async def asyncio(
             client=client,
             since=since,
             until=until,
+            route=route,
+            method=method,
         )
     ).parsed

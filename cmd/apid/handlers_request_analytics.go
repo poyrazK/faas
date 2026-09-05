@@ -3,7 +3,7 @@ package main
 // Customer-facing aggregated request analytics.
 //
 // GET /v1/apps/{slug}/analytics?since=24h&until=<RFC3339>
-// GET /v1/apps/{slug}/analytics/timeseries?since=24h&until=<RFC3339>
+// GET /v1/apps/{slug}/analytics/timeseries?since=24h&until=<RFC3339>&route=GET%20%2Fusers&method=GET
 //
 // This is the historical analytics layer on top of request_telemetry. It
 // intentionally returns aggregates only: the debugger remains the place for
@@ -16,8 +16,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -29,6 +32,13 @@ import (
 )
 
 const requestAnalyticsRouteLimit = 50
+
+const requestAnalyticsRouteMaxLength = 256
+
+var requestAnalyticsMethods = map[string]struct{}{
+	"GET": {}, "POST": {}, "PUT": {}, "PATCH": {},
+	"DELETE": {}, "HEAD": {}, "OPTIONS": {},
+}
 
 // getAppRequestAnalytics serves the bounded, aggregated request analytics
 // overview for one app. The route is gated by the same paid telemetry
@@ -80,12 +90,38 @@ func (s *server) getAppRequestAnalyticsTimeseries(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
-	response, err := s.requestAnalyticsTimeseriesResponse(r.Context(), app, acct, window)
+	route, method, err := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("route"), r.URL.Query().Get("method"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	response, err := s.requestAnalyticsTimeseriesResponse(r.Context(), app, acct, window, route, method)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("request analytics timeseries"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// parseRequestAnalyticsRouteFilter validates the exact route-label/method pair used
+// to select a route-level series. Keeping the pair closed prevents ambiguous
+// aggregates (for example, combining GET and POST latency distributions) and
+// bounds the query-string value before it reaches the database.
+func parseRequestAnalyticsRouteFilter(route, method string) (string, string, error) {
+	if route == "" && method == "" {
+		return "", "", nil
+	}
+	if route == "" || method == "" {
+		return "", "", fmt.Errorf("route and method must be provided together")
+	}
+	if utf8.RuneCountInString(route) > requestAnalyticsRouteMaxLength {
+		return "", "", fmt.Errorf("route must be at most %d characters", requestAnalyticsRouteMaxLength)
+	}
+	method = strings.ToUpper(method)
+	if _, ok := requestAnalyticsMethods[method]; !ok {
+		return "", "", fmt.Errorf("method must be one of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+	}
+	return route, method, nil
 }
 
 type requestAnalyticsWindow struct {
@@ -234,12 +270,14 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	}, nil
 }
 
-func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow) (api.RequestAnalyticsTimeseriesResponse, error) {
+func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, route, method string) (api.RequestAnalyticsTimeseriesResponse, error) {
 	rows, err := s.store.RequestTelemetryAnalyticsTimeseries(ctx, sqlc.RequestTelemetryAnalyticsTimeseriesParams{
 		AppID:       stringToPgUUID(app.ID),
 		AccountID:   stringToPgUUID(acct.ID),
 		ReceivedAt:  pgtype.Timestamptz{Time: window.From, Valid: true},
 		ReceivedAt2: pgtype.Timestamptz{Time: window.Until, Valid: true},
+		Route:       route,
+		Method:      method,
 	})
 	if err != nil {
 		return api.RequestAnalyticsTimeseriesResponse{}, err
@@ -259,6 +297,8 @@ func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app sta
 	}
 	return api.RequestAnalyticsTimeseriesResponse{
 		Slug:          app.Slug,
+		Route:         route,
+		Method:        method,
 		Since:         echoDebugSince(window.RequestedSince, window.Since),
 		From:          window.From.Format(time.RFC3339Nano),
 		Until:         window.Until.Format(time.RFC3339Nano),
@@ -280,7 +320,7 @@ func requestErrorRatePct(requests, errors int64) float64 {
 // the public endpoint into the app-detail template. It is intentionally
 // best-effort: the live metrics/SLO panels should remain usable during a
 // transient request_telemetry read failure.
-func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.Logger, app state.App, acct state.Account) *dashboard.RequestAnalyticsView {
+func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.Logger, app state.App, acct state.Account, selectedRoute, selectedMethod string) *dashboard.RequestAnalyticsView {
 	limits := api.MustLimitsFor(acct.Plan)
 	if !limits.DebugTelemetryEnabled {
 		return nil
@@ -307,6 +347,9 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 	}
 	routes := make([]dashboard.RequestAnalyticsRouteView, 0, len(response.Routes))
 	for _, route := range response.Routes {
+		trendQuery := url.Values{}
+		trendQuery.Set("analytics_route", route.Route)
+		trendQuery.Set("analytics_method", route.Method)
 		routes = append(routes, dashboard.RequestAnalyticsRouteView{
 			Route:         route.Route,
 			Method:        route.Method,
@@ -317,7 +360,19 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 			P50MS:         route.P50MS,
 			P95MS:         route.P95MS,
 			P99MS:         route.P99MS,
+			TrendURL:      "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
 		})
+	}
+	selectedQuery := url.Values{}
+	if selectedRoute != "" && selectedMethod != "" {
+		selectedQuery.Set("analytics_route", selectedRoute)
+		selectedQuery.Set("analytics_method", selectedMethod)
+	}
+	seriesQuery := url.Values{}
+	seriesQuery.Set("since", response.Since)
+	if selectedRoute != "" && selectedMethod != "" {
+		seriesQuery.Set("route", selectedRoute)
+		seriesQuery.Set("method", selectedMethod)
 	}
 	view := &dashboard.RequestAnalyticsView{
 		Since:           response.Since,
@@ -335,13 +390,17 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		RoutesLimit:     response.RoutesLimit,
 		RoutesTruncated: response.RoutesTruncated,
 		AsOf:            response.AsOf,
+		SelectedRoute:   selectedRoute,
+		SelectedMethod:  selectedMethod,
+		SelectedQuery:   selectedQuery.Encode(),
+		TimeseriesURL:   "/v1/apps/" + app.Slug + "/analytics/timeseries?" + seriesQuery.Encode(),
 	}
-	series, err := s.requestAnalyticsTimeseriesResponse(ctx, app, acct, window)
+	series, err := s.requestAnalyticsTimeseriesResponse(ctx, app, acct, window, selectedRoute, selectedMethod)
 	if err != nil {
 		log.Warn("dashboard renderAppDetail: request analytics timeseries", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		return view
 	}
-	if response.Requests > 0 {
+	if len(series.Points) > 0 {
 		latency := views.LatencySparklineView{}
 		errorPoints := make([]appmetrics.SparklinePoint, 0, len(series.Points))
 		coldBootPoints := make([]appmetrics.SparklinePoint, 0, len(series.Points))

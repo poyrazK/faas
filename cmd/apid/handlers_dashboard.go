@@ -613,6 +613,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			previews = projectPreviewItems(previewRows, app.Slug, s.domain)
 		}
 	}
+	analyticsRoute, analyticsMethod, _ := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("analytics_route"), r.URL.Query().Get("analytics_method"))
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
 		App:             appRow,
 		Manifest:        dashboardManifestView(app),
@@ -651,7 +652,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// Customer request analytics is a best-effort durable rollup. It is
 		// separate from the live Prometheus snapshot above and is omitted for
 		// plans without request-telemetry retention.
-		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct),
+		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct, analyticsRoute, analyticsMethod),
 		// Issue #396 / ADR-045 PR 4 — best-effort alert-rule
 		// snapshot. Failure is non-fatal: a Postgres blip on the
 		// alert_rules read renders the panel's warning empty-state

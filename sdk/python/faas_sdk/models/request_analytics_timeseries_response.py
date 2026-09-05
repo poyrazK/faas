@@ -11,6 +11,11 @@ from ..models.request_analytics_timeseries_response_bucket import (
     RequestAnalyticsTimeseriesResponseBucket,
     check_request_analytics_timeseries_response_bucket,
 )
+from ..models.request_analytics_timeseries_response_method import (
+    RequestAnalyticsTimeseriesResponseMethod,
+    check_request_analytics_timeseries_response_method,
+)
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
@@ -41,6 +46,10 @@ class RequestAnalyticsTimeseriesResponse:
     points: list[RequestAnalyticsTimeseriesPoint]
     as_of: datetime.datetime
     """UTC time when the series response was assembled."""
+    route: str | Unset = UNSET
+    """Exact bounded route-label filter when a route-level series was requested."""
+    method: RequestAnalyticsTimeseriesResponseMethod | Unset = UNSET
+    """Exact method filter when a route-level series was requested."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +72,12 @@ class RequestAnalyticsTimeseriesResponse:
 
         as_of = self.as_of.isoformat()
 
+        route = self.route
+
+        method: str | Unset = UNSET
+        if not isinstance(self.method, Unset):
+            method = self.method
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -77,6 +92,10 @@ class RequestAnalyticsTimeseriesResponse:
                 "as_of": as_of,
             }
         )
+        if route is not UNSET:
+            field_dict["route"] = route
+        if method is not UNSET:
+            field_dict["method"] = method
 
         return field_dict
 
@@ -106,6 +125,15 @@ class RequestAnalyticsTimeseriesResponse:
 
         as_of = datetime.datetime.fromisoformat(d.pop("as_of"))
 
+        route = d.pop("route", UNSET)
+
+        _method = d.pop("method", UNSET)
+        method: RequestAnalyticsTimeseriesResponseMethod | Unset
+        if isinstance(_method, Unset):
+            method = UNSET
+        else:
+            method = check_request_analytics_timeseries_response_method(_method)
+
         request_analytics_timeseries_response = cls(
             slug=slug,
             since=since,
@@ -115,6 +143,8 @@ class RequestAnalyticsTimeseriesResponse:
             bucket=bucket,
             points=points,
             as_of=as_of,
+            route=route,
+            method=method,
         )
 
         request_analytics_timeseries_response.additional_properties = d
