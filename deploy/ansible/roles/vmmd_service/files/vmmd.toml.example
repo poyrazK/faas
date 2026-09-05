@@ -6,9 +6,11 @@
 # Default: /run/faas/vmmd.sock
 # socket_path = "/run/faas/vmmd.sock"
 
-# metrics_addr: optional bind address for /metrics. Empty disables metrics.
+# metrics_addr: bind address for the Prometheus /metrics and /readyz endpoints.
+# Strict fleet verification expects the production loopback endpoint below;
+# leave this empty only for a metrics-disabled local development daemon.
 # Default: "" (no metrics endpoint)
-# metrics_addr = "127.0.0.1:9090"
+# metrics_addr = "127.0.0.1:9104"
 
 # owner_user: the unix user that owns the unix-domain socket file. Members
 # of the 'faas' group can dial the socket. Default: faas-vmmd

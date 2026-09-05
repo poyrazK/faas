@@ -63,9 +63,11 @@ type SimulatorSource interface {
 type SimulatorOption func(*simulatorConfig)
 
 type simulatorConfig struct {
-	errRate  float64
-	p95Ms    float64
-	override bool
+	errRate         float64
+	p95Ms           float64
+	traffic         int64
+	override        bool
+	trafficOverride bool
 }
 
 // WithAggregate pre-populates the simulator's aggregate reads (error
@@ -77,6 +79,21 @@ func WithAggregate(errRate, p95Ms float64) SimulatorOption {
 		c.errRate = errRate
 		c.p95Ms = p95Ms
 		c.override = true
+	}
+}
+
+// WithObservedTraffic overrides the number of invocations used to derive
+// traffic-per-second and the insufficient-sample guard. The CLI uses the
+// one-hour request count from the app metrics endpoint instead of allocating
+// one InvocationSample per request, which keeps the read-only simulation safe
+// for high-volume apps.
+func WithObservedTraffic(count int64) SimulatorOption {
+	return func(c *simulatorConfig) {
+		if count < 0 {
+			count = 0
+		}
+		c.traffic = count
+		c.trafficOverride = true
 	}
 }
 
@@ -250,24 +267,28 @@ func SimulateCanary(ctx context.Context, source SimulatorSource, appID, presetNa
 		p95Ms = p95s.p95Ms
 	}
 
+	observedTraffic := int64(len(invs))
+	if cfg.trafficOverride {
+		observedTraffic = cfg.traffic
+	}
 	// observedTrafficPerSec = invocations / window.Seconds().
 	// Window is 1h so this is rph / 3600.
 	windowDur := windowEnd.Sub(windowStart)
-	observedTrafficPerSec := float64(len(invs)) / windowDur.Seconds()
+	observedTrafficPerSec := float64(observedTraffic) / windowDur.Seconds()
 
 	report := SimReport{
 		Preset:           presetName,
 		Stages:           len(preset.Stages),
 		ProjectedSuccess: 1.0,
 		PerStep:          make([]SimStepEntry, 0, len(preset.Stages)),
-		ObservedTraffic:  len(invs),
+		ObservedTraffic:  clampTrafficCount(observedTraffic),
 		ObservedError:    errRate,
 		ObservedP95Ms:    p95Ms,
 		WindowStart:      windowStart,
 		WindowEnd:        windowEnd,
 	}
 
-	if len(invs) < 5 {
+	if observedTraffic < 5 {
 		report.Note = "insufficient traffic sample (< 5 invocations in window); per-step projection clamped to 0.5 (maximum-entropy neutral)"
 		for i, st := range preset.Stages {
 			report.PerStep = append(report.PerStep, SimStepEntry{
@@ -294,6 +315,17 @@ func SimulateCanary(ctx context.Context, source SimulatorSource, appID, presetNa
 		report.ProjectedSuccess *= p
 	}
 	return report, nil
+}
+
+func clampTrafficCount(count int64) int {
+	if count <= 0 {
+		return 0
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if count > maxInt {
+		return int(maxInt)
+	}
+	return int(count)
 }
 
 // FormatTable renders SimReport as a fixed-width text table for the

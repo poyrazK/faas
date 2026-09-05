@@ -46,7 +46,7 @@ In order (each role is independent and verifies its own preconditions):
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
 | `host_hardening` | §11, ADR-143 | sshd drop-in, fail2ban, unattended security upgrades, auditd rules, kernel sysctls | templates + validated `sshd -t`; lockout guard before disabling password auth |
 | `geoip` | ADR-091 D21, ADR-143 | `/var/lib/faas/geoip/dbip-country-lite.mmdb` (compute) | pinned monthly release + two SHA-256s |
-| `fleet_verify` | ADR-143 | verify-only: enabled → active → probe → `gregalectl doctor` | read-only |
+| `fleet_verify` | ADR-143 | verify-only: enabled → active → dependency-aware `/readyz` → transport fallback → `gregalectl doctor` | read-only |
 
 ## Run it
 
@@ -71,7 +71,7 @@ make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini ansible-syn
 
 After the operator has run `gregalectl secrets init` and enabled the units,
 prove the fleet converged (every required daemon enabled, active and
-answering its readiness probe, then `gregalectl doctor`):
+answering its dependency-aware `/readyz` endpoint, then `gregalectl doctor`):
 
 ```
 make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini verify-fleet

@@ -5344,7 +5344,7 @@ CREATE INDEX deployments_app_scope_idx ON public.deployments USING btree (app_id
 -- Name: deployments_app_scope_live_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX deployments_app_scope_live_uniq ON public.deployments USING btree (app_id, scope) WHERE ((status = 'live'::text) AND ((canary_total_steps = 0) OR (rollout_state = 'complete'::text)));
+CREATE UNIQUE INDEX deployments_app_scope_live_uniq ON public.deployments USING btree (app_id, scope) WHERE ((status = 'live'::text) AND (((canary_total_steps = 0) AND (rollout_state <> 'rolling_out'::text)) OR (rollout_state = 'complete'::text)));
 
 
 --

@@ -1542,6 +1542,7 @@ func TestRecordDaemonRestart_PreInstantiationCartesian(t *testing.T) {
 //   - daemon_uptime_seconds{daemon} — starts at 0, SetDaemonUptime
 //     updates per tick.
 //   - daemon_ready{daemon} — 0 until MarkReady, 1 after.
+//   - daemon_ready_reason{daemon,reason} — one-hot bounded reason class.
 //
 // The constructor pre-instantiates every row at value=1 (for
 // build_info) / 0 (for uptime + ready). The test verifies the
@@ -1580,12 +1581,18 @@ func TestDaemon_BuildInfo_Uptime_Ready(t *testing.T) {
 	if !strings.Contains(body, `vmmd_daemon_ready{daemon="vmmd"} 1`) {
 		t.Errorf("missing ready=1 after MarkReady in:\n%s", body)
 	}
+	if !strings.Contains(body, `vmmd_daemon_ready_reason{daemon="vmmd",reason="ready"} 1`) {
+		t.Errorf("missing ready reason class after MarkReady in:\n%s", body)
+	}
 	// MarkReady(true, "") flips ready → 1 (already covered above).
 	// MarkReady(false, reason) flips back to 0 (commit 3 tri-state).
 	m.MarkReady("vmmd", false, "draining")
 	body = render(t, m)
 	if !strings.Contains(body, `vmmd_daemon_ready{daemon="vmmd"} 0`) {
 		t.Errorf("missing ready=0 after MarkReady(vmmd, false, \"draining\") in:\n%s", body)
+	}
+	if !strings.Contains(body, `vmmd_daemon_ready_reason{daemon="vmmd",reason="draining"} 1`) {
+		t.Errorf("missing draining reason class after MarkReady in:\n%s", body)
 	}
 	// Unknown daemon name collapses to "other" (closed-set contract).
 	m.SetDaemonUptime("unknown-daemon", 1.0)

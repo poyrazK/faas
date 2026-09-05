@@ -14,6 +14,23 @@ import (
 // gate before reaching the cap check.
 const goodSidecarImage = "ghcr.io/me/x@sha256:" + "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 
+func TestBuildDeploymentForInsert_ServiceDefaultsToReadinessRollout(t *testing.T) {
+	app := state.App{
+		ID:       "app-service",
+		Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeService},
+	}
+	dep, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{Image: "sha256:test"}, nil, testSidecarLimits())
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if !state.IsServiceRollout(dep) {
+		t.Fatalf("deployment marker = state:%q canary_steps:%d; want readiness-gated service rollout", dep.RolloutState, dep.CanaryTotalSteps)
+	}
+	if dep.TrafficPercent != 0 || dep.RolloutStartedAt == nil {
+		t.Fatalf("service rollout = traffic:%d started_at:%v; want traffic 0 and a start timestamp", dep.TrafficPercent, dep.RolloutStartedAt)
+	}
+}
+
 // testSidecarLimits returns the per-plan Limits table
 // the apid gate reads (cmd/apid/main.go populates this at
 // boot from pkg/api::planLimits via the exported LimitsFor

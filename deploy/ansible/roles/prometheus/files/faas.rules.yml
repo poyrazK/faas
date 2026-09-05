@@ -724,6 +724,38 @@ groups:
           description: "{{ $labels.daemon }} has exposed daemon_ready=0 for 5m. Check its /readyz response and dependency-specific reason before routing traffic or restarting it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonNotReady.md"
 
+      # A rollout should converge to one daemon release. This catches a
+      # partial deploy where systemd is healthy and readiness is green, but
+      # different hosts (or different daemons on one host) are serving
+      # incompatible code for longer than the normal rollout window.
+      - alert: FaasDeployVersionSkew
+        expr: count(count by (version) ({__name__=~".*_faas_deploy_version"})) > 1
+        for: 10m
+        labels:
+          severity: warn
+          component: platform
+          family: daemon_lifecycle
+        annotations:
+          summary: "Fleet is running multiple daemon release versions"
+          description: "More than one faas_deploy_version has been visible for 10m. Check daemon_build_info by instance and version, then complete or roll back the interrupted deployment before traffic is split across releases."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDeployVersionSkew.md"
+
+      # Long-lived processes are not automatically unhealthy, but a daemon
+      # above this threshold has likely missed at least one planned rollout.
+      # Keep this a warning: operators may intentionally defer a restart while
+      # investigating a release or capacity event.
+      - alert: FaasDaemonUptimeStale
+        expr: max by (daemon, instance) ({__name__=~".*_daemon_uptime_seconds"}) > 604800
+        for: 1h
+        labels:
+          severity: warn
+          component: platform
+          family: daemon_lifecycle
+        annotations:
+          summary: "Daemon {{ $labels.daemon }} has stale uptime"
+          description: "{{ $labels.daemon }} on {{ $labels.instance }} has been running for more than 7 days. Verify its deployed build identity and include the host in the next controlled rollout."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonUptimeStale.md"
+
       # The archive shipper is intentionally best-effort and does not take
       # apid down when S3 is unavailable. These rules turn its existing
       # failure/spool signals into an actionable alert instead of relying on

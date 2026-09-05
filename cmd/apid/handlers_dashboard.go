@@ -510,6 +510,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 		cronItems = append(cronItems, item)
 	}
+	workflowItems := s.fetchDashboardWorkflows(ctx, log, app.ID)
 	// Single-app detail page reuses the batched instance map; for
 	// a one-app render that's one extra row fetched but it keeps
 	// the helper signatures symmetric with renderAppsList (PR #48
@@ -613,6 +614,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		Manifest:        dashboardManifestView(app),
 		Deployments:     deps,
 		Crons:           cronItems,
+		Workflows:       workflowItems,
 		Previews:        previews,
 		RecentInstances: recentItems,
 		// Issue #791 PR-E / ADR-090 closure — cron fire-now
@@ -653,6 +655,75 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
+}
+
+// fetchDashboardWorkflows returns a bounded, safe projection of the most
+// recent workflow runs for an app. A workflow read failure is non-fatal to the
+// rest of the app page, matching the dashboard's other best-effort panels.
+func (s *server) fetchDashboardWorkflows(ctx context.Context, log *slog.Logger, appID string) []dashboard.WorkflowRunItem {
+	runs, _, err := s.store.ListWorkflowRuns(ctx, appID, state.ListWorkflowRunsOpts{Limit: 10})
+	if err != nil {
+		log.Warn("dashboard renderAppDetail: list workflow runs", "app_id", appID, "err", err)
+		return nil
+	}
+	items := make([]dashboard.WorkflowRunItem, 0, len(runs))
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		item := dashboard.WorkflowRunItem{
+			ID:           run.ID,
+			WorkflowName: run.WorkflowName,
+			Status:       run.Status,
+			CreatedAt:    dashboardWorkflowTime(run.CreatedAt),
+			StartedAt:    dashboardWorkflowPtrTime(run.StartedAt),
+			FinishedAt:   dashboardWorkflowPtrTime(run.FinishedAt),
+			LastError:    dashboardWorkflowError(run.LastError),
+		}
+		if run.CurrentStep != nil {
+			item.CurrentStep = *run.CurrentStep
+		}
+		steps, stepErr := s.store.GetWorkflowSteps(ctx, run.ID)
+		if stepErr != nil {
+			log.Warn("dashboard renderAppDetail: list workflow steps", "app_id", appID, "run_id", run.ID, "err", stepErr)
+		} else {
+			item.Steps = make([]dashboard.WorkflowStepItem, 0, len(steps))
+			for _, step := range steps {
+				if step == nil {
+					continue
+				}
+				item.Steps = append(item.Steps, dashboard.WorkflowStepItem{
+					Name:    step.StepName,
+					Status:  step.Status,
+					Attempt: step.Attempt,
+					Error:   dashboardWorkflowError(step.Error),
+				})
+			}
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func dashboardWorkflowTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func dashboardWorkflowPtrTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return dashboardWorkflowTime(*t)
+}
+
+func dashboardWorkflowError(err *string) string {
+	if err == nil {
+		return ""
+	}
+	return *err
 }
 
 // firedFlash translates the dashboard cron fire-now POST-redirect

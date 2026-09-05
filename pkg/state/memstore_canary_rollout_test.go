@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -81,6 +82,65 @@ func TestMemStore_CanaryRolloutListingsAndStamp(t *testing.T) {
 	if _, err := m.SafedeployStampRollout(ctx, "missing", "aborted", nil, nil, nil, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing SafedeployStampRollout error = %v, want ErrNotFound", err)
 	}
+}
+
+func TestMemStoreServiceRolloutNormalizesDefaultScope(t *testing.T) {
+	seed := func(t *testing.T) (*MemStore, context.Context, App, Deployment, Deployment) {
+		t.Helper()
+		m, ctx, _, app, stable := memDeploymentFixture(t)
+		base := time.Now().Add(-time.Minute)
+		stable.Status = DeployLive
+		stable.Scope = DefaultEnvScope
+		stable.TrafficPercent = 100
+		stable.CreatedAt = base
+		rollout := stable
+		rollout.ID = uuid.NewString()
+		rollout.Scope = "" // legacy in-memory rows used the pre-default shape
+		rollout.ImageDigest = "sha256:service-next"
+		rollout.TrafficPercent = 0
+		rollout.RolloutState = "rolling_out"
+		rollout.RolloutStartedAt = &base
+		rollout.CreatedAt = base.Add(time.Second)
+		m.mu.Lock()
+		m.deployments[stable.ID] = stable
+		m.deployments[rollout.ID] = rollout
+		m.mu.Unlock()
+		return m, ctx, app, stable, rollout
+	}
+
+	t.Run("live lookup and finalize", func(t *testing.T) {
+		m, ctx, app, stable, rollout := seed(t)
+		if got, err := m.LiveDeploymentForScope(ctx, app.ID, DefaultEnvScope); err != nil || got.ID != stable.ID {
+			t.Fatalf("LiveDeploymentForScope(default) = %q, %v; want stable %q", got.ID, err, stable.ID)
+		}
+		if got, err := m.LiveDeploymentForScope(ctx, app.ID, ""); err != nil || got.ID != stable.ID {
+			t.Fatalf("LiveDeploymentForScope(empty) = %q, %v; want stable %q", got.ID, err, stable.ID)
+		}
+		if _, err := m.FinalizeServiceRollout(ctx, rollout.ID); err != nil {
+			t.Fatalf("FinalizeServiceRollout: %v", err)
+		}
+		got, err := m.DeploymentByID(ctx, stable.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != DeploySuperseded || got.TrafficPercent != 0 {
+			t.Fatalf("stable after finalize = status:%q traffic:%d; want superseded/0", got.Status, got.TrafficPercent)
+		}
+	})
+
+	t.Run("abort restores mixed-scope predecessor", func(t *testing.T) {
+		m, ctx, _, stable, rollout := seed(t)
+		if _, err := m.AbortServiceRollout(ctx, rollout.ID, "scope test"); err != nil {
+			t.Fatalf("AbortServiceRollout: %v", err)
+		}
+		got, err := m.DeploymentByID(ctx, stable.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != DeployLive || got.TrafficPercent != 100 {
+			t.Fatalf("stable after abort = status:%q traffic:%d; want live/100", got.Status, got.TrafficPercent)
+		}
+	})
 }
 
 func TestMemStore_RecoverRolloutActionsAndGuards(t *testing.T) {

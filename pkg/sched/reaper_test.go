@@ -225,6 +225,27 @@ func TestSelectEvictionsProtectsYoungInstances(t *testing.T) {
 	}
 }
 
+func TestSelectEvictionsSkipsServiceReplicas(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-time.Hour)
+	instances := []InstanceInfo{
+		{Instance: "service-replica", AppID: "svc", Plan: api.PlanPro, State: state.StateRunning,
+			Mode: string(state.InstanceModeService), RAMMB: 512, LastRequest: old, Started: old},
+		{Instance: "request-instance", AppID: "fn", Plan: api.PlanPro, State: state.StateRunning,
+			Mode: string(state.InstanceModeNormal), RAMMB: 512, LastRequest: old, Started: old},
+	}
+
+	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	if len(got) != 1 || got[0] != "request-instance" {
+		t.Fatalf("service replica must be skipped while request instance remains evictable, got %v", got)
+	}
+
+	got = SelectEvictions(EvictionThresholdMB+1, now, instances[:1])
+	if len(got) != 0 {
+		t.Fatalf("service-only pressure must not park a replica, got %v", got)
+	}
+}
+
 func TestSelectEvictionsEvictsEnough(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)

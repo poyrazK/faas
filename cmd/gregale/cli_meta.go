@@ -254,6 +254,17 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "canary",
+		DocSlug: "canary",
+		Short:   "Project a canary preset against recent app traffic (canary simulate <slug>)",
+		Subcommands: []cliSub{
+			{Name: "simulate", Short: "Estimate per-stage canary success from the last hour", Flags: []cliFlag{
+				{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"slow", "balanced", "aggressive", "1-10-50-100"}},
+			}},
+		},
+		Positionals: []string{"<slug>"},
+	},
+	{
 		Name:    dispatchBuild,
 		DocSlug: "build",
 		Short:   "Build provenance + sbom (build provenance <id>|build sbom <id>)",

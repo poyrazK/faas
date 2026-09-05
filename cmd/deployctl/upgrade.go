@@ -8,15 +8,15 @@
 //   3. signal the cloud-specific image-rollout mechanism (hcloud /
 //      amazon-ebs / bare-metal — each is its own .sh wrapper)
 //   4. wait for the new VM to come up
-//   5. poll every Lifecycle.Probe / ProbeTarget in
-//      pkg/daemonunitspec.Registry IN ORDER; fail-closed if any probe
-//      reports not-ready past readyTimeout
+//   5. poll every Lifecycle.ReadyzURL in pkg/daemonunitspec.Registry IN
+//      ORDER; fail-closed if any dependency-aware readiness check reports
+//      not-ready past readyTimeout. Transport probes remain the fallback.
 //   6. UPDATE compute_nodes SET active=true on the node ONLY after
 //      every probe passes
 //
-// The orchestrator reuses the existing waitPath / waitTCP /
-// waitSystemdActive helpers from cmd/deployctl/runtime.go:295-299 — no
-// new probe code; the gate IS the per-daemon probe.
+// The orchestrator runs the probe on the target box over SSH so a loopback
+// readiness URL is evaluated on the box being upgraded, not the operator's
+// workstation.
 //
 // Per ADR-066 / §14 M9: live-migration is out of scope. The drain-
 // then-rollout path is the only supported upgrade mechanism.
@@ -53,7 +53,7 @@ import (
 //	                       [--ssh-user=root]
 //	                       [--ssh-key=/path/to/key]
 //
-// SSH flags are used by the per-daemon Probe gate (waitForReady) to
+// SSH flags are used by the per-daemon readiness gate (waitForReady) to
 // ssh into the TARGET box being upgraded — without them, the gate
 // would probe the operator's local /run/faas/*.sock (PR #929 review
 // finding M5: "waitOneReady probes operator box").
@@ -82,7 +82,7 @@ func parseUpgradeArgs(stdout io.Writer, args []string) (*upgradeArgs, error) {
 	fs.StringVar(&a.node, "node", "", "fqdn of the node being upgraded")
 	fs.StringVar(&a.cloud, "cloud", a.cloud, "cloud provider: hcloud|amazon-ebs|bare-metal")
 	fs.DurationVar(&a.drainTimeout, "drain-timeout", a.drainTimeout, "time to wait for live instances to land on peers (MigrateLiveLeaseSeconds + 5s grace)")
-	fs.DurationVar(&a.readyTimeout, "ready-timeout", a.readyTimeout, "time to wait for every Lifecycle.Probe on every Registry entry to pass")
+	fs.DurationVar(&a.readyTimeout, "ready-timeout", a.readyTimeout, "time to wait for every Lifecycle.ReadyzURL (or transport probe fallback) on every Registry entry to pass")
 	fs.StringVar(&a.cloudRollout, "cloud-rollout", "", "path to the cloud-specific rollout shell wrapper (defaults to deploy/packer/cloud-rollout/<cloud>.sh)")
 	fs.StringVar(&a.sshUser, "ssh-user", a.sshUser, "ssh user for the target box (default root)")
 	fs.StringVar(&a.sshKey, "ssh-key", "", "path to the ssh private key for the target box (defaults to $HOME/.ssh/id_rsa if unset)")
@@ -146,7 +146,8 @@ func runUpgradeNode(args []string) error {
 	}
 	logger.Info("upgrade-node: cloud rollout signal sent", "node", a.node, "cloud", a.cloud)
 
-	// 4+5. Wait for the new VM to come up + poll every Lifecycle.Probe.
+	// 4+5. Wait for the new VM to come up + poll every Lifecycle.ReadyzURL
+	// (or the legacy transport probe when no URL is registered).
 	if err := waitForReady(ctx, a); err != nil {
 		return fmt.Errorf("ready gate %s: %w", a.node, err)
 	}
@@ -206,18 +207,14 @@ func runCloudRollout(ctx context.Context, a *upgradeArgs) error {
 	return cmd.Run()
 }
 
-// waitForReady polls every Lifecycle.Probe / ProbeTarget in
+// waitForReady polls every Lifecycle.ReadyzURL in
 // pkg/daemonunitspec.Registry IN REGISTRATION ORDER until every entry
 // reports ready. The probes run against the TARGET box (a.node),
 // not the operator's host — every probe is wrapped in an ssh hop.
 //
-// Reuses runtime.go:295-299's waitPath / waitTCP / waitSystemdActive
-// primitives indirectly: each sshExec invokes the canonical probe on
-// the remote box (test -S for unix probes, /dev/tcp/<host>/<port> for
-// tcp probes, `systemctl is-active` for systemd probes). The wire
-// shape matches what `deployctl deploy` uses to gate per-service
-// readiness — but the gate is on the box being upgraded, not the
-// operator's box (PR #929 review-fix M5).
+// Each sshExec invokes the canonical readiness check on the remote box;
+// the gate is on the box being upgraded, not the operator's box
+// (PR #929 review-fix M5).
 func waitForReady(ctx context.Context, a *upgradeArgs) error {
 	deadline := time.Now().Add(a.readyTimeout)
 	for _, entry := range daemonunitspec.Registry {
@@ -231,15 +228,16 @@ func waitForReady(ctx context.Context, a *upgradeArgs) error {
 	return nil
 }
 
-// waitOneReadyOnTarget probes entry.Lifecycle.Probe on the TARGET box
+// waitOneReadyOnTarget probes entry.Lifecycle.ReadyzURL on the TARGET box
 // via ssh. The local-host probes (127.0.0.1) are remapped to the
 // target's loopback; cross-host probes dial via the box's eth0.
 //
-// Per the registry's ProbeTarget conventions:
+// Per the registry's Lifecycle conventions:
 //
-//	ProbeUnix    → /run/faas/<daemon>.sock on the target
-//	ProbeTCP     → 127.0.0.1:<port> on the target (or eth0 if set)
-//	ProbeSystemd → `systemctl is-active faas-<daemon>.service` on the target
+//	ReadyzURL    → `curl` the dependency-aware endpoint on the target
+//	ProbeUnix    → /run/faas/<daemon>.sock fallback
+//	ProbeTCP     → 127.0.0.1:<port> fallback
+//	ProbeSystemd → `systemctl is-active faas-<daemon>.service` fallback
 func waitOneReadyOnTarget(ctx context.Context, a *upgradeArgs, entry daemonunitspec.Entry, timeout time.Duration) error {
 	if timeout < 0 {
 		timeout = 0
@@ -247,21 +245,28 @@ func waitOneReadyOnTarget(ctx context.Context, a *upgradeArgs, entry daemonunits
 	deadline := time.Now().Add(timeout)
 
 	var probeCmd string
-	switch entry.Lifecycle.Probe {
-	case daemonunitspec.ProbeUnix:
-		probeCmd = fmt.Sprintf("test -S %s", entry.Lifecycle.ProbeTarget)
-	case daemonunitspec.ProbeTCP:
-		// ProbeTarget is host:port. Re-target localhost loopback since
-		// the ssh session is already inside the box.
-		_, port, splitErr := net.SplitHostPort(entry.Lifecycle.ProbeTarget)
-		if splitErr != nil {
-			return fmt.Errorf("daemon %s: bad tcp probe %q: %w", entry.Name, entry.Lifecycle.ProbeTarget, splitErr)
+	if entry.Lifecycle.ReadyzURL != "" {
+		// Registry-owned URLs are fixed loopback endpoints, so quoting the
+		// complete URL keeps the remote shell boundary explicit without
+		// allowing a future URL edit to become shell syntax.
+		probeCmd = fmt.Sprintf("curl --fail --silent --show-error --max-time 2 %q >/dev/null", entry.Lifecycle.ReadyzURL)
+	} else {
+		switch entry.Lifecycle.Probe {
+		case daemonunitspec.ProbeUnix:
+			probeCmd = fmt.Sprintf("test -S %s", entry.Lifecycle.ProbeTarget)
+		case daemonunitspec.ProbeTCP:
+			// ProbeTarget is host:port. Re-target localhost loopback since
+			// the ssh session is already inside the box.
+			_, port, splitErr := net.SplitHostPort(entry.Lifecycle.ProbeTarget)
+			if splitErr != nil {
+				return fmt.Errorf("daemon %s: bad tcp probe %q: %w", entry.Name, entry.Lifecycle.ProbeTarget, splitErr)
+			}
+			probeCmd = fmt.Sprintf("bash -c 'echo > /dev/tcp/127.0.0.1/%s'", port)
+		case daemonunitspec.ProbeSystemd:
+			probeCmd = fmt.Sprintf("systemctl is-active faas-%s.service", entry.Name)
+		default:
+			return fmt.Errorf("unknown readiness probe for %s", entry.Name)
 		}
-		probeCmd = fmt.Sprintf("bash -c 'echo > /dev/tcp/127.0.0.1/%s'", port)
-	case daemonunitspec.ProbeSystemd:
-		probeCmd = fmt.Sprintf("systemctl is-active faas-%s.service", entry.Name)
-	default:
-		return fmt.Errorf("unknown readiness probe for %s", entry.Name)
 	}
 
 	for time.Now().Before(deadline) {
@@ -274,6 +279,9 @@ func waitOneReadyOnTarget(ctx context.Context, a *upgradeArgs, entry daemonunits
 			return ctx.Err()
 		case <-time.After(2 * time.Second):
 		}
+	}
+	if entry.Lifecycle.ReadyzURL != "" {
+		return fmt.Errorf("daemon %s /readyz not ready within %s", entry.Name, timeout)
 	}
 	return fmt.Errorf("daemon %s probe %s not ready within %s", entry.Name, entry.Lifecycle.Probe, timeout)
 }

@@ -310,6 +310,9 @@ func TestRegistry_LifecycleProbesAreAllKnown(t *testing.T) {
 				t.Errorf("%s: ProbeTarget empty for probe %q", e.Name, e.Lifecycle.Probe)
 			}
 		}
+		if e.Lifecycle.ReadyzURL == "" {
+			t.Errorf("%s: ReadyzURL must be declared for deploy verification", e.Name)
+		}
 	}
 }
 

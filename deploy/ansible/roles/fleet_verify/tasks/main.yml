@@ -56,12 +56,43 @@
   loop_control:
     label: "{{ item.item }}"
 
+- name: fleet_verify — poll dependency-aware /readyz endpoints
+  ansible.builtin.uri:
+    url: "{{ faas_daemon_probes[item].readyz_url | default('') }}"
+    method: GET
+    status_code: [200, 503]
+    return_content: true
+    timeout: "{{ faas_verify_readyz_timeout_s }}"
+  loop: "{{ faas_verify_active_units }}"
+  register: faas_verify_readyz
+  until: (faas_verify_readyz.status | default(0) | int) == 200
+  retries: "{{ faas_verify_readyz_retries }}"
+  delay: "{{ faas_verify_readyz_delay_s }}"
+  failed_when: false
+  when:
+    - faas_daemon_probes[item].readyz_url | default('') | length > 0
+
+- name: fleet_verify — fail on a dependency-degraded daemon
+  ansible.builtin.assert:
+    that: (item.status | default(0) | int) == 200
+    fail_msg: >-
+      {{ item.item }} /readyz did not return 200 on {{ faas_node_name }}:
+      status={{ item.status | default('unreachable') }}
+      body={{ item.content | default('no response') | trim }}.
+      Check the dependency named by the response before restarting the unit.
+  loop: "{{ faas_verify_readyz.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not (item.skipped | default(false) | bool)
+
 - name: fleet_verify — probe unix-socket daemons
   ansible.builtin.wait_for:
     path: "{{ faas_daemon_probes[item].target }}"
     timeout: "{{ faas_verify_probe_timeout_s }}"
   loop: "{{ faas_verify_active_units }}"
-  when: faas_daemon_probes[item].probe == 'unix'
+  when:
+    - faas_daemon_probes[item].probe == 'unix'
+    - faas_daemon_probes[item].readyz_url | default('') | length == 0
 
 - name: fleet_verify — probe tcp daemons
   ansible.builtin.wait_for:
@@ -69,7 +100,9 @@
     port: "{{ faas_daemon_probes[item].target.split(':')[1] | int }}"
     timeout: "{{ faas_verify_probe_timeout_s }}"
   loop: "{{ faas_verify_active_units }}"
-  when: faas_daemon_probes[item].probe == 'tcp'
+  when:
+    - faas_daemon_probes[item].probe == 'tcp'
+    - faas_daemon_probes[item].readyz_url | default('') | length == 0
 
 - name: fleet_verify — stat the doctor binary
   ansible.builtin.stat:

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -196,6 +197,12 @@ type OpsMetrics struct {
 	// dashboard's "Fleet readiness" panel surfaces a zero row
 	// from boot. The probe observer calls MarkReady(id).
 	daemonReady *prometheus.GaugeVec
+	// daemonReadyReason (issue #586 / ADR-129) is a one-hot, bounded
+	// classification of the current readiness reason. The detailed reason
+	// remains in /readyz and logs; this metric deliberately uses a closed
+	// class set so transient database/error text cannot become a label.
+	daemonReadyReason   *prometheus.GaugeVec
+	daemonReadyReasonMu sync.Mutex
 	// faasDeployVersion (issue #586 / ADR-129 / cluster C commit 11)
 	// is the per-version gauge that exposes the platform's
 	// current release identifier. Single-version by design —
@@ -1910,10 +1917,20 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_daemon_ready",
 		Help: "Readiness gauge (issue #586 / ADR-129 / issue #571 PR-A2), labelled by daemon. 0 = initializing / draining / not yet serving traffic; 1 = ready. The daemon's ReadyzProbe observer mirrors the same aggregate state returned by /readyz; see pkg/wire/readiness.go. Operator dashboards query this for the 'Fleet readiness' panel.",
 	}, []string{"daemon"})
+	daemonReadyReason := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_daemon_ready_reason",
+		Help: "One-hot readiness reason classification (issue #586 / ADR-129), labelled by daemon and a closed reason class. reason ∈ {ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other}; detailed error text remains in /readyz and logs to keep metric cardinality bounded.",
+	}, []string{"daemon", "reason"})
 	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale", "other"} {
 		daemonBuildInfo.WithLabelValues(daemon, Version, GitSHA, BuildTime).Set(1)
 		daemonUptimeSeconds.WithLabelValues(daemon).Set(0)
 		daemonReady.WithLabelValues(daemon).Set(0)
+		for _, reason := range readyReasonClasses {
+			daemonReadyReason.WithLabelValues(daemon, reason).Set(0)
+		}
+		// Before a daemon attaches its ReadyzProbe observer, the boolean
+		// gauge is conservatively 0 and the reason is not yet known.
+		daemonReadyReason.WithLabelValues(daemon, "other").Set(1)
 	}
 	// faasDeployVersion (issue #586 / ADR-129 / cluster C commit 11)
 	// is the platform-wide release identifier. Single label, `version`,
@@ -3106,7 +3123,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, residentGBPerCustomer, billingCapExceededTotal,
@@ -4229,6 +4246,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		daemonBuildInfo:                            daemonBuildInfo,
 		daemonUptimeSeconds:                        daemonUptimeSeconds,
 		daemonReady:                                daemonReady,
+		daemonReadyReason:                          daemonReadyReason,
 		faasDeployVersion:                          faasDeployVersion,
 		bridgeFramingTotal:                         bridgeFramingTotal,
 		guestInitDuration:                          guestInitDuration,
@@ -4561,13 +4579,11 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 // signals flip — single source of truth between the /readyz body
 // and the daemon_ready gauge.
 //
-// reason is captured for human triage (operator can pair the
-// reason string with the gauge value in journalctl) but is NOT
-// surfaced as a Prometheus label — adding a reason label would
-// inflate cardinality (one row per unique reason string per
-// daemon). Pass "" when there is no human-readable reason to
-// surface; pass "draining" / "pg ping failed: ..." / etc. when
-// the operator can act on it.
+// reason is captured for human triage in /readyz and logs. Prometheus gets
+// only a bounded classification via daemon_ready_reason; raw error text is
+// deliberately not a label. Pass "" when there is no human-readable reason
+// to surface; pass "draining" / "pg ping failed: ..." / etc. when the
+// operator can act on it.
 //
 // nil-receiver guard mirrors RecordDaemonRestart.
 func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
@@ -4585,6 +4601,56 @@ func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
 		v = 1
 	}
 	m.daemonReady.WithLabelValues(daemon).Set(float64(v))
+	reasonClass := classifyReadyReason(ready, reason)
+	m.daemonReadyReasonMu.Lock()
+	defer m.daemonReadyReasonMu.Unlock()
+	for _, class := range readyReasonClasses {
+		m.daemonReadyReason.WithLabelValues(daemon, class).Set(0)
+	}
+	m.daemonReadyReason.WithLabelValues(daemon, reasonClass).Set(1)
+}
+
+var readyReasonClasses = []string{
+	"ready",
+	"draining",
+	"database",
+	"vmmd",
+	"grpc",
+	"storage",
+	"credentials",
+	"stale",
+	"process",
+	"other",
+}
+
+// classifyReadyReason maps detailed /readyz text onto the closed metric
+// label set. Match the most specific dependency before generic failure words
+// so "pg ping failed" is reported as database rather than process.
+func classifyReadyReason(ready bool, reason string) string {
+	if ready {
+		return "ready"
+	}
+	r := strings.ToLower(reason)
+	switch {
+	case strings.Contains(r, "drain"), strings.Contains(r, "shutdown"), strings.Contains(r, "stopping"):
+		return "draining"
+	case strings.Contains(r, "pg "), strings.Contains(r, "postgres"), strings.Contains(r, "database"):
+		return "database"
+	case strings.Contains(r, "vmmd"), strings.Contains(r, "kvm"):
+		return "vmmd"
+	case strings.Contains(r, "grpc"):
+		return "grpc"
+	case strings.Contains(r, "storage"), strings.Contains(r, "build"), strings.Contains(r, "writable"), strings.Contains(r, "disk"):
+		return "storage"
+	case strings.Contains(r, "credential"), strings.Contains(r, "secret"), strings.Contains(r, "token"):
+		return "credentials"
+	case strings.Contains(r, "stale"), strings.Contains(r, "timeout"), strings.Contains(r, "not yet"), strings.Contains(r, "no touch"):
+		return "stale"
+	case strings.Contains(r, "error"), strings.Contains(r, "failed"), strings.Contains(r, "failure"), strings.Contains(r, "exited"):
+		return "process"
+	default:
+		return "other"
+	}
 }
 
 // SetDeployVersion (issue #586 / ADR-129) stamps the platform-wide

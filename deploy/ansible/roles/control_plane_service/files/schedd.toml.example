@@ -16,7 +16,8 @@
 # owner_user = "faas-schedd"
 
 # metrics_addr: bind address for the Prometheus /metrics endpoint.
-# Empty disables it.
+# Empty disables it. Strict fleet verification expects the production
+# loopback endpoint below.
 # metrics_addr = "127.0.0.1:9103"
 
 # db_url: Postgres DSN. Empty => $DATABASE_URL from the environment.

@@ -11,6 +11,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`apps`](#apps) | List your apps |
 | [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|--ram N\|…]) |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
+| [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Build provenance + sbom (build provenance &lt;id&gt;\|build sbom &lt;id&gt;) |
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
 | [`cors`](#cors) | Configure CORS for an app (allow\|ls\|rm\|show) |
@@ -294,6 +295,21 @@ Reconcile Paddle overage charges (admin)
 ### billing webhook-test
 
 Send a signed test webhook (operator)
+
+
+## canary
+
+Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;)
+
+`gregale canary [<subcommand>] <slug>`
+
+### canary simulate
+
+Estimate per-stage canary success from the last hour
+
+| Flag | Meaning | |
+|---|---|---|
+| `--canary-preset <PRESET>` | canary ladder preset | one of `slow` · `balanced` · `aggressive` · `1-10-50-100` |
 
 
 ## build
