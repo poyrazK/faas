@@ -363,6 +363,9 @@ type invalidator interface {
 	// per-rule invalidation would require the rule's match_host
 	// in the notify payload, which it doesn't carry.
 	InvalidateResponseCacheAll()
+	// InvalidateResponseCacheByPath drops only the requested path subset
+	// for one app. Malformed globs are logged and ignored by the consumer.
+	InvalidateResponseCacheByPath(appID, pathGlob string) error
 	// RequestCertForSurface (ADR-100 / issue #879) is the
 	// cert-remint goroutine's entry point. A
 	// tenant_surface_changed notification (any insert / update /
@@ -418,6 +421,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyKeyChanged,
 		db.NotifyDeploymentChanged,
 		db.NotifyEdgeRuleChanged,
+		db.NotifyCachePurge,
 		db.NotifyTenantSurfaceChanged,
 		db.NotifyCorsPresetChanged,
 	}
@@ -623,9 +627,25 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				log.Warn("gatewayd: refresh mirror rules failed", "app", p.AppID, "err", err)
 			}
 		default:
+			// v1 cache lookup happens before target selection, so the
+			// deployment dimension is currently empty. Fence rollout and
+			// traffic changes with an app-wide cache purge.
+			inv.InvalidateResponseCacheByApp(p.AppID)
 			if err := inv.RefreshDeploymentWeights(ctx, p.AppID); err != nil {
 				log.Warn("gatewayd: refresh deployment weights failed", "app", p.AppID, "err", err)
 			}
+		}
+	case db.NotifyCachePurge:
+		var p struct {
+			AppID    string `json:"app_id"`
+			PathGlob string `json:"path_glob"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" {
+			log.Warn("gatewayd: bad cache purge payload", "payload", n.Payload)
+			return
+		}
+		if err := inv.InvalidateResponseCacheByPath(p.AppID, p.PathGlob); err != nil {
+			log.Warn("gatewayd: cache purge failed", "app", p.AppID, "path", p.PathGlob, "err", err)
 		}
 	case db.NotifyEdgeRuleChanged:
 		// Issue #561 / ADR-089 PR 3. A create / update /

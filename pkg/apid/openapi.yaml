@@ -3738,6 +3738,31 @@ paths:
         # parsing prose.
         '402': { $ref: '#/components/responses/AdmissionRefused' }
 
+  /v1/apps/{slug}/cache:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    delete:
+      tags: [apps]
+      operationId: purgeAppCache
+      summary: Purge cached responses for an app.
+      description: |
+        Requests an in-process response-cache purge on every gateway. The
+        optional path glob limits the purge to matching normalized request
+        paths; omit it to purge the complete app cache.
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema: { type: string }
+          description: Optional normalized request path glob (for example `/products/*`).
+      responses:
+        '204': { description: Purge requested. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/overage-cap:
     post:
       tags: [account]

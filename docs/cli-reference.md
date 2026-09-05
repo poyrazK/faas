@@ -72,6 +72,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
 | [`mirror`](#mirror) | Manage traffic mirroring (mirror list\|create\|info\|update\|rm\|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only) |
+| [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
@@ -1550,6 +1551,21 @@ Aggregate mirror drift counts over a window
 | `--app <slug>` | app slug | required |
 | `--id <ID>` | mirror rule id | required |
 | `--window <WINDOW>` | summary window: 1h \| 24h \| 7d (default 1h) | one of `1h` · `24h` · `7d` |
+
+
+## cache
+
+Manage response cache (cache purge &lt;slug&gt; [--path GLOB])
+
+`gregale cache [<subcommand>] <slug>`
+
+### cache purge
+
+Purge cached responses for an app
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <GLOB>` | optional normalized request path glob |  |
 
 
 ## webhooks
