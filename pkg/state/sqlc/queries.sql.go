@@ -5766,6 +5766,190 @@ func (q *Queries) RecordMailSuppression(ctx context.Context, db DBTX, arg Record
 	return inserted, err
 }
 
+const requestTelemetryAnalyticsByRoute = `-- name: RequestTelemetryAnalyticsByRoute :many
+WITH filtered AS (
+    SELECT route, method, latency_ms, cold_boot, status,
+           count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), route_totals AS (
+    SELECT route,
+           method,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+    GROUP BY route, method
+), latency_values AS (
+    SELECT route,
+           method,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY route, method, latency_ms
+), ranked AS (
+    SELECT route,
+           method,
+           latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (PARTITION BY route, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY route, method) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT route,
+           method,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY route, method
+)
+SELECT totals.route,
+       totals.method,
+       totals.requests,
+       totals.error_requests,
+       totals.cold_boots,
+       percentiles.p50_ms,
+       percentiles.p95_ms,
+       percentiles.p99_ms
+FROM route_totals AS totals
+JOIN percentiles USING (route, method)
+ORDER BY totals.requests DESC, totals.method ASC, totals.route ASC
+LIMIT $5
+`
+
+type RequestTelemetryAnalyticsByRouteParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+	Limit        int32
+}
+
+type RequestTelemetryAnalyticsByRouteRow struct {
+	Route         string
+	Method        string
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	P50Ms         int32
+	P95Ms         int32
+	P99Ms         int32
+}
+
+// Top route/method rows for the customer analytics overview. `count` is
+// weighted throughout the same way as RequestTelemetryAnalyticsSummary.
+func (q *Queries) RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteParams) ([]RequestTelemetryAnalyticsByRouteRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryAnalyticsByRoute,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryAnalyticsByRouteRow{}
+	for rows.Next() {
+		var i RequestTelemetryAnalyticsByRouteRow
+		if err := rows.Scan(
+			&i.Route,
+			&i.Method,
+			&i.Requests,
+			&i.ErrorRequests,
+			&i.ColdBoots,
+			&i.P50Ms,
+			&i.P95Ms,
+			&i.P99Ms,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requestTelemetryAnalyticsSummary = `-- name: RequestTelemetryAnalyticsSummary :one
+WITH filtered AS (
+    SELECT latency_ms, cold_boot, status, count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), latency_values AS (
+    SELECT latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY latency_ms
+), ranked AS (
+    SELECT latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER () AS total
+    FROM latency_values
+), totals AS (
+    SELECT COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+)
+SELECT requests,
+       error_requests,
+       cold_boots,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+FROM totals
+`
+
+type RequestTelemetryAnalyticsSummaryParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type RequestTelemetryAnalyticsSummaryRow struct {
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	P50Ms         int32
+	P95Ms         int32
+	P99Ms         int32
+}
+
+// Customer-facing request analytics over a bounded retention window.
+// The recorder collapses identical requests into rows with `count`, so
+// all request/error/cold-boot totals and percentiles must expand that
+// weight rather than treating each stored row as one request.
+func (q *Queries) RequestTelemetryAnalyticsSummary(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsSummaryParams) (RequestTelemetryAnalyticsSummaryRow, error) {
+	row := db.QueryRow(ctx, requestTelemetryAnalyticsSummary,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	var i RequestTelemetryAnalyticsSummaryRow
+	err := row.Scan(
+		&i.Requests,
+		&i.ErrorRequests,
+		&i.ColdBoots,
+		&i.P50Ms,
+		&i.P95Ms,
+		&i.P99Ms,
+	)
+	return i, err
+}
+
 const requestTelemetryBaselineP95ByRoute = `-- name: RequestTelemetryBaselineP95ByRoute :many
 SELECT route,
        percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int AS p50_ms,

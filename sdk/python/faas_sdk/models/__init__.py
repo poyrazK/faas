@@ -565,6 +565,9 @@ from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .repo_response import RepoResponse
+from .request_analytics_response import RequestAnalyticsResponse
+from .request_analytics_route import RequestAnalyticsRoute
+from .request_analytics_route_method import RequestAnalyticsRouteMethod
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
@@ -1275,6 +1278,9 @@ __all__ = (
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "RepoResponse",
+    "RequestAnalyticsResponse",
+    "RequestAnalyticsRoute",
+    "RequestAnalyticsRouteMethod",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",

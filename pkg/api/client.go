@@ -2878,6 +2878,19 @@ func (c *Client) GetAppUsageSummary(ctx context.Context, slug string, opts AppUs
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppRequestAnalytics returns the bounded historical request analytics
+// overview for slug. Since is a duration such as "24h" or "7d"; the server
+// clamps it to the plan's request-telemetry retention and reports that fact
+// in WindowClamped. Free accounts receive the normal plan-gated response.
+func (c *Client) GetAppRequestAnalytics(ctx context.Context, slug, since string) (RequestAnalyticsResponse, error) {
+	var out RequestAnalyticsResponse
+	path := "/v1/apps/" + slug + "/analytics"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppThrottleSuggestions returns the per-route throttle
 // recommendation payload for slug over the named range window
 // (ADR-091 D20.5 amendment, issue #881). The recommender is

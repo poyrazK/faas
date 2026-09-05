@@ -1628,6 +1628,99 @@ WHERE app_id = $1
   AND received_at <  $4
 GROUP BY route;
 
+-- name: RequestTelemetryAnalyticsSummary :one
+-- Customer-facing request analytics over a bounded retention window.
+-- The recorder collapses identical requests into rows with `count`, so
+-- all request/error/cold-boot totals and percentiles must expand that
+-- weight rather than treating each stored row as one request.
+WITH filtered AS (
+    SELECT latency_ms, cold_boot, status, count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), latency_values AS (
+    SELECT latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY latency_ms
+), ranked AS (
+    SELECT latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER () AS total
+    FROM latency_values
+), totals AS (
+    SELECT COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+)
+SELECT requests,
+       error_requests,
+       cold_boots,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+FROM totals;
+
+-- name: RequestTelemetryAnalyticsByRoute :many
+-- Top route/method rows for the customer analytics overview. `count` is
+-- weighted throughout the same way as RequestTelemetryAnalyticsSummary.
+WITH filtered AS (
+    SELECT route, method, latency_ms, cold_boot, status,
+           count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), route_totals AS (
+    SELECT route,
+           method,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+    GROUP BY route, method
+), latency_values AS (
+    SELECT route,
+           method,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY route, method, latency_ms
+), ranked AS (
+    SELECT route,
+           method,
+           latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (PARTITION BY route, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY route, method) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT route,
+           method,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY route, method
+)
+SELECT totals.route,
+       totals.method,
+       totals.requests,
+       totals.error_requests,
+       totals.cold_boots,
+       percentiles.p50_ms,
+       percentiles.p95_ms,
+       percentiles.p99_ms
+FROM route_totals AS totals
+JOIN percentiles USING (route, method)
+ORDER BY totals.requests DESC, totals.method ASC, totals.route ASC
+LIMIT $5;
+
 -- PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
 -- read patterns. The cron in cmd/apid/debug_regression_cron.go composes
 -- RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment

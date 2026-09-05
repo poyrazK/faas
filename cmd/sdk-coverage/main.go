@@ -555,6 +555,7 @@ var methodRouteMap = map[string]string{
 	// (AppUsageSummary) for the noun.
 	"GET /v1/apps/{slug}/wake-timeline": "GetAppWakeTimeline",
 	"GET /v1/apps/{slug}/usage":         "GetAppUsageSummary",
+	"GET /v1/apps/{slug}/analytics":     "GetAppRequestAnalytics",
 
 	// ADR-127 / PR-A — production debugger data plane. The
 	// auto-derivation would produce GetAppsSlugDebugRequests

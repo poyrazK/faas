@@ -451,6 +451,51 @@
         </section>
       {{end}}
 
+      {{/* Customer request analytics is the durable, weighted rollup
+           behind GET /v1/apps/{slug}/analytics. It complements the live
+           Prometheus snapshot above with a retention-window view and a
+           deterministic top-route table. */}}
+      {{if .Data.RequestAnalytics}}
+        <section aria-label="Request analytics">
+          <h2>Request analytics
+            <small style="font-weight:normal;color:#888">(last {{.Data.RequestAnalytics.Since}})</small>
+            · <a href="/v1/apps/{{.Data.App.Slug}}/analytics?since={{.Data.RequestAnalytics.Since}}">JSON</a>
+          </h2>
+          {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          {{if eq .Data.RequestAnalytics.Requests 0}}
+            <p>No requests in the last {{.Data.RequestAnalytics.Since}}.</p>
+          {{else}}
+            <dl>
+              <dt>Requests</dt><dd>{{.Data.RequestAnalytics.Requests}}</dd>
+              <dt>Errors</dt><dd>{{.Data.RequestAnalytics.ErrorRequests}} ({{printf "%.2f" .Data.RequestAnalytics.ErrorRatePct}}%)</dd>
+              <dt>Cold boots</dt><dd>{{.Data.RequestAnalytics.ColdBoots}}</dd>
+              <dt>Latency p50 / p95 / p99</dt><dd>{{.Data.RequestAnalytics.P50MS}} / {{.Data.RequestAnalytics.P95MS}} / {{.Data.RequestAnalytics.P99MS}} ms</dd>
+            </dl>
+            {{if .Data.RequestAnalytics.Routes}}
+              <h3>Top routes</h3>
+              <table>
+                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th></tr></thead>
+                <tbody>
+                  {{range .Data.RequestAnalytics.Routes}}
+                    <tr>
+                      <td><code>{{.Route}}</code></td>
+                      <td>{{.Method}}</td>
+                      <td>{{.Requests}}</td>
+                      <td>{{.ErrorRequests}} ({{printf "%.2f" .ErrorRatePct}}%)</td>
+                      <td>{{.P50MS}} ms</td>
+                      <td>{{.P95MS}} ms</td>
+                      <td>{{.P99MS}} ms</td>
+                    </tr>
+                  {{end}}
+                </tbody>
+              </table>
+              {{if .Data.RequestAnalytics.RoutesTruncated}}<p class="muted">Showing the top {{.Data.RequestAnalytics.RoutesLimit}} route/method combinations. Use the JSON endpoint for the same bounded result.</p>{{end}}
+            {{end}}
+          {{end}}
+          <small class="muted">Updated {{.Data.RequestAnalytics.AsOf}} · latency percentiles include collapsed request counts.</small>
+        </section>
+      {{end}}
+
       {{/* Issue #272 / ADR-095 PR-C — preview environments panel.
            Suppressed for a preview row itself (a preview cannot have
            previews — the per-deployment scope gates dispatch) so the
