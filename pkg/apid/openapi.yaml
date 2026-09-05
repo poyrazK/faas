@@ -12738,6 +12738,11 @@ components:
         memory_mb: { type: integer, minimum: 1, description: "Configured instance memory in MB." }
         cpu_millicores: { type: integer, enum: [250, 500, 1000], description: "Configured sustained CPU allowance in millicores." }
 
+    ResourceProfile:
+      description: "Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup and placement controls."
+      type: string
+      enum: [micro, small, medium, large, xlarge]
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -12749,6 +12754,9 @@ components:
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer , example: 256}
         cpu_millicores: { type: integer, enum: [250, 500, 1000], example: 500 }
+        resource_profile:
+          $ref: '#/components/schemas/ResourceProfile'
+          description: "Named profile when the configured memory and CPU exactly match one of the platform profiles; omitted for custom shapes."
         configured_resources: { $ref: '#/components/schemas/AppConfiguredResources' }
         max_concurrency: { type: integer }
         # Issue #559: platform-advertised per-VM concurrency cap for
@@ -13036,6 +13044,9 @@ components:
           enum: [250, 500, 1000]
           default: 1000
           description: "Sustained CPU allowance per instance. Omit for 1000 millicores."
+        resource_profile:
+          $ref: '#/components/schemas/ResourceProfile'
+          description: "Named memory/CPU profile. When set, ram_mb and cpu_millicores are filled from the profile; explicit values must agree with it."
         max_concurrency: { type: integer }
         idle_timeout_s: { type: integer }
         # Service/lifecycle settings are persisted on the app and merged into
@@ -13190,6 +13201,11 @@ components:
           type: [integer, "null"]
           enum: [250, 500, 1000, null]
           description: "Sustained CPU allowance per instance. Omit for no change."
+        resource_profile:
+          oneOf:
+            - $ref: '#/components/schemas/ResourceProfile'
+            - type: "null"
+          description: "Named memory/CPU profile. Omit for no change; explicit ram_mb or cpu_millicores must agree with the selected profile."
         idle_timeout_s: { type: [integer, "null"] }
         max_concurrency: { type: [integer, "null"] }
         # Lifecycle settings are partial updates. Setting execution_mode away

@@ -154,13 +154,14 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
 	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
-		"app_id":          created.ID,
-		"slug":            created.Slug,
-		"type":            string(created.Type),
-		"ram_mb":          created.RAMMB,
-		"cpu_millicores":  created.CPUMillicores,
-		"max_concurrency": created.MaxConcurrency,
-		"runtime":         created.Runtime,
+		"app_id":           created.ID,
+		"slug":             created.Slug,
+		"type":             string(created.Type),
+		"ram_mb":           created.RAMMB,
+		"cpu_millicores":   created.CPUMillicores,
+		"resource_profile": api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
+		"max_concurrency":  created.MaxConcurrency,
+		"runtime":          created.Runtime,
 	})
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponse(created, acct.Plan)
@@ -183,10 +184,24 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 			"Invalid runtime", "functions require runtime node22, python312, go124, go124-alpine, node24, or python313")
 	}
 	ram := req.RAMMB
+	cpuMillicores := req.CPUMillicores
+	if req.ResourceProfile != "" {
+		profile, ok := api.ResourceProfileSpecFor(req.ResourceProfile)
+		if !ok {
+			return state.App{}, api.ErrInvalidResourceProfile(req.ResourceProfile)
+		}
+		if ram != 0 && ram != profile.MemoryMB {
+			return state.App{}, api.ErrResourceProfileConflict("ram_mb", profile.Name, profile.MemoryMB, ram)
+		}
+		if cpuMillicores != 0 && cpuMillicores != profile.CPUMillicores {
+			return state.App{}, api.ErrResourceProfileConflict("cpu_millicores", profile.Name, profile.CPUMillicores, cpuMillicores)
+		}
+		ram = profile.MemoryMB
+		cpuMillicores = profile.CPUMillicores
+	}
 	if ram == 0 {
 		ram = limits.RAMMB
 	}
-	cpuMillicores := req.CPUMillicores
 	if cpuMillicores == 0 {
 		cpuMillicores = api.DefaultAppCPUMillicores
 	}
@@ -612,7 +627,9 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), Runtime: a.Runtime,
-		RAMMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan), MaxConcurrency: a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
+		RAMMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
+		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		// Issue #559: platform-advertised per-VM concurrency cap
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall

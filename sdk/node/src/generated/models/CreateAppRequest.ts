@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ResourceProfile } from './ResourceProfile.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 /**
  * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
@@ -15,6 +16,10 @@ export type CreateAppRequest = {
    * Sustained CPU allowance per instance. Omit for 1000 millicores.
    */
   cpu_millicores?: 250 | 500 | 1000;
+  /**
+   * Named memory/CPU profile. When set, ram_mb and cpu_millicores are filled from the profile; explicit values must agree with it.
+   */
+  resource_profile?: ResourceProfile;
   max_concurrency?: number;
   idle_timeout_s?: number;
   /**

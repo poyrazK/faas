@@ -9,7 +9,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`apps`](#apps) | List your apps |
-| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|--ram N\|…]) |
+| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|--profile NAME\|--ram N\|…]) |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Build provenance + sbom (build provenance &lt;id&gt;\|build sbom &lt;id&gt;) |
@@ -228,19 +228,20 @@ Delete one app (positional: &lt;slug&gt;)
 
 ## app
 
-Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|--ram N|…])
+Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|--profile NAME|--ram N|…])
 
-`gregale app [<subcommand>] <slug> [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>]`
+`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--profile <micro|small|medium|large|xlarge>` | set a named RAM/CPU profile |  |
 | `--ram <MB>` | set RAM in MB |  |
 | `--max-concurrency <N>` | set max_concurrency |  |
 | `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
 
 ### app scale
 
-Set max_concurrency / RAM / CPU
+Set max_concurrency / resource profile / RAM / CPU
 
 ### app rename
 
@@ -679,7 +680,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--secret-scan <on|off>] [--diff] [--strict] [--lenient] [--server-diff] [--doctor-strict]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--secret-scan <on|off>] [--diff] [--strict] [--lenient] [--server-diff] [--doctor-strict]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -695,6 +696,7 @@ Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF 
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
 | `--name <SLUG>` | app name (default: selected source directory, or current directory) |  |
+| `--profile <PROFILE>` | named app resource profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--function` | deploy as a function; skip shape auto-detection |  |
 | `--app` | deploy as an app; skip shape auto-detection |  |
 | `--yes` | skip the apply confirmation prompt |  |

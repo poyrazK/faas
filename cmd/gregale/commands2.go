@@ -194,13 +194,14 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
 	fs := flag.NewFlagSet("app", flag.ContinueOnError)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
+	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	// --min sets the per-app cold-wake floor (ux_spec §6.5).
@@ -362,6 +363,9 @@ func cmdApp(args []string) int {
 		v := *cpuMillicores
 		req.CPUMillicores = &v
 	}
+	if explicit["profile"] {
+		req.ResourceProfile = profile
+	}
 	if explicit["max-concurrency"] {
 		v := *conc
 		req.MaxConcurrency = &v
@@ -485,7 +489,7 @@ func cmdApp(args []string) int {
 		req.OverflowNode = &v
 	}
 
-	if req.RAMMB == nil && req.CPUMillicores == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.MinInstances == nil &&
+	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
@@ -501,6 +505,9 @@ func cmdApp(args []string) int {
 		fmt.Printf("%-30s %s\n", "url:", a.URL)
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
 		fmt.Printf("%-30s %d mCPU\n", "cpu:", a.CPUMillicores)
+		if a.ResourceProfile != "" {
+			fmt.Printf("%-30s %s\n", "resource profile:", a.ResourceProfile)
+		}
 		fmt.Printf("%-30s %d\n", "max concurrency:", a.MaxConcurrency)
 		// Issue #559: surface the platform-advertised per-VM
 		// concurrency bound for the app's plan. Distinct from
@@ -678,11 +685,14 @@ func cmdAppsRm(args []string) int {
 //     explicit --function --tarball path relies on the explicit
 //     --runtime flag, with --handler defaulting to "handler.handler"
 //     (defaultTemplateHandler, commands2.go:48).
-func buildCreateRequest(slug string, sh shape, runtime string, requireAuthnPtr *bool, appProtocolPtr *string) api.CreateAppRequest {
+func buildCreateRequest(slug string, sh shape, runtime string, requireAuthnPtr *bool, appProtocolPtr *string, resourceProfile ...string) api.CreateAppRequest {
 	req := api.CreateAppRequest{
 		Slug:         slug,
 		RequireAuthn: requireAuthnPtr,
 		AppProtocol:  appProtocolPtr,
+	}
+	if len(resourceProfile) > 0 {
+		req.ResourceProfile = resourceProfile[0]
 	}
 	if sh == shapeFunction {
 		req.Type = "function"
@@ -739,10 +749,14 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 		// --app-protocol, when set) onto the existing app via PATCH. The
 		// plan gate (Pro/Scale only) still fires at the apid PATCH handler
 		// — the existing #560 contract is preserved verbatim.
-		if requireAuthnPtr != nil || appProtocolPtr != nil {
+		if requireAuthnPtr != nil || appProtocolPtr != nil || req.ResourceProfile != "" {
 			upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr}
 			if appProtocolPtr != nil {
 				upd.AppProtocol = appProtocolPtr
+			}
+			if req.ResourceProfile != "" {
+				profile := req.ResourceProfile
+				upd.ResourceProfile = &profile
 			}
 			if _, err := client.UpdateApp(ctx, req.Slug, upd); err != nil {
 				return err
@@ -943,6 +957,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
+	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
 	// Issue #737 / ADR-083: explicit shape override. Without either flag
 	// the CLI auto-detects from the cwd (handler.*-only → function,
 	// otherwise app). With --function or --app, detection is skipped.
@@ -1107,6 +1122,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *requireAuthn && *noRequireAuthn {
 		return printErr("Invalid flags", fmt.Errorf("--require-authn and --no-require-authn are mutually exclusive"))
 	}
+	if *profile != "" {
+		if _, ok := api.ResourceProfileSpecFor(*profile); !ok {
+			return printErr("Invalid --profile", fmt.Errorf("must be one of micro, small, medium, large, xlarge; got %q", *profile))
+		}
+	}
 	// Issue #737 / ADR-083: --function and --app are mutually exclusive.
 	// Setting both is ambiguous noise; reject before any side effects so
 	// the customer's first response from the CLI is not a silent shape
@@ -1240,6 +1260,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// in PR-B; the server resolves the install token from
 	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
 	if *repo != "" {
+		if *profile != "" {
+			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --repo"))
+		}
 		if err := validateRepoSlug(*repo); err != nil {
 			return printErr("Invalid --repo", err)
 		}
@@ -1686,6 +1709,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff never ships a deploy.
 	if *diff {
+		if *profile != "" {
+			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --diff"))
+		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
@@ -1701,6 +1727,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// transactional on the server (rollback on over-quota per
 	// ADR-050), and the confirm prompt is gated on TTY + --yes.
 	if *deployOnly != "" || *projectSlug != "" {
+		if *profile != "" {
+			return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
+		}
 		// Make sure the tarball resolves the same way it does for
 		// the legacy path: --template materialises, zero-config packs
 		// $PWD. The block above already populated *tarball in those
@@ -1794,9 +1823,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Workflow manifest validation failed", err)
 	}
 	if !existingApp {
-		createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr)
+		createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr, *profile)
 		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr); err != nil {
 			return printErr("Could not create or fetch app", err)
+		}
+	} else if *profile != "" {
+		// Developer sessions reuse an existing app and skip the
+		// create-or-fetch probe. Apply the requested profile explicitly so
+		// `gregale dev ... --profile` has the same effect as a normal deploy.
+		if _, err := client.UpdateApp(ctx, slug, api.UpdateAppRequest{ResourceProfile: profile}); err != nil {
+			return printErr("Could not update app resource profile", err)
 		}
 	}
 

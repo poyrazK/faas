@@ -160,22 +160,23 @@ func (p *Problem) WithDocs(url string) *Problem {
 // Stable error codes (spec Appendix A, UX spec §7). Keep in sync with docs and
 // the CLI's exit-code mapping.
 const (
-	CodePlanLimitApps   = "plan_limit_apps"
-	CodePlanLimitRAM    = "plan_limit_ram"
-	CodePlanLimitConcur = "plan_limit_concurrency"
-	CodeInvalidAppCPU   = "invalid_cpu_millicores"
-	CodeSourceTooLarge  = "source_too_large"
-	CodeSourceInvalid   = "source_invalid"
-	CodeAppLayerTooBig  = "app_layer_too_large"
-	CodeBuildUndetected = "build_undetected"
-	CodeBuildOOM        = "build_oom"
-	CodeBuildTimeout    = "build_timeout"
-	CodeQuotaExhausted  = "quota_exhausted"
-	CodeBillingPastDue  = "billing_past_due"
-	CodeCapacity        = "capacity_unavailable"
-	CodeUnauthorized    = "unauthorized"
-	CodeMFARequired     = "mfa_required"
-	CodeStepUpRequired  = "step_up_required"
+	CodePlanLimitApps          = "plan_limit_apps"
+	CodePlanLimitRAM           = "plan_limit_ram"
+	CodePlanLimitConcur        = "plan_limit_concurrency"
+	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidResourceProfile = "invalid_resource_profile"
+	CodeSourceTooLarge         = "source_too_large"
+	CodeSourceInvalid          = "source_invalid"
+	CodeAppLayerTooBig         = "app_layer_too_large"
+	CodeBuildUndetected        = "build_undetected"
+	CodeBuildOOM               = "build_oom"
+	CodeBuildTimeout           = "build_timeout"
+	CodeQuotaExhausted         = "quota_exhausted"
+	CodeBillingPastDue         = "billing_past_due"
+	CodeCapacity               = "capacity_unavailable"
+	CodeUnauthorized           = "unauthorized"
+	CodeMFARequired            = "mfa_required"
+	CodeStepUpRequired         = "step_up_required"
 	// CodeUnsupportedByCLI is returned when a bearer-key SDK client
 	// targets a dashboard-session-only route. Use the dedicated
 	// session-aware helper when the caller has the dashboard cookies.
@@ -435,7 +436,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity
 	case CodeImageNotFound, CodeImageManifestInvalid:
 		return http.StatusUnprocessableEntity

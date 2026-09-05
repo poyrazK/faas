@@ -710,6 +710,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if prob := resolveUpdateResourceProfile(&req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	ram, mc := app.RAMMB, app.MaxConcurrency
 	if req.RAMMB != nil {
@@ -1078,6 +1082,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// raw netip.Prefix so the JSON is stable across Go minor bumps.
 	oldApp := map[string]any{}
 	newApp := map[string]any{}
+	if req.ResourceProfile != nil {
+		oldApp["resource_profile"] = api.ResourceProfileForResources(app.RAMMB, effectiveAppCPUMillicores(app, acct.Plan))
+		newApp["resource_profile"] = api.ResourceProfileForResources(updated.RAMMB, effectiveAppCPUMillicores(updated, acct.Plan))
+	}
 	if req.RAMMB != nil {
 		oldApp["ram_mb"] = app.RAMMB
 		newApp["ram_mb"] = updated.RAMMB
@@ -1292,6 +1300,30 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	resp := s.appResponse(updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
+}
+
+// resolveUpdateResourceProfile expands a named profile into the existing
+// RAM/CPU update fields before validation and persistence. Explicit values may
+// accompany a profile only when they agree with its resolved shape; this keeps
+// a typo or ambiguous request from silently selecting the wrong cgroup quota.
+func resolveUpdateResourceProfile(req *api.UpdateAppRequest) *api.Problem {
+	if req.ResourceProfile == nil {
+		return nil
+	}
+	profile, ok := api.ResourceProfileSpecFor(*req.ResourceProfile)
+	if !ok {
+		return api.ErrInvalidResourceProfile(*req.ResourceProfile)
+	}
+	if req.RAMMB != nil && *req.RAMMB != profile.MemoryMB {
+		return api.ErrResourceProfileConflict("ram_mb", profile.Name, profile.MemoryMB, *req.RAMMB)
+	}
+	if req.CPUMillicores != nil && *req.CPUMillicores != profile.CPUMillicores {
+		return api.ErrResourceProfileConflict("cpu_millicores", profile.Name, profile.CPUMillicores, *req.CPUMillicores)
+	}
+	memory, cpu := profile.MemoryMB, profile.CPUMillicores
+	req.RAMMB = &memory
+	req.CPUMillicores = &cpu
+	return nil
 }
 
 // deleteApp marks the app as deleted (soft delete; PG snapshot GC runs on the

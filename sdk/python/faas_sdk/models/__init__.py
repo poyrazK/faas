@@ -590,6 +590,7 @@ from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
 from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
+from .resource_profile import ResourceProfile
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
@@ -1335,6 +1336,7 @@ __all__ = (
     "RequestAnalyticsTimeseriesResponse",
     "RequestAnalyticsTimeseriesResponseBucket",
     "RequestAnalyticsTimeseriesResponseMethod",
+    "ResourceProfile",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",
