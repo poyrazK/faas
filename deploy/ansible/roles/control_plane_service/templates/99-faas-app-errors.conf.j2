@@ -4,5 +4,6 @@
 # the local /run/faas/app_errors.sock fallback.
 Environment=FAAS_APID_APP_ERRORS_TARGET={{ faas_apid_app_errors_listen }}
 Environment=FAAS_APID_APP_ERRORS_TLS_CERT_PATH=/etc/faas/tls/apid/advisory.crt
-Environment=FAAS_APID_APP_ERRORS_TLS_KEY_PATH=/etc/faas/tls/apid/advisory.key
+LoadCredential=app_errors_tls_key:/etc/faas/tls/apid/advisory.key
+Environment=FAAS_APID_APP_ERRORS_TLS_KEY_PATH=%d/app_errors_tls_key
 Environment=FAAS_APID_APP_ERRORS_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt

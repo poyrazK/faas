@@ -3874,7 +3874,9 @@ const (
 	GatewayDrainGraceSeconds        = 25
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000
-	CertSyncIntervalSeconds         = 30
+	// WarmHintHeartbeatInterval keeps idle hint streams observable without tenant traffic.
+	WarmHintHeartbeatInterval = 30 * time.Second
+	CertSyncIntervalSeconds   = 30
 
 	// Tenant-surface cert engine constants (ADR-100 amendment,
 	// PR-D cert-engine-real-mint). The cap + renew-window + tick live
@@ -6243,3 +6245,7 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 	}
 	return d
 }
+
+// FunctionInterpreterMaxWorkers bounds active generated-adapter processes in
+// one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
+const FunctionInterpreterMaxWorkers = 4

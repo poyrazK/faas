@@ -14,10 +14,15 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const protocolMarker = "FAAS_PERSISTENT_PROTOCOL_V1"
-const maxIdleWorkers = 4
+
+// Keep active interpreters within the same four-worker footprint previously
+// used for idle retention. Waiters keep their invocation cancellation budget.
+const maxWorkers = api.FunctionInterpreterMaxWorkers
 
 // Spec identifies one generated adapter process pool.
 type Spec struct {
@@ -81,37 +86,65 @@ func supportsPersistentProtocol(path string) bool {
 }
 
 type pool struct {
-	spec Spec
-	mu   sync.Mutex
-	idle []*worker
+	spec    Spec
+	mu      sync.Mutex
+	idle    []*worker
+	live    int
+	changed chan struct{}
 }
 
-func newPool(spec Spec) *pool { return &pool{spec: spec} }
+func newPool(spec Spec) *pool { return &pool{spec: spec, changed: make(chan struct{})} }
 
 func (p *pool) acquire(ctx context.Context) (*worker, error) {
-	p.mu.Lock()
-	if n := len(p.idle); n > 0 {
-		w := p.idle[n-1]
-		p.idle = p.idle[:n-1]
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		p.mu.Lock()
+		if n := len(p.idle); n > 0 {
+			w := p.idle[n-1]
+			p.idle = p.idle[:n-1]
+			p.mu.Unlock()
+			return w, nil
+		}
+		if p.live < maxWorkers {
+			p.live++ // Reserve before starting: concurrent misses cannot oversubscribe.
+			p.mu.Unlock()
+			w, err := startWorker(ctx, p.spec)
+			if err != nil {
+				p.mu.Lock()
+				p.live--
+				p.notifyLocked()
+				p.mu.Unlock()
+			}
+			return w, err
+		}
+		changed := p.changed
 		p.mu.Unlock()
-		return w, nil
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-changed:
+		}
 	}
-	p.mu.Unlock()
-	return startWorker(ctx, p.spec)
+}
+
+func (p *pool) notifyLocked() {
+	close(p.changed)
+	p.changed = make(chan struct{})
 }
 
 func (p *pool) release(w *worker, healthy bool) {
 	if !healthy {
 		w.close()
-		return
 	}
 	p.mu.Lock()
-	if len(p.idle) >= maxIdleWorkers {
-		p.mu.Unlock()
-		w.close()
-		return
+	if healthy {
+		p.idle = append(p.idle, w)
+	} else {
+		p.live--
 	}
-	p.idle = append(p.idle, w)
+	p.notifyLocked()
 	p.mu.Unlock()
 }
 
