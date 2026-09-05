@@ -168,6 +168,10 @@ type fakeInvalidator struct {
 	// kind="mirror" deployment_changed notify. Paired with
 	// `refreshed` for the kind=traffic / kind="" discriminator.
 	mirrorRefreshed []string
+	// liveRefreshed records running-instance refreshes. Service
+	// replicas are admitted out-of-band by schedd and must be merged
+	// into an already-warm picker.
+	liveRefreshed []string
 }
 
 func (f *fakeInvalidator) EvictInstance(appID, instanceID string) {
@@ -217,6 +221,12 @@ func (f *fakeInvalidator) RefreshDeploymentWeights(_ context.Context, appID stri
 func (f *fakeInvalidator) RefreshMirrorRules(_ context.Context, appID string) error {
 	f.mu.Lock()
 	f.mirrorRefreshed = append(f.mirrorRefreshed, appID)
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeInvalidator) RefreshLiveTargets(_ context.Context, appID string) error {
+	f.mu.Lock()
+	f.liveRefreshed = append(f.liveRefreshed, appID)
 	f.mu.Unlock()
 	return nil
 }
@@ -384,6 +394,23 @@ func TestHandleInvalidation_LifecycleStatesDoNotEvict(t *testing.T) {
 		if evicted != 0 {
 			t.Errorf("state=%q: evicted %d entries, want 0 (cache-self-destruct guard)", state, evicted)
 		}
+	}
+}
+
+func TestHandleInvalidation_RunningRefreshesLiveTargets(t *testing.T) {
+	f := &fakeInvalidator{}
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyInstanceChanged,
+		Payload: `{"instance_id":"service-2","app_id":"app-9","state":"running"}`,
+	}, testLogger())
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.liveRefreshed) != 1 || f.liveRefreshed[0] != "app-9" {
+		t.Fatalf("liveRefreshed = %v, want [app-9]", f.liveRefreshed)
+	}
+	if len(f.evicted) != 0 {
+		t.Fatalf("running refresh evicted targets: %v", f.evicted)
 	}
 }
 

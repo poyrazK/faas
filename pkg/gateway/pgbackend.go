@@ -150,8 +150,10 @@ func (s *targetSet) pick(_ string) (Target, bool) {
 //     (plan). Filled on a Lookup miss via Router; wholesale-reset on an
 //     app/domain change (Reset / FlushRoutes).
 //   - targets: app_id → *targetSet. Filled by Admit (issue #168) when
-//     schedd returns a fresh instance, and mutated by EvictInstance when
-//     an instance_changed notification says a specific instance parked.
+//     schedd returns a fresh instance, merged by RefreshLiveTargets when
+//     an out-of-band RUNNING notification publishes a service replica, and
+//     mutated by EvictInstance when an instance_changed notification says
+//     a specific instance parked.
 //     Pick is the ctx-less hot path, so it must be a pure in-memory read —
 //     the notify loop + the admit path keep it fresh rather than per-request
 //     DB hits.
@@ -443,6 +445,33 @@ func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) erro
 		if b.targetCountLocked(appID) > 0 {
 			return nil, nil
 		}
+		for _, target := range targets {
+			b.recordTargetLocked(appID, target)
+		}
+		return nil, nil
+	})
+	return err
+}
+
+// RefreshLiveTargets merges the authoritative RUNNING target set into the
+// process-local picker even when that picker already contains a healthy target.
+// This is the out-of-band counterpart to Admit: service replicas are admitted
+// by schedd's desired-count reconciler, not by a gateway request, so a
+// running-instance notification must publish the new replica for real fan-out.
+// The merge is additive; terminal rows are removed by EvictInstance
+// notifications, and recordTargetLocked makes replays idempotent by instance
+// identity. The same single-flight group coalesces a burst of RUNNING events.
+func (b *PGBackend) RefreshLiveTargets(ctx context.Context, appID string) error {
+	if b == nil || appID == "" || b.liveTargetLoader == nil {
+		return nil
+	}
+	_, err, _ := b.liveTargetHydration.Do(appID, func() (any, error) {
+		targets, err := b.liveTargetLoader(ctx, appID)
+		if err != nil {
+			return nil, fmt.Errorf("gateway: refresh live targets for app %s: %w", appID, err)
+		}
+		b.tgtMu.Lock()
+		defer b.tgtMu.Unlock()
 		for _, target := range targets {
 			b.recordTargetLocked(appID, target)
 		}

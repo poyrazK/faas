@@ -497,12 +497,21 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// path lands).
 		switch p.State {
 		case "running":
-			// RUNNING may have been produced by another gateway process
-			// or by a schedd-side wake producer. Do not assume this
-			// process admitted the instance: hydrate the local picker from
-			// the authoritative row before the next request mistakes the
-			// app for cold and starts a duplicate VM.
-			if reconciler, ok := inv.(interface {
+			// RUNNING may have been produced by another gateway process,
+			// by a schedd-side wake producer, or by the service desired-count
+			// reconciler. The latter can add a replica while this picker
+			// already has a healthy sibling, so the normal empty-cache
+			// reconciliation is insufficient: merge the authoritative set
+			// even when the local cache is non-empty. Keep the older
+			// ReconcileLiveTargets fallback for invalidators that predate the
+			// explicit refresh seam.
+			if refresher, ok := inv.(interface {
+				RefreshLiveTargets(context.Context, string) error
+			}); ok {
+				if err := refresher.RefreshLiveTargets(ctx, p.AppID); err != nil {
+					log.Warn("gatewayd: refresh running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
+				}
+			} else if reconciler, ok := inv.(interface {
 				ReconcileLiveTargets(context.Context, string) error
 			}); ok {
 				if err := reconciler.ReconcileLiveTargets(ctx, p.AppID); err != nil {

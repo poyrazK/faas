@@ -590,8 +590,11 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 
 // SelectEvictions returns instances to park to bring residentMB down to the
 // eviction threshold, in eviction order (spec §4.3): LRU by last request, never
-// an instance younger than MinInstanceAge, Scale plan evicted last. It returns
-// nothing when resident RAM is at or below the threshold.
+// an instance younger than MinInstanceAge, Scale plan evicted last. Service
+// replicas are not candidates: their RAM is the customer's paid, continuous
+// desired-count capacity and parking one would make the service flap under
+// pressure. It returns nothing when resident RAM is at or below the threshold
+// or when only service replicas remain.
 func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []string {
 	if residentMB <= EvictionThresholdMB {
 		return nil
@@ -601,6 +604,15 @@ func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []
 	var cands []InstanceInfo
 	for _, in := range instances {
 		if in.State != state.StateRunning {
+			continue
+		}
+		// Services are continuously reconciled to desired_count and
+		// are explicitly exempt from both idle reaping and RAM-pressure
+		// parking. The desired-count scheduler is the owner of service
+		// replica lifecycle; allowing this independent selector to park
+		// one creates an avoidable replacement storm and can leave a
+		// service below its availability floor when admission is full.
+		if state.InstanceMode(in.Mode) == state.InstanceModeService {
 			continue
 		}
 		if now.Sub(in.Started) < MinInstanceAge {
