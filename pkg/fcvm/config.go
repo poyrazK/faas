@@ -600,6 +600,10 @@ type WorkloadSpec struct {
 	Essential  bool   // type=="init" + essential=true → fail deploy on non-zero exit
 	Cmd        []string
 	Entrypoint []string
+	// DependsOn is the guest-init startup gate list. Conditions are
+	// started, healthy, or completed_successfully; an empty condition
+	// defaults to started.
+	DependsOn []api.WorkloadDependency
 	// SealedEnv carries per-sidecar ciphertext from the deployment record. It is
 	// unsealed by Manager.Wake and never written into the shared sidecar image.
 	SealedEnv []SealedEnvEntry

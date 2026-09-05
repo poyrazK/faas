@@ -29,6 +29,11 @@ type Supervisor struct {
 	Policy  string                       // restart policy; empty preserves on-failure
 	Start   func() error                 // runs the app to completion; nil = clean exit
 	OnCrash func(attempt int, err error) // optional hook for logging/backoff
+	// onStart and onHealthy are lifecycle hooks used by the workload roster
+	// scheduler. They are fired once per supervisor lifetime, after the child
+	// has started and after its startup gate respectively.
+	onStart   func()
+	onHealthy func()
 
 	// LastCmd tracks the *exec.Cmd the supervisor most-recently forked,
 	// swapped atomically on every restart. nil until the first fork.
@@ -79,6 +84,28 @@ type Supervisor struct {
 	// supervisor checks it after Start returns so an intentional SIGTERM does
 	// not get mistaken for a crash and restarted under an `always` policy.
 	stopRequested atomic.Bool
+	startedOnce   sync.Once
+	healthyOnce   sync.Once
+}
+
+func (s *Supervisor) markStarted() {
+	if s != nil {
+		s.startedOnce.Do(func() {
+			if s.onStart != nil {
+				s.onStart()
+			}
+		})
+	}
+}
+
+func (s *Supervisor) markHealthy() {
+	if s != nil {
+		s.healthyOnce.Do(func() {
+			if s.onHealthy != nil {
+				s.onHealthy()
+			}
+		})
+	}
 }
 
 // LastExitCode returns -1 if no fork has observed an exit yet;
