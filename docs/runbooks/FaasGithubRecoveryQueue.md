@@ -4,6 +4,13 @@ GitHub webhook deliveries and Check Run updates are durable queues owned by
 `githubd`. A dead delivery can mean missing customer deployment work; a dead
 Check update means the deployment continued but GitHub may show stale status.
 
+## Symptom
+
+The alert identifies either a dead webhook delivery, a dead Check Run update,
+an actionable item that has stopped making progress, or a failure to collect
+the recovery-queue metrics. Customers may see a missing deployment or a stale
+GitHub status until the affected item is recovered.
+
 ## Verify
 
 Run `gregalectl github status --status dead`. For a stalled queue, also inspect
