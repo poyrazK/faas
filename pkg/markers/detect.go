@@ -88,7 +88,7 @@ func DetectFromTarballAtRoot(path, sourceRoot string) (Framework, error) {
 		return detectFromTarballNestedRoot(path, root)
 	}
 
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // path is the apid-spooled tarball that passed validateTarballShape before builderd receives it; the spool file is server-owned.
 	if err != nil {
 		return FrameworkUnknown, fmt.Errorf("markers: open: %w", err)
 	}
@@ -170,7 +170,7 @@ func detectFromTarballNestedRoot(path, sourceRoot string) (Framework, error) {
 		return FrameworkUnknown, fmt.Errorf("markers: source root: %w", err)
 	}
 
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // path is the apid-spooled tarball that passed validateTarballShape before builderd receives it; the spool file is server-owned.
 	if err != nil {
 		return FrameworkUnknown, fmt.Errorf("markers: open: %w", err)
 	}

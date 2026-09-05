@@ -9,21 +9,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 )
 
-// newMultipartWriter builds the multipart/form-data writer used by
-// DeployMultipart. The slug field is shipped for apid's optional
-// path-validator (the URL path is the source of truth — see cmd/apid/handlers.go
-// createDeployment), but the server actually keys off the {slug} URL
-// component. The dockerfile flag gates function-runnner vs Dockerfile
-// builds (apid/dispatch).
+// newMultipartWriterWithSourceRoot builds the multipart/form-data writer used
+// by DeployMultipartWithSourceRoot. The slug field is shipped for apid's
+// optional path-validator (the URL path is the source of truth — see
+// cmd/apid/handlers.go createDeployment), but the server actually keys off
+// the {slug} URL component. The dockerfile flag gates function-runner vs
+// Dockerfile builds (apid/dispatch).
 //
 // Annotation fields (issue #977 / ADR-116): when an annotation is
 // non-zero on `a`, the corresponding multipart form field is emitted
 // (reason / tag / deployed_by / pr_number). nil/zero values skip the
 // field entirely — the server defaults them to NULL on the row.
-func newMultipartWriter(dst *bytes.Buffer, slug string, dockerfile bool, runtime, handler string, a DeployAnnotations) *multipart.Writer {
-	return newMultipartWriterWithSourceRoot(dst, slug, dockerfile, runtime, handler, "", a)
-}
-
 func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile bool, runtime, handler, sourceRoot string, a DeployAnnotations) *multipart.Writer {
 	w := multipart.NewWriter(dst)
 	// slug is redundant (URL has it too) but apid accepts it for log

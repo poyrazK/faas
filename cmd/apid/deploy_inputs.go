@@ -479,7 +479,7 @@ func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot str
 	if rootErr != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error())
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // path is a server-owned spool file created by validateAndSpool under spoolRoot; customer input cannot replace it.
 	if err != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
@@ -557,7 +557,7 @@ func archiveHasRootDockerfileAtRoot(path, sourceRoot string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // path is a server-owned spool file created by validateAndSpool under spoolRoot; customer input cannot replace it.
 	if err != nil {
 		return false, err
 	}
@@ -623,7 +623,7 @@ func archiveHasSourceRoot(path, sourceRoot string) (bool, error) {
 	if logicalRoot == "" {
 		return false, nil
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // path is a server-owned spool file created by validateAndSpool under spoolRoot; customer input cannot replace it.
 	if err != nil {
 		return false, err
 	}
