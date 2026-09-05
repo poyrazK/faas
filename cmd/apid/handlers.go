@@ -871,10 +871,11 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 func (s *server) accountResponse(ctx context.Context, acct state.Account, r *http.Request) api.AccountResponse {
 	l := api.MustLimitsFor(acct.Plan)
 	resp := api.AccountResponse{
-		ID:     acct.ID,
-		Email:  acct.Email,
-		Plan:   string(acct.Plan),
-		Status: string(acct.Status),
+		ID:            acct.ID,
+		Email:         acct.Email,
+		EmailVerified: acct.EmailVerified(),
+		Plan:          string(acct.Plan),
+		Status:        string(acct.Status),
 		Limits: api.AccountLimits{
 			Plan:            string(acct.Plan),
 			RAMMB:           l.RAMMB,
@@ -883,6 +884,10 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			IncludedGBHours: int64(l.IncludedGBHours),
 			AppLayerMaxMB:   l.AppLayerMaxMB,
 		},
+	}
+	if !acct.EmailVerified() {
+		graceEnds := acct.CreatedAt.Add(emailVerificationGrace)
+		resp.EmailVerificationGraceEndsAt = &graceEnds
 	}
 	if inst, err := s.store.GitHubInstallForAccount(ctx, acct.ID); err == nil {
 		resp.GitHubInstall = strconv.FormatInt(inst.InstallationID, 10)

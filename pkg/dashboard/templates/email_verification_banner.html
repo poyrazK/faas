@@ -1,0 +1,12 @@
+{{define "email-verification-banner"}}
+  {{if .Account}}
+    {{if not .Account.EmailVerified}}
+      <aside role="status" class="email-verification-banner">
+        <strong>Verify your email.</strong>
+        We sent a 24-hour verification link to <code>{{.Account.Email}}</code>.
+        Complete verification by {{.Account.EmailVerificationGraceEnds}}.
+        Sign in again to request a fresh link.
+      </aside>
+    {{end}}
+  {{end}}
+{{end}}

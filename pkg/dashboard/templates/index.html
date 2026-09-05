@@ -33,6 +33,7 @@
   </header>
   {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
   <main>
+    {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
     {{if .Account}}
       <p>Signed in as <code>{{.Account.Email}}</code> ({{.Account.Plan}} plan).</p>

@@ -32,6 +32,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
     {{if .Account}}
       <p>Signed in as <code>{{.Account.Email}}</code>.</p>

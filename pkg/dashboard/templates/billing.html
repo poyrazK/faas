@@ -30,6 +30,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     {{if .Data}}
       <h1>Plan: {{.Data.Plan}}</h1>
       <table>

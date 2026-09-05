@@ -33,6 +33,7 @@ export class BillingService {
       url: '/v1/billing/portal',
       errors: {
         401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
@@ -57,6 +58,7 @@ export class BillingService {
       url: '/v1/billing/retry',
       errors: {
         401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `No open charge to retry — the account is in good standing, or the operator has not configured a billing provider.`,
         501: `The provider has no direct saved-card retry API; use the billing portal URL in the response.`,
         502: `Provider-side failure. The CLI surfaces this as 'retry failed'.`,
@@ -82,6 +84,7 @@ export class BillingService {
       url: '/v1/billing/cancel',
       errors: {
         401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         409: `Already cancelled. CLI renders a friendly hint.`,
         502: `Provider-side failure.`,
       },

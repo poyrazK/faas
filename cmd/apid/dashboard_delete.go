@@ -174,9 +174,11 @@ func (s *server) dashboardDPA(w http.ResponseWriter, r *http.Request) {
 // identical to the rest of the dashboard chrome.
 func acctViewFrom(acct state.Account) *dashboard.AccountView {
 	return &dashboard.AccountView{
-		ID:    acct.ID,
-		Email: acct.Email,
-		Plan:  string(acct.Plan),
+		ID:                         acct.ID,
+		Email:                      acct.Email,
+		Plan:                       string(acct.Plan),
+		EmailVerified:              acct.EmailVerified(),
+		EmailVerificationGraceEnds: acct.CreatedAt.Add(emailVerificationGrace).UTC().Format("2006-01-02"),
 	}
 }
 

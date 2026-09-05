@@ -229,8 +229,9 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	})
 
 	page := dashboard.Page{
-		Title: "Authorize CLI session",
-		Body:  "cli_auth",
+		Title:   "Authorize CLI session",
+		Body:    "cli_auth",
+		Account: dashboardAccountView(acct, 0),
 		Data: map[string]any{
 			"Code":         raw,
 			"CSRFToken":    token,

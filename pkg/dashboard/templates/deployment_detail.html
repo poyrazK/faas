@@ -161,6 +161,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     {{if .Data}}
       <h1>Deployment <code>{{.Data.Deployment.ID}}</code></h1>
       <p>

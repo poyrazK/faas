@@ -43,6 +43,7 @@
   </header>
 
   <main>
+    {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
     <p>Operator view of every in-flight canary, recent safe-releases audit rows, and the alert rules currently firing on this fleet. Bounded by the <code>safedeploy_in_flight_rollouts</code> gauge (PR-B alert <code>canary_fleet_in_flight_high</code> tripwires at 50).</p>
 

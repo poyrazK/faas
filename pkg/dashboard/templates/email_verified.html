@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0 auto; padding: 3rem 1.5rem; max-width: 560px; }
+    a { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>Email verified</h1>
+    <p>Your email address is verified. Sign in again to continue.</p>
+    <p><a href="/login">Sign in</a></p>
+  </main>
+</body>
+</html>

@@ -66,6 +66,7 @@
     </nav>
   </header>
   <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done" hx-get="/dashboard/apps" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+    {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
     {{if .Data}}
       {{$items := .Data}}

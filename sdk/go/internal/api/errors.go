@@ -380,12 +380,13 @@ const (
 	//     and "email already taken"; the constant exists so future
 	//     surfaces (e.g. an explicit "claim this email" admin tool)
 	//     can branch on it without inventing a new code.
-	CodeInvalidCredentials = "invalid_credentials"
-	CodeEmailNotVerified   = "email_not_verified"
-	CodePasswordTooWeak    = "password_too_weak"
-	CodeResetTokenInvalid  = "reset_token_invalid"
-	CodeResetTokenExpired  = "reset_token_expired"
-	CodeAccountExists      = "account_exists"
+	CodeInvalidCredentials        = "invalid_credentials"
+	CodeEmailNotVerified          = "email_not_verified"
+	CodeEmailVerificationRequired = "email_verification_required"
+	CodePasswordTooWeak           = "password_too_weak"
+	CodeResetTokenInvalid         = "reset_token_invalid"
+	CodeResetTokenExpired         = "reset_token_expired"
+	CodeAccountExists             = "account_exists"
 
 	// CodeRateLimited is the wire string the authlimiter middleware
 	// emits on a 429. It is plain-text, not a Problem-shaped body, so
@@ -466,6 +467,8 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
+	case CodeEmailVerificationRequired:
+		return http.StatusForbidden
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired:

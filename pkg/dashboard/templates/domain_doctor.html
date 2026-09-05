@@ -63,6 +63,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     {{if .Data}}
       <h1>Doctor <code>{{.Data.Domain}}</code></h1>
       <p>

@@ -1015,7 +1015,7 @@ func (s *server) handler() http.Handler {
 	// PR-8 §2: list invitations surface (cursor-paginated, every role).
 	mux.HandleFunc("GET /v1/orgs/{slug}/invitations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgInvitations)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/seat_usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgSeatUsage)))))
-	mux.HandleFunc("PATCH /v1/account/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.changePlan))))))
+	mux.HandleFunc("PATCH /v1/account/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.idempotent(s.changePlan)))))))
 	// Issue #561 — spend cap pause-workload. Account-self-scoped
 	// (mirror restoreAccount: any authenticated principal on the
 	// account may set / clear the cap). MFA gate is intentional —
@@ -1083,7 +1083,7 @@ func (s *server) handler() http.Handler {
 	// gateway and shipper jobs never scrape each other's ports.
 	mux.HandleFunc("GET /v1/internal/metrics/promtail-targets", s.promtailMetricsDiscovery)
 	mux.HandleFunc("GET /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listApps))))
-	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createApp)))))
+	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createApp))))))
 	// `gregale dev`: one stable, expiring preview app per account/project.
 	// Source bytes still flow through the normal deployment endpoints; these
 	// routes only own the developer-session lease.
@@ -1236,8 +1236,8 @@ func (s *server) handler() http.Handler {
 	}
 
 	// Deployments.
-	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDeployment)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/deployments/dev-source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.handleDevSourceDeploy)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createDeployment))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/dev-source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.handleDevSourceDeploy))))))
 	// ADR-117 §Production-ready follow-on, C2 — per-stage retry.
 	// Same auth chain as createDeployment (authLimited → requireMFA
 	// → requireScope(ScopesDeployWriteSurface)). NOT wrapped in
@@ -1254,14 +1254,14 @@ func (s *server) handler() http.Handler {
 	// same build row; handler resolves the install token via the
 	// githubd gRPC bridge (cmd/apid/githubd_client.go) and streams
 	// the upstream tarball straight into validateAndSpool.
-	mux.HandleFunc("POST /v1/apps/{slug}/deployments/source-ref", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.handleSourceRefDeploy)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/source-ref", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.handleSourceRefDeploy))))))
 	// Issue #961 / Mega-A PR-1 — zero-config local-tarball deploy.
 	// The CLI is the trust root on this path; apid does NOT consult
 	// github_installations and does NOT attempt a server-side git
 	// fetch. See docs/adr/0XX-local-tarball-deploy-trust-root.md.
 	// Parallel to source-ref, not a replacement — that gate stays
 	// load-bearing for `--repo X --ref SHA` semantics.
-	mux.HandleFunc("POST /v1/apps/{slug}/deployments/source-tarball", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.handleSourceTarballDeploy)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/source-tarball", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.handleSourceTarballDeploy))))))
 	// PR-1 of the deploy-diff cluster — server-side pre-deploy
 	// preview. Read-only (no DB writes, no audit row, no deployment
 	// row), so the auth chain matches GET /v1/apps/{slug}/metrics
@@ -2077,10 +2077,10 @@ func (s *server) handler() http.Handler {
 	// does not mutate anything; the customer-facing mutations live
 	// inside the provider-hosted portal that the URL points to. Same
 	// access tier as usage/invoices (usage:read scope) but NO MFA
-	// gate: viewing a portal link is a read, and the mutations gated
-	// by the portal itself happen after the customer authenticates
-	// to Stripe with 2FA on their side.
-	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.getBillingPortal)))
+	// gate: the portal is a read in HTTP terms, but it creates an
+	// authenticated Stripe session where the customer can mutate billing.
+	// Email verification therefore applies before the redirect leaves Gregale.
+	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.getBillingPortal))))
 
 	// Billing retry (issue #242). Closes the customer-trust lie in
 	// pkg/mail/account.go:107,150 (the dunning email promises
@@ -2088,7 +2088,7 @@ func (s *server) handler() http.Handler {
 	// auth + usage:read scope; the destructive nature of retry is
 	// bounded (a single charge attempt against the saved card).
 	// MFA-gated for parity with changePlan — retry touches money.
-	mux.HandleFunc("POST /v1/billing/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postBillingRetry))))
+	mux.HandleFunc("POST /v1/billing/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.postBillingRetry)))))
 
 	// Billing cancel (issue #242). Sets cancel_at_period_end on
 	// the account's subscription; account keeps running until
@@ -2097,7 +2097,7 @@ func (s *server) handler() http.Handler {
 	// confirm gate from PR #782 ("cancel subscription"). Headless
 	// callers can wire their own confirm. MFA-gated for parity
 	// with changePlan.
-	mux.HandleFunc("POST /v1/billing/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postBillingCancel))))
+	mux.HandleFunc("POST /v1/billing/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.postBillingCancel)))))
 
 	// Credit consumption reducer (issue #279 PR-C). Admin-only +
 	// MFA-gated — operator action that mutates money (spec §11). The
@@ -2284,6 +2284,9 @@ func (s *server) handler() http.Handler {
 		// faster than the spec §11 10/min/IP budget.
 		CountStatuses: []int{http.StatusUnauthorized, http.StatusGone},
 	}, http.HandlerFunc(auth.verify)))
+	mux.Handle("GET /v1/auth/verify-email", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, http.HandlerFunc(s.verifyEmail)))
 	// Programmatic auth surface (issue #311). JSON-only, bearer-key
 	// CLI path — three endpoints that share the spec §11 10/min/IP
 	// authlimit bucket with the rest of the cookie auth surface.
@@ -2362,7 +2365,7 @@ func (s *server) handler() http.Handler {
 	// Free → paid hosted-checkout hand-off (dashboard_upgrade.go). Same
 	// step-up posture as PATCH /v1/account/plan: starting a checkout is
 	// a billing mutation even though the plan only flips on the webhook.
-	mux.Handle("POST /dashboard/upgrade", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardUpgrade)))))
+	mux.Handle("POST /dashboard/upgrade", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardUpgrade))))))
 	// Issue #791 PR-E / ADR-090 closure — fire-now from the
 	// dashboard's cron section. Same CSRF-envelope shape as the
 	// form POSTs above (the form-render path in renderAppDetail
