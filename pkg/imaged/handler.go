@@ -1660,27 +1660,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return err
 	}
 
-	// Issue #472 / ADR-054: per-app cosign signature verification.
-	// Runs AFTER the stateful-deny check (a known-bad base is
-	// rejected faster without a network round-trip) and BEFORE
-	// PullDigest (no point pulling an unsigned / untrusted image).
-	// The flag lives on the apps row (NOT the deployment row) so a
-	// single PATCH takes effect on the next deploy — apid's
-	// createDeployment gate already handles the "no signers" fail-
-	// closed case before imaged sees the deployment. Defence-in-
-	// depth: if imaged is called with require_signed=true but the
-	// on-disk trust dir is empty, we re-verify here.
-	if app.RequireSigned {
-		if err := h.verifyImageSignature(ctx, app, dep, ref); err != nil {
-			return err
-		}
-	}
-
-	digest, err := pullDigestWithAuth(ctx, h.oci, ref, appAuth)
+	// Resolve before verification so a tag names the same immutable source
+	// throughout verification and platform selection. Offline pullers retain
+	// the existing verification/pull sequence.
+	selectedRef, digest, err := h.prepareContainerImage(ctx, app, dep, appAuth)
 	if err != nil {
-		_ = h.markDeployFailed(ctx, dep.ID, err, "oci pull failed")
-		return fmt.Errorf("imaged: oci pull: %w", err)
+		return err
 	}
+	ref = selectedRef
 	// Issue #461 / ADR-062: best-effort mark credential used on
 	// successful authenticated pull. Best-effort so a transient
 	// mark-used failure cannot abort an otherwise-successful
@@ -1755,11 +1742,11 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// ghcr.io/onebox-faas/...). Production RegistryClient
 		// satisfies AuthManifestPuller so both paths carry the
 		// correct auth shape.
-		above, diffs, err := h.aboveBaseLayers(ctx, mp, dep.ImageDigest, app.Runtime, manifest, appAuth)
+		above, diffs, err := h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
 		if err != nil {
 			// aboveBaseLayers can surface any of the three puller-side
-			// sentinels (image-not-found on app manifest 404, manifest-list
-			// rejection on multi-arch images, egress-denial on a private
+			// sentinels (image-not-found on app manifest 404, invalid
+			// platform/manifest metadata, egress-denial on a private
 			// registry) so it goes through markDeployFailed too. Non-pull
 			// failures (e.g. base mismatch) get code "" — the message
 			// preserves the upstream string.

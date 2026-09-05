@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 )
 
 // Descriptor mirrors the OCI content descriptor (spec §4.6, §9). The MediaType
@@ -54,53 +53,13 @@ func (c *RegistryClient) PullManifestWithAuth(ctx context.Context, ref string, a
 	if err != nil {
 		return Manifest{}, err
 	}
-	url := c.baseURL(r) + "/v2/" + r.Repository + "/manifests/" + r.ManifestRef()
-	resp, err := c.getManifest(ctx, url, "")
+	resolved, err := c.resolveImageManifest(ctx, r, auth)
 	if err != nil {
 		return Manifest{}, err
 	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
-		_ = resp.Body.Close()
-		token, err := c.fetchToken(ctx, ch, auth)
-		if err != nil {
-			return Manifest{}, err
-		}
-		resp, err = c.getManifest(ctx, url, token)
-		if err != nil {
-			return Manifest{}, err
-		}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		msg := fmt.Errorf("oci: manifest %s: registry returned %d: %s",
-			r.String(), resp.StatusCode, string(body))
-		// ADR-021: puller-side 404s map to the canonical
-		// ErrImageNotFound sentinel (surface as 422). 4xx / 5xx that
-		// aren't 404 keep their plain-text shape — those are not the
-		// three puller-side failure modes this ADR closes.
-		if resp.StatusCode == http.StatusNotFound {
-			return Manifest{}, fmt.Errorf("%w: %s", ErrImageNotFound, msg.Error())
-		}
-		return Manifest{}, msg
-	}
-
-	// A manifest-index / manifest-list points at per-platform manifests — we
-	// refuse those here because the two-drive scheme needs a single platform
-	// (spec §4.6). Callers re-pull with a digest to pin.
-	mt := resp.Header.Get("Content-Type")
-	if mt == "application/vnd.oci.image.index.v1+json" ||
-		mt == "application/vnd.docker.distribution.manifest.list.v2+json" {
-		return Manifest{}, fmt.Errorf("%w: %s is a manifest list; pin a digest",
-			ErrImageManifestInvalid, r.String())
-	}
-
 	var doc Manifest
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&doc); err != nil {
-		return Manifest{}, fmt.Errorf("%w: decode manifest %s: %s",
-			ErrImageManifestInvalid, r.String(), err.Error())
+	if err := json.Unmarshal(resolved.body, &doc); err != nil {
+		return Manifest{}, fmt.Errorf("%w: decode image manifest: %w", ErrImageManifestInvalid, err)
 	}
 	if doc.Config.Digest == "" {
 		return Manifest{}, fmt.Errorf("%w: %s missing config descriptor",
@@ -148,8 +107,9 @@ func (c *RegistryClient) PullBlobWithAuth(ctx context.Context, repo, digest stri
 	if repo == "" {
 		return nil, fmt.Errorf("oci: empty repository")
 	}
-	// Synthesize a partial reference just to get the baseURL/host wiring.
-	r, err := ParseReference(repo + "@" + digest)
+	// Parse the repository or full image reference for host/repository routing.
+	// A pinned image reference must not acquire a second @digest suffix.
+	r, err := ParseReference(repo)
 	if err != nil {
 		return nil, err
 	}

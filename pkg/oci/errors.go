@@ -41,8 +41,8 @@ var ErrImageNotFound = errors.New("oci: image not found")
 var ErrImageEgressDenied = errors.New("oci: egress denied by policy")
 
 // ErrImageManifestInvalid is wrapped into the error returned from
-// PullManifest when the body is a manifest-list (multi-arch), fails
-// schema validation, or otherwise cannot be reduced to a single-
+// manifest readers when content fails digest/schema validation or
+// cannot be resolved to a compatible single-
 // platform Manifest. The two-drive build path requires a flat
 // per-platform manifest to compute the above-base layer list
 // (see pkg/imaged/handler.go::aboveBaseLayers).

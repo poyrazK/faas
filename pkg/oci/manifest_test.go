@@ -35,7 +35,7 @@ func TestRegistryPullManifest_DecodesLayersAndConfig(t *testing.T) {
 	}
 }
 
-func TestRegistryPullManifest_RejectsManifestList(t *testing.T) {
+func TestRegistryPullManifest_NoCompatiblePlatform(t *testing.T) {
 	f := newFakeRegistry(t)
 	f.manifestBody = []byte(`{
         "schemaVersion": 2,
@@ -44,13 +44,13 @@ func TestRegistryPullManifest_RejectsManifestList(t *testing.T) {
     }`)
 	_, err := f.client().PullManifest(context.Background(), "ghcr.io/org/app:main")
 	if err == nil {
-		t.Fatal("manifest list should be rejected")
+		t.Fatal("empty index should be rejected")
 	}
-	// ADR-021: the manifest-list rejection must lift to
+	// ADR-021: platform selection failures must lift to
 	// ErrImageManifestInvalid so the imaged handler persists
 	// deployments.error_code = image_manifest_invalid.
 	if !errors.Is(err, ErrImageManifestInvalid) {
-		t.Errorf("PullManifest manifest-list err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
+		t.Errorf("PullManifest platform selection err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
 	}
 }
 

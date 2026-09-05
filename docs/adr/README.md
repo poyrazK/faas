@@ -103,6 +103,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 140 | Public-release backend hardening foundation — admission-only warm affinity, stale residency fail-closed, and cancellation-safe stream teardown | proposed | public release path; see ADR-140 |
 | 141 | Durable imaged→apid audit-event delivery (`audit_event_outbox`; deployment-scoped dedupe; transactional `events` insert; 2s replay worker; capped retries + dead-letter; 90d queue metadata retention; legacy `pg_notify` fallback) | accepted | public-release backend hardening; migration 00590; issue #472 / ADR-058 |
 | 142 | Timestamp migration IDs + post-cutover out-of-order apply; freezes legacy 1–590 and retires slot reservations | accepted | migration concurrency; supersedes ADR-041 for new migrations |
+| 146 | [OCI platform selection](146-oci-platform-selection.md): shared Linux/amd64 resolution and immutable source/child references | accepted | container compatibility; index-aware image preflight and deployment |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

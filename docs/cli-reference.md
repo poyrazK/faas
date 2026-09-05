@@ -588,7 +588,7 @@ Preflight local source or OCI image metadata; runtime checks are skipped
 
 | Flag | Meaning | |
 |---|---|---|
-| `--image <REF>` | inspect a single-platform OCI image without downloading layers |  |
+| `--image <REF>` | inspect the Linux/amd64 image without downloading layers |  |
 | `--registry-user <USER>` | registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | read registry password/token from stdin; requires --image and --registry-user |  |
 | `--strict` | exit 1 on warn (default: exit 0 on warn) |  |

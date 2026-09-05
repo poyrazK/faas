@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -202,75 +203,98 @@ func (r *recordingRunner) Run(_ context.Context, argv []string) error {
 // stamped. It uses a recordingRunner that captures mkfs argv (we don't need
 // a real mkfs to validate the wired-up logic).
 func TestHandleDeployment_RealBuildPath(t *testing.T) {
-	store := state.NewMemStore()
-	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
-	app, _ := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: "img-app", RAMMB: 512, Runtime: "node22",
-		IdleTimeoutS: 60, MaxConcurrency: 5,
-	})
-	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: app.ID, ImageDigest: "ghcr.io/org/app:v1", Kind: state.DeploymentKindImage,
-	})
+	for _, resolve := range []bool{false, true} {
+		t.Run(fmt.Sprintf("platform_resolution=%t", resolve), func(t *testing.T) {
+			store := state.NewMemStore()
+			acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+			app, _ := store.CreateApp(context.Background(), state.App{
+				AccountID: acct.ID, Slug: "img-app", RAMMB: 512, Runtime: "node22",
+				IdleTimeoutS: 60, MaxConcurrency: 5,
+			})
+			dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+				AppID: app.ID, ImageDigest: "ghcr.io/org/app:v1", Kind: state.DeploymentKindImage,
+			})
 
-	appConfigDigest := "sha256:" + strings.Repeat("a", 64)
-	baseConfigDigest := "sha256:" + strings.Repeat("b", 64)
-	layer1 := "sha256:" + strings.Repeat("1", 64)
-	layer2 := "sha256:" + strings.Repeat("2", 64)
-	baseLayer := "sha256:" + strings.Repeat("0", 64)
+			appConfigDigest := "sha256:" + strings.Repeat("a", 64)
+			baseConfigDigest := "sha256:" + strings.Repeat("b", 64)
+			layer1 := "sha256:" + strings.Repeat("1", 64)
+			layer2 := "sha256:" + strings.Repeat("2", 64)
+			baseLayer := "sha256:" + strings.Repeat("0", 64)
 
-	diffID1 := "sha256:" + strings.Repeat("c", 64)
-	diffID2 := "sha256:" + strings.Repeat("d", 64)
-	baseDiffID := "sha256:" + strings.Repeat("e", 64)
+			diffID1 := "sha256:" + strings.Repeat("c", 64)
+			diffID2 := "sha256:" + strings.Repeat("d", 64)
+			baseDiffID := "sha256:" + strings.Repeat("e", 64)
 
-	appConfigJSON := `{"config":{"Env":["NODE_ENV=production"],"Entrypoint":["node"],"Cmd":["index.js"]},"rootfs":{"type":"layers","diff_ids":["` + baseDiffID + `","` + diffID1 + `","` + diffID2 + `"]}}`
-	baseConfigJSON := `{"config":{"Env":[]},"rootfs":{"type":"layers","diff_ids":["` + baseDiffID + `"]}}`
+			appConfigJSON := `{"config":{"Env":["NODE_ENV=production"],"Entrypoint":["node"],"Cmd":["index.js"]},"rootfs":{"type":"layers","diff_ids":["` + baseDiffID + `","` + diffID1 + `","` + diffID2 + `"]}}`
+			baseConfigJSON := `{"config":{"Env":[]},"rootfs":{"type":"layers","diff_ids":["` + baseDiffID + `"]}}`
 
-	mp := &fakeManifestPuller{
-		digest: "ghcr.io/org/app@sha256:" + strings.Repeat("9", 64),
-		appRef: dep.ImageDigest,
-		appManifest: oci.Manifest{
-			Config: oci.Descriptor{Digest: appConfigDigest, Size: int64(len(appConfigJSON))},
-			Layers: []oci.Descriptor{
-				{Digest: baseLayer, Size: 100},
-				{Digest: layer1, Size: 200},
-				{Digest: layer2, Size: 300},
-			},
-		},
-		appConfig:    oci.Config{Entrypoint: []string{"node"}, Cmd: []string{"index.js"}, DiffIDs: []string{baseDiffID, diffID1, diffID2}},
-		baseManifest: oci.Manifest{Config: oci.Descriptor{Digest: baseConfigDigest, Size: int64(len(baseConfigJSON))}},
-		baseConfig:   oci.Config{DiffIDs: []string{baseDiffID}},
-	}
-	mp.putConfig(appConfigDigest, mp.appConfig)
-	mp.putConfig(baseConfigDigest, mp.baseConfig)
-	mp.layerBlobs[layer1] = gzTar(t, map[string]string{"app/index.js": "console.log('hi')\n"})
-	mp.layerBlobs[layer2] = gzTar(t, map[string]string{"app/lib/util.js": "module.exports = {}\n"})
+			mp := &fakeManifestPuller{
+				digest: "ghcr.io/org/app@sha256:" + strings.Repeat("9", 64),
+				appRef: dep.ImageDigest,
+				appManifest: oci.Manifest{
+					Config: oci.Descriptor{Digest: appConfigDigest, Size: int64(len(appConfigJSON))},
+					Layers: []oci.Descriptor{
+						{Digest: baseLayer, Size: 100},
+						{Digest: layer1, Size: 200},
+						{Digest: layer2, Size: 300},
+					},
+				},
+				appConfig:    oci.Config{Entrypoint: []string{"node"}, Cmd: []string{"index.js"}, DiffIDs: []string{baseDiffID, diffID1, diffID2}},
+				baseManifest: oci.Manifest{Config: oci.Descriptor{Digest: baseConfigDigest, Size: int64(len(baseConfigJSON))}},
+				baseConfig:   oci.Config{DiffIDs: []string{baseDiffID}},
+			}
+			mp.putConfig(appConfigDigest, mp.appConfig)
+			mp.putConfig(baseConfigDigest, mp.baseConfig)
+			mp.layerBlobs[layer1] = gzTar(t, map[string]string{"app/index.js": "console.log('hi')\n"})
+			mp.layerBlobs[layer2] = gzTar(t, map[string]string{"app/lib/util.js": "module.exports = {}\n"})
 
-	run := &recordingRunner{}
-	b := rootfs.NewBuilder(run)
-	tmp := t.TempDir()
-	guestInitPath := filepath.Join(tmp, "guest-init")
-	if err := writeFileImpl(guestInitPath, []byte("fake guest init"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+			run := &recordingRunner{}
+			b := rootfs.NewBuilder(run)
+			tmp := t.TempDir()
+			guestInitPath := filepath.Join(tmp, "guest-init")
+			if err := writeFileImpl(guestInitPath, []byte("fake guest init"), 0o755); err != nil {
+				t.Fatal(err)
+			}
 
-	notif := &fakeNotifier{}
-	h := New(store, notif, mp, b, guestInitPath, t.TempDir(), silentLogger())
+			notif := &fakeNotifier{}
+			var puller oci.Puller = mp
+			var resolving *resolvingTestPuller
+			if resolve {
+				child := "sha256:" + strings.Repeat("8", 64)
+				mp.appRef = "ghcr.io/org/app@" + child
+				resolving = &resolvingTestPuller{fakeManifestPuller: mp, resolution: oci.ImageResolution{
+					SourceReference: "ghcr.io/org/app@sha256:" + strings.Repeat("9", 64),
+					Reference:       mp.appRef, Digest: child,
+				}}
+				puller = resolving
+			}
+			h := New(store, notif, puller, b, guestInitPath, t.TempDir(), silentLogger())
 
-	h.HandleNotification(context.Background(), db.Notification{
-		Channel: db.NotifyDeploymentChanged,
-		Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image","image_digest":"ghcr.io/org/app:v1"}`,
-	})
+			h.HandleNotification(context.Background(), db.Notification{
+				Channel: db.NotifyDeploymentChanged,
+				Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image","image_digest":"ghcr.io/org/app:v1"}`,
+			})
 
-	// Should have transitioned through building → imaging → snapshotting.
-	got, _ := store.DeploymentByID(context.Background(), dep.ID)
-	if got.Status != state.DeploySnapshotting {
-		t.Errorf("status = %s, want snapshotting (err=%q)", got.Status, got.Error)
-	}
-	if got.RootfsPath == "" {
-		t.Error("rootfs_path not stamped")
-	}
-	if findNotify(notif, db.NotifySnapshotPrime) == nil {
-		t.Error("expected snapshot_prime notification")
+			// Should have transitioned through building → imaging → snapshotting.
+			got, _ := store.DeploymentByID(context.Background(), dep.ID)
+			if got.Status != state.DeploySnapshotting {
+				t.Errorf("status = %s, want snapshotting (err=%q)", got.Status, got.Error)
+			}
+			if got.RootfsPath == "" {
+				t.Error("rootfs_path not stamped")
+			}
+			if findNotify(notif, db.NotifySnapshotPrime) == nil {
+				t.Error("expected snapshot_prime notification")
+			}
+			if resolving != nil {
+				if len(resolving.configRefs) != 1 || resolving.configRefs[0] != mp.appRef || len(resolving.manifestRefs) < 1 || resolving.manifestRefs[0] != mp.appRef {
+					t.Fatalf("build did not consume selected child: configs=%v manifests=%v", resolving.configRefs, resolving.manifestRefs)
+				}
+				if got.ImageDigest != dep.ImageDigest {
+					t.Fatal("original deployment reference was overwritten")
+				}
+			}
+		})
 	}
 }
 

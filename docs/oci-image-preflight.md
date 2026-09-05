@@ -9,7 +9,8 @@ gregale doctor --image registry.example.com/team/api:release
 gregale doctor --image registry.example.com/team/api@sha256:<digest> --json --strict
 ```
 
-The report includes the immutable image reference, OS/architecture, image
+The report includes the requested reference, immutable source reference, selected
+image reference, OS/architecture, image
 entrypoint and command, combined launch arguments, effective default user and
 working directory, stop signal, declared ports, and health-check metadata.
 Image environment values and registry credentials are omitted. These are image
@@ -18,7 +19,7 @@ defaults **before deployment overrides**, not the configuration of an existing a
 Checks cover:
 
 - Registry metadata access from the machine running the CLI.
-- Manifest/config content digests and the single-platform manifest contract.
+- Manifest/config content digests and compatible platform selection.
 - The production Linux/amd64 image target.
 - The same image-to-runtime manifest validator used by deployment.
 - The platform's known stateful-image name denylist. Passing this check does
@@ -26,11 +27,26 @@ Checks cover:
 - Health-check command shape, negative timing/retry values, stop-signal
   fallback, and image volume declarations that do not provision durable storage.
 
-Many image tags identify a multi-platform index. Current Gregale deployment
-requires a **platform-specific image manifest**: select the Linux/amd64 child
-digest with your registry's image inspection tools, then pass that reference.
-Pinning the index's own digest does not select a platform. Preflight follows
-this deployment restriction rather than silently choosing a different image.
+Many image tags identify a multi-platform index. Gregale automatically selects
+its **Linux/amd64 image** in both preflight and deployment, including on an ARM
+laptop running the CLI. OCI indexes and Docker manifest lists are supported.
+You can pass a tag, an index digest, or a platform-specific image digest:
+
+```sh
+gregale doctor --image busybox:1.36 --json
+```
+
+The source reference identifies the immutable index (or original single image).
+The selected image reference identifies the child used for config and layer
+reads. Deployment verifies required signatures against the immutable source,
+then builds from the selected child. This does not add ARM execution or emulation.
+
+Selection accepts baseline amd64 (no variant or `v1`) and skips ARM, Windows,
+and unknown-platform attestation entries. Missing or multiple distinct compatible
+images fail with a platform diagnostic. Publish one compatible image or pin the
+intended child digest. Nested indexes and additional CPU/OS requirements are not
+supported. Existing deployment checks, including Gregale base-layer compatibility,
+still apply; selecting a platform does not make every Docker image deployable.
 
 ## Private registries
 

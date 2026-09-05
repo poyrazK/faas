@@ -406,7 +406,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "doctor",
 		Short:   "Preflight local source or OCI image metadata; runtime checks are skipped",
 		Flags: []cliFlag{
-			{Name: "image", Value: "REF", Short: "inspect a single-platform OCI image without downloading layers"},
+			{Name: "image", Value: "REF", Short: "inspect the Linux/amd64 image without downloading layers"},
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
 			{Name: "registry-password-stdin", Short: "read registry password/token from stdin; requires --image and --registry-user"},
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},

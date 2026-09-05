@@ -60,18 +60,20 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 // doctorImage deliberately omits image environment values and credentials.
 // EffectiveArgv is the unmodified image command, before deployment overrides.
 type doctorImage struct {
-	Reference     string                      `json:"reference"`
-	Digest        string                      `json:"digest,omitempty"`
-	OS            string                      `json:"os,omitempty"`
-	Architecture  string                      `json:"architecture,omitempty"`
-	Entrypoint    []string                    `json:"entrypoint,omitempty"`
-	Command       []string                    `json:"command,omitempty"`
-	EffectiveArgv []string                    `json:"effective_argv,omitempty"`
-	User          string                      `json:"user,omitempty"`
-	WorkingDir    string                      `json:"working_dir,omitempty"`
-	StopSignal    string                      `json:"stop_signal,omitempty"`
-	Healthcheck   *api.AppManifestHealthcheck `json:"healthcheck,omitempty"`
-	ExposedPorts  []string                    `json:"exposed_ports,omitempty"`
+	InputReference  string                      `json:"input_reference,omitempty"`
+	SourceReference string                      `json:"source_reference,omitempty"`
+	Reference       string                      `json:"reference"`
+	Digest          string                      `json:"digest,omitempty"`
+	OS              string                      `json:"os,omitempty"`
+	Architecture    string                      `json:"architecture,omitempty"`
+	Entrypoint      []string                    `json:"entrypoint,omitempty"`
+	Command         []string                    `json:"command,omitempty"`
+	EffectiveArgv   []string                    `json:"effective_argv,omitempty"`
+	User            string                      `json:"user,omitempty"`
+	WorkingDir      string                      `json:"working_dir,omitempty"`
+	StopSignal      string                      `json:"stop_signal,omitempty"`
+	Healthcheck     *api.AppManifestHealthcheck `json:"healthcheck,omitempty"`
+	ExposedPorts    []string                    `json:"exposed_ports,omitempty"`
 }
 
 func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspector, strict, asJSON bool) int {
@@ -131,9 +133,13 @@ func runDoctorImageChecks(ctx context.Context, ref string, auth *oci.BasicAuth, 
 func doctorImageAccessError(err error) doctorCheck {
 	c := doctorCheck{Name: "registry-metadata", Status: "error", Code: "image_inspection_failed", Hint: "Could not read image metadata from this machine.", Fix: "Check the image reference, registry connectivity and pull permissions; supply private-registry credentials with --registry-user and --registry-password-stdin."}
 	// Never print arbitrary registry response bodies: they can echo credentials.
-	if errors.Is(err, oci.ErrImageManifestInvalid) {
+	var selection *oci.PlatformSelectionError
+	if errors.As(err, &selection) {
+		c.Code, c.Hint = api.CodeImageManifestInvalid, selection.Error()
+		c.Fix = "Publish one compatible Linux/amd64 image or pin the intended platform-specific child digest."
+	} else if errors.Is(err, oci.ErrImageManifestInvalid) {
 		c.Code, c.Hint = api.CodeImageManifestInvalid, "The image metadata does not meet the deployment manifest contract."
-		c.Fix = "Use a valid single-platform Linux/amd64 image digest. Manifest lists/indexes must be pinned to their platform-specific child manifest; rebuild malformed images."
+		c.Fix = "Publish a valid Linux/amd64 image or index containing one compatible image; rebuild malformed images."
 	} else if errors.Is(err, context.DeadlineExceeded) {
 		c.Code, c.Hint = "image_inspection_timeout", "Registry metadata inspection timed out."
 	}
@@ -141,7 +147,7 @@ func doctorImageAccessError(err error) doctorCheck {
 }
 
 func doctorImagePlatformCheck(cfg oci.ImageConfig) doctorCheck {
-	if cfg.OS != "linux" || cfg.Architecture != "amd64" {
+	if !cfg.SupportsProductionPlatform() {
 		return doctorCheck{Name: "platform", Status: "error", Code: api.CodeAppArchMismatch, Hint: "Image must declare os=linux and architecture=amd64 for production Gregale.", Fix: "Build for linux/amd64 and inspect that platform's image digest."}
 	}
 	return doctorCheck{Name: "platform", Status: "ok"}
@@ -180,6 +186,7 @@ func doctorImageStopSignal(signal string) doctorCheck {
 func describeDoctorImage(result oci.ImageInspection) *doctorImage {
 	cfg := result.Config
 	m := &doctorImage{Reference: result.Reference, Digest: result.Digest, OS: cfg.OS, Architecture: cfg.Architecture, Entrypoint: cfg.Entrypoint, Command: cfg.Cmd, EffectiveArgv: append(append([]string{}, cfg.Entrypoint...), cfg.Cmd...), User: cfg.User, WorkingDir: cfg.WorkingDir, StopSignal: cfg.StopSignal}
+	m.InputReference, m.SourceReference = result.InputReference, result.SourceReference
 	if hc := cfg.Healthcheck; hc != nil {
 		m.Healthcheck = &api.AppManifestHealthcheck{Test: hc.Test, IntervalS: hc.IntervalS, TimeoutS: hc.TimeoutS, Retries: hc.Retries, StartPeriodS: hc.StartPeriodS}
 	}
@@ -206,6 +213,9 @@ func renderDoctorImage(w io.Writer, img *doctorImage) {
 	_, _ = fmt.Fprintf(w, "gregale doctor — image %q\n", img.Reference)
 	if img.Digest == "" {
 		return
+	}
+	if img.InputReference != "" {
+		_, _ = fmt.Fprintf(w, "  requested: %q\n  immutable source: %q\n", img.InputReference, img.SourceReference)
 	}
 	_, _ = fmt.Fprintf(w, "  platform: %q\n  entrypoint: %q\n  command: %q\n  effective argv: %q\n  user: %q  working directory: %q\n  stop signal: %q\n  declared ports: %q\n", img.OS+"/"+img.Architecture, img.Entrypoint, img.Command, img.EffectiveArgv, img.User, img.WorkingDir, img.StopSignal, img.ExposedPorts)
 	if img.Healthcheck != nil {

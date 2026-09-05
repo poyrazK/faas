@@ -33,6 +33,7 @@ import (
 type rawConfig struct {
 	OS           string `json:"os"`
 	Architecture string `json:"architecture"`
+	Variant      string `json:"variant"`
 	// Flat fields (Docker v2 schema).
 	Cmd         []string        `json:"Cmd"`
 	Env         []string        `json:"Env"`
