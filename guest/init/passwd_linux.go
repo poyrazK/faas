@@ -5,14 +5,15 @@
 // build time (M-3 commit 7 + commit 8, ADR-142 §Decision 3).
 //
 // The table layout is fixed:
-//   per record, big-endian, contiguous, no padding:
-//     bytes 0..3   uint32  uid
-//     bytes 4..7   uint32  gid (unused today; gid is supplied
-//                           by the per-app manifest's
-//                           OverrideUserGid, see ADR-053 fourth
-//                           axis for M-4)
-//     byte  8      uint8   name length (0..255)
-//     bytes 9..9+N name (UTF-8, no NUL terminator)
+//
+//	per record, big-endian, contiguous, no padding:
+//	  bytes 0..3   uint32  uid
+//	  bytes 4..7   uint32  gid (unused today; gid is supplied
+//	                        by the per-app manifest's
+//	                        OverrideUserGid, see ADR-053 fourth
+//	                        axis for M-4)
+//	  byte  8      uint8   name length (0..255)
+//	  bytes 9..9+N name (UTF-8, no NUL terminator)
 //
 // Records are sorted ascending by name so binary-search is
 // O(log N) per lookup. Lookup runs once per guest boot (via

@@ -53,7 +53,7 @@ func TestReadPasswdTable_MalformedFileFallback(t *testing.T) {
 		name string
 		body []byte
 	}{
-		{"truncated header", []byte{0, 0, 0}},           // 3 bytes — shorter than the 9-byte header
+		{"truncated header", []byte{0, 0, 0}},             // 3 bytes — shorter than the 9-byte header
 		{"truncated name field", makePasswdRow(0, 0, "")}, // length byte = 0 → next record immediately
 		// Over-declared name length:
 		{"name-len-exceeds-body", []byte{
