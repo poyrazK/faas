@@ -469,6 +469,7 @@ from .operator_runtime_config_operation_scope import OperatorRuntimeConfigOperat
 from .operator_runtime_config_operation_status import OperatorRuntimeConfigOperationStatus
 from .operator_runtime_config_revision import OperatorRuntimeConfigRevision
 from .operator_runtime_config_revision_scope import OperatorRuntimeConfigRevisionScope
+from .operator_runtime_config_rollout_state import OperatorRuntimeConfigRolloutState
 from .operator_runtime_config_scope import OperatorRuntimeConfigScope
 from .operator_runtime_config_source import OperatorRuntimeConfigSource
 from .operator_runtime_config_status import OperatorRuntimeConfigStatus
@@ -1163,6 +1164,7 @@ __all__ = (
     "OperatorRuntimeConfigOperationStatus",
     "OperatorRuntimeConfigRevision",
     "OperatorRuntimeConfigRevisionScope",
+    "OperatorRuntimeConfigRolloutState",
     "OperatorRuntimeConfigScope",
     "OperatorRuntimeConfigSource",
     "OperatorRuntimeConfigStatus",

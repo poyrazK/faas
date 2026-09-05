@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -143,7 +145,7 @@ func TestRuntimeConfigPatchSupportsScopedCanary(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode scoped config response: %v", err)
 	}
-	if response.Scope != string(state.RuntimeConfigScopeDaemon) || response.ScopeID != "gatewayd-internal" || response.RolloutPercent != 25 || response.Status != string(state.RuntimeConfigApplied) {
+	if response.Scope != string(state.RuntimeConfigScopeDaemon) || response.ScopeID != "gatewayd-internal" || response.RolloutPercent != 25 || response.RolloutState != string(state.RuntimeConfigRolloutCanary) || response.Status != string(state.RuntimeConfigApplied) {
 		t.Fatalf("scoped config response = %#v", response)
 	}
 	row, err := e.store.GetRuntimeConfig(t.Context(), runtimeConfigGatewayStreaming, state.RuntimeConfigScopeDaemon, "gatewayd-internal")
@@ -164,13 +166,55 @@ func TestRuntimeConfigPatchSupportsScopedCanary(t *testing.T) {
 	}
 	for _, item := range listed.Items {
 		if item.Key == runtimeConfigGatewayStreaming {
-			if item.Scope != string(state.RuntimeConfigScopeDaemon) || item.ScopeID != "gatewayd-internal" || item.RolloutPercent != 25 {
+			if item.Scope != string(state.RuntimeConfigScopeDaemon) || item.ScopeID != "gatewayd-internal" || item.RolloutPercent != 25 || item.RolloutState != string(state.RuntimeConfigRolloutCanary) {
 				t.Fatalf("listed scoped config = %#v", item)
 			}
 			return
 		}
 	}
 	t.Fatalf("scoped runtime config list did not include %q", runtimeConfigGatewayStreaming)
+}
+
+func TestRuntimeConfigPatchBlocksUnhealthyCanaryPromotion(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	canary := e.do(t, http.MethodPatch, "/v1/admin/config/gateway_streaming_enabled", map[string]any{
+		"value": true, "reason": "start streaming canary", "scope": "daemon",
+		"scope_id": "gatewayd-internal", "rollout_percent": 10,
+	}, nil)
+	if canary.Code != http.StatusOK {
+		t.Fatalf("canary status = %d, want 200: %s", canary.Code, canary.Body.String())
+	}
+	row, err := e.store.GetRuntimeConfig(t.Context(), runtimeConfigGatewayStreaming, state.RuntimeConfigScopeDaemon, "gatewayd-internal")
+	if err != nil {
+		t.Fatalf("get canary: %v", err)
+	}
+	if err := e.store.AcknowledgeRuntimeConfig(t.Context(), state.RuntimeConfigAck{
+		Key: row.Key, Scope: row.Scope, ScopeID: row.ScopeID, Consumer: row.ScopeID,
+		NodeID: "node-a", Version: row.Version, Status: state.RuntimeConfigAckApplied,
+	}); err != nil {
+		t.Fatalf("ack canary: %v", err)
+	}
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	defer prom.Close()
+	e.s.promqlClient = promql.NewClient(prom.URL, prom.Client())
+	promote := e.do(t, http.MethodPatch, "/v1/admin/config/gateway_streaming_enabled", map[string]any{
+		"value": true, "reason": "promote streaming canary", "scope": "daemon",
+		"scope_id": "gatewayd-internal", "rollout_percent": 100,
+		"expected_version": row.Version,
+	}, nil)
+	if promote.Code != http.StatusConflict {
+		t.Fatalf("promotion status = %d, want 409: %s", promote.Code, promote.Body.String())
+	}
+	rowAfter, err := e.store.GetRuntimeConfig(t.Context(), row.Key, row.Scope, row.ScopeID)
+	if err != nil {
+		t.Fatalf("get row after blocked promotion: %v", err)
+	}
+	if rowAfter.Version != row.Version || rowAfter.RolloutPercent != 10 {
+		t.Fatalf("blocked promotion changed row = %#v", rowAfter)
+	}
 }
 
 func TestRuntimeConfigPatchRejectsInvalidCanaryTarget(t *testing.T) {

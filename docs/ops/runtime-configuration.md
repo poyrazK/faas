@@ -12,6 +12,8 @@ Each catalogued key has a durable row in `runtime_config_entries`:
 - `effective_value` is what the daemon acknowledged as live.
 - `version` is an optimistic-concurrency number.
 - `status` is `pending`, `applied`, `failed`, or `blocked`.
+- `rollout_state` is `stable`, `canary`, `promoting`, `paused`, or
+  `rolled_back`.
 
 Every write also appends `runtime_config_revisions` and emits the
 `runtime_config_changed` notification. Notifications are only wake-ups; apid
@@ -28,6 +30,16 @@ control-plane acknowledgement from an edge daemon's observation and gives
 the operations UI a durable basis for reporting partial fleet convergence.
 Missing acknowledgement rows mean that a consumer has not observed that
 version yet; they are not treated as successful application.
+
+Daemon-scoped values with `rollout_percent` between 1 and 99 are treated as
+canaries. The runtime-config safety controller waits for the observation
+window, then checks current-version acknowledgements and the fleet gateway
+signals (`gateway_requests_total` and
+`gateway_request_duration_seconds`). A failed acknowledgement or a breach of
+the default gate (at least 20 requests, at most 5% 5xx, and at most 2s p95)
+automatically restores the newest older 100% revision. If no stable revision
+exists, the canary is marked paused rather than guessing a fallback. Missing
+Prometheus data never causes a mutation.
 
 ## Scope and canary targeting
 
@@ -97,3 +109,9 @@ and an acknowledgement before the catalog is expanded.
 All writes require admin scope, MFA, a reason, and an optional expected
 version. Sensitive values are redacted in list, operation, and revision
 responses.
+
+To promote a daemon canary, PATCH the same target with `rollout_percent: 100`.
+The API evaluates the current canary health first and rejects promotion when
+the gate is not met. A later regression is handled by the background safety
+controller and is recorded as `operator.runtime_config_auto_rollback` in the
+audit stream.

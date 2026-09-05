@@ -92,6 +92,7 @@ func (m *MemStore) UpsertRuntimeConfig(_ context.Context, update RuntimeConfigUp
 	row.DesiredValue = append(json.RawMessage(nil), update.DesiredValue...)
 	row.EffectiveValue = nil
 	row.RolloutPercent = rolloutPercent
+	row.RolloutState = runtimeConfigRolloutState(rolloutPercent)
 	row.ApplyMode = update.ApplyMode
 	row.Status = RuntimeConfigPending
 	row.LastError = ""
@@ -166,6 +167,47 @@ func (m *MemStore) MarkRuntimeConfigApplied(_ context.Context, key string, scope
 	}
 	m.runtimeConfigs[mapKey] = row
 	return nil
+}
+
+// MarkRuntimeConfigRolloutState mirrors the Postgres lifecycle update used by
+// the automatic rollout safety controller.
+func (m *MemStore) MarkRuntimeConfigRolloutState(_ context.Context, key string, scope RuntimeConfigScope, scopeID string, version int64, rolloutState RuntimeConfigRolloutState, lastError string) error {
+	if !validRuntimeConfigRolloutState(rolloutState) {
+		return fmt.Errorf("state: invalid runtime config rollout state %q", rolloutState)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mapKey := runtimeConfigMapKey(key, scope, scopeID)
+	row, ok := m.runtimeConfigs[mapKey]
+	if !ok || row.Version != version {
+		return ErrRuntimeConfigConflict
+	}
+	if len(lastError) > 1024 {
+		lastError = lastError[:1024]
+	}
+	row.RolloutState = rolloutState
+	row.LastError = lastError
+	row.UpdatedAt = time.Now().UTC()
+	m.runtimeConfigs[mapKey] = row
+	return nil
+}
+
+func runtimeConfigRolloutState(percent int) RuntimeConfigRolloutState {
+	if percent > 0 && percent < 100 {
+		return RuntimeConfigRolloutCanary
+	}
+	return RuntimeConfigRolloutStable
+}
+
+func validRuntimeConfigRolloutState(value RuntimeConfigRolloutState) bool {
+	switch value {
+	case RuntimeConfigRolloutStable, RuntimeConfigRolloutCanary,
+		RuntimeConfigRolloutPromoting, RuntimeConfigRolloutPaused,
+		RuntimeConfigRolloutRolledBack:
+		return true
+	default:
+		return false
+	}
 }
 
 func cloneRuntimeConfig(row RuntimeConfig) RuntimeConfig {

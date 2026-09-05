@@ -27,6 +27,7 @@ type runtimeConfigEntryResponse struct {
 	Scope             string                     `json:"scope"`
 	ScopeID           string                     `json:"scope_id,omitempty"`
 	RolloutPercent    int                        `json:"rollout_percent"`
+	RolloutState      string                     `json:"rollout_state"`
 	Source            string                     `json:"source"`
 	ApplyMode         string                     `json:"apply_mode"`
 	ControllerEnabled bool                       `json:"controller_enabled"`
@@ -203,6 +204,7 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 			Scope:             string(scope),
 			ScopeID:           scopeID,
 			RolloutPercent:    100,
+			RolloutState:      string(state.RuntimeConfigRolloutStable),
 			Source:            "default_or_environment",
 			ApplyMode:         string(def.ApplyMode),
 			ControllerEnabled: def.ControllerEnabled,
@@ -220,6 +222,7 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 			item.LastError = row.LastError
 			item.Version = row.Version
 			item.RolloutPercent = row.RolloutPercent
+			item.RolloutState = string(row.RolloutState)
 			item.UpdatedAt = row.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
 			if row.AppliedAt != nil {
 				item.AppliedAt = row.AppliedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
@@ -288,6 +291,15 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 	if err := validateRuntimeConfigValue(def, req.Value); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", err.Error()))
 		return
+	}
+	if current, promoting, promotionErr := runtimeConfigPromotionRequested(s.store, key, scope, scopeID, percent, r.Context()); promotionErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not inspect runtime configuration rollout"))
+		return
+	} else if promoting {
+		if healthErr, unavailable := s.runtimeConfigPromotionHealth(r.Context(), current); healthErr != nil {
+			api.WriteProblem(w, runtimeConfigPromotionProblem(healthErr, unavailable))
+			return
+		}
 	}
 	if len(req.Reason) < 3 || len(req.Reason) > 500 {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid change reason", "reason must be 3..500 characters"))
@@ -395,6 +407,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		Scope:             string(scope),
 		ScopeID:           scopeID,
 		RolloutPercent:    percent,
+		RolloutState:      string(row.RolloutState),
 		Source:            "operator",
 		ApplyMode:         string(def.ApplyMode),
 		ControllerEnabled: def.ControllerEnabled,
@@ -553,7 +566,8 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		DesiredValue:   append(json.RawMessage(nil), row.DesiredValue...),
 		EffectiveValue: append(json.RawMessage(nil), row.EffectiveValue...),
 		Scope:          string(scope), ScopeID: scopeID, RolloutPercent: revision.RolloutPercent,
-		Source: "operator", ApplyMode: string(def.ApplyMode), Mutable: def.Mutable,
+		RolloutState: string(row.RolloutState),
+		Source:       "operator", ApplyMode: string(def.ApplyMode), Mutable: def.Mutable,
 		ControllerEnabled: def.ControllerEnabled,
 		Sensitive:         def.Sensitive, Status: string(state.RuntimeConfigApplied),
 		Version: row.Version, UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339), AppliedAt: nowUTCString(),

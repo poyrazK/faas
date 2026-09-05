@@ -18,6 +18,7 @@ export type OperatorRuntimeConfig = {
   scope: 'global' | 'control_plane' | 'daemon' | 'node';
   scope_id?: string;
   rollout_percent: number;
+  rollout_state: 'stable' | 'canary' | 'promoting' | 'paused' | 'rolled_back';
   source: 'default_or_environment' | 'operator';
   apply_mode: 'hot' | 'graceful' | 'rolling' | 'break_glass';
   controller_enabled: boolean;
