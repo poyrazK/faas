@@ -1,6 +1,7 @@
 package builderd
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -10,6 +11,96 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestBuildRecipeLeaseSurvivesCanonicalSweep(t *testing.T) {
+	root := t.TempDir()
+	c := NewCache(root)
+	artifact := filepath.Join(t.TempDir(), "image.tar")
+	if err := os.WriteFile(artifact, []byte("leased artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recipe := testBuildCacheRecipe("source", FrameworkNode, api.PlanPro, "base")
+	if err := c.StoreBuild(recipe, artifact, 15); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok, err := c.LeaseBuild(recipe, "deployment-1")
+	if err != nil || !ok {
+		t.Fatalf("LeaseBuild ok=%v err=%v", ok, err)
+	}
+	if n, err := c.Sweep(1, 100*365*24*time.Hour, time.Now(), nil); err != nil || n != 1 {
+		t.Fatalf("Sweep count=%d err=%v", n, err)
+	}
+	got, err := os.ReadFile(entry.Path)
+	if err != nil {
+		t.Fatalf("leased artifact was removed with canonical entry: %v", err)
+	}
+	if string(got) != "leased artifact" {
+		t.Fatalf("leased artifact = %q", got)
+	}
+}
+
+func TestBuildRecipeLeaseRefreshesRecency(t *testing.T) {
+	root := t.TempDir()
+	c := NewCache(root)
+	artifact := filepath.Join(t.TempDir(), "image.tar")
+	if err := os.WriteFile(artifact, []byte("artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recipe := testBuildCacheRecipe("source", FrameworkNode, api.PlanPro, "base")
+	if err := c.StoreBuild(recipe, artifact, 8); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := recipe.key()
+	dir := filepath.Dir(c.entryPath(key, recipe.Framework, recipe.Plan))
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := c.LeaseBuild(recipe, "deployment-2"); err != nil || !ok {
+		t.Fatalf("LeaseBuild ok=%v err=%v", ok, err)
+	}
+	if n, err := c.Sweep(1<<20, 24*time.Hour, time.Now(), nil); err != nil || n != 0 {
+		t.Fatalf("recently-used entry swept: count=%d err=%v", n, err)
+	}
+}
+
+func TestCacheReapLeasesPreservesReferencedAndRemovesOrphan(t *testing.T) {
+	root := t.TempDir()
+	refs := map[string]bool{"deployment-live": true}
+	c := NewCache(root).WithLeaseReferenceChecker(func(_ context.Context, deploymentID, _ string) (bool, error) {
+		return refs[deploymentID], nil
+	})
+	artifact := filepath.Join(t.TempDir(), "image.tar")
+	if err := os.WriteFile(artifact, []byte("artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recipe := testBuildCacheRecipe("source", FrameworkNode, api.PlanPro, "base")
+	if err := c.StoreBuild(recipe, artifact, 8); err != nil {
+		t.Fatal(err)
+	}
+	live, ok, err := c.LeaseBuild(recipe, "deployment-live")
+	if err != nil || !ok {
+		t.Fatalf("live lease ok=%v err=%v", ok, err)
+	}
+	orphan, ok, err := c.LeaseBuild(recipe, "deployment-orphan")
+	if err != nil || !ok {
+		t.Fatalf("orphan lease ok=%v err=%v", ok, err)
+	}
+	temp := filepath.Join(root, ".leases", ".lease-abandoned")
+	if err := os.WriteFile(temp, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.reapLeases(context.Background(), nil)
+	if _, err := os.Stat(live.Path); err != nil {
+		t.Fatalf("referenced lease removed: %v", err)
+	}
+	if _, err := os.Stat(orphan.Path); !os.IsNotExist(err) {
+		t.Fatalf("orphan lease remains: %v", err)
+	}
+	if _, err := os.Stat(temp); !os.IsNotExist(err) {
+		t.Fatalf("abandoned lease temp remains: %v", err)
+	}
+}
 
 func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 	c := NewCache(t.TempDir())
