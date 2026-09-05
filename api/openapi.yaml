@@ -1942,7 +1942,7 @@ paths:
         description: Stable local project identity used to derive the account-scoped developer URL.
         schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
     put:
-      tags: [dev, previews]
+      tags: [dev]
       operationId: upsertDevSession
       summary: Create or refresh a remote developer environment.
       description: Creates one stable preview app per account and project, or renews its 24-hour lease.
@@ -1968,7 +1968,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
-      tags: [dev, previews]
+      tags: [dev]
       operationId: destroyDevSession
       summary: Tear down a remote developer environment.
       responses:
