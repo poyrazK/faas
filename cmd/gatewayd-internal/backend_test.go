@@ -585,3 +585,17 @@ func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
 func unlimitedLimiterForTest() *gateway.Limiter {
 	return gateway.NewLimiter().WithNoop()
 }
+
+func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "limited", api.PlanScale)
+	app.MaxConcurrency = 1
+	r := pgRouter{store: store}
+	got, ok, err := r.toApp(context.Background(), app)
+	if err != nil || !ok {
+		t.Fatalf("toApp ok=%v err=%v", ok, err)
+	}
+	if got.MaxConcurrency != 1 {
+		t.Fatalf("app ceiling = %d, want 1", got.MaxConcurrency)
+	}
+}

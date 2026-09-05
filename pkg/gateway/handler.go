@@ -54,6 +54,8 @@ type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
 	Plan      api.Plan
+	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
+	MaxConcurrency int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can

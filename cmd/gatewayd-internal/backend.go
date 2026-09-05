@@ -214,6 +214,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		ID:               app.ID,
 		AccountID:        acct.ID,
 		Plan:             acct.Plan,
+		MaxConcurrency:   app.MaxConcurrency,
 		Slug:             app.Slug,
 		StreamingEnabled: app.StreamingEnabled,
 		// Issue #676 / ADR-080: per-app raw-bytes Upgrade
