@@ -2198,23 +2198,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	var snapshotNodes []string
 	if haveSnap {
-		if replicas, ok := e.store.(state.SnapshotReplicaStore); ok {
-			var replicaErr error
-			snapshotNodes, replicaErr = replicas.ReadySnapshotReplicaNodes(ctx, snap.ID)
-			if replicaErr != nil {
-				// Snapshot replicas are an optimization. A schema rollout,
-				// transient DB error, or an older test store must never turn a
-				// valid shared snapshot into a failed wake.
-				e.log.Debug("snapshot replica lookup failed; using normal placement", "snapshot_id", snap.ID, "err", replicaErr)
-				snapshotNodes = nil
-			}
-		}
-	}
-	// Do not let a stale WarmAffinity hint defeat a known-ready replica.
-	// When the warm hint itself is ready, retain its stronger sticky bias;
-	// otherwise let ChoosePlacement rank the ready replica set.
-	if len(snapshotNodes) > 0 && !containsNodeID(snapshotNodes, warmHint) {
-		warmHint = ""
+		warmHint, snapshotNodes = e.snapshotPlacementHints(ctx, snap.ID, warmHint)
 	}
 	// ADR-098 PR-D: connection-aware placement bias. Score is
 	// the synchronous read (per ADR §D2 — schedd does NOT
@@ -4552,9 +4536,12 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// path as Wake — single-box fleets degenerate to
 	// "default-local" because the synthetic row carries the legacy
 	// ceiling and there's no other active node.
+	// Keep the initial snapshot near the app's assigned node when it fits.
+	// The chooser still enforces liveness and CPU/RAM admission.
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
 		return err // *api.Problem from chooser

@@ -162,3 +162,10 @@ Files carrying the banner:
 
 ADR-070 itself is the source of truth for the split and carries an end-of-file
 note instead of the banner.
+
+## Snapshot restore optimization decisions
+
+- [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)
+- [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
+- [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
+- [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)

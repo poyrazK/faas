@@ -56,8 +56,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 )
 
@@ -820,6 +818,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	// Recover only unused cache names from a previous daemon, including when
+	// an operator has disabled the cache. Active instance names are excluded.
+	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
+	preparedCleanupErr := fcvm.ReapPreparedNetworks(preparedCleanupCtx, wire.ExecRunner{})
+	preparedCleanupCancel()
+	if preparedCleanupErr != nil {
+		return fmt.Errorf("vmmd: recover prepared networks: %w", preparedCleanupErr)
+	}
+	if err := mgr.EnablePreparedNetworks(ctx, cfg.PreparedNetworks); err != nil {
+		return err
+	}
+	defer func() {
+		if err := mgr.ClosePreparedNetworks(); err != nil {
+			log.Error("vmmd: prepared network cleanup", "err", err)
+		}
+	}()
 	jailer.WithProcessExitSink(mgr.ProcessExited)
 	// Issue #554 / ADR-078 / PR review fix: wire the per-instance
 	// liveness probe registry + starter so the Manager's bringUp /
@@ -1199,36 +1213,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Optional /metrics endpoint.
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
-		mux := http.NewServeMux()
-		// The canonical scrape combines all vmmd-owned registries. The
-		// dedicated paths below remain for backwards-compatible debugging
-		// and targeted scrapes.
-		mux.Handle(metricsPath, promhttp.HandlerFor(
-			prometheus.Gatherers{
-				ops.Registry(),
-				cbm.Registry(),
-				frm.Registry(),
-				wpm.Registry(),
-			},
-			promhttp.HandlerOpts{Registry: ops.Registry()},
-		))
-		// Cold-boot fallback counter has its own registry (one writer,
-		// one reader). Mount at /metrics/fallback so a scrape that only
-		// wants the ops series stays clean.
-		mux.Handle(metricsPath+"/fallback", cbm.Handler())
-		// PR #470-FU-B: the framework-ready warmup histogram has its
-		// own registry (one writer = the DGRAM recv loop, one reader
-		// = Prometheus). Mount at /metrics/framework-warmup so the
-		// dashboard panel picks it up without polluting /metrics.
-		mux.Handle(metricsPath+"/framework-warmup", frm.Handler())
-		// ADR-098 C11: wake-phase histogram on its own
-		// dedicated registry, mirroring the framework-warmup
-		// pattern. Single writer (Manager.Wake), single reader
-		// (Prometheus). Mounted at /metrics/wake-phase so the
-		// §12 wake-phase-breakdown panel can scrape it
-		// directly without polluting the main /metrics scrape
-		// (which is the wire-side OpsMetrics registry).
-		mux.Handle(metricsPath+"/wake-phase", wpm.Handler())
+		mux := newMetricsMux(ops, cbm, frm, wpm)
 		// Issue #571 PR-A2: /healthz + /readyz on the metrics mux
 		// (operator-side, loopback-only) for the LB scrape and
 		// on-box monitoring. Source of truth is the same

@@ -2232,3 +2232,13 @@ SELECT COALESCE(SUM(total_size), 0)::bigint AS bytes
 FROM upload_sessions
 WHERE account_id = $1::uuid
   AND status = 'open';
+
+-- name: SnapshotLocalityNodes :many
+SELECT node_id::text AS node_id, true AS is_origin
+FROM snapshot_origins
+WHERE snapshot_id = $1::uuid AND node_id IS NOT NULL
+UNION ALL
+SELECT node_id::text AS node_id, false AS is_origin
+FROM snapshot_replicas
+WHERE snapshot_id = $1::uuid AND state = 'ready'
+ORDER BY node_id, is_origin DESC;

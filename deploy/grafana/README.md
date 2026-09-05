@@ -241,6 +241,9 @@ will move to a federated scrape per ADR-031).
 | Deployment clear (single) rate by outcome (5m) | `apid_ops_total{op="deployment_clear",outcome}` | queue controls — clear (ADR-124 + PR #1181) |
 | Deployment clear-obsolete (bulk) rate by outcome (5m) | `apid_ops_total{op="deployment_clear_obsolete",outcome}` | queue controls — clear-obsolete (ADR-124 + PR #1181) |
 | Deployment queue controls — overall success rate (5m) | `apid_ops_total{op=~"deployment_(cancel\|reorder\|clear\|clear_obsolete)",outcome="ok"}` / same set, all outcomes | §12 success-rate tile across all 4 ops |
+| Compute metrics scrape coverage | `faas_compute_metrics_scrape_coverage:by_job` | HTTP-SD downstream coverage (issue #1219 follow-up) |
+| Compute metrics scrape health by node | `up{job=~"gatewayd-internal\|promtail-compute"}` | HTTP-SD downstream target reachability |
+| Compute metrics scrape duration by node | `scrape_duration_seconds{job=~"gatewayd-internal\|promtail-compute"}` | HTTP-SD downstream scrape latency |
 
 ## Deferred rows
 

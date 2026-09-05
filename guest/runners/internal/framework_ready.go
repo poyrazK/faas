@@ -93,15 +93,19 @@ func (s *RunnerSignal) StartTime() time.Time { return s.startTime }
 // up, stale socket) is logged and the guest's normal request
 // handling proceeds. The engine's warm-capture wait times out
 // and falls through to init-tier (correctness-preserving).
+// The one bounded signal runs in the background: waiting on the proxy here
+// would keep net/http from finishing the response, including concurrent
+// responses waiting on the same sync.Once.
 func (s *RunnerSignal) SignalReady(warmupMs int64) {
 	s.once.Do(func() {
-		if err := signalFrameworkReady(s.runtime, warmupMs); err != nil {
-			// Best-effort: write to stderr so the runner's log
-			// surfaces the proxy failure. The host's
-			// vmmd_guest_framework_warmup_seconds histogram
-			// will simply not see this wake.
-			fmt.Fprintf(os.Stderr, "framework_ready signal failed: %v\n", err)
-		}
+		// Capture the dialer before dispatch so restoring a test hook cannot
+		// change an already queued signal's destination.
+		dial := dialProxy
+		go func() {
+			if err := signalFrameworkReady(s.runtime, warmupMs, dial); err != nil {
+				fmt.Fprintf(os.Stderr, "framework_ready signal failed: %v\n", err)
+			}
+		}()
 	})
 }
 
@@ -143,8 +147,8 @@ var SetProxyDialHook = func(dial func(network, path string) (net.Conn, error)) f
 // guest-init proxy, writes "<runtime> <warmup_ms>\n", and
 // reads the proxy's "ok\n" or "err <reason>\n" reply. The
 // proxy is the framing boundary — the runner side stays narrow.
-func signalFrameworkReady(runtime string, warmupMs int64) error {
-	conn, err := dialProxy("unix", FrameworkReadyProxyPath)
+func signalFrameworkReady(runtime string, warmupMs int64, dial func(string, string) (net.Conn, error)) error {
+	conn, err := dial("unix", FrameworkReadyProxyPath)
 	if err != nil {
 		return fmt.Errorf("dial proxy: %w", err)
 	}

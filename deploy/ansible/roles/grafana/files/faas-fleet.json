@@ -2100,6 +2100,101 @@
       ],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
       "options": {"showHeader": true}
+    },
+    {
+      "id": 410,
+      "type": "timeseries",
+      "title": "Compute metrics scrape coverage",
+      "description": "Fraction of the latest healthy HTTP-SD target set that Prometheus is actively scraping. A value below 1 means discovery succeeded but one or more compute metrics endpoints are missing or down.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 222},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "faas_compute_metrics_scrape_coverage:by_job",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.95},
+              {"color": "green", "value": 1}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 411,
+      "type": "timeseries",
+      "title": "Compute metrics scrape health by node",
+      "description": "Prometheus `up` status for every discovered gatewayd-internal and Promtail metrics endpoint. A missing series is captured by the aggregate coverage panel and alert.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 222},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "max by (job, node, region, zone) (up{job=~\"gatewayd-internal|promtail-compute\"})",
+          "legendFormat": "{{job}} / {{node}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 412,
+      "type": "timeseries",
+      "title": "Compute metrics scrape duration by node",
+      "description": "Prometheus scrape duration for discovered compute metrics endpoints. Spikes often precede a target-down alert or indicate a saturated private route.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 230},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "max by (job, node) (scrape_duration_seconds{job=~\"gatewayd-internal|promtail-compute\"})",
+          "legendFormat": "{{job}} / {{node}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
     }
   ],
   "refresh": "30s",

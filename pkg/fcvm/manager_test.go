@@ -1770,33 +1770,29 @@ func indexOfArgv(cmds [][]string, substr string) int {
 	return -1
 }
 
-// TestSetupNetworkTcResetBeforeNftReset locks the snapshot-restore
-// ordering: each ruleset's reset (`tc qdisc del`, `nft delete table`)
-// must come BEFORE its strict add, and the tc reset must come BEFORE
-// the nft reset so a fresh netns that already had the veth set up
-// (which happens across park→wake) drops the qdisc before the nft
-// reset tries to clean the table.
-func TestSetupNetworkTcResetBeforeNftReset(t *testing.T) {
+// A successful setup creates a new namespace and veth. Any stale policy
+// belongs to the removed objects; resetting the new objects is unnecessary.
+func TestSetupNetworkRecreatesObjectsBeforePolicy(t *testing.T) {
 	run, vmm := &fakeRunner{}, &fakeVMM{}
 	m := newTestManager(run, vmm)
-
 	r := req("tc-ord")
 	r.EgressMbit = 25
 	if _, err := m.ColdBoot(context.Background(), r); err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
-	tcDel := indexOfArgv(run.commands, "tc qdisc del")
-	nftDel := indexOfArgv(run.commands, "nft delete table")
+	for _, reset := range []string{"tc qdisc del", "nft delete table"} {
+		if indexOfArgv(run.commands, reset) >= 0 {
+			t.Fatalf("reset ran against a newly created object: %s", reset)
+		}
+	}
+	nsDel := indexOfArgv(run.commands, "ip netns del")
+	nsAdd := indexOfArgv(run.commands, "ip netns add")
+	linkDel := indexOfArgv(run.commands, "ip link del")
+	linkAdd := indexOfArgv(run.commands, "ip link add")
+	tcAdd := indexOfArgv(run.commands, "tc qdisc add")
 	nftAdd := indexOfArgv(run.commands, "nft add table")
-	if tcDel < 0 || nftDel < 0 || nftAdd < 0 {
-		t.Fatalf("expected all three argvs; got tcDel=%d nftDel=%d nftAdd=%d\n%s",
-			tcDel, nftDel, nftAdd, flattenForTest(run.commands))
-	}
-	if tcDel >= nftDel {
-		t.Errorf("tc qdisc del (idx %d) must precede nft delete table (idx %d) on snapshot-restore Wake", tcDel, nftDel)
-	}
-	if nftDel >= nftAdd {
-		t.Errorf("nft delete table (idx %d) must precede nft add table (idx %d) — same reset-before-add invariant", nftDel, nftAdd)
+	if nsDel < 0 || nsAdd <= nsDel || linkDel < 0 || linkAdd <= linkDel || tcAdd <= linkAdd || nftAdd <= nsAdd {
+		t.Fatalf("objects must be recreated before policy: %s", flattenForTest(run.commands))
 	}
 }
 

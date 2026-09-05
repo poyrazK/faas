@@ -1,0 +1,49 @@
+{
+  "requests": 20,
+  "http_errors": 0,
+  "unique_guest_uuids": 20,
+  "verified_unique_instances": 20,
+  "methods": {
+    "restore": 20
+  },
+  "zero_live_before_each": true,
+  "node_ids": [
+    "cc461882-cba6-4182-8f26-e67c314361dc"
+  ],
+  "snapshot_restore_through_ready": {
+    "n": 20,
+    "p50_ms": 73,
+    "p95_ms": 104,
+    "max_ms": 126
+  },
+  "vmmd_wake_including_network": {
+    "n": 20,
+    "p50_ms": 74,
+    "p95_ms": 124,
+    "max_ms": 126
+  },
+  "first_http_response_headers": {
+    "n": 20,
+    "p50_ms": 216.664853,
+    "p95_ms": 281.195259,
+    "max_ms": 324.574424
+  },
+  "all_attempt_response_headers": {
+    "n": 20,
+    "p50_ms": 216.664853,
+    "p95_ms": 281.195259,
+    "max_ms": 324.574424
+  },
+  "full_http_response": {
+    "n": 20,
+    "p50_ms": 216.690497,
+    "p95_ms": 281.220315,
+    "max_ms": 324.598134
+  },
+  "network_cache": {
+    "False": 1,
+    "True": 19
+  },
+  "phase_ms": {},
+  "cohort_passed": true
+}

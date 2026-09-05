@@ -465,6 +465,7 @@ func (s *Server) Close(ctx context.Context) error {
 // actually happened. ADR-005 is enforced one layer down.
 func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (*vmmdpb.WakeResponse, error) {
 	const op = "CreateFromSnapshot"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	wr, err := toWakeRequest(ctx, req)
 	if err != nil {
@@ -504,6 +505,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 // path (no snapshot).
 func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (*vmmdpb.WakeResponse, error) {
 	const op = "CreateColdBoot"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	wr, err := toColdBootRequest(ctx, req)
 	if err != nil {

@@ -10,8 +10,10 @@ import (
 )
 
 // lastSeenFlushInterval is how often the gateway drains buffered touches to
-// schedd (spec §4.1: flush last_request_at every 15 s, not per request).
-const lastSeenFlushInterval = 15 * time.Second
+// schedd. ADR-147 replaces the legacy 15 s cadence: a legal 10 s idle
+// timeout otherwise expires while successful requests are still buffered.
+// Keep writes batched and leave headroom for the scheduler RPC.
+const lastSeenFlushInterval = 2 * time.Second
 
 // schedFlushSink is gatewayd's production LastSeenSink. The handler Touches it
 // by the instance_id it proxied to on every 2xx (issue #168 — per-instance
@@ -168,7 +170,7 @@ func (s *schedFlushSink) Flush(ctx context.Context) error {
 		// cli, so this lookup runs at most once per instance id
 		// per Flush — and the instance count per Flush is bounded
 		// by lastSeenFlushInterval × per-instance request rate,
-		// which is well within reason for the 15 s cadence. nil
+		// which is well within reason for the batched cadence. nil
 		// store (tests) skips the lookup; the log line just
 		// doesn't carry the node id.
 		var nodeID string

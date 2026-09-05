@@ -6169,6 +6169,42 @@ func (q *Queries) SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeplo
 	return i, err
 }
 
+const snapshotLocalityNodes = `-- name: SnapshotLocalityNodes :many
+SELECT node_id::text AS node_id, true AS is_origin
+FROM snapshot_origins
+WHERE snapshot_id = $1::uuid AND node_id IS NOT NULL
+UNION ALL
+SELECT node_id::text AS node_id, false AS is_origin
+FROM snapshot_replicas
+WHERE snapshot_id = $1::uuid AND state = 'ready'
+ORDER BY node_id, is_origin DESC
+`
+
+type SnapshotLocalityNodesRow struct {
+	NodeID   string
+	IsOrigin bool
+}
+
+func (q *Queries) SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error) {
+	rows, err := db.Query(ctx, snapshotLocalityNodes, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SnapshotLocalityNodesRow{}
+	for rows.Next() {
+		var i SnapshotLocalityNodesRow
+		if err := rows.Scan(&i.NodeID, &i.IsOrigin); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const softDeleteOrg = `-- name: SoftDeleteOrg :exec
 update orgs set deleted_pending = true, status = 'deleted_pending', updated_at = now() where id = $1
 `

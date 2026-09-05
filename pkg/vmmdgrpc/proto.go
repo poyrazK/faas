@@ -110,6 +110,15 @@ func cloneStringMap(in map[string]string) map[string]string {
 	return out
 }
 
+// withIncomingCorrelation makes the wire envelope available to wake timing
+// emitters throughout Manager and JailerVMM, independently of OTel setup.
+func withIncomingCorrelation(ctx context.Context) context.Context {
+	if fields, ok := wire.CorrelationFromIncoming(ctx); ok {
+		return wire.WithContext(ctx, fields)
+	}
+	return ctx
+}
+
 // toWakeRequest flattens CreateFromSnapshotRequest into an fcvm.WakeRequest.
 // The caller resolves (app) here; vmmd stores none of it (ADR-014).
 func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, error) {

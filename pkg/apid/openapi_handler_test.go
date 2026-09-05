@@ -15,7 +15,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -135,7 +138,7 @@ func TestServeOpenAPISpecJSON_Shape(t *testing.T) {
 		t.Fatalf("read body: %v", err)
 	}
 	if bytes.HasPrefix(body, []byte(`{"error":`)) {
-		t.Fatalf("init() fell through to error envelope — embedded spec is malformed: %s", body)
+		t.Fatalf("spec conversion fell through to error envelope — embedded spec is malformed: %s", body)
 	}
 
 	var doc struct {
@@ -156,6 +159,50 @@ func TestServeOpenAPISpecJSON_Shape(t *testing.T) {
 	}
 	if doc.Info.Title == "" {
 		t.Errorf("info.title is empty — embedded spec is missing info block")
+	}
+}
+
+// Start a fresh process so other handler tests cannot hide eager package
+// initialization or a race between concurrent first JSON requests.
+func TestOpenAPIJSONLazyInitialization(t *testing.T) {
+	const childEnv = "FAAS_TEST_OPENAPI_LAZY_CHILD"
+	if os.Getenv(childEnv) != "1" {
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(exe, "-test.run=^TestOpenAPIJSONLazyInitialization$")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fresh-process test: %v\n%s", err, out)
+		}
+		return
+	}
+	if openapiJSON != nil {
+		t.Fatal("JSON was converted during package initialization")
+	}
+	ServeOpenAPISpec(httptest.NewRecorder(), httptest.NewRequest("GET", "/v1/openapi.yaml", nil))
+	if openapiJSON != nil {
+		t.Fatal("serving YAML unnecessarily converted the JSON spec")
+	}
+	const clients = 8
+	responses := make([][]byte, clients)
+	var wg sync.WaitGroup
+	for i := range responses {
+		wg.Go(func() {
+			w := httptest.NewRecorder()
+			ServeOpenAPISpecJSON(w, httptest.NewRequest("GET", "/v1/openapi.json", nil))
+			responses[i] = w.Body.Bytes()
+		})
+	}
+	wg.Wait()
+	if !json.Valid(responses[0]) || !bytes.Contains(responses[0], []byte(`"openapi":"3.`)) {
+		t.Fatal("first JSON request did not return the OpenAPI spec")
+	}
+	for i, response := range responses {
+		if !bytes.Equal(response, responses[0]) {
+			t.Errorf("concurrent response %d differs", i)
+		}
 	}
 }
 
