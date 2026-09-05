@@ -232,6 +232,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_MAIL_RESEND_API_KEY", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_MAIL_RESEND_WEBHOOK_SECRET", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_MAIL_TRANSPORT", Owners: []string{"apid", "meterd", "shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
+	{Name: "FAAS_MANAGED_POSTGRES_CONFIG", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional provider-registry JSON path; the foundation remains disabled until an apid adapter and launch gates are wired (ADR-155)"},
 	{Name: "FAAS_MANIFEST_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_METERD_ROLE", Owners: []string{"meterd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_MFA_RECOVERY_HMAC_KEY", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
