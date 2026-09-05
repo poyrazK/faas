@@ -188,7 +188,7 @@ func VerifyAuthenticatedNamed(manager *session.Manager, r *http.Request, action,
 		return fmt.Errorf("%w: nil session manager", ErrCSRFInvalid)
 	}
 	if err := validateCSRFCookieName(cookieName); err != nil {
-		return fmt.Errorf("%w: %v", ErrCSRFInvalid, err)
+		return fmt.Errorf("%w: %w", ErrCSRFInvalid, err)
 	}
 	c, err := r.Cookie(cookieName)
 	if err != nil || c.Value == "" {
