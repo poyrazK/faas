@@ -30,6 +30,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"sort"
 )
 
 // readPasswdTable opens /etc/faas/app_passwd, binary-searches
@@ -66,44 +67,43 @@ func readPasswdTable(name string) (int, bool) {
 // "table is corrupt". Both degrade to today's behavior.
 func searchPasswdTable(body []byte, name string) (int, bool) {
 	const recordHeader = 9 // 4 + 4 + 1
-	lo, hi := 0, len(body)
-	for lo < hi {
-		// Mid-record offsets are unsafe (mid-record slicing
-		// would split a record). Walk forward from the lower
-		// bound until we find a record boundary. The record
-		// count is bounded by the builder cap (256) so the
-		// per-iteration cost is constant in practice.
-		mid := (lo + hi) / 2
-		off := lo
-		for off < mid {
-			if off+recordHeader > len(body) {
-				return 0, false
-			}
-			nameLen := int(body[off+8])
-			off += recordHeader + nameLen
-		}
+	if name == "" {
+		return 0, false
+	}
+
+	// Build record boundaries before searching. A byte offset in the
+	// middle of a variable-length record cannot be used as a binary-search
+	// midpoint: advancing it to the next boundary can leave the search
+	// interval unchanged and loop forever. The builder caps this table at
+	// 256 entries, so this bounded index is cheap and keeps malformed input
+	// fail-closed.
+	type record struct {
+		off  int
+		name []byte
+	}
+	records := make([]record, 0, 16)
+	for off := 0; off < len(body); {
 		if off+recordHeader > len(body) {
 			return 0, false
 		}
 		nameLen := int(body[off+8])
-		if off+recordHeader+nameLen > len(body) {
+		end := off + recordHeader + nameLen
+		if end > len(body) {
 			return 0, false
 		}
-		got := string(body[off+9 : off+9+nameLen])
-		cmp := bytes.Compare([]byte(got), []byte(name))
-		switch {
-		case cmp < 0:
-			// The search range is the byte-indexed slice;
-			// we want to skip THIS record. Compute the
-			// next record boundary.
-			lo = off + recordHeader + nameLen
-		case cmp > 0:
-			hi = off
-		default:
-			// Hit.
-			uid := binary.BigEndian.Uint32(body[off : off+4])
-			return int(uid), true
-		}
+		records = append(records, record{off: off, name: body[off+9 : end]})
+		off = end
 	}
-	return 0, false
+	if len(records) == 0 {
+		return 0, false
+	}
+
+	key := []byte(name)
+	i := sort.Search(len(records), func(i int) bool {
+		return bytes.Compare(records[i].name, key) >= 0
+	})
+	if i >= len(records) || !bytes.Equal(records[i].name, key) {
+		return 0, false
+	}
+	return int(binary.BigEndian.Uint32(body[records[i].off : records[i].off+4])), true
 }
