@@ -69,6 +69,7 @@ const (
 	latencyP99   = "#0a2c5e" // dark  — the heaviest line
 	areaError    = "#c0392b" // warning — error rate
 	areaColdBoot = "#d49000" // info    — cold-boot rate
+	areaUsage    = "#4f46e5" // accent — account usage
 	areaOpacity  = "0.18"    // the fill is a hint, not a bar
 )
 
@@ -328,4 +329,31 @@ func RenderErrorRateSparkline(points []appmetrics.SparklinePoint, width, height 
 // the cold-boot rate row of the per-app SLO card.
 func RenderColdBootRateSparkline(points []appmetrics.SparklinePoint, width, height int) template.HTML {
 	return RenderAreaSparkline(points, width, height, areaColdBoot, areaOpacity)
+}
+
+// RenderUsageSparkline draws the account's daily GB-hour trend. It shares the
+// fixed-shape SVG renderer and accessibility contract with the SLO sparklines,
+// while using a wider viewport because the usage page has room for 30 days.
+func RenderUsageSparkline(points []appmetrics.SparklinePoint, width, height int) template.HTML {
+	if width == 0 {
+		width = 480
+	}
+	if height == 0 {
+		height = 100
+	}
+	if len(points) == 0 {
+		return template.HTML("")
+	}
+	label := "daily GB-hours, " + trendLabel(points)
+	aria := escapeAttr(label)
+	var b strings.Builder
+	fmt.Fprintf(&b,
+		`<svg viewBox="0 0 %d %d" width="%d" height="%d" role="img" aria-label=%q preserveAspectRatio="none">`,
+		width, height, width, height, aria)
+	b.WriteString(renderArea(points, width, height, areaUsage, areaOpacity))
+	if line := renderPoints(points, width, height, areaUsage); line != "" {
+		b.WriteString(line)
+	}
+	b.WriteString(`</svg>`)
+	return template.HTML(b.String())
 }

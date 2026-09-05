@@ -4572,6 +4572,11 @@ type Store interface {
 	// day is a UTC midnight time; the returned rows cover the
 	// single day. Empty when no rollup has fired yet. ADR-048 §5.
 	UsageDaily(ctx context.Context, accountID string, day time.Time) ([]DailyUsage, error)
+	// UsageDailyForAccount returns the per-(account, app, day) rollup
+	// rows for the trailing 30 UTC calendar days, oldest first. The
+	// bounded window keeps the customer analytics read predictable and
+	// is backed by usage_daily_account_day_idx. ADR-048 / issue #308.
+	UsageDailyForAccount(ctx context.Context, accountID string) ([]DailyUsage, error)
 	// TrafficAnomalyAggregate is the per-(account, app, minute) anomaly
 	// scan that powers GET /v1/admin/obs/anomalies (ADR-091 §3.6 /
 	// PR #2). The handler passes (since, baselineCutoff, limit);

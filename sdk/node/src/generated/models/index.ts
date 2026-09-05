@@ -107,6 +107,7 @@ export type { CronRun } from './CronRun.js';
 export type { CustomDomainResponse } from './CustomDomainResponse.js';
 export type { CustomStage } from './CustomStage.js';
 export type { DailyUsageListResponse } from './DailyUsageListResponse.js';
+export type { DailyUsagePoint } from './DailyUsagePoint.js';
 export type { DailyUsageResponse } from './DailyUsageResponse.js';
 export type { DataUpstreamListResponse } from './DataUpstreamListResponse.js';
 export type { DataUpstreamResponse } from './DataUpstreamResponse.js';

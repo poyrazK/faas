@@ -2103,6 +2103,43 @@ func TestUsageSummary_HappyPath(t *testing.T) {
 	if out.IncludedGBHours == 0 {
 		t.Errorf("included = 0, want plan default")
 	}
+	if out.Daily == nil {
+		t.Errorf("daily = nil, want an empty array")
+	}
+}
+
+func TestUsageSummary_DailyTopApp(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appA, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appB, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := time.Now().UTC()
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appA.ID, "instance-api", today, 7_200_000, 10, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appB.ID, "instance-worker", today, 3_600_000, 5, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, "GET", "/v1/usage/summary", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.UsageSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Daily) != 1 {
+		t.Fatalf("daily = %+v, want one point", out.Daily)
+	}
+	if out.Daily[0].TopAppSlug != "api" || out.Daily[0].GBHours != 3 || out.Daily[0].TopAppGBHours != 2 {
+		t.Fatalf("daily point = %+v", out.Daily[0])
+	}
 }
 
 // TestUsageSummary_BadMonth: YYYY-MM parse failure.

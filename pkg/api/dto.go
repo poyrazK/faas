@@ -2813,9 +2813,20 @@ type SetPasswordRequest struct {
 	CurrentPassword string `json:"current_password,omitempty"`
 }
 
+// DailyUsagePoint is one day in the account's trailing usage trend.
+// GBHours is the sum across apps; TopAppSlug identifies the largest
+// contributor for that day. All fields are informational and use the
+// same GB-hour conversion as UsageSummaryResponse.
+type DailyUsagePoint struct {
+	Date          string  `json:"date"` // YYYY-MM-DD in UTC
+	GBHours       float64 `json:"gb_hours"`
+	TopAppSlug    string  `json:"top_app_slug,omitempty"`
+	TopAppGBHours float64 `json:"top_app_gb_hours,omitempty"`
+}
+
 // UsageSummaryResponse is the roll-up for the current month (or any
 // month passed as a query param). Used by the dashboard usage page so
-// the customer sees a single number ("used X of Y GB-h, overage $Z")
+// the customer sees the account summary and its trailing daily trend
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
@@ -2839,7 +2850,8 @@ type UsageSummaryResponse struct {
 	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
 	// UsedCPUHours is the per-month CPU-hours Σ CPUUsageUsec /
 	// 3.6e9. Informational only — billing is on UsedGBHours.
-	// Issue #279 / PR-B.
+	// Issue #279 / PR-B. The customer dashboard renders this
+	// alongside the other account summary dimensions.
 	UsedCPUHours float64 `json:"used_cpu_hours"`
 	// UsedEgressGB is the per-month egress Σ (TXBytes +
 	// NetTxBytes) / 1024^3. Informational only — not
@@ -2862,6 +2874,9 @@ type UsageSummaryResponse struct {
 	// bill of health" panel reads this single number; the
 	// per-app breakdown lives at UsageResponse.ColdBootCount.
 	ColdBootTotal int64 `json:"cold_boots"`
+	// Daily is the trailing 30 UTC calendar days of account usage,
+	// grouped by day. It is additive so existing clients can ignore it.
+	Daily []DailyUsagePoint `json:"daily"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec

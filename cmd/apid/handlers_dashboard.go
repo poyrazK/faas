@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/presetwhy"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -1020,9 +1021,15 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		return
 	}
 	var mbSec int64
+	var requests int64
+	var cpuUsec int64
 	var egressBytes int64
+	var ingressBytes int64
+	var coldBoots int64
 	for _, u := range rows {
 		mbSec += u.MBSeconds
+		requests += u.Requests
+		cpuUsec += u.CPUUsec
 		// ADR-046 (step 10): sum both egress columns so
 		// the dashboard's "egress this month" panel
 		// surfaces a single GB number. Informational;
@@ -1036,12 +1043,26 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		// dashboard template renders this with a footer
 		// note; the future billing PR will pick the unit.
 		egressBytes += u.TXBytes + u.NetTxBytes
+		ingressBytes += u.NetRxBytes
+		coldBoots += u.ColdBootCount
 	}
 	used := float64(mbSec) / 3_600_000.0
 	// usedEgressGB carries the same framing caveat as the
 	// docstring on api.UsageResponse.TotalEgressGB — see
 	// pkg/api/dto.go for the wire-side semantics.
 	usedEgressGB := float64(egressBytes) / (1024 * 1024 * 1024)
+	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderUsage: list apps", "account_id", acct.ID, "err", err)
+		apps = nil
+	}
+	dailyRows, err := s.store.UsageDailyForAccount(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderUsage: load daily usage", "account_id", acct.ID, "err", err)
+		dailyRows = nil
+	}
+	perApp := usageAppData(rows, apps, used)
+	daily, dailySparkline := usageDailyView(dailyRows, apps)
 	limits := api.MustLimitsFor(acct.Plan)
 	included := int64(limits.IncludedGBHours)
 	pct := 0.0
@@ -1055,12 +1076,19 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		appCount = 0
 	}
 	page := dashboard.Page{Title: "Usage", Body: "usage", Account: dashboardAccountView(view, appCount), Data: dashboard.UsageData{
-		Month:           month.Format("2006-01"),
-		UsedGBHours:     used,
-		IncludedGBHours: included,
-		OverageGBHours:  max(0, used-float64(included)),
-		UsedPct:         pct,
-		UsedEgressGB:    usedEgressGB,
+		Month:              month.Format("2006-01"),
+		UsedGBHours:        used,
+		IncludedGBHours:    included,
+		OverageGBHours:     max(0, used-float64(included)),
+		UsedPct:            pct,
+		Requests:           requests,
+		UsedEgressGB:       usedEgressGB,
+		UsedIngressGB:      float64(ingressBytes) / (1024 * 1024 * 1024),
+		UsedCPUHours:       meter.CPUHours(cpuUsec),
+		ColdBoots:          coldBoots,
+		PerApp:             perApp,
+		Daily:              daily,
+		DailySparklineHTML: dailySparkline,
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)

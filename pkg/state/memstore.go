@@ -11852,6 +11852,52 @@ func (m *MemStore) UsageDaily(_ context.Context, _ string, _ time.Time) ([]Daily
 	return nil, nil
 }
 
+// UsageDailyForAccount derives the same bounded shape from MemStore's minute
+// rows. MemStore does not run the production usage_daily rollup cron, but
+// aggregating its source rows keeps dashboard and API tests representative of
+// the production read contract. ADR-048 / issue #308.
+func (m *MemStore) UsageDailyForAccount(_ context.Context, accountID string) ([]DailyUsage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	start := today.AddDate(0, 0, -29)
+	end := today.AddDate(0, 0, 1)
+	byKey := make(map[string]*DailyUsage)
+	for _, minute := range m.usage {
+		if minute.AccountID != accountID || minute.Minute.Before(start) || !minute.Minute.Before(end) {
+			continue
+		}
+		day := time.Date(minute.Minute.Year(), minute.Minute.Month(), minute.Minute.Day(), 0, 0, 0, 0, time.UTC)
+		key := minute.AppID + "\x00" + day.Format("2006-01-02")
+		row := byKey[key]
+		if row == nil {
+			row = &DailyUsage{AccountID: accountID, AppID: minute.AppID, Day: day}
+			byKey[key] = row
+		}
+		row.MBSeconds += minute.MBSeconds
+		row.Requests += minute.Requests
+		row.CPUUsec += minute.CPUUsec
+		row.TXBytes += minute.TXBytes
+		row.NetTxBytes += minute.NetTxBytes
+		row.NetRxBytes += minute.NetRxBytes
+		row.ColdBootCount += int64(minute.ColdBootCount)
+		row.TailSeconds += minute.TailSeconds
+	}
+	out := make([]DailyUsage, 0, len(byKey))
+	for _, row := range byKey {
+		out = append(out, *row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Day.Equal(out[j].Day) {
+			return out[i].Day.Before(out[j].Day)
+		}
+		return out[i].AppID < out[j].AppID
+	})
+	return out, nil
+}
+
 // UsageSLOForApp + UsageSLOForAccount mirror pgstore for the
 // customer-facing SLO surface (issue #696 / ADR-082). The
 // MemStore does not maintain usage_minutes — pkg/meter

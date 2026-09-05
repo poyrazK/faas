@@ -1,6 +1,6 @@
 # ADR-132 · Customer-facing dashboard surfaces (usage dashboard + rate-limit indicator)
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-08-24
 - **Issue / PR:** [#308](https://github.com/poyrazK/faas/issues/308), [#314](https://github.com/poyrazK/faas/issues/314)
 - **Decision:** Ship two customer-facing surfaces — per-app/day
@@ -31,7 +31,7 @@ Customers today find out via a 429 with no `Retry-After` (or
 via a support ticket). The dashboard doesn't surface the
 "deploys used / limit / window resets" pill.
 
-## Decision (deferred surfaces)
+## Decision
 
 ### 1. Per-app/day usage series (issue #308)
 
@@ -52,7 +52,7 @@ type UsageSummaryResponse struct {
 ```
 
 `pkg/state/pgstore.go` + `pkg/state/memstore.go` gain
-`UsageDailyForAccount(ctx, acct.ID) ([]DailyUsagePoint, error)`
+`UsageDailyForAccount(ctx, acct.ID) ([]DailyUsage, error)`
 — a single SQL query that GROUP BY day + computes the top app
 per day (window function or correlated subquery).
 

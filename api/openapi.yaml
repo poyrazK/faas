@@ -19701,8 +19701,29 @@ components:
       x-since: "2026-08"
       x-issue: "696"
 
+    DailyUsagePoint:
+      description: "One day in the account's trailing 30 UTC calendar day usage trend (issue #308)."
+      type: object
+      required: [date, gb_hours]
+      properties:
+        date:
+          type: string
+          format: date
+          description: "UTC calendar day."
+        gb_hours:
+          type: number
+          description: "Account-wide GB-hours consumed on this day. Informational; uses the usage summary conversion."
+        top_app_slug:
+          type: string
+          description: "Slug of the app contributing the most GB-hours on this day."
+        top_app_gb_hours:
+          type: number
+          description: "GB-hours consumed by top_app_slug on this day."
+      x-since: "2026-09"
+      x-issue: "308"
+
     UsageSummaryResponse:
-      description: "Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, and informational used_cpu_hours (issue #279 / PR-B). The CPU dimension is observable but not yet billed; the GB-hours fields drive the overage math."
+      description: "Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage dimensions, and a trailing 30-day daily trend (issue #308). The GB-hours fields drive the overage math; the other dimensions are informational."
       type: object
       required: [month, used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents]
       properties:
@@ -19732,6 +19753,13 @@ components:
           description: 'Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not billed). ADR-048.'
           x-since: "2026-08"
           x-issue: "436"
+        daily:
+          type: array
+          description: 'Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows exist. issue #308.'
+          items:
+            $ref: '#/components/schemas/DailyUsagePoint'
+          x-since: "2026-09"
+          x-issue: "308"
 
     # ─── Event-driven surface (Move 2) ───────────────────────────────────
 
