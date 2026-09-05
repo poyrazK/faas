@@ -43,6 +43,8 @@ class OperatorRuntimeConfig:
     scope: OperatorRuntimeConfigScope
     rollout_percent: int
     rollout_state: OperatorRuntimeConfigRolloutState
+    auto_promote: bool
+    """Whether the safety controller automatically advances a healthy daemon canary."""
     source: OperatorRuntimeConfigSource
     apply_mode: OperatorRuntimeConfigApplyMode
     controller_enabled: bool
@@ -80,6 +82,8 @@ class OperatorRuntimeConfig:
         rollout_percent = self.rollout_percent
 
         rollout_state: str = self.rollout_state
+
+        auto_promote = self.auto_promote
 
         source: str = self.source
 
@@ -129,6 +133,7 @@ class OperatorRuntimeConfig:
                 "scope": scope,
                 "rollout_percent": rollout_percent,
                 "rollout_state": rollout_state,
+                "auto_promote": auto_promote,
                 "source": source,
                 "apply_mode": apply_mode,
                 "controller_enabled": controller_enabled,
@@ -177,6 +182,8 @@ class OperatorRuntimeConfig:
         rollout_percent = d.pop("rollout_percent")
 
         rollout_state = check_operator_runtime_config_rollout_state(d.pop("rollout_state"))
+
+        auto_promote = d.pop("auto_promote")
 
         source = check_operator_runtime_config_source(d.pop("source"))
 
@@ -231,6 +238,7 @@ class OperatorRuntimeConfig:
             scope=scope,
             rollout_percent=rollout_percent,
             rollout_state=rollout_state,
+            auto_promote=auto_promote,
             source=source,
             apply_mode=apply_mode,
             controller_enabled=controller_enabled,

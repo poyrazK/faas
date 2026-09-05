@@ -14,6 +14,8 @@ Each catalogued key has a durable row in `runtime_config_entries`:
 - `status` is `pending`, `applied`, `failed`, or `blocked`.
 - `rollout_state` is `stable`, `canary`, `promoting`, `paused`, or
   `rolled_back`.
+- `auto_promote` opts a daemon canary into the fixed progression ladder;
+  safety rollback remains active for every canary.
 
 Every write also appends `runtime_config_revisions` and emits the
 `runtime_config_changed` notification. Notifications are only wake-ups; apid
@@ -64,6 +66,13 @@ test. Use a daemon override with 1–100% for a gradual fleet rollout. The
 control-plane row is marked effective when it is persisted; the `acks` array is
 the source of truth for whether each selected daemon has actually applied it.
 
+Set `auto_promote: true` when creating a daemon canary to let the safety
+controller advance it through `1% → 5% → 25% → 50% → 100%`. Each step waits
+for the acknowledgement and health gates plus the observation window. The
+default is false, so existing and manually managed canaries remain operator-
+controlled. An operator edit wins through optimistic versioning and stops the
+automatic ladder.
+
 ## Apply modes
 
 `hot` settings are validated, swapped into the process snapshot, acknowledged,
@@ -110,8 +119,9 @@ All writes require admin scope, MFA, a reason, and an optional expected
 version. Sensitive values are redacted in list, operation, and revision
 responses.
 
-To promote a daemon canary, PATCH the same target with `rollout_percent: 100`.
-The API evaluates the current canary health first and rejects promotion when
-the gate is not met. A later regression is handled by the background safety
-controller and is recorded as `operator.runtime_config_auto_rollback` in the
-audit stream.
+To manually promote a daemon canary, PATCH the same target with
+`rollout_percent: 100`. The API evaluates the current canary health first and
+rejects promotion when the gate is not met. A later regression is handled by
+the background safety controller and is recorded as
+`operator.runtime_config_auto_rollback` in the audit stream. Automatic step-up
+uses `operator.runtime_config_auto_promote` for each successful transition.

@@ -93,6 +93,7 @@ func (m *MemStore) UpsertRuntimeConfig(_ context.Context, update RuntimeConfigUp
 	row.EffectiveValue = nil
 	row.RolloutPercent = rolloutPercent
 	row.RolloutState = runtimeConfigRolloutState(rolloutPercent)
+	row.AutoPromote = update.AutoPromote
 	row.ApplyMode = update.ApplyMode
 	row.Status = RuntimeConfigPending
 	row.LastError = ""
@@ -105,6 +106,7 @@ func (m *MemStore) UpsertRuntimeConfig(_ context.Context, update RuntimeConfigUp
 		ID: int64(len(m.runtimeConfigRevisions) + 1), Key: row.Key, Scope: row.Scope,
 		ScopeID: row.ScopeID, Version: row.Version,
 		RolloutPercent: row.RolloutPercent,
+		AutoPromote:    row.AutoPromote,
 		OldValue:       append(json.RawMessage(nil), oldValue...),
 		NewValue:       append(json.RawMessage(nil), row.DesiredValue...),
 		ActorID:        row.ActorID, Reason: row.Reason, CreatedAt: row.UpdatedAt,

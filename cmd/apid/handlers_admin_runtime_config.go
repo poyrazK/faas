@@ -28,6 +28,7 @@ type runtimeConfigEntryResponse struct {
 	ScopeID           string                     `json:"scope_id,omitempty"`
 	RolloutPercent    int                        `json:"rollout_percent"`
 	RolloutState      string                     `json:"rollout_state"`
+	AutoPromote       bool                       `json:"auto_promote"`
 	Source            string                     `json:"source"`
 	ApplyMode         string                     `json:"apply_mode"`
 	ControllerEnabled bool                       `json:"controller_enabled"`
@@ -64,6 +65,7 @@ type runtimeConfigPatchRequest struct {
 	Scope           string          `json:"scope"`
 	ScopeID         string          `json:"scope_id"`
 	RolloutPercent  *int            `json:"rollout_percent"`
+	AutoPromote     bool            `json:"auto_promote"`
 }
 
 type runtimeConfigRollbackRequest struct {
@@ -205,6 +207,7 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 			ScopeID:           scopeID,
 			RolloutPercent:    100,
 			RolloutState:      string(state.RuntimeConfigRolloutStable),
+			AutoPromote:       false,
 			Source:            "default_or_environment",
 			ApplyMode:         string(def.ApplyMode),
 			ControllerEnabled: def.ControllerEnabled,
@@ -223,6 +226,7 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 			item.Version = row.Version
 			item.RolloutPercent = row.RolloutPercent
 			item.RolloutState = string(row.RolloutState)
+			item.AutoPromote = row.AutoPromote
 			item.UpdatedAt = row.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
 			if row.AppliedAt != nil {
 				item.AppliedAt = row.AppliedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
@@ -284,6 +288,10 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid rollout target", "percentage rollout is supported only for daemon-scoped settings; use a node scope for an exact target"))
 		return
 	}
+	if req.AutoPromote && (scope != state.RuntimeConfigScopeDaemon || percent >= 100) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid automatic promotion target", "auto_promote requires a daemon-scoped canary with rollout_percent below 100"))
+		return
+	}
 	if (scope == state.RuntimeConfigScopeDaemon || scope == state.RuntimeConfigScopeNode) && def.ApplyMode != state.RuntimeConfigApplyHot {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid scoped setting", "daemon and node targets require a hot setting with a live runtime watcher"))
 		return
@@ -311,6 +319,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		ScopeID:         scopeID,
 		DesiredValue:    req.Value,
 		RolloutPercent:  &percent,
+		AutoPromote:     req.AutoPromote,
 		ApplyMode:       def.ApplyMode,
 		ActorID:         acct.ID,
 		Reason:          req.Reason,
@@ -334,7 +343,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 			s.audit.Emit(r.Context(), "operator.runtime_config_apply_requested", nil, map[string]any{
 				"key": key, "version": row.Version, "apply_mode": def.ApplyMode,
 				"operation_id": operation.ID, "reason": req.Reason, "actor": acct.ID,
-				"scope": scope, "scope_id": scopeID, "rollout_percent": percent,
+				"scope": scope, "scope_id": scopeID, "rollout_percent": percent, "auto_promote": req.AutoPromote,
 			})
 		}
 		if !def.ControllerEnabled {
@@ -386,7 +395,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		s.audit.Emit(r.Context(), "operator.runtime_config_changed", nil, map[string]any{
 			"key": key, "version": row.Version, "value": req.Value,
 			"apply_mode": def.ApplyMode, "reason": req.Reason, "actor": acct.ID,
-			"scope": scope, "scope_id": scopeID, "rollout_percent": percent,
+			"scope": scope, "scope_id": scopeID, "rollout_percent": percent, "auto_promote": req.AutoPromote,
 		})
 	}
 	// The trigger is the production notification path. The explicit call is
@@ -408,6 +417,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		ScopeID:           scopeID,
 		RolloutPercent:    percent,
 		RolloutState:      string(row.RolloutState),
+		AutoPromote:       row.AutoPromote,
 		Source:            "operator",
 		ApplyMode:         string(def.ApplyMode),
 		ControllerEnabled: def.ControllerEnabled,
@@ -522,6 +532,7 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		ScopeID:         scopeID,
 		DesiredValue:    revision.NewValue,
 		RolloutPercent:  &revision.RolloutPercent,
+		AutoPromote:     revision.AutoPromote,
 		ApplyMode:       state.RuntimeConfigApplyHot,
 		ActorID:         acct.ID,
 		Reason:          reason,
@@ -553,7 +564,7 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		s.audit.Emit(r.Context(), "operator.runtime_config_rollback", nil, map[string]any{
 			"key": key, "version": row.Version, "rollback_target_version": req.Version,
 			"value": revision.NewValue, "reason": req.Reason, "actor": acct.ID,
-			"scope": scope, "scope_id": scopeID, "rollout_percent": revision.RolloutPercent,
+			"scope": scope, "scope_id": scopeID, "rollout_percent": revision.RolloutPercent, "auto_promote": revision.AutoPromote,
 		})
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyRuntimeConfigChanged, key)
@@ -567,6 +578,7 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		EffectiveValue: append(json.RawMessage(nil), row.EffectiveValue...),
 		Scope:          string(scope), ScopeID: scopeID, RolloutPercent: revision.RolloutPercent,
 		RolloutState: string(row.RolloutState),
+		AutoPromote:  row.AutoPromote,
 		Source:       "operator", ApplyMode: string(def.ApplyMode), Mutable: def.Mutable,
 		ControllerEnabled: def.ControllerEnabled,
 		Sensitive:         def.Sensitive, Status: string(state.RuntimeConfigApplied),
@@ -626,7 +638,7 @@ func (s *server) adminRuntimeConfigRevisions(w http.ResponseWriter, r *http.Requ
 		}
 		items = append(items, api.OperatorRuntimeConfigRevision{
 			ID: revision.ID, Key: revision.Key, Scope: string(revision.Scope), ScopeID: revision.ScopeID,
-			Version: revision.Version, RolloutPercent: revision.RolloutPercent, OldValue: oldValue, NewValue: newValue,
+			Version: revision.Version, RolloutPercent: revision.RolloutPercent, AutoPromote: revision.AutoPromote, OldValue: oldValue, NewValue: newValue,
 			ActorID: revision.ActorID, Reason: revision.Reason,
 			CreatedAt: revision.CreatedAt.UTC().Format(time.RFC3339),
 		})

@@ -137,6 +137,7 @@ func TestRuntimeConfigPatchSupportsScopedCanary(t *testing.T) {
 		"scope":           "daemon",
 		"scope_id":        "gatewayd-internal",
 		"rollout_percent": 25,
+		"auto_promote":    true,
 	}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scoped config update status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -145,14 +146,14 @@ func TestRuntimeConfigPatchSupportsScopedCanary(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode scoped config response: %v", err)
 	}
-	if response.Scope != string(state.RuntimeConfigScopeDaemon) || response.ScopeID != "gatewayd-internal" || response.RolloutPercent != 25 || response.RolloutState != string(state.RuntimeConfigRolloutCanary) || response.Status != string(state.RuntimeConfigApplied) {
+	if response.Scope != string(state.RuntimeConfigScopeDaemon) || response.ScopeID != "gatewayd-internal" || response.RolloutPercent != 25 || response.RolloutState != string(state.RuntimeConfigRolloutCanary) || !response.AutoPromote || response.Status != string(state.RuntimeConfigApplied) {
 		t.Fatalf("scoped config response = %#v", response)
 	}
 	row, err := e.store.GetRuntimeConfig(t.Context(), runtimeConfigGatewayStreaming, state.RuntimeConfigScopeDaemon, "gatewayd-internal")
 	if err != nil {
 		t.Fatalf("get scoped runtime config: %v", err)
 	}
-	if row.RolloutPercent != 25 || row.Status != state.RuntimeConfigApplied {
+	if row.RolloutPercent != 25 || !row.AutoPromote || row.Status != state.RuntimeConfigApplied {
 		t.Fatalf("stored scoped runtime config = %#v", row)
 	}
 
@@ -166,13 +167,25 @@ func TestRuntimeConfigPatchSupportsScopedCanary(t *testing.T) {
 	}
 	for _, item := range listed.Items {
 		if item.Key == runtimeConfigGatewayStreaming {
-			if item.Scope != string(state.RuntimeConfigScopeDaemon) || item.ScopeID != "gatewayd-internal" || item.RolloutPercent != 25 || item.RolloutState != string(state.RuntimeConfigRolloutCanary) {
+			if item.Scope != string(state.RuntimeConfigScopeDaemon) || item.ScopeID != "gatewayd-internal" || item.RolloutPercent != 25 || item.RolloutState != string(state.RuntimeConfigRolloutCanary) || !item.AutoPromote {
 				t.Fatalf("listed scoped config = %#v", item)
 			}
-			return
+			break
 		}
 	}
-	t.Fatalf("scoped runtime config list did not include %q", runtimeConfigGatewayStreaming)
+	var revisions struct {
+		Items []api.OperatorRuntimeConfigRevision `json:"items"`
+	}
+	revisionsRec := e.do(t, http.MethodGet, "/v1/admin/config/gateway_streaming_enabled/revisions?scope=daemon&scope_id=gatewayd-internal", nil, nil)
+	if revisionsRec.Code != http.StatusOK {
+		t.Fatalf("scoped config revisions status = %d, want 200: %s", revisionsRec.Code, revisionsRec.Body.String())
+	}
+	if err := json.Unmarshal(revisionsRec.Body.Bytes(), &revisions); err != nil {
+		t.Fatalf("decode scoped config revisions: %v", err)
+	}
+	if len(revisions.Items) != 1 || !revisions.Items[0].AutoPromote {
+		t.Fatalf("scoped config revisions = %#v, want auto_promote=true", revisions.Items)
+	}
 }
 
 func TestRuntimeConfigPatchBlocksUnhealthyCanaryPromotion(t *testing.T) {
@@ -223,6 +236,8 @@ func TestRuntimeConfigPatchRejectsInvalidCanaryTarget(t *testing.T) {
 		{"value": true, "reason": "missing daemon target", "scope": "daemon"},
 		{"value": true, "reason": "canary must target daemon", "scope": "node", "scope_id": "node-a", "rollout_percent": 10},
 		{"value": true, "reason": "percent out of range", "scope": "daemon", "scope_id": "gatewayd-internal", "rollout_percent": 101},
+		{"value": true, "reason": "auto promotion requires canary", "auto_promote": true},
+		{"value": true, "reason": "auto promotion requires daemon canary", "scope": "daemon", "scope_id": "gatewayd-internal", "rollout_percent": 100, "auto_promote": true},
 	}
 	for _, body := range cases {
 		rec := e.do(t, http.MethodPatch, "/v1/admin/config/gateway_streaming_enabled", body, nil)

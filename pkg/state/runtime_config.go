@@ -119,13 +119,17 @@ type RuntimeConfig struct {
 	// or global flag while the lower-precedence value remains available.
 	RolloutPercent int
 	RolloutState   RuntimeConfigRolloutState
-	ApplyMode      RuntimeConfigApplyMode
-	Status         RuntimeConfigStatus
-	LastError      string
-	ActorID        string
-	Reason         string
-	UpdatedAt      time.Time
-	AppliedAt      *time.Time
+	// AutoPromote enables the controller's progressive step-up after each
+	// healthy observation window. Safety rollback remains active for every
+	// canary, including manually promoted ones.
+	AutoPromote bool
+	ApplyMode   RuntimeConfigApplyMode
+	Status      RuntimeConfigStatus
+	LastError   string
+	ActorID     string
+	Reason      string
+	UpdatedAt   time.Time
+	AppliedAt   *time.Time
 }
 
 // RuntimeConfigUpdate is the write-side request passed to the state layer.
@@ -140,6 +144,7 @@ type RuntimeConfigUpdate struct {
 	// meaningful zero value, which disables this override for every target and
 	// allows the watcher to fall back to a lower-precedence setting.
 	RolloutPercent  *int
+	AutoPromote     bool
 	ApplyMode       RuntimeConfigApplyMode
 	ActorID         string
 	Reason          string
@@ -182,6 +187,7 @@ type RuntimeConfigRevision struct {
 	ScopeID        string
 	Version        int64
 	RolloutPercent int
+	AutoPromote    bool
 	OldValue       json.RawMessage
 	NewValue       json.RawMessage
 	ActorID        string
