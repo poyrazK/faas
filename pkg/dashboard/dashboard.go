@@ -331,10 +331,13 @@ type CronRunRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
-	App         AppListItem
-	Manifest    ManifestView
-	Deployments []DeploymentItem
-	Crons       []CronItem
+	App      AppListItem
+	Manifest ManifestView
+	// EffectiveLimits is the customer-visible resource and request
+	// envelope derived from the app plus its current plan.
+	EffectiveLimits api.AppEffectiveLimits
+	Deployments     []DeploymentItem
+	Crons           []CronItem
 	// Workflows is the bounded recent-run view for the app detail page.
 	// It intentionally carries step status and operator-facing errors, but
 	// never the workflow input/output payloads.

@@ -588,6 +588,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// through the accessor to 0 — same fail-closed contract
 		// as MaxMinInstances.
 		ConcurrencyPerVMBound: plan.ConcurrencyPerVMBound(),
+		EffectiveLimits:       appEffectiveLimits(a, plan),
 		// ux_spec §6.5: per-app floor the reaper honors when
 		// parking idle instances. Pro/Scale only (apid gates).
 		MinInstances: a.MinInstances,
@@ -725,6 +726,31 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// reasons as EgressAllowlist above.
 		CORSDefaultEnabled: a.CORSDefaultEnabled,
 		CORSDefaultOrigins: cORSOriginsList(a.CORSDefaultOrigins),
+	}
+}
+
+func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
+	limits, ok := api.LimitsFor(plan)
+	if !ok {
+		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, MaxInstances: a.MaxConcurrency}
+	}
+	maxInstances := a.MaxConcurrency
+	if a.ScalingPolicy != nil && a.ScalingPolicy.MaxInstances > 0 {
+		maxInstances = a.ScalingPolicy.MaxInstances
+	}
+	cpuMillicores := 0
+	if limits.CPUQuotaUS > 0 && limits.CPUPeriodUS > 0 {
+		cpuMillicores = int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
+	}
+	return api.AppEffectiveLimits{
+		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
+		GuestVCPUs: limits.VCPU, CPULimitMillicores: cpuMillicores, CPUWeight: limits.CPUWeight,
+		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
+		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
+		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
+		RequestBudgetMS:       limits.RequestBudget().Milliseconds(),
+		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
+		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 	}
 }
 

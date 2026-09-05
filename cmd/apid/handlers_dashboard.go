@@ -616,6 +616,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
 		App:             appRow,
 		Manifest:        dashboardManifestView(app),
+		EffectiveLimits: appEffectiveLimits(app, acct.Plan),
 		Deployments:     deps,
 		Crons:           cronItems,
 		Workflows:       workflowItems,

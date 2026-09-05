@@ -518,6 +518,16 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %d\n", "min instances:", a.MinInstances)
 		}
+		if l := a.EffectiveLimits; l.MemoryLimitMB > 0 {
+			fmt.Printf("%-30s %d MB (plan max %d MB)\n", "effective memory:", l.MemoryLimitMB, l.PlanMemoryMaxMB)
+			fmt.Printf("%-30s %d visible, %dm sustained\n", "effective cpu:", l.GuestVCPUs, l.CPULimitMillicores)
+			fmt.Printf("%-30s %d\n", "cpu scheduling weight:", l.CPUWeight)
+			fmt.Printf("%-30s %d instances × %d requests\n", "effective scaling:", l.MaxInstances, l.ConcurrencyPerInstance)
+			fmt.Printf("%-30s %d rps (burst %d)\n", "app request rate:", l.AppRequestRateRPS, l.AppRequestBurst)
+			fmt.Printf("%-30s %d rpm across apps\n", "account request rate:", l.AccountRequestRateRPM)
+			fmt.Printf("%-30s %dms default, %dms max\n", "request budget:", l.RequestBudgetMS, l.RequestBudgetMaxMS)
+			fmt.Printf("%-30s %ds\n", "response write timeout:", l.ResponseWriteTimeoutS)
+		}
 		// ADR-031 + ADR-032: surface the per-app outbound CIDR
 		// allowlist in the text-mode `gregale app <slug>` output so a
 		// customer can verify their PATCH round-tripped without

@@ -40,6 +40,7 @@ from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
+from .app_effective_limits import AppEffectiveLimits
 from .app_env_list_response import AppEnvListResponse
 from .app_env_list_response_env_by_scope import AppEnvListResponseEnvByScope
 from .app_env_response import AppEnvResponse
@@ -764,6 +765,7 @@ __all__ = (
     "APIKeyResponse",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
+    "AppEffectiveLimits",
     "AppEnvListResponse",
     "AppEnvListResponseEnvByScope",
     "AppEnvResponse",

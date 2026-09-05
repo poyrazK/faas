@@ -20,6 +20,7 @@ export type { AdvanceCanaryRequest } from './AdvanceCanaryRequest.js';
 export type { AlertDeliveryResponse } from './AlertDeliveryResponse.js';
 export type { AlertPresetResponse } from './AlertPresetResponse.js';
 export type { AlertRuleResponse } from './AlertRuleResponse.js';
+export type { AppEffectiveLimits } from './AppEffectiveLimits.js';
 export type { AppEnvListResponse } from './AppEnvListResponse.js';
 export type { AppEnvResponse } from './AppEnvResponse.js';
 export type { AppErrorRequestItem } from './AppErrorRequestItem.js';

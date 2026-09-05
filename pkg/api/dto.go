@@ -535,6 +535,26 @@ func (s *ScalingPolicy) ClearUnknownFields() {
 	s.unknownFields = nil
 }
 
+// AppEffectiveLimits is the resource and edge envelope that actually applies
+// to an app. It gives customers one place to see plan-derived limits whose
+// names otherwise invite incorrect assumptions (for example, guest-visible
+// vCPUs are distinct from the sustained cgroup CPU allowance).
+type AppEffectiveLimits struct {
+	MemoryLimitMB          int   `json:"memory_limit_mb"`
+	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
+	GuestVCPUs             int   `json:"guest_vcpus"`
+	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
+	CPUWeight              int   `json:"cpu_weight"`
+	MaxInstances           int   `json:"max_instances"`
+	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
+	AppRequestRateRPS      int   `json:"app_request_rate_rps"`
+	AppRequestBurst        int   `json:"app_request_burst"`
+	AccountRequestRateRPM  int   `json:"account_request_rate_rpm"`
+	RequestBudgetMS        int64 `json:"request_budget_ms"`
+	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
+	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
+}
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
 	ID             string `json:"id"`
@@ -555,7 +575,10 @@ type AppResponse struct {
 	// concurrency-safe; sync subprocess-per-request handlers are
 	// not).
 	ConcurrencyPerVMBound int `json:"concurrency_per_vm"`
-	IdleTimeoutS          int `json:"idle_timeout_s,omitempty"`
+	// EffectiveLimits makes the complete resource and request envelope
+	// visible without requiring the customer to infer it from their plan.
+	EffectiveLimits AppEffectiveLimits `json:"effective_limits"`
+	IdleTimeoutS    int                `json:"idle_timeout_s,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`

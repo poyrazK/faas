@@ -1148,6 +1148,59 @@ func TestGetApp_SurfacesConcurrencyPerVMBound(t *testing.T) {
 	}
 }
 
+func TestGetApp_SurfacesEffectiveLimits(t *testing.T) {
+	cases := []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale}
+	for _, plan := range cases {
+		t.Run(string(plan), func(t *testing.T) {
+			e := setup(t, plan)
+			mustSeedApp(t, e, "limits-app")
+			rec := e.do(t, "GET", "/v1/apps/limits-app", nil, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body)
+			}
+			var out api.AppResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			limits := api.MustLimitsFor(plan)
+			got := out.EffectiveLimits
+			if got.MemoryLimitMB != out.RAMMB || got.PlanMemoryMaxMB != limits.RAMMB {
+				t.Errorf("memory limits = %d/%d, want %d/%d", got.MemoryLimitMB, got.PlanMemoryMaxMB, out.RAMMB, limits.RAMMB)
+			}
+			if got.GuestVCPUs != limits.VCPU || got.CPULimitMillicores != limits.CPUQuotaUS*1000/limits.CPUPeriodUS {
+				t.Errorf("cpu limits = %d vCPU/%dm, want %d/%dm", got.GuestVCPUs, got.CPULimitMillicores, limits.VCPU, limits.CPUQuotaUS*1000/limits.CPUPeriodUS)
+			}
+			if got.MaxInstances != out.MaxConcurrency || got.ConcurrencyPerInstance != limits.ConcurrencyPerVMBound {
+				t.Errorf("scaling limits = %d/%d, want %d/%d", got.MaxInstances, got.ConcurrencyPerInstance, out.MaxConcurrency, limits.ConcurrencyPerVMBound)
+			}
+			if got.AppRequestRateRPS != limits.RateLimitRPS || got.AppRequestBurst != limits.RateLimitBurst || got.AccountRequestRateRPM != limits.RateLimitPerAccountRPM {
+				t.Errorf("request rates = %d/%d/%d, want %d/%d/%d", got.AppRequestRateRPS, got.AppRequestBurst, got.AccountRequestRateRPM, limits.RateLimitRPS, limits.RateLimitBurst, limits.RateLimitPerAccountRPM)
+			}
+			if got.RequestBudgetMS != limits.RequestBudget().Milliseconds() || got.RequestBudgetMaxMS != limits.RequestBudgetMaxDuration().Milliseconds() {
+				t.Errorf("request budgets = %d/%d, want %d/%d", got.RequestBudgetMS, got.RequestBudgetMaxMS, limits.RequestBudget().Milliseconds(), limits.RequestBudgetMaxDuration().Milliseconds())
+			}
+			if !bytes.Contains(rec.Body.Bytes(), []byte(`"effective_limits":`)) {
+				t.Errorf("raw JSON missing effective_limits key:\n%s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestAppEffectiveLimits_UsesScalingPolicyCeiling(t *testing.T) {
+	app := state.App{
+		RAMMB:          384,
+		MaxConcurrency: 5,
+		ScalingPolicy:  &state.ScalingPolicy{MaxInstances: 3},
+	}
+	got := appEffectiveLimits(app, api.PlanPro)
+	if got.MaxInstances != 3 {
+		t.Fatalf("max_instances = %d, want scaling-policy ceiling 3", got.MaxInstances)
+	}
+	if got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != 512 {
+		t.Fatalf("memory limits = %d/%d, want 384/512", got.MemoryLimitMB, got.PlanMemoryMaxMB)
+	}
+}
+
 // TestUpdateApp_RAMValid covers the happy path: a valid RAM value persists
 // and the response reflects the new value.
 func TestUpdateApp_RAMValid(t *testing.T) {
