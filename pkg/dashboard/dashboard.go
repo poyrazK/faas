@@ -148,6 +148,7 @@ type PreviewListItem struct {
 	Slug          string
 	ParentSlug    string
 	PRNumber      int
+	IsDev         bool
 	PRState       string
 	ExpiresAt     *time.Time
 	CreatedAt     time.Time
@@ -275,6 +276,7 @@ type PreviewItem struct {
 	Slug       string // preview app slug (e.g. "demo-pr-42")
 	URL        string // full preview URL (e.g. "https://pr-42-demo.gregale.dev")
 	PrNumber   int
+	IsDev      bool
 	PrState    string // closed vocab: open / closed / stale / torn_down
 	CreatedAt  string // RFC 3339 UTC
 	ExpiresAt  string // RFC 3339 UTC; empty when no TTL

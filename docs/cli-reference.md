@@ -27,6 +27,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete) |
 | [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
+| [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`tenant-surfaces`](#tenant-surfaces) | Manage tenant surfaces (multi-hostname SAN bundle per app) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|delete --app &lt;slug&gt;) |
@@ -744,6 +745,20 @@ Show a domain&#39;s cert details
 ### domains doctor
 
 5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)
+
+
+## dev
+
+Sync the dirty working tree to a stable remote developer environment
+
+`gregale dev [--path <DIR>] [--name <PROJECT>] [--once] [--stop]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | source directory |  |
+| `--name <PROJECT>` | developer-session project name |  |
+| `--once` | deploy once and exit |  |
+| `--stop` | tear down the developer environment |  |
 
 
 ## preview

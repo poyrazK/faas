@@ -529,6 +529,30 @@ func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppRespon
 	return out, c.do(ctx, "POST", "/v1/apps", req, &out)
 }
 
+// UpsertDevSession creates or refreshes the stable developer preview for a
+// project. Source is uploaded separately through the normal deploy surface.
+func (c *Client) UpsertDevSession(ctx context.Context, project string, req UpsertDevSessionRequest) (DevSessionResponse, error) {
+	return c.PutDevSessionsProject(ctx, project, req)
+}
+
+// PutDevSessionsProject is the path-shaped SDK method for
+// PUT /v1/dev/sessions/{project}.
+func (c *Client) PutDevSessionsProject(ctx context.Context, project string, req UpsertDevSessionRequest) (DevSessionResponse, error) {
+	var out DevSessionResponse
+	return out, c.do(ctx, "PUT", "/v1/dev/sessions/"+project, req, &out)
+}
+
+// DestroyDevSession tears down the developer preview for a project.
+func (c *Client) DestroyDevSession(ctx context.Context, project string) error {
+	return c.DeleteDevSessionsProject(ctx, project)
+}
+
+// DeleteDevSessionsProject is the path-shaped SDK method for
+// DELETE /v1/dev/sessions/{project}.
+func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string) error {
+	return c.do(ctx, "DELETE", "/v1/dev/sessions/"+project, nil, nil)
+}
+
 // Deploy creates a deployment for an app slug (JSON variant).
 // For tarball / dockerfile deploys use DeployMultipart.
 func (c *Client) Deploy(ctx context.Context, slug string, req CreateDeploymentRequest) (DeploymentResponse, error) {

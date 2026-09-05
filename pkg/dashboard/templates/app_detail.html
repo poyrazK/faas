@@ -463,9 +463,9 @@
         <h2>Preview environments</h2>
         {{if .Data.Previews}}
           {{range .Data.Previews}}
-            <section class="preview-section" id="preview-{{.Slug}}" aria-label="preview PR #{{.PrNumber}}">
+            <section class="preview-section" id="preview-{{.Slug}}" aria-label="{{if .IsDev}}developer preview{{else}}preview PR #{{.PrNumber}}{{end}}">
               <header>
-                PR #{{.PrNumber}}
+                {{if .IsDev}}Developer{{else}}PR #{{.PrNumber}}{{end}}
                 · <code>{{.Slug}}</code>
                 · <span class="preview-state-{{.PrState}}">{{.StateLabel}}</span>
                 {{if .ExpiresAt}}· expires {{.ExpiresAt}}{{end}}

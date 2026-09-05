@@ -59,8 +59,8 @@
             {{range $items}}
               <tr>
                 <td><code>{{.Slug}}</code></td>
-                <td><a href="/dashboard/apps/{{.ParentSlug}}">{{.ParentSlug}}</a></td>
-                <td><a href="https://github.com/.../pull/{{.PRNumber}}">#{{.PRNumber}}</a></td>
+                <td>{{if .IsDev}}{{.ParentSlug}}{{else}}<a href="/dashboard/apps/{{.ParentSlug}}">{{.ParentSlug}}</a>{{end}}</td>
+                <td>{{if .IsDev}}Developer{{else}}<a href="https://github.com/.../pull/{{.PRNumber}}">#{{.PRNumber}}</a>{{end}}</td>
                 <td><span class="badge {{.PRState}}">{{.PRState}}</span></td>
                 <td>{{if .ExpiresAt}}{{.ExpiresAt.Format "2006-01-02 15:04 MST"}}{{else}}—{{end}}</td>
                 <td><a href="https://{{.Hostname}}">{{.Hostname}}</a></td>

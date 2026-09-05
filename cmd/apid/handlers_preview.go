@@ -65,11 +65,12 @@ func (s *server) destroyPreview(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 
-	// Mirror cmd/apid/preview_janitor.go::tombstone so the
-	// janitor's subsequent sweep sees the row already in the
-	// 'torn_down' state. Two writes in the same request: the
-	// second is idempotent (SoftDeleteAppCascade returns the
-	// freshly-tombstoned row or ErrNotFound; both are benign).
+	s.destroyPreviewApp(w, r, acct, app, "preview.destroyed_by_customer")
+}
+
+// destroyPreviewApp applies the shared preview tombstone ordering used by
+// both GitHub previews and CLI-managed developer sessions.
+func (s *server) destroyPreviewApp(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, auditKind string) {
 	if _, err := s.store.SetPreviewPrState(r.Context(), app.ID, state.PreviewPrStateTornDown); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			// Race: the row vanished between loadApp and the
@@ -111,7 +112,7 @@ func (s *server) destroyPreview(w http.ResponseWriter, r *http.Request, acct sta
 	// teardown" branch is observable. data carries enough to
 	// reconstruct the destroy intent (parent slug + PR number)
 	// after the row is soft-deleted.
-	s.audit.Emit(r.Context(), "preview.destroyed_by_customer", &acct.ID, map[string]any{
+	s.audit.Emit(r.Context(), auditKind, &acct.ID, map[string]any{
 		"app_id":          app.ID,
 		"slug":            app.Slug,
 		"preview_of_slug": app.PreviewOfSlug,
@@ -120,6 +121,7 @@ func (s *server) destroyPreview(w http.ResponseWriter, r *http.Request, acct sta
 
 	s.log.Info("preview destroyed by customer",
 		"app", app.ID, "slug", app.Slug,
+		"audit_kind", auditKind,
 		"parent_slug", app.PreviewOfSlug,
 		"pr_number", app.PreviewPrNumber,
 		"account", acct.ID)

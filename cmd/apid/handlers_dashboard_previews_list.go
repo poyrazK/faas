@@ -46,6 +46,7 @@ func (s *server) renderPreviewsList(w http.ResponseWriter, r *http.Request, log 
 			Slug:          p.Slug,
 			ParentSlug:    p.PreviewOfSlug,
 			PRNumber:      p.PreviewPrNumber,
+			IsDev:         p.PreviewPrNumber == 0,
 			PRState:       p.PreviewPrState,
 			ExpiresAt:     p.PreviewExpiresAt,
 			CreatedAt:     p.CreatedAt,

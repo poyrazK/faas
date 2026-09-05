@@ -53,6 +53,8 @@ tags:
       surface is under `deployments` (preview kind deployments).
       Cross-tagged with `apps` so a tag filter of `apps` surfaces
       preview-destroy alongside the parent-app lifecycle.
+  - name: dev
+    description: Stable, expiring remote developer environments used by `gregale dev`.
   - name: deploydiff
     description: Read-only pre-deploy preview (PR-1 of the deploy-diff cluster).
   - name: edge_rules
@@ -1930,6 +1932,49 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
                 example: {"type":"https://docs.gregale.dev/errors/preview-not-found","code":"preview_not_found","title":"Preview not found","detail":"the slug does not identify a preview app; use DELETE /v1/apps/{slug} to destroy a production app","status":404}
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/dev/sessions/{project}:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        description: Stable local project identity used to derive the account-scoped developer URL.
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+    put:
+      tags: [dev]
+      operationId: upsertDevSession
+      summary: Create or refresh a remote developer environment.
+      description: Creates one stable preview app per account and project, or renews its 24-hour lease.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertDevSessionRequest' }
+      responses:
+        '200':
+          description: Existing developer environment refreshed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSessionResponse' }
+        '201':
+          description: Developer environment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSessionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [dev]
+      operationId: destroyDevSession
+      summary: Tear down a remote developer environment.
+      responses:
+        '204': { description: Developer environment removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/metrics:
@@ -12578,6 +12623,7 @@ components:
           description: "Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted at create-time → apid applies the plan default. Free/Hobby PATCH-true is rejected."
           type: boolean
           example: true
+
         warm_snapshot_min_requests:
           description: "Optional create-time override for the warm-tier request-count threshold (issue #470 / ADR-055). Range [1, 100]. Omitted → apid applies the plan default."
           type: integer
@@ -12622,6 +12668,21 @@ components:
           description: "Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false). Pro/Scale only."
           type: boolean
           example: false
+
+    UpsertDevSessionRequest:
+      description: Application shape for a CLI-managed developer environment.
+      type: object
+      properties:
+        type: { type: string, enum: [app, function], default: app }
+        runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
+
+    DevSessionResponse:
+      description: Stable remote developer environment and its renewable lease.
+      type: object
+      required: [app, expires_at]
+      properties:
+        app: { $ref: '#/components/schemas/AppResponse' }
+        expires_at: { type: string, format: date-time }
 
     UpdateAppRequest:
       description: "Partial update — every field is optional; omitted fields are unchanged."
