@@ -130,6 +130,69 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
 
   # ────────────────────────────────────────────────────────────────────
+  # Compute metrics HTTP-SD health (issue #1219 follow-up).
+  # Prometheus can remain scrapeable while apid serves an old, empty, or
+  # partially filtered target snapshot, so these rules use producer-side
+  # freshness and target counts rather than only `up`.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_compute_metrics_discovery
+    interval: 30s
+    rules:
+      - alert: FaasComputeMetricsDiscoveryStale
+        expr: |
+          (
+            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} == 0
+          )
+          or
+          (
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} > 120
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        annotations:
+          summary: "Compute metrics discovery is stale for {{ $labels.job }}"
+          description: "apid has not completed a successful registry-backed HTTP-SD snapshot for {{ $labels.job }} within 120s. Prometheus may still be healthy while compute-node metrics coverage is frozen or missing. Check apid availability, its database pool, and the discovery runbook."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+      - alert: FaasComputeMetricsDiscoveryEmpty
+        expr: |
+          (
+            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|promtail-compute"} > 0
+          )
+          and on (job)
+          (
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} == 0
+          )
+          and on (job)
+          (
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        annotations:
+          summary: "Compute metrics discovery returned no targets for {{ $labels.job }}"
+          description: "The active compute registry contains scrape-ready nodes, but the latest successful HTTP-SD response for {{ $labels.job }} returned zero targets. Check invalid gateway_target_url values, stable node names, and the apid registry rows before changing Prometheus configuration."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+      - alert: FaasComputeMetricsDiscoveryInvalidTargets
+        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        annotations:
+          summary: "Compute metrics discovery is filtering invalid targets for {{ $labels.job }}"
+          description: "apid omitted one or more active compute registry rows from the {{ $labels.job }} HTTP-SD response because the gateway target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the next refresh."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
   # Traffic anomaly recording rules (issue #303, ADR-039).
   # 3-day rolling baseline vs current 5m window. Series:
   #   faas_apid_request_rate_5m:by_route            current rate (reqps)

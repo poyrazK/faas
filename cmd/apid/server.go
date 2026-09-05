@@ -219,6 +219,10 @@ type server struct {
 	// apid_op_duration_seconds without each one wrapping itself.
 	// Nil = observation disabled (unit tests).
 	ops *wire.OpsMetrics
+	// metricsDiscoveryMetrics is bound to the same per-daemon registry as ops.
+	// It records producer-side health for the loopback Prometheus HTTP-SD
+	// endpoints; nil keeps tests and degraded construction paths no-op.
+	metricsDiscoveryMetrics *metricsDiscoveryMetrics
 	// graceWindowCache (issue #189 / IAM-5) caches the per-account
 	// rotation grace override (accounts.key_grace_window_days). The
 	// bearer-key auth path does NOT read it (the lazy expiry gate
@@ -366,6 +370,11 @@ const anonymousAccountLabel = "anonymous"
 // through drainFlusher/flushOne).
 func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *server {
 	s.ops = ops
+	if ops == nil {
+		s.metricsDiscoveryMetrics = nil
+	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
+		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
+	}
 	// Re-bind the audit counter so the IAM-4 seam can record
 	// failures. If ops is nil (unit tests that don't care about
 	// metrics), leave the auditor with a nil ops interface so Emit
