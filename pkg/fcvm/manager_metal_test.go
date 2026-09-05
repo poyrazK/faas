@@ -47,7 +47,7 @@ func newMetalManager(t *testing.T, kernel string) *Manager {
 	t.Helper()
 	return NewManager(
 		wire.ExecRunner{},
-		NewJailerVMM(JailChrootBase, 30*time.Second),
+		newMetalVMM(t, 30*time.Second),
 		Paths{Kernel: kernel},
 		os.Getenv("FAAS_TEST_FC_VERSION"),
 		nil,
@@ -132,7 +132,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detect firecracker version: %v", err)
 	}
-	m := NewManager(wire.ExecRunner{}, NewJailerVMM(JailChrootBase, 30*time.Second),
+	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 30*time.Second),
 		Paths{Kernel: kernel}, fcVersion, nil, nil)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
@@ -195,23 +195,16 @@ func TestMetalParkWakeCycle(t *testing.T) {
 // measure latency here — M3 owns that — only correctness: VM live,
 // VM gone, zero leaks (invariant §6.2-4/5).
 //
-// M0 exception to the two-drive scheme (spec §4.6): BaseKey and
-// LayerKey point at the SAME busybox image. There is no per-app
-// layer yet (that's M2), but the chroot + driver wiring is identical
-// to the two-drive hot path — only the second drive is missing its
-// own ext4. We document this in the request via comment so future
-// maintainers don't think it's a bug.
+// The staged base carries guest-init and the hello app. A distinct writable
+// layer exercises the same two-drive overlay contract as production.
 func TestMetalHelloBoot(t *testing.T) {
-	kernel, _, _ := metalImages(t) // base/layer will be replaced by hello img
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	// Metal tests run a real jailer, which writes the per-VM scope
 	// under /sys/fs/cgroup. Point cgroupRoot there so writeMemoryMax
 	// probes the same path the jailer wrote (TestMain defaults to a
 	// tempdir to keep the unit-test path isolated).
 	withCgroupRootAt(t, "/sys/fs/cgroup")
-
-	tmp := t.TempDir()
-	busybox := ensureBusyboxExt4(t, tmp)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -220,8 +213,8 @@ func TestMetalHelloBoot(t *testing.T) {
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
 		Plan:       "pro",
-		BaseKey:    busybox, // M0-only: Base == Layer, see comment above.
-		LayerKey:   busybox, // produces a single-drive VM that still hits the chroot path.
+		BaseKey:    base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 	})

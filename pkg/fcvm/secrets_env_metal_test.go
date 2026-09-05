@@ -63,7 +63,7 @@ func TestMetalSecretsEnvReachesGuest(t *testing.T) {
 	}
 	m := NewManager(
 		wire.ExecRunner{},
-		NewJailerVMM(JailChrootBase, 30*time.Second),
+		newMetalVMM(t, 30*time.Second),
 		Paths{Kernel: kernel},
 		fcVer,
 		slog.New(slog.NewTextHandler(testLogWriter{t}, nil)),

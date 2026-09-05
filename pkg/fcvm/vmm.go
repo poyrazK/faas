@@ -1705,10 +1705,9 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 // only if exportDir != "" loopback-mounts the chroot-local drive1 to copy out
 // /etc/faas/build-done.json and /build/out/* before removing the chroot.
 //
-// exportDir="" means "app VM", and the method becomes Kill-equivalent: wait
-// for the child, drop the chroot, return (0, nil). Existing app-VM callers
-// (Manager.Destroy) keep their contract — only builderd opts in via the
-// BuildSpec.ExportDir field.
+// Ordinary app VMs with exportDir="" are killed immediately, matching
+// Manager.Destroy's contract. Builder records wait for completion even when
+// a caller suppresses export; cancellation interrupts them via InterruptBuild.
 func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir string) (int, error) {
 	v.mu.Lock()
 	rec, ok := v.recs[l.Instance]
@@ -1718,6 +1717,13 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 		v.closeClient(l.Instance)
 		_ = os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance))
 		return 0, nil
+	}
+
+	// App VMs run until explicitly stopped; waiting for natural exit here
+	// holds their network and lease for the builder timeout. Only builders
+	// need to finish and flush artifacts before teardown.
+	if exportDir == "" && !rec.isBuilder {
+		return 0, v.Kill(ctx, l)
 	}
 
 	// 1. Wait for the firecracker child to exit. The watchdog goroutine started
