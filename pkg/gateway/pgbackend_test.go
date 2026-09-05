@@ -292,6 +292,45 @@ func TestPGBackend_ReconcileLiveTargetsHydratesEmptyPicker(t *testing.T) {
 	}
 }
 
+func TestPGBackend_RefreshLiveTargetsMergesIntoExistingPicker(t *testing.T) {
+	loaderCalls := atomic.Int32{}
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, gateway.NewFakeScheduler(""), nil).
+		WithLiveTargetLoader(func(context.Context, string) ([]gateway.Target, error) {
+			loaderCalls.Add(1)
+			return []gateway.Target{
+				{InstanceID: "service-1", NodeID: "compute-1", DeploymentID: "deployment-live"},
+				{InstanceID: "service-2", NodeID: "compute-2", DeploymentID: "deployment-live"},
+			}, nil
+		})
+	b.RecordTarget("app-1", gateway.Target{
+		InstanceID: "service-1", NodeID: "compute-1", DeploymentID: "deployment-live",
+	})
+
+	if got := b.HealthyCount("app-1"); got != 1 {
+		t.Fatalf("HealthyCount before refresh = %d, want 1", got)
+	}
+	if err := b.RefreshLiveTargets(context.Background(), "app-1"); err != nil {
+		t.Fatalf("RefreshLiveTargets: %v", err)
+	}
+	if got := b.HealthyCount("app-1"); got != 2 {
+		t.Fatalf("HealthyCount after refresh = %d, want 2", got)
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 8; i++ {
+		pick := b.Pick("app-1")
+		if !pick.OK {
+			t.Fatal("Pick after refresh: !ok")
+		}
+		seen[pick.Target.InstanceID] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("refreshed picker targets = %v, want both service replicas", seen)
+	}
+	if got := loaderCalls.Load(); got != 1 {
+		t.Errorf("live target loader calls = %d, want 1", got)
+	}
+}
+
 type ensureWakeOnlyScheduler struct {
 	ensureCalls int
 	admitCalls  int
