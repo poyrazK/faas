@@ -335,22 +335,22 @@ func TestBuildArgv(t *testing.T) {
 		{
 			name: "node → railpack",
 			fw:   api.FrameworkRailpackNode,
-			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:latest --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
+			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
 		},
 		{
 			name: "python → railpack",
 			fw:   api.FrameworkRailpackPython,
-			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:latest --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
+			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
 		},
 		{
 			name: "go → railpack",
 			fw:   api.FrameworkRailpackGo,
-			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:latest --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
+			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
 		},
 		{
 			name: "auto → railpack (default branch)",
 			fw:   api.FrameworkAuto,
-			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:latest --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
+			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
 		},
 	}
 	for _, tc := range cases {
