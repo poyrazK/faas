@@ -19,29 +19,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// CacheEntry is one cached build: source-hash + framework + plan → produced
-// layer path + size. The entry is purely on-disk; pkg/state never sees it
-// (ADR-005 keeps state in the SQL tables; the cache is content-addressed
-// storage that can be wiped without data loss).
+// CacheEntry points to a cached OCI tarball and its size. The cache can be
+// wiped without data loss; deployment state remains in SQL (ADR-005).
 type CacheEntry struct {
 	Path  string
 	Bytes int64
 }
 
-// Cache is a content-addressed cache of produced app layers. The key is
-// sha256(source-bytes) + framework + plan; the value is the produced ext4
-// layer + size. The filesystem layout is:
+// Cache stores produced OCI tarballs. Deployment builds use a versioned
+// BuildCacheRecipe key; Lookup/Store retain the low-level legacy key interface.
+// The historical artifact filename remains layer.ext4 for disk compatibility:
 //
-//	<CacheDir>/<sha256>.<framework>.<plan>/layer.ext4
+// <CacheDir>/<key>.<framework>.<plan>/layer.ext4
 //
-// Plan is in the key (issue #197 B3.11) so a Hobby customer's cached layer
-// (built against the Hobby cap) does not serve a Pro deploy (which would
-// expect Pro layering / resource sizes). All four plans get distinct
-// cache directories; the GC sweep walks all of them.
-//
-// Lookup is best-effort: a missing entry is not an error (the caller will
-// build). A corrupted entry (size mismatch, missing file) IS an error so the
-// caller can rebuild instead of using a broken layer.
+// Framework and plan remain visible partitions. Corrupt or missing entries
+// produce cache misses; GC sweeps both old and versioned entries.
 type Cache struct {
 	root string
 }
@@ -73,11 +65,10 @@ func (c *Cache) Lookup(sourceHash string, fw Framework, plan api.Plan) (CacheEnt
 	return c.lookupKey(sourceHash, fw, plan)
 }
 
-// LookupWithBase is the deployment-build cache lookup. The runtime base is
-// part of the key so a base-image rollout cannot reuse an OCI artifact built
-// against a different runner chain.
+// LookupWithBase looks up an archive-root build in the versioned recipe
+// namespace. Call LookupBuild when selecting a workspace member.
 func (c *Cache) LookupWithBase(sourceHash string, fw Framework, plan api.Plan, runtimeBaseRef string) (CacheEntry, bool) {
-	return c.lookupKey(cacheKey(sourceHash, runtimeBaseRef), fw, plan)
+	return c.LookupBuild(BuildCacheRecipe{SourceSHA256: sourceHash, Framework: fw, Plan: plan, RuntimeBaseRef: runtimeBaseRef})
 }
 
 func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (CacheEntry, bool) {
@@ -167,11 +158,10 @@ func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath 
 	return c.storeKey(sourceHash, fw, plan, layerPath, bytes)
 }
 
-// StoreWithBase publishes a cache entry whose key includes the exact
-// Railpack runtime base ref used to build it. This prevents stale cache hits
-// after the pinned runtime base changes.
+// StoreWithBase publishes an archive-root build in the versioned recipe
+// namespace. Call StoreBuild when selecting a workspace member.
 func (c *Cache) StoreWithBase(sourceHash string, fw Framework, plan api.Plan, runtimeBaseRef, layerPath string, bytes int64) error {
-	return c.storeKey(cacheKey(sourceHash, runtimeBaseRef), fw, plan, layerPath, bytes)
+	return c.StoreBuild(BuildCacheRecipe{SourceSHA256: sourceHash, Framework: fw, Plan: plan, RuntimeBaseRef: runtimeBaseRef}, layerPath, bytes)
 }
 
 func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {
@@ -320,14 +310,6 @@ func writeCacheSidecar(cs, value string) error {
 
 func (c *Cache) entryPath(sourceHash string, fw Framework, plan api.Plan) string {
 	return filepath.Join(c.root, sourceHash+"."+string(fw)+"."+string(plan), "layer.ext4")
-}
-
-func cacheKey(sourceHash, runtimeBaseRef string) string {
-	if runtimeBaseRef == "" {
-		return sourceHash
-	}
-	sum := sha256.Sum256([]byte(runtimeBaseRef))
-	return sourceHash + ".base-" + hex.EncodeToString(sum[:])
 }
 
 // CacheGCSweepLoop is the free-function goroutine that calls
