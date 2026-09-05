@@ -1188,6 +1188,13 @@ type OpsMetrics struct {
 	// (60 s); the 5 s control-plane bucket is wrong for the multi-second
 	// blob downloads.
 	imagedOCIPull *prometheus.HistogramVec
+	// imagedOCIBlobCache* count the node-local immutable OCI blob cache
+	// lifecycle. They are registered on every daemon registry for stable
+	// exposition, but imaged is the only writer. Plain counters avoid
+	// unbounded labels for repositories or digests.
+	imagedOCIBlobCacheHits      prometheus.Counter
+	imagedOCIBlobCacheMisses    prometheus.Counter
+	imagedOCIBlobCacheEvictions prometheus.Counter
 	// issue #170 / PR-A: per-{app,node} instance-stats gauges. The
 	// (app, node) label tuple is unbounded because it grows with the
 	// customer count, so it cannot be pre-instantiated at boot.
@@ -2754,6 +2761,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// multi-second for big layers; 60 s ceiling = OCIPullTimeoutSeconds.
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"op", "result"})
+	imagedOCIBlobCacheHits := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_oci_blob_cache_hits_total",
+		Help: "Count of OCI registry blob cache hits on the local compute node.",
+	})
+	imagedOCIBlobCacheMisses := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_oci_blob_cache_misses_total",
+		Help: "Count of OCI registry blob cache misses that required a registry fetch.",
+	})
+	imagedOCIBlobCacheEvictions := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_oci_blob_cache_evictions_total",
+		Help: "Count of OCI registry blob cache entries evicted by the byte budget.",
+	})
 	// issue #170 / PR-A: per-{app,node} instance-stats gauges. Sized
 	// for the poller’s 200 ms cadence — the per-tick histogram tops
 	// out at the 200 ms interval so a regression that doubles the
@@ -3151,7 +3170,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditOrgEvent, authzDenied, authzAllowed,
 		wakeIDV4Fallback,
 		snapshotDiskDrift,
-		imagedOCIPull, instanceCPUPct, instanceRSSMB, instanceInflightReqs,
+		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
+		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
@@ -4368,6 +4388,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		snapshotDiskDrift:                                     snapshotDiskDrift,
 		capacitySignatureRejected:                             capacitySignatureRejected,
 		imagedOCIPull:                                         imagedOCIPull,
+		imagedOCIBlobCacheHits:                                imagedOCIBlobCacheHits,
+		imagedOCIBlobCacheMisses:                              imagedOCIBlobCacheMisses,
+		imagedOCIBlobCacheEvictions:                           imagedOCIBlobCacheEvictions,
 		instanceCPUPct:                                        instanceCPUPct,
 		instanceRSSMB:                                         instanceRSSMB,
 		instanceInflightReqs:                                  instanceInflightReqs,
@@ -6603,6 +6626,32 @@ func (m *OpsMetrics) ObserveImagedOCIPull(op, result string, dur time.Duration) 
 		return
 	}
 	m.imagedOCIPull.WithLabelValues(op, result).Observe(dur.Seconds())
+}
+
+// ImagedOCIBlobCacheHit records a node-local OCI blob cache hit. Safe on a
+// nil receiver so tests and non-imaged callers can share the observer seam.
+func (m *OpsMetrics) ImagedOCIBlobCacheHit() {
+	if m == nil {
+		return
+	}
+	m.imagedOCIBlobCacheHits.Inc()
+}
+
+// ImagedOCIBlobCacheMiss records a cache miss that required a registry fetch.
+func (m *OpsMetrics) ImagedOCIBlobCacheMiss() {
+	if m == nil {
+		return
+	}
+	m.imagedOCIBlobCacheMisses.Inc()
+}
+
+// ImagedOCIBlobCacheEviction records one entry removed by the local cache
+// byte budget.
+func (m *OpsMetrics) ImagedOCIBlobCacheEviction() {
+	if m == nil {
+		return
+	}
+	m.imagedOCIBlobCacheEvictions.Inc()
 }
 
 // SetResidentGBPerCustomer writes one sample to the
