@@ -6249,3 +6249,7 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 // FunctionInterpreterMaxWorkers bounds active generated-adapter processes in
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
+
+// Startup attestation runs before the scheduler opens its readiness boundary.
+const StartupAttestationWorkers = 2
+const StartupAttestationLayerTimeout = 15 * time.Second

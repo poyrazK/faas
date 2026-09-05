@@ -670,6 +670,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load sign pub %q: %w (run `faas sign-keys init` on imaged's host if missing)", signPubPath, err)
 	}
 	log.Info("schedd: build attestation verifier ready", "pub", signPubPath)
+	deployments, err := store.ListAllDeployments(ctx)
+	if err != nil {
+		return fmt.Errorf("schedd: list startup attestations: %w", err)
+	}
+	if err := prepareLayerAttestations(ctx, deployments, verifier, log); err != nil {
+		return err
+	}
 	engine.WithVerifier(verifier)
 	// Issue #561 — wire the spend-cap pause-workload seam. Engine
 	// consults the checker inside admitGate AFTER the existing
