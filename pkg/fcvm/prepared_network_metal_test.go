@@ -67,6 +67,18 @@ func TestMetalPreparedNetworkOwnership(t *testing.T) {
 		t.Fatal("cache did not fill")
 	}
 	old := p.ready[0]
+	// Refresh an aging spare using real namespaces, while preserving the
+	// young entry that the next claim transfers. Retirement must remove its
+	// kernel objects before a replacement reserves the slot.
+	aging := p.ready[1]
+	p.ready[1].created = time.Now().Add(-3 * preparedNetworkTTL / 4)
+	p.fill()
+	if _, err := os.Stat("/run/netns/" + aging.config.Netns); !os.IsNotExist(err) {
+		t.Fatalf("refresh retained the aging spare's namespace: %v", err)
+	}
+	if len(p.ready) != 2 || len(m.alloc.reserved) != 2 {
+		t.Fatal("refresh changed the reserved network capacity")
+	}
 	oldFD, err := os.Open("/run/netns/" + old.config.Netns)
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,44 @@
+{
+  "single": {
+    "scenario": "single",
+    "n": 10,
+    "errors": 0,
+    "cold_boot_fallbacks": 0,
+    "p50_ms": 185.669744,
+    "p95_ms": 283.215293,
+    "max_ms": 283.215293,
+    "background_requests": 0,
+    "background_errors": 0,
+    "background_uuid_count": 0,
+    "completed": true,
+    "meets_latency_target": true
+  },
+  "burst2_background": {
+    "scenario": "burst2_background",
+    "n": 10,
+    "errors": 0,
+    "cold_boot_fallbacks": 0,
+    "p50_ms": 221.545359,
+    "p95_ms": 245.017568,
+    "max_ms": 245.017568,
+    "background_requests": 1462,
+    "background_errors": 0,
+    "background_uuid_count": 1,
+    "completed": true,
+    "meets_latency_target": true
+  },
+  "burst3": {
+    "scenario": "burst3",
+    "n": 15,
+    "errors": 0,
+    "cold_boot_fallbacks": 0,
+    "p50_ms": 277.67623,
+    "p95_ms": 324.85187,
+    "max_ms": 324.85187,
+    "background_requests": 0,
+    "background_errors": 0,
+    "background_uuid_count": 0,
+    "completed": true,
+    "meets_latency_target": true
+  }
+}
