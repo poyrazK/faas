@@ -274,6 +274,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_POLAR_USAGE_EVENT_NAME", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_POLAR_WEBHOOK_SECRET", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_PREPARED_NETWORKS", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "opt-in unused-network cache size (0–16), disabled by default; ADR-149"},
 	{Name: "FAAS_PRESSURE_MIGRATION_POLICY", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PRESSURE_REASSESSMENT_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PRESSURE_THRESHOLD_PER_MIN", Owners: []string{"schedd"}, Source: EnvSourceDefault},

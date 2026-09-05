@@ -5504,7 +5504,9 @@ haveApp:
 		}
 	}()
 
-	wakeStart := time.Now()
+	// Include admission, queueing, and restore from the ingress timestamp.
+	// Starting here measures only the proxy after the guest is already ready.
+	wakeStart := start
 	// Issue #676 / ADR-080: detect inbound Connection: Upgrade +
 	// Upgrade: <token> requests BEFORE the plain-HTTP forwarder
 	// strips the hop-by-hop headers. The raw-bytes bridge carries
@@ -5699,7 +5701,7 @@ haveApp:
 		// the gap is observable but the dashboard still gets a sample.
 		firstByteAt, ok := FirstByteFrom(r)
 		if !ok {
-			h.log.Warn("gateway: wake-timing first-byte stamp missing; observing full proxy duration",
+			h.log.Warn("gateway: wake-timing first-byte stamp missing; observing full request duration",
 				"app", app.ID, "node", target.NodeID, "instance", target.InstanceID)
 			firstByteAt = time.Now()
 		}

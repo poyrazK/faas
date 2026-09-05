@@ -34,7 +34,7 @@ func TestSupportBinaryNames_Stable(t *testing.T) {
 		}
 	}
 	// The canonical support files — every release ships these.
-	want := []string{"gregale", "gregalectl", "init", "schedd-brokerq-apply", "vmmd-raw-bridge", "vmmd-stream-bridge", "vmlinux"}
+	want := []string{"gregale", "gregalectl", "init", "schedd-brokerq-apply", "vmmd-jail-helper", "vmmd-raw-bridge", "vmmd-stream-bridge", "vmlinux"}
 	for _, name := range want {
 		found := false
 		for _, got := range first {

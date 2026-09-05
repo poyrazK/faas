@@ -52,9 +52,9 @@ type JailerVMM struct {
 	// Optional — when nil, Restore/Snapshot fall back to the legacy
 	// MemPath/VMStatePath branch unchanged.
 	storage storage.StorageBackend
-	// mountHelperPath is a process-versioned copy of vmmd on the jail tmpfs.
+	// mountHelperPath is a process-versioned copy of the jail helper on tmpfs.
 	// Every VM hardlinks this shared inode into its chroot instead of copying
-	// the ~50 MiB vmmd binary across filesystems on every wake.
+	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
 
@@ -1071,6 +1071,8 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	// When the boot context has no span (e.g. legacy single-box without
 	// OTel config), the empty string is shipped and the guest no-ops.
 	traceparent := traceparentFromContext(ctx)
+	started := time.Now()
+	attempts := 0
 	sock := v.vsockUDSSock(l.Instance)
 	deadline := time.Now().Add(resumeHookDialDeadline)
 	var conn net.Conn
@@ -1081,6 +1083,7 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 		}
 		var c net.Conn
 		var err error
+		attempts++
 		c, err = net.DialTimeout("unix", sock, 20*time.Millisecond)
 		if err == nil {
 			_ = c.SetDeadline(time.Now().Add(500 * time.Millisecond))
@@ -1111,6 +1114,7 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	if conn == nil {
 		return fmt.Errorf("vmm: dial vsock uds %s: %w", sock, lastErr)
 	}
+	connected := time.Now()
 	defer func() { _ = conn.Close() }()
 
 	_ = conn.SetDeadline(time.Now().Add(resumeHookDialDeadline))
@@ -1159,6 +1163,8 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 		return fmt.Errorf("vmm: write resume request: %w", err)
 	}
 
+	sent := time.Now()
+
 	// Step 4: read the 1-byte ack from the guest.
 	ack := make([]byte, 1)
 	if _, err := io.ReadFull(conn, ack); err != nil {
@@ -1167,6 +1173,12 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	if ack[0] != 0 {
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
 	}
+	// Keep host transport setup separate from waiting for the guest hook.
+	// Durations and the lease ID are sufficient; never log the entropy payload.
+	slog.Default().Info("resume hook timing", "instance", l.Instance,
+		"connect_ms", connected.Sub(started).Milliseconds(),
+		"write_ms", sent.Sub(connected).Milliseconds(),
+		"ack_ms", time.Since(sent).Milliseconds(), "attempts", attempts)
 	return nil
 }
 
@@ -2772,14 +2784,13 @@ func (v *JailerVMM) bindImage(root, src, name, instance string, addPerms os.File
 		return "", fmt.Errorf("create bind target %s: %w", dst, createErr)
 	}
 	_ = f.Close()
-	cmd := exec.Command("mount", "--bind", src, dst)
-	if output, mountErr := cmd.CombinedOutput(); mountErr != nil {
+	if output, mountErr := bindFileMount(src, dst); mountErr != nil {
 		v.releaseBindSource(src)
 		_ = os.Remove(dst)
 		return "", fmt.Errorf("bind image %s: %w (%s)", src, mountErr, strings.TrimSpace(string(output)))
 	}
 	if readOnly {
-		if output, remountErr := exec.Command("mount", "-o", "remount,bind,ro", dst).CombinedOutput(); remountErr != nil {
+		if output, remountErr := makeFileMountReadOnly(dst); remountErr != nil {
 			_ = exec.Command("umount", dst).Run()
 			v.releaseBindSource(src)
 			_ = os.Remove(dst)
@@ -2848,6 +2859,10 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("vmm: locate mount helper: %w", err)
 	}
+	exe, err = resolveMountHelper(exe)
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(v.chrootBase, 0o700); err != nil {
 		return "", fmt.Errorf("vmm: create mount helper root: %w", err)
 	}
@@ -2887,7 +2902,7 @@ func (v *JailerVMM) bindTunSource(root, instance string) error {
 		return fmt.Errorf("vmm: create TUN source target: %w", err)
 	}
 	_ = f.Close()
-	if output, err := exec.Command("mount", "--bind", source, target).CombinedOutput(); err != nil {
+	if output, err := bindFileMount(source, target); err != nil {
 		_ = os.Remove(target)
 		return fmt.Errorf("vmm: bind TUN source: %w (%s)", err, strings.TrimSpace(string(output)))
 	}

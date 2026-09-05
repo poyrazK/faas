@@ -5,7 +5,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"syscall"
 	"unsafe"
@@ -20,9 +19,9 @@ import (
 const (
 	hwrngPath   = "/dev/hwrng"   // virtio-rng (always attached, spec §11)
 	urandomPath = "/dev/urandom" // kernel entropy pool
-	reseedBytes = 256            // enough to fully re-key the pool
-	// resumeDiagLog is where the resume hook appends one JSON line per op,
-	// visible to the operator and the §14 V6 metal test. /etc/faas/ is
+	reseedBytes = 256            // maximum optional hardware bytes to mix
+	// resumeDiagLog records resume failures for operators and the §14 V6
+	// metal test. Successful resumes do not write diagnostic files. /etc/faas/ is
 	// already writable on the upper overlay (the layer build script
 	// pre-creates it). We don't go through slog here because PID 1's
 	// stderr doesn't reliably reach FC's serial console; the file
@@ -56,10 +55,9 @@ func resumeDiag(msg string) {
 // for the RNDADDENTROPY ioctl: an int entropy_count (bits credited) + int buf_size
 // (bytes that follow) + a flexible-array byte buffer holding the actual bytes.
 //
-// Layout MUST match the kernel — we use unsafe.Sizeof checks in unit tests if any
-// are added later. The pool treats entropy_count as a credit against the SHA1
-// pool's entropy estimate; setting it equal to len(buf)*8 fully credits every
-// byte, which is what we want for fresh CSPRNG output.
+// Layout MUST match the kernel. Linux 6.1 mixes the bytes into its BLAKE2s
+// input pool and credits entropy_count toward initial CRNG readiness. An
+// already initialized CRNG still needs the explicit reseed below.
 type randPoolInfo struct {
 	entropyCount int32
 	bufSize      int32
@@ -86,7 +84,7 @@ func SetResumeTraceparent(tp string) { resumeTraceparent = tp }
 func GetResumeTraceparent() string { return resumeTraceparent }
 
 // RunResumeHook performs the post-restore hook: inject host-supplied CSPRNG
-// bytes into /dev/urandom via ioctl(RNDADDENTROPY) FIRST so each restore
+// bytes into /dev/urandom and explicitly reseed the kernel CRNG FIRST so each restore
 // mixes a unique prefix into the pool (virtio-rng state is snapshotted, so
 // without this every restore draws the same UUID). Then re-seed from
 // virtio-rng (mixes a snapshotted-but-fresh-Linux-pool-aware quantity into the
@@ -98,7 +96,6 @@ func GetResumeTraceparent() string { return resumeTraceparent }
 // hostEntropy may be nil/empty (e.g. on cold boot the hook isn't invoked, but
 // if a future caller does invoke with no entropy, AddEntropy is a no-op).
 func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
-	resumeDiag(fmt.Sprintf("resume: start hostEntropy=%dB nano=%d", len(hostEntropy), hostTimeUnixNano))
 	if err := addHostEntropy(hostEntropy); err != nil {
 		resumeDiag(fmt.Sprintf("resume: addHostEntropy err=%v", err))
 		return fmt.Errorf("resume: add entropy: %w", err)
@@ -115,7 +112,6 @@ func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
 		resumeDiag(fmt.Sprintf("resume: writeUUIDMarker err=%v", err))
 		return fmt.Errorf("resume: write uuid marker: %w", err)
 	}
-	resumeDiag("resume: ok")
 	return nil
 }
 
@@ -123,14 +119,12 @@ func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
 // ioctl(RNDADDENTROPY). Empty input is a no-op (still returns nil) — the
 // cold-boot path never calls us, but a future caller might pass nil.
 //
-// NOTE: a plain write(2) to /dev/urandom does NOT credit the pool — the
-// kernel silently treats it as a draw, not a deposit. The RNDADDENTROPY
-// ioctl is the only public API that adds entropy. Without this ioctl, every
-// restored guest's UUID would still be unique-by-virtio-rng — which is
-// snapshot-shared, hence identical across restores (V6 fails). ADR-022.
+// A plain write mixes bytes without crediting the pool; RNDADDENTROPY also
+// credits initialization entropy. Neither immediately rekeys an initialized
+// Linux 6.1 CRNG. Both paths must finish with RNDRESEEDCRNG before any caller
+// can observe readiness or draw the UUID marker (ADR-022).
 func addHostEntropy(entropy []byte) error {
 	if len(entropy) == 0 {
-		resumeDiag("addHostEntropy: skipped (empty)")
 		return nil
 	}
 	if len(entropy) > 4096 {
@@ -145,19 +139,17 @@ func addHostEntropy(entropy []byte) error {
 
 	pool := randPoolInfo{entropyCount: int32(len(entropy)) * 8, bufSize: int32(len(entropy))}
 	copy(pool.buf[:], entropy)
-	resumeDiag(fmt.Sprintf("addHostEntropy: about to ioctl bytes=%d head8=%x ec=%d bs=%d", len(entropy), entropy[:8], pool.entropyCount, pool.bufSize))
 	// SAFETY: pool lives on this goroutine's stack and the syscall is
 	// synchronous — escape analysis won't move it before Syscall returns,
 	// so unsafe.Pointer(&pool) is valid for the duration of the ioctl. Do
 	// NOT extract this block into a helper that closes over pool, and do
 	// NOT pass pool across a goroutine boundary.
-	r1, _, errno := unix.Syscall(
+	_, _, errno := unix.Syscall(
 		unix.SYS_IOCTL,
 		uintptr(fd),
 		uintptr(rndaddentropyIoctl),
 		uintptr(unsafe.Pointer(&pool)), //nolint:gosec // pool is on the calling goroutine's stack; syscall is synchronous, no escape. See SAFETY comment above.
 	)
-	resumeDiag(fmt.Sprintf("addHostEntropy: ioctl r1=%d errno=%d", r1, errno))
 	if errno != 0 {
 		// Some Firecracker guest kernels expose /dev/urandom but reject
 		// RNDADDENTROPY for the guest's capability set. A host CSPRNG
@@ -175,21 +167,36 @@ func addHostEntropy(entropy []byte) error {
 			if writeErr != nil {
 				return fmt.Errorf("ioctl(RNDADDENTROPY): %w; fallback write: %w", errno, writeErr)
 			}
-			resumeDiag("addHostEntropy: ioctl rejected; fallback urandom write succeeded")
-			return nil
+			return reseedCRNG(fd)
 		}
 		return fmt.Errorf("ioctl(RNDADDENTROPY): %w", errno)
+	}
+	return reseedCRNG(fd)
+}
+
+// Linux 6.1 credit_init_bits is a no-op once the CRNG is initialized.
+// RNDRESEEDCRNG extracts the newly mixed host input and advances the CRNG
+// generation, invalidating snapshotted per-CPU random batches. Fail closed
+// if the kernel or guest capabilities cannot perform this required step.
+func reseedCRNG(fd int) error {
+	if err := unix.IoctlSetInt(fd, unix.RNDRESEEDCRNG, 0); err != nil {
+		return fmt.Errorf("ioctl(RNDRESEEDCRNG): %w", err)
 	}
 	return nil
 }
 
-// reseedFromHWRNG copies fresh virtio-rng bytes into /dev/urandom. Belt-and-
-// suspenders on top of addHostEntropy: virtio-rng is snapshotted, but mixing
-// a fresh (same-on-every-restore) input on top of a unique prefix keeps the
-// pool advancing.
+// reseedFromHWRNG mixes up to reseedBytes currently available from virtio-rng.
+// Host entropy and the explicit CRNG reseed have already made this restore
+// unique. The optional hardware mix must not wait for a device refill before
+// allowing the clock, UUID marker, and resume ACK to advance (ADR-148).
 func reseedFromHWRNG() error {
-	//nolint:forbidigo // hwrngPath is the virtio-rng chardev (/dev/hwrng by default) exposed to the microVM. Kernel-internal device, the customer has no write surface to a chardev on the guest side; symlink-attack impossible.
-	src, err := os.Open(hwrngPath)
+	return mixHWRNG(hwrngPath, urandomPath)
+}
+
+// mixHWRNG takes explicit device paths so unavailable hardware can be exercised
+// with a FIFO in unprivileged Linux tests.
+func mixHWRNG(source, destination string) error {
+	fd, err := unix.Open(source, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		// The host-supplied entropy is the authoritative uniqueness input.
 		// Some otherwise valid Firecracker kernels omit CONFIG_HW_RANDOM_VIRTIO,
@@ -199,19 +206,28 @@ func reseedFromHWRNG() error {
 		// this function runs. Other errors still fail closed so a real device
 		// or filesystem problem is visible to the resume caller.
 		if errors.Is(err, os.ErrNotExist) {
-			resumeDiag("reseedFromHWRNG: skipped (device unavailable)")
 			return nil
 		}
-		return fmt.Errorf("open %s: %w", hwrngPath, err)
+		return fmt.Errorf("open %s: %w", source, err)
 	}
-	defer func() { _ = src.Close() }()
-	dst, err := os.OpenFile(urandomPath, os.O_WRONLY, 0)
+	defer func() { _ = unix.Close(fd) }()
+	var entropy [reseedBytes]byte
+	// Use the raw nonblocking syscall: os.File.Read can use Go's poller to
+	// wait for readability after EAGAIN, defeating the device's O_NONBLOCK.
+	n, err := unix.Read(fd, entropy[:])
+	if err != nil && !errors.Is(err, unix.EAGAIN) {
+		return fmt.Errorf("read %s: %w", source, err)
+	}
+	if n <= 0 {
+		return nil
+	}
+	dst, err := os.OpenFile(destination, os.O_WRONLY, 0)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", urandomPath, err)
+		return fmt.Errorf("open %s: %w", destination, err)
 	}
 	defer func() { _ = dst.Close() }()
-	if _, err := io.CopyN(dst, src, reseedBytes); err != nil {
-		return fmt.Errorf("reseed copy: %w", err)
+	if _, err := dst.Write(entropy[:n]); err != nil {
+		return fmt.Errorf("reseed write: %w", err)
 	}
 	return nil
 }

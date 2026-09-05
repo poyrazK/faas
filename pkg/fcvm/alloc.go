@@ -124,6 +124,60 @@ type Allocator struct {
 	mu         sync.Mutex
 	free       []int          // stack of free slot numbers
 	byInstance map[string]int // instance id -> slot, for Release + double-acquire guard
+	reserved   map[string]int // fresh networks only; excluded from VM admission counts
+}
+
+// reserveNetwork takes a slot without claiming a running VM. The cache must
+// either adopt it exactly once or return it after tearing down its network.
+func (a *Allocator) reserveNetwork(id string) (Lease, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if id == "" || len(a.free) == 0 {
+		return Lease{}, fmt.Errorf("fcvm: reserve network: empty id or no free slots")
+	}
+	if _, ok := a.byInstance[id]; ok {
+		return Lease{}, fmt.Errorf("fcvm: reserve network: id already leased")
+	}
+	if _, ok := a.reserved[id]; ok {
+		return Lease{}, fmt.Errorf("fcvm: reserve network: id already reserved")
+	}
+	if a.reserved == nil {
+		a.reserved = make(map[string]int)
+	}
+	slot := a.free[len(a.free)-1]
+	a.free = a.free[:len(a.free)-1]
+	a.reserved[id] = slot
+	return leaseForSlot(id, slot), nil
+}
+
+func (a *Allocator) releaseNetwork(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if slot, ok := a.reserved[id]; ok {
+		delete(a.reserved, id)
+		a.free = append(a.free, slot)
+	}
+}
+
+func (a *Allocator) adoptNetwork(reservation, instance string) (Lease, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if instance == "" {
+		return Lease{}, fmt.Errorf("fcvm: adopt network: empty instance")
+	}
+	if _, ok := a.byInstance[instance]; ok {
+		return Lease{}, fmt.Errorf("fcvm: adopt network: instance already leased")
+	}
+	if _, ok := a.reserved[instance]; ok {
+		return Lease{}, fmt.Errorf("fcvm: adopt network: instance id reserved")
+	}
+	slot, ok := a.reserved[reservation]
+	if !ok {
+		return Lease{}, fmt.Errorf("fcvm: adopt network: reservation missing")
+	}
+	delete(a.reserved, reservation)
+	a.byInstance[instance] = slot
+	return leaseForSlot(instance, slot), nil
 }
 
 // NewAllocator returns an allocator with all MaxSlots free.
@@ -155,6 +209,9 @@ func (a *Allocator) Acquire(instance string) (Lease, error) {
 
 	if _, dup := a.byInstance[instance]; dup {
 		return Lease{}, fmt.Errorf("fcvm: acquire: instance %q already holds a lease", instance)
+	}
+	if _, dup := a.reserved[instance]; dup {
+		return Lease{}, fmt.Errorf("fcvm: acquire: instance %q is reserved", instance)
 	}
 	if len(a.free) == 0 {
 		return Lease{}, fmt.Errorf("fcvm: acquire: no free slots (all %d in use)", MaxSlots)

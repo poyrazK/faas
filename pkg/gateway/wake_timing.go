@@ -70,6 +70,14 @@ func WithFirstByteRecorder(ctx context.Context, rec *firstByteRecorder) context.
 	return context.WithValue(ctx, firstByteAtKey{}, rec)
 }
 
+// recordForwardedFirstByte stamps the first response frame from vmmd. The
+// gRPC forwarders do not pass through the HTTP RoundTripper's trace hook.
+func recordForwardedFirstByte(ctx context.Context) {
+	if rec, ok := ctx.Value(firstByteAtKey{}).(*firstByteRecorder); ok && rec != nil {
+		rec.record(time.Now())
+	}
+}
+
 // FirstByteFrom returns the timestamp the wake-timing RoundTripper captured
 // at "first upstream response byte", if any. The bool is false when the
 // reverse proxy never reached the first-byte boundary (e.g. upstream

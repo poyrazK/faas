@@ -1484,6 +1484,9 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		defer transport.CloseIdleConnections()
 		client = &http.Client{Transport: transport}
 	}
+	if s.ops != nil {
+		s.ops.Observe("stream_bridge_acquire", time.Since(start), nil)
+	}
 
 	bodyPr, bodyPw := io.Pipe()
 	// H2C request ctx: inherit stream.Context() directly. v1 used
@@ -2083,18 +2086,26 @@ func bridgeStopError(cmd *exec.Cmd, err error) error {
 	return err
 }
 
-// waitForUnixSock polls for the socket file to exist. The bridge
-// binary binds synchronously before serving, so this is a quick
-// readiness gate. cap=0 means no wait.
+// waitForUnixSock waits until the bridge accepts connections. A Unix socket
+// path exists after bind, before listen, so stat alone can release the first
+// request into ECONNREFUSED. The probe sends no HTTP request. cap <= 0 performs
+// one bounded connection attempt without retrying.
 func waitForUnixSock(path string, cap time.Duration) error {
 	deadline := time.Now().Add(cap)
 	for {
-		if _, err := os.Stat(path); err == nil {
+		timeout := 2 * time.Millisecond
+		if remaining := time.Until(deadline); cap > 0 && remaining > 0 {
+			timeout = min(timeout, remaining)
+		}
+		conn, err := net.DialTimeout("unix", path, timeout)
+		if err == nil {
+			_ = conn.Close()
 			return nil
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for %s", path)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("timeout waiting for %s: %w", path, err)
 		}
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(min(2*time.Millisecond, remaining))
 	}
 }

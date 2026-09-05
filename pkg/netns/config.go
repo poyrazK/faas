@@ -182,6 +182,11 @@ func (c Config) SetupCommands() [][]string {
 		cmd("ip", "link", "set", c.VethHost, "master", TenantBridge),
 		cmd("ip", "link", "set", c.VethHost, "up"),
 		cmd("ip", "link", "set", c.VethPeer, "netns", c.Netns),
+		// Lease IPs are reused with new veth MACs. Their bridge neighbor
+		// entries outlive veth teardown and can blackhole readiness traffic
+		// until ARP ages out. Invalidate only this lease before publishing it;
+		// flush also succeeds on the first use, when no entry exists.
+		cmd("ip", "neigh", "flush", "to", c.HostIP.String()+"/32", "dev", TenantBridge),
 		inNetns("ip", "addr", "add", c.hostCIDR(), "dev", c.VethPeer),
 		inNetns("ip", "link", "set", c.VethPeer, "up"),
 		// tap0 for firecracker; host side of the guest /30. The jailer
