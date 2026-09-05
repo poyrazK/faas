@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func TestComputeMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
@@ -214,4 +217,81 @@ func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	if got[0].Labels["job"] != "promtail-compute" {
 		t.Fatalf("job label=%q, want promtail-compute", got[0].Labels["job"])
 	}
+}
+
+func TestComputeMetricsDiscoveryRecordsProducerHealth(t *testing.T) {
+	store := state.NewMemStore()
+	validTarget := "tcp://fsn-2.gregale.dev:8080"
+	if _, err := store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name:               "fsn-2.faas",
+		TargetURL:          "tcp://vmmd-2.gregale.dev:50051",
+		GatewayTargetURL:   &validTarget,
+		VPCPUs:             4,
+		MemMB:              8192,
+		MaxConcurrency:     16,
+		AdmissionCeilingMB: 4096,
+	}); err != nil {
+		t.Fatalf("upsert valid node: %v", err)
+	}
+	invalidTarget := "tcp://127.0.0.1:8080"
+	if _, err := store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name:               "fsn-invalid.faas",
+		TargetURL:          "tcp://vmmd-invalid.gregale.dev:50051",
+		GatewayTargetURL:   &invalidTarget,
+		VPCPUs:             4,
+		MemMB:              8192,
+		MaxConcurrency:     16,
+		AdmissionCeilingMB: 4096,
+	}); err != nil {
+		t.Fatalf("upsert invalid node: %v", err)
+	}
+
+	ops := wire.NewOpsMetrics("apid_discovery_test")
+	srv := newServer(store, nil, "gregale.dev", nil).WithOpsMetrics(context.Background(), ops)
+	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	req.RemoteAddr = "127.0.0.1:9099"
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	body := scrapeDiscoveryMetrics(t, ops)
+	for _, want := range []string{
+		`apid_discovery_test_metrics_discovery_requests_total{job="gatewayd-internal",outcome="success"} 1`,
+		`apid_discovery_test_metrics_discovery_registry_nodes{job="gatewayd-internal"} 2`,
+		`apid_discovery_test_metrics_discovery_targets{job="gatewayd-internal"} 1`,
+		`apid_discovery_test_metrics_discovery_invalid_targets{job="gatewayd-internal"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(body, `apid_discovery_test_metrics_discovery_last_success_timestamp_seconds{job="gatewayd-internal"} `) {
+		t.Errorf("metrics body missing last-success timestamp:\n%s", body)
+	}
+
+	forbiddenReq := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	forbiddenReq.RemoteAddr = "203.0.113.10:8080"
+	forbiddenRec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(forbiddenRec, forbiddenReq)
+	if forbiddenRec.Code != http.StatusNotFound {
+		t.Fatalf("forbidden status=%d, want 404", forbiddenRec.Code)
+	}
+	body = scrapeDiscoveryMetrics(t, ops)
+	if !strings.Contains(body, `apid_discovery_test_metrics_discovery_requests_total{job="gatewayd-internal",outcome="forbidden"} 1`) {
+		t.Errorf("metrics body missing forbidden request count:\n%s", body)
+	}
+}
+
+func scrapeDiscoveryMetrics(t *testing.T, ops *wire.OpsMetrics) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(rec, req)
+	b, err := io.ReadAll(rec.Result().Body)
+	if err != nil {
+		t.Fatalf("read metrics body: %v", err)
+	}
+	return string(b)
 }

@@ -43,16 +43,19 @@ func (s *server) promtailMetricsDiscovery(w http.ResponseWriter, r *http.Request
 
 func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job string, targetFn func(string) (string, bool)) {
 	if !isLoopbackRemote(r.RemoteAddr) {
+		s.metricsDiscoveryMetrics.request(job, "forbidden")
 		http.NotFound(w, r)
 		return
 	}
 	if s.store == nil {
+		s.metricsDiscoveryMetrics.request(job, "unavailable")
 		http.Error(w, "metrics discovery is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
 	nodes, err := s.store.ListComputeNodes(r.Context(), false)
 	if err != nil {
+		s.metricsDiscoveryMetrics.request(job, "error")
 		if s.log != nil {
 			s.log.Warn("compute metrics discovery failed", "err", err)
 		}
@@ -61,20 +64,25 @@ func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job st
 	}
 
 	groups := make([]prometheusTargetGroup, 0, len(nodes))
+	registryNodes := 0
+	invalidTargets := 0
 	for _, node := range nodes {
 		if !node.Active || node.GatewayTargetURL == nil {
 			// A node without a gateway endpoint is pre-registration or
 			// legacy single-box state. It is not a scrape target yet.
 			continue
 		}
+		registryNodes++
 		target, ok := targetFn(*node.GatewayTargetURL)
 		if !ok {
+			invalidTargets++
 			if s.log != nil {
 				s.log.Warn("ignoring invalid metrics discovery target", "job", job, "node", node.Name)
 			}
 			continue
 		}
 		if strings.TrimSpace(node.Name) == "" {
+			invalidTargets++
 			if s.log != nil {
 				s.log.Warn("ignoring compute metrics target without stable node name", "target", target)
 			}
@@ -98,6 +106,8 @@ func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job st
 		})
 	}
 
+	s.metricsDiscoveryMetrics.request(job, "success")
+	s.metricsDiscoveryMetrics.snapshot(job, registryNodes, len(groups), invalidTargets)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Faas-Metrics-Discovery", "compute-node-registry")
 	writeJSON(w, http.StatusOK, groups)
