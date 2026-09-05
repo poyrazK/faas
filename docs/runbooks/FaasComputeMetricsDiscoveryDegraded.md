@@ -2,10 +2,11 @@
 
 ## Meaning
 
-The control-plane Prometheus HTTP service-discovery producer is stale or is
-returning fewer compute targets than the active registry expects. Prometheus
-itself may still be up, but remote `gatewayd-internal` or Promtail metrics can
-be frozen, incomplete, or absent.
+The control-plane Prometheus HTTP service-discovery producer is stale, is
+returning fewer compute targets than the active registry expects, or is
+returning healthy targets that Prometheus cannot scrape. Prometheus itself may
+still be up while remote `gatewayd-internal` or Promtail metrics are frozen,
+incomplete, or absent.
 
 The producer is apid's loopback-only endpoint. It reads active
 `compute_nodes` rows with a configured `gateway_target_url`; it does not read
@@ -32,7 +33,22 @@ The expected state is:
 - `targets` equal to `registry_nodes` for each job; and
 - `invalid_targets` equal to zero.
 
-Check the Prometheus target view next:
+Check the downstream coverage signals next. These compare the latest healthy
+target list from apid with the `up` series Prometheus is actually producing:
+
+```text
+faas_compute_metrics_healthy_targets:by_job
+faas_compute_metrics_scrape_coverage:by_job
+up{job=~"gatewayd-internal|promtail-compute"}
+max by (job, node) (scrape_duration_seconds{job=~"gatewayd-internal|promtail-compute"})
+```
+
+The expected state is one healthy target per discovered target and coverage of
+`1` for each enabled job. A target with `up == 0` is a downstream scrape
+failure. If coverage is below `1` but no `up == 0` series exists, all or part
+of the target list disappeared before Prometheus created a scrape series.
+
+Check the Prometheus target view for the node-level error:
 
 ```sh
 curl -fsS http://127.0.0.1:9095/api/v1/targets \
@@ -79,7 +95,10 @@ network, or migration problem is understood:
 systemctl restart faas-apid
 ```
 
-Confirm that `last_success` advances and that the target count matches the
-active registry before closing the alert. For a target that is present but
-unhealthy, continue with the compute-node or Promtail runbook; this alert only
-covers discovery production, not the downstream scrape process.
+Confirm that `last_success` advances, the target count matches the active
+registry, and downstream coverage returns to `1` before closing the alert. For
+a target that is present but unhealthy, inspect the node's listener, private
+route, firewall, and service readiness before restarting the service. The
+`FaasComputeMetricsScrapeTargetDown` alert identifies the affected node; the
+`FaasComputeMetricsScrapeCoverageLow` alert covers missing or partial `up`
+series.

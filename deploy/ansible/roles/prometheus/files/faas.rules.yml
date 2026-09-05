@@ -138,6 +138,77 @@ groups:
   - name: faas_compute_metrics_discovery
     interval: 30s
     rules:
+      # `up` is the downstream truth: the HTTP-SD endpoint can return a
+      # healthy snapshot while one or more discovered compute endpoints are
+      # unreachable. The `or ... * 0` branch preserves a zero-valued job when
+      # Prometheus has no `up` series at all (for example, every target was
+      # dropped before the first scrape).
+      - record: faas_compute_metrics_healthy_targets:by_job
+        expr: |
+          sum by (job) (
+            up{job=~"gatewayd-internal|promtail-compute"}
+          )
+          or on (job)
+          (
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} * 0
+          )
+
+      - record: faas_compute_metrics_scrape_coverage:by_job
+        expr: |
+          faas_compute_metrics_healthy_targets:by_job
+          /
+          on (job)
+          clamp_min(
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"},
+            1
+          )
+
+      - alert: FaasComputeMetricsScrapeCoverageLow
+        expr: |
+          (
+            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|promtail-compute"} < 1
+          )
+          and on (job)
+          (
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+          )
+          and on (job)
+          (
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        annotations:
+          summary: "Compute metrics scrape coverage is incomplete for {{ $labels.job }}"
+          description: "Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for {{ $labels.job }}. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing a scrape series. Check the per-node up status and scrape errors in the discovery runbook."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+      - alert: FaasComputeMetricsScrapeTargetDown
+        expr: |
+          (
+            up{job=~"gatewayd-internal|promtail-compute"} == 0
+          )
+          and on (job)
+          (
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+          )
+          and on (job)
+          (
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        annotations:
+          summary: "Compute metrics target is down on {{ $labels.node }}"
+          description: "Prometheus cannot scrape the discovered {{ $labels.job }} endpoint for node {{ $labels.node }}. Discovery is still returning a fresh target, so check the node's gateway or Promtail metrics listener, private route, firewall, and service readiness."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
       - alert: FaasComputeMetricsDiscoveryStale
         expr: |
           (
