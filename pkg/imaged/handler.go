@@ -2500,7 +2500,12 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 			return fmt.Errorf("imaged: load existing snapshot: %w", err)
 		}
 	}
-	if p.NodeID != "" {
+	if stored.StorageKey != p.StorageKey && state.IsSnapshotCaptureKey(p.StorageKey) {
+		// A second capture can finish before the first notification is read.
+		// Keep the already-published pair and discard only this unused one.
+		h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: p.StorageKey})
+	}
+	if p.NodeID != "" && stored.StorageKey == p.StorageKey {
 		if origins, ok := h.store.(state.SnapshotOriginStore); ok {
 			if originErr := origins.RecordSnapshotOrigin(ctx, stored.ID, p.NodeID); originErr != nil {
 				// Origin metadata improves locality but is not the blob's
@@ -3200,6 +3205,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
 	}
 	if !keepSnap {
+		h.cleanupSnapshotCaptures(ctx, be, dep.ID)
 		memKey := state.SnapMemKey(dep.ID)
 		vmKey := state.SnapVMStateKey(dep.ID)
 		if err := be.Delete(ctx, memKey); err != nil {
@@ -3265,6 +3271,7 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 			h.log.Warn("imaged: app cleanup list sidecar layers",
 				"deployment", d.ID, "err", listErr)
 		}
+		h.cleanupSnapshotCaptures(ctx, be, d.ID)
 		memKey := state.SnapMemKey(d.ID)
 		vmKey := state.SnapVMStateKey(d.ID)
 		if err := be.Delete(ctx, memKey); err != nil {

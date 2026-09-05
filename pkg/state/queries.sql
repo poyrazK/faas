@@ -2429,3 +2429,6 @@ WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
 ORDER BY retry_at,id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: SnapshotStorageKeys :many
+SELECT storage_key FROM snapshots WHERE deployment_id = $1;

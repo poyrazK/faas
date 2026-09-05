@@ -209,6 +209,7 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica commit: %w", err)
 	}
 	job.Attempts++
+	job.VMStateStorageKey = SnapshotVMStateKey(Snapshot{DeploymentID: job.DeploymentID, StorageKey: job.StorageKey, Tier: job.Tier})
 	return job, nil
 }
 

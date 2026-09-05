@@ -215,12 +215,7 @@ func snapshotTier(s Snapshot) string {
 	return SnapshotTierInit
 }
 
-func snapshotVMStateKey(s Snapshot) string {
-	if snapshotTier(s) == SnapshotTierWarm {
-		return WarmSnapVMStateKey(s.DeploymentID)
-	}
-	return SnapVMStateKey(s.DeploymentID)
-}
+func snapshotVMStateKey(s Snapshot) string { return SnapshotVMStateKey(s) }
 
 var _ SnapshotReplicaStore = (*MemStore)(nil)
 var _ SnapshotReplicaStore = (*PgStore)(nil)

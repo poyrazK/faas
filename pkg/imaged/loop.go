@@ -398,15 +398,15 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		// unconditional default before #470; the tier-aware path
 		// preserves that for init-tier targets and switches to
 		// the warm keys when the row was a warm-tier snapshot.
-		var memKey, vmstateKey string
-		switch t.Tier {
-		case state.SnapshotTierWarm:
-			memKey = state.WarmSnapMemKey(t.DeploymentID)
-			vmstateKey = state.WarmSnapVMStateKey(t.DeploymentID)
-		default:
+		snap := state.Snapshot{DeploymentID: t.DeploymentID, StorageKey: t.StorageKey, Tier: t.Tier}
+		memKey := t.StorageKey
+		if memKey == "" {
 			memKey = state.SnapMemKey(t.DeploymentID)
-			vmstateKey = state.SnapVMStateKey(t.DeploymentID)
+			if t.Tier == state.SnapshotTierWarm {
+				memKey = state.WarmSnapMemKey(t.DeploymentID)
+			}
 		}
+		vmstateKey := state.SnapshotVMStateKey(snap)
 		if err := be.Delete(ctx, memKey); err != nil {
 			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", err)
 		}
