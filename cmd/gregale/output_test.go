@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 )
 
 // TestMain forces the test seam into "glyphs on" by default for every
@@ -33,6 +35,10 @@ import (
 // the default-on state. Production binaries never see this — testOnlyTTY
 // is `nil` in non-test builds (output.go).
 func TestMain(m *testing.M) {
+	// A missing per-test stub must never read, overwrite, or delete the
+	// developer's real OS credentials. Explicit test doubles still take
+	// precedence through effectiveKeyring.
+	keyring.MockInit()
 	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
 	_ = os.Unsetenv("NO_COLOR")
 	resetNOColorCache()

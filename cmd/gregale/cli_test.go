@@ -1250,6 +1250,8 @@ func TestCmdApp_Min1_Hobby_NoEcho(t *testing.T) {
 // (ListApps returns []) sees the 3-line UX §8 quickstart after the
 // success line. Failure to list apps must NOT block login (silent).
 func TestCmdLogin_FirstRun_PrintsQuickstart(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	setFakeKeyring(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/account":
@@ -1290,6 +1292,8 @@ func TestCmdLogin_FirstRun_PrintsQuickstart(t *testing.T) {
 // TestCmdLogin_ExistingAccount_NoQuickstart pins that an account
 // with at least one app gets the success line but no quickstart.
 func TestCmdLogin_ExistingAccount_NoQuickstart(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	setFakeKeyring(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/account":
@@ -1327,6 +1331,8 @@ func TestCmdLogin_ExistingAccount_NoQuickstart(t *testing.T) {
 // call does NOT block login (UX §8: don't gate login on transient
 // API issues). The success line still prints.
 func TestCmdLogin_ListAppsFails_NoQuickstart(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	setFakeKeyring(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/account":
