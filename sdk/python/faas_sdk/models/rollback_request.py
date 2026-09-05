@@ -24,6 +24,12 @@ class RollbackRequest:
     target_deployment_id: UUID | Unset = UNSET
     """The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and must
     have status='superseded'. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."""
+    alert_rule_id: UUID | Unset = UNSET
+    """SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when set, the handler stamps the deployment_audit row's
+    alert_rule_id column with this UUID so an operator can cross-link the audit timeline back to
+    /dashboard/alerts/{id}. Wire-additive per ADR-016; the field is ignored when nil/empty. Only privileged in-
+    process callers (meterd ActionDispatcher) set this; the API does not enforce role because the endpoint already
+    requires MFA + ScopesDeployWrite."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -31,11 +37,17 @@ class RollbackRequest:
         if not isinstance(self.target_deployment_id, Unset):
             target_deployment_id = str(self.target_deployment_id)
 
+        alert_rule_id: str | Unset = UNSET
+        if not isinstance(self.alert_rule_id, Unset):
+            alert_rule_id = str(self.alert_rule_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
         if target_deployment_id is not UNSET:
             field_dict["target_deployment_id"] = target_deployment_id
+        if alert_rule_id is not UNSET:
+            field_dict["alert_rule_id"] = alert_rule_id
 
         return field_dict
 
@@ -49,8 +61,16 @@ class RollbackRequest:
         else:
             target_deployment_id = UUID(_target_deployment_id)
 
+        _alert_rule_id = d.pop("alert_rule_id", UNSET)
+        alert_rule_id: UUID | Unset
+        if isinstance(_alert_rule_id, Unset):
+            alert_rule_id = UNSET
+        else:
+            alert_rule_id = UUID(_alert_rule_id)
+
         rollback_request = cls(
             target_deployment_id=target_deployment_id,
+            alert_rule_id=alert_rule_id,
         )
 
         rollback_request.additional_properties = d
