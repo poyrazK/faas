@@ -19,3 +19,4 @@ export type RequestAnalyticsRoute = {
   p95_ms: number;
   p99_ms: number;
 };
+
