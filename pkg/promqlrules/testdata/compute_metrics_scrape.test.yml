@@ -1,0 +1,130 @@
+# Synthetic rule-engine coverage for the downstream side of compute metrics
+# HTTP-SD (issue #1219 follow-up). The producer-side discovery metrics can be
+# healthy while Prometheus has zero or only a partial set of `up` series, so
+# this fixture pins both the recording rules and the two scrape alerts.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # One of two discovered gateway targets is down. The recording rules must
+  # report 1 scraped target and 50% coverage, and both the aggregate coverage
+  # alert and the per-node alert must fire after their 5m hold.
+  - interval: 30s
+    name: "one of two gateway targets down -> partial coverage and target alert"
+    input_series:
+      - series: 'up{job="gatewayd-internal",instance="fsn-1.gregale.dev:8080",node="fsn-1.faas",node_id="node-1",region="eu-fsn1",zone="a"}'
+        values: '1x31'
+      - series: 'up{job="gatewayd-internal",instance="fsn-2.gregale.dev:8080",node="fsn-2.faas",node_id="node-2",region="eu-fsn1",zone="b"}'
+        values: '0x31'
+      - series: 'apid_metrics_discovery_targets{job="gatewayd-internal"}'
+        values: '2x31'
+      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="gatewayd-internal"}'
+        values: '600x31'
+    promql_expr_test:
+      - expr: faas_compute_metrics_healthy_targets:by_job{job="gatewayd-internal"}
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="gatewayd-internal"}'
+            value: 1
+      - expr: faas_compute_metrics_scrape_coverage:by_job{job="gatewayd-internal"}
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="gatewayd-internal"}'
+            value: 0.5
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasComputeMetricsScrapeCoverageLow
+        exp_alerts:
+          - exp_labels:
+              job: gatewayd-internal
+              severity: warn
+              component: prometheus
+              family: compute_metrics_scrape
+            exp_annotations:
+              summary: "Compute metrics scrape coverage is incomplete for gatewayd-internal"
+              description: "Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for gatewayd-internal. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing a scrape series. Check the per-node up status and scrape errors in the discovery runbook."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+      - eval_time: 10m
+        alertname: FaasComputeMetricsScrapeTargetDown
+        exp_alerts:
+          - exp_labels:
+              job: gatewayd-internal
+              instance: fsn-2.gregale.dev:8080
+              node: fsn-2.faas
+              node_id: node-2
+              region: eu-fsn1
+              zone: b
+              severity: warn
+              component: prometheus
+              family: compute_metrics_scrape
+            exp_annotations:
+              summary: "Compute metrics target is down on fsn-2.faas"
+              description: "Prometheus cannot scrape the discovered gatewayd-internal endpoint for node fsn-2.faas. Discovery is still returning a fresh target, so check the node's gateway or Promtail metrics listener, private route, firewall, and service readiness."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+  # If every target disappears before Prometheus creates an `up` series, the
+  # recording rule must still materialize zero coverage from the discovery
+  # target gauge. This is the case a plain sum(up) expression misses.
+  - interval: 30s
+    name: "all discovered targets absent from scrape series -> zero coverage"
+    input_series:
+      - series: 'apid_metrics_discovery_targets{job="promtail-compute"}'
+        values: '2x31'
+      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="promtail-compute"}'
+        values: '600x31'
+    promql_expr_test:
+      - expr: faas_compute_metrics_healthy_targets:by_job{job="promtail-compute"}
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="promtail-compute"}'
+            value: 0
+      - expr: faas_compute_metrics_scrape_coverage:by_job{job="promtail-compute"}
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="promtail-compute"}'
+            value: 0
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasComputeMetricsScrapeCoverageLow
+        exp_alerts:
+          - exp_labels:
+              job: promtail-compute
+              severity: warn
+              component: prometheus
+              family: compute_metrics_scrape
+            exp_annotations:
+              summary: "Compute metrics scrape coverage is incomplete for promtail-compute"
+              description: "Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for promtail-compute. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing a scrape series. Check the per-node up status and scrape errors in the discovery runbook."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+  # A stale producer must remain a discovery alert, not a downstream scrape
+  # alert. This prevents a frozen target list from producing duplicate noise.
+  - interval: 30s
+    name: "stale discovery suppresses downstream scrape alerts"
+    input_series:
+      - series: 'up{job="gatewayd-internal",instance="fsn-2.gregale.dev:8080",node="fsn-2.faas",node_id="node-2"}'
+        values: '0x31'
+      - series: 'apid_metrics_discovery_targets{job="gatewayd-internal"}'
+        values: '1x31'
+      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="gatewayd-internal"}'
+        values: '0x31'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasComputeMetricsDiscoveryStale
+        exp_alerts:
+          - exp_labels:
+              job: gatewayd-internal
+              severity: warn
+              component: apid
+              family: compute_metrics_discovery
+            exp_annotations:
+              summary: "Compute metrics discovery is stale for gatewayd-internal"
+              description: "apid has not completed a successful registry-backed HTTP-SD snapshot for gatewayd-internal within 120s. Prometheus may still be healthy while compute-node metrics coverage is frozen or missing. Check apid availability, its database pool, and the discovery runbook."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+      - eval_time: 10m
+        alertname: FaasComputeMetricsScrapeCoverageLow
+      - eval_time: 10m
+        alertname: FaasComputeMetricsScrapeTargetDown

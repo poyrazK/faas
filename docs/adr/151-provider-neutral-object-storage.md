@@ -1,4 +1,4 @@
-# ADR-147 · Provider-neutral customer object storage
+# ADR-151 · Provider-neutral customer object storage
 
 - **Status:** accepted for an opt-in preview; public launch pending provider qualification and billing integration.
 - **Date:** 2026-09-05

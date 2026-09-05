@@ -888,6 +888,10 @@ func TestOpsMetrics_SnapshotDiskDriftNilSafe(t *testing.T) {
 func TestOpsMetrics_WakePhaseClosedSet(t *testing.T) {
 	for _, prefix := range []string{"schedd", "vmmd", "gatewayd_internal", "apid", "builderd"} {
 		m := wire.NewOpsMetrics(prefix)
+		durationName := prefix + "_wake_phase_duration_seconds"
+		if prefix == "vmmd" {
+			durationName = "vmmd_wake_event_write_duration_seconds"
+		}
 		// Increment one phase to verify the counter surfaces
 		// under the correct metric name.
 		m.WakePhaseEmitted("boot_started", "ok").Inc()
@@ -897,7 +901,7 @@ func TestOpsMetrics_WakePhaseClosedSet(t *testing.T) {
 		if !strings.Contains(body, prefix+"_wake_phase_emitted_total{phase=\"boot_started\",result=\"ok\"} 1") {
 			t.Errorf("prefix=%s missing wake_phase_emitted counter; body:\n%s", prefix, body)
 		}
-		if !strings.Contains(body, prefix+"_wake_phase_duration_seconds_count{phase=\"boot_started\",result=\"ok\"} 1") {
+		if !strings.Contains(body, durationName+"_count{phase=\"boot_started\",result=\"ok\"} 1") {
 			t.Errorf("prefix=%s missing wake_phase_duration histogram; body:\n%s", prefix, body)
 		}
 		// Each pre-instantiated (phase, result) tuple must
@@ -906,7 +910,7 @@ func TestOpsMetrics_WakePhaseClosedSet(t *testing.T) {
 		for _, want := range []string{
 			prefix + `_wake_phase_emitted_total{phase="readiness_200",result="ok"} 0`,
 			prefix + `_wake_phase_emitted_total{phase="build_failed",result="failed"} 0`,
-			prefix + `_wake_phase_duration_seconds_count{phase="proxy_first_byte",result="ok"} 0`,
+			durationName + `_count{phase="proxy_first_byte",result="ok"} 0`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("prefix=%s missing pre-instantiated cell %q", prefix, want)

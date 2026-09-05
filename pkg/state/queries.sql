@@ -2027,3 +2027,13 @@ AND ($1 = 'deleting' OR state = 'provisioning') RETURNING *;
 
 -- name: ObjectBucketFinish :execrows
 UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now() WHERE id = $2 AND lease_token = $3;
+
+-- name: SnapshotLocalityNodes :many
+SELECT node_id::text AS node_id, true AS is_origin
+FROM snapshot_origins
+WHERE snapshot_id = $1::uuid AND node_id IS NOT NULL
+UNION ALL
+SELECT node_id::text AS node_id, false AS is_origin
+FROM snapshot_replicas
+WHERE snapshot_id = $1::uuid AND state = 'ready'
+ORDER BY node_id, is_origin DESC;

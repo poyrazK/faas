@@ -3,7 +3,7 @@
 Gregale can manage private S3-backed object buckets without operating storage
 nodes. Compute remains stateless: these are not VM volumes. The dashboard's
 Storage page keeps object buckets separate from snapshot/image-layer usage.
-Architecture and launch boundaries: [ADR-147](adr/147-provider-neutral-object-storage.md).
+Architecture and launch boundaries: [ADR-151](adr/151-provider-neutral-object-storage.md).
 
 ## Enable a qualified backend
 

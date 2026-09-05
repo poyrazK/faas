@@ -26,6 +26,9 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// PreparedNetworks bounds the optional cache of unused namespaces.
+	// Zero disables it; FAAS_PREPARED_NETWORKS overrides TOML for canaries.
+	PreparedNetworks int `toml:"prepared_networks"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -493,6 +496,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_VCPU_BUDGET %q must be a positive integer", v)
 		}
 		c.ComputeNode.VCPUBudget = n
+	}
+	if v := os.Getenv("FAAS_PREPARED_NETWORKS"); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 || n > api.MaxPreparedNetworkCacheSize {
+			return nil, fmt.Errorf("vmmd: FAAS_PREPARED_NETWORKS must be between 0 and %d", api.MaxPreparedNetworkCacheSize)
+		}
+		c.PreparedNetworks = n
 	}
 	// Issue #938 / PR-A: reject non-positive TOML values for
 	// [compute_node].vcpu_budget at LoadConfig rather than letting them

@@ -23,7 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 147 | [Provider-neutral customer object storage](147-provider-neutral-object-storage.md): opt-in managed S3 buckets with durable placement and provider-neutral APIs | accepted for preview | S3 preview milestone; public launch pending billing and backend qualification |
+| 151 | [Provider-neutral customer object storage](151-provider-neutral-object-storage.md): opt-in managed S3 buckets with durable placement and provider-neutral APIs | accepted for preview | S3 preview milestone; public launch pending billing and backend qualification |
 | 001–010 | Locked v1 decisions | accepted | spec §3 |
 | 011 | Thin dashboard at launch (was gap G3) | accepted | UX spec §11 — landed before M7.5 code |
 | 012 | `githubd` / GitHub App for push-to-deploy | accepted | UX spec §11 — landed before M7.5 code |
@@ -163,3 +163,10 @@ Files carrying the banner:
 
 ADR-070 itself is the source of truth for the split and carries an end-of-file
 note instead of the banner.
+
+## Snapshot restore optimization decisions
+
+- [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)
+- [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
+- [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
+- [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)

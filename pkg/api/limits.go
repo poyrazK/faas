@@ -3987,6 +3987,12 @@ const (
 	// it lives in pkg/netns/config.go::NftCommands.
 	DefaultConntrackCap = 4096
 
+	// MaxPreparedNetworkCacheSize bounds unused host network namespaces.
+	// This is separate from admitted VMs, RAM, vCPUs, and per-app concurrency.
+	MaxPreparedNetworkCacheSize            = 16
+	PreparedNetworkCacheTTLSeconds         = 60
+	PreparedNetworkOperationTimeoutSeconds = 2
+
 	// ConntrackCap is the spec §7 per-instance conntrack cap value.
 	// Use ConntrackCapProbe() at runtime to get the effective value,
 	// which falls back to 0 on kernels without per-netns conntrack
