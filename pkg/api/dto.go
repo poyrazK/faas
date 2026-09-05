@@ -4674,6 +4674,24 @@ const (
 	SidecarTypeSidecar SidecarType = "sidecar"
 )
 
+// WorkloadDependencyCondition controls when a workload may start after one
+// of its dependencies reaches a lifecycle milestone. An empty condition is
+// treated as started for backwards-compatible clients that omit it.
+type WorkloadDependencyCondition string
+
+const (
+	WorkloadDependencyStarted               WorkloadDependencyCondition = "started"
+	WorkloadDependencyHealthy               WorkloadDependencyCondition = "healthy"
+	WorkloadDependencyCompletedSuccessfully WorkloadDependencyCondition = "completed_successfully"
+)
+
+// WorkloadDependency describes one dependency in a bounded workload set.
+// Name is "main" for the primary workload or the name of another sidecar.
+type WorkloadDependency struct {
+	Name      string                      `json:"name"`
+	Condition WorkloadDependencyCondition `json:"condition,omitempty"`
+}
+
 // EvictionPriority is the per-app tier classification (issue #475).
 // 'best_effort' keeps the historical LRU-by-last_request_at reaper
 // behaviour: under cross-account RAM pressure, schedd may park the
@@ -4771,20 +4789,26 @@ type Sidecar struct {
 	// means "absent / inherit the plan RAM" (the common case).
 	// 32..512 enforced at the API layer.
 	RamMB int `json:"ram_mb,omitempty"`
-	// Essential defaults to true. If true and the sidecar exits
-	// non-zero: type=init → fail the deploy with
-	// `failure_class=user_error`; type=sidecar → restart-loop.
-	// If false: warn-log + restart-cap (PR-B's runtime contract).
+	// Essential defaults to true. If true and the workload exits
+	// non-zero: the dependency set fails (`failure_class=user_error`)
+	// and essential long-running sidecars restart-loop. If false,
+	// the failure is logged and the other workloads continue.
 	// *bool so the wire form can distinguish "don't set" (nil)
 	// from "explicit true/false". PR-A only persists the field;
 	// the runtime effect is PR-B.
 	Essential *bool `json:"essential,omitempty"`
+	// DependsOn gates this workload on another workload's lifecycle state.
+	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
+	// condition means started. Init workloads remain prerequisites of the main
+	// workload and long-running sidecars for compatibility.
+	DependsOn []WorkloadDependency `json:"depends_on,omitempty"`
 }
 
 // Validate enforces ADR-068 §Decisions 1, 2, 4, 5: name grammar,
 // digest-pinning, type ∈ {init, sidecar}, cmd element non-empty,
 // env key grammar + per-value byte cap, port 0/absent or 1..65535,
-// ram_mb 0/inherit or 32..512, stateful denylist.
+// ram_mb 0/inherit or 32..512, stateful denylist, and dependency
+// condition/name syntax.
 //
 // Returns nil on success or a *Problem with RFC 7807 status 400
 // (or 403 for stateful image). The handler maps this directly to
@@ -4795,6 +4819,11 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	}
 	if !sidecarNameRe.MatchString(s.Name) {
 		return ErrSidecarInvalidName(s.Name)
+	}
+	if s.Name == "main" {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar name",
+			"sidecar name \"main\" is reserved for the primary workload.")
 	}
 	if !sidecarImageRe.MatchString(s.Image) {
 		return ErrSidecarInvalidImage(s.Name,
@@ -4841,6 +4870,37 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if s.RamMB != 0 && (s.RamMB < 32 || s.RamMB > 512) {
 		return ErrSidecarInvalidRamMB(s.RamMB)
 	}
+	if len(s.DependsOn) > WorkloadDependencyCapMax {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar dependency",
+			fmt.Sprintf("sidecar[%q] has %d dependencies; max is %d.", s.Name, len(s.DependsOn), WorkloadDependencyCapMax))
+	}
+	seenDeps := make(map[string]struct{}, len(s.DependsOn))
+	for i, dep := range s.DependsOn {
+		if !sidecarNameRe.MatchString(dep.Name) && dep.Name != "main" {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependency",
+				fmt.Sprintf("sidecar[%q].depends_on[%d].name %q is not a workload name.", s.Name, i, dep.Name))
+		}
+		if dep.Name == s.Name {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependency",
+				fmt.Sprintf("sidecar[%q] cannot depend on itself.", s.Name))
+		}
+		if _, ok := seenDeps[dep.Name]; ok {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependency",
+				fmt.Sprintf("sidecar[%q] depends on workload %q more than once.", s.Name, dep.Name))
+		}
+		seenDeps[dep.Name] = struct{}{}
+		switch dep.Condition {
+		case "", WorkloadDependencyStarted, WorkloadDependencyHealthy, WorkloadDependencyCompletedSuccessfully:
+		default:
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependency",
+				fmt.Sprintf("sidecar[%q].depends_on[%d].condition %q is invalid; use started, healthy, or completed_successfully.", s.Name, i, dep.Condition))
+		}
+	}
 	return nil
 }
 
@@ -4877,7 +4937,73 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 				fmt.Sprintf("at most one sidecar of type %q (got %d)", ss[i].Type, seen[ss[i].Type]))
 		}
 	}
+	// Validate the complete graph, including compatibility edges that keep
+	// init workloads ahead of the main and long-running sidecars. This catches
+	// unknown names and cycles before the request is persisted or reaches
+	// guest-init.
+	deps := map[string][]string{"main": nil}
+	for _, sc := range ss {
+		for _, dep := range sc.DependsOn {
+			if dep.Name != "main" && !names[dep.Name] {
+				return NewProblem(http.StatusBadRequest, CodeValidation,
+					"Invalid sidecar dependency",
+					fmt.Sprintf("sidecar[%q] depends on unknown workload %q.", sc.Name, dep.Name))
+			}
+			deps[sc.Name] = append(deps[sc.Name], dep.Name)
+		}
+	}
+	for _, sc := range ss {
+		if sc.Type == SidecarTypeInit {
+			deps["main"] = appendUniqueDependencyName(deps["main"], sc.Name)
+		}
+	}
+	for _, sc := range ss {
+		if sc.Type == SidecarTypeSidecar {
+			for _, init := range ss {
+				if init.Type == SidecarTypeInit {
+					deps[sc.Name] = appendUniqueDependencyName(deps[sc.Name], init.Name)
+				}
+			}
+		}
+	}
+	state := make(map[string]uint8, len(deps))
+	var visit func(string) *Problem
+	visit = func(name string) *Problem {
+		switch state[name] {
+		case 1:
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependencies",
+				fmt.Sprintf("workload dependency graph contains a cycle involving %q.", name))
+		case 2:
+			return nil
+		}
+		state[name] = 1
+		for _, dep := range deps[name] {
+			if p := visit(dep); p != nil {
+				return p
+			}
+		}
+		state[name] = 2
+		return nil
+	}
+	for _, sc := range ss {
+		if p := visit(sc.Name); p != nil {
+			return p
+		}
+	}
+	if p := visit("main"); p != nil {
+		return p
+	}
 	return nil
+}
+
+func appendUniqueDependencyName(names []string, name string) []string {
+	for _, existing := range names {
+		if existing == name {
+			return names
+		}
+	}
+	return append(names, name)
 }
 
 // --- per-account egress allowlist extra (issue #679 / PR-B / ADR-082) ---
