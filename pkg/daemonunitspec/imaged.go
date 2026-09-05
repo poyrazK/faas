@@ -41,10 +41,12 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // canonical source for typed config (cmd/imaged/main.go:392-401).
 func UnitImaged() daemonunit.Unit {
 	return daemonunit.Unit{
-		Description:   "onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)",
-		Documentation: "https://docs.gregale.dev/ops/imaged",
-		After:         []string{"network.target", "faas-cp.slice", "faas-vmmd.service"},
-		Wants:         []string{"faas-cp.slice", "faas-vmmd.service"},
+		Description:           "onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)",
+		Documentation:         "https://docs.gregale.dev/ops/imaged",
+		After:                 []string{"network.target", "faas-cp.slice", "faas-vmmd.service"},
+		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service"},
+		StartLimitIntervalSec: "60s",
+		StartLimitBurst:       "5",
 
 		Type:               "simple",
 		User:               "faas-imaged",

@@ -3,6 +3,8 @@ Description=onebox-faas vmmd — microVM supervisor (the only root component, sp
 Documentation=https://docs.gregale.dev/ops/vmmd
 After=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice
 Wants=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple

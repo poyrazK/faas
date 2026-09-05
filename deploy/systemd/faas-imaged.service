@@ -3,6 +3,8 @@ Description=onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-
 Documentation=https://docs.gregale.dev/ops/imaged
 After=network.target faas-cp.slice faas-vmmd.service
 Wants=faas-cp.slice faas-vmmd.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple

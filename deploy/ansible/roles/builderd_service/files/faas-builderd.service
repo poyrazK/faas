@@ -3,6 +3,8 @@ Description=onebox-faas builderd — build orchestrator + ephemeral builder micr
 Documentation=https://docs.gregale.dev/ops/builderd
 After=network.target faas-cp.slice faas-vmmd.service
 Wants=faas-cp.slice faas-vmmd.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple

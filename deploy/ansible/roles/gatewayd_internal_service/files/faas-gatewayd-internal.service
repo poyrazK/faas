@@ -3,6 +3,8 @@ Description=onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 sp
 Documentation=https://docs.gregale.dev/ops/gatewayd-internal
 After=faas-cp.slice network-online.target faas-vmmd.service
 Wants=faas-cp.slice faas-vmmd.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
