@@ -130,6 +130,22 @@ type CreateAppRequest struct {
 	OverflowNode *string `json:"overflow_node,omitempty"`
 }
 
+// UpsertDevSessionRequest describes the application shape for an expiring,
+// CLI-managed developer preview. The project identity lives in the URL path;
+// this body only carries the shape needed before the first source upload.
+type UpsertDevSessionRequest struct {
+	Type    string `json:"type,omitempty"`    // "app" (default) | "function"
+	Runtime string `json:"runtime,omitempty"` // required for functions
+}
+
+// DevSessionResponse is returned when a developer preview is created or its
+// lease is refreshed. App.URL is the stable browser URL for this account and
+// project; ExpiresAt is renewed whenever the CLI syncs source.
+type DevSessionResponse struct {
+	App       AppResponse `json:"app"`
+	ExpiresAt time.Time   `json:"expires_at"`
+}
+
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".

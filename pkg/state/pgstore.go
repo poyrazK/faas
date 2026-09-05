@@ -2264,6 +2264,26 @@ func (s *PgStore) SetPreviewPrState(ctx context.Context, appID, prState string) 
 	return a, nil
 }
 
+// RefreshDevSession renews the lease on a CLI-created developer preview.
+// The preview_pr_number=0 guard keeps this path from reopening or extending a
+// GitHub PR preview, while the status predicate prevents reviving a row the
+// janitor has already tombstoned.
+func (s *PgStore) RefreshDevSession(ctx context.Context, appID string, expiresAt time.Time) (App, error) {
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		set preview_pr_state = $2, preview_expires_at = $3
+		where id = $1
+		  and preview_of_slug is not null
+		  and coalesce(preview_pr_number, 0) = 0
+		  and status <> 'deleted'
+		returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
+	if err := scanAppInto(&a, row); err != nil {
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
 // StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961 leaf 3)
 // records that the one-click PR comment destroy hint was posted
 // to GitHub for this preview row. githubd's previewCommentOnce

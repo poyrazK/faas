@@ -874,6 +874,14 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 // the runner wires up correctly without the customer having to know
 // those flags.
 func cmdDeployTarball(args []string) int {
+	return cmdDeployTarballToExisting(args, false)
+}
+
+// cmdDeployTarballToExisting is the shared deploy implementation. `gregale
+// dev` has already reserved its preview app, so it skips the create-or-fetch
+// probe; this also avoids incorrectly tripping the app-count quota while
+// redeploying an existing developer environment.
+func cmdDeployTarballToExisting(args []string, existingApp bool) int {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
@@ -1749,9 +1757,11 @@ func cmdDeployTarball(args []string) int {
 	if err != nil {
 		return printErr("Workflow manifest validation failed", err)
 	}
-	createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr)
-	if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr); err != nil {
-		return printErr("Could not create or fetch app", err)
+	if !existingApp {
+		createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr)
+		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr); err != nil {
+			return printErr("Could not create or fetch app", err)
+		}
 	}
 
 	// Issue #791 PR-C / ADR-090: gregale.yaml triggers fan-out. Runs

@@ -2669,6 +2669,23 @@ func (m *MemStore) SetPreviewPrState(_ context.Context, appID, prState string) (
 	return a, nil
 }
 
+// RefreshDevSession is the in-memory mirror of PgStore.RefreshDevSession.
+// preview_pr_number=0 is the discriminator for CLI-created developer
+// sessions; GitHub PR previews are never eligible for this transition.
+func (m *MemStore) RefreshDevSession(_ context.Context, appID string, expiresAt time.Time) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[appID]
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber != 0 || a.Status == AppDeleted {
+		return App{}, ErrNotFound
+	}
+	t := expiresAt
+	a.PreviewPrState = PreviewPrStateOpen
+	a.PreviewExpiresAt = &t
+	m.apps[appID] = a
+	return a, nil
+}
+
 // StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961 leaf 3)
 // is the MemStore mirror of PgStore.StampPreviewDestroyCommentedAt.
 // Preview-only by construction; production rows return

@@ -2760,7 +2760,11 @@ func repoFullNameFromSourceURL(sourceURL string) string {
 func projectPreviewItems(rows []state.App, parentSlug, domain string) []dashboard.PreviewItem {
 	out := make([]dashboard.PreviewItem, 0, len(rows))
 	for _, a := range rows {
-		scope := fmt.Sprintf("pr-%d-%s", a.PreviewPrNumber, parentSlug)
+		isDev := a.PreviewPrNumber == 0
+		scope := a.Slug
+		if !isDev {
+			scope = fmt.Sprintf("pr-%d-%s", a.PreviewPrNumber, parentSlug)
+		}
 		url := appURLForDomain(scope, domain)
 		if domain == "" {
 			url = scope
@@ -2769,6 +2773,7 @@ func projectPreviewItems(rows []state.App, parentSlug, domain string) []dashboar
 			Slug:       a.Slug,
 			URL:        url,
 			PrNumber:   a.PreviewPrNumber,
+			IsDev:      isDev,
 			PrState:    a.PreviewPrState,
 			StateLabel: a.PreviewPrState,
 			StateClass: "preview-state-" + a.PreviewPrState,

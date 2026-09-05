@@ -1077,6 +1077,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/internal/metrics/promtail-targets", s.promtailMetricsDiscovery)
 	mux.HandleFunc("GET /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listApps))))
 	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createApp)))))
+	// `gregale dev`: one stable, expiring preview app per account/project.
+	// Source bytes still flow through the normal deployment endpoints; these
+	// routes only own the developer-session lease.
+	mux.HandleFunc("PUT /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.upsertDevSession))))
+	mux.HandleFunc("DELETE /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyDevSession))))
 	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getApp))))
 	// Issue #273 / ADR-042 — per-app metrics endpoint. Read-only,
 	// no MFA required (the primary caller is an API key with

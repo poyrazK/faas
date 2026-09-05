@@ -1503,6 +1503,11 @@ type Store interface {
 	// production app id is ErrNotFound, so a bug in the janitor's
 	// query can never relabel a customer's live app.
 	SetPreviewPrState(ctx context.Context, appID, prState string) (App, error)
+	// RefreshDevSession extends an ad-hoc developer preview's lease and
+	// restores its serving state to open. Developer previews are encoded as
+	// preview rows with preview_pr_number=0; the implementation must refuse
+	// ordinary PR previews and production apps.
+	RefreshDevSession(ctx context.Context, appID string, expiresAt time.Time) (App, error)
 	// StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961
 	// leaf 3) records that the one-click PR comment destroy hint
 	// was posted to GitHub for this preview row. githubd's

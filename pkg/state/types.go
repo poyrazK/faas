@@ -1006,8 +1006,9 @@ type App struct {
 	PreviewOfSlug string
 	// PreviewPrNumber is the GitHub PR number this preview row
 	// tracks. Stable across synchronize/reopened events on the
-	// same PR; the slug is `pr-{N}-{parent_slug}`. Zero on
-	// production apps.
+	// same PR; the slug is `pr-{N}-{parent_slug}`. Zero identifies
+	// an ad-hoc developer preview (and is also the Go zero value on
+	// production apps, where PreviewOfSlug is empty).
 	PreviewPrNumber int
 	// PreviewPrState is the closed-set lifecycle label on a
 	// preview row. NULL on production apps. The

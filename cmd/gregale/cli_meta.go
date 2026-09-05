@@ -570,6 +570,17 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "dev",
+		DocSlug: "dev",
+		Short:   "Sync the dirty working tree to a stable remote developer environment",
+		Flags: []cliFlag{
+			{Name: "path", Short: "source directory", Value: "DIR"},
+			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
+			{Name: "once", Short: "deploy once and exit"},
+			{Name: "stop", Short: "tear down the developer environment"},
+		},
+	},
+	{
 		Name:    "preview",
 		DocSlug: "preview",
 		Short:   "Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)",
