@@ -897,13 +897,10 @@ const (
 // The new stamp is written by /v1/account/mfa/verify on every
 // success — see cmd/apid/handlers_mfa.go reissueSessionCookie.
 //
-// PR-9: a per-route opt-in is needed for acceptInvitation: the
-// threat model "a bearer with a leaked invitation token can mint
-// themselves into the target org without a fresh TOTP" is closed
-// by RequireStepUpStrict, which fails-fast on the no-stamp branch
-// (the bearer path). All other sensitive routes continue to use
-// RequireStepUp with the documented bypass until the next PR
-// audits each route's threat model individually.
+// RequireStepUpStrict is the opt-in for operations where a bearer must
+// never be enough proof. Invitation acceptance and provider-admin
+// mutations use it; other legacy sensitive routes retain the documented
+// lax key-as-proof posture until they are migrated.
 func (m *Middleware) RequireStepUp(ttl time.Duration) func(AccountHandler) AccountHandler {
 	return m.requireStepUp(ttl, false)
 }
@@ -916,9 +913,9 @@ func (m *Middleware) RequireStepUp(ttl time.Duration) func(AccountHandler) Accou
 // step-up chain exists to require a fresh TOTP even from the
 // bearer principal.
 //
-// PR-9: acceptInvitation is the first route to mount Strict.
-// Future PRs audit each remaining requireStepUp mount individually
-// (cmd/apid/server.go grep `requireStepUp` for the full list).
+// PR-9 introduced Strict for invitation acceptance. Provider-admin
+// mutations use the same strict gate so bearer/API-key principals are
+// rejected consistently across the control plane.
 //
 // The cookie path is unchanged — the absence of a step-up stamp
 // on a session-cookie principal still fails-fast (the v1 cookie

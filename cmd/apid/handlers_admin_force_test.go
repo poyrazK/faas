@@ -66,6 +66,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -149,7 +150,8 @@ func (f *fakeStoreForIntent) InsertOperatorIntent(
 // fakeStoreForIntent. The admin allowlist is set to the caller's
 // email so adminAllowlist (compute_nodes.go:74-86) passes —
 // without it the request would 403 before reaching the handler.
-// The bearer carries admin scope. The notifier is overridden
+// The harness mints a verified operator session with a fresh
+// step-up stamp. The notifier is overridden
 // with the existing captureNotifier (handlers_traffic_notify_test.go)
 // when fake != nil so tests can assert Notify calls; otherwise
 // the default noopNotifier is used (covers sweep-builds tests
@@ -163,18 +165,11 @@ func (f *fakeStoreForIntent) InsertOperatorIntent(
 // via the returned *state.MemStore so seedRunningInstance /
 // seedAppAndDeployment can call store methods like
 // CreateAccount / CreateApp that the wrapper delegates.
-func newForceHarness(t *testing.T, fake *fakeStoreForIntent) (*server, *state.MemStore, string) {
+func newForceHarness(t *testing.T, fake *fakeStoreForIntent) (*server, *state.MemStore, *http.Cookie) {
 	t.Helper()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(context.Background(), "ops@example.com", api.PlanPro)
 	if err != nil {
-		t.Fatal(err)
-	}
-	pt, hash, err := api.GenerateAPIKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "force-test", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
 	ops := wire.NewOpsMetrics("apid_force_test")
@@ -190,7 +185,15 @@ func newForceHarness(t *testing.T, fake *fakeStoreForIntent) (*server, *state.Me
 	if fake != nil {
 		srv.notif = &captureNotifier{}
 	}
-	return srv, store, pt
+	sid := uuid.NewString()
+	if _, err := store.CreateSession(context.Background(), sid, acct.ID, "192.0.2.10", "force-test-ua"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	token, err := srv.sessions.IssueWithSessionAndBindingHashAndStepUp(sid, acct.ID, "", time.Now(), false)
+	if err != nil {
+		t.Fatalf("IssueWithSessionAndBindingHashAndStepUp: %v", err)
+	}
+	return srv, store, &http.Cookie{Name: sessionCookie, Value: token}
 }
 
 // notifyCountByChannel returns the number of captured Notify
@@ -276,12 +279,13 @@ func seedAppAndDeployment(t *testing.T, store *state.MemStore) (string, string, 
 func TestPostForcePark_TableDriven(t *testing.T) {
 	t.Run("missing_confirm_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -298,13 +302,14 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 
 	t.Run("invalid_reason_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		// Space + punctuation are not in [a-z0-9_]; handler must 400.
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true&reason=has%20space", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -318,11 +323,12 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 
 	t.Run("invalid_uuid_returns_404", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, _, key := newForceHarness(t, fake)
+		srv, _, cookie := newForceHarness(t, fake)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/not-a-uuid/force-park?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -338,11 +344,12 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 		// The MemStore has no instance at this uuid — gate-time
 		// read fails, handler returns 404 with no intent insert.
 		fake := &fakeStoreForIntent{}
-		srv, _, key := newForceHarness(t, fake)
+		srv, _, cookie := newForceHarness(t, fake)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/00000000-0000-0000-0000-000000000000/force-park?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -356,12 +363,13 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 
 	t.Run("parked_state_returns_409_no_intent", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "PARKED")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true&reason=already_parked", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -382,12 +390,13 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 
 	t.Run("store_returns_error_returns_500", func(t *testing.T) {
 		fake := &fakeStoreForIntent{insertErr: errors.New("connection refused")}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -405,12 +414,13 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 
 	t.Run("happy_path_inserts_intent_returns_202", func(t *testing.T) {
 		fake := &fakeStoreForIntent{nextIntentID: "11111111-1111-1111-1111-111111111111"}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true&reason=incident_42", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -460,13 +470,14 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 		// We swap in a failingNotifier that returns the drop error
 		// so we can pin the "logged but not surfaced" semantics.
 		fake := &fakeStoreForIntent{nextIntentID: "22222222-2222-2222-2222-222222222222"}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		srv.notif = &failingNotifier{err: errors.New("pg notify dropped")}
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -495,11 +506,12 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 func TestPostForceColdBoot_TableDriven(t *testing.T) {
 	t.Run("missing_confirm_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, _, key := newForceHarness(t, fake)
+		srv, _, cookie := newForceHarness(t, fake)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/apps/tenant-app/force-cold-boot", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -513,11 +525,12 @@ func TestPostForceColdBoot_TableDriven(t *testing.T) {
 
 	t.Run("invalid_reason_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, _, key := newForceHarness(t, fake)
+		srv, _, cookie := newForceHarness(t, fake)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/apps/tenant-app/force-cold-boot?confirm=true&reason=has%20space", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -531,11 +544,12 @@ func TestPostForceColdBoot_TableDriven(t *testing.T) {
 
 	t.Run("unknown_slug_returns_404", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, _, key := newForceHarness(t, fake)
+		srv, _, cookie := newForceHarness(t, fake)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/apps/does-not-exist/force-cold-boot?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -549,12 +563,13 @@ func TestPostForceColdBoot_TableDriven(t *testing.T) {
 
 	t.Run("happy_path_inserts_intent_returns_202", func(t *testing.T) {
 		fake := &fakeStoreForIntent{nextIntentID: "33333333-3333-3333-3333-333333333333"}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		appID, depID, _ := seedAppAndDeployment(t, store)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/apps/tenant-app/force-cold-boot?confirm=true&reason=incident_42", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -605,12 +620,13 @@ func TestPostForceColdBoot_TableDriven(t *testing.T) {
 
 	t.Run("store_returns_error_returns_500", func(t *testing.T) {
 		fake := &fakeStoreForIntent{insertErr: errors.New("connection refused")}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		_, _, _ = seedAppAndDeployment(t, store)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/apps/tenant-app/force-cold-boot?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -669,12 +685,13 @@ func (f *failingNotifier) WaitFor(_ context.Context, _ string, _ func(payload st
 func TestPostForceRestart_TableDriven(t *testing.T) {
 	t.Run("missing_confirm_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -691,13 +708,14 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 
 	t.Run("invalid_reason_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		// Space + punctuation are not in [a-z0-9_]; handler must 400.
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true&reason=has%20space", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -711,11 +729,12 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 
 	t.Run("invalid_uuid_returns_404", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, _, key := newForceHarness(t, fake)
+		srv, _, cookie := newForceHarness(t, fake)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/not-a-uuid/force-restart?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -731,11 +750,12 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 		// The MemStore has no instance at this uuid — gate-time
 		// read fails, handler returns 404 with no intent insert.
 		fake := &fakeStoreForIntent{}
-		srv, _, key := newForceHarness(t, fake)
+		srv, _, cookie := newForceHarness(t, fake)
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/00000000-0000-0000-0000-000000000000/force-restart?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -749,12 +769,13 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 
 	t.Run("parked_state_returns_409_no_intent", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "PARKED")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true&reason=already_parked", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -781,12 +802,13 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 		// misleading 202-then-fail. WAKING instances get 409
 		// instance_not_restartable with NO intent row written.
 		fake := &fakeStoreForIntent{}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "WAKING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -810,12 +832,13 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 		// eligible for force-restart because the engine's locked
 		// re-read rejects them as state.ErrInstanceNotRunning.
 		fake := &fakeStoreForIntent{}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "COLD_BOOTING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -836,12 +859,13 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 
 	t.Run("store_returns_error_returns_500", func(t *testing.T) {
 		fake := &fakeStoreForIntent{insertErr: errors.New("connection refused")}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -859,12 +883,13 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 
 	t.Run("happy_path_inserts_intent_returns_202", func(t *testing.T) {
 		fake := &fakeStoreForIntent{nextIntentID: "44444444-4444-4444-4444-444444444444"}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true&reason=incident_42", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
@@ -912,13 +937,14 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 		// the 30s safety tick reclaims it, the response is still
 		// 202 Accepted. Same precedent as handlers_cron_run.go.
 		fake := &fakeStoreForIntent{nextIntentID: "55555555-5555-5555-5555-555555555555"}
-		srv, store, key := newForceHarness(t, fake)
+		srv, store, cookie := newForceHarness(t, fake)
 		srv.notif = &failingNotifier{err: errors.New("pg notify dropped")}
 		insID, _ := seedRunningInstance(t, store, "RUNNING")
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true", nil)
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 

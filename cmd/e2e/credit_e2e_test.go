@@ -19,6 +19,8 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -31,11 +33,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestE2E_CreditIssue_AdminKey — POST /v1/admin/accounts/{id}/credits
-// from an admin-scoped key with the email in FAAS_ADMIN_EMAILS lands a
+// from a verified operator session with the email in FAAS_ADMIN_EMAILS lands a
 // row in account_credits + a row in credit_ledger + an audit event of
 // kind "credit.issued". Mirrors TestIssueCredit_HappyPath at the
 // handler unit-test layer (cmd/apid/handlers_admin_credits_test.go);
@@ -57,10 +60,26 @@ func TestE2E_CreditIssue_AdminKey(t *testing.T) {
 	// must match what SeedAccount produces for the operator.
 	const adminEmail = "e2e+hobby+admin@test.example"
 	const targetEmail = "e2e+hobby+credit-target@test.example"
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		t.Fatalf("session key: %v", err)
+	}
+	// NewManager deliberately zeroes the caller-owned key slice after
+	// copying it into the manager. Preserve the encoded value before
+	// construction so the apid subprocess receives the same key used to
+	// mint the test cookie.
+	keyHex := hex.EncodeToString(keyBytes)
+	sessionMgr, err := session.NewManager(keyBytes, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("session manager: %v", err)
+	}
 
 	h := e2etest.StartWithEnv(t, pool,
 		e2etest.APID,
-		[]string{"FAAS_ADMIN_EMAILS=" + adminEmail})
+		[]string{
+			"FAAS_ADMIN_EMAILS=" + adminEmail,
+			"FAAS_SESSION_KEY=" + keyHex,
+		})
 
 	store := state.NewPgStore(pool)
 
@@ -74,10 +93,22 @@ func TestE2E_CreditIssue_AdminKey(t *testing.T) {
 		}
 	}
 
-	// Seed the operator account + admin API key. SeedAccount stamps a
-	// fresh admin-scoped bearer and the matching email is in the
-	// allowlist above.
-	adminToken := h.SeedAccount(ctx, api.PlanHobby, "admin")
+	// Seed the operator account, then mint the same verified session cookie
+	// that the operations console uses. Provider-admin mutations deliberately
+	// reject bearer/API-key principals.
+	h.SeedAccount(ctx, api.PlanHobby, "admin")
+	adminAcct, err := store.AccountByEmail(ctx, adminEmail)
+	if err != nil {
+		t.Fatalf("load admin account: %v", err)
+	}
+	sid := uuid.NewString()
+	if _, err := store.CreateSession(ctx, sid, adminAcct.ID, "192.0.2.10", "credit-e2e-ua"); err != nil {
+		t.Fatalf("create admin session: %v", err)
+	}
+	sessionToken, err := sessionMgr.IssueWithSessionAndBindingHashAndStepUp(sid, adminAcct.ID, "", time.Now(), false)
+	if err != nil {
+		t.Fatalf("issue admin session: %v", err)
+	}
 
 	body, err := json.Marshal(map[string]any{
 		"cents":  500,
@@ -92,7 +123,7 @@ func TestE2E_CreditIssue_AdminKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.AddCookie(&http.Cookie{Name: "faas_sid", Value: sessionToken})
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "e2e-credit-"+uuid.NewString())
 

@@ -52,7 +52,7 @@ func newIssueCreditEnv(t *testing.T, scopes []string, adminEmail, callerEmail st
 	}
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
 	srv.WithAdminAllowlist(adminEmail)
-	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct, ops: ops}
+	return testEnv{h: srv.handler(), s: srv, store: store, key: pt, acct: acct, ops: ops}
 }
 
 func TestIssueCredit_HappyPath(t *testing.T) {
@@ -63,7 +63,7 @@ func TestIssueCredit_HappyPath(t *testing.T) {
 	}
 	body := bytes.NewBufferString(`{"cents": 500, "reason": "goodwill for outage"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits", body)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	e.addAdminSession(t, req)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "test-credits-1")
 	rec := httptest.NewRecorder()
@@ -137,8 +137,10 @@ func TestIssueCredit_AdminScopeButEmailNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed target: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits",
-		map[string]any{"cents": 500, "reason": "goodwill for outage"}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits",
+		bytes.NewBufferString(`{"cents":500,"reason":"goodwill for outage"}`))
+	rec := httptest.NewRecorder()
+	e.s.issueCredit(rec, req, e.acct)
 	assertProblem(t, rec, http.StatusForbidden, "admin_required")
 }
 
@@ -158,7 +160,7 @@ func TestIssueCredit_RejectsBadReason(t *testing.T) {
 			if err != nil {
 				t.Fatalf("seed: %v", err)
 			}
-			rec := e.do(t, http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits",
+			rec := e.doAdmin(t, http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits",
 				map[string]any{"cents": 500, "reason": tc.reason}, nil)
 			assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 		})
@@ -180,7 +182,7 @@ func TestIssueCredit_RejectsBadCents(t *testing.T) {
 			if err != nil {
 				t.Fatalf("seed: %v", err)
 			}
-			rec := e.do(t, http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits",
+			rec := e.doAdmin(t, http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits",
 				map[string]any{"cents": tc.cents, "reason": "goodwill for outage"}, nil)
 			assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 		})
@@ -190,14 +192,14 @@ func TestIssueCredit_RejectsBadCents(t *testing.T) {
 func TestIssueCredit_AccountNotFound(t *testing.T) {
 	e := newIssueCreditEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
 	missingID := uuid.NewString()
-	rec := e.do(t, http.MethodPost, "/v1/admin/accounts/"+missingID+"/credits",
+	rec := e.doAdmin(t, http.MethodPost, "/v1/admin/accounts/"+missingID+"/credits",
 		map[string]any{"cents": 500, "reason": "goodwill for outage"}, nil)
 	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }
 
 func TestIssueCredit_BadUUID(t *testing.T) {
 	e := newIssueCreditEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
-	rec := e.do(t, http.MethodPost, "/v1/admin/accounts/not-a-uuid/credits",
+	rec := e.doAdmin(t, http.MethodPost, "/v1/admin/accounts/not-a-uuid/credits",
 		map[string]any{"cents": 500, "reason": "goodwill for outage"}, nil)
 	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
@@ -212,7 +214,7 @@ func TestIssueCredit_Idempotent(t *testing.T) {
 	// First call.
 	body := bytes.NewBufferString(`{"cents": 500, "reason": "goodwill for outage"}`)
 	req1 := httptest.NewRequest(http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits", body)
-	req1.Header.Set("Authorization", "Bearer "+e.key)
+	e.addAdminSession(t, req1)
 	req1.Header.Set("Content-Type", "application/json")
 	req1.Header.Set("Idempotency-Key", "test-credits-idem")
 	rec1 := httptest.NewRecorder()
@@ -228,7 +230,7 @@ func TestIssueCredit_Idempotent(t *testing.T) {
 	// Second call with the same Idempotency-Key + body.
 	body2 := bytes.NewBufferString(`{"cents": 500, "reason": "goodwill for outage"}`)
 	req2 := httptest.NewRequest(http.MethodPost, "/v1/admin/accounts/"+target.ID+"/credits", body2)
-	req2.Header.Set("Authorization", "Bearer "+e.key)
+	e.addAdminSession(t, req2)
 	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("Idempotency-Key", "test-credits-idem")
 	rec2 := httptest.NewRecorder()

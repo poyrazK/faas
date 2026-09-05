@@ -27,8 +27,11 @@ package main
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -79,13 +82,62 @@ func (s *server) requireStepUp(ttl time.Duration) func(accountHandler) accountHa
 
 // requireStepUpStrict is the PR-9 §4 twin of requireStepUp: same
 // 5m TTL but the bearer-key branch is rejected with 403 instead
-// of bypassed. Used on acceptInvitation only — the threat model
-// "a leaked invitation token can mint org membership without a
-// fresh TOTP" justifies the closure even on bearer principals.
-// The remaining 8 requireStepUp mounts keep the documented bypass
-// pending per-route audit.
+// of bypassed. It is used by invitation acceptance and the provider
+// admin mutation policy, where a leaked bearer must never be enough
+// to perform a privileged operation.
 func (s *server) requireStepUpStrict(ttl time.Duration) func(accountHandler) accountHandler {
 	return s.requireStepUpVariant(ttl, s.authMw.RequireStepUpStrict)
+}
+
+// requireAdminMutation is the single authentication policy for provider
+// control-plane writes. Unlike the legacy RequireMFA/RequireStepUp pair, the
+// strict step-up gate rejects bearer/API-key principals instead of treating a
+// key as an equivalent proof. Provider mutations must be performed from a
+// verified operator session with a recent TOTP step-up.
+//
+// Keep this helper next to the auth facade so adding a new /v1/admin mutation
+// requires choosing this policy explicitly at the route table rather than
+// repeating a subtly different middleware chain at every call site.
+func (s *server) requireAdminMutation(next accountHandler) accountHandler {
+	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(s.requireIdempotency(next)))))
+}
+
+// requireSameOrigin is a defense-in-depth browser boundary for provider
+// mutations. API clients and CLI callers generally omit Origin, so an absent
+// header is allowed; when a browser supplies Origin or Sec-Fetch-Site, the
+// request must come from the API host or the dedicated operations origin.
+// This prevents a customer-controlled page from driving an operator's
+// cookie-authenticated control-plane session.
+func (s *server) requireSameOrigin(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if site := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); site == "cross-site" {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+				"cross-origin request rejected", "provider-admin mutations require a trusted control-plane origin"))
+			return
+		}
+		if raw := strings.TrimSpace(r.Header.Get("Origin")); raw != "" {
+			origin, err := url.Parse(raw)
+			if err != nil || origin.Host == "" || !s.isTrustedAdminOrigin(origin, r) {
+				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+					"cross-origin request rejected", "provider-admin mutations require a trusted control-plane origin"))
+				return
+			}
+		}
+		next(w, r, acct)
+	}
+}
+
+func (s *server) isTrustedAdminOrigin(origin *url.URL, r *http.Request) bool {
+	originHost := strings.ToLower(origin.Hostname())
+	requestHost := strings.ToLower(r.Host)
+	if parsed, err := url.Parse("//" + r.Host); err == nil && parsed.Hostname() != "" {
+		requestHost = strings.ToLower(parsed.Hostname())
+	}
+	if originHost == requestHost {
+		return true
+	}
+	base := strings.ToLower(strings.TrimSpace(s.domain))
+	return base != "" && originHost == "operations."+base
 }
 
 // requireStepUpVariant is the shared body of requireStepUp /

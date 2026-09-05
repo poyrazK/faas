@@ -11,13 +11,13 @@ import (
 func TestRuntimeConfigRollback_HotRevision(t *testing.T) {
 	e := newObsEnv(t, []string{"admin"}, "ops@faas.dev", "ops@faas.dev")
 
-	first := e.do(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
+	first := e.doAdmin(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
 		"value": false, "reason": "establish rollback baseline",
 	}, nil)
 	if first.Code != http.StatusOK {
 		t.Fatalf("initial config update status = %d, want 200: %s", first.Code, first.Body.String())
 	}
-	second := e.do(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
+	second := e.doAdmin(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
 		"value": true, "reason": "enable placement for test",
 		"expected_version": int64(1),
 	}, nil)
@@ -25,7 +25,7 @@ func TestRuntimeConfigRollback_HotRevision(t *testing.T) {
 		t.Fatalf("second config update status = %d, want 200: %s", second.Code, second.Body.String())
 	}
 
-	rollback := e.do(t, http.MethodPost, "/v1/admin/config/data_placement_enabled/rollback", map[string]any{
+	rollback := e.doAdmin(t, http.MethodPost, "/v1/admin/config/data_placement_enabled/rollback", map[string]any{
 		"version":          1,
 		"reason":           "restore the known-safe placement setting",
 		"expected_version": int64(2),
@@ -59,13 +59,13 @@ func TestRuntimeConfigRollback_HotRevision(t *testing.T) {
 
 func TestRuntimeConfigRollback_RejectsStaleExpectedVersion(t *testing.T) {
 	e := newObsEnv(t, []string{"admin"}, "ops@faas.dev", "ops@faas.dev")
-	first := e.do(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
+	first := e.doAdmin(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
 		"value": false, "reason": "establish rollback baseline",
 	}, nil)
 	if first.Code != http.StatusOK {
 		t.Fatalf("initial config update status = %d, want 200: %s", first.Code, first.Body.String())
 	}
-	second := e.do(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
+	second := e.doAdmin(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
 		"value": true, "reason": "enable placement for stale test",
 		"expected_version": int64(1),
 	}, nil)
@@ -73,7 +73,7 @@ func TestRuntimeConfigRollback_RejectsStaleExpectedVersion(t *testing.T) {
 		t.Fatalf("second config update status = %d, want 200: %s", second.Code, second.Body.String())
 	}
 
-	rollback := e.do(t, http.MethodPost, "/v1/admin/config/data_placement_enabled/rollback", map[string]any{
+	rollback := e.doAdmin(t, http.MethodPost, "/v1/admin/config/data_placement_enabled/rollback", map[string]any{
 		"version":          1,
 		"reason":           "stale operator request",
 		"expected_version": int64(1),

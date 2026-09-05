@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -60,6 +61,48 @@ func (e testEnv) do(t *testing.T, method, path string, body any, hdrs map[string
 	rec := httptest.NewRecorder()
 	e.h.ServeHTTP(rec, req)
 	return rec
+}
+
+// doAdmin dispatches a request as a verified operator session. Provider
+// mutations deliberately reject bearer/API-key principals; keeping this
+// helper beside testEnv makes that contract explicit in admin tests without
+// changing the default bearer-auth helper used by customer API tests.
+func (e testEnv) doAdmin(t *testing.T, method, path string, body any, hdrs map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, r)
+	e.addAdminSession(t, req)
+	req.Header.Set("Idempotency-Key", "test-admin-"+uuid.NewString())
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return rec
+}
+
+// addAdminSession mints a short-lived session carrying a fresh step-up stamp
+// so a test can exercise the same authentication path as the operations UI.
+// It is intentionally not used by do: bearer requests remain available for
+// explicit denial tests.
+func (e testEnv) addAdminSession(t *testing.T, req *http.Request) {
+	t.Helper()
+	if e.s == nil || e.s.sessions == nil || e.store == nil {
+		t.Fatal("admin session helper requires a server, session manager, and store")
+	}
+	sid := uuid.NewString()
+	if _, err := e.store.CreateSession(req.Context(), sid, e.acct.ID, "192.0.2.10", "admin-test-ua"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	token, err := e.s.sessions.IssueWithSessionAndBindingHashAndStepUp(sid, e.acct.ID, "", time.Now(), false)
+	if err != nil {
+		t.Fatalf("IssueWithSessionAndBindingHashAndStepUp: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
 }
 
 // setupWithNotifier is the Move 2 sibling of setup: lets handlers_ext_test
