@@ -199,6 +199,40 @@ func TestRunDevWatchLoopSkipsUndeployableSnapshot(t *testing.T) {
 	}
 }
 
+func TestRunDevWatchLoopNotifiesLiveOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var first, second [sha256.Size]byte
+	second[0] = 1
+	liveObserved := make(chan struct{})
+	liveCalls := 0
+	waitCalls := 0
+
+	exit := runDevWatchLoop(ctx, "project", first, devSourceConfig{shape: shapeApp}, false, devLoopOps{
+		deploy: func(context.Context, devSourceConfig, func(string)) int { return 0 },
+		waitForChange: func(watchCtx context.Context, _ string, _ [sha256.Size]byte) ([sha256.Size]byte, error) {
+			waitCalls++
+			if waitCalls == 1 {
+				<-liveObserved
+				cancel()
+				return second, nil
+			}
+			<-watchCtx.Done()
+			return second, watchCtx.Err()
+		},
+		onLive: func() {
+			liveCalls++
+			close(liveObserved)
+		},
+	})
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	if liveCalls != 1 {
+		t.Fatalf("live callbacks = %d, want 1", liveCalls)
+	}
+}
+
 func TestRunDevWatchLoopSupersedesInFlightDeployment(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

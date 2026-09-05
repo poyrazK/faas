@@ -38,7 +38,14 @@ gregale dev --once             # sync once, do not watch
 gregale dev --path apps/api    # select one workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
+gregale dev --no-logs          # keep the watcher quiet for scripts
 ```
+
+Watch mode attaches one app-level runtime log stream after the first live sync.
+It follows the stable developer URL across later redeploys, prefixes lines with
+their stream (`runtime stdout` or `runtime stderr`), and reconnects after a
+transient API or scheduler interruption. `--once` remains finite and does not
+attach the stream.
 
 The URL is stable for an account, local developer installation, and source
 directory. Teammates and separate clones or worktrees therefore get independent
