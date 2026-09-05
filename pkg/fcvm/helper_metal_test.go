@@ -5,6 +5,7 @@ package fcvm
 import (
 	"debug/elf"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -78,7 +79,14 @@ func newMetalVMM(t *testing.T, timeout time.Duration) *JailerVMM {
 func NewAcceptanceManager(t *testing.T) *Manager {
 	t.Helper()
 	withCgroupRootAt(t, "/sys/fs/cgroup")
-	backend, err := storage.NewLocalStorageBackend("/srv/fc")
+	storageRoot := os.Getenv("FAAS_METAL_ACCEPTANCE_ROOT")
+	if storageRoot == "" {
+		storageRoot = "/srv/fc"
+	}
+	if !filepath.IsAbs(storageRoot) {
+		t.Fatal("FAAS_METAL_ACCEPTANCE_ROOT must be absolute")
+	}
+	backend, err := storage.NewLocalStorageBackend(filepath.Clean(storageRoot))
 	if err != nil {
 		t.Fatal(err)
 	}
