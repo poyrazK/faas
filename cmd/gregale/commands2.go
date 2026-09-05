@@ -1306,6 +1306,10 @@ func cmdDeployTarball(args []string) int {
 	// resolvedShape via this variable in the same branch.
 	var resolvedShape = shapeApp
 	var gitArchivePath string
+	// sourceRoot is persisted only for workspace-context deploys. An empty
+	// value means the uploaded archive root and preserves the legacy wire shape.
+	var sourceRoot string
+	var workspaceContextRoot string
 	// Issue #737 / ADR-083: explicit --function / --app on a
 	// --tarball / --template path skips the cwd detector (no cwd
 	// pack happens), but still flips resolvedShape so CreateApp
@@ -1347,6 +1351,20 @@ func cmdDeployTarball(args []string) int {
 		}
 		if *name == "" {
 			slug = sanitizeSlug(filepath.Base(sourceDir))
+		}
+		// Resolve workspace membership independently of GitHub provenance so
+		// --worktree also gets the same repository context when the repo has no
+		// origin. Only an explicitly selected workload can expand the upload
+		// scope; a plain deploy from a repository root remains unchanged.
+		if repoRoot, rootErr := gitRootFromCwd(sourceDir); rootErr == nil {
+			contextRoot, selectedRoot, workspace, contextErr := resolveWorkspaceContext(repoRoot, sourceDir)
+			if contextErr != nil {
+				return printErr("Could not resolve workspace build context", contextErr)
+			}
+			if workspace {
+				workspaceContextRoot = contextRoot
+				sourceRoot = selectedRoot
+			}
 		}
 	}
 	// Cluster A: --doctor-strict pre-upload gate. Runs runDoctorChecks
@@ -1398,10 +1416,12 @@ func cmdDeployTarball(args []string) int {
 		// path) by NOT routing through it; it goes through the same
 		// CreateApp + DeployTarball wire as --tarball / --template.
 		//
-		// `--path` changes only the selected tree: `git archive
-		// HEAD:path/to/app` makes that directory the archive root. The
-		// explicit `--worktree` opt-in skips the Git archive and packs
-		// the selected directory from disk, including local changes.
+		// `--path` normally changes only the selected tree: `git archive
+		// HEAD:path/to/app` makes that directory the archive root. When the
+		// selected path is a declared workspace workload, the full repository
+		// is retained as the build context and sourceRoot points at the member.
+		// The explicit `--worktree` opt-in skips the Git archive and packs the
+		// selected directory (or its workspace repository context) from disk.
 		//
 		// Three outcomes from resolveZeroConfigProvenance:
 		//   - ok=true,  err=nil   → pack HEAD, stamp provenance
@@ -1448,7 +1468,11 @@ func cmdDeployTarball(args []string) int {
 				_ = tmpFile.Close()
 				defer func() { _ = os.Remove(tmpPath) }()
 				archiveErr := error(nil)
-				if *sourcePath == "" {
+				if workspaceContextRoot != "" {
+					PrintProgress(os.Stderr, "archiving workspace HEAD (%s) with build root %s",
+						provVal.SHA[:7], sourceRoot)
+					archiveErr = gitArchiveHEAD(provVal.Root, tmpPath)
+				} else if *sourcePath == "" {
 					archiveErr = gitArchiveHEAD(provVal.Root, tmpPath)
 				} else {
 					relPath, relErr := gitRelativePath(provVal.Root, sourceDir)
@@ -1560,11 +1584,17 @@ func cmdDeployTarball(args []string) int {
 				// tarball is sealed so a Stripe key committed to
 				// .env.production by accident is dropped before it leaves
 				// the workstation; --secret-scan=off disables it.
-				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(sourceDir, secretScanMode)
+				packRoot := sourceDir
+				flatContext := false
+				if workspaceContextRoot != "" {
+					packRoot = workspaceContextRoot
+					flatContext = true
+				}
+				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(packRoot, secretScanMode)
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, _, n, err := autoPackCwd(sourceDir, planCapMB, overrides)
+				path, _, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides)
 				if err != nil {
 					return printErr("Could not pack deploy source", err)
 				}
@@ -1574,11 +1604,17 @@ func cmdDeployTarball(args []string) int {
 				*tarball = path
 				resolvedShape = shapeFunction
 			case shapeApp:
-				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(sourceDir, secretScanMode)
+				packRoot := sourceDir
+				flatContext := false
+				if workspaceContextRoot != "" {
+					packRoot = workspaceContextRoot
+					flatContext = true
+				}
+				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(packRoot, secretScanMode)
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, fw, n, err := autoPackCwd(sourceDir, planCapMB, overrides)
+				path, fw, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides)
 				if err != nil {
 					return printErr("Could not pack deploy source", err)
 				}
@@ -1744,7 +1780,7 @@ func cmdDeployTarball(args []string) int {
 			sourceSHA256  string
 			usedResumable bool
 		)
-		if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			var progress resumableUploadProgress
 			if !jsonOutput {
 				lastPercent := -1
@@ -1760,7 +1796,7 @@ func cmdDeployTarball(args []string) int {
 			var uploadErr error
 			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress)
 			if uploadErr == nil && !usedResumable {
-				dep, uploadErr = DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, ann)
+				dep, uploadErr = DeployTarballWithSourceRoot(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
 			}
 			if uploadErr != nil {
 				if errors.Is(uploadErr, context.Canceled) || ctx.Err() != nil {
@@ -1770,7 +1806,7 @@ func cmdDeployTarball(args []string) int {
 			}
 		} else {
 			var deployErr error
-			dep, deployErr = DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, ann)
+			dep, deployErr = DeployTarballWithSourceRoot(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
 			if deployErr != nil {
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130

@@ -110,6 +110,18 @@ func TestVersionFromTarball_GitHubCodeloadPAX(t *testing.T) {
 	}
 }
 
+func TestVersionFromTarballAtRoot_WorkspaceMember(t *testing.T) {
+	path := tempTarball(t)
+	writeTarGz(t, path, map[string]string{
+		"package.json":              `{"engines":{"node":">=18.0.0"}}`,
+		"apps/api/package.json":     `{"engines":{"node":">=22.11.0"}}`,
+		"packages/web/package.json": `{"engines":{"node":">=20.0.0"}}`,
+	})
+	if got := VersionFromTarballAtRoot(path, FrameworkNode, "apps/api"); got != "22.11.0" {
+		t.Fatalf("VersionFromTarballAtRoot = %q, want 22.11.0", got)
+	}
+}
+
 // seedDirFSWithFiles creates a tempdir + writes the given
 // name→content map (forward-slash names) + returns an os.DirFS
 // over the root. Used by the VersionFromFS tests.

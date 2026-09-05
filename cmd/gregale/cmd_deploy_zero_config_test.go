@@ -270,6 +270,98 @@ func TestDeployZeroConfig_PathArchivesSelectedTree(t *testing.T) {
 	}
 }
 
+func TestDeployZeroConfig_WorkspacePathRetainsRepositoryContext(t *testing.T) {
+	repo := initZeroConfigRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"private":true,"workspaces":["apps/*","packages/*"]}
+`), 0o644); err != nil {
+		t.Fatalf("write workspace package.json: %v", err)
+	}
+	files := map[string]string{
+		"apps/api/package.json":    `{"name":"api"}` + "\n",
+		"apps/api/index.js":        "console.log('api')\n",
+		"packages/shared/index.js": "module.exports = {}\n",
+		"pnpm-lock.yaml":           "lockfileVersion: '9.0'\n",
+		"README.workspace.md":      "workspace context\n",
+	}
+	for name, body := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, name)), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-q", "-m", "add workspace context"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	withCwd(t, repo)
+
+	var sourceBytes []byte
+	var gotSourceRoot string
+	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+		switch {
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			z.gotCalls["create"]++
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "api"})
+		case r.URL.Path == "/v1/apps/api/deployments" && r.Method == http.MethodPost:
+			z.gotCalls["deploy"]++
+			mr, err := r.MultipartReader()
+			if err != nil {
+				t.Errorf("multipart read: %v", err)
+				return
+			}
+			for {
+				part, err := mr.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Errorf("multipart next part: %v", err)
+					break
+				}
+				switch part.FormName() {
+				case "source":
+					sourceBytes, _ = io.ReadAll(part)
+				case "source_root":
+					body, _ := io.ReadAll(part)
+					gotSourceRoot = string(body)
+				default:
+					_, _ = io.Copy(io.Discard, part)
+				}
+				_ = part.Close()
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "api"})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	})
+	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdDeployTarball([]string{"--path", "apps/api", "--no-wait"}); code != 0 {
+		t.Fatalf("workspace --path deploy exit = %d, want 0", code)
+	}
+	if gotSourceRoot != "apps/api" {
+		t.Fatalf("source_root = %q, want apps/api", gotSourceRoot)
+	}
+	entries := readCapturedDeployArchive(t, sourceBytes)
+	for _, want := range []string{
+		"package.json", "apps/api/package.json", "apps/api/index.js",
+		"packages/shared/index.js", "pnpm-lock.yaml",
+	} {
+		if _, ok := entries[want]; !ok {
+			t.Errorf("workspace archive missing %q; entries=%v", want, entries)
+		}
+	}
+	if _, ok := entries["apps/api"]; ok {
+		t.Error("workspace archive should preserve files under repository-relative paths")
+	}
+}
+
 // TestDeployZeroConfig_PathWorktreeIncludesLocalChanges pins the explicit
 // opt-in escape hatch for local development. --worktree uses the selected
 // directory packer, so a modified tracked file and an untracked file are both

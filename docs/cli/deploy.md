@@ -14,19 +14,30 @@ deploy` without a source selector still ships the
 zero-config behavior. A nested working directory does not implicitly
 change the build root.
 
-Use `--path` when one self-contained service in a monorepo should be
-deployed as its own app:
+Use `--path` when one service in a monorepo should be deployed as its
+own app:
 
 ```bash
 cd monorepo
 gregale deploy --path packages/api --name api
 ```
 
-`--path` is resolved relative to the current directory. Inside a Git
-repository with an `origin` remote it archives `HEAD:<path>` and makes the selected directory
-the uploaded archive root, so its `package.json`, `go.mod`, or
-`Dockerfile` is detected normally. It never requires removing `.git`.
-The default remains reproducible and excludes uncommitted changes.
+`--path` is resolved relative to the current directory. For a
+self-contained directory, it archives `HEAD:<path>` and makes the
+selected directory the uploaded archive root, so its `package.json`,
+`go.mod`, or `Dockerfile` is detected normally. When the selected
+directory is a deployable member of a recognized workspace manifest
+(`package.json`, `pnpm-workspace.yaml`, `go.work`, and the other
+`reposcan` workspace forms), Gregale uploads the repository tree as the
+BuildKit context and records `source_root=<path>`. The builder runs in
+that nested directory while retaining workspace lockfiles, shared
+packages, and root-level build configuration.
+
+Workspace context uploads still use the normal source exclusions,
+secret scan, and source-size cap. `source_root` is validated against the
+archive before the deployment is queued. It never requires removing
+`.git`. The default remains reproducible and excludes uncommitted
+changes.
 
 Use `--worktree` to explicitly deploy local files from the selected
 directory, including uncommitted and untracked files:
@@ -40,20 +51,18 @@ directory. Both modes keep the repository's `commit_sha` in the JSON
 receipt when Git metadata is available; `dirty: true` indicates that
 the repository had local changes at deploy time.
 
-This first source-root path is intended for self-contained services. A
-service that needs workspace lockfiles, shared packages, or build
-configuration outside `--path` should use the project-plan flow until
-server-side build-context support is available. For a decomposed
-monorepo deploy (one CLI invocation, N apps), use
+For a decomposed monorepo deploy (one CLI invocation, N apps), use
 `gregale scan --path .` and the project-plan apply path; see the
-decomposition PR (issue #791 / ADR-090).
+decomposition PR (issue #791 / ADR-090). A direct `--path` deploy is
+still one app per invocation, with the selected workspace member as its
+working directory.
 
 ## Monorepo / nested-project detection
 
 When the cwd contains **monorepo workspace markers** in a nested
-subdir (e.g. `apps/web/package.json`, `apps/services/api/package.json`),
-the CLI prints a hint and exits with a "no deployable source here"
-error rather than guessing:
+subdir (e.g. `apps/web/package.json`, `apps/services/api/package.json`)
+and there is no explicit `--path` selection, the CLI prints a hint and
+exits with a "no deployable source here" error rather than guessing:
 
 ```
 note: detected nested project marker(s) at apps/web/services/api/package.json
@@ -62,10 +71,12 @@ hint: this looks like a monorepo subdir; run `gregale scan --path .` to
 ```
 
 The detection walks depth 2 from the cwd (so `apps/web/package.json`
-and `apps/services/api/package.json` both trigger it). Depth 4+
-remains intentionally out of scope — a `pkg/billing/internal/lib/`
-marker is too deep for the CLI to act on without explicit operator
-intent. See `detectNestedMarkerHint` at `cmd/gregale/pack.go:691`.
+and `apps/services/api/package.json` both trigger it). An explicit
+`--path` is the operator intent that enables the workspace-context
+behavior above. Depth 4+ remains intentionally out of scope for the
+cwd hint — a `pkg/billing/internal/lib/` marker is too deep for the CLI
+to act on without explicit operator intent. See
+`detectNestedMarkerHint` at `cmd/gregale/pack.go:691`.
 
 ## `--json` receipt shape
 
@@ -102,9 +113,11 @@ Three flavors of "what was deployed", pinned differently:
 
 - **Zero-config (`gregale deploy` from a git repo)**: pinned at
   `commit_sha` (HEAD) + the committed tree of HEAD. Without `--path`,
-  that tree is the repository root; with `--path`, it is the selected
-  `HEAD:<path>` tree. Re-runs of the same SHA are byte-identical
-  assuming the selected tree is unchanged.
+  that tree is the repository root. With `--path`, a self-contained
+  source uses the selected `HEAD:<path>` tree; a recognized workspace
+  member uses the repository HEAD tree plus its `source_root`. Re-runs
+  of the same SHA are byte-identical assuming the selected tree/context
+  is unchanged.
 - **Working-tree zero-config (`--worktree`)**: pinned by the shipped
   `source_sha256`; `commit_sha` and `dirty` remain useful provenance,
   but local edits and untracked files are intentionally included.

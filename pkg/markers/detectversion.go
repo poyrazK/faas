@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
@@ -82,31 +83,38 @@ func VersionFromFS(fsys fs.FS, fw Framework) string {
 //
 //nolint:forbidigo // path is the apid-spooled tarball; same trust rationale as DetectFromTarball above.
 func VersionFromTarball(path string, fw Framework) string {
+	return VersionFromTarballAtRoot(path, fw, "")
+}
+
+// VersionFromTarballAtRoot is the workspace-aware mirror of
+// VersionFromTarball. sourceRoot is relative to the logical archive root;
+// empty means the legacy archive root.
+func VersionFromTarballAtRoot(path string, fw Framework, sourceRoot string) string {
 	switch fw {
 	case FrameworkNode:
-		if nvmrc := readTarballFile(path, ".nvmrc"); nvmrc != "" {
+		if nvmrc := readTarballFileAtRoot(path, ".nvmrc", sourceRoot); nvmrc != "" {
 			if v := normalizeSemver(stripLines(nvmrc)); v != "" {
 				return v
 			}
 		}
-		if pkg := readTarballFile(path, "package.json"); pkg != "" {
+		if pkg := readTarballFileAtRoot(path, "package.json", sourceRoot); pkg != "" {
 			if v := versionFromPackageJSONNode(pkg); v != "" {
 				return v
 			}
 		}
 	case FrameworkPython:
-		if pyver := readTarballFile(path, ".python-version"); pyver != "" {
+		if pyver := readTarballFileAtRoot(path, ".python-version", sourceRoot); pyver != "" {
 			if v := normalizePythonVersion(stripLines(pyver)); v != "" {
 				return v
 			}
 		}
-		if pyproj := readTarballFile(path, "pyproject.toml"); pyproj != "" {
+		if pyproj := readTarballFileAtRoot(path, "pyproject.toml", sourceRoot); pyproj != "" {
 			if v := versionFromPyprojectRequires(pyproj); v != "" {
 				return v
 			}
 		}
 	case FrameworkGo:
-		if gomod := readTarballFile(path, "go.mod"); gomod != "" {
+		if gomod := readTarballFileAtRoot(path, "go.mod", sourceRoot); gomod != "" {
 			if v := versionFromGoModDirective(gomod); v != "" {
 				return v
 			}
@@ -153,7 +161,15 @@ func readFSFile(fsys fs.FS, name string) string {
 // pkg/builderd/detectversion.go::readTarFile verbatim — the only
 // change is the function name to disambiguate from readFSFile.
 func readTarballFile(path, entryName string) string {
-	prefix, err := tarball.RootPrefix(path)
+	return readTarballFileAtRoot(path, entryName, "")
+}
+
+func readTarballFileAtRoot(path, entryName, sourceRoot string) string {
+	root, err := sourcecontext.Normalize(sourceRoot)
+	if err != nil {
+		return ""
+	}
+	logicalRoot, err := tarball.ResolveSourceRoot(path, sourceRoot)
 	if err != nil {
 		return ""
 	}
@@ -172,8 +188,10 @@ func readTarballFile(path, entryName string) string {
 
 	tr := tar.NewReader(gz)
 	needle := strings.ToLower(strings.TrimPrefix(entryName, "./"))
-	if prefix != "" {
-		needle = strings.ToLower(prefix + "/" + strings.TrimPrefix(entryName, "./"))
+	if root != sourcecontext.DefaultRoot {
+		needle = strings.ToLower(logicalRoot + "/" + strings.TrimPrefix(entryName, "./"))
+	} else if logicalRoot != "" {
+		needle = strings.ToLower(logicalRoot + "/" + needle)
 	}
 	for {
 		hdr, err := tr.Next()

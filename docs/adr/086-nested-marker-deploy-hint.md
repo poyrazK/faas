@@ -4,7 +4,7 @@
 - **Date:** 2026-08-08
 - **Issue:** #744 / DEPLOY-PROV-8
 - **Supersedes:** none
-- **Related:** ADR-083 (function-vs-app shape auto-detection, the `Detected: …` banner pattern this extends); `pkg/reposcan/workspaces_extra_test.go:103` (the "monorepo" fixture proving `gregale scan` already handles nested markers); `cmd/gregale/commands_decompose.go:39-97` (the `gregale scan` command); `pkg/builderd/detect.go:41-95` (server-side tarball detector — explicitly NOT changed)
+- **Related:** ADR-083 (function-vs-app shape auto-detection, the `Detected: …` banner pattern this extends); ADR-144 (explicit workspace-member deploys now retain repository context); `pkg/reposcan/workspaces_extra_test.go:103` (the "monorepo" fixture proving `gregale scan` already handles nested markers); `cmd/gregale/commands_decompose.go:39-97` (the `gregale scan` command)
 
 ## Context
 
@@ -19,7 +19,11 @@ handler.{js,ts,py,go} for a *function* — or pass --image, --tarball, --templat
 
 (`cmd/gregale/pack.go:482-487`, surfaced via `resolveDeployShape`'s `shapeUnknown` branch). Technically correct but unhelpful for a customer whose source IS deployable, just not in a top-level layout.
 
-The fix is **not** to make the deploy detector accept nested markers — that's a deeper architectural question (`pkg/reposcan` already handles nested for `gregale scan`; bringing that depth to deploy is a separate ADR). The fix is to **point the customer at the right next step**: `gregale scan --path .`. Tier-2 DX; no schema migration; no new endpoint; no wire change.
+The fix for an implicit cwd deploy remains **not** to guess among nested
+markers — that's a deeper architectural question. The explicit `--path`
+case is now covered by ADR-144: when the operator names a recognized
+workspace member, the CLI may retain the repository context and send its
+source root. This ADR still governs the no-selector hint path.
 
 ## Decision
 
@@ -33,9 +37,14 @@ The fix is **not** to make the deploy detector accept nested markers — that's 
 
 5. **`--json` contract preserved.** Hint NEVER appears on stdout (would corrupt the JSON envelope). The hint lives in the error message string AND in a wrapped `*NestedMarkerHintError` typed error. `printErr` uses `errors.As` to extract the hint and writes it to stderr; the JSON envelope on stdout carries only the existing `{"error": "<message>", "code": "no_deployable_source"}`. Stable error code unchanged (the hint is a hint, not a new error class).
 
-6. **No wire-shape change.** `DeploymentResponse`, `PlanResponse`, `appMarker` enum, SDKs, OpenAPI spec, server-side handlers — all untouched. Purely CLI.
+6. **No wire-shape change for the hint path.** The explicit workspace
+   source-root wire contract is defined separately by ADR-144; this ADR's
+   implicit cwd hint remains a CLI-only behavior.
 
-7. **Server-side detector unchanged.** `pkg/builderd/detect.go:41-95` keeps its tarball-top-level contract. That contract is load-bearing for the §4.5 build pipeline (Dockerfile at root wins over language markers, etc.). The CLI's shape resolution happens BEFORE tarball packing; the customer sees the hint before any bytes cross the wire.
+7. **Server-side detector remains top-level by default.** Its workspace-aware
+   extension is only selected when ADR-144 supplies an explicit
+   `source_root`; the legacy empty-root contract stays load-bearing for the
+   §4.5 build pipeline.
 
 ### Rationale
 

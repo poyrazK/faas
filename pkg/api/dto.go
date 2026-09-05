@@ -1564,6 +1564,10 @@ type DeploymentResponse struct {
 	// tripwire; see pkg/whycopy.Render for the catalogue row).
 	ErrorRelevantLogs []LogExcerpt `json:"error_relevant_logs,omitempty"`
 	CreatedAt         string       `json:"created_at"`
+	// SourceRoot is the repository-relative build root used by a workspace
+	// context upload. Empty means the archive root and is omitted for legacy
+	// self-contained source deploys.
+	SourceRoot string `json:"source_root,omitempty"`
 	// HasOverrides is true when the deployment carries an
 	// override_* column set (issue #460 / ADR-053). Lets dashboards
 	// render "this deploy pinned overrides" without re-parsing the

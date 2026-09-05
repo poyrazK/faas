@@ -9,6 +9,9 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
+	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
 // DetectFromFS inspects the top-level entries of fsys (no
@@ -67,6 +70,24 @@ func DetectFromFS(fsys fs.FS) (Framework, error) {
 //
 //nolint:forbidigo // path is the apid-spooled tarball that already passed apid's validateTarballShape (in cmd/apid/deploy_inputs.go) before builderd received the build notification. Symlink-attack impossible because apid wrote the file with a fresh random id. Direct unit-test callers construct the path themselves; rationale holds. The original comment lived at pkg/builderd/detect.go:40 and applies unchanged here.
 func DetectFromTarball(path string) (Framework, error) {
+	return DetectFromTarballAtRoot(path, sourcecontext.DefaultRoot)
+}
+
+// DetectFromTarballAtRoot inspects only the immediate files below sourceRoot
+// in a source archive. sourceRoot is relative to the logical project root;
+// the legacy single-directory wrapper used by the CLI is recognized and
+// ignored for this purpose. This lets a repository-context archive expose
+// root-level workspace files without making a sibling package's package.json
+// decide the selected service's framework.
+func DetectFromTarballAtRoot(path, sourceRoot string) (Framework, error) {
+	root, err := sourcecontext.Normalize(sourceRoot)
+	if err != nil {
+		return FrameworkUnknown, fmt.Errorf("markers: invalid source root: %w", err)
+	}
+	if root != sourcecontext.DefaultRoot {
+		return detectFromTarballNestedRoot(path, root)
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return FrameworkUnknown, fmt.Errorf("markers: open: %w", err)
@@ -140,5 +161,56 @@ func DetectFromTarball(path string) (Framework, error) {
 	// returned an error, but the parity test pins the
 	// CLI shape as authoritative. Callers that need an error
 	// can wrap the (unknown, nil) tuple.
+	return FrameworkUnknown, nil
+}
+
+func detectFromTarballNestedRoot(path, sourceRoot string) (Framework, error) {
+	logicalRoot, err := tarball.ResolveSourceRoot(path, sourceRoot)
+	if err != nil {
+		return FrameworkUnknown, fmt.Errorf("markers: source root: %w", err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return FrameworkUnknown, fmt.Errorf("markers: open: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return FrameworkUnknown, fmt.Errorf("markers: gzip: %w", err)
+	}
+	defer func() { _ = gz.Close() }()
+
+	tr := tar.NewReader(gz)
+	present := map[string]bool{}
+	prefixWithSlash := strings.TrimSuffix(logicalRoot, "/") + "/"
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return FrameworkUnknown, fmt.Errorf("markers: read tar: %w", err)
+		}
+		switch hdr.Typeflag {
+		case tar.TypeDir, tar.TypeXHeader, tar.TypeXGlobalHeader,
+			tar.TypeGNULongName, tar.TypeGNULongLink:
+			continue
+		}
+		name := strings.TrimPrefix(hdr.Name, "./")
+		if !strings.HasPrefix(name, prefixWithSlash) {
+			continue
+		}
+		rel := strings.TrimPrefix(name, prefixWithSlash)
+		if rel == "" || strings.Contains(rel, "/") {
+			continue
+		}
+		present[strings.ToLower(rel)] = true
+	}
+	for _, m := range appMarkers {
+		if present[strings.ToLower(m.filename)] {
+			return m.framework, nil
+		}
+	}
 	return FrameworkUnknown, nil
 }

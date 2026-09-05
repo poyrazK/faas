@@ -143,6 +143,7 @@ type EnqueueParams struct {
 	Kind        state.DeploymentKind
 	SourcePath  string
 	SourceBytes int64
+	SourceRoot  string
 	SourceURL   string
 	CommitSHA   string
 	Handler     string
@@ -274,6 +275,7 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 		Kind:        p.Kind,
 		SourcePath:  p.SourcePath,
 		SourceBytes: p.SourceBytes,
+		SourceRoot:  p.SourceRoot,
 		SourceURL:   p.SourceURL,
 		CommitSHA:   p.CommitSHA,
 		Handler:     p.Handler,

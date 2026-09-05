@@ -153,13 +153,19 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	if timeoutSec <= 0 {
 		timeoutSec = api.BuildTimeoutSeconds
 	}
+	workdir, err := buildWorkdir(req.SourceRoot)
+	if err != nil {
+		os.Remove(drive1Path)
+		return BuildHandle{}, fmt.Errorf("builderd: source root: %w", err)
+	}
 	bManifest := api.BuildManifest{
 		SchemaVersion:  1,
 		BuildID:        req.BuildID,
 		TenantID:       req.TenantID,
 		DeploymentID:   req.DeploymentID,
 		SourceTarPath:  "/build/src.tar",
-		Workdir:        "/build/src",
+		BuildContext:   "/build/src",
+		Workdir:        workdir,
 		OutDir:         "/build/out",
 		Framework:      MapFramework(req.Framework),
 		Runtime:        req.Runtime,

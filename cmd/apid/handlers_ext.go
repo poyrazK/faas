@@ -3987,6 +3987,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		ErrorFix:          d.ErrorFix,
 		ErrorRelevantLogs: d.ErrorRelevantLogs,
 		CreatedAt:         d.CreatedAt.UTC().Format(time.RFC3339),
+		SourceRoot:        d.SourceRoot,
 		HasOverrides:      hasOverrides,
 		MinInstances:      d.MinInstances,
 		// Issue #556 PR-A: traffic_percent echoes the per-deployment
@@ -4143,7 +4144,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	// HIGH-2 fix: route the marker detection through
 	// getCachedBuildPlan so listDeployments doesn't open +
 	// parse every spooled tarball on every page render. The
-	// cache is keyed by path + mtime — a fresh spool write
+	// cache is keyed by path + source root + mtime — a fresh spool write
 	// invalidates the entry.
 	//
 	// getCachedBuildPlan calls pkg/markers.DetectFromTarball
@@ -4161,9 +4162,9 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		// HIGH-2 fix: route the marker detection through
 		// getCachedBuildPlan so listDeployments doesn't open +
 		// parse every spooled tarball on every page render. The
-		// cache is keyed by path + mtime — a fresh spool write
+		// cache is keyed by path + source root + mtime — a fresh spool write
 		// invalidates the entry.
-		fw, ver := getCachedBuildPlan(d.SourcePath)
+		fw, ver := getCachedBuildPlanAtRoot(d.SourcePath, d.SourceRoot)
 		bp.Framework = string(fw)
 		bp.Version = ver
 		if len(d.OverrideEntrypoint) > 0 {

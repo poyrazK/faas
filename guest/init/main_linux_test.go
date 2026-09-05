@@ -365,6 +365,40 @@ func TestBuildArgv(t *testing.T) {
 	}
 }
 
+func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
+	got := buildArgv(api.BuildManifest{
+		Framework:    api.FrameworkRailpackNode,
+		BuildContext: "/build/src",
+		Workdir:      "/build/src/apps/api",
+		OutDir:       "/build/out",
+	})
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "railpack prepare '/build/src/apps/api'") {
+		t.Fatalf("workspace argv does not prepare selected workdir: %s", joined)
+	}
+	if !strings.Contains(joined, "--local context='/build/src'") {
+		t.Fatalf("workspace argv does not use repository build context: %s", joined)
+	}
+
+	docker := buildArgv(api.BuildManifest{
+		Framework:    api.FrameworkDockerfile,
+		BuildContext: "/build/src",
+		Workdir:      "/build/src/apps/api",
+		OutDir:       "/build/out",
+	})
+	dockerJoined := strings.Join(docker, " ")
+	if !strings.Contains(dockerJoined, "--local context=/build/src") ||
+		!strings.Contains(dockerJoined, "--local dockerfile=/build/src/apps/api") {
+		t.Fatalf("workspace docker argv has wrong context/workdir: %s", dockerJoined)
+	}
+}
+
+func TestManifestBuildContextFallsBackToWorkdir(t *testing.T) {
+	if got := manifestBuildContext(api.BuildManifest{Workdir: "/build/src"}); got != "/build/src" {
+		t.Fatalf("manifestBuildContext legacy fallback = %q, want /build/src", got)
+	}
+}
+
 func TestPrepareRailpackConfig_UsesPlatformBaseAndRestoresSource(t *testing.T) {
 	workdir := t.TempDir()
 	original := []byte(`{"deploy":{"aptPackages":["curl"],"base":{"image":"customer/base"}},"custom":true}`)

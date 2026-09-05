@@ -426,7 +426,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, nil
 	}
 
-	fw, ver, err := b.detector.DetectWithVersion(dep.SourcePath)
+	fw, ver, err := b.detector.DetectWithVersionAtRoot(dep.SourcePath, dep.SourceRoot)
 	if err != nil {
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, "framework detect: "+err.Error(), buildStart)
 		return BuildResult{}, err
@@ -543,6 +543,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		TenantID:       app.AccountID,
 		DeploymentID:   dep.ID,
 		SourcePath:     dep.SourcePath,
+		SourceRoot:     dep.SourceRoot,
 		Framework:      fw,
 		Runtime:        runtimeName,
 		RuntimeBaseRef: runtimeBaseRef,

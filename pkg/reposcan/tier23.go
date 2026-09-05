@@ -2,12 +2,13 @@ package reposcan
 
 import (
 	"io/fs"
+	"sort"
 )
 
 // detectWorkspaces returns one workloadSeed per workspace-graph
-// member that ALSO carries a Dockerfile or language marker. A
-// library-only member (e.g. packages/ui with package.json but no
-// Dockerfile) is NOT a workload — it's a workspace tool dependency.
+// member that also carries a Dockerfile or language marker. A
+// member with no build marker is not a workload — it is only a
+// workspace graph entry.
 // Implementation lives in workspaces.go.
 //
 // Recognized workspace manifests (impl plan §3):
@@ -27,6 +28,32 @@ import (
 // is a quiet skip.
 func detectWorkspaces(fsys fs.FS) ([]workloadSeed, []string, error) {
 	return detectWorkspacesImpl(fsys)
+}
+
+// WorkspaceMemberPaths returns the repository-relative paths of workspace
+// members that carry a build marker. It is the public, path-only view of the
+// same workspace graph used by Scan. Members without a marker are omitted so
+// a deploy selected with --path expands to a repository context only when it
+// points at a buildable workspace member.
+func WorkspaceMemberPaths(fsys fs.FS) ([]string, error) {
+	seeds, _, err := detectWorkspacesImpl(fsys)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(seeds))
+	paths := make([]string, 0, len(seeds))
+	for _, seed := range seeds {
+		if seed.rootDir == "" {
+			continue
+		}
+		if _, ok := seen[seed.rootDir]; ok {
+			continue
+		}
+		seen[seed.rootDir] = struct{}{}
+		paths = append(paths, seed.rootDir)
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // detectConvention scans the documented Tier-3 root subdirectories
