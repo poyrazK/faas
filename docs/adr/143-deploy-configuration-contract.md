@@ -53,7 +53,7 @@ Every service role has handlers: a `daemon-reload` listener first, then `systemc
 ### D4 — convergence is verified, not assumed
 
 - `deploy/ansible/vars/daemons.yml` is the shared topology for `role_convergence` and the new `fleet_verify` role; `TestDaemonsYAML_LockstepWithRegistry` pins it to the registry (units per role and readiness probes).
-- `fleet_verify` runs at the end of both bootstrap plays in lenient mode (skips units nobody enabled yet) and strictly through `verify.yml` / `make verify-fleet`: every required unit enabled, active, answering its unix-socket or TCP probe, then `gregalectl doctor`.
+- `fleet_verify` runs at the end of both bootstrap plays in lenient mode (skips units nobody enabled yet) and strictly through `verify.yml` / `make verify-fleet`: every required unit enabled, active, answering its dependency-aware `/readyz` endpoint (with the registered unix-socket or TCP probe retained as a compatibility fallback), then `gregalectl doctor`.
 - CI now runs `scale_check.yml` for real against the rendered example manifest, `ansible-lint` at the `production` profile (`deploy/ansible/.ansible-lint`; three cosmetic rules skipped with rationale), and syntax-checks `verify.yml`.
 
 ### D5 — spec §11 host posture ships as a role

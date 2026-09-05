@@ -11,5 +11,11 @@
 # disabled-but-allowed unit into a failure too — use it after activation.
 faas_verify_strict: false
 faas_verify_probe_timeout_s: 15
+# Dependency-aware /readyz checks run after the unit is active. The response
+# body is retained in the failure message so a failed verify names the broken
+# dependency instead of only reporting an unreachable port.
+faas_verify_readyz_timeout_s: 2
+faas_verify_readyz_retries: 30
+faas_verify_readyz_delay_s: 2
 faas_verify_run_doctor: true
 faas_verify_gregalectl: /usr/local/bin/gregalectl

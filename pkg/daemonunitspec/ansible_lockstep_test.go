@@ -16,8 +16,9 @@ type daemonsYAML struct {
 	ComputeOnlyUnits  []string `yaml:"faas_compute_only_units"`
 	LegacyUnits       []string `yaml:"faas_legacy_units"`
 	Probes            map[string]struct {
-		Probe  string `yaml:"probe"`
-		Target string `yaml:"target"`
+		Probe     string `yaml:"probe"`
+		Target    string `yaml:"target"`
+		ReadyzURL string `yaml:"readyz_url"`
 	} `yaml:"faas_daemon_probes"`
 }
 
@@ -67,8 +68,8 @@ func TestDaemonsYAML_LockstepWithRegistry(t *testing.T) {
 			t.Errorf("faas_daemon_probes missing %s", unit)
 			continue
 		}
-		if p.Probe != string(e.Lifecycle.Probe) || p.Target != e.Lifecycle.ProbeTarget {
-			t.Errorf("%s probe = %s %q, Registry says %s %q", unit, p.Probe, p.Target, e.Lifecycle.Probe, e.Lifecycle.ProbeTarget)
+		if p.Probe != string(e.Lifecycle.Probe) || p.Target != e.Lifecycle.ProbeTarget || p.ReadyzURL != e.Lifecycle.ReadyzURL {
+			t.Errorf("%s probe = %s %q readyz=%q, Registry says %s %q readyz=%q", unit, p.Probe, p.Target, p.ReadyzURL, e.Lifecycle.Probe, e.Lifecycle.ProbeTarget, e.Lifecycle.ReadyzURL)
 		}
 		if e.Role != RoleControlPlane && e.Role != RoleComputeOnly {
 			t.Errorf("%s: Registry entry has no Role", e.Name)
