@@ -2584,6 +2584,37 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/requests/{req_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: req_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: "Telemetry record UUID to retrieve."
+    get:
+      tags: [apps]
+      operationId: getAppDebugRequest
+      summary: Get one request telemetry record (ADR-127).
+      description: |
+        Returns one request telemetry row by id for the app. The
+        lookup is scoped to the app resolved from `slug`, so a request
+        id belonging to another app is returned as not found. This
+        direct lookup is not limited to the first page of recent
+        requests. Plan-gated by `DebugTelemetryEnabled`.
+      responses:
+        '200':
+          description: Request telemetry record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugTelemetryRequestItem'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/regressions:
     parameters:
       - $ref: '#/components/parameters/Slug'

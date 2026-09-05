@@ -562,7 +562,8 @@ var methodRouteMap = map[string]string{
 	// match the operationId on the spec side and the per-resource
 	// list family (ListAlertRules, ListEdgeRules, ListAppWebhooks)
 	// — drop the slug placeholder from the verb.
-	"GET /v1/apps/{slug}/debug/requests": "ListAppDebugRequests",
+	"GET /v1/apps/{slug}/debug/requests":          "ListAppDebugRequests",
+	"GET /v1/apps/{slug}/debug/requests/{req_id}": "GetAppDebugRequest",
 
 	// ADR-127 / PR-B — production debugger consumer surface.
 	// Same rationale as the PR-A request list: drop the slug from

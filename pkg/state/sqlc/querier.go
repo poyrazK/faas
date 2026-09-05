@@ -210,6 +210,10 @@ type Querier interface {
 	// first-use auto-create path (PR-A) and the dashboard's Refine
 	// form (PR-C).
 	GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTrustPolicyParams) (GetOIDCTrustPolicyRow, error)
+	// Direct request drill-down for the customer debugger. The app_id
+	// predicate is the database-side tenant boundary; the handler has
+	// already resolved the slug through the caller's account.
+	GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIDParams) (GetRequestTelemetryByAppAndIDRow, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
 	// sql.ErrNoRows from pgx maps to state.ErrNotFound in pgstore.
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)

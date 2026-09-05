@@ -4098,6 +4098,15 @@ func (c *Client) ListAppDebugRequests(ctx context.Context, slug, since string) (
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppDebugRequest returns one request-telemetry row by id. The
+// server scopes the lookup to the app resolved from slug, so a request
+// id from another app is indistinguishable from a missing request.
+func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (DebugTelemetryRequestItem, error) {
+	var out DebugTelemetryRequestItem
+	path := "/v1/apps/" + slug + "/debug/requests/" + reqID
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // ListAppDebugRegressions returns the active regression
 // observations for an app (ADR-127 / PR-B). Ordered by
 // regression_factor DESC, last_detected_at DESC (worst first).

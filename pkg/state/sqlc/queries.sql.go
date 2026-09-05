@@ -1831,6 +1831,61 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 	return i, err
 }
 
+const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
+SELECT id, deployment_id, route, method, status, latency_ms,
+       cold_boot, trace_id, received_at
+FROM request_telemetry
+WHERE app_id = $1
+  AND id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+LIMIT 1
+`
+
+type GetRequestTelemetryByAppAndIDParams struct {
+	AppID        pgtype.UUID
+	ID           pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type GetRequestTelemetryByAppAndIDRow struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+	Method       string
+	Status       int32
+	LatencyMs    int32
+	ColdBoot     bool
+	TraceID      pgtype.Text
+	ReceivedAt   pgtype.Timestamptz
+}
+
+// Direct request drill-down for the customer debugger. The app_id
+// predicate is the database-side tenant boundary; the handler has
+// already resolved the slug through the caller's account.
+func (q *Queries) GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIDParams) (GetRequestTelemetryByAppAndIDRow, error) {
+	row := db.QueryRow(ctx, getRequestTelemetryByAppAndID,
+		arg.AppID,
+		arg.ID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	var i GetRequestTelemetryByAppAndIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.Route,
+		&i.Method,
+		&i.Status,
+		&i.LatencyMs,
+		&i.ColdBoot,
+		&i.TraceID,
+		&i.ReceivedAt,
+	)
+	return i, err
+}
+
 const getSession = `-- name: GetSession :one
 select id, account_id,
        coalesce(host(issued_ip), '') as issued_ip,
