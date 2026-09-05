@@ -38,6 +38,10 @@ export type DeploymentResponse = {
   error_relevant_logs?: Array<LogExcerpt>;
   created_at: string;
   /**
+   * Repository-relative build root used by a workspace context upload; omitted when the archive root is built.
+   */
+  source_root?: string;
+  /**
    * True when this deployment carries a non-null override_* column set.
    */
   has_overrides?: boolean;

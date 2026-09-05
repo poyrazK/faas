@@ -2548,6 +2548,11 @@ paths:
                 runtime:
                   type: string
                   enum: [node22, python312, go124, go124-alpine, node24, python313]
+                source_root:
+                  type: string
+                  maxLength: 256
+                  pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
+                  description: "Optional repository-relative directory to build from when source contains a workspace context. Empty or omitted means the archive root."
                 workflows:
                   type: string
                   description: "JSON array of workflow definitions (plan-gated)."
@@ -12972,6 +12977,9 @@ components:
           description: "Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes by the CLI tripwire."
           items: { $ref: '#/components/schemas/LogExcerpt' }
         created_at: { type: string, format: date-time }
+        source_root:
+          type: string
+          description: "Repository-relative build root used by a workspace context upload; omitted when the archive root is built."
         has_overrides: { type: boolean, description: "True when this deployment carries a non-null override_* column set." }
         override_entrypoint:
           type: array

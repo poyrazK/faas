@@ -12,9 +12,8 @@ import (
 
 // detectWorkspacesImpl enumerates workspace-graph members. A member
 // is a workload only if the directory carries a Dockerfile or a
-// recognized language marker. Otherwise it's a library-only
-// member — the workspace graph imports it but it isn't a runnable
-// thing on its own.
+// recognized language marker. Otherwise it is only a workspace graph
+// entry and is not buildable on its own.
 //
 // Recognized workspace sources:
 //

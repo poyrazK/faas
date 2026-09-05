@@ -17,7 +17,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
 // Source tarball + dockerfile + function deploys (spec §9).
@@ -89,6 +91,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		dockerfile     bool
 		runtime        string
 		handler        string
+		sourceRoot     string
 		kind           state.DeploymentKind
 		sourceAccepted bool
 		workflows      []api.WorkflowSpec
@@ -137,6 +140,18 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		case "handler":
 			b, _ := io.ReadAll(io.LimitReader(part, 256))
 			handler = strings.TrimSpace(string(b))
+		case "source_root":
+			b, readErr := io.ReadAll(io.LimitReader(part, sourcecontext.MaxRootBytes+1))
+			if readErr != nil || len(b) > sourcecontext.MaxRootBytes {
+				api.WriteProblem(w, api.ErrSourceInvalid("source_root is too long"))
+				return
+			}
+			storedRoot, rootErr := sourcecontext.StorageRoot(string(b))
+			if rootErr != nil {
+				api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
+				return
+			}
+			sourceRoot = storedRoot
 		case "workflows":
 			b, readErr := io.ReadAll(io.LimitReader(part, 1<<20))
 			if readErr != nil || !json.Valid(b) {
@@ -163,18 +178,29 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			"Source required", "multipart deploys require a 'source' file field"))
 		return
 	}
+	if sourceRoot != "" {
+		present, rootErr := archiveHasSourceRoot(sourcePath, sourceRoot)
+		if rootErr != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error()))
+			return
+		}
+		if !present {
+			api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", sourceRoot)))
+			return
+		}
+	}
 
 	// Wave 0 / year-one stateless-only: detect persistence-shaped
 	// deploys at accept time so we fail fast (no build slot wasted).
 	// Two checks run inside one tarball pass:
 	//   - Dockerfile scan: VOLUME instruction, mkfs/mount -t ext4|xfs
 	//     inside a RUN. Only when the customer marked dockerfile=true
-	//     OR a Dockerfile exists at the archive root (Railpack detect
+	//     OR a Dockerfile exists at the selected source root (Railpack detect
 	//     handles the latter case, but we surface the violation here).
-	//   - Tarball root: a `data/` or `db/` directory at the top level
+	//   - Source root: a `data/` or `db/` directory at the selected root
 	//     is the canonical "this is a database" signal.
 	// Both pass the same spooled tarball — no extra I/O.
-	if prob := scanForStatefulShape(sourcePath, dockerfile); prob != nil {
+	if prob := scanForStatefulShapeAtRoot(sourcePath, dockerfile, sourceRoot); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -182,7 +208,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	hasRootDockerfile, err := archiveHasRootDockerfile(sourcePath)
+	hasRootDockerfile, err := archiveHasRootDockerfileAtRoot(sourcePath, sourceRoot)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error()))
 		return
@@ -231,6 +257,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			Kind:        kind,
 			SourcePath:  sourcePath,
 			SourceBytes: sourceBytes,
+			SourceRoot:  sourceRoot,
 			Handler:     handler,
 			LogSpool:    spoolRoot(),
 			Log:         s.log,
@@ -423,13 +450,13 @@ func init() {
 
 // scanForStatefulShape is the Wave 0 stateless-only accept-time check.
 // Reads the spooled tarball once and rejects with CodeStatelessOnlyViolation
-// when the deploy shape is a persistent one. Three checks, all in one pass:
+// when the selected source root has a persistent shape. Three checks, all in one pass:
 //
-//  1. If a Dockerfile exists at the archive root (or dockerfile=true was
+//  1. If a Dockerfile exists at the selected source root (or dockerfile=true was
 //     sent), reject any VOLUME instruction or mkfs/mount -t ext4|xfs call
 //     inside a RUN directive. Bounded: we only read up to dockerfileMaxBytes
 //     of the Dockerfile so a multi-MB heredoc can't pin apid.
-//  2. Reject a top-level data/ or db/ directory — the canonical
+//  2. Reject a source-root-level data/ or db/ directory — the canonical
 //     "this is a database" signal that bypasses Dockerfile detection.
 //     Short-circuits the scan: as soon as the offending entry is
 //     observed, the loop returns without reading the rest of the
@@ -440,7 +467,19 @@ func init() {
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Stateless-shape validation re-reads the same bytes validateTarballShape just walked.
 func scanForStatefulShape(path string, dockerfileFlag bool) *api.Problem {
-	f, err := os.Open(path)
+	return scanForStatefulShapeAtRoot(path, dockerfileFlag, "")
+}
+
+// scanForStatefulShapeAtRoot applies the stateless-only checks to the selected
+// source root. Files in sibling workspace packages are build inputs, but they
+// must not make a selected app look stateful merely because they contain a
+// top-level data/ or db/ directory of their own.
+func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot string) *api.Problem {
+	logicalRoot, rootErr := archiveLogicalRoot(path, sourceRoot)
+	if rootErr != nil {
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error())
+	}
+	f, err := os.Open(path) //nolint:forbidigo // path is a server-owned spool file created by validateAndSpool under spoolRoot; customer input cannot replace it.
 	if err != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
@@ -461,36 +500,35 @@ func scanForStatefulShape(path string, dockerfileFlag bool) *api.Problem {
 		if err != nil {
 			return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad tar", err.Error())
 		}
-		// tar paths are `<root>/<sub>/<file>`; the first segment is the
-		// archive root (already enforced single-root by
-		// validateTarballShape) so the second segment names the
-		// customer's top-level dir.
-		parts := strings.SplitN(hdr.Name, "/", 3)
-		if len(parts) >= 2 {
-			if reason, denied := statefulTopLevelDirs[parts[1]]; denied {
+		rel, inRoot := archiveEntryRelativeToRoot(hdr.Name, logicalRoot)
+		if !inRoot {
+			continue
+		}
+		parts := strings.SplitN(rel, "/", 2)
+		if len(parts) >= 1 {
+			if reason, denied := statefulTopLevelDirs[parts[0]]; denied {
 				// Short-circuit: we don't need to read the rest of
 				// the tarball now that we've found the violation.
 				return api.ErrStatelessOnlyViolation("tarball", reason)
 			}
 		}
-		// Only read the Dockerfile at the archive root. We do this
+		// Only read the Dockerfile at the selected source root. We do this
 		// lazily — dockerfileMaxBytes caps the read so a hostile
 		// heredoc can't pin apid.
-		baseName := parts[len(parts)-1]
-		if baseName == "Dockerfile" && len(parts) == 2 {
+		if rel == "Dockerfile" {
 			dockerfileBytes, _ = io.ReadAll(io.LimitReader(tr, dockerfileMaxBytes))
 		}
 	}
 
 	// Check 1: Dockerfile scan. If dockerfile=true but no Dockerfile
-	// was found in the archive root, fail fast at accept time rather
+	// was found at the selected source root, fail fast at accept time rather
 	// than punting to a build-time failure — the customer asked for a
 	// Dockerfile deploy and we shouldn't have to start a build slot to
 	// tell them they forgot to include one.
 	if dockerfileFlag && len(dockerfileBytes) == 0 {
 		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid,
 			"Dockerfile missing",
-			"`dockerfile=true` was set but no Dockerfile was found at the archive root")
+			"`dockerfile=true` was set but no Dockerfile was found at the selected source root")
 	}
 	if len(dockerfileBytes) > 0 {
 		if reason := scanDockerfileForStatefulShape(dockerfileBytes); reason != "" {
@@ -501,14 +539,25 @@ func scanForStatefulShape(path string, dockerfileFlag bool) *api.Problem {
 }
 
 // archiveHasRootDockerfile reports whether a source archive contains the
-// root-level Dockerfile that Railpack would use for a custom-image build. It
+// selected-root Dockerfile that Railpack would use for a custom-image build. It
 // is deliberately separate from scanForStatefulShape: a clean Dockerfile is
 // valid for a container deploy but incompatible with a function deploy, which
 // must use the selected runtime's normalized handler scaffold.
 //
 //nolint:forbidigo // path is the spool file created and owned by apid.
 func archiveHasRootDockerfile(path string) (bool, error) {
-	f, err := os.Open(path)
+	return archiveHasRootDockerfileAtRoot(path, "")
+}
+
+// archiveHasRootDockerfileAtRoot reports whether the selected source root has
+// a Dockerfile. sourceRoot is relative to the logical archive root, not to a
+// transport wrapper directory.
+func archiveHasRootDockerfileAtRoot(path, sourceRoot string) (bool, error) {
+	logicalRoot, err := archiveLogicalRoot(path, sourceRoot)
+	if err != nil {
+		return false, err
+	}
+	f, err := os.Open(path) //nolint:forbidigo // path is a server-owned spool file created by validateAndSpool under spoolRoot; customer input cannot replace it.
 	if err != nil {
 		return false, err
 	}
@@ -527,8 +576,80 @@ func archiveHasRootDockerfile(path string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		parts := strings.SplitN(hdr.Name, "/", 3)
-		if len(parts) == 2 && parts[1] == "Dockerfile" {
+		rel, inRoot := archiveEntryRelativeToRoot(hdr.Name, logicalRoot)
+		if inRoot && rel == "Dockerfile" {
+			return true, nil
+		}
+	}
+}
+
+// archiveLogicalRoot resolves the optional historical single-directory
+// wrapper used by the CLI. A non-empty source root is then addressed below
+// that wrapper, while an empty source root retains the old archive-root
+// behavior.
+func archiveLogicalRoot(path, sourceRoot string) (string, error) {
+	return tarball.ResolveSourceRoot(path, sourceRoot)
+}
+
+// archiveEntryRelativeToRoot returns the slash-separated path of an archive
+// entry below logicalRoot. An empty logicalRoot means a flat archive root.
+func archiveEntryRelativeToRoot(name, logicalRoot string) (string, bool) {
+	name = strings.TrimPrefix(strings.TrimSuffix(name, "/"), "./")
+	if name == "" {
+		return "", false
+	}
+	if logicalRoot == "" {
+		return name, true
+	}
+	prefix := strings.TrimSuffix(logicalRoot, "/") + "/"
+	if !strings.HasPrefix(name, prefix) {
+		return "", false
+	}
+	rel := strings.TrimPrefix(name, prefix)
+	if rel == "" {
+		return "", false
+	}
+	return rel, true
+}
+
+// archiveHasSourceRoot checks that a non-default source root names a
+// directory represented by at least one archive entry. Tar does not require
+// explicit directory headers, so a child file is the durable existence test.
+func archiveHasSourceRoot(path, sourceRoot string) (bool, error) {
+	logicalRoot, err := archiveLogicalRoot(path, sourceRoot)
+	if err != nil {
+		return false, err
+	}
+	if logicalRoot == "" {
+		return false, nil
+	}
+	f, err := os.Open(path) //nolint:forbidigo // path is a server-owned spool file created by validateAndSpool under spoolRoot; customer input cannot replace it.
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	prefix := strings.TrimSuffix(logicalRoot, "/") + "/"
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		switch hdr.Typeflag {
+		case tar.TypeXHeader, tar.TypeXGlobalHeader,
+			tar.TypeGNULongName, tar.TypeGNULongLink:
+			continue
+		}
+		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		if strings.HasPrefix(name, prefix) && strings.TrimPrefix(name, prefix) != "" {
 			return true, nil
 		}
 	}

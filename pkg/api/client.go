@@ -785,8 +785,20 @@ func (c *Client) GetBuilds(ctx context.Context, app, status, before string, limi
 // `faas deploy --tarball` refuses symlinks via openCustomerFile),
 // wrap openCustomerFile before calling DeployMultipart.
 func (c *Client) DeployMultipart(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, ann DeployAnnotations) (DeploymentResponse, error) {
+	return c.DeployMultipartWithSourceRoot(ctx, slug, source, sourceName, runtime, handler, dockerfile, "", ann)
+}
+
+// DeployMultipartWithSourceRoot is the workspace-aware source upload path.
+// sourceRoot is a repository-relative directory inside the uploaded archive;
+// an empty value means the archive root. The legacy DeployMultipart method
+// delegates here with an empty root so existing callers remain unchanged.
+func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations) (DeploymentResponse, error) {
+	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("invalid source root: %w", err)
+	}
 	var b bytes.Buffer
-	w := newMultipartWriter(&b, slug, dockerfile, runtime, handler, ann)
+	w := newMultipartWriterWithSourceRoot(&b, slug, dockerfile, runtime, handler, storedRoot, ann)
 	fw, err := w.CreateFormFile("source", sourceName)
 	if err != nil {
 		return DeploymentResponse{}, fmt.Errorf("create form file: %w", err)

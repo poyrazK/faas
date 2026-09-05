@@ -41,12 +41,14 @@ type resumableUploadProgress func(uploaded, total int64)
 // represent this deploy without dropping options. Runtime/handler,
 // Dockerfile mode, canaries, traffic weights, and deployment annotations are
 // intentionally left on the multipart path until the upload commit request
-// carries those fields too.
-func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
+// carries those fields too. A non-empty source root also stays on multipart
+// because the resumable commit protocol has no source-context field.
+func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
 	return sh == shapeApp &&
 		runtime == "" &&
 		handler == "" &&
 		!dockerfile &&
+		sourceRoot == "" &&
 		ann.Reason == "" && ann.Tag == "" && ann.DeployedBy == "" && ann.PRNumber == 0 && len(ann.Workflows) == 0 &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&

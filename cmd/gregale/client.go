@@ -60,12 +60,19 @@ type APIError = api.APIError
 // function because the existing test surface in client_test.go
 // expects `c.DeployTarball(...)` as a method on the alias.
 func DeployTarball(c *Client, ctx context.Context, slug, path, runtime, handler string, dockerfile bool, ann api.DeployAnnotations) (api.DeploymentResponse, error) {
+	return DeployTarballWithSourceRoot(c, ctx, slug, path, runtime, handler, dockerfile, "", ann)
+}
+
+// DeployTarballWithSourceRoot is the workspace-aware counterpart to
+// DeployTarball. sourceRoot is relative to the uploaded repository context;
+// an empty value preserves the legacy archive-root behavior.
+func DeployTarballWithSourceRoot(c *Client, ctx context.Context, slug, path, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations) (api.DeploymentResponse, error) {
 	f, err := openCustomerFile(path)
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
 	defer func() { _ = f.Close() }()
-	return c.DeployMultipart(ctx, slug, f, filepath.Base(path), runtime, handler, dockerfile, ann)
+	return c.DeployMultipartWithSourceRoot(ctx, slug, f, filepath.Base(path), runtime, handler, dockerfile, sourceRoot, ann)
 }
 
 // ExportAccountFile fetches the GDPR export bundle and writes the

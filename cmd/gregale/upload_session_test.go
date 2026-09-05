@@ -24,6 +24,7 @@ func TestCanUseResumableUpload_PreservesUnsupportedOptions(t *testing.T) {
 		dockerfile     bool
 		annotations    api.DeployAnnotations
 		trafficPercent int
+		sourceRoot     string
 		want           bool
 	}{
 		{name: "plain app tarball", trafficPercent: -1, want: true},
@@ -31,10 +32,11 @@ func TestCanUseResumableUpload_PreservesUnsupportedOptions(t *testing.T) {
 		{name: "dockerfile", dockerfile: true, trafficPercent: -1},
 		{name: "traffic split", trafficPercent: 50},
 		{name: "annotation", annotations: api.DeployAnnotations{Reason: "release"}, trafficPercent: -1},
+		{name: "workspace source root", sourceRoot: "apps/api", trafficPercent: -1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := canUseResumableUpload(shapeApp, tc.runtime, "", tc.dockerfile, tc.annotations, tc.trafficPercent, "", "")
+			got := canUseResumableUpload(shapeApp, tc.runtime, "", tc.dockerfile, tc.sourceRoot, tc.annotations, tc.trafficPercent, "", "")
 			if got != tc.want {
 				t.Fatalf("canUseResumableUpload() = %v, want %v", got, tc.want)
 			}

@@ -33,7 +33,11 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
 echo "Downloading packer ${VERSION}…"
-curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+# Hosted runners occasionally reset the TLS connection to releases.hashicorp.com
+# before any response bytes arrive. Retry those transport errors as well as the
+# usual transient HTTP failures; checksum verification still gates installation.
+curl --fail --silent --show-error --location \
+    --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
     -o "${TMP}/packer.zip" "${URL}"
 
 echo "${SHA}  ${TMP}/packer.zip" | sha256sum --check --strict

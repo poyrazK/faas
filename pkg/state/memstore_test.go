@@ -5705,6 +5705,7 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 		Status:             DeployFailed,
 		ImageDigest:        "sha256:orig",
 		Kind:               DeploymentKindTarball,
+		SourceRoot:         "apps/api",
 		SourceURL:          "https://github.com/example/repo",
 		CommitSHA:          "abc1234",
 		Sidecars:           sidecarsJSON,
@@ -5735,6 +5736,9 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	}
 	if got.Kind != failed.Kind {
 		t.Errorf("Kind not copied: got %q, want %q", got.Kind, failed.Kind)
+	}
+	if got.SourceRoot != failed.SourceRoot {
+		t.Errorf("SourceRoot not copied: got %q, want %q", got.SourceRoot, failed.SourceRoot)
 	}
 	if got.SourceURL != failed.SourceURL {
 		t.Errorf("SourceURL not copied: got %q, want %q", got.SourceURL, failed.SourceURL)

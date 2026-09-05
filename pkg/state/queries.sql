@@ -100,37 +100,37 @@ update apps set manifest = $2 where id = $1;
 update apps set status = 'deleted' where id = $1;
 
 -- name: CreateDeployment :one
-insert into deployments (id, app_id, build_id, image_digest, kind, source_path, source_bytes, handler, log_path, status)
-values (gen_random_uuid(), $1, null, $2, $3, $4, $5, $6, $7, 'pending')
+insert into deployments (id, app_id, build_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, status)
+values (gen_random_uuid(), $1, null, $2, $3, $4, $5, $6, $7, $8, 'pending')
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-          coalesce(source_path, ''), coalesce(source_bytes, 0),
+          coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
           coalesce(handler, ''), coalesce(log_path, ''),
           status, coalesce(error, ''), created_at;
 
 -- name: DeploymentByID :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-       coalesce(source_path, ''), coalesce(source_bytes, 0),
+       coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
        coalesce(handler, ''), coalesce(log_path, ''),
        status, coalesce(error, ''), created_at
 from deployments where id = $1;
 
 -- name: LatestDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-       coalesce(source_path, ''), coalesce(source_bytes, 0),
+       coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
        coalesce(handler, ''), coalesce(log_path, ''),
        status, coalesce(error, ''), created_at
 from deployments where app_id = $1 order by created_at desc limit 1;
 
 -- name: ListDeploymentsForApp :many
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-       coalesce(source_path, ''), coalesce(source_bytes, 0),
+       coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
        coalesce(handler, ''), coalesce(log_path, ''),
        status, coalesce(error, ''), created_at
 from deployments where app_id = $1 order by created_at desc limit $2 offset $3;
 
 -- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-       coalesce(source_path, ''), coalesce(source_bytes, 0),
+       coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
        coalesce(handler, ''), coalesce(log_path, ''),
        status, coalesce(error, ''), created_at
 from deployments
@@ -158,7 +158,7 @@ update deployments
    set status = 'failed', error = $2, error_code = $3
  where id = $1
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-          coalesce(source_path, ''), coalesce(source_bytes, 0),
+          coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
           coalesce(handler, ''), coalesce(log_path, ''),
           coalesce(rootfs_path, ''), coalesce(rootfs_key, ''), coalesce(rootfs_bytes, 0),
           status, coalesce(error, ''), coalesce(error_code, ''), created_at;
