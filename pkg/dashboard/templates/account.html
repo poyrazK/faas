@@ -85,9 +85,10 @@
 
       <h2>Plan</h2>
       <form method="POST" action="/dashboard/account/plan">
+        <input type="hidden" name="csrf_token" value="{{.Data.PlanConfirmToken}}">
         <label>
           Change plan:
-          <select name="plan">
+          <select name="plan" required>
             <option value="free" {{if eq .Account.Plan "free"}}selected{{end}}>Free</option>
             <option value="hobby" {{if eq .Account.Plan "hobby"}}selected{{end}}>Hobby</option>
             <option value="pro" {{if eq .Account.Plan "pro"}}selected{{end}}>Pro</option>
