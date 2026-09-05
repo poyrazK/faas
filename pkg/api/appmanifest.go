@@ -31,6 +31,12 @@ const FullRootfsMarkerValue = "gregale-full-rootfs-v1\n"
 // data over the wake wire.
 const SidecarWorkloadManifestPath = "/etc/faas/workloads"
 
+// FullRootfsSidecarMountPath is the guest-only mount root for sidecar image
+// drives when the main workload uses a self-contained full-rootfs artifact.
+// guest-init creates one validated child directory per sidecar beneath this
+// platform-owned path and runs the workload from the sidecar image's root.
+const FullRootfsSidecarMountPath = "/run/faas/sidecars"
+
 // Defaults for the guest runtime contract (spec §4.8, §4.9).
 const (
 	DefaultAppPort = 8080  // the :8080 contract

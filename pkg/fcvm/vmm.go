@@ -2005,6 +2005,34 @@ const secretsEnvPath = "upper/etc/faas/secrets.env"
 // manifest_env > os.environ".
 const apiEnvPath = "upper/etc/faas/env.json"
 
+// stagedDrivePath selects the on-disk contract location for drive1. The
+// optimized two-drive artifact stores mutable runtime files below /upper;
+// full-rootfs artifacts are already mounted as the guest's root and therefore
+// receive the same files directly under /. The marker is written only by the
+// platform builder, so a malformed value fails closed instead of silently
+// writing state to a path guest-init will never read.
+func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
+	marker := filepath.Join(mountRoot, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
+	info, err := os.Lstat(marker)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return filepath.Join(mountRoot, optimizedPath), nil
+		}
+		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("full-rootfs marker is not a regular file")
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return "", fmt.Errorf("read full-rootfs marker: %w", err)
+	}
+	if string(data) != api.FullRootfsMarkerValue {
+		return "", fmt.Errorf("invalid full-rootfs marker payload")
+	}
+	return filepath.Join(mountRoot, strings.TrimPrefix(optimizedPath, "upper/")), nil
+}
+
 // StageSecretsEnv loopback-mounts drive1 (the per-app layer, the only fs
 // the VM can write at runtime), writes /etc/faas/secrets.env with mode
 // 0400, and umounts. The plaintext is read off the chroot-local image
@@ -2037,7 +2065,10 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, secretsEnvPath)
+	target, err := stagedDrivePath(mp, secretsEnvPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2078,7 +2109,10 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, apiEnvPath)
+	target, err := stagedDrivePath(mp, apiEnvPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2118,7 +2152,11 @@ func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []b
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, workloadEnvPath, workloadName, "env.json")
+	base, err := stagedDrivePath(mp, workloadEnvPath)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(base, workloadName, "env.json")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir workload env: %w", err)
 	}
@@ -2226,7 +2264,10 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	if err != nil {
 		return fmt.Errorf("marshal workload manifest: %w", err)
 	}
-	target := filepath.Join(mp, workloadManifestPath)
+	target, err := stagedDrivePath(mp, workloadManifestPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2432,7 +2473,10 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	if err != nil {
 		return fmt.Errorf("marshal workload roster: %w", err)
 	}
-	target := filepath.Join(mp, workloadRosterPath)
+	target, err := stagedDrivePath(mp, workloadRosterPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}

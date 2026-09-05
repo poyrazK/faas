@@ -29,9 +29,17 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+const maxImagePasswdBytes = 1 << 20
 
 // readPasswdTable opens /etc/faas/app_passwd, binary-searches
 // the entry for `name`, returns the resolved uid. Returns
@@ -51,6 +59,72 @@ func readPasswdTable(name string) (int, bool) {
 		return 0, false
 	}
 	return searchPasswdTable(body, name)
+}
+
+// lookupUIDInRoot resolves a named user from an OCI image's own /etc/passwd.
+// Full-rootfs sidecars run with their image root chrooted, so using the main
+// image's /etc/faas/app_passwd table would resolve names against the wrong
+// filesystem. Numeric UIDs use the same [0, 65534] trust boundary as the
+// builder's ownership resolver. A missing, malformed, or out-of-range image
+// passwd entry falls back to the platform default, matching lookupUID's
+// legacy behavior.
+func lookupUIDInRoot(root, name string) int {
+	if name == api.DefaultAppUser {
+		return api.DefaultAppUID
+	}
+	if uid, ok := numericUID(name); ok {
+		return uid
+	}
+	if uid, ok := readImagePasswd(root, name); ok {
+		return uid
+	}
+	return api.DefaultAppUID
+}
+
+func numericUID(name string) (int, bool) {
+	if name == "" {
+		return 0, false
+	}
+	uid, err := strconv.ParseUint(name, 10, 32)
+	if err != nil || uid > 65534 {
+		return 0, false
+	}
+	return int(uid), true
+}
+
+func readImagePasswd(root, name string) (int, bool) {
+	if root == "" {
+		root = "/"
+	}
+	passwdPath, err := safeRootPath(root, filepath.Join("etc", "passwd"))
+	if err != nil {
+		return 0, false
+	}
+	//nolint:forbidigo // root is a guest-local, builder-mounted sidecar image.
+	f, err := os.Open(passwdPath)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	body, err := io.ReadAll(io.LimitReader(f, maxImagePasswdBytes+1))
+	if err != nil || len(body) > maxImagePasswdBytes {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, ":")
+		if len(fields) < 4 || fields[0] != name {
+			continue
+		}
+		uid, err := strconv.ParseUint(fields[2], 10, 32)
+		if err != nil || uid > 65534 {
+			return 0, false
+		}
+		return int(uid), true
+	}
+	return 0, false
 }
 
 // searchPasswdTable is the binary-search core, separated from

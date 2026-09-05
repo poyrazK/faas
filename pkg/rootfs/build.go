@@ -303,6 +303,13 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		if err := InjectWorkloadManifest(staging, in.WorkloadName, *in.WorkloadManifest); err != nil {
 			return BuildResult{}, err
 		}
+		// Sidecar images are mounted as independent roots when their main
+		// deployment uses full-rootfs. Keep the standard container mount
+		// points in the immutable sidecar tree so guest-init can attach
+		// /proc, /sys, /dev, and /tmp after chrooting the workload.
+		if err := ensureWorkloadMountpoints(staging); err != nil {
+			return BuildResult{}, err
+		}
 	}
 
 	stats, err := InspectStaging(staging)
@@ -387,6 +394,58 @@ func stageAppUpper(staging string) error {
 		}
 	}
 	return nil
+}
+
+// ensureWorkloadMountpoints creates the mount targets needed by a sidecar
+// that runs from its own root. The directories are created before stageAppUpper
+// moves the assembled image below /upper, so the sidecar ext4 remains
+// read-only while guest-init attaches the shared guest pseudo-filesystems.
+func ensureWorkloadMountpoints(staging string) error {
+	for _, rel := range []string{"dev", "proc", "sys", "tmp"} {
+		if err := ensureRuntimeDirectory(staging, rel); err != nil {
+			return fmt.Errorf("rootfs: sidecar mountpoint %q: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+// ensureRuntimeDirectory creates a path beneath staging while resolving any
+// existing ancestor symlinks with the same containment rules as OCI layer
+// extraction. The final target must resolve to a directory; a customer image
+// cannot turn a platform mountpoint into a regular file or an escape path.
+func ensureRuntimeDirectory(staging, rel string) error {
+	joined, err := safeJoin(staging, rel)
+	if err != nil {
+		return err
+	}
+	// The final mountpoint must be a real directory. Check the lexical path
+	// before resolveWithin follows ancestor symlinks; otherwise a final image
+	// symlink (for example /tmp -> /var/tmp) would look like an ordinary target
+	// and could not be safely overmounted after the artifact is mounted.
+	if info, statErr := os.Lstat(joined); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path exists but is a symlink")
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("path exists but is not a directory")
+		}
+		return nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	path, err := resolveWithin(staging, rel)
+	if err != nil {
+		return err
+	}
+	if info, statErr := os.Lstat(path); statErr == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("path exists but is not a directory")
+		}
+		return nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	return os.MkdirAll(path, 0o755)
 }
 
 // publishExt4 mkfs-es the staging tree into a temp file (or directly into
