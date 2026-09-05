@@ -1,4 +1,5 @@
 -- +goose Up
+-- +goose StatementBegin
 -- Provider-independent application access to logical object buckets.
 CREATE TABLE IF NOT EXISTS object_storage_access_grants (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -61,8 +62,10 @@ ALTER TABLE api_keys ADD CONSTRAINT api_keys_scopes_vocab_chk CHECK (
         'storage:read', 'storage:write'
     ]::text[] AND cardinality(scopes) > 0
 );
+-- +goose StatementEnd
 
 -- +goose Down
+-- +goose StatementBegin
 ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_vocab_chk;
 ALTER TABLE api_keys ADD CONSTRAINT api_keys_scopes_vocab_chk CHECK (
     scopes <@ ARRAY[
@@ -75,3 +78,4 @@ DROP FUNCTION IF EXISTS delete_object_storage_grants_on_bucket_delete();
 DROP TRIGGER IF EXISTS api_key_rotation_copy_object_storage_grants ON api_keys;
 DROP FUNCTION IF EXISTS copy_object_storage_grants_on_key_rotation();
 DROP TABLE IF EXISTS object_storage_access_grants;
+-- +goose StatementEnd
