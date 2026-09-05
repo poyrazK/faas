@@ -2677,6 +2677,8 @@ type Store interface {
 
 	// Builds (apid creates the queued row; builderd writes status, spec §9).
 	CreateBuild(ctx context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error)
+	FailSourceDeployment(ctx context.Context, id, message string) error
+	CreateBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error)
 	BuildByID(ctx context.Context, id string) (Build, error)
 	BuildByDeployment(ctx context.Context, deploymentID string) (Build, error)
 	// ClaimQueuedBuild atomically transitions queued → running and returns
@@ -2721,20 +2723,18 @@ type Store interface {
 	RequeueBuild(ctx context.Context, id string) error
 	UpdateBuildStatus(ctx context.Context, id string, status BuildStatus, fc FailureClass, started, finished bool) error
 
-	// CreateBuildProvenance persists the post-mortem "what ran?"
-	// record for a successful Build (ADR-038, Tier 3 / issue #197
-	// B3.1). Called by builderd's recordProvenance helper at the two
-	// markSucceeded sites; ON CONFLICT (build_id) DO UPDATE makes
-	// redelivery safe — a LISTEN race between apid and imaged's
-	// reaper must not double-row.
-	//
-	// Builderd's failure path is best-effort: a failed INSERT is
-	// logged at WARN and the build still succeeds (the builds row is
-	// authoritative for customer-visible success/fail). The reader
-	// (apid GET /v1/builds/{id}/provenance) renders 404 when the
-	// row is missing — the customer-visible surface is "missing
-	// provenance for build X" rather than "build X failed".
+	// CreateBuildProvenance upserts provenance without clearing an existing SBOM
+	// key when the incoming key is empty. Production build completion uses
+	// CompleteBuild to commit provenance together with success.
 	CreateBuildProvenance(ctx context.Context, prov BuildProvenance) error
+	// FailBuild atomically fails a matching running claim and its deployment.
+	FailBuild(ctx context.Context, claim Build, fc FailureClass, message string) error
+	// CompleteBuild atomically publishes artifact metadata, provenance and
+	// success while the original running claim and eligible deployment match.
+	CompleteBuild(ctx context.Context, claim Build, path, key string, bytes int64, prov BuildProvenance) error
+	// ListBuildsAwaitingImage recovers missed builder-to-imaged notifications.
+	ListBuildsAwaitingImage(ctx context.Context, nodeID string, limit int) ([]BuildImageWork, error)
+
 	// BuildProvenanceByBuildID resolves the row by build_id. Returns
 	// ErrNotFound when the build has no provenance row — either a
 	// pre-PR build, or a successful build whose populator INSERT

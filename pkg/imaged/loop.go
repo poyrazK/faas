@@ -118,6 +118,11 @@ func (l *Loop) WithFCSweepCh(ch <-chan struct{}) *Loop {
 // mode the LISTEN subscriber is skipped and the loop is purely ticker
 // driven.
 func (l *Loop) Run(ctx context.Context) error {
+	// Serialize recovery with notification handling: replay cannot race an
+	// imaged conversion in this process, and deployment status deduplicates it.
+	buildTicker := time.NewTicker(2 * time.Second)
+	defer buildTicker.Stop()
+
 	if l.gcCh == nil {
 		t := time.NewTicker(l.gcEvery)
 		defer t.Stop()
@@ -163,6 +168,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		}
 	}
 
+	l.recoverBuildHandoffs(ctx)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -175,6 +182,8 @@ func (l *Loop) Run(ctx context.Context) error {
 				return nil
 			}
 			l.handler.HandleNotification(ctx, n)
+		case <-buildTicker.C:
+			l.recoverBuildHandoffs(ctx)
 		case <-l.gcCh:
 			l.runGCTick(ctx, l.now())
 		case <-l.fcCh:
@@ -428,4 +437,23 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			"backend", fmt.Sprintf("%T", be))
 	}
 	return nil
+}
+
+// recoverBuildHandoffs consumes successful builds whose image stage has not
+// started. Provenance and rootfs are committed with success, so an imaged
+// restart or a lost snapshot_boot notification cannot strand this handoff.
+func (l *Loop) recoverBuildHandoffs(ctx context.Context) {
+	if l.handler == nil || l.store == nil {
+		return
+	}
+	work, err := l.store.ListBuildsAwaitingImage(ctx, l.handler.nodeName, 16)
+	if err != nil {
+		l.log.Warn("imaged: recover build handoffs", "err", err)
+		return
+	}
+	for _, item := range work {
+		if err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID}); err != nil {
+			l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)
+		}
+	}
 }

@@ -13,21 +13,12 @@
 //     closes; the apply loop calls Enqueue in a per-app loop and
 //     keeps partial-failure semantics.
 //
-// The shared ~40-line sequence is:
-//
-//  1. Read LatestDeployment so the prior row's id can ride the
-//     supersede notify.
-//  2. CreateDeployment with the caller-supplied Kind/SourcePath/
-//     SourceBytes/SourceURL/CommitSHA/Handler.
-//  3. Create the build.log spool dir + an empty file so builderd
-//     can write to it before the row flips to building.
-//  4. UpdateDeploymentStatus(deployment_id, DeployBuilding, "") so
-//     dashboards see the in-flight state.
-//  5. CreateBuild with the same kind + source_bytes.
-//  6. Notify(build_queued) — best-effort; the durable net is the
-//     build row + ClaimNextQueuedBuild.
-//  7. Notify(deployment_changed, status=superseded) if a prior row
-//     existed — imaged's F5-cleanup handler drops the prior snapshot.
+// The shared sequence uploads the source under a reserved build ID before
+// creating a deployment. CreateBuildWithID then publishes the queue row and
+// marks the deployment building in one transaction, guarded against cancel.
+// Notifications are best-effort; workers recover from the durable queue.
+// An enqueue error marks an unqueued deployment failed when the database is
+// reachable, without overwriting cancellation or an uncertain successful commit.
 //
 // Each caller keeps its own auth preamble (HTTP session + scope vs
 // unix-socket DAC vs reposcan/apply ACLs) and its own error mapping
@@ -48,6 +39,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -63,8 +57,8 @@ import (
 type Store interface {
 	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
 	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
-	UpdateDeploymentStatus(ctx context.Context, id string, status state.DeploymentStatus, logPath string) error
-	CreateBuild(ctx context.Context, deploymentID string, kind state.DeploymentKind, sourceBytes int64, logPath string) (state.Build, error)
+	FailSourceDeployment(ctx context.Context, id, message string) error
+	CreateBuildWithID(ctx context.Context, id, deploymentID string, kind state.DeploymentKind, sourceBytes int64, logPath string) (state.Build, error)
 }
 
 // Notifier is the minimal pg_notify surface the deploy+build flow
@@ -259,6 +253,21 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: %w", err)
 	}
 
+	return enqueueWithSourceStorage(ctx, store, notif, p, sourceStorage)
+}
+
+func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, p EnqueueParams, sourceStorage storage.StorageBackend) (EnqueueResult, error) {
+	// Publish before creating any durable work. Polling workers can claim a
+	// queued row without receiving its notification.
+	id, err := uuid.NewV7()
+	if err != nil {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: build ID: %w", err)
+	}
+	buildID := id.String()
+	if err := publishSource(ctx, sourceStorage, buildID, p.SourcePath); err != nil {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source handoff: %w", err)
+	}
+
 	// Step 1: read prior deployment so the supersede notify can
 	// carry the right deployment_id.
 	prev, _ := store.LatestDeployment(ctx, p.AppID)
@@ -315,38 +324,25 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 			"deployment", d.ID, "app", p.AppID, "dir", logDir, "err", err)
 	} else {
 		logPath := filepath.Join(logDir, "build.log")
-		if _, err := os.Create(logPath); err != nil {
+		if f, err := os.Create(logPath); err != nil {
 			p.Log.Warn("apidsource.Enqueue: create build.log (builderd will create on demand)",
 				"deployment", d.ID, "app", p.AppID, "path", logPath, "err", err)
+		} else {
+			_ = f.Close()
 		}
 	}
 
-	// Step 4: flip to 'building' so dashboards see in-flight. The
-	// pre-helper apid code ignored the UpdateDeploymentStatus
-	// error (PR-B comment at deploy_inputs.go:196-200); we
-	// preserve that — the next step (CreateBuild) will surface
-	// the actual durable-state failure.
-	_ = store.UpdateDeploymentStatus(ctx, d.ID, state.DeployBuilding, "")
-
-	// Step 5: create the build row. Same kind as the deployment;
+	// Publish the build and building status together. Same kind as the deployment;
 	// builderd's railpack/dockerfile/tarball detector picks the
 	// pipeline at build time.
-	build, err := store.CreateBuild(ctx, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+	build, err := store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
 	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if cleanupErr := store.FailSourceDeployment(cleanupCtx, d.ID, "create build: "+err.Error()); cleanupErr != nil {
+			p.Log.Warn("apidsource.Enqueue: mark source deployment failed", "deployment", d.ID, "err", cleanupErr)
+		}
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create build: %w", err)
-	}
-
-	// Split-box source handoff. The build row carries the local source path
-	// for compatibility, while compute-side builderd retrieves the same
-	// archive from the shared OCI namespace keyed by the durable build ID.
-	// Publish before the NOTIFY so a fast builderd cannot claim a row before
-	// its source is visible remotely. A failed publish deliberately leaves the
-	// row queued; the durable builder worker can retry after a transient
-	// registry or source-spool failure.
-	if err := publishSource(ctx, sourceStorage, build.ID, p.SourcePath); err != nil {
-		p.Log.Warn("apidsource.Enqueue: source handoff failed (build remains queued for retry)",
-			"build", build.ID, "deployment", d.ID, "app", p.AppID, "err", err)
-		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source handoff: %w", err)
 	}
 
 	// Resolve the wire "source" field. Default to Kind so the

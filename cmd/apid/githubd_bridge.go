@@ -49,6 +49,8 @@ type githubdBridgeStore interface {
 	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status state.DeploymentStatus, logPath string) error
 	CreateBuild(ctx context.Context, deploymentID string, kind state.DeploymentKind, sourceBytes int64, logPath string) (state.Build, error)
+	FailSourceDeployment(ctx context.Context, id, message string) error
+	CreateBuildWithID(ctx context.Context, id, deploymentID string, kind state.DeploymentKind, sourceBytes int64, logPath string) (state.Build, error)
 }
 
 // githubdBridgeNotifier is the minimal Notifier surface the receiver

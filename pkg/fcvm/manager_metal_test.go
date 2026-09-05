@@ -219,6 +219,7 @@ func TestMetalHelloBoot(t *testing.T) {
 	const instance = "m0-hello"
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    busybox, // M0-only: Base == Layer, see comment above.
 		LayerKey:   busybox, // produces a single-drive VM that still hits the chroot path.
 		VcpuCount:  2,

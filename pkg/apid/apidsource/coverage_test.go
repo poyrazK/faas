@@ -81,11 +81,11 @@ func (e *errStore) UpdateDeploymentStatus(ctx context.Context, id string, status
 	return e.Store.UpdateDeploymentStatus(ctx, id, status, logPath)
 }
 
-func (e *errStore) CreateBuild(ctx context.Context, deploymentID string, kind state.DeploymentKind, sourceBytes int64, logPath string) (state.Build, error) {
+func (e *errStore) CreateBuildWithID(ctx context.Context, id, deploymentID string, kind state.DeploymentKind, sourceBytes int64, logPath string) (state.Build, error) {
 	if e.createBuildErr != nil {
 		return state.Build{}, e.createBuildErr
 	}
-	return e.Store.CreateBuild(ctx, deploymentID, kind, sourceBytes, logPath)
+	return e.Store.CreateBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath)
 }
 
 // memBackend is a StorageBackend that records Puts in memory. Used
@@ -330,8 +330,7 @@ func TestEnqueue_CreateDeploymentError(t *testing.T) {
 func TestEnqueue_CreateBuildError(t *testing.T) {
 	// CreateDeployment succeeds (deploy row exists), but CreateBuild
 	// fails → Enqueue must surface a "create build" wrapped error.
-	// The deployment row exists in MemStore; the caller can decide
-	// whether to retry or skip-and-continue (per the doc).
+	// The unqueued deployment must become failed so it cannot hang in flight.
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)
 	notif := &recordingNotifier{}
@@ -356,6 +355,14 @@ func TestEnqueue_CreateBuildError(t *testing.T) {
 	if !strings.Contains(err.Error(), "build row insert failed") {
 		t.Errorf("err = %v, want 'build row insert failed' in chain", err)
 	}
+	dep, readErr := st.LatestDeployment(context.Background(), app.ID)
+	if readErr != nil || dep.Status != state.DeployFailed {
+		t.Fatalf("orphan deployment: %+v %v", dep, readErr)
+	}
+	if _, readErr := st.ClaimNextQueuedBuild(context.Background()); !errors.Is(readErr, state.ErrNotFound) {
+		t.Fatalf("unexpected queued build: %v", readErr)
+	}
+
 }
 
 func TestEnqueue_MkdirSpoolFailure_BuildLogFallbackOK(t *testing.T) {
@@ -396,10 +403,8 @@ func TestEnqueue_MkdirSpoolFailure_BuildLogFallbackOK(t *testing.T) {
 	}
 }
 
-func TestEnqueue_UpdateDeploymentStatusError_Swallowed(t *testing.T) {
-	// UpdateDeploymentStatus error must be swallowed (the helper
-	// captures the result with `_ =`). CreateBuild must still
-	// succeed.
+func TestEnqueue_StatusAndQueueUseSingleStoreOperation(t *testing.T) {
+	// Queue publication must not rely on a separate status update.
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)
 	notif := &recordingNotifier{}
@@ -421,8 +426,8 @@ func TestEnqueue_UpdateDeploymentStatusError_Swallowed(t *testing.T) {
 	if res.DeploymentID == "" || res.BuildID == "" {
 		t.Fatalf("expected durable IDs, got %+v", res)
 	}
-	if store.updateStatusCalled == 0 {
-		t.Error("UpdateDeploymentStatus was never called")
+	if store.updateStatusCalled != 0 {
+		t.Error("separate UpdateDeploymentStatus called")
 	}
 }
 
@@ -508,9 +513,9 @@ type teeStore struct {
 	lastBuildLogPath *string
 }
 
-func (t *teeStore) CreateBuild(ctx context.Context, deploymentID string, kind state.DeploymentKind, sourceBytes int64, logPath string) (state.Build, error) {
+func (t *teeStore) CreateBuildWithID(ctx context.Context, id, deploymentID string, kind state.DeploymentKind, sourceBytes int64, logPath string) (state.Build, error) {
 	*t.lastBuildLogPath = logPath
-	return t.Store.CreateBuild(ctx, deploymentID, kind, sourceBytes, logPath)
+	return t.Store.CreateBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath)
 }
 
 func TestEnqueue_SupersedeNotifyError_Swallowed(t *testing.T) {

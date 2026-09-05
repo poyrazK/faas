@@ -380,3 +380,70 @@ func newHandlerWithBuilder(store *state.MemStore, b *fakeBuilder) *Handler {
 	h.builder = b
 	return h
 }
+
+func TestRecoverBuildHandoffWithoutNotification(t *testing.T) {
+	store := state.NewMemStore()
+	notif := &fakeNotifier{}
+	bld := &fakeBuilder{bytesOut: 4096}
+	bin := filepath.Join(t.TempDir(), "faas-runner")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := newHandlerWithBuilder(store, bld)
+	h.notif = notif
+	h.WithFunctionRunnerNode22(bin)
+
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "boot-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+		Runtime: RuntimeNode22,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",
+	})
+
+	ctx := context.Background()
+	build, err := store.CreateBuild(ctx, dep.ID, dep.Kind, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimQueuedBuild(ctx, build.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteBuild(ctx, claim, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 4096, state.BuildProvenance{BuildID: build.ID, BuilderNodeID: "node-a"}); err != nil {
+		t.Fatal(err)
+	}
+	h.WithNodeName("node-b")
+	loop := NewLoop(LoopConfig{Handler: h, Store: store})
+	loop.recoverBuildHandoffs(ctx)
+	untouched, _ := store.DeploymentByID(ctx, dep.ID)
+	if untouched.RootfsPath != "/tmp/oci.tar" {
+		t.Fatal("foreign node consumed artifact")
+	}
+	h.WithNodeName("node-a")
+	loop.recoverBuildHandoffs(ctx)
+	before := len(notif.calls)
+	loop.recoverBuildHandoffs(ctx)
+	if len(notif.calls) != before {
+		t.Fatal("handoff replay produced duplicate effects")
+	}
+	got, _ := store.DeploymentByID(context.Background(), dep.ID)
+	if got.Status != state.DeploySnapshotting {
+		t.Errorf("deployment status = %s, want snapshotting", got.Status)
+	}
+	if !strings.HasSuffix(got.RootfsPath, ".ext4") {
+		t.Errorf("RootfsPath = %q, want .ext4", got.RootfsPath)
+	}
+	primeFound := false
+	for _, c := range notif.calls {
+		if c.channel == db.NotifySnapshotPrime &&
+			strings.Contains(c.payload, app.ID) &&
+			strings.Contains(c.payload, dep.ID) {
+			primeFound = true
+		}
+	}
+	if !primeFound {
+		t.Errorf("expected NotifySnapshotPrime to schedd; got %v", notif.calls)
+	}
+}

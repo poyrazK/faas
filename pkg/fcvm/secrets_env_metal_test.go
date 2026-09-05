@@ -142,7 +142,7 @@ func TestMetalSecretsEnvReachesGuest(t *testing.T) {
 
 	// Defensive: the on-disk plaintext must not contain a ciphertext
 	// marker (regression guard for the "ship-the-wrong-shape" bug).
-	if want := "AGE-"; contains(raw, want) {
+	if want := "AGE-"; containsSecretBytes(raw, want) {
 		t.Errorf("secrets.env contains ciphertext marker %q — Manager shipped ciphertext to guest:\n%s",
 			want, raw)
 	}
@@ -162,7 +162,7 @@ func mustSeal(t *testing.T, id *age.X25519Identity, env secretbox.Envelope) []by
 // contains is a tiny strings.Contains without the import dance —
 // this test file is build-tagged `metal` and we don't want to drag in
 // the strings package just for one substring check.
-func contains(haystack []byte, needle string) bool {
+func containsSecretBytes(haystack []byte, needle string) bool {
 	if len(needle) == 0 {
 		return true
 	}

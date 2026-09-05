@@ -7386,6 +7386,55 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 	return scanBuild(row)
 }
 
+// CreateBuildWithID publishes a pre-uploaded source into the queue and
+// advances its deployment under the same lock used by cancellation.
+func (s *PgStore) CreateBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Build{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `update deployments set status='building' where id=$1 and status in ('pending','building')`, deploymentID)
+	if err != nil {
+		return Build{}, err
+	}
+	if tag.RowsAffected() != 1 {
+		return Build{}, ErrNotFound
+	}
+	build, err := scanBuild(tx.QueryRow(ctx, `insert into builds(id,deployment_id,kind,source_bytes,status,log_path)
+	values($1,$2,$3,$4,'queued',$5)
+	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
+	if err != nil {
+		return Build{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Build{}, err
+	}
+	return build, nil
+}
+
+func (s *PgStore) FailSourceDeployment(ctx context.Context, id, message string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// A commit response may be lost while the queue transaction still owns
+	// this row. Acquire its lock before checking builds on a fresh snapshot.
+	var status DeploymentStatus
+	if err := tx.QueryRow(ctx, `select status from deployments where id=$1 for update`, id).Scan(&status); err != nil {
+		return mapErr(err)
+	}
+	if status != DeployPending && status != DeployBuilding {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `update deployments set status='failed',error=$2 where id=$1
+	and not exists(select 1 from builds where deployment_id=$1)`, id, message); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *PgStore) BuildByID(ctx context.Context, id string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
@@ -7474,7 +7523,15 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 // nullString so an empty input maps to NULL (e.g. cache-hit builds
 // have empty buildkit_version / railpack_version / base_digest).
 func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenance) error {
-	_, err := s.pool.Exec(ctx,
+	return createBuildProvenance(ctx, s.pool, prov)
+}
+
+type buildProvenanceWriter interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func createBuildProvenance(ctx context.Context, writer buildProvenanceWriter, prov BuildProvenance) error {
+	_, err := writer.Exec(ctx,
 		`insert into build_provenance
 		   (build_id, buildkit_version, railpack_version, base_digest, source_sha256,
 		    source_url, commit_sha, plan, runner_digest, builder_node_id,
@@ -7492,7 +7549,7 @@ func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenanc
 		   builder_node_id  = excluded.builder_node_id,
 		   started_at       = excluded.started_at,
 		   finished_at      = excluded.finished_at,
-		   sbom_storage_key = excluded.sbom_storage_key,
+		   sbom_storage_key = coalesce(excluded.sbom_storage_key, build_provenance.sbom_storage_key),
 		   framework_version = excluded.framework_version`,
 		prov.BuildID,
 		nullString(prov.BuildkitVer),
@@ -7686,61 +7743,32 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 	return b, nil
 }
 
-// ClaimNextQueuedBuildWithFairness is the B2.2 (issue #196) variant.
-// Same shape as ClaimNextQueuedBuild (single UPDATE+RETURNING under a
-// SELECT … FOR UPDATE SKIP LOCKED) but with a CTE that excludes
-// accounts whose last claim is more recent than fairnessWindow.
-//
-// Critical invariant #1 (never starve): if every queued account is in
-// recent_claims (e.g. 100% of accounts claimed within the window), the
-// `or not exists (… fresh_candidate …)` clause falls back to ALL queued
-// rows. This is the standard round-robin fairness property.
-//
-// Critical invariant #2 (must not regress basic claim): the row we
-// SELECT FOR UPDATE must still be only status='queued' (the
-// freshness-fallback path also enforces status='queued').
-//
-// Critical invariant #3 (builds↔account path): builds does NOT carry
-// account_id directly; we join through deployments → apps. The double
-// join is the cost of the fairness filter without denormalising
-// account_id onto the builds row (a future B3.x could carry
-// account_id on builds to skip the JOIN, but that's a separate slice).
+// ClaimNextQueuedBuildWithFairness prefers accounts without a recent claim,
+// then falls back to FIFO. Lock the build row itself before returning it so
+// polling workers and direct notification claims cannot execute one build
+// twice. Ranking rather than filtering also lets a worker skip a locked quiet
+// account's build and use another available row.
 func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairnessWindow time.Duration) (Build, error) {
 	row := s.pool.QueryRow(ctx,
-		`with skipped as (
-		   select account_id from recent_build_claims
-		    where claimed_at > now() - $1::interval
-		 ),
-		 queued_with_account as (
-		   select b.id, b.enqueued_at, a.account_id
-		     from builds b
-		     join deployments d on d.id = b.deployment_id
-		     join apps a        on a.id = d.app_id
-		    where b.status = 'queued'
-		 ),
-		 fresh_candidates as (
-		   select id, enqueued_at from queued_with_account
-		    where account_id not in (select account_id from skipped)
-		 ),
-		 has_fresh as (
-		   select exists (select 1 from fresh_candidates) as yes
-		 ),
-		 target as (
-		   -- prefer fresh; if none, fall back to ALL queued (starvation guard)
-		   select id, enqueued_at from fresh_candidates
-		    where (select yes from has_fresh)
-		   union all
-		   select id, enqueued_at from queued_with_account
-		    where not (select yes from has_fresh)
-		    order by enqueued_at
-		    limit 1
-		 )
-		 update builds set status='running', started_at = now()
-		  where id = (select id from target)
-		  returning id, deployment_id, kind, source_bytes, status,
-		            coalesce(failure_class,''), coalesce(log_path,''),
-		            started_at, finished_at, enqueued_at,
-		           cancelled_at, cancelled_by_deployment_cascade`,
+		`update builds set status='running', started_at = now()
+    where status = 'queued' and id = (
+      select b.id
+        from builds b
+        join deployments d on d.id = b.deployment_id
+        join apps a on a.id = d.app_id
+       where b.status = 'queued'
+       order by exists (
+         select 1 from recent_build_claims r
+          where r.account_id = a.account_id
+            and r.claimed_at > now() - $1::interval
+       ), b.enqueued_at, b.id
+       limit 1
+       for update of b skip locked
+    )
+    returning id, deployment_id, kind, source_bytes, status,
+              coalesce(failure_class,''), coalesce(log_path,''),
+              started_at, finished_at, enqueued_at,
+              cancelled_at, cancelled_by_deployment_cascade`,
 		fmt.Sprintf("%d milliseconds", fairnessWindow.Milliseconds()))
 	b, err := scanBuild(row)
 	if err != nil {

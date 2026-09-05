@@ -1730,6 +1730,14 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 		select {
 		case <-rec.done:
 			goto exited
+		case <-ctx.Done():
+			v.killProcess(l.Instance)
+			select {
+			case <-rec.done:
+			case <-time.After(5 * time.Second):
+				return -1, fmt.Errorf("vmm: %s did not exit after cancellation", l.Instance)
+			}
+			goto exited
 		case <-deadline.C:
 			// Force-kill and re-wait with a shorter budget. A builder that ignores
 			// the spec's BuildTimeoutSeconds is misbehaving; refuse to hold vmmd
@@ -1764,11 +1772,12 @@ exited:
 	// 2. Artifact export (build VMs only). Loopback-mount the chroot-local
 	//    drive1.ext4 and copy out /etc/faas/build-done.json + /build/out/*.
 	//    The mount uses root privileges (vmmd is the only root component, §11).
+	var exportErr error
 	if exportDir != "" {
 		if err := v.exportBuildArtifacts(l.Instance, exportDir); err != nil {
-			// Don't fail Destroy — the build is dead either way; log + return
-			// the exit code so the caller can still classify.
-			return exitCode, fmt.Errorf("vmm: export build artifacts: %w", err)
+			// Retain the export error, but release the dead VM's resources
+			// before returning it.
+			exportErr = fmt.Errorf("vmm: export build artifacts: %w", err)
 		}
 	}
 
@@ -1787,7 +1796,28 @@ exited:
 		return exitCode, fmt.Errorf("vmm: remove chroot: %w", err)
 	}
 	v.sweepMaterialised(l.Instance)
-	return exitCode, nil
+	return exitCode, exportErr
+}
+
+// InterruptBuild stops the child without releasing its drives, chroot or
+// process record. DestroyWithExport owns those resources until export finishes.
+func (v *JailerVMM) InterruptBuild(ctx context.Context, instance string) (int32, error) {
+	v.mu.Lock()
+	rec := v.recs[instance]
+	v.mu.Unlock()
+	if rec == nil {
+		return 0, nil
+	}
+	v.killProcess(instance)
+	select {
+	case <-rec.done:
+		v.mu.Lock()
+		code := rec.exitCode
+		v.mu.Unlock()
+		return int32(code), nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
 }
 
 func (v *JailerVMM) killProcess(instance string) {

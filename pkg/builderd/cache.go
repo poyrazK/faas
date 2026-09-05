@@ -67,12 +67,8 @@ func NewCache(dir string) *Cache { return &Cache{root: dir} }
 // Store re-creates the sidecar (idempotent), so legacy caches written
 // before B1.3 self-heal on first Store of the same key.
 //
-// The sidecar is a tamper-detector for crash-recovery (the layer
-// publish is atomic, but a process kill between the layer rename and
-// the sidecar write could leave a half-keyed entry). It is NOT a
-// content-addressed proof of layer bytes — that requires hashing the
-// layer, not the source, and is out of scope for #195 (Tier 3 cosign
-// signing territory).
+// artifact.sha256 additionally records the output SHA-256. A missing digest
+// (including pre-upgrade entries) or a byte mismatch is a cache miss.
 func (c *Cache) Lookup(sourceHash string, fw Framework, plan api.Plan) (CacheEntry, bool) {
 	return c.lookupKey(sourceHash, fw, plan)
 }
@@ -93,7 +89,7 @@ func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (Cache
 	if err != nil {
 		return CacheEntry{}, false
 	}
-	if !st.Mode().IsRegular() {
+	if !st.Mode().IsRegular() || st.Size() == 0 {
 		return CacheEntry{}, false
 	}
 	// Sidecar check: must exist, must be regular, must contain the
@@ -112,6 +108,16 @@ func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (Cache
 		return CacheEntry{}, false
 	}
 	if strings.TrimSpace(string(content)) != sourceHash {
+		return CacheEntry{}, false
+	}
+	// The source sidecar identifies the key; the output digest authenticates
+	// the actual artifact. Legacy entries without it are safe cache misses.
+	digest, err := os.ReadFile(filepath.Join(filepath.Dir(p), "artifact.sha256"))
+	if err != nil {
+		return CacheEntry{}, false
+	}
+	got, err := hashFile(p)
+	if err != nil || got != strings.TrimSpace(string(digest)) {
 		return CacheEntry{}, false
 	}
 	return CacheEntry{Path: p, Bytes: st.Size()}, true
@@ -176,20 +182,15 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("cache: mkdir: %w", err)
 	}
-	// Idempotent: if the destination already exists, keep it (its bytes
-	// should match — content-addressed — so the existing copy is fine).
-	// We still write the sidecar if it's missing (legacy cache self-heal
-	// after the B1.3 upgrade — a pre-B1.3 entry is a cache miss under
-	// the new Lookup, and the sidecar is the small bit of metadata that
-	// makes it a hit again).
-	if _, err := os.Stat(dst); err == nil {
-		// Repair entries published by older builderd versions. The first
-		// release used CreateTemp's 0600 default, which is readable by
-		// builderd but not by the sibling imaged daemon on a split box.
-		if err := os.Chmod(dst, cacheArtifactMode); err != nil {
-			return fmt.Errorf("cache: store %s: chmod existing layer: %w", dst, err)
+	// Keep only an intact entry. A corrupt or legacy entry is rebuilt from
+	// the newly produced artifact, including all its integrity metadata.
+	if _, ok := c.lookupKey(sourceHash, fw, plan); ok {
+		for _, path := range []string{dst, c.checksumPath(sourceHash, fw, plan), filepath.Join(filepath.Dir(dst), "artifact.sha256")} {
+			if err := os.Chmod(path, cacheArtifactMode); err != nil {
+				return err
+			}
 		}
-		return c.writeSidecar(sourceHash, fw, plan)
+		return nil
 	}
 	// Step 1: open source for reading (never write to it).
 	//
@@ -221,7 +222,8 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 		}
 	}()
 	// Step 3: copy source bytes into temp.
-	if _, err := io.Copy(tmp, in); err != nil {
+	digest := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, digest), in); err != nil {
 		_ = in.Close()
 		return fmt.Errorf("cache: store %s: copy: %w", dst, err)
 	}
@@ -259,6 +261,9 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	// layer-without-sidecar and returns a cache miss — the
 	// conservative choice. Every successful Lookup after both
 	// publishes have landed sees both files.
+	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), hex.EncodeToString(digest.Sum(nil))); err != nil {
+		return err
+	}
 	return c.writeSidecar(sourceHash, fw, plan)
 }
 
@@ -270,15 +275,14 @@ func (c *Cache) writeSidecar(sourceHash string, fw Framework, plan api.Plan) err
 	if c == nil || c.root == "" {
 		return errors.New("cache: not configured")
 	}
-	cs := c.checksumPath(sourceHash, fw, plan)
-	if _, err := os.Stat(cs); err == nil {
-		// Repair a sidecar that was published with the pre-split-box 0600
-		// mode, keeping an otherwise valid cache entry usable by imaged.
-		if err := os.Chmod(cs, cacheArtifactMode); err != nil {
-			return fmt.Errorf("cache: sidecar chmod existing: %w", err)
-		}
-		return nil // already published
+	return writeCacheSidecar(c.checksumPath(sourceHash, fw, plan), sourceHash)
+}
+
+func writeCacheSidecar(cs, value string) error {
+	if content, err := os.ReadFile(cs); err == nil && strings.TrimSpace(string(content)) == value {
+		return os.Chmod(cs, cacheArtifactMode)
 	}
+
 	if err := os.MkdirAll(filepath.Dir(cs), 0o755); err != nil {
 		return fmt.Errorf("cache: sidecar mkdir: %w", err)
 	}
@@ -294,7 +298,7 @@ func (c *Cache) writeSidecar(sourceHash string, fw Framework, plan api.Plan) err
 			_ = os.Remove(tmpPath)
 		}
 	}()
-	if _, err := tmp.WriteString(sourceHash + "\n"); err != nil {
+	if _, err := tmp.WriteString(value + "\n"); err != nil {
 		return fmt.Errorf("cache: sidecar write: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
