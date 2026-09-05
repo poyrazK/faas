@@ -150,18 +150,23 @@ func seedDeploymentWithPlan(t *testing.T, store state.Store, source, plan string
 // the same test don't collide.
 func seedDeploymentWithSlug(t *testing.T, store state.Store, source, slug string) (string, string, string) {
 	t.Helper()
+	return seedDeploymentWithSlugContext(t, context.Background(), store, source, slug)
+}
+
+func seedDeploymentWithSlugContext(t *testing.T, ctx context.Context, store state.Store, source, slug string) (string, string, string) {
+	t.Helper()
 	email := fmt.Sprintf("%s@example.com", slug)
-	acct, err := store.CreateAccount(context.Background(), email, api.PlanPro)
+	acct, err := store.CreateAccount(ctx, email, api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(context.Background(), state.App{
+	app, err := store.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: slug, RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindTarball,
 		SourcePath:  source,
@@ -171,7 +176,7 @@ func seedDeploymentWithSlug(t *testing.T, store state.Store, source, slug string
 	if err != nil {
 		t.Fatal(err)
 	}
-	build, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, dep.LogPath)
+	build, err := store.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 100, dep.LogPath)
 	if err != nil {
 		t.Fatal(err)
 	}

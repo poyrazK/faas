@@ -22,7 +22,7 @@ func TestProcessOnePartitionsCacheByBuildEnvironment(t *testing.T) {
 
 	run := func(slug, artifact string, wantHit bool) {
 		t.Helper()
-		buildID, deploymentID, _ := seedDeploymentWithSlug(t, store, source, slug)
+		buildID, deploymentID, _ := seedDeploymentWithSlugContext(t, ctx, store, source, slug)
 		output := filepath.Join(t.TempDir(), "image.tar")
 		if err := os.WriteFile(output, []byte(artifact), 0o600); err != nil {
 			t.Fatal(err)
@@ -73,7 +73,7 @@ func TestProcessOneDoesNotCacheAcrossBuilderRestage(t *testing.T) {
 	vm.waitHook = func() { vm.environment = environmentB }
 	cache := NewCache(t.TempDir())
 	b := New(store, &fakeNotifier{}, vm, cache, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	buildID, _, _ := seedDeploymentWithSlug(t, store, source, "restage")
+	buildID, _, _ := seedDeploymentWithSlugContext(t, ctx, store, source, "restage")
 
 	if result, err := b.ProcessOne(ctx, buildID); err != nil || result.CacheHit {
 		t.Fatalf("ProcessOne result=%+v err=%v", result, err)
@@ -110,7 +110,7 @@ func TestProcessOneContinuesWithoutCacheWhenBuildEnvironmentUnavailable(t *testi
 	b := New(store, &fakeNotifier{}, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	for _, slug := range []string{"identity-unavailable-first", "identity-unavailable-second"} {
-		buildID, _, _ := seedDeploymentWithSlug(t, store, source, slug)
+		buildID, _, _ := seedDeploymentWithSlugContext(t, ctx, store, source, slug)
 		result, err := b.ProcessOne(ctx, buildID)
 		if err != nil {
 			t.Fatal(err)
