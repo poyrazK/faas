@@ -34,6 +34,9 @@ Credential rotation does not change placement. API replicas must share config.
 
 Creation/deletion use durable two-minute leases and bounded upstream calls.
 Failed setup is retried with the same app/scope/name and physical bucket.
+Apid also reconciles pending intents automatically using durable retry metadata,
+bounded backoff, and lease-token fencing. Configuration failures use a slower
+probe cadence. Recovery never deletes unidentified upstream buckets.
 Nonempty deletion fails and restores access; successful deletion leaves a
 tombstone. App deletion is rejected while active buckets exist. There is no
 recursive deletion, automatic migration, or automatic orphan cleanup.
@@ -48,7 +51,11 @@ S3 protocol endpoint or a native S3 access-key service.
 
 ## Financial and launch boundaries
 
-The feature defaults off. Enabling it is an operator opt-in to an unmetered
+The global, hot-applied `s3_enabled` runtime-config flag defaults off, independently
+of the bootstrap provider registry. Off blocks provisioning and new signed URLs,
+but preserves metadata, authorized cleanup, and recovery of deletion intents.
+Already-issued URLs expire normally; in-flight operations may finish.
+Enabling it is an operator opt-in to an unmetered
 preview, not an entitlement included in existing plans. Existing runtime
 storage rollups are not object-storage usage. Per-app bucket and per-upload
 limits are configurable safety controls, not a total byte quota, request budget

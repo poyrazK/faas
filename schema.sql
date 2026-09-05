@@ -7965,6 +7965,11 @@ CREATE TABLE public.object_buckets (
     lease_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error_code text DEFAULT '' NOT NULL,
+    CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
+    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
     CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
@@ -7996,6 +8001,8 @@ ALTER TABLE ONLY public.object_buckets
 --
 
 CREATE INDEX object_buckets_account_app_idx ON public.object_buckets USING btree (account_id, app_id);
+
+CREATE INDEX object_buckets_recovery_idx ON public.object_buckets USING btree (retry_at, id) WHERE (state = ANY (ARRAY['provisioning'::text, 'deleting'::text]));
 
 
 --

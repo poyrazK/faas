@@ -1132,6 +1132,9 @@ type ObjectBucket struct {
 	LeaseUntil         pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	AttemptCount       int32
+	RetryAt            pgtype.Timestamptz
+	LastErrorCode      string
 }
 
 type OidcExchangedToken struct {

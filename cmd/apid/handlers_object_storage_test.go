@@ -65,6 +65,9 @@ func bucketResponse(t *testing.T, r *httptest.ResponseRecorder, status int) buck
 
 func TestObjectStorageLifecycleAndProviderSwitch(t *testing.T) {
 	e := setup(t, api.PlanHobby)
+	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
 	createApp(t, e, "bucket-app")
 	a, b := &fakeObjectProvider{}, &fakeObjectProvider{}
 	e.s.WithObjectStorage(objectRegistry(t, a, b, "external"))
@@ -110,6 +113,9 @@ func TestObjectStorageLifecycleAndProviderSwitch(t *testing.T) {
 
 func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 	e := setup(t, api.PlanHobby)
+	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
 	createApp(t, e, "bucket-auth")
 	createApp(t, e, "different-app")
 	path := "/v1/apps/bucket-auth/buckets"
@@ -122,9 +128,19 @@ func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 		t.Fatal(r.Code)
 	}
 	a.createErr = nil
+	if r := e.do(t, "POST", path, map[string]any{"name": "assets"}, nil); r.Code != 409 {
+		t.Fatal("retry bypassed cooldown", r.Code)
+	}
+	var pending api.ObjectBucketList
+	if err := json.Unmarshal(e.do(t, "GET", path, nil, nil).Body.Bytes(), &pending); err != nil || len(pending.Items) != 1 {
+		t.Fatal(err, pending)
+	}
+	if r := e.do(t, "DELETE", path+"/"+pending.Items[0].ID, nil, nil); r.Code != 204 {
+		t.Fatal("failed provisioning cleanup", r.Code)
+	}
 	first := bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "assets"}, nil), 201)
-	if len(a.created) != 2 || a.created[0] != a.created[1] {
-		t.Fatal("retry created orphan")
+	if len(a.created) != 2 || len(a.accessed) != 1 || a.accessed[0] != a.created[0] {
+		t.Fatal("failed bucket not cleaned up")
 	}
 	sign := path + "/" + first.ID + "/signed-url"
 	if r := e.do(t, "POST", sign, map[string]any{"method": "PUT", "key": "file", "size_bytes": 101}, nil); r.Code != 400 {

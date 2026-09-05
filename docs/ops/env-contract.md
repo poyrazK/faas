@@ -188,7 +188,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |
-| `FAAS_OBJECT_STORAGE_CONFIG` | apid, shared | `default` | unset disables the opt-in object-storage preview; operators explicitly set a provider-registry JSON path to enable it (docs/object-storage.md); no production activation is promised |
+| `FAAS_OBJECT_STORAGE_CONFIG` | apid, shared | `default` | optional provider-registry JSON path; s3_enabled runtime config separately defaults off (docs/object-storage.md); no production activation is promised |
 | `FAAS_OCI_INSECURE` | imaged | `dev-only` | must never be set on a production host |
 | `FAAS_OCI_PASSWORD` | shared | `envfile` |  |
 | `FAAS_OCI_PULL_TIMEOUT_SECONDS` | imaged | `default` |  |

@@ -16,11 +16,12 @@ import (
 )
 
 var (
-	ErrUnavailable = errors.New("object storage unavailable")
-	ErrNotFound    = errors.New("object storage resource not found")
-	ErrConflict    = errors.New("object storage resource conflict")
-	ErrNotEmpty    = errors.New("bucket is not empty")
-	ErrInvalid     = errors.New("invalid object storage request")
+	ErrUnavailable   = errors.New("object storage unavailable")
+	ErrNotFound      = errors.New("object storage resource not found")
+	ErrConflict      = errors.New("object storage resource conflict")
+	ErrNotEmpty      = errors.New("bucket is not empty")
+	ErrInvalid       = errors.New("invalid object storage request")
+	ErrConfiguration = errors.New("object storage provider configuration requires attention")
 )
 
 // Provider owns data operations for a single immutable backend placement.

@@ -242,7 +242,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_NODE_NAME", Owners: []string{"apid", "builderd", "gatewayd-internal", "gatewayd-public", "githubd", "imaged", "meterd", "schedd", "vmmd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_NODE_PUBLIC_IP", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_OBJECT_STORAGE_CONFIG", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "unset disables the opt-in object-storage preview; operators explicitly set a provider-registry JSON path to enable it (docs/object-storage.md); no production activation is promised"},
+	{Name: "FAAS_OBJECT_STORAGE_CONFIG", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "optional provider-registry JSON path; s3_enabled runtime config separately defaults off (docs/object-storage.md); no production activation is promised"},
 	{Name: "FAAS_OCI_INSECURE", Owners: []string{"imaged"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_OCI_PASSWORD", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_OCI_PULL_TIMEOUT_SECONDS", Owners: []string{"imaged"}, Source: EnvSourceDefault},

@@ -5071,7 +5071,7 @@ func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLife
 }
 
 const objectBucketByName = `-- name: ObjectBucketByName :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
 
 type ObjectBucketByNameParams struct {
@@ -5104,14 +5104,21 @@ func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
 
 const objectBucketClaim = `-- name: ObjectBucketClaim :one
-UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now()
+UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now(),
+attempt_count = CASE WHEN state <> $1 THEN 1 ELSE least(attempt_count + 1, 30) END,
+last_error_code = CASE WHEN state <> $1 THEN '' ELSE last_error_code END, retry_at = now()
 WHERE account_id = $4 AND app_id = $5 AND id = $6 AND state <> 'deleted' AND (lease_until IS NULL OR lease_until < now())
-AND ($1 = 'deleting' OR state = 'provisioning') RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at
+AND ($1 = 'deleting' OR state = 'provisioning')
+AND (NOT $7::boolean OR state = $1)
+AND (retry_at <= now() OR state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code
 `
 
 type ObjectBucketClaimParams struct {
@@ -5121,6 +5128,7 @@ type ObjectBucketClaimParams struct {
 	AccountID  pgtype.UUID
 	AppID      pgtype.UUID
 	ID         pgtype.UUID
+	Recovery   bool
 }
 
 func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBucketClaimParams) (ObjectBucket, error) {
@@ -5131,6 +5139,7 @@ func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBuck
 		arg.AccountID,
 		arg.AppID,
 		arg.ID,
+		arg.Recovery,
 	)
 	var i ObjectBucket
 	err := row.Scan(
@@ -5148,6 +5157,9 @@ func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBuck
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
@@ -5175,7 +5187,8 @@ func (q *Queries) ObjectBucketCountForAccount(ctx context.Context, db DBTX, acco
 }
 
 const objectBucketFinish = `-- name: ObjectBucketFinish :execrows
-UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now() WHERE id = $2 AND lease_token = $3
+UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now(),
+attempt_count = 0, last_error_code = '', retry_at = now() WHERE id = $2 AND lease_token = $3
 `
 
 type ObjectBucketFinishParams struct {
@@ -5193,7 +5206,7 @@ func (q *Queries) ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBuc
 }
 
 const objectBucketGet = `-- name: ObjectBucketGet :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
 `
 
 type ObjectBucketGetParams struct {
@@ -5220,13 +5233,16 @@ func (q *Queries) ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucket
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
 
 const objectBucketInsert = `-- name: ObjectBucketInsert :one
 INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code
 `
 
 type ObjectBucketInsertParams struct {
@@ -5269,12 +5285,15 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
 
 const objectBucketList = `-- name: ObjectBucketList :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
 `
 
 type ObjectBucketListParams struct {
@@ -5306,6 +5325,9 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.LeaseUntil,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
 		); err != nil {
 			return nil, err
 		}
@@ -5340,6 +5362,82 @@ DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted'
 func (q *Queries) ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
 	_, err := db.Exec(ctx, objectBucketPruneTombstones, accountID)
 	return err
+}
+
+const objectBucketRetry = `-- name: ObjectBucketRetry :execrows
+UPDATE object_buckets SET lease_token = NULL, lease_until = NULL, updated_at = now(),
+last_error_code = $3, retry_at = now() + ($4::int * interval '1 second')
+WHERE id = $1 AND lease_token = $2 AND state IN ('provisioning', 'deleting')
+`
+
+type ObjectBucketRetryParams struct {
+	ID            pgtype.UUID
+	LeaseToken    pgtype.Text
+	LastErrorCode string
+	Column4       int32
+}
+
+func (q *Queries) ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketRetry,
+		arg.ID,
+		arg.LeaseToken,
+		arg.LastErrorCode,
+		arg.Column4,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectBucketsDue = `-- name: ObjectBucketsDue :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets
+WHERE (state = 'deleting' OR ($1::boolean AND state = 'provisioning'))
+AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
+ORDER BY retry_at, id LIMIT $2::int
+`
+
+type ObjectBucketsDueParams struct {
+	IncludeProvisioning bool
+	BatchLimit          int32
+}
+
+func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucketsDueParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectBucketsDue, arg.IncludeProvisioning, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const orgByID = `-- name: OrgByID :one
