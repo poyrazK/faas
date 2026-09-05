@@ -613,6 +613,14 @@ func writePasswdTable(staging string, entries map[string]PasswdEntry, maxEntries
 			// fired above. The text form still carries it.
 			continue
 		}
+		// Keep the guest-side resolver within the same uid/gid policy as
+		// tar ownership application. The explicit bounds also make the
+		// narrowing conversion to the table's uint32 fields safe on every
+		// architecture; out-of-range rows remain available in the image's
+		// text /etc/passwd but are not trusted for boot-time lookup.
+		if e.Uid < 0 || e.Uid > 65534 || e.Gid < 0 || e.Gid > 65534 {
+			continue
+		}
 		var uidBytes [4]byte
 		var gidBytes [4]byte
 		binaryBigEndianPutUint32(uidBytes[:], uint32(e.Uid))
