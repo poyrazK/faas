@@ -1828,7 +1828,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	gsrv.GracefulStop()
+	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
+	stopGRPCServer(stopCtx, gsrv)
 	if httpSrv != nil {
 		//nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
 		_ = httpSrv.Shutdown(stopCtx)
