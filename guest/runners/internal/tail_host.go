@@ -234,7 +234,7 @@ func (h *TailHost) Drain() {
 		// the hang. The inner goroutine will exit on its own
 		// once the wg unblocks (the per-task timeouts in
 		// runTask fire even if the drain returned early).
-		fmt.Fprintf(h.stderr, "tail_host: drain timeout after %s; %d tails may be lost\n",
+		_, _ = fmt.Fprintf(h.stderr, "tail_host: drain timeout after %s; %d tails may be lost\n",
 			h.waitUntil+TailWriteTimeout, h.RegisterCount())
 	}
 }
@@ -309,12 +309,12 @@ func (h *TailHost) runTask(parentCtx context.Context, taskID string, taskFn func
 		// emit would log a Warn. Fail loud at the boundary
 		// instead so the regression is caught at the call site.
 		if outcome < TailOutcomeCompleted || outcome > TailOutcomeTimeout {
-			fmt.Fprintf(h.stderr, "tail_host: outcome 0x%02x outside closed set {1,2,3} for %s — proxy would reject, dropping tail_event\n",
+			_, _ = fmt.Fprintf(h.stderr, "tail_host: outcome 0x%02x outside closed set {1,2,3} for %s — proxy would reject, dropping tail_event\n",
 				outcome, taskID)
 			return
 		}
 		if err := h.emit(outcome, elapsedMs); err != nil {
-			fmt.Fprintf(h.stderr, "tail_host: emit 0x%02x for %s failed: %v\n", outcome, taskID, err)
+			_, _ = fmt.Fprintf(h.stderr, "tail_host: emit 0x%02x for %s failed: %v\n", outcome, taskID, err)
 		}
 	}()
 

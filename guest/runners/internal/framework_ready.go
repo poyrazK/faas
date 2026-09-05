@@ -104,7 +104,7 @@ func (s *RunnerSignal) SignalReady(warmupMs int64) {
 		dial := dialProxy
 		go func() {
 			if err := signalFrameworkReady(s.runtime, warmupMs, dial); err != nil {
-				fmt.Fprintf(s.stderr, "framework_ready signal failed: %v\n", err)
+				_, _ = fmt.Fprintf(s.stderr, "framework_ready signal failed: %v\n", err)
 			}
 		}()
 	})
