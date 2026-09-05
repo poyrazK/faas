@@ -5843,11 +5843,16 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			if target.DeploymentID != "" {
 				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
 			}
+			telemetryRoute := routeLabel
+			if telemetryRoute == "" {
+				// Route metrics are optional; the telemetry schema requires a label.
+				telemetryRoute = otherRouteLabel
+			}
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
 				AccountID:    acctUUID,
 				AppID:        appUUID,
 				DeploymentID: deploymentUUID,
-				Route:        routeLabel,
+				Route:        telemetryRoute,
 				Method:       r.Method,
 				Status:       status,
 				LatencyMS:    int(elapsed / time.Millisecond),

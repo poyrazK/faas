@@ -81,6 +81,9 @@ func TestHandlerObserveEnqueuesRow(t *testing.T) {
 		if row.DeploymentID != deployment {
 			t.Errorf("DeploymentID mismatch: got %v, want %v", row.DeploymentID, deployment)
 		}
+		if row.Route != otherRouteLabel {
+			t.Errorf("route without opt-in = %q, want bounded fallback", row.Route)
+		}
 		if row.Method != http.MethodPost {
 			t.Errorf("Method: got %q, want POST", row.Method)
 		}
