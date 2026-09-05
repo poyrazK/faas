@@ -200,10 +200,11 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Could not watch developer source", err)
 	}
+	syncState := &devSourceSyncState{}
 	return runDevWatchLoop(ctx, sourceDir, lastSynced, config, *once, devLoopOps{
 		deploy: func(config devSourceConfig) int {
 			started := time.Now()
-			code := cmdDeployTarballToExisting(config.deployArgs(session.App.Slug, sourceDir), true)
+			code := cmdDeployTarballToExisting(config.deployArgs(session.App.Slug, sourceDir), true, syncState)
 			if code == 0 && !jsonOutput {
 				PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
 			}

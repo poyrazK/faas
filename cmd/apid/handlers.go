@@ -438,7 +438,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		// overflow which createDeploymentMultipart maps to 413.
 		max := int64(limits.SourceTarballMaxMB) * 1024 * 1024
 		r.Body = http.MaxBytesReader(w, r.Body, max)
-		s.createDeploymentMultipart(w, r, acct, app)
+		s.createDeploymentMultipart(w, r, acct, app, false)
 		return
 	}
 	var req api.CreateDeploymentRequest
@@ -544,6 +544,28 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	}
 	notifyAndAuditDeployment(r.Context(), s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+}
+
+// handleDevSourceDeploy is the developer-only delta transport. Keeping it on
+// a distinct route makes compatibility safe: an older apid returns 404, so the
+// CLI can retry the complete archive through the canonical deploy endpoint
+// instead of an old server accidentally treating a delta as complete source.
+func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
+	if !ok {
+		return
+	}
+	if app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 {
+		s.notFound(w, "no such developer environment")
+		return
+	}
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		api.WriteProblem(w, api.ErrValidation("developer source sync requires multipart/form-data"))
+		return
+	}
+	max := int64(limits.SourceTarballMaxMB)*1024*1024 + api.DevSourceMetadataMaxBytes
+	r.Body = http.MaxBytesReader(w, r.Body, max)
+	s.createDeploymentMultipart(w, r, acct, app, true)
 }
 
 // loadAppAndPreflight resolves the app from the URL slug, enforces

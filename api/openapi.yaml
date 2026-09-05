@@ -2881,6 +2881,83 @@ paths:
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployments/dev-source:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [deployments]
+      operationId: deployDevSource
+      summary: Create a developer deployment from a complete source snapshot or delta.
+      description: |
+        Transport used only for ad-hoc developer environments created by
+        `gregale dev`. With an empty `dev_source_base`, `source` is a complete
+        source archive. With a base revision, `source` contains changed entries
+        and `dev_source_deleted` removes paths from the cached base.
+
+        The cache is account/app scoped, node-local, and disposable. apid
+        reconstructs and verifies a complete archive before applying the same
+        source-root, stateful-shape, secret-scan, Dockerfile, function, and
+        enqueue gates as an ordinary source deployment. A missing base returns
+        409 `dev_source_base_missing`; clients retry the target as a complete
+        snapshot. Older servers safely return 404 on this distinct route.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [source, dev_source_target]
+              properties:
+                source:
+                  type: string
+                  format: binary
+                  description: "Complete tar.gz when dev_source_base is absent; otherwise a tar.gz of changed entries."
+                dev_source_base:
+                  type: string
+                  pattern: '^[a-f0-9]{64}$'
+                  description: "Canonical cached source revision. Omit for a complete snapshot."
+                dev_source_target:
+                  type: string
+                  pattern: '^[a-f0-9]{64}$'
+                  description: "Canonical revision of the complete source tree after reconstruction."
+                dev_source_deleted:
+                  type: string
+                  description: "JSON string array of canonical archive paths removed since dev_source_base."
+                dockerfile:
+                  type: boolean
+                runtime:
+                  type: string
+                  enum: [node22, python312, go124, go124-alpine, node24, python313]
+                handler:
+                  type: string
+                source_root:
+                  type: string
+                  maxLength: 256
+                  pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
+                workflows:
+                  type: string
+                  description: "Optional JSON workflow-definition array attached to this developer deployment."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: The reconstructed developer deployment whose build has been accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "code: dev_source_base_missing. Retry with a complete source snapshot."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '422': { $ref: '#/components/responses/DeployFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/deployments/source-ref:
     parameters:
       - $ref: '#/components/parameters/Slug'

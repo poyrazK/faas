@@ -658,6 +658,50 @@ func TestDeployMultipartWithSourceRoot_EmitsSourceRoot(t *testing.T) {
 	}
 }
 
+func TestDeployDevSource_EmitsDeltaMetadataOnDistinctRoute(t *testing.T) {
+	fields := map[string]string{}
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("server multipart reader: %v", err)
+		}
+		for {
+			part, err := reader.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("read multipart part: %v", err)
+			}
+			body, _ := io.ReadAll(part)
+			if part.FileName() == "" {
+				fields[part.FormName()] = string(body)
+			}
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"d1","app_id":"x","status":"pending","created_at":"2026-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	base := strings.Repeat("a", 64)
+	target := strings.Repeat("b", 64)
+	c := NewClientWithDeployTimeout(srv.URL, "fp_test", 30*time.Second)
+	if _, err := c.DeployDevSource(context.Background(), "x", bytes.NewReader([]byte("delta")), "delta.tar.gz", "node22", "index.handler", false, "apps/api", DeployAnnotations{}, base, target, []string{"apps/api/old.js"}); err != nil {
+		t.Fatalf("DeployDevSource: %v", err)
+	}
+	if gotPath != "/v1/apps/x/deployments/dev-source" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if fields["dev_source_base"] != base || fields["dev_source_target"] != target || fields["dev_source_deleted"] != `["apps/api/old.js"]` {
+		t.Fatalf("developer source fields = %#v", fields)
+	}
+	if fields["source_root"] != "apps/api" {
+		t.Fatalf("source_root = %q", fields["source_root"])
+	}
+}
+
 // TestDeployMultipart_ProblemError: tarball deploy with a too-large
 // archive returns 413 + CodeSourceTooLarge as *APIError.
 func TestDeployMultipart_ProblemError(t *testing.T) {

@@ -240,6 +240,8 @@ from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
+from .deploy_dev_source_body import DeployDevSourceBody
+from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
 from .deployment_healthcheck import DeploymentHealthcheck
@@ -964,6 +966,8 @@ __all__ = (
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
+    "DeployDevSourceBody",
+    "DeployDevSourceBodyRuntime",
     "DeploymentAuditResponse",
     "DeploymentAuditResponseKind",
     "DeploymentHealthcheck",

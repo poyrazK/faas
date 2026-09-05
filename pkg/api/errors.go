@@ -331,6 +331,10 @@ const (
 	CodePlanLimitConcur = "plan_limit_concurrency"
 	CodeSourceTooLarge  = "source_too_large"
 	CodeSourceInvalid   = "source_invalid"
+	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
+	// the node-local developer-source cache was absent, stale, or corrupt.
+	// The CLI responds by uploading a complete source snapshot.
+	CodeDevSourceBaseMissing = "dev_source_base_missing"
 	// CodeSecretScanStrict is the 422 sentinel returned by both
 	//   - cmd/apid/scan_service.go (server-side tree scan rejected)
 	//   - cmd/gregale/printErr (--secret-scan=strict client-side rejected)
@@ -1578,7 +1582,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget,
+	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending:
 		return http.StatusConflict
@@ -2193,6 +2197,15 @@ func ErrSourceInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSourceInvalid,
 		"Source invalid", reason).
 		WithDocs(docsBase + "/build/source")
+}
+
+// ErrDevSourceBaseMissing tells an incremental-sync client to retry the same
+// target as a complete snapshot. Cache state is deliberately not durable.
+func ErrDevSourceBaseMissing() *Problem {
+	return NewProblem(http.StatusConflict, CodeDevSourceBaseMissing,
+		"Developer source base unavailable",
+		"the cached source revision is unavailable; retry with a complete source snapshot").
+		WithDocs(docsBase + "/dev/source-sync")
 }
 
 // ErrStatelessOnlyViolation is returned when a deploy shape (or resolved
