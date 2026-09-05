@@ -94,6 +94,17 @@ test restore and deletion; ingest provider usage; enforce account entitlements
 and spend ceilings; add audit events, dashboard/API surfaces, and account
 deletion cleanup; document regional, backup, extension, and support promises.
 
+## Durable lifecycle follow-up
+
+The first follow-up adds the production PostgreSQL store, persisted retry
+schedule and attempt counter, and a provider-neutral recovery loop. Account-row
+locking serializes quota reservations across replicas. Lease-token fencing
+prevents a stale worker from committing after its lease expires, while the
+provider resource ID survives a process crash so recovery inspects the accepted
+resource instead of provisioning another one. Provisioning discovery remains
+disabled by default; deletion intents are still recovered while disabled so a
+rollout switch cannot leak paid upstream resources.
+
 ## Consequences
 
 Gregale can add Neon, Xata, Prisma Postgres, a traditional managed PostgreSQL

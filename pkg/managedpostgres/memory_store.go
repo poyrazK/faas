@@ -22,7 +22,7 @@ func NewMemoryStore() *MemoryStore {
 func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (Database, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if limit < 1 {
+	if limit < 1 || limit > 100 {
 		return Database{}, false, ErrInvalid
 	}
 	key := database.AccountID + "\x00" + database.Name
@@ -31,6 +31,9 @@ func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (
 	}
 	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" {
 		return Database{}, false, ErrInvalid
+	}
+	if database.RetryAt.IsZero() {
+		database.RetryAt = database.CreatedAt
 	}
 	if _, exists := s.databases[database.ID]; exists {
 		return Database{}, false, ErrConflict
@@ -87,6 +90,35 @@ func (s *MemoryStore) List(_ context.Context, accountID string) ([]Database, err
 	return items, nil
 }
 
+func (s *MemoryStore) Due(_ context.Context, includeProvisioning bool, limit int, now time.Time) ([]Database, error) {
+	if limit < 1 || limit > 100 || now.IsZero() {
+		return nil, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]Database, 0)
+	for _, database := range s.databases {
+		provisioning := database.State == StateProvisioning || database.State == StateFailed
+		if database.State != StateDeleting && (!includeProvisioning || !provisioning) {
+			continue
+		}
+		if database.RetryAt.After(now) || database.LeaseUntil.After(now) {
+			continue
+		}
+		items = append(items, cloneDatabase(database))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].RetryAt.Equal(items[j].RetryAt) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].RetryAt.Before(items[j].RetryAt)
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
 func (s *MemoryStore) Claim(_ context.Context, accountID, databaseID, leaseToken string, operation State, now, leaseUntil time.Time) (Database, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -94,12 +126,15 @@ func (s *MemoryStore) Claim(_ context.Context, accountID, databaseID, leaseToken
 	if !ok || database.AccountID != accountID {
 		return Database{}, ErrNotFound
 	}
-	if leaseToken == "" || !leaseUntil.After(now) || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
+	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
 	switch operation {
 	case StateProvisioning:
 		if database.State != StateProvisioning && database.State != StateFailed {
+			return Database{}, ErrConflict
+		}
+		if database.RetryAt.After(now) {
 			return Database{}, ErrConflict
 		}
 	case StateDeleting:
@@ -109,10 +144,20 @@ func (s *MemoryStore) Claim(_ context.Context, accountID, databaseID, leaseToken
 	default:
 		return Database{}, ErrInvalid
 	}
+	if operation == StateDeleting && database.State != StateDeleting {
+		database.AttemptCount = 0
+	}
+	if operation != database.State {
+		database.LastErrorCode = ""
+	}
+	if database.AttemptCount < 30 {
+		database.AttemptCount++
+	}
 	database.State = operation
 	database.LeaseToken = leaseToken
 	database.LeaseUntil = leaseUntil
 	database.UpdatedAt = now
+	database.RetryAt = now
 	s.databases[databaseID] = database
 	return cloneDatabase(database), nil
 }
@@ -124,7 +169,7 @@ func (s *MemoryStore) RecordProviderResource(_ context.Context, databaseID, leas
 	if !ok {
 		return ErrNotFound
 	}
-	if database.State != StateProvisioning || database.LeaseToken != leaseToken || providerResourceID == "" {
+	if database.State != StateProvisioning || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) || providerResourceID == "" {
 		return ErrConflict
 	}
 	if database.ProviderResourceID != "" && database.ProviderResourceID != providerResourceID {
@@ -143,12 +188,14 @@ func (s *MemoryStore) FinishProvision(_ context.Context, databaseID, leaseToken 
 	if !ok {
 		return Database{}, ErrNotFound
 	}
-	if database.State != StateProvisioning || database.LeaseToken != leaseToken || database.ProviderResourceID == "" {
+	if database.State != StateProvisioning || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) || database.ProviderResourceID == "" {
 		return Database{}, ErrConflict
 	}
 	database.State = StateReady
 	database.ObservedGeneration = database.DesiredGeneration
 	database.LastErrorCode = ""
+	database.AttemptCount = 0
+	database.RetryAt = now
 	database.LeaseToken = ""
 	database.LeaseUntil = time.Time{}
 	database.UpdatedAt = now
@@ -156,17 +203,17 @@ func (s *MemoryStore) FinishProvision(_ context.Context, databaseID, leaseToken 
 	return cloneDatabase(database), nil
 }
 
-func (s *MemoryStore) Release(_ context.Context, databaseID, leaseToken string, next State, errorCode string, now time.Time) error {
+func (s *MemoryStore) Release(_ context.Context, databaseID, leaseToken string, next State, errorCode string, now, retryAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	database, ok := s.databases[databaseID]
 	if !ok {
 		return ErrNotFound
 	}
-	if database.LeaseToken != leaseToken {
+	if database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return ErrConflict
 	}
-	if next != StateProvisioning && next != StateDeleting && next != StateFailed {
+	if (next != StateProvisioning && next != StateDeleting && next != StateFailed) || !validErrorCode(errorCode) || now.IsZero() || retryAt.Before(now) {
 		return ErrInvalid
 	}
 	database.State = next
@@ -174,6 +221,7 @@ func (s *MemoryStore) Release(_ context.Context, databaseID, leaseToken string, 
 	database.LeaseToken = ""
 	database.LeaseUntil = time.Time{}
 	database.UpdatedAt = now
+	database.RetryAt = retryAt
 	s.databases[databaseID] = database
 	return nil
 }
@@ -185,11 +233,13 @@ func (s *MemoryStore) FinishDelete(_ context.Context, databaseID, leaseToken str
 	if !ok {
 		return Database{}, ErrNotFound
 	}
-	if database.State != StateDeleting || database.LeaseToken != leaseToken {
+	if database.State != StateDeleting || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return Database{}, ErrConflict
 	}
 	database.State = StateDeleted
 	database.LastErrorCode = ""
+	database.AttemptCount = 0
+	database.RetryAt = now
 	database.LeaseToken = ""
 	database.LeaseUntil = time.Time{}
 	database.UpdatedAt = now
