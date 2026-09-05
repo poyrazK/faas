@@ -20,7 +20,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
 | [`workflows`](#workflows) | Manage durable execution workflows |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
-| [`doctor`](#doctor) | Preflight: scan local source; deployed-only checks are reported as skipped |
+| [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
 | [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
 | [`deployment`](#deployment) | Get one deployment (&lt;id&gt; \| set-min-instances &lt;id&gt; --min N) |
@@ -582,12 +582,15 @@ Open the account dashboard in your browser
 
 ## doctor
 
-Preflight: scan local source; deployed-only checks are reported as skipped
+Preflight local source or OCI image metadata; runtime checks are skipped
 
-`gregale doctor [--strict] [--json]`
+`gregale doctor [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--image <REF>` | inspect a single-platform OCI image without downloading layers |  |
+| `--registry-user <USER>` | registry username; requires --registry-password-stdin |  |
+| `--registry-password-stdin` | read registry password/token from stdin; requires --image and --registry-user |  |
 | `--strict` | exit 1 on warn (default: exit 0 on warn) |  |
 | `--json` | machine output (default: human prose) |  |
 

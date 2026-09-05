@@ -50,6 +50,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -72,7 +73,8 @@ type doctorCheck struct {
 // "checks" array even when empty so script consumers can grep on
 // `length(checks) == 0` as the "all green" signal.
 type doctorReport struct {
-	Path   string        `json:"path"`
+	Path   string        `json:"path,omitempty"`
+	Image  *doctorImage  `json:"image,omitempty"`
 	Checks []doctorCheck `json:"checks"`
 }
 
@@ -124,13 +126,26 @@ func (r doctorReport) HasWarnings() bool {
 //	1  any check error (always), OR any check warn under --strict=true
 //	2  usage error (bad argv)
 func cmdDoctor(args []string) int {
+	return cmdDoctorWithImageInspector(args, oci.NewRegistryClient(oci.WithHTTPClient(oci.NewEgressHTTPClient())))
+}
+
+func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(osStderr)
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
+	imageFlags := registerDoctorImageFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale doctor [path] [--strict] [--json]", "doctor")
+		PrintUsage(osStderr, doctorUsage, "doctor")
 		return 2
+	}
+	if err := imageFlags.validate(fs); err != nil {
+		_, _ = fmt.Fprintln(osStderr, err)
+		PrintUsage(osStderr, doctorUsage, "doctor")
+		return 2
+	}
+	if imageFlags.image != "" {
+		return runDoctorImageCommand(imageFlags, inspector, *strict, *jsonOut || jsonOutput)
 	}
 	path := "."
 	if fs.NArg() > 0 {
@@ -574,7 +589,11 @@ func scanStatelessShape(path string) []string {
 // no glyph). Skipped checks carry their reason so the summary never
 // implies that an unperformed check passed.
 func renderDoctorHuman(w io.Writer, rep doctorReport) {
-	_, _ = fmt.Fprintf(w, "gregale doctor — %s\n", rep.Path)
+	if rep.Image != nil {
+		renderDoctorImage(w, rep.Image)
+	} else {
+		_, _ = fmt.Fprintf(w, "gregale doctor — %s\n", rep.Path)
+	}
 	_, _ = fmt.Fprintln(w, strings.Repeat("─", 60))
 	hasFinding := false
 	hasSkipped := false

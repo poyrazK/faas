@@ -956,8 +956,8 @@ func TestLintTripwire_DoctorStrictMutex(t *testing.T) {
 	// documented declaration would silently disable the tripwire
 	// on the legitimate --strict).
 	allowedFuncs := map[string]bool{
-		"cmdDeployTarball": true, // --strict (--diff pair, commands2.go:838)
-		"cmdDoctor":        true, // --strict (gregale doctor, commands_doctor.go:124)
+		"cmdDeployTarball":            true, // --strict (--diff pair, commands2.go:838)
+		"cmdDoctorWithImageInspector": true, // --strict (gregale doctor source/image dispatcher)
 	}
 
 	// flag-registration selector names. The full set is matched
@@ -1007,7 +1007,7 @@ func TestLintTripwire_DoctorStrictMutex(t *testing.T) {
 		}
 	}
 	if len(violations) > 0 {
-		t.Fatalf("found %d unscoped --strict flag declaration(s). --strict is owned by the deploy-diff cluster (cmdDeployTarball in commands2.go) and the gregale doctor (cmdDoctor in commands_doctor.go). New strict-style gates must be scoped via a prefix (--doctor-strict, --secret-strict, --diff-strict, etc.) to avoid customer-script breakage:\n  %s",
+		t.Fatalf("found %d unscoped --strict flag declaration(s). --strict is owned by the deploy-diff cluster (cmdDeployTarball in commands2.go) and gregale doctor (cmdDoctorWithImageInspector in commands_doctor.go). New strict-style gates must be scoped via a prefix (--doctor-strict, --secret-strict, --diff-strict, etc.) to avoid customer-script breakage:\n  %s",
 			len(violations), strings.Join(violations, "\n  "))
 	}
 }

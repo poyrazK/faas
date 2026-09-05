@@ -21,6 +21,10 @@ import (
 // Field naming follows the OCI image config spec
 // (https://github.com/opencontainers/image-spec/blob/main/config.md).
 type ImageConfig struct {
+	// Platform metadata is inspected without fetching filesystem layers.
+	OS           string
+	Architecture string
+	Volumes      map[string]struct{}
 	// Entrypoint is the image's ENTRYPOINT argv (Docker v2 + OCI).
 	// Joined with Cmd when projecting onto AppManifest.Entrypoint.
 	// Pre-M-1 silently dropped on the registry path.

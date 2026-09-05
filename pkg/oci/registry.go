@@ -404,10 +404,15 @@ func parseImageConfig(b []byte) (ImageConfig, error) {
 	}
 	f := raw.resolved()
 	var exposed map[string]struct{}
+	var volumes map[string]struct{}
 	if raw.Config != nil {
 		exposed = raw.Config.ExposedPorts
+		volumes = raw.Config.Volumes
 	}
 	return ImageConfig{
+		OS:               raw.OS,
+		Architecture:     raw.Architecture,
+		Volumes:          volumes,
 		Entrypoint:       f.Entrypoint,
 		Cmd:              f.Cmd,
 		Env:              envSliceToMap(f.Env),
