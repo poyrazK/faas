@@ -352,6 +352,7 @@ from .get_account_slo_window import GetAccountSLOWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
+from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
 from .get_app_slo_window import GetAppSLOWindow
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
@@ -580,6 +581,7 @@ from .request_analytics_route_method import RequestAnalyticsRouteMethod
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
+from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
@@ -1085,6 +1087,7 @@ __all__ = (
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
+    "GetAppRequestAnalyticsTimeseriesMethod",
     "GetAppSLOWindow",
     "GetAppsMetricsRange",
     "GetBuildSbomResponse200",
@@ -1311,6 +1314,7 @@ __all__ = (
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",
     "RequestAnalyticsTimeseriesResponseBucket",
+    "RequestAnalyticsTimeseriesResponseMethod",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",

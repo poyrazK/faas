@@ -1742,6 +1742,8 @@ WITH buckets AS (
       AND account_id = $2
       AND received_at >= sqlc.arg('received_at')::timestamptz
       AND received_at <  sqlc.arg('received_at_2')::timestamptz
+      AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
+      AND (sqlc.arg('method')::text = '' OR method = sqlc.arg('method')::text)
 ), latency_values AS (
     SELECT bucket_start,
            latency_ms,

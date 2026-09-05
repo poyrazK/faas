@@ -12,6 +12,14 @@ import type { RequestAnalyticsTimeseriesPoint } from './RequestAnalyticsTimeseri
 export type RequestAnalyticsTimeseriesResponse = {
   slug: string;
   /**
+   * Exact bounded route-label filter when a route-level series was requested.
+   */
+  route?: string;
+  /**
+   * Exact method filter when a route-level series was requested.
+   */
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  /**
    * Effective series lookback after retention clamping.
    */
   since: string;

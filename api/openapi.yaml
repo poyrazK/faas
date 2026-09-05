@@ -2345,6 +2345,16 @@ paths:
           required: false
           schema: { type: string, format: date-time }
           description: "Exclusive end timestamp; omitted means current server time."
+        - name: route
+          in: query
+          required: false
+          schema: { type: string, maxLength: 256 }
+          description: "Exact bounded route label to drill into (for example `GET /users/{id}`). Must be provided together with `method`; omitted means all routes."
+        - name: method
+          in: query
+          required: false
+          schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+          description: "Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods."
       x-since: 2026-09
       responses:
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -19914,6 +19924,8 @@ components:
       required: [slug, since, from, until, window_clamped, bucket, points, as_of]
       properties:
         slug: { type: string }
+        route: { type: string, maxLength: 256, description: "Exact bounded route-label filter when a route-level series was requested." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "Exact method filter when a route-level series was requested." }
         since: { type: string, description: "Effective series lookback after retention clamping." }
         from: { type: string, format: date-time, description: "First instant represented by the hourly series." }
         until: { type: string, format: date-time, description: "Exclusive end instant represented by the hourly series." }
