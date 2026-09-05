@@ -1087,3 +1087,52 @@ func TestPoller_CpuThrottledSecondsNilLeavesThrottledUsecAtNaN(t *testing.T) {
 		t.Errorf("throttleSecondsLastSeen for (anonymous, app1) = %g; want 0 (nil contract — NaN guard must skip)", seen)
 	}
 }
+
+func TestPoller_PersistentRequestRateSurvivesCachedTicksAndExpires(t *testing.T) {
+	store := state.NewMemStore()
+	_, node := seedTwoNodes(t, store)
+	ins := seedInstance(t, store, "app1", node.ID)
+	cache := sched.NewNodeTelemetryCache()
+	now := time.Unix(500, 0)
+	p := NewPoller(store, &statsFakeDialer{}, nil, NewReader(), nil, nilLogger()).WithTelemetry(cache)
+	p.Now = func() time.Time { return now }
+	publish := func(count *int64) {
+		cache.Replace(node.ID, now, now, []sched.NodeTelemetry{{InstanceID: ins.ID, RequestCountTotal: count}})
+	}
+	tick := func(want float64, valid bool) {
+		t.Helper()
+		if err := p.Tick(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := p.Reader.RequestsPerSecond("app1"); got != want || ok != valid {
+			t.Fatalf("rate=(%v,%v), want (%v,%v)", got, ok, want, valid)
+		}
+	}
+	count := int64(0)
+	publish(&count)
+	tick(0, false)
+	now = now.Add(time.Second)
+	count = 140
+	publish(&count)
+	tick(140, true)
+	for range 4 {
+		now = now.Add(200 * time.Millisecond)
+		tick(140, true)
+	}
+	now = now.Add(200 * time.Millisecond)
+	publish(&count)
+	tick(0, true)
+	now = now.Add(sched.TelemetryFreshness + time.Nanosecond)
+	tick(0, false)
+	now = now.Add(time.Second)
+	count = 500
+	publish(&count)
+	tick(0, false)
+	now = now.Add(time.Second)
+	publish(nil)
+	tick(0, false)
+	now = now.Add(time.Second)
+	count = -1
+	publish(&count)
+	tick(0, false)
+}

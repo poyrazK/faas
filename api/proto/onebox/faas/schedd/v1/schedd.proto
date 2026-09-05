@@ -963,6 +963,8 @@ message InstanceTelemetry {
   // schedd does not need a per-node conntrack query.
   int64 open_conns = 9;
   google.protobuf.Int64Value net_rx_bytes = 10;
+  // Cumulative requests; absent on older nodes, zero is a valid baseline.
+  google.protobuf.Int64Value request_count_total = 11;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

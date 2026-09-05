@@ -273,6 +273,10 @@ func (p *Poller) decodeTelemetrySnapshot(
 			CPUSeconds:       math.NaN(),
 			ThrottledUsec:    math.NaN(),
 		}
+		if in.RequestCountTotal != nil && *in.RequestCountTotal >= 0 {
+			row.RequestCountTotal = uint64(*in.RequestCountTotal)
+			row.RequestCountValid = true
+		}
 		if in.CPUPct != nil {
 			row.CPUPct = *in.CPUPct
 			row.CPU = Valid
