@@ -188,7 +188,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |
-| `FAAS_OBJECT_STORAGE_CONFIG` | apid, shared | `default` | unset disables the opt-in object-storage preview; operators explicitly set a provider-registry JSON path to enable it (docs/object-storage.md); no production activation is promised |
+| `FAAS_OBJECT_STORAGE_CONFIG` | apid, shared | `default` | optional provider-registry JSON path; s3_enabled runtime config separately defaults off (docs/object-storage.md); no production activation is promised |
 | `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
 | `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |
 | `FAAS_OCI_INSECURE` | imaged | `dev-only` | must never be set on a production host |

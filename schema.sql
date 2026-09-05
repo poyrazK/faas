@@ -1240,6 +1240,7 @@ CREATE TABLE public.apps (
     type text DEFAULT 'app'::text NOT NULL,
     runtime text,
     ram_mb integer NOT NULL,
+    cpu_millicores integer DEFAULT 1000 NOT NULL,
     idle_timeout_s integer,
     max_concurrency integer DEFAULT 1 NOT NULL,
     status text DEFAULT 'active'::text NOT NULL,
@@ -1306,6 +1307,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
     CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
     CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
+    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
@@ -7965,6 +7967,11 @@ CREATE TABLE public.object_buckets (
     lease_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error_code text DEFAULT '' NOT NULL,
+    CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
+    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
     CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
@@ -7996,6 +8003,8 @@ ALTER TABLE ONLY public.object_buckets
 --
 
 CREATE INDEX object_buckets_account_app_idx ON public.object_buckets USING btree (account_id, app_id);
+
+CREATE INDEX object_buckets_recovery_idx ON public.object_buckets USING btree (retry_at, id) WHERE (state = ANY (ARRAY['provisioning'::text, 'deleting'::text]));
 
 
 --

@@ -240,7 +240,7 @@ Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|--ram N|â
 
 ### app scale
 
-Set max_concurrency / ram_mb
+Set max_concurrency / RAM / CPU
 
 ### app rename
 

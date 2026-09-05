@@ -1721,6 +1721,67 @@ JOIN percentiles USING (route, method)
 ORDER BY totals.requests DESC, totals.method ASC, totals.route ASC
 LIMIT $5;
 
+-- name: RequestTelemetryAnalyticsTimeseries :many
+-- Zero-filled UTC hourly request analytics for customer charts. The
+-- recorder collapses rows by count, so all totals and percentile ranks
+-- expand that weight rather than counting stored rows.
+WITH buckets AS (
+    SELECT generate_series(
+        date_bin('1 hour', sqlc.arg('received_at')::timestamptz, 'epoch'::timestamptz),
+        date_bin('1 hour', sqlc.arg('received_at_2')::timestamptz - interval '1 microsecond', 'epoch'::timestamptz),
+        interval '1 hour'
+    )::timestamptz AS bucket_start
+), filtered AS (
+    SELECT date_bin('1 hour', received_at, 'epoch'::timestamptz) AS bucket_start,
+           latency_ms,
+           cold_boot,
+           status,
+           count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= sqlc.arg('received_at')::timestamptz
+      AND received_at <  sqlc.arg('received_at_2')::timestamptz
+), latency_values AS (
+    SELECT bucket_start,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY bucket_start, latency_ms
+), ranked AS (
+    SELECT bucket_start,
+           latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (PARTITION BY bucket_start ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY bucket_start) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT bucket_start,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY bucket_start
+), totals AS (
+    SELECT bucket_start,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+    GROUP BY bucket_start
+)
+SELECT b.bucket_start,
+       COALESCE(t.requests, 0)::bigint AS requests,
+       COALESCE(t.error_requests, 0)::bigint AS error_requests,
+       COALESCE(t.cold_boots, 0)::bigint AS cold_boots,
+       COALESCE(p.p50_ms, 0)::int AS p50_ms,
+       COALESCE(p.p95_ms, 0)::int AS p95_ms,
+       COALESCE(p.p99_ms, 0)::int AS p99_ms
+FROM buckets AS b
+LEFT JOIN totals AS t USING (bucket_start)
+LEFT JOIN percentiles AS p USING (bucket_start)
+ORDER BY b.bucket_start ASC;
+
 -- PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
 -- read patterns. The cron in cmd/apid/debug_regression_cron.go composes
 -- RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
@@ -2127,12 +2188,28 @@ SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted';
 
 -- name: ObjectBucketClaim :one
-UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now()
+UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now(),
+attempt_count = CASE WHEN state <> $1 THEN 1 ELSE least(attempt_count + 1, 30) END,
+last_error_code = CASE WHEN state <> $1 THEN '' ELSE last_error_code END, retry_at = now()
 WHERE account_id = $4 AND app_id = $5 AND id = $6 AND state <> 'deleted' AND (lease_until IS NULL OR lease_until < now())
-AND ($1 = 'deleting' OR state = 'provisioning') RETURNING *;
+AND ($1 = 'deleting' OR state = 'provisioning')
+AND (NOT sqlc.arg(recovery)::boolean OR state = $1)
+AND (retry_at <= now() OR state <> $1) RETURNING *;
 
 -- name: ObjectBucketFinish :execrows
-UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now() WHERE id = $2 AND lease_token = $3;
+UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now(),
+attempt_count = 0, last_error_code = '', retry_at = now() WHERE id = $2 AND lease_token = $3;
+
+-- name: ObjectBucketRetry :execrows
+UPDATE object_buckets SET lease_token = NULL, lease_until = NULL, updated_at = now(),
+last_error_code = $3, retry_at = now() + ($4::int * interval '1 second')
+WHERE id = $1 AND lease_token = $2 AND state IN ('provisioning', 'deleting');
+
+-- name: ObjectBucketsDue :many
+SELECT * FROM object_buckets
+WHERE (state = 'deleting' OR (sqlc.arg(include_provisioning)::boolean AND state = 'provisioning'))
+AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
+ORDER BY retry_at, id LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: SnapshotLocalityNodes :many
 SELECT node_id::text AS node_id, true AS is_origin

@@ -2271,9 +2271,15 @@ paths:
           in: query
           required: false
           schema: { type: string, default: 24h }
-          description: "Lookback duration (`24h`, `3d`, `7d`). Defaults to `24h` and is retention-clamped."
+          description: "Lookback duration (`24h`, `3d`, `7d`) or RFC3339 start timestamp. Defaults to `24h` and is retention-clamped."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Optional RFC3339 upper-bound timestamp for the historical window."
       x-since: 2026-09
       responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '200':
           description: Aggregated request analytics.
           content:
@@ -2283,6 +2289,7 @@ paths:
               example:
                 slug: my-api
                 since: 24h
+                from: "2026-09-04T13:00:00.123456Z"
                 until: "2026-09-05T13:00:00.123456Z"
                 window_clamped: false
                 requests: 8421
@@ -2305,6 +2312,48 @@ paths:
                 routes_limit: 50
                 routes_truncated: false
                 as_of: "2026-09-05T13:00:00.123456Z"
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/analytics/timeseries:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRequestAnalyticsTimeseries
+      summary: Request analytics time series by hour.
+      description: |
+        Returns zero-filled UTC hourly buckets for customer request analytics.
+        Each bucket contains request and error counts, error rate, cold boots,
+        and weighted p50/p95/p99 latency. The window is half-open [since, until)
+        and is clamped to the plan's DebugTelemetryRetentionDays.
+
+        `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+        timestamp. `until` is an optional RFC3339 exclusive upper bound and
+        defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+        by `DebugTelemetryEnabled`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Lookback duration or RFC3339 start timestamp. Defaults to `24h`."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive end timestamp; omitted means current server time."
+      x-since: 2026-09
+      responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '200':
+          description: Zero-filled hourly request analytics buckets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestAnalyticsTimeseriesResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -12439,12 +12488,13 @@ components:
     AppEffectiveLimits:
       description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
       type: object
-      required: [memory_limit_mb, plan_memory_max_mb, guest_vcpus, cpu_limit_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
+      required: [memory_limit_mb, plan_memory_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
       properties:
         memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
         plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
         guest_vcpus: { type: integer, description: "Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit." }
         cpu_limit_millicores: { type: integer, description: "Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores." }
+        plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
         cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
         max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
         concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
@@ -12455,16 +12505,26 @@ components:
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
 
+    AppConfiguredResources:
+      description: "The memory and sustained CPU shape selected for each instance of this app."
+      type: object
+      required: [memory_mb, cpu_millicores]
+      properties:
+        memory_mb: { type: integer, minimum: 1, description: "Configured instance memory in MB." }
+        cpu_millicores: { type: integer, enum: [250, 500, 1000], description: "Configured sustained CPU allowance in millicores." }
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
-      required: [id, slug, type, ram_mb, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
+      required: [id, slug, type, ram_mb, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer , example: 256}
+        cpu_millicores: { type: integer, enum: [250, 500, 1000], example: 500 }
+        configured_resources: { $ref: '#/components/schemas/AppConfiguredResources' }
         max_concurrency: { type: integer }
         # Issue #559: platform-advertised per-VM concurrency cap for
         # the customer's plan. Distinct from max_concurrency (the
@@ -12746,6 +12806,11 @@ components:
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
         ram_mb: { type: integer , example: 256}
+        cpu_millicores:
+          type: integer
+          enum: [250, 500, 1000]
+          default: 1000
+          description: "Sustained CPU allowance per instance. Omit for 1000 millicores."
         max_concurrency: { type: integer }
         idle_timeout_s: { type: integer }
         # Service/lifecycle settings are persisted on the app and merged into
@@ -12896,6 +12961,10 @@ components:
       type: object
       properties:
         ram_mb: { type: [integer, "null"] , example: 256}
+        cpu_millicores:
+          type: [integer, "null"]
+          enum: [250, 500, 1000, null]
+          description: "Sustained CPU allowance per instance. Omit for no change."
         idle_timeout_s: { type: [integer, "null"] }
         max_concurrency: { type: [integer, "null"] }
         # Lifecycle settings are partial updates. Setting execution_mode away
@@ -16084,6 +16153,7 @@ components:
       type: object
       properties:
         ram_mb: { type: integer, minimum: 128, maximum: 10240 }
+        cpu_millicores: { type: integer, enum: [250, 500, 1000] }
         idle_timeout_s: { type: integer, minimum: 30, maximum: 600 }
         max_concurrency: { type: integer, minimum: 1, maximum: 200 }
         min_instances: { type: integer, minimum: 0, maximum: 10 }
@@ -19799,11 +19869,12 @@ components:
       description: |
         Bounded historical request analytics for
         `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
-        `[now-since, now)`, and the route list is capped at 50 rows.
-      required: [slug, since, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, routes, routes_limit, routes_truncated, as_of]
+        `[from, until)`, and the route list is capped at 50 rows.
+      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, routes, routes_limit, routes_truncated, as_of]
       properties:
         slug: { type: string }
         since: { type: string, description: "Effective lookback duration after retention clamping." }
+        from: { type: string, format: date-time, description: "Inclusive lower bound of the analytics window." }
         until: { type: string, format: date-time, description: "Exclusive upper bound of the analytics window." }
         window_clamped: { type: boolean, description: "True when the requested lookback exceeded plan retention." }
         requests: { type: integer, format: int64, minimum: 0 }
@@ -19819,6 +19890,39 @@ components:
         routes_limit: { type: integer, minimum: 1, description: "Maximum number of route rows returned." }
         routes_truncated: { type: boolean, description: "True when more route rows matched than routes_limit." }
         as_of: { type: string, format: date-time, description: "RFC3339Nano UTC assembly timestamp." }
+
+    RequestAnalyticsTimeseriesPoint:
+      type: object
+      description: "One UTC-aligned hourly request analytics bucket."
+      required: [start, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
+      properties:
+        start: { type: string, format: date-time, description: "Inclusive UTC start of the one-hour bucket." }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+
+    RequestAnalyticsTimeseriesResponse:
+      type: object
+      description: |
+        Zero-filled UTC hourly request analytics for
+        `GET /v1/apps/{slug}/analytics/timeseries`. The effective window is
+        half-open [from, until) and bounded by plan retention.
+      required: [slug, since, from, until, window_clamped, bucket, points, as_of]
+      properties:
+        slug: { type: string }
+        since: { type: string, description: "Effective series lookback after retention clamping." }
+        from: { type: string, format: date-time, description: "First instant represented by the hourly series." }
+        until: { type: string, format: date-time, description: "Exclusive end instant represented by the hourly series." }
+        window_clamped: { type: boolean, description: "Indicates the series start was limited by plan retention." }
+        bucket: { type: string, enum: [1h], description: "UTC bucket size." }
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
+        as_of: { type: string, format: date-time, description: "UTC time when the series response was assembled." }
 
     AppSLOResponse:
       description: |

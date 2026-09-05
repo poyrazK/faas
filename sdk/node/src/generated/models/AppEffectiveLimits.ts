@@ -23,6 +23,10 @@ export type AppEffectiveLimits = {
    */
   cpu_limit_millicores: number;
   /**
+   * Largest sustained CPU allowance the current plan permits, in millicores.
+   */
+  plan_cpu_max_millicores: number;
+  /**
    * Relative cgroup CPU scheduling weight applied when the host is contended.
    */
   cpu_weight: number;

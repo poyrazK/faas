@@ -10,6 +10,10 @@ from ..models.diff_app_config_patch_app_protocol import (
     DiffAppConfigPatchAppProtocol,
     check_diff_app_config_patch_app_protocol,
 )
+from ..models.diff_app_config_patch_cpu_millicores import (
+    DiffAppConfigPatchCpuMillicores,
+    check_diff_app_config_patch_cpu_millicores,
+)
 from ..models.diff_app_config_patch_eviction_priority import (
     DiffAppConfigPatchEvictionPriority,
     check_diff_app_config_patch_eviction_priority,
@@ -30,6 +34,7 @@ class DiffAppConfigPatch:
     """
 
     ram_mb: int | Unset = UNSET
+    cpu_millicores: DiffAppConfigPatchCpuMillicores | Unset = UNSET
     idle_timeout_s: int | Unset = UNSET
     max_concurrency: int | Unset = UNSET
     min_instances: int | Unset = UNSET
@@ -49,6 +54,10 @@ class DiffAppConfigPatch:
 
     def to_dict(self) -> dict[str, Any]:
         ram_mb = self.ram_mb
+
+        cpu_millicores: int | Unset = UNSET
+        if not isinstance(self.cpu_millicores, Unset):
+            cpu_millicores = self.cpu_millicores
 
         idle_timeout_s = self.idle_timeout_s
 
@@ -87,6 +96,8 @@ class DiffAppConfigPatch:
         field_dict.update({})
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
+        if cpu_millicores is not UNSET:
+            field_dict["cpu_millicores"] = cpu_millicores
         if idle_timeout_s is not UNSET:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if max_concurrency is not UNSET:
@@ -120,6 +131,13 @@ class DiffAppConfigPatch:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         ram_mb = d.pop("ram_mb", UNSET)
+
+        _cpu_millicores = d.pop("cpu_millicores", UNSET)
+        cpu_millicores: DiffAppConfigPatchCpuMillicores | Unset
+        if isinstance(_cpu_millicores, Unset):
+            cpu_millicores = UNSET
+        else:
+            cpu_millicores = check_diff_app_config_patch_cpu_millicores(_cpu_millicores)
 
         idle_timeout_s = d.pop("idle_timeout_s", UNSET)
 
@@ -159,6 +177,7 @@ class DiffAppConfigPatch:
 
         diff_app_config_patch = cls(
             ram_mb=ram_mb,
+            cpu_millicores=cpu_millicores,
             idle_timeout_s=idle_timeout_s,
             max_concurrency=max_concurrency,
             min_instances=min_instances,

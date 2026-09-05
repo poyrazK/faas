@@ -17,10 +17,74 @@ Architecture and launch boundaries: [ADR-151](adr/151-provider-neutral-object-st
    control, URLs, or logs. Optional `session_token_env` supports temporary
    upstream credentials; restart/rotate before their expiration.
 4. Set `FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json` for apid and
-   restart all replicas with identical settings. Missing config disables the
-   feature. Invalid config or missing credentials fails startup. There is no
-   request-time config reload or credential refresh process.
+   restart all replicas with identical settings. This loads provider configuration
+   but does not enable provisioning or signing. Missing config disables the
+   feature. Invalid config or missing credentials fails startup. Provider config
+   and credentials still require a restart; the enable flag does not.
 5. Run the qualification checks below before admitting customers.
+
+## Hot enable / disable
+
+The single global runtime-config key `s3_enabled` defaults to **false**, even
+when a provider registry is loaded. Through the existing authenticated operator
+configuration API, use `PATCH /v1/admin/config/s3_enabled` with
+`{"value":true,"reason":"enable qualified storage backend"}`; set `value` to
+`false` to disable. Use `expected_version` for optimistic concurrency as with
+other runtime settings. Existing operator authorization, audit, and rollback
+rules apply. No additional environment enable flag or account allowlist exists.
+
+The existing database notification subscriber propagates changes across API
+replicas, with a five-second repair poll for missed notifications while the DB
+is reachable. This is not a synchronous global revocation barrier. In-flight
+operations can finish, and already-issued URLs remain usable until expiration.
+Disabling blocks new bucket provisioning and both GET/PUT URL issuance, and
+pauses background provisioning. Bucket metadata, object listing, object deletion,
+and empty-bucket deletion remain available under their existing authorization
+rules. Background deletion also continues. Keep the provider config/credentials
+loaded for cleanup. `GET /v1/apps/{slug}/buckets` reports `enabled: false` while
+still returning metadata and configured limits. Enabling without a loaded
+registry does not make storage usable.
+
+Rollout: apply the recovery migration, then update every apid replica before
+relying on this flag. Older binaries treat a loaded registry as enabled and do
+not honor `s3_enabled`; keep customer storage traffic disabled during a mixed-
+version rollout. Stop recovery workers before rolling the schema back.
+
+## Recovery and operator attention
+
+Each production apid runs a recovery sweep at startup and every 15 seconds after
+the preceding sweep completes. Each batch selects at most 20 due operations;
+replicas atomically claim the persisted two-minute leases before upstream I/O.
+Each operation has a 45-second deadline. The worker only retries catalogued
+`provisioning`/`deleting` intents, never discovers or deletes unknown buckets.
+
+Failed requests and background attempts persist `attempt_count`, `retry_at`, and
+a bounded `last_error_code`. Transient failures back off from 30 seconds to 15
+minutes; invalid requests and credential/configuration failures retry once per
+hour. Request retries respect the same cooldown (409 while busy/not due).
+Cleanup may replace a failed provisioning intent once its active lease ends.
+Successful completion resets retry metadata. Nonempty deletion returns the
+bucket to `ready` rather than repeatedly trying to delete customer data.
+
+After a process crash, recovery waits for the lease to expire and repeats the
+same operation against the same physical bucket. Missing buckets on deletion
+are success; successful creation followed by a lost response must be safe to
+repeat on the qualified provider. A stale lease owner cannot commit a newer
+worker's outcome. Provider qualification remains necessary for external effects.
+
+Inspect `faas_object_storage_recovery_attempts_total{operation,outcome}` for
+worker progress (`success`, `not_empty`, `deferred`). Structured logs contain
+bucket/backend IDs, operation, attempt, retry interval, and sanitized error code;
+`needs_attention=true` marks configuration/invalid failures or five consecutive
+attempts. No raw upstream errors, credentials, or signed URLs are recorded.
+The durable retry fields are available for operator diagnosis in the bucket
+catalog; they are not added to the customer API. A failed sweep emits a warning.
+
+For configuration failures, restore the original backend identity and valid
+credentials on all replicas; restart for provider-config changes and wait for
+the persisted retry time. Do not bypass placement fencing or mutate lease tokens
+to force recovery. The first release does not include a manual force-retry API,
+ready-bucket inventory/orphan reconciliation, or automatic data migration.
 
 The identity needs bucket creation/deletion and CORS configuration plus object
 list/get/put/delete for Gregale buckets. Restrict it to `gregale-*` where supported;
@@ -117,7 +181,9 @@ tenant IAM adapter; never hand out the operator-wide credential.
 - Tamper with a nonempty signed upload's Content-Length and an empty upload's
   body: both must fail. Verify wrong key/method and expired URLs fail.
 - Test CORS preflight, pagination, deletion of objects, nonempty bucket rejection,
-  empty deletion, upstream outage, and retry after apid interruption.
+  empty deletion, upstream outage, and automatic recovery after apid interruption
+  before/after upstream success and before/after catalog completion. Verify
+  cooldowns survive restart and multiple replicas do not duplicate active work.
 - Add a second backend and switch the default. Old/new buckets must use their
   respective backends; removing the old config must fail closed.
 - Keep operator monitoring/budgets in place. Defaults are 10 buckets/app and

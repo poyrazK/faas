@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppConfiguredResources } from './AppConfiguredResources.js';
 import type { AppEffectiveLimits } from './AppEffectiveLimits.js';
 import type { AppManifest } from './AppManifest.js';
 import type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
@@ -19,6 +20,8 @@ export type AppResponse = {
    */
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
   ram_mb: number;
+  cpu_millicores: 250 | 500 | 1000;
+  configured_resources: AppConfiguredResources;
   max_concurrency: number;
   concurrency_per_vm: number;
   effective_limits: AppEffectiveLimits;

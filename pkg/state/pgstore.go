@@ -1786,6 +1786,10 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if ramMB <= 0 {
 		ramMB = 128
 	}
+	cpuMillicores := app.CPUMillicores
+	if cpuMillicores <= 0 {
+		cpuMillicores = api.DefaultAppCPUMillicores
+	}
 	// warm_snapshot_min_requests / warm_snapshot_min_ms have CHECK bounds
 	// (1..100 / 100..60000) added by migration 00109. A caller that
 	// leaves them at the Go int zero trips the CHECK at insert time —
@@ -1853,8 +1857,8 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// ("" → SQL NULL). The empty-uuid CHECK + the FK with
 	// ON DELETE SET NULL (migration 00167) enforce the
 	// integrity contract downstream.
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
 		returning ` + appsSelectColumns
 	// status: pull from app.Status when non-empty (the API surfaces it on
 	// update / restore paths); fall back to 'active' on the Go zero so the
@@ -1924,7 +1928,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		// before reaching this path, so the floor is a
 		// last-line defence for internal callers that build an
 		// App by hand.
-		appProtocol)
+		appProtocol, cpuMillicores)
 	return scanApp(row)
 }
 
@@ -1997,6 +2001,10 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	if ramMB <= 0 {
 		ramMB = 128
 	}
+	cpuMillicores := app.CPUMillicores
+	if cpuMillicores <= 0 {
+		cpuMillicores = api.DefaultAppCPUMillicores
+	}
 	// Issue #470 / ADR-055: warm_snapshot_min_* have CHECK bounds (1..100 /
 	// 100..60000) added by migration 00109. Mirror the ramMB floor above
 	// so a zero-value App struct (test fixtures, internal callers) lands
@@ -2065,8 +2073,8 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	// ("" → SQL NULL). The empty-uuid CHECK + the FK with
 	// ON DELETE SET NULL (migration 00167) enforce the
 	// integrity contract downstream.
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
 		returning ` + appsSelectColumns
 	// status: same fallback as CreateApp above — empty Go Status would
 	// trip 23514 on the CHECK constraint, so coerce to AppActive. The
@@ -2123,7 +2131,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		// coerced to 'http1' so the schema DEFAULT and the
 		// explicit-write path converge on the same universal
 		// default. Mirrors the binding in CreateApp above.
-		appProtocol)
+		appProtocol, cpuMillicores)
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -3293,7 +3301,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 				   -- {http1, http2, grpc}; apid validates the value
 				   -- (Plan.AppProtocolAllowed gates 'grpc' to
 				   -- Hobby+) before reaching this UPDATE.
-					   app_protocol = case when $61 then $62 else app_protocol end
+					   app_protocol = case when $61 then $62 else app_protocol end,
+					   cpu_millicores = coalesce($63, cpu_millicores)
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3413,7 +3422,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		// apid-side default of "http1" is preserved on PATCHes
 		// that don't touch the field. The Set bit distinguishes
 		// "don't touch" from "explicit http1".
-		p.SetAppProtocol, derefString(p.AppProtocol))
+		p.SetAppProtocol, derefString(p.AppProtocol),
+		p.CPUMillicores)
 	return scanApp(row)
 }
 
@@ -3970,6 +3980,10 @@ func (s *PgStore) ApplyProjectPlan(
 		if ramMB <= 0 {
 			ramMB = 128
 		}
+		cpuMillicores := a.CPUMillicores
+		if cpuMillicores <= 0 {
+			cpuMillicores = api.DefaultAppCPUMillicores
+		}
 		// Coerce Type=="" to AppTypeApp so the NOT NULL CHECK
 		// (type IN ('app','function')) is satisfied (matches CreateApp).
 		appType := a.Type
@@ -3980,9 +3994,9 @@ func (s *PgStore) ApplyProjectPlan(
 		    (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency,
 		     status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist,
 		     project_id, root_dir, workload_name, workload_class, start_command,
-			     preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at)
+		     preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, cpu_millicores)
 		values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9, $10::cidr[], $11::cidr[],
-		        $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		returning ` + appsSelectColumns
 		row := tx.QueryRow(ctx, insertAppSQL,
 			project.AccountID, a.Slug, string(appType), runtime, ramMB, idle, maxConcurrency,
@@ -3995,7 +4009,7 @@ func (s *PgStore) ApplyProjectPlan(
 			// time. The preview path provisions rows via
 			// CreateApp / CreateAppIfUnderQuota directly.
 			nullString(a.PreviewOfSlug), a.PreviewPrNumber,
-			nullString(a.PreviewPrState), nullableTimestamptzPtr(a.PreviewExpiresAt),
+			nullString(a.PreviewPrState), nullableTimestamptzPtr(a.PreviewExpiresAt), cpuMillicores,
 		)
 		app, err := scanApp(row)
 		if err != nil {
@@ -16718,7 +16732,8 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// *time.Time (Go nil when SQL NULL). Both pointer
 		// targets are populated by the Set*/CASE branch on the
 		// write side.
-		&a.StaticEgressIP, &a.StaticEgressIPSetAt); err != nil {
+		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
+		&a.CPUMillicores); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -16878,7 +16893,9 @@ const appsSelectColumns = `
 	-- (static_egress_ip_set_at) is nullable timestamptz scanned
 	-- into *time.Time (pgx handles SQL NULL → Go nil natively —
 	-- same shape as ReassignedAt / MigratedAt above).
-	static_egress_ip, static_egress_ip_set_at`
+	static_egress_ip, static_egress_ip_set_at,
+	-- Configured sustained CPU quota. Appended to keep the positional scan stable.
+	cpu_millicores`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`
@@ -21033,6 +21050,12 @@ func (s *PgStore) RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc
 // the customer-facing request analytics response.
 func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
 	return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, s.pool, arg)
+}
+
+// RequestTelemetryAnalyticsTimeseries backs the zero-filled hourly customer
+// analytics chart. The SQL query weights collapsed telemetry rows by count.
+func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, s.pool, arg)
 }
 
 // --- ADR-127 PR-B — regression observation persistence + dashboard reads ---

@@ -81,6 +81,7 @@ type DiffRequest struct {
 // pr-819-openapi-nullable-3-1: wire "absent" ≠ "explicit zero").
 type DiffAppConfigPatch struct {
 	RAMMB               *int      `json:"ram_mb,omitempty"`
+	CPUMillicores       *int      `json:"cpu_millicores,omitempty"`
 	IdleTimeoutS        *int      `json:"idle_timeout_s,omitempty"`
 	MaxConcurrency      *int      `json:"max_concurrency,omitempty"`
 	MinInstances        *int      `json:"min_instances,omitempty"`

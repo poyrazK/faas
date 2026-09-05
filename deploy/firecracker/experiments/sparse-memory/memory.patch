@@ -1,0 +1,137 @@
+--- a/src/vmm/src/vstate/memory.rs
++++ b/src/vmm/src/vstate/memory.rs
+@@ -231,19 +231,7 @@
+                     return Err(MemoryError::HugetlbfsSnapshot);
+                 }
+ 
+-                let regions = state
+-                    .regions
+-                    .iter()
+-                    .map(|r| {
+-                        f.try_clone().map(|file_clone| {
+-                            let offset = FileOffset::new(file_clone, r.offset);
+-                            (offset, GuestAddress(r.base_address), r.size)
+-                        })
+-                    })
+-                    .collect::<Result<Vec<_>, std::io::Error>>()
+-                    .map_err(MemoryError::FileError)?;
+-
+-                Self::from_raw_regions_file(regions, track_dirty_pages, false)
++                sparse_anonymous_restore(f, state, track_dirty_pages)
+             }
+             None => {
+                 let regions = state
+@@ -815,3 +803,113 @@
+         memfd.add_seals(&seals).unwrap_err();
+     }
+ }
++
++// Private SSD diagnostic. The snapshot format and cold-boot path are unchanged.
++// Restore populated file extents into anonymous THP-advised memory before KVM
++// can access it. Sparse holes retain the anonymous mapping's zero contents.
++fn sparse_anonymous_restore(
++    file: &File,
++    state: &GuestMemoryState,
++    track_dirty_pages: bool,
++) -> Result<GuestMemoryMmap, MemoryError> {
++    use std::os::fd::AsRawFd;
++    use std::os::unix::fs::FileExt;
++    let invalid = || MemoryError::FileError(std::io::Error::new(
++        std::io::ErrorKind::InvalidData, "invalid snapshot memory extent"));
++    let file_len = file.metadata().map_err(MemoryError::FileError)?.len();
++    for r in &state.regions {
++        if r.offset.checked_add(r.size as u64).ok_or_else(invalid)? > file_len {
++            return Err(invalid());
++        }
++    }
++    let regions: Vec<_> = state.regions.iter()
++        .map(|r| (GuestAddress(r.base_address), r.size)).collect();
++    let memory = GuestMemoryMmap::from_raw_regions(&regions, track_dirty_pages, HugePageConfig::None)?;
++    for r in &state.regions {
++        let region = memory.find_region(GuestAddress(r.base_address)).ok_or_else(invalid)?;
++        if region.start_addr().0 != r.base_address || region.len() != r.size as u64 {
++            return Err(invalid());
++        }
++        let ptr = region.as_ptr();
++        // SAFETY: region is a new writable mapping, not registered with KVM yet.
++        if unsafe { libc::madvise(ptr.cast(), r.size, libc::MADV_HUGEPAGE) } != 0 {
++            return Err(MemoryError::FileError(std::io::Error::last_os_error()));
++        }
++        let end = r.offset + r.size as u64;
++        let mut pos = r.offset;
++        while pos < end {
++            let off = i64::try_from(pos).map_err(|_| invalid())?;
++            // SAFETY: live file descriptor and representable offset.
++            let data = unsafe { libc::lseek(file.as_raw_fd(), off, libc::SEEK_DATA) };
++            let (data, hole) = if data < 0 {
++                let err = std::io::Error::last_os_error();
++                if err.raw_os_error() == Some(libc::ENXIO) { break; }
++                if err.raw_os_error() != Some(libc::EINVAL) && err.raw_os_error() != Some(libc::EOPNOTSUPP) {
++                    return Err(MemoryError::FileError(err));
++                }
++                (pos, end)
++            } else {
++                let data = data as u64;
++                if data >= end { break; }
++                // SAFETY: data was returned by the preceding seek.
++                let hole = unsafe { libc::lseek(file.as_raw_fd(), data as i64, libc::SEEK_HOLE) };
++                if hole < 0 { return Err(MemoryError::FileError(std::io::Error::last_os_error())); }
++                (data, (hole as u64).min(end))
++            };
++            if data < pos || hole <= data { return Err(invalid()); }
++            // SAFETY: checked offsets keep this writable slice in the new
++            // region. No guest or other thread can access it during restore.
++            let bytes = unsafe { std::slice::from_raw_parts_mut(ptr.add((data-r.offset) as usize), (hole-data) as usize) };
++            file.read_exact_at(bytes, data).map_err(MemoryError::FileError)?;
++            pos = hole;
++        }
++    }
++    Ok(memory)
++}
++
++#[cfg(test)]
++mod sparse_restore_tests {
++    use super::*;
++    use std::os::unix::fs::FileExt;
++    use utils::tempfile::TempFile;
++
++    #[test]
++    fn preserves_sparse_bytes_offsets_and_isolation() {
++        let file = TempFile::new().unwrap().into_file();
++        file.set_len(8 * 1024 * 1024).unwrap();
++        file.write_all_at(&[0x37; 4096], 2 * 1024 * 1024 + 4096).unwrap();
++        file.write_all_at(&[0xc1; 4096], 6 * 1024 * 1024 - 4096).unwrap();
++        let state = GuestMemoryState { regions: vec![
++            GuestMemoryRegionState { base_address: 0, size: 2 * 1024 * 1024, offset: 2 * 1024 * 1024 },
++            GuestMemoryRegionState { base_address: 4 * 1024 * 1024, size: 2 * 1024 * 1024, offset: 4 * 1024 * 1024 },
++        ]};
++        let one = sparse_anonymous_restore(&file, &state, true).unwrap();
++        let two = sparse_anonymous_restore(&file, &state, false).unwrap();
++        for r in &state.regions {
++            let mut expected = vec![0; r.size];
++            file.read_exact_at(&mut expected, r.offset).unwrap();
++            let mut actual = vec![0; r.size];
++            one.read_slice(&mut actual, GuestAddress(r.base_address)).unwrap();
++            assert_eq!(actual, expected);
++            two.read_slice(&mut actual, GuestAddress(r.base_address)).unwrap();
++            assert_eq!(actual, expected);
++        }
++        one.write_slice(&[0x44], GuestAddress(4096)).unwrap();
++        assert_eq!(two.read_obj::<u8>(GuestAddress(4096)).unwrap(), 0x37);
++        let mut original = [0];
++        file.read_exact_at(&mut original, 2 * 1024 * 1024 + 4096).unwrap();
++        assert_eq!(original, [0x37]);
++    }
++
++    #[test]
++    fn rejects_truncated_and_overflowing_input() {
++        let file = TempFile::new().unwrap().into_file();
++        file.set_len(4096).unwrap();
++        for offset in [4096, u64::MAX] {
++            let state = GuestMemoryState { regions: vec![GuestMemoryRegionState {
++                base_address: 0, size: 4096, offset,
++            }]};
++            assert!(sparse_anonymous_restore(&file, &state, false).is_err());
++        }
++    }
++}

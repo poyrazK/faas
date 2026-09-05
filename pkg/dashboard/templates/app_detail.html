@@ -208,8 +208,9 @@
       {{if .Data.EffectiveLimits.MemoryLimitMB}}
       <h2>Effective limits</h2>
       <table>
+        <tr><th>Configured shape</th><td>{{.Data.ConfiguredResources.MemoryMB}} MB · {{.Data.ConfiguredResources.CPUMillicores}}m CPU</td></tr>
         <tr><th>Memory</th><td>{{.Data.EffectiveLimits.MemoryLimitMB}} MB (plan ceiling {{.Data.EffectiveLimits.PlanMemoryMaxMB}} MB)</td></tr>
-        <tr><th>CPU</th><td>{{.Data.EffectiveLimits.GuestVCPUs}} guest vCPU · {{.Data.EffectiveLimits.CPULimitMillicores}}m sustained limit · scheduling weight {{.Data.EffectiveLimits.CPUWeight}}</td></tr>
+        <tr><th>CPU</th><td>{{.Data.EffectiveLimits.GuestVCPUs}} guest vCPU · {{.Data.EffectiveLimits.CPULimitMillicores}}m sustained limit (plan ceiling {{.Data.EffectiveLimits.PlanCPUMaxMillicores}}m) · scheduling weight {{.Data.EffectiveLimits.CPUWeight}}</td></tr>
         <tr><th>Scaling</th><td>up to {{.Data.EffectiveLimits.MaxInstances}} instances · {{.Data.EffectiveLimits.ConcurrencyPerInstance}} concurrent requests per instance</td></tr>
         <tr><th>App request rate</th><td>{{.Data.EffectiveLimits.AppRequestRateRPS}} requests/s · burst {{.Data.EffectiveLimits.AppRequestBurst}}</td></tr>
         <tr><th>Account request rate</th><td>{{.Data.EffectiveLimits.AccountRequestRateRPM}} requests/min across apps</td></tr>
@@ -475,6 +476,25 @@
             · <a href="/v1/apps/{{.Data.App.Slug}}/analytics?since={{.Data.RequestAnalytics.Since}}">JSON</a>
           </h2>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          {{if .Data.RequestAnalytics.LatencySparklineHTML}}
+            <h3>Hourly trend <small style="font-weight:normal;color:#888">({{.Data.RequestAnalytics.Bucket}} buckets · {{.Data.RequestAnalytics.From}} to {{.Data.RequestAnalytics.Until}})</small></h3>
+            <table aria-label="Hourly request analytics trends">
+              <tbody>
+                <tr>
+                  <td>Latency p50 / p95 / p99</td>
+                  <td>{{.Data.RequestAnalytics.LatencySparklineHTML}}</td>
+                </tr>
+                <tr>
+                  <td>Error rate</td>
+                  <td>{{.Data.RequestAnalytics.ErrorSparklineHTML}}</td>
+                </tr>
+                <tr>
+                  <td>Cold-boot rate</td>
+                  <td>{{.Data.RequestAnalytics.ColdBootSparklineHTML}}</td>
+                </tr>
+              </tbody>
+            </table>
+          {{end}}
           {{if eq .Data.RequestAnalytics.Requests 0}}
             <p>No requests in the last {{.Data.RequestAnalytics.Since}}.</p>
           {{else}}

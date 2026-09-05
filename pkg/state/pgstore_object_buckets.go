@@ -12,7 +12,7 @@ import (
 var _ ObjectBucketStore = (*PgStore)(nil)
 
 func objectBucketFromSQL(b sqlc.ObjectBucket) ObjectBucket {
-	return ObjectBucket{ID: pgUUIDString(b.ID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time}
+	return ObjectBucket{ID: pgUUIDString(b.ID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
 }
 
 func (s *PgStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
@@ -66,14 +66,51 @@ func (s *PgStore) GetObjectBucket(ctx context.Context, accountID, appID, id stri
 }
 
 func (s *PgStore) ClaimObjectBucket(ctx context.Context, accountID, appID, id, token, next string) (ObjectBucket, error) {
+	return s.claimObjectBucket(ctx, accountID, appID, id, token, next, false)
+}
+
+func (s *PgStore) ClaimObjectBucketRecovery(ctx context.Context, accountID, appID, id, token, next string) (ObjectBucket, error) {
+	return s.claimObjectBucket(ctx, accountID, appID, id, token, next, true)
+}
+
+func (s *PgStore) claimObjectBucket(ctx context.Context, accountID, appID, id, token, next string, recovery bool) (ObjectBucket, error) {
 	if token == "" || (next != "provisioning" && next != "deleting") {
 		return ObjectBucket{}, ErrConflict
 	}
-	b, err := sqlc.New().ObjectBucketClaim(ctx, s.pool, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id)})
+	b, err := sqlc.New().ObjectBucketClaim(ctx, s.pool, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ObjectBucket{}, ErrConflict
 	}
 	return objectBucketFromSQL(b), mapErr(err)
+}
+
+func (s *PgStore) RetryObjectBucket(ctx context.Context, id, token, code string, delay time.Duration) error {
+	if token == "" || !validObjectBucketRetry(code, delay) {
+		return ErrConflict
+	}
+	n, err := sqlc.New().ObjectBucketRetry(ctx, s.pool, sqlc.ObjectBucketRetryParams{ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}, LastErrorCode: code, Column4: int32(delay / time.Second)})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) DueObjectBuckets(ctx context.Context, provision bool, limit int32) ([]ObjectBucket, error) {
+	if limit < 1 || limit > 100 {
+		return nil, ErrConflict
+	}
+	rows, err := sqlc.New().ObjectBucketsDue(ctx, s.pool, sqlc.ObjectBucketsDueParams{IncludeProvisioning: provision, BatchLimit: limit})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]ObjectBucket, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, objectBucketFromSQL(row))
+	}
+	return out, nil
 }
 
 func (s *PgStore) FinishObjectBucket(ctx context.Context, id, token, next string) error {

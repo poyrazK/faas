@@ -344,7 +344,7 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	//
 	// Handing over an *os.File lets the parent hash in place and
 	// upload from the same fd. One write, not two.
-	written, spoolErr := copyContext(ctx, tmp, r)
+	written, spoolErr := copyArtifactContext(ctx, tmp, r, key)
 	if spoolErr != nil {
 		return fmt.Errorf("storage: cache: put %q: spool: %w", key, spoolErr)
 	}
@@ -633,7 +633,7 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 		}
 	}()
 
-	n, err := copyContext(ctx, tmp, src)
+	n, err := copyArtifactContext(ctx, tmp, src, key)
 	if err != nil {
 		return nil, err
 	}

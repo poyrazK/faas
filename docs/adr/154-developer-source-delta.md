@@ -1,4 +1,4 @@
-# ADR-153 · Disposable developer source deltas
+# ADR-154 · Disposable developer source deltas
 
 - **Status:** accepted
 - **Date:** 2026-09-05
@@ -7,7 +7,7 @@
 ## Context
 
 `gregale dev` deliberately deploys the dirty working tree through the same
-build and Firecracker path as production. ADR-152 removed repeated dependency
+build and Firecracker path as production. ADR-153 removed repeated dependency
 installation for Railpack developer builds, but every edit still uploaded the
 complete source archive. Large workspaces therefore paid full network cost for
 a one-file change.
@@ -65,7 +65,7 @@ measured in production.
   turns an optional optimization into control-plane truth and adds lifecycle
   coupling to developer sessions.
 - Keeping builder microVMs alive between edits: weakens the ephemeral builder
-  isolation boundary and duplicates ADR-152's content-cache solution.
+  isolation boundary and duplicates ADR-153's content-cache solution.
 - Applying changes directly to a builder spool directory: exposes partially
   mutated source to concurrent builds and bypasses full-archive validation.
 

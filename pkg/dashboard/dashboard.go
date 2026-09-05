@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/presetwhy"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -335,9 +336,10 @@ type AppDetailData struct {
 	Manifest ManifestView
 	// EffectiveLimits is the customer-visible resource and request
 	// envelope derived from the app plus its current plan.
-	EffectiveLimits api.AppEffectiveLimits
-	Deployments     []DeploymentItem
-	Crons           []CronItem
+	EffectiveLimits     api.AppEffectiveLimits
+	ConfiguredResources api.AppConfiguredResources
+	Deployments         []DeploymentItem
+	Crons               []CronItem
 	// Workflows is the bounded recent-run view for the app detail page.
 	// It intentionally carries step status and operator-facing errors, but
 	// never the workflow input/output payloads.
@@ -916,19 +918,28 @@ type AppMetricsView struct {
 // request analytics API. It deliberately mirrors only aggregate fields;
 // request IDs and trace data belong to the debugger surface.
 type RequestAnalyticsView struct {
-	Since           string
-	WindowClamped   bool
-	Requests        int64
-	ErrorRequests   int64
-	ErrorRatePct    float64
-	ColdBoots       int64
-	P50MS           int
-	P95MS           int
-	P99MS           int
-	Routes          []RequestAnalyticsRouteView
-	RoutesLimit     int
-	RoutesTruncated bool
-	AsOf            string
+	Since                 string
+	From                  string
+	Until                 string
+	WindowClamped         bool
+	Requests              int64
+	ErrorRequests         int64
+	ErrorRatePct          float64
+	ColdBoots             int64
+	P50MS                 int
+	P95MS                 int
+	P99MS                 int
+	Routes                []RequestAnalyticsRouteView
+	RoutesLimit           int
+	RoutesTruncated       bool
+	AsOf                  string
+	Bucket                string
+	LatencySparkline      views.LatencySparklineView
+	LatencySparklineHTML  template.HTML
+	ErrorSparkline        []appmetrics.SparklinePoint
+	ErrorSparklineHTML    template.HTML
+	ColdBootSparkline     []appmetrics.SparklinePoint
+	ColdBootSparklineHTML template.HTML
 }
 
 type RequestAnalyticsRouteView struct {

@@ -148,9 +148,21 @@ func TestLoop_Health_ReportsFailedBillingTick(t *testing.T) {
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- loop.Run(ctx) }()
-	time.Sleep(60 * time.Millisecond)
+	// Wait for the failed result, not an assumed goroutine scheduling delay.
+	poll := time.NewTicker(time.Millisecond)
+	defer poll.Stop()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	for loop.Health(time.Now()).Failed["stripe"] == "" {
+		select {
+		case <-poll.C:
+		case <-deadline.C:
+			t.Fatal("billing failure was not reported within 3s")
+		}
+	}
 	cancel()
 	select {
 	case err := <-done:
@@ -177,7 +189,7 @@ func TestLoop_Health_ReportsFailedBillingTick(t *testing.T) {
 // clock time of the named tick's last successful run; ok==true, the
 // timestamp is within the brief-run window, and the recorded value is
 // a recent stamp (no older than 200 ms before `time.Now()`). Pins the
-// write-path: a regression that drops the `l.recordTick(name, start)`
+// write-path: a regression that drops the `l.recordTick(name, start, err)`
 // call from runTicks would leave LastTick returning the zero value
 // forever, and this test would catch it.
 func TestLoop_Health_RecordsLastTick(t *testing.T) {

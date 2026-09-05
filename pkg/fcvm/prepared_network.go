@@ -158,7 +158,10 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 
 func (p *preparedNetworkPool) run() {
 	defer close(p.done)
-	ticker := time.NewTicker(preparedNetworkTTL / 2)
+	// Refresh ahead of hard expiry. A partially consumed pool can retain an
+	// old spare while successful wakes replace only its younger entries.
+	// Waiting until hard expiry leaves that spare unusable between ticks.
+	ticker := time.NewTicker(preparedNetworkTTL / 4)
 	defer ticker.Stop()
 	defer func() {
 		p.mu.Lock()
@@ -192,7 +195,7 @@ func (p *preparedNetworkPool) fill() {
 		p.retired = nil
 		var kept []preparedNetworkEntry
 		for _, e := range p.ready {
-			if time.Since(e.created) >= preparedNetworkTTL || p.desired == nil || e.policy != *p.desired {
+			if time.Since(e.created) >= preparedNetworkTTL/2 || p.desired == nil || e.policy != *p.desired {
 				expired = append(expired, e)
 			} else {
 				kept = append(kept, e)

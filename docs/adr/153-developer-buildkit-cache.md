@@ -1,4 +1,4 @@
-# ADR-152 · Developer BuildKit dependency cache
+# ADR-153 · Developer BuildKit dependency cache
 
 - **Status:** accepted
 - **Date:** 2026-09-05

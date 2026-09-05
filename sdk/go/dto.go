@@ -18,11 +18,12 @@ import "github.com/poyrazK/faas-go/internal/api"
 // DTOs in internal/api should be added here on the next PR.
 type (
 	// App lifecycle.
-	CreateAppRequest   = api.CreateAppRequest
-	UpdateAppRequest   = api.UpdateAppRequest
-	RenameAppRequest   = api.RenameAppRequest
-	AppResponse        = api.AppResponse
-	AppEffectiveLimits = api.AppEffectiveLimits
+	CreateAppRequest       = api.CreateAppRequest
+	UpdateAppRequest       = api.UpdateAppRequest
+	RenameAppRequest       = api.RenameAppRequest
+	AppResponse            = api.AppResponse
+	AppEffectiveLimits     = api.AppEffectiveLimits
+	AppConfiguredResources = api.AppConfiguredResources
 
 	// Deployments.
 	CreateDeploymentRequest = api.CreateDeploymentRequest

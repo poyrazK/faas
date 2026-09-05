@@ -157,6 +157,7 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"slug":            created.Slug,
 		"type":            string(created.Type),
 		"ram_mb":          created.RAMMB,
+		"cpu_millicores":  created.CPUMillicores,
 		"max_concurrency": created.MaxConcurrency,
 		"runtime":         created.Runtime,
 	})
@@ -183,6 +184,13 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	ram := req.RAMMB
 	if ram == 0 {
 		ram = limits.RAMMB
+	}
+	cpuMillicores := req.CPUMillicores
+	if cpuMillicores == 0 {
+		cpuMillicores = api.DefaultAppCPUMillicores
+	}
+	if prob := api.ValidateAppCPUMillicores(cpuMillicores); prob != nil {
+		return state.App{}, prob
 	}
 	mc := req.MaxConcurrency
 	if mc == 0 {
@@ -369,7 +377,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	}
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
-		RAMMB: ram, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
+		RAMMB: ram, CPUMillicores: cpuMillicores, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
 		StreamingEnabled: streaming,
 		WebSocketEnabled: ws,
 		// ADR-093: per-route observability opt-in (plan-level
@@ -603,7 +611,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), Runtime: a.Runtime,
-		RAMMB: a.RAMMB, MaxConcurrency: a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
+		RAMMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan), MaxConcurrency: a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		// Issue #559: platform-advertised per-VM concurrency cap
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
@@ -611,6 +619,9 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// as MaxMinInstances.
 		ConcurrencyPerVMBound: plan.ConcurrencyPerVMBound(),
 		EffectiveLimits:       appEffectiveLimits(a, plan),
+		ConfiguredResources: api.AppConfiguredResources{
+			MemoryMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		},
 		// ux_spec §6.5: per-app floor the reaper honors when
 		// parking idle instances. Pro/Scale only (apid gates).
 		MinInstances: a.MinInstances,
@@ -754,19 +765,17 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	limits, ok := api.LimitsFor(plan)
 	if !ok {
-		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, MaxInstances: a.MaxConcurrency}
+		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency}
 	}
 	maxInstances := a.MaxConcurrency
 	if a.ScalingPolicy != nil && a.ScalingPolicy.MaxInstances > 0 {
 		maxInstances = a.ScalingPolicy.MaxInstances
 	}
-	cpuMillicores := 0
-	if limits.CPUQuotaUS > 0 && limits.CPUPeriodUS > 0 {
-		cpuMillicores = int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
-	}
+	cpuMillicores := effectiveAppCPUMillicores(a, plan)
+	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
 	return api.AppEffectiveLimits{
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
-		GuestVCPUs: limits.VCPU, CPULimitMillicores: cpuMillicores, CPUWeight: limits.CPUWeight,
+		GuestVCPUs: limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
 		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
@@ -774,6 +783,16 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 	}
+}
+
+func effectiveAppCPUMillicores(a state.App, plan api.Plan) int {
+	if a.CPUMillicores > 0 {
+		return a.CPUMillicores
+	}
+	if limits, ok := api.LimitsFor(plan); ok && limits.CPUQuotaUS > 0 && limits.CPUPeriodUS > 0 {
+		return int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
+	}
+	return api.DefaultAppCPUMillicores
 }
 
 // cORSOriginsList materialises the text[] column as a non-nil slice.

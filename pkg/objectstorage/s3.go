@@ -178,13 +178,15 @@ func normalize(err error) error {
 	var e smithy.APIError
 	if errors.As(err, &e) {
 		switch e.ErrorCode() {
+		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken", "InvalidToken", "AuthorizationHeaderMalformed":
+			return ErrConfiguration
 		case "NoSuchBucket", "NoSuchKey", "NotFound":
 			return ErrNotFound
 		case "BucketNotEmpty":
 			return ErrNotEmpty
 		case "BucketAlreadyExists", "OperationAborted":
 			return ErrConflict
-		case "InvalidArgument", "InvalidRequest", "InvalidToken":
+		case "InvalidArgument", "InvalidRequest":
 			return ErrInvalid
 		}
 	}

@@ -2395,7 +2395,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
+		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -3959,11 +3959,12 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
 	}
 	return AppSpec{
-		BaseKey:    baseKey(app.Runtime),
-		LayerKey:   layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:  int32(limits.VCPU),
-		MemSizeMiB: int32(app.RAMMB),
-		EgressMbit: int32(limits.EgressMbit),
+		BaseKey:       baseKey(app.Runtime),
+		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
+		VCPUCount:     int32(limits.VCPU),
+		MemSizeMiB:    int32(app.RAMMB),
+		CPUMillicores: int32(app.CPUMillicores),
+		EgressMbit:    int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
@@ -4602,7 +4603,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
+		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.

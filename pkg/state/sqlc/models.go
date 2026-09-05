@@ -191,6 +191,7 @@ type App struct {
 	Type                   string
 	Runtime                pgtype.Text
 	RamMb                  int32
+	CpuMillicores          int32
 	IdleTimeoutS           pgtype.Int4
 	MaxConcurrency         int32
 	Status                 string
@@ -1132,6 +1133,9 @@ type ObjectBucket struct {
 	LeaseUntil         pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	AttemptCount       int32
+	RetryAt            pgtype.Timestamptz
+	LastErrorCode      string
 }
 
 type OidcExchangedToken struct {

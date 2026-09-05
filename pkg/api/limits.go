@@ -41,6 +41,18 @@ const (
 	DevSourceCacheMaxBytes int64 = 4 << 30
 )
 
+// App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
+// Keep the first release deliberately small: it lets customers right-size
+// CPU-bound behavior without changing plan capacity or billing semantics.
+const DefaultAppCPUMillicores = 1000
+
+// ValidAppCPUMillicores reports whether v is one of the supported app CPU
+// shapes. The closed set keeps API validation, persistence, and cgroup quota
+// arithmetic aligned.
+func ValidAppCPUMillicores(v int) bool {
+	return v == 250 || v == 500 || v == DefaultAppCPUMillicores
+}
+
 // Plan is a customer subscription tier. The zero value is intentionally invalid
 // so an unset plan never silently reads as Free.
 type Plan string

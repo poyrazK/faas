@@ -182,7 +182,7 @@ func (l *LocalStorageBackend) Put(ctx context.Context, key string, r io.Reader) 
 			_ = os.Remove(tmp)
 		}
 	}()
-	if _, err := copyContext(ctx, f, r); err != nil {
+	if _, err := copyArtifactContext(ctx, f, r, key); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("storage: put %q: %w", key, err)
 	}

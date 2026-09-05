@@ -617,6 +617,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		App:             appRow,
 		Manifest:        dashboardManifestView(app),
 		EffectiveLimits: appEffectiveLimits(app, acct.Plan),
+		ConfiguredResources: api.AppConfiguredResources{
+			MemoryMB: app.RAMMB, CPUMillicores: effectiveAppCPUMillicores(app, acct.Plan),
+		},
 		Deployments:     deps,
 		Crons:           cronItems,
 		Workflows:       workflowItems,

@@ -24,6 +24,8 @@ class AppEffectiveLimits:
     """Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit."""
     cpu_limit_millicores: int
     """Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores."""
+    plan_cpu_max_millicores: int
+    """Largest sustained CPU allowance the current plan permits, in millicores."""
     cpu_weight: int
     """Relative cgroup CPU scheduling weight applied when the host is contended."""
     max_instances: int
@@ -54,6 +56,8 @@ class AppEffectiveLimits:
 
         cpu_limit_millicores = self.cpu_limit_millicores
 
+        plan_cpu_max_millicores = self.plan_cpu_max_millicores
+
         cpu_weight = self.cpu_weight
 
         max_instances = self.max_instances
@@ -80,6 +84,7 @@ class AppEffectiveLimits:
                 "plan_memory_max_mb": plan_memory_max_mb,
                 "guest_vcpus": guest_vcpus,
                 "cpu_limit_millicores": cpu_limit_millicores,
+                "plan_cpu_max_millicores": plan_cpu_max_millicores,
                 "cpu_weight": cpu_weight,
                 "max_instances": max_instances,
                 "concurrency_per_instance": concurrency_per_instance,
@@ -105,6 +110,8 @@ class AppEffectiveLimits:
 
         cpu_limit_millicores = d.pop("cpu_limit_millicores")
 
+        plan_cpu_max_millicores = d.pop("plan_cpu_max_millicores")
+
         cpu_weight = d.pop("cpu_weight")
 
         max_instances = d.pop("max_instances")
@@ -128,6 +135,7 @@ class AppEffectiveLimits:
             plan_memory_max_mb=plan_memory_max_mb,
             guest_vcpus=guest_vcpus,
             cpu_limit_millicores=cpu_limit_millicores,
+            plan_cpu_max_millicores=plan_cpu_max_millicores,
             cpu_weight=cpu_weight,
             max_instances=max_instances,
             concurrency_per_instance=concurrency_per_instance,

@@ -5126,7 +5126,7 @@ func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLife
 }
 
 const objectBucketByName = `-- name: ObjectBucketByName :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
 
 type ObjectBucketByNameParams struct {
@@ -5159,14 +5159,21 @@ func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
 
 const objectBucketClaim = `-- name: ObjectBucketClaim :one
-UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now()
+UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now(),
+attempt_count = CASE WHEN state <> $1 THEN 1 ELSE least(attempt_count + 1, 30) END,
+last_error_code = CASE WHEN state <> $1 THEN '' ELSE last_error_code END, retry_at = now()
 WHERE account_id = $4 AND app_id = $5 AND id = $6 AND state <> 'deleted' AND (lease_until IS NULL OR lease_until < now())
-AND ($1 = 'deleting' OR state = 'provisioning') RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at
+AND ($1 = 'deleting' OR state = 'provisioning')
+AND (NOT $7::boolean OR state = $1)
+AND (retry_at <= now() OR state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code
 `
 
 type ObjectBucketClaimParams struct {
@@ -5176,6 +5183,7 @@ type ObjectBucketClaimParams struct {
 	AccountID  pgtype.UUID
 	AppID      pgtype.UUID
 	ID         pgtype.UUID
+	Recovery   bool
 }
 
 func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBucketClaimParams) (ObjectBucket, error) {
@@ -5186,6 +5194,7 @@ func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBuck
 		arg.AccountID,
 		arg.AppID,
 		arg.ID,
+		arg.Recovery,
 	)
 	var i ObjectBucket
 	err := row.Scan(
@@ -5203,6 +5212,9 @@ func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBuck
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
@@ -5230,7 +5242,8 @@ func (q *Queries) ObjectBucketCountForAccount(ctx context.Context, db DBTX, acco
 }
 
 const objectBucketFinish = `-- name: ObjectBucketFinish :execrows
-UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now() WHERE id = $2 AND lease_token = $3
+UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now(),
+attempt_count = 0, last_error_code = '', retry_at = now() WHERE id = $2 AND lease_token = $3
 `
 
 type ObjectBucketFinishParams struct {
@@ -5248,7 +5261,7 @@ func (q *Queries) ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBuc
 }
 
 const objectBucketGet = `-- name: ObjectBucketGet :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
 `
 
 type ObjectBucketGetParams struct {
@@ -5275,13 +5288,16 @@ func (q *Queries) ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucket
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
 
 const objectBucketInsert = `-- name: ObjectBucketInsert :one
 INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code
 `
 
 type ObjectBucketInsertParams struct {
@@ -5324,12 +5340,15 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
 
 const objectBucketList = `-- name: ObjectBucketList :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
 `
 
 type ObjectBucketListParams struct {
@@ -5361,6 +5380,9 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.LeaseUntil,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
 		); err != nil {
 			return nil, err
 		}
@@ -5395,6 +5417,82 @@ DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted'
 func (q *Queries) ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
 	_, err := db.Exec(ctx, objectBucketPruneTombstones, accountID)
 	return err
+}
+
+const objectBucketRetry = `-- name: ObjectBucketRetry :execrows
+UPDATE object_buckets SET lease_token = NULL, lease_until = NULL, updated_at = now(),
+last_error_code = $3, retry_at = now() + ($4::int * interval '1 second')
+WHERE id = $1 AND lease_token = $2 AND state IN ('provisioning', 'deleting')
+`
+
+type ObjectBucketRetryParams struct {
+	ID            pgtype.UUID
+	LeaseToken    pgtype.Text
+	LastErrorCode string
+	Column4       int32
+}
+
+func (q *Queries) ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketRetry,
+		arg.ID,
+		arg.LeaseToken,
+		arg.LastErrorCode,
+		arg.Column4,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectBucketsDue = `-- name: ObjectBucketsDue :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets
+WHERE (state = 'deleting' OR ($1::boolean AND state = 'provisioning'))
+AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
+ORDER BY retry_at, id LIMIT $2::int
+`
+
+type ObjectBucketsDueParams struct {
+	IncludeProvisioning bool
+	BatchLimit          int32
+}
+
+func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucketsDueParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectBucketsDue, arg.IncludeProvisioning, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const orgByID = `-- name: OrgByID :one
@@ -5948,6 +6046,118 @@ func (q *Queries) RequestTelemetryAnalyticsSummary(ctx context.Context, db DBTX,
 		&i.P99Ms,
 	)
 	return i, err
+}
+
+const requestTelemetryAnalyticsTimeseries = `-- name: RequestTelemetryAnalyticsTimeseries :many
+WITH buckets AS (
+    SELECT generate_series(
+        date_bin('1 hour', $3::timestamptz, 'epoch'::timestamptz),
+        date_bin('1 hour', $4::timestamptz - interval '1 microsecond', 'epoch'::timestamptz),
+        interval '1 hour'
+    )::timestamptz AS bucket_start
+), filtered AS (
+    SELECT date_bin('1 hour', received_at, 'epoch'::timestamptz) AS bucket_start,
+           latency_ms,
+           cold_boot,
+           status,
+           count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3::timestamptz
+      AND received_at <  $4::timestamptz
+), latency_values AS (
+    SELECT bucket_start,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY bucket_start, latency_ms
+), ranked AS (
+    SELECT bucket_start,
+           latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (PARTITION BY bucket_start ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY bucket_start) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT bucket_start,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY bucket_start
+), totals AS (
+    SELECT bucket_start,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+    GROUP BY bucket_start
+)
+SELECT b.bucket_start,
+       COALESCE(t.requests, 0)::bigint AS requests,
+       COALESCE(t.error_requests, 0)::bigint AS error_requests,
+       COALESCE(t.cold_boots, 0)::bigint AS cold_boots,
+       COALESCE(p.p50_ms, 0)::int AS p50_ms,
+       COALESCE(p.p95_ms, 0)::int AS p95_ms,
+       COALESCE(p.p99_ms, 0)::int AS p99_ms
+FROM buckets AS b
+LEFT JOIN totals AS t USING (bucket_start)
+LEFT JOIN percentiles AS p USING (bucket_start)
+ORDER BY b.bucket_start ASC
+`
+
+type RequestTelemetryAnalyticsTimeseriesParams struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	ReceivedAt  pgtype.Timestamptz
+	ReceivedAt2 pgtype.Timestamptz
+}
+
+type RequestTelemetryAnalyticsTimeseriesRow struct {
+	BucketStart   pgtype.Timestamptz
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	P50Ms         int32
+	P95Ms         int32
+	P99Ms         int32
+}
+
+// Zero-filled UTC hourly request analytics for customer charts. The
+// recorder collapses rows by count, so all totals and percentile ranks
+// expand that weight rather than counting stored rows.
+func (q *Queries) RequestTelemetryAnalyticsTimeseries(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsTimeseriesParams) ([]RequestTelemetryAnalyticsTimeseriesRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryAnalyticsTimeseries,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryAnalyticsTimeseriesRow{}
+	for rows.Next() {
+		var i RequestTelemetryAnalyticsTimeseriesRow
+		if err := rows.Scan(
+			&i.BucketStart,
+			&i.Requests,
+			&i.ErrorRequests,
+			&i.ColdBoots,
+			&i.P50Ms,
+			&i.P95Ms,
+			&i.P99Ms,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const requestTelemetryBaselineP95ByRoute = `-- name: RequestTelemetryBaselineP95ByRoute :many

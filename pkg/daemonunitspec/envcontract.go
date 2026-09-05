@@ -242,7 +242,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_NODE_NAME", Owners: []string{"apid", "builderd", "gatewayd-internal", "gatewayd-public", "githubd", "imaged", "meterd", "schedd", "vmmd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_NODE_PUBLIC_IP", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_OBJECT_STORAGE_CONFIG", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "unset disables the opt-in object-storage preview; operators explicitly set a provider-registry JSON path to enable it (docs/object-storage.md); no production activation is promised"},
+	{Name: "FAAS_OBJECT_STORAGE_CONFIG", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "optional provider-registry JSON path; s3_enabled runtime config separately defaults off (docs/object-storage.md); no production activation is promised"},
 	{Name: "FAAS_OCI_BLOB_CACHE_DIR", Owners: []string{"imaged"}, Source: EnvSourceDefault, Note: "defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly"},
 	{Name: "FAAS_OCI_BLOB_CACHE_MAX_BYTES", Owners: []string{"imaged"}, Source: EnvSourceDefault, Note: "8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks"},
 	{Name: "FAAS_OCI_INSECURE", Owners: []string{"imaged"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
