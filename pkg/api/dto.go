@@ -132,15 +132,16 @@ type CreateAppRequest struct {
 
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
-// this body only carries the shape needed before the first source upload.
+// WorkspaceID separates developers and local source trees within that project.
 type UpsertDevSessionRequest struct {
-	Type    string `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime string `json:"runtime,omitempty"` // required for functions
+	Type        string `json:"type,omitempty"`         // "app" (default) | "function"
+	Runtime     string `json:"runtime,omitempty"`      // required for functions
+	WorkspaceID string `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
 }
 
 // DevSessionResponse is returned when a developer preview is created or its
 // lease is refreshed. App.URL is the stable browser URL for this account and
-// project; ExpiresAt is renewed whenever the CLI syncs source.
+// developer workspace; ExpiresAt is renewed whenever the CLI syncs source.
 type DevSessionResponse struct {
 	App       AppResponse `json:"app"`
 	ExpiresAt time.Time   `json:"expires_at"`

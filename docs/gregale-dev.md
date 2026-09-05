@@ -22,10 +22,17 @@ gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
 ```
 
-The URL is stable for an account/project pair. Each sync renews a 24-hour
-lease; the existing preview janitor tears down an expired environment. Stopping
-the watcher with Ctrl-C leaves the environment available—use `--stop` when it
-should be removed immediately.
+The URL is stable for an account, local developer installation, and source
+directory. Teammates and separate clones or worktrees therefore get independent
+environments, while repeated runs from the same source directory resume the
+same one. The non-secret local identity lives in the Gregale config directory;
+`FAAS_DEVELOPER_ID` can override it with 32 lowercase hexadecimal characters
+for reproducible automation.
+
+Each sync renews a 24-hour lease; the existing preview janitor tears down an
+expired environment. Stopping the watcher with Ctrl-C leaves the environment
+available—use `--stop` from the same source directory when it should be removed
+immediately.
 
 Developer environments currently consume the same deployed-app quota as pull
 request previews. Separate development quotas and incremental source transfer
