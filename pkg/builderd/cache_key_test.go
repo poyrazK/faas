@@ -66,13 +66,16 @@ func TestCacheKey_RuntimeBasePartition(t *testing.T) {
 	}
 	baseA := "ghcr.io/poyrazk/runner-node22@sha256:" + strings.Repeat("a", 64)
 	baseB := "ghcr.io/poyrazk/runner-node22@sha256:" + strings.Repeat("b", 64)
-	if err := c.StoreWithBase("source-hash", FrameworkNode, api.PlanHobby, baseA, src, 19); err != nil {
+	recipe := testBuildCacheRecipe("source-hash", FrameworkNode, api.PlanHobby, baseA)
+	if err := c.StoreBuild(recipe, src, 19); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := c.LookupWithBase("source-hash", FrameworkNode, api.PlanHobby, baseB); ok {
+	recipe.RuntimeBaseRef = baseB
+	if _, ok := c.LookupBuild(recipe); ok {
 		t.Fatal("runtime base change must not reuse the previous cache entry")
 	}
-	if got, ok := c.LookupWithBase("source-hash", FrameworkNode, api.PlanHobby, baseA); !ok || got.Bytes != 19 {
+	recipe.RuntimeBaseRef = baseA
+	if got, ok := c.LookupBuild(recipe); !ok || got.Bytes != 19 {
 		t.Fatalf("base-specific cache lookup = %+v, %v; want the baseA entry", got, ok)
 	}
 }

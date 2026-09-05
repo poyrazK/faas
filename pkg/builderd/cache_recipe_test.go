@@ -17,7 +17,10 @@ func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 	if err := os.WriteFile(path, []byte("artifact"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	recipe := BuildCacheRecipe{SourceSHA256: "source-a", SourceRoot: "apps/api", Framework: FrameworkNode, Plan: api.PlanPro, RuntimeBaseRef: "base-a"}
+	recipe := BuildCacheRecipe{
+		SourceSHA256: "source-a", SourceRoot: "apps/api", Framework: FrameworkNode,
+		Plan: api.PlanPro, RuntimeBaseRef: "base-a", BuilderBaseIdentity: "builder-a", TargetPlatform: "linux/amd64",
+	}
 	if err := c.StoreBuild(recipe, path, 8); err != nil {
 		t.Fatal(err)
 	}
@@ -27,6 +30,8 @@ func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 		"base":      func(r *BuildCacheRecipe) { r.RuntimeBaseRef = "base-b" },
 		"framework": func(r *BuildCacheRecipe) { r.Framework = FrameworkPython },
 		"plan":      func(r *BuildCacheRecipe) { r.Plan = api.PlanHobby },
+		"builder":   func(r *BuildCacheRecipe) { r.BuilderBaseIdentity = "builder-b" },
+		"platform":  func(r *BuildCacheRecipe) { r.TargetPlatform = "linux/arm64" },
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
@@ -56,7 +61,7 @@ func TestBuildRecipeRootNormalization(t *testing.T) {
 	if err := os.WriteFile(path, []byte("artifact"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	recipe := BuildCacheRecipe{SourceSHA256: "source", Framework: FrameworkNode, Plan: api.PlanPro}
+	recipe := testBuildCacheRecipe("source", FrameworkNode, api.PlanPro, "base")
 	if err := c.StoreBuild(recipe, path, 8); err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +90,24 @@ func TestBuildRecipeRootNormalization(t *testing.T) {
 	}
 }
 
+func TestBuildRecipeRejectsIncompleteEnvironment(t *testing.T) {
+	recipe := testBuildCacheRecipe("source", FrameworkNode, api.PlanPro, "base")
+	for name, change := range map[string]func(*BuildCacheRecipe){
+		"empty builder identity": func(r *BuildCacheRecipe) { r.BuilderBaseIdentity = "" },
+		"blank builder identity": func(r *BuildCacheRecipe) { r.BuilderBaseIdentity = " " },
+		"empty target platform":  func(r *BuildCacheRecipe) { r.TargetPlatform = "" },
+		"blank target platform":  func(r *BuildCacheRecipe) { r.TargetPlatform = "\t" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := recipe
+			change(&invalid)
+			if _, err := invalid.key(); err == nil {
+				t.Fatal("incomplete cache recipe was accepted")
+			}
+		})
+	}
+}
+
 func TestBuildRecipeRejectsLegacyEntries(t *testing.T) {
 	for _, base := range []string{"", "base-ref"} {
 		t.Run(base, func(t *testing.T) {
@@ -105,7 +128,7 @@ func TestBuildRecipeRejectsLegacyEntries(t *testing.T) {
 			if _, ok := c.Lookup(legacyKey, FrameworkNode, api.PlanPro); !ok {
 				t.Fatal("invalid legacy fixture")
 			}
-			recipe := BuildCacheRecipe{SourceSHA256: "source", Framework: FrameworkNode, Plan: api.PlanPro, RuntimeBaseRef: base}
+			recipe := testBuildCacheRecipe("source", FrameworkNode, api.PlanPro, base)
 			for _, root := range []string{"", ".", "apps/api"} {
 				recipe.SourceRoot = root
 				if _, ok := c.LookupBuild(recipe); ok {

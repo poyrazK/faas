@@ -456,7 +456,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
 		Framework: fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
 	}
-	if cached, ok := b.cache.LookupBuild(recipe); ok {
+	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
+	if cacheAvailable {
+		recipe.BuilderBaseIdentity = buildEnvironment.BuilderBaseIdentity
+		recipe.TargetPlatform = buildEnvironment.TargetPlatform
+	}
+	if cached, ok := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable); ok {
 		if b.stopIfBuildCancelled(ctx, build.ID) {
 			return BuildResult{}, nil
 		}
@@ -671,12 +676,54 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
-	// Only cache a successfully committed build, never a stale completion.
-	if err := b.cache.StoreBuild(recipe, out.OCIImage, artifactBytes); err != nil {
-		b.log.Warn("builderd: cache store failed (continuing)", "err", err)
+	// Only cache a successfully committed build produced by the same builder
+	// environment observed before VM launch. A concurrent base restage leaves
+	// the successful deployment intact but deliberately skips cache publication.
+	if cacheAvailable && b.buildEnvironmentStillCurrent(buildEnvironment) {
+		if err := b.cache.StoreBuild(recipe, out.OCIImage, artifactBytes); err != nil {
+			b.log.Warn("builderd: cache store failed (continuing)", "err", err)
+		}
 	}
 	return result, nil
 
+}
+
+func (b *Builderd) resolveBuildEnvironment() (BuildEnvironment, bool) {
+	environment, err := currentBuildEnvironment(b.vm)
+	if err != nil {
+		b.log.Warn("builderd: build cache unavailable; builder environment identity is not current", "err", err)
+		return BuildEnvironment{}, false
+	}
+	return environment, true
+}
+
+func (b *Builderd) buildEnvironmentStillCurrent(want BuildEnvironment) bool {
+	have, err := currentBuildEnvironment(b.vm)
+	if err != nil {
+		b.log.Warn("builderd: build cache skipped; builder environment identity is unavailable", "err", err)
+		return false
+	}
+	if have != want {
+		b.log.Warn("builderd: build cache skipped; builder environment changed",
+			"before", want.BuilderBaseIdentity, "after", have.BuilderBaseIdentity,
+			"before_platform", want.TargetPlatform, "after_platform", have.TargetPlatform)
+		return false
+	}
+	return true
+}
+
+func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment BuildEnvironment, available bool) (CacheEntry, bool) {
+	if !available {
+		return CacheEntry{}, false
+	}
+	cached, ok := b.cache.LookupBuild(recipe)
+	if !ok {
+		return CacheEntry{}, false
+	}
+	if !b.buildEnvironmentStillCurrent(environment) {
+		return CacheEntry{}, false
+	}
+	return cached, true
 }
 
 // snapshotBootPayload identifies the compute node that produced the local
