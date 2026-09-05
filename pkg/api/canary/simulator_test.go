@@ -154,6 +154,23 @@ func TestSimulateCanary_NilSourceWithOverride(t *testing.T) {
 	}
 }
 
+func TestSimulateCanary_ObservedTrafficOverride(t *testing.T) {
+	report, err := SimulateCanary(context.Background(), nil, "my-app", "balanced", nil,
+		WithAggregate(0.05, 25), WithObservedTraffic(1000))
+	if err != nil {
+		t.Fatalf("SimulateCanary: %v", err)
+	}
+	if report.ObservedTraffic != 1000 {
+		t.Fatalf("observed_traffic = %d, want 1000", report.ObservedTraffic)
+	}
+	if report.Note != "" {
+		t.Fatalf("unexpected low-traffic note: %q", report.Note)
+	}
+	if report.ProjectedSuccess >= 1 {
+		t.Fatalf("projected_success_p = %v, want less than 1", report.ProjectedSuccess)
+	}
+}
+
 // TestSimulateCanary_NilSourceWithoutOverride pins the no-source +
 // no-override path: ErrSimulatorNoSource. Defends against a future
 // refactor that silently lets the simulator run with empty data.
