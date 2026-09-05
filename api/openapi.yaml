@@ -2760,6 +2760,7 @@ paths:
               schema: { $ref: '#/components/schemas/UploadStartResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/uploads/{id}:

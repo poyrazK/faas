@@ -1,4 +1,4 @@
--- filename: 00563_upload_sessions.sql
+-- filename: 20260905120000000_upload_sessions.sql
 -- +goose Up
 -- +goose StatementBegin
 
@@ -21,7 +21,7 @@
 --   DELETE /v1/uploads/{id}              → 204
 --
 -- The atomic CAS in AppendUploadBytes (UPDATE ... WHERE id=$1 AND
--- status='open' AND received_bytes=$2 RETURNING ...) is the load-
+-- status='open' AND expires_at > now() AND received_bytes=$2 RETURNING ...) is the load-
 -- bearing safety: a slow client that resumes mid-flight corrupts the
 -- spool file if the CAS is missing. See
 -- docs/adr/NNN-resumable-upload-protocol.md (added in PR-3) for the
@@ -41,7 +41,7 @@
 
 CREATE TABLE IF NOT EXISTS upload_sessions (
     id              text PRIMARY KEY,
-    account_id      uuid NOT NULL,
+    account_id      uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_slug        text NOT NULL,
     total_size      bigint NOT NULL CHECK (total_size > 0 AND total_size <= 1073741824),
     received_bytes  bigint NOT NULL DEFAULT 0 CHECK (received_bytes >= 0 AND received_bytes <= total_size),

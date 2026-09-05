@@ -23419,6 +23419,8 @@ func (s *PgStore) DeleteTriggerRecordsByIDs(ctx context.Context, ids []string) (
 		return 0, fmt.Errorf("state: trigger_records reaper delete: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
 // Issue #1182 §P1 packaging follow-up (PR-1 of 3): PgStore
 // implementations of the upload-session Store methods. Each method
 // is a one-liner that delegates to the per-call sqlc.Queries helper
@@ -23491,12 +23493,17 @@ func (s *PgStore) ReapExpiredUploadSessions(ctx context.Context) ([]sqlc.ReapExp
 }
 
 // ReapStaleUploadPartFiles returns terminal-row sessions whose
-// last_patched_at < now() - 1h. The reaper os.Removes each
-// part_path; the in-DB row stays terminal (no UPDATE needed —
-// status IN ('committed','cancelled','expired') is already the
-// irreversible end state).
+// last_patched_at < now() - 1h and whose part_path cleanup marker
+// is still set. The reaper removes each part_path and then clears
+// the marker in the terminal row.
 func (s *PgStore) ReapStaleUploadPartFiles(ctx context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
 	return s.uploadSessionQueries().ReapStaleUploadPartFiles(ctx, s.pool)
+}
+
+// ClearUploadSessionPartPath records that the terminal session's
+// spool file has been removed.
+func (s *PgStore) ClearUploadSessionPartPath(ctx context.Context, id string) error {
+	return s.uploadSessionQueries().ClearUploadSessionPartPath(ctx, s.pool, id)
 }
 
 // ExpireUploadSession marks a single session expired.

@@ -4477,11 +4477,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
 		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
-		uploadSessionCreatedTotal:           uploadSessionCreatedTotal,
-		uploadSessionCommittedTotal:         uploadSessionCommittedTotal,
-		uploadSessionExpiredTotal:           uploadSessionExpiredTotal,
-		uploadSessionReaperRowsDeletedTotal: uploadSessionReaperRowsDeletedTotal,
-		uploadSessionReaperFailedTotal:      uploadSessionReaperFailedTotal,
+		uploadSessionCreatedTotal:                           uploadSessionCreatedTotal,
+		uploadSessionCommittedTotal:                         uploadSessionCommittedTotal,
+		uploadSessionExpiredTotal:                           uploadSessionExpiredTotal,
+		uploadSessionReaperRowsDeletedTotal:                 uploadSessionReaperRowsDeletedTotal,
+		uploadSessionReaperFailedTotal:                      uploadSessionReaperFailedTotal,
 	}
 }
 

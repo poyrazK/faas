@@ -342,6 +342,7 @@ UPDATE upload_sessions
        last_patched_at = now()
  WHERE id = $1
    AND status = 'open'
+   AND expires_at > now()
    AND received_bytes = $2
 RETURNING received_bytes, total_size
 `
@@ -363,7 +364,7 @@ type AppendUploadBytesRow struct {
 // the server is currently at) and the chunk_size it sent, then
 // computes expected_new = client_offset + chunk_bytes. The WHERE
 // clause pins the row to (id=$1 AND status='open' AND
-// received_bytes=$3) — a row whose received_bytes has already
+// expires_at > now() AND received_bytes=$3) — a row whose received_bytes has already
 // advanced (e.g., a racing PATCH from a retry) returns 0 rows and
 // the handler maps that to 409 Conflict with the actual current
 // offset in the body.
@@ -635,6 +636,22 @@ func (q *Queries) ClaimTriggerRecords(ctx context.Context, db DBTX, arg ClaimTri
 		return nil, err
 	}
 	return items, nil
+}
+
+const clearUploadSessionPartPath = `-- name: ClearUploadSessionPartPath :exec
+UPDATE upload_sessions
+   SET part_path = ''
+ WHERE id = $1
+   AND status IN ('committed', 'cancelled', 'expired')
+   AND part_path <> ''
+`
+
+// Records that the spool file has been removed. Terminal status is
+// required so an out-of-order cleanup call cannot hide the path of
+// an open session that a concurrent PATCH still needs.
+func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error {
+	_, err := db.Exec(ctx, clearUploadSessionPartPath, id)
+	return err
 }
 
 const countDeployedApps = `-- name: CountDeployedApps :one
@@ -4736,6 +4753,45 @@ func (q *Queries) MarkTriggerRecordSucceeded(ctx context.Context, db DBTX, id pg
 	return err
 }
 
+const markUploadSessionCommitted = `-- name: MarkUploadSessionCommitted :one
+UPDATE upload_sessions
+   SET status = 'committed',
+       deployment_id = $2
+ WHERE id = $1
+   AND status = 'open'
+RETURNING id, status, deployment_id
+`
+
+type MarkUploadSessionCommittedParams struct {
+	ID           string
+	DeploymentID pgtype.Text
+}
+
+type MarkUploadSessionCommittedRow struct {
+	ID           string
+	Status       string
+	DeploymentID pgtype.Text
+}
+
+// Final state transition: open → committed. The handler runs
+// validateTarballShape + scanForStatefulShape (cmd/apid/
+// deploy_inputs.go:291-447) BEFORE this UPDATE so a commit that
+// fails validation leaves the row at status='open' and the .part
+// file in place for retry. deployment_id is set after the build
+// row is enqueued (apidsource.Enqueue) so the row points at the
+// deployment that consumed the .part.
+//
+// The UPDATE WHERE status='open' is the second-line idempotency
+// guard: a retry of POST /v1/uploads/{id}/commit that races with
+// itself hits 0 rows and the handler reads upload_commit_outcomes
+// to return the original deployment_id.
+func (q *Queries) MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error) {
+	row := db.QueryRow(ctx, markUploadSessionCommitted, arg.ID, arg.DeploymentID)
+	var i MarkUploadSessionCommittedRow
+	err := row.Scan(&i.ID, &i.Status, &i.DeploymentID)
+	return i, err
+}
+
 const nodeGet = `-- name: NodeGet :one
 
 SELECT
@@ -5322,45 +5378,6 @@ func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLife
 	return result.RowsAffected(), nil
 }
 
-const markUploadSessionCommitted = `-- name: MarkUploadSessionCommitted :one
-UPDATE upload_sessions
-   SET status = 'committed',
-       deployment_id = $2
- WHERE id = $1
-   AND status = 'open'
-RETURNING id, status, deployment_id
-`
-
-type MarkUploadSessionCommittedParams struct {
-	ID           string
-	DeploymentID pgtype.Text
-}
-
-type MarkUploadSessionCommittedRow struct {
-	ID           string
-	Status       string
-	DeploymentID pgtype.Text
-}
-
-// Final state transition: open → committed. The handler runs
-// validateTarballShape + scanForStatefulShape (cmd/apid/
-// deploy_inputs.go:291-447) BEFORE this UPDATE so a commit that
-// fails validation leaves the row at status='open' and the .part
-// file in place for retry. deployment_id is set after the build
-// row is enqueued (apidsource.Enqueue) so the row points at the
-// deployment that consumed the .part.
-//
-// The UPDATE WHERE status='open' is the second-line idempotency
-// guard: a retry of POST /v1/uploads/{id}/commit that races with
-// itself hits 0 rows and the handler reads upload_commit_outcomes
-// to return the original deployment_id.
-func (q *Queries) MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error) {
-	row := db.QueryRow(ctx, markUploadSessionCommitted, arg.ID, arg.DeploymentID)
-	var i MarkUploadSessionCommittedRow
-	err := row.Scan(&i.ID, &i.Status, &i.DeploymentID)
-	return i, err
-}
-
 const orgByID = `-- name: OrgByID :one
 select
     id, slug, name, personal_org,
@@ -5670,6 +5687,112 @@ func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX,
 	return err
 }
 
+const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many
+SELECT id, part_path
+FROM upload_sessions
+WHERE status = 'open'
+  AND expires_at < now()
+ORDER BY expires_at ASC
+LIMIT 100
+`
+
+type ReapExpiredUploadSessionsRow struct {
+	ID       string
+	PartPath string
+}
+
+// The reaper's scan query (cmd/apid/upload_session_reaper.go).
+// Returns at most 100 rows per invocation to bound memory; the
+// goroutine ticker at cmd/apid/main.go re-invokes on its 5-minute
+// cadence. partial index upload_sessions_expires_idx makes this
+// an index-only scan over the open sessions whose expires_at has
+// passed. The handler then UPDATEs status='expired' and removes
+// the .part file via os.Remove.
+//
+// The status='open' predicate is load-bearing — once a session is
+// committed/cancelled/expired the .part file is already gone and
+// the row is terminal.
+func (q *Queries) ReapExpiredUploadSessions(ctx context.Context, db DBTX) ([]ReapExpiredUploadSessionsRow, error) {
+	rows, err := db.Query(ctx, reapExpiredUploadSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReapExpiredUploadSessionsRow{}
+	for rows.Next() {
+		var i ReapExpiredUploadSessionsRow
+		if err := rows.Scan(&i.ID, &i.PartPath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reapStaleUploadPartFiles = `-- name: ReapStaleUploadPartFiles :many
+SELECT id, part_path
+FROM upload_sessions
+WHERE status IN ('committed', 'cancelled', 'expired')
+  AND part_path <> ''
+  AND last_patched_at < now() - INTERVAL '1 hour'
+ORDER BY last_patched_at ASC
+LIMIT 100
+`
+
+type ReapStaleUploadPartFilesRow struct {
+	ID       string
+	PartPath string
+}
+
+// PR-1 fixup #5: sweep .part files for terminal rows whose
+// builderd consumption window has closed. The commit handler
+// leaves .part in place for builderd to consume
+// (pkg/builderd/builderd.go:407 hashFile(SourcePath)); the
+// cancel handler removes its .part at the same time it flips
+// status='cancelled'; but neither has a 1-hour cleanup guarantee
+// for committed rows. This query returns rows in terminal
+// status whose last_patched_at is >1h old and whose part_path
+// cleanup marker is still set; the reaper removes the file and
+// clears the marker after a successful removal.
+//
+// The status IN (committed, cancelled, expired) predicate is
+// load-bearing — we never sweep open sessions (could race a
+// PATCH). The last_patched_at < now() - '1 hour' guard stops
+// us from racing a builderd that's mid-consumption right after
+// commit. The 100-row LIMIT bounds the per-tick work the same
+// way ReapExpiredUploadSessions does.
+//
+// Index strategy: pg doesn't have an index on (status,
+// last_patched_at) today; the scan is sequential over the
+// terminal-status rows. At expected volumes (≪ 1k terminal
+// rows/day per apid) this is fine. If terminal-row volume
+// grows, add a partial index on (last_patched_at) WHERE
+// status IN ('committed', 'cancelled', 'expired') — leaving
+// as a follow-up ADR rather than conflated into PR-1's
+// migration slot 533.
+func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error) {
+	rows, err := db.Query(ctx, reapStaleUploadPartFiles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReapStaleUploadPartFilesRow{}
+	for rows.Next() {
+		var i ReapStaleUploadPartFilesRow
+		if err := rows.Scan(&i.ID, &i.PartPath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordMailSuppression = `-- name: RecordMailSuppression :one
 
 INSERT INTO mail_suppressions (
@@ -5728,108 +5851,6 @@ func (q *Queries) RecordMailSuppression(ctx context.Context, db DBTX, arg Record
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
-const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many
-SELECT id, part_path
-FROM upload_sessions
-WHERE status = 'open'
-  AND expires_at < now()
-ORDER BY expires_at ASC
-LIMIT 100
-`
-
-type ReapExpiredUploadSessionsRow struct {
-	ID       string
-	PartPath string
-}
-
-// The reaper's scan query (cmd/apid/upload_session_reaper.go).
-// Returns at most 100 rows per invocation to bound memory; the
-// goroutine ticker at cmd/apid/main.go re-invokes on its 5-minute
-// cadence. partial index upload_sessions_expires_idx makes this
-// an index-only scan over the open sessions whose expires_at has
-// passed. The handler then UPDATEs status='expired' and removes
-// the .part file via os.Remove.
-//
-// The status='open' predicate is load-bearing — once a session is
-// committed/cancelled/expired the .part file is already gone and
-// the row is terminal.
-func (q *Queries) ReapExpiredUploadSessions(ctx context.Context, db DBTX) ([]ReapExpiredUploadSessionsRow, error) {
-	rows, err := db.Query(ctx, reapExpiredUploadSessions)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ReapExpiredUploadSessionsRow{}
-	for rows.Next() {
-		var i ReapExpiredUploadSessionsRow
-		if err := rows.Scan(&i.ID, &i.PartPath); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const reapStaleUploadPartFiles = `-- name: ReapStaleUploadPartFiles :many
-SELECT id, part_path
-FROM upload_sessions
-WHERE status IN ('committed', 'cancelled', 'expired')
-  AND last_patched_at < now() - INTERVAL '1 hour'
-ORDER BY last_patched_at ASC
-LIMIT 100
-`
-
-type ReapStaleUploadPartFilesRow struct {
-	ID       string
-	PartPath string
-}
-
-// PR-1 fixup #5: sweep .part files for terminal rows whose
-// builderd consumption window has closed. The commit handler
-// leaves .part in place for builderd to consume
-// (pkg/builderd/builderd.go:407 hashFile(SourcePath)); the
-// cancel handler removes its .part at the same time it flips
-// status='cancelled'; but neither has a 1-hour cleanup guarantee
-// for committed rows. This query returns rows in terminal
-// status whose last_patched_at is >1h old AND part_path still
-// exists on disk; the reaper then os.Removes the file.
-//
-// The status IN (committed, cancelled, expired) predicate is
-// load-bearing — we never sweep open sessions (could race a
-// PATCH). The last_patched_at < now() - '1 hour' guard stops
-// us from racing a builderd that's mid-consumption right after
-// commit. The 100-row LIMIT bounds the per-tick work the same
-// way ReapExpiredUploadSessions does.
-//
-// Index strategy: pg doesn't have an index on (status,
-// last_patched_at) today; the scan is sequential over the
-// terminal-status rows. At expected volumes (≪ 1k terminal
-// rows/day per apid) this is fine. If terminal-row volume
-// grows, add a partial index on (last_patched_at) WHERE
-// status IN ('committed', 'cancelled', 'expired') — leaving
-// as a follow-up ADR rather than conflated into PR-1's
-// migration slot 533.
-func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error) {
-	rows, err := db.Query(ctx, reapStaleUploadPartFiles)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ReapStaleUploadPartFilesRow{}
-	for rows.Next() {
-		var i ReapStaleUploadPartFilesRow
-		if err := rows.Scan(&i.ID, &i.PartPath); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const recordUploadCommitOutcome = `-- name: RecordUploadCommitOutcome :one

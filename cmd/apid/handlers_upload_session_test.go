@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"sync"
 	"testing"
@@ -85,6 +86,33 @@ func TestUploadSession_PlanCap(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &prob)
 	if prob.Code != api.CodeSourceTooLarge {
 		t.Fatalf("want code %q, got %q", api.CodeSourceTooLarge, prob.Code)
+	}
+}
+
+func TestUploadSession_UnknownAppDoesNotAllocateSpool(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", dir)
+	e := setup(t, api.PlanFree)
+
+	rec := e.do(t, "POST", "/v1/uploads", startUploadRequest{
+		AppSlug: "missing", TotalSize: 1024,
+	}, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var prob api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if prob.Code != api.CodeNotFound {
+		t.Fatalf("want code %q, got %q", api.CodeNotFound, prob.Code)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read spool root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unknown app allocated spool entries: %+v", entries)
 	}
 }
 

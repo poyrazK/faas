@@ -2219,8 +2219,9 @@ func ErrUploadSessionOffsetConflict(uploadID string, expected, current int64) *P
 		WithDocs(docsBase + "/build/uploads")
 }
 
-// ErrUploadSessionExpired is returned when the reaper has deleted the
-// row. The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
+// ErrUploadSessionExpired is returned when the reaper has marked the
+// row expired (or the request arrives after its TTL before the next
+// sweep). The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
 // this code (cmd/gregale/upload_session.go, PR-2). 410 Gone so the
 // CLI can distinguish from 404 NotFound (id never existed).
 func ErrUploadSessionExpired(uploadID string) *Problem {

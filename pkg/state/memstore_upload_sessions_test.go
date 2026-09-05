@@ -357,6 +357,17 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 	if row, _ := m.GetUploadSession(ctx, "expired-open"); row.Status != "expired" {
 		t.Errorf("Status after expire = %q; want expired", row.Status)
 	}
+	if err := m.ClearUploadSessionPartPath(ctx, "expired-open"); err != nil {
+		t.Fatalf("ClearUploadSessionPartPath: %v", err)
+	}
+	if row, _ := m.GetUploadSession(ctx, "expired-open"); row.PartPath != "" {
+		t.Errorf("PartPath after clear = %q; want empty", row.PartPath)
+	}
+	if stale, err := m.ReapStaleUploadPartFiles(ctx); err != nil {
+		t.Fatalf("ReapStaleUploadPartFiles after clear: %v", err)
+	} else if len(stale) != 1 || stale[0].ID != "stale-committed" {
+		t.Errorf("ReapStaleUploadPartFiles after clear ids = %v; want [stale-committed]", uploadIDsStale(stale))
+	}
 
 	// ExpireUploadSession idempotent on terminal row → nil, no-op.
 	if err := m.ExpireUploadSession(ctx, "stale-committed"); err != nil {

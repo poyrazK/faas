@@ -44,12 +44,13 @@ import (
 const reaperTick = 5 * time.Minute
 
 // runUploadSessionReaper blocks until ctx is cancelled. The
-// ticker fires the first sweep at t=0 (so an apid boot catches
+// performs the first sweep immediately (so an apid boot catches
 // up on any backlog from a previous instance crash) and then
 // every reaperTick.
 //
 // Mirrors the rekeyRunner.Run pattern (cmd/apid/rekey_runner.go).
 func runUploadSessionReaper(ctx context.Context, s *server, log *slog.Logger) error {
+	sweepUploadSessions(ctx, s, log)
 	tick := time.NewTicker(reaperTick)
 	defer tick.Stop()
 	for {
@@ -91,6 +92,8 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 	}
 	deleted := 0
 	for _, row := range rows {
+		mu := acquireUploadSessionLock(row.ID)
+		mu.Lock()
 		// Race order matters: do .part removal FIRST, then flip
 		// status. The reverse ordering leaves a leaked .part if
 		// os.Remove fails (the WHERE status='open' partial index
@@ -104,6 +107,7 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 				log.Warn("upload session reaper: .part remove failed, will retry next sweep",
 					"upload_id", row.ID, "path", row.PartPath, "err", rmErr)
 				uploadSessionReaperFailedTotal().Inc()
+				mu.Unlock()
 				continue
 			}
 		}
@@ -112,13 +116,26 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 				// Already expired by a racing reaper (or by
 				// an admin tool). Skip silently — the partial
 				// index will exclude it next sweep.
+				if clearErr := s.store.ClearUploadSessionPartPath(ctx, row.ID); clearErr != nil && !errors.Is(clearErr, state.ErrNotFound) {
+					log.Warn("upload session reaper: clear expired part path failed",
+						"upload_id", row.ID, "err", clearErr)
+					uploadSessionReaperFailedTotal().Inc()
+				}
+				mu.Unlock()
 				continue
 			}
 			log.Warn("upload session reaper: expire failed",
 				"upload_id", row.ID, "err", err)
 			uploadSessionReaperFailedTotal().Inc()
+			mu.Unlock()
 			continue
 		}
+		if clearErr := s.store.ClearUploadSessionPartPath(ctx, row.ID); clearErr != nil && !errors.Is(clearErr, state.ErrNotFound) {
+			log.Warn("upload session reaper: clear expired part path failed",
+				"upload_id", row.ID, "err", clearErr)
+			uploadSessionReaperFailedTotal().Inc()
+		}
+		mu.Unlock()
 		deleted++
 		uploadSessionExpiredTotal().Inc()
 	}
@@ -135,18 +152,30 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 	// Stale part sweep (#5): remove .part files for terminal
 	// rows that builderd never consumed (e.g. apid crash between
 	// commit + builderd pickup, or a builderd crash mid-read).
-	// No DB UPDATE — status is already terminal.
+	// Clear the durable part_path marker after removal so the row is
+	// not returned by every later sweep.
 	staleDeleted := 0
 	for _, row := range stale {
 		if row.PartPath == "" {
 			continue
 		}
+		mu := acquireUploadSessionLock(row.ID)
+		mu.Lock()
 		if rmErr := removeUploadPart(row.PartPath); rmErr != nil && !os.IsNotExist(rmErr) {
 			log.Warn("upload session reaper: stale .part remove failed",
 				"upload_id", row.ID, "path", row.PartPath, "err", rmErr)
 			uploadSessionReaperFailedTotal().Inc()
+			mu.Unlock()
 			continue
 		}
+		if clearErr := s.store.ClearUploadSessionPartPath(ctx, row.ID); clearErr != nil && !errors.Is(clearErr, state.ErrNotFound) {
+			log.Warn("upload session reaper: clear stale part path failed",
+				"upload_id", row.ID, "err", clearErr)
+			uploadSessionReaperFailedTotal().Inc()
+			mu.Unlock()
+			continue
+		}
+		mu.Unlock()
 		staleDeleted++
 	}
 	if staleDeleted > 0 {

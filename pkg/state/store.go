@@ -5730,9 +5730,14 @@ type Store interface {
 	// of .part files left in place after a commit for builderd
 	// to consume (pkg/builderd/builderd.go:407). Bounded by 100
 	// rows/tick to mirror ReapExpiredUploadSessions's memory
-	// guarantee. The reaper os.Removes the .part file in place
-	// (no DB UPDATE needed — the row is already terminal).
+	// guarantee. The reaper os.Removes the .part file in place and
+	// clears the durable part_path cleanup marker afterward.
 	ReapStaleUploadPartFiles(ctx context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error)
+	// ClearUploadSessionPartPath records that the terminal session's
+	// spool file has been removed. Reaper and cancel cleanup call this
+	// after a successful remove (or ErrNotExist) so subsequent sweeps
+	// do not rediscover the same row.
+	ClearUploadSessionPartPath(ctx context.Context, id string) error
 	// ExpireUploadSession marks a single session expired after the
 	// reaper deletes its .part file. The status='open' predicate
 	// means a session that was committed / cancelled between the

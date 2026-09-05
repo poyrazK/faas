@@ -25,11 +25,10 @@
 //	commit  → builderd reads SourcePath via hashFile
 //	          (pkg/builderd/builderd.go:407); the .part file is
 //	          LEFT IN PLACE for builderd to consume (removing
-//	          it races the read). Future work (out of scope for
-//	          PR-1) sweeps status IN (committed, cancelled,
-//	          expired) .part files older than 1h to bound the
-//	          spool leak. The reaper (cmd/apid/upload_session_reaper.go)
-//	          sweeps status='open' expired rows.
+//	          it races the read). The reaper
+//	          (cmd/apid/upload_session_reaper.go) sweeps status='open'
+//	          expired rows and terminal rows whose 1h builderd grace
+//	          period has elapsed.
 //	cancel  → os.Remove(.part) AFTER the row's status flips to
 //	          cancelled.
 //
@@ -43,7 +42,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +49,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/prometheus/client_golang/prometheus"
@@ -62,26 +61,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// commitLocks serializes the Enqueue + dedupe-row-insert +
-// status-flip critical section per upload_id. Without this
-// guard, two concurrent commit requests on the same upload_id
-// both pass the GetUploadSession status='open' check, both
-// call apidsource.Enqueue, and the loser-of-the-dedupe-row
-// leaves an orphan deployment that builderd picks up.
+// uploadSessionLocks serializes all state/file transitions per
+// upload_id. Without this guard, a commit can observe the CAS from
+// the final PATCH before that PATCH has written the corresponding
+// bytes, or a cancel can remove the .part file while a PATCH is
+// still writing it. It also serializes the Enqueue + dedupe-row-
+// insert + status-flip commit critical section.
 //
 // In-process only — apid is a single replica per CLAUDE.md,
 // so a package-level sync.Map is sufficient. Cross-replica
 // concurrency would need pg_advisory_xact_lock (deferred).
-var commitLocks sync.Map // map[string]*sync.Mutex
+var uploadSessionLocks sync.Map // map[string]*sync.Mutex
 
-// acquireCommitLock returns a per-upload_id mutex that the
-// caller MUST Release after the critical section exits.
-func acquireCommitLock(uploadID string) *sync.Mutex {
-	if v, ok := commitLocks.Load(uploadID); ok {
+// acquireUploadSessionLock returns a per-upload_id mutex that the
+// caller MUST Unlock after the critical section exits.
+func acquireUploadSessionLock(uploadID string) *sync.Mutex {
+	if v, ok := uploadSessionLocks.Load(uploadID); ok {
 		return v.(*sync.Mutex)
 	}
 	mu := &sync.Mutex{}
-	actual, _ := commitLocks.LoadOrStore(uploadID, mu)
+	actual, _ := uploadSessionLocks.LoadOrStore(uploadID, mu)
 	return actual.(*sync.Mutex)
 }
 
@@ -131,7 +130,7 @@ const (
 // chunk_size.
 func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req startUploadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad request body", err.Error()))
 		return
@@ -152,8 +151,33 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrSourceTooLarge(limits, req.TotalSize))
 		return
 	}
+	app, err := s.store.AppBySlug(r.Context(), req.AppSlug)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such app")
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"App lookup failed", err.Error()))
+		return
+	}
+	if app.AccountID != acct.ID {
+		// Do not allow a session to be opened for another account's
+		// slug. Besides avoiding a later commit failure, this keeps
+		// the cap/budget queries from becoming an app-existence oracle.
+		s.notFound(w, "no such app")
+		return
+	}
 
 	acctUUID := pgtypeFromUUIDString(acct.ID)
+	// Keep the cap and budget checks together with the INSERT. The
+	// checks are intentionally handler-side because plan limits are
+	// dynamic; serializing starts for one account closes the in-process
+	// check-then-insert race across different apps. A multi-replica
+	// deployment still needs a database-backed admission primitive.
+	startMu := acquireUploadSessionLock("account:" + acct.ID)
+	startMu.Lock()
+	defer startMu.Unlock()
 
 	openCount, err := s.store.CountOpenUploadSessionsByAccountApp(r.Context(), sqlc.CountOpenUploadSessionsByAccountAppParams{
 		Column1: acctUUID,
@@ -276,27 +300,6 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 			"Get session failed", err.Error()))
 		return
 	}
-	if row.Status != "open" {
-		switch row.Status {
-		case "committed":
-			// Distinguish committed from cancelled on PATCH so
-			// the CLI's PR-2 resume path doesn't mis-interpret
-			// a post-commit PATCH as a post-cancel PATCH and
-			// re-roll the session. Surface the dedupe row's
-			// deployment_id to the customer so the original
-			// commit's result is the answer.
-			if outcome, getErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); getErr == nil {
-				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
-			} else {
-				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, row.DeploymentID.String))
-			}
-		case "expired":
-			api.WriteProblem(w, api.ErrUploadSessionExpired(uploadID))
-		default: // cancelled (or any future terminal status)
-			api.WriteProblem(w, api.ErrUploadSessionAlreadyCancelled(uploadID))
-		}
-		return
-	}
 	acctUUID := pgtypeFromUUIDString(acct.ID)
 	if row.AccountID != acctUUID {
 		// Defense in depth: even though the auth chain enforces
@@ -305,6 +308,14 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 		// avoids leaking that the upload_id exists in another
 		// account's namespace.
 		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+		return
+	}
+	if row.Status != "open" {
+		s.writeUploadSessionTerminalProblem(r.Context(), w, row)
+		return
+	}
+	if uploadSessionExpired(row) {
+		api.WriteProblem(w, api.ErrUploadSessionExpired(uploadID))
 		return
 	}
 	if clientOffset != row.ReceivedBytes {
@@ -324,6 +335,40 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	if int64(len(chunk)) > int64(row.ChunkSize) {
 		api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeValidation,
 			"Chunk too large", fmt.Sprintf("chunk size %d exceeds server chunk_size %d", len(chunk), row.ChunkSize)))
+		return
+	}
+
+	// The database CAS protects the offset, while this lock protects
+	// the paired row/file transition. Re-read after acquiring it: the
+	// first row read can race a commit, cancel, or the reaper while the
+	// request body is being received.
+	mu := acquireUploadSessionLock(uploadID)
+	mu.Lock()
+	defer mu.Unlock()
+	row, err = s.store.GetUploadSession(r.Context(), uploadID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Get session failed", err.Error()))
+		return
+	}
+	if row.AccountID != acctUUID {
+		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+		return
+	}
+	if row.Status != "open" {
+		s.writeUploadSessionTerminalProblem(r.Context(), w, row)
+		return
+	}
+	if uploadSessionExpired(row) {
+		api.WriteProblem(w, api.ErrUploadSessionExpired(uploadID))
+		return
+	}
+	if clientOffset != row.ReceivedBytes {
+		api.WriteProblem(w, api.ErrUploadSessionOffsetConflict(uploadID, clientOffset, row.ReceivedBytes))
 		return
 	}
 
@@ -393,12 +438,12 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 // the dedupe row, and marks the session committed.
 func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
-	// Serialize per-upload_id commit critical sections to
+	// Serialize per-upload_id upload/file critical sections to
 	// prevent two concurrent commit retries both calling
 	// apidsource.Enqueue and leaving an orphan deployment.
 	// In-process only (single-replica per CLAUDE.md); see
-	// acquireCommitLock above for the deferral note.
-	mu := acquireCommitLock(uploadID)
+	// acquireUploadSessionLock above for the deferral note.
+	mu := acquireUploadSessionLock(uploadID)
 	mu.Lock()
 	defer mu.Unlock()
 	row, err := s.store.GetUploadSession(r.Context(), uploadID)
@@ -417,12 +462,24 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			"Get session failed", err.Error()))
 		return
 	}
+	if row.AccountID != pgtypeFromUUIDString(acct.ID) {
+		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+		return
+	}
+	if outcome, outcomeErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); outcomeErr == nil {
+		api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
+		return
+	} else if !errors.Is(outcomeErr, state.ErrNotFound) {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Get commit outcome failed", outcomeErr.Error()))
+		return
+	}
 	if row.Status != "open" {
-		if outcome, getErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); getErr == nil {
-			api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
-			return
-		}
-		api.WriteProblem(w, api.ErrUploadSessionAlreadyCancelled(uploadID))
+		s.writeUploadSessionTerminalProblem(r.Context(), w, row)
+		return
+	}
+	if uploadSessionExpired(row) {
+		api.WriteProblem(w, api.ErrUploadSessionExpired(uploadID))
 		return
 	}
 	if row.ReceivedBytes != row.TotalSize {
@@ -434,6 +491,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 
 	app, err := s.store.AppBySlug(r.Context(), row.AppSlug)
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such app")
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"App lookup failed", err.Error()))
 		return
@@ -458,9 +519,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	limits := api.MustLimitsFor(acct.Plan)
 
 	// apidsource.Enqueue never deletes the staged SourcePath —
-	// builderd reads it. We leave the .part in place; future
-	// work (out of scope for PR-1) sweeps committed/cancelled/
-	// expired .part files older than 1h to bound the spool leak.
+	// builderd reads it. We leave the .part in place; the reaper
+	// sweeps committed/cancelled/expired .part files older than 1h
+	// to bound the spool leak while giving builderd time to consume.
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 		AppID:            app.ID,
 		Kind:             state.DeploymentKindTarball,
@@ -481,15 +542,26 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
-	// Dedupe row first — if MarkUploadSessionCommitted fails
-	// because the row is already terminal (a racing commit),
-	// the dedupe row's ON CONFLICT DO NOTHING protects us from
-	// creating two outcomes for the same upload_id.
+	// Record the dedupe outcome before flipping the session state so a
+	// retry after a response loss can recover the original deployment.
+	// A conflict is only safe to treat as a retry when the canonical
+	// outcome can actually be read; otherwise returning an error avoids
+	// marking the session with an outcome that belongs to another build.
 	if _, err := s.store.RecordUploadCommitOutcome(r.Context(), sqlc.RecordUploadCommitOutcomeParams{
 		UploadID:     uploadID,
 		DeploymentID: res.DeploymentID,
 		BuildID:      res.BuildID,
-	}); err != nil && !errors.Is(err, state.ErrConflict) {
+	}); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			if outcome, getErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); getErr == nil {
+				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
+				return
+			} else {
+				api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+					"Commit outcome conflict without stored outcome", getErr.Error()))
+				return
+			}
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Record outcome failed", err.Error()))
 		return
@@ -516,7 +588,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 
 	s.auditUploadSessionCommitted(r.Context(), acct, app, uploadID, res.DeploymentID, res.BuildID, row.ReceivedBytes, limits)
 
-	d, err := s.store.LatestDeployment(r.Context(), app.ID)
+	// Read the deployment created by this commit, not merely the
+	// latest deployment for the app. Another deploy may legitimately
+	// arrive between Enqueue and this response.
+	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
@@ -529,7 +604,24 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
 	acctUUID := pgtypeFromUUIDString(acct.ID)
-	err := s.store.CancelUploadSession(r.Context(), sqlc.CancelUploadSessionParams{
+	mu := acquireUploadSessionLock(uploadID)
+	mu.Lock()
+	defer mu.Unlock()
+	row, err := s.store.GetUploadSession(r.Context(), uploadID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Get session failed", err.Error()))
+		return
+	}
+	if row.AccountID != acctUUID {
+		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+		return
+	}
+	err = s.store.CancelUploadSession(r.Context(), sqlc.CancelUploadSessionParams{
 		ID:      uploadID,
 		Column2: acctUUID,
 	})
@@ -549,15 +641,37 @@ func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct
 
 	// Best-effort .part removal. ErrNotExist is logged + ignored
 	// (the reaper may have deleted it first).
-	row, _ := s.store.GetUploadSession(r.Context(), uploadID)
 	if row.PartPath != "" {
-		if rmErr := os.Remove(row.PartPath); rmErr != nil && !os.IsNotExist(rmErr) {
+		if rmErr := removeUploadPart(row.PartPath); rmErr != nil && !os.IsNotExist(rmErr) {
 			s.log.Warn("upload session cancel: .part remove failed",
 				"upload_id", uploadID, "path", row.PartPath, "err", rmErr)
+		} else if clearErr := s.store.ClearUploadSessionPartPath(r.Context(), uploadID); clearErr != nil {
+			s.log.Warn("upload session cancel: clear part path failed",
+				"upload_id", uploadID, "path", row.PartPath, "err", clearErr)
 		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func uploadSessionExpired(row sqlc.UploadSession) bool {
+	return row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now())
+}
+
+func (s *server) writeUploadSessionTerminalProblem(ctx context.Context, w http.ResponseWriter, row sqlc.UploadSession) {
+	if row.Status == "committed" {
+		if outcome, err := s.store.GetUploadCommitOutcome(ctx, row.ID); err == nil {
+			api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(row.ID, outcome.DeploymentID))
+			return
+		}
+		api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(row.ID, row.DeploymentID.String))
+		return
+	}
+	if row.Status == "expired" {
+		api.WriteProblem(w, api.ErrUploadSessionExpired(row.ID))
+		return
+	}
+	api.WriteProblem(w, api.ErrUploadSessionAlreadyCancelled(row.ID))
 }
 
 // auditUploadSessionCommitted emits the `upload.session_committed`

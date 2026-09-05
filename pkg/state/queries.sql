@@ -2054,7 +2054,7 @@ WHERE id = $1;
 -- the server is currently at) and the chunk_size it sent, then
 -- computes expected_new = client_offset + chunk_bytes. The WHERE
 -- clause pins the row to (id=$1 AND status='open' AND
--- received_bytes=$3) — a row whose received_bytes has already
+-- expires_at > now() AND received_bytes=$3) — a row whose received_bytes has already
 -- advanced (e.g., a racing PATCH from a retry) returns 0 rows and
 -- the handler maps that to 409 Conflict with the actual current
 -- offset in the body.
@@ -2068,6 +2068,7 @@ UPDATE upload_sessions
        last_patched_at = now()
  WHERE id = $1
    AND status = 'open'
+   AND expires_at > now()
    AND received_bytes = $2
 RETURNING received_bytes, total_size;
 
@@ -2131,8 +2132,9 @@ LIMIT 100;
 -- cancel handler removes its .part at the same time it flips
 -- status='cancelled'; but neither has a 1-hour cleanup guarantee
 -- for committed rows. This query returns rows in terminal
--- status whose last_patched_at is >1h old AND part_path still
--- exists on disk; the reaper then os.Removes the file.
+-- status whose last_patched_at is >1h old and whose part_path
+-- cleanup marker is still set; the reaper removes the file and
+-- clears the marker after a successful removal.
 --
 -- The status IN (committed, cancelled, expired) predicate is
 -- load-bearing — we never sweep open sessions (could race a
@@ -2152,9 +2154,20 @@ LIMIT 100;
 SELECT id, part_path
 FROM upload_sessions
 WHERE status IN ('committed', 'cancelled', 'expired')
+  AND part_path <> ''
   AND last_patched_at < now() - INTERVAL '1 hour'
 ORDER BY last_patched_at ASC
 LIMIT 100;
+
+-- name: ClearUploadSessionPartPath :exec
+-- Records that the spool file has been removed. Terminal status is
+-- required so an out-of-order cleanup call cannot hide the path of
+-- an open session that a concurrent PATCH still needs.
+UPDATE upload_sessions
+   SET part_path = ''
+ WHERE id = $1
+   AND status IN ('committed', 'cancelled', 'expired')
+   AND part_path <> '';
 
 -- name: ExpireUploadSession :exec
 -- Marks a single session as expired after the reaper removes its

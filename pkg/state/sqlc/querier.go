@@ -35,7 +35,7 @@ type Querier interface {
 	// the server is currently at) and the chunk_size it sent, then
 	// computes expected_new = client_offset + chunk_bytes. The WHERE
 	// clause pins the row to (id=$1 AND status='open' AND
-	// received_bytes=$3) — a row whose received_bytes has already
+	// expires_at > now() AND received_bytes=$3) — a row whose received_bytes has already
 	// advanced (e.g., a racing PATCH from a retry) returns 0 rows and
 	// the handler maps that to 409 Conflict with the actual current
 	// offset in the body.
@@ -88,6 +88,10 @@ type Querier interface {
 	// next_fire_at <= now(). The trigger_id constraint scopes the
 	// claim so the poller drains one trigger at a time.
 	ClaimTriggerRecords(ctx context.Context, db DBTX, arg ClaimTriggerRecordsParams) ([]ClaimTriggerRecordsRow, error)
+	// Records that the spool file has been removed. Terminal status is
+	// required so an out-of-order cleanup call cannot hide the path of
+	// an open session that a concurrent PATCH still needs.
+	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Per-(account_id, app_slug) open-session cap check at the top of
 	// POST /v1/uploads. Returns the current count; the handler
@@ -658,6 +662,19 @@ type Querier interface {
 	MarkTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkTriggerRecordDeadLetterParams) error
 	MarkTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkTriggerRecordRetryParams) error
 	MarkTriggerRecordSucceeded(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// Final state transition: open → committed. The handler runs
+	// validateTarballShape + scanForStatefulShape (cmd/apid/
+	// deploy_inputs.go:291-447) BEFORE this UPDATE so a commit that
+	// fails validation leaves the row at status='open' and the .part
+	// file in place for retry. deployment_id is set after the build
+	// row is enqueued (apidsource.Enqueue) so the row points at the
+	// deployment that consumed the .part.
+	//
+	// The UPDATE WHERE status='open' is the second-line idempotency
+	// guard: a retry of POST /v1/uploads/{id}/commit that races with
+	// itself hits 0 rows and the handler reads upload_commit_outcomes
+	// to return the original deployment_id.
+	MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error)
 	// ----------------------------------------------------------------------
 	// NodeLifecycleStore (Workstream B, issue #1184)
 	//
@@ -729,19 +746,6 @@ type Querier interface {
 	//                             successful drain) OR NULL when called
 	//                             from the heartbeat reactivator
 	NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLifecycleParams) (int64, error)
-	// Final state transition: open → committed. The handler runs
-	// validateTarballShape + scanForStatefulShape (cmd/apid/
-	// deploy_inputs.go:291-447) BEFORE this UPDATE so a commit that
-	// fails validation leaves the row at status='open' and the .part
-	// file in place for retry. deployment_id is set after the build
-	// row is enqueued (apidsource.Enqueue) so the row points at the
-	// deployment that consumed the .part.
-	//
-	// The UPDATE WHERE status='open' is the second-line idempotency
-	// guard: a retry of POST /v1/uploads/{id}/commit that races with
-	// itself hits 0 rows and the handler reads upload_commit_outcomes
-	// to return the original deployment_id.
-	MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)
@@ -773,6 +777,45 @@ type Querier interface {
 	// partition tail (rows in the default partition or
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
+	// The reaper's scan query (cmd/apid/upload_session_reaper.go).
+	// Returns at most 100 rows per invocation to bound memory; the
+	// goroutine ticker at cmd/apid/main.go re-invokes on its 5-minute
+	// cadence. partial index upload_sessions_expires_idx makes this
+	// an index-only scan over the open sessions whose expires_at has
+	// passed. The handler then UPDATEs status='expired' and removes
+	// the .part file via os.Remove.
+	//
+	// The status='open' predicate is load-bearing — once a session is
+	// committed/cancelled/expired the .part file is already gone and
+	// the row is terminal.
+	ReapExpiredUploadSessions(ctx context.Context, db DBTX) ([]ReapExpiredUploadSessionsRow, error)
+	// PR-1 fixup #5: sweep .part files for terminal rows whose
+	// builderd consumption window has closed. The commit handler
+	// leaves .part in place for builderd to consume
+	// (pkg/builderd/builderd.go:407 hashFile(SourcePath)); the
+	// cancel handler removes its .part at the same time it flips
+	// status='cancelled'; but neither has a 1-hour cleanup guarantee
+	// for committed rows. This query returns rows in terminal
+	// status whose last_patched_at is >1h old and whose part_path
+	// cleanup marker is still set; the reaper removes the file and
+	// clears the marker after a successful removal.
+	//
+	// The status IN (committed, cancelled, expired) predicate is
+	// load-bearing — we never sweep open sessions (could race a
+	// PATCH). The last_patched_at < now() - '1 hour' guard stops
+	// us from racing a builderd that's mid-consumption right after
+	// commit. The 100-row LIMIT bounds the per-tick work the same
+	// way ReapExpiredUploadSessions does.
+	//
+	// Index strategy: pg doesn't have an index on (status,
+	// last_patched_at) today; the scan is sequential over the
+	// terminal-status rows. At expected volumes (≪ 1k terminal
+	// rows/day per apid) this is fine. If terminal-row volume
+	// grows, add a partial index on (last_patched_at) WHERE
+	// status IN ('committed', 'cancelled', 'expired') — leaving
+	// as a follow-up ADR rather than conflated into PR-1's
+	// migration slot 533.
+	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
 	// (ADR-115 §D.3, RFC 8058 follow-on). One row per (source,
@@ -798,44 +841,6 @@ type Querier interface {
 	// $6 = expires_at (nullable — null means suppression is permanent
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
-	// The reaper's scan query (cmd/apid/upload_session_reaper.go).
-	// Returns at most 100 rows per invocation to bound memory; the
-	// goroutine ticker at cmd/apid/main.go re-invokes on its 5-minute
-	// cadence. partial index upload_sessions_expires_idx makes this
-	// an index-only scan over the open sessions whose expires_at has
-	// passed. The handler then UPDATEs status='expired' and removes
-	// the .part file via os.Remove.
-	//
-	// The status='open' predicate is load-bearing — once a session is
-	// committed/cancelled/expired the .part file is already gone and
-	// the row is terminal.
-	ReapExpiredUploadSessions(ctx context.Context, db DBTX) ([]ReapExpiredUploadSessionsRow, error)
-	// PR-1 fixup #5: sweep .part files for terminal rows whose
-	// builderd consumption window has closed. The commit handler
-	// leaves .part in place for builderd to consume
-	// (pkg/builderd/builderd.go:407 hashFile(SourcePath)); the
-	// cancel handler removes its .part at the same time it flips
-	// status='cancelled'; but neither has a 1-hour cleanup guarantee
-	// for committed rows. This query returns rows in terminal
-	// status whose last_patched_at is >1h old AND part_path still
-	// exists on disk; the reaper then os.Removes the file.
-	//
-	// The status IN (committed, cancelled, expired) predicate is
-	// load-bearing — we never sweep open sessions (could race a
-	// PATCH). The last_patched_at < now() - '1 hour' guard stops
-	// us from racing a builderd that's mid-consumption right after
-	// commit. The 100-row LIMIT bounds the per-tick work the same
-	// way ReapExpiredUploadSessions does.
-	//
-	// Index strategy: pg doesn't have an index on (status,
-	// last_patched_at) today; the scan is sequential over the
-	// terminal-status rows. At expected volumes (≪ 1k terminal
-	// rows/day per apid) this is fine. If terminal-row volume
-	// grows, add a partial index on (last_patched_at) WHERE
-	// status IN ('committed', 'cancelled', 'expired') — leaving
-	// as a follow-up ADR rather than conflated into PR-1's
-	// migration slot 533.
-	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
 	// companion table. The handler calls this AFTER a successful
 	// apidsource.Enqueue and BEFORE writing the 201 response. On

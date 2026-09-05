@@ -228,7 +228,7 @@ type MemStore struct {
 	// backing for the upload-session Store methods. Keyed by upload_id
 	// (text). Backs the resumable upload protocol's handler unit
 	// tests; production uses *PgStore against the upload_sessions
-	// table (migrations/00563_upload_sessions.sql). Mutex is the
+	// table (migrations/20260905120000000_upload_sessions.sql). Mutex is the
 	// existing m.mu — no new lock.
 	uploadSessions       map[string]sqlc.UploadSession
 	uploadCommitOutcomes map[string]sqlc.UploadCommitOutcome
@@ -17558,6 +17558,8 @@ func (m *MemStore) ListExpiredTriggerRecordsForReaper(_ context.Context, _ time.
 // MemStore for the same reason — see ListExpiredTriggerRecordsForReaper.
 func (m *MemStore) DeleteTriggerRecordsByIDs(_ context.Context, _ []string) (int, error) {
 	return 0, nil
+}
+
 // Issue #1182 §P1 packaging follow-up (PR-1 of 3): in-memory
 // implementations of the upload-session Store methods. Production
 // uses *PgStore against the upload_sessions table; these memstore
@@ -17618,7 +17620,9 @@ func (m *MemStore) AppendUploadBytes(_ context.Context, in sqlc.AppendUploadByte
 	if !ok {
 		return sqlc.AppendUploadBytesRow{}, ErrNotFound
 	}
-	if row.Status != "open" || row.ReceivedBytes != in.ReceivedBytes_2 {
+	if row.Status != "open" ||
+		(row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now())) ||
+		row.ReceivedBytes != in.ReceivedBytes_2 {
 		return sqlc.AppendUploadBytesRow{
 			ReceivedBytes: row.ReceivedBytes,
 			TotalSize:     row.TotalSize,
@@ -17703,9 +17707,10 @@ func (m *MemStore) ReapExpiredUploadSessions(_ context.Context) ([]sqlc.ReapExpi
 }
 
 // ReapStaleUploadPartFiles returns terminal-row sessions whose
-// last_patched_at < now() - 1h. Bounded by 100 rows. The
-// 1h grace matches the production query — kept identical so
-// the whitebox reaper tests exercise the same predicate.
+// part_path cleanup marker is set and last_patched_at < now() - 1h.
+// Bounded by 100 rows. The 1h grace matches the production query —
+// kept identical so the whitebox reaper tests exercise the same
+// predicate.
 func (m *MemStore) ReapStaleUploadPartFiles(_ context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -17713,6 +17718,9 @@ func (m *MemStore) ReapStaleUploadPartFiles(_ context.Context) ([]sqlc.ReapStale
 	cutoff := time.Now().UTC().Add(-1 * time.Hour)
 	for _, row := range m.uploadSessions {
 		if row.Status != "committed" && row.Status != "cancelled" && row.Status != "expired" {
+			continue
+		}
+		if row.PartPath == "" {
 			continue
 		}
 		if row.LastPatchedAt.Valid && row.LastPatchedAt.Time.Before(cutoff) {
@@ -17726,6 +17734,24 @@ func (m *MemStore) ReapStaleUploadPartFiles(_ context.Context) ([]sqlc.ReapStale
 		}
 	}
 	return out, nil
+}
+
+// ClearUploadSessionPartPath records that a terminal session's
+// spool file has been removed. The empty path is a durable cleanup
+// marker so subsequent reaper sweeps do not rediscover the row.
+func (m *MemStore) ClearUploadSessionPartPath(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.Status != "committed" && row.Status != "cancelled" && row.Status != "expired" {
+		return ErrConflict
+	}
+	row.PartPath = ""
+	m.uploadSessions[id] = row
+	return nil
 }
 
 // ExpireUploadSession marks a single session expired. Idempotent —

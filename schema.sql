@@ -7982,6 +7982,14 @@ ALTER TABLE ONLY public.upload_sessions
 
 
 --
+-- Name: upload_sessions upload_sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_sessions
+    ADD CONSTRAINT upload_sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: upload_sessions_account_open_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8005,4 +8013,3 @@ ALTER TABLE ONLY public.upload_commit_outcomes
 
 --
 --
-
