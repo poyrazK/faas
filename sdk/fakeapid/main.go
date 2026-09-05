@@ -34,6 +34,7 @@ var healthzBody = mustJSON(map[string]bool{"ok": true})
 var accountResponse = mustJSON(map[string]any{
 	"id":             "0123456789abcdef0123456789abcdef",
 	"email":          "ops@example.com",
+	"email_verified": true,
 	"plan":           "hobby",
 	"status":         "active",
 	"limits":         accountLimits(),
