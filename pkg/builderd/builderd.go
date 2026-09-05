@@ -441,9 +441,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, baseErr
 	}
 
-	// Cache check: content-addressed by sha256(source). A hit means we
-	// produced this exact app layer before and can short-circuit the VM
-	// spawn entirely (this is the ≥2× speedup gate, spec §14 M6).
+	// The cache recipe includes the selected member as well as the complete
+	// source context. Sibling apps can share archive bytes without sharing
+	// their produced artifact. Keep srcHash itself for source provenance.
 	srcHash, err := hashFile(dep.SourcePath)
 	if err != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "source hash: "+err.Error(), buildStart)
@@ -452,7 +452,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
 	}
-	if cached, ok := b.cache.LookupWithBase(srcHash, fw, acct.Plan, runtimeBaseRef); ok {
+	recipe := BuildCacheRecipe{
+		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
+		Framework: fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
+	}
+	if cached, ok := b.cache.LookupBuild(recipe); ok {
 		if b.stopIfBuildCancelled(ctx, build.ID) {
 			return BuildResult{}, nil
 		}
@@ -654,7 +658,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return result, err
 	}
 	// Only cache a successfully committed build, never a stale completion.
-	if err := b.cache.StoreWithBase(srcHash, fw, acct.Plan, runtimeBaseRef, out.OCIImage, artifactBytes); err != nil {
+	if err := b.cache.StoreBuild(recipe, out.OCIImage, artifactBytes); err != nil {
 		b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 	}
 	return result, nil

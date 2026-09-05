@@ -43,12 +43,23 @@ a database error, or a lost notification could leave contradictory state.
   empty, or corrupt entries miss and can be repaired. Old entries without an
   artifact digest miss once. Preserve source executable bits and skip symlinks
   when granting the unprivileged build user access.
+- Identify deployment cache entries with a versioned build recipe containing
+  the full archive SHA-256, normalized source root, framework, plan, and runtime
+  base reference. Workspace members sharing an archive must not share output
+  unless their selected roots also match. Empty and `.` roots are equivalent.
+  Never fall back to unversioned entries: their producing root is unknown.
 
 ## Consequences and limits
 
 No schema or protobuf change is required. Roll out vmmd with builderd so the
 new stop behavior is available; older vmmd versions do not implement builder
 interruption during export. Checksumming cache hits adds an artifact read.
+The recipe namespace causes a one-time cache miss for old entries; existing GC
+continues to collect them. The source digest in provenance remains the archive
+SHA-256, separate from the cache recipe digest. Changes to build semantics or
+recipe encoding require a recipe version bump. Builder/toolchain digests and
+platform partitioning remain follow-ups; the recipe does not yet promise full
+build reproducibility.
 
 Recovery covers the committed build-to-imaged handoff before imaging starts.
 It does not resume an imaged process that crashes partway through conversion.
