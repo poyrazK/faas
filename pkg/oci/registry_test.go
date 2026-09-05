@@ -12,6 +12,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -195,6 +197,95 @@ func TestRegistryPullDigest_BadReference(t *testing.T) {
 	c := NewRegistryClient()
 	if _, err := c.PullDigest(context.Background(), "app@sha256:short"); err == nil {
 		t.Fatal("expected parse error for bad digest")
+	}
+}
+
+func TestRegistryPullConcurrencyBoundsRequests(t *testing.T) {
+	manifest := []byte(`{"schemaVersion":2}`)
+	digest := digestOf(manifest)
+	var active, maxActive int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		current := atomic.AddInt32(&active, 1)
+		for {
+			old := atomic.LoadInt32(&maxActive)
+			if current <= old || atomic.CompareAndSwapInt32(&maxActive, old, current) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+		w.Header().Set("Docker-Content-Digest", digest)
+		w.WriteHeader(http.StatusOK)
+		atomic.AddInt32(&active, -1)
+		_, _ = w.Write(manifest)
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c := NewRegistryClient(
+		WithEndpoint("http", u.Host),
+		WithPullConcurrency(2),
+		WithPullRetry(0, time.Millisecond),
+	)
+
+	const callers = 10
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := c.PullDigest(context.Background(), "example.com/org/app:latest")
+			if err == nil && got != digest {
+				err = fmt.Errorf("digest = %q, want %q", got, digest)
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("PullDigest: %v", err)
+		}
+	}
+	if got := atomic.LoadInt32(&maxActive); got > 2 {
+		t.Fatalf("max concurrent requests = %d, want <= 2", got)
+	}
+}
+
+func TestRegistryPullRetriesTransientResponses(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusBadGateway} {
+		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
+			manifest := []byte(`{"schemaVersion":2}`)
+			digest := digestOf(manifest)
+			var hits int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				attempt := atomic.AddInt32(&hits, 1)
+				if attempt <= 2 {
+					http.Error(w, "temporary registry failure", status)
+					return
+				}
+				w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+				w.Header().Set("Docker-Content-Digest", digest)
+				_, _ = w.Write(manifest)
+			}))
+			t.Cleanup(srv.Close)
+			u, _ := url.Parse(srv.URL)
+			c := NewRegistryClient(
+				WithEndpoint("http", u.Host),
+				WithPullRetry(3, time.Millisecond),
+			)
+			got, err := c.PullDigest(context.Background(), "example.com/org/app:latest")
+			if err != nil {
+				t.Fatalf("PullDigest: %v", err)
+			}
+			if got != digest {
+				t.Fatalf("digest = %q, want %q", got, digest)
+			}
+			if got := atomic.LoadInt32(&hits); got != 3 {
+				t.Fatalf("request count = %d, want 3", got)
+			}
+		})
 	}
 }
 
