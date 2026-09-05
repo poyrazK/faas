@@ -751,7 +751,7 @@ Show a domain&#39;s cert details
 
 Sync the dirty working tree to a stable remote developer environment
 
-`gregale dev [--path <DIR>] [--name <PROJECT>] [--once] [--stop]`
+`gregale dev [--path <DIR>] [--name <PROJECT>] [--once] [--stop] [--no-logs]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -759,6 +759,7 @@ Sync the dirty working tree to a stable remote developer environment
 | `--name <PROJECT>` | developer-session project name |  |
 | `--once` | deploy once and exit |  |
 | `--stop` | tear down the developer environment |  |
+| `--no-logs` | do not attach the live runtime log stream |  |
 
 
 ## preview

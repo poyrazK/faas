@@ -578,6 +578,7 @@ var cliCommands = []cliCommand{
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 			{Name: "once", Short: "deploy once and exit"},
 			{Name: "stop", Short: "tear down the developer environment"},
+			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
 		},
 	},
 	{
