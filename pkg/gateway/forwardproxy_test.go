@@ -91,6 +91,12 @@ func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromS
 func (f *fakeVmmdClient) CreateColdBoot(context.Context, *vmmdpb.CreateColdBootRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateColdBoot: not stubbed")
 }
+func (f *fakeVmmdClient) JobColdBoot(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
+	panic("JobColdBoot: not stubbed")
+}
+func (f *fakeVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
+	panic("WaitJobExit: not stubbed")
+}
 func (f *fakeVmmdClient) PauseAndSnapshot(context.Context, *vmmdpb.PauseAndSnapshotRequest, ...grpc.CallOption) (*vmmdpb.SnapshotResponse, error) {
 	panic("PauseAndSnapshot: not stubbed")
 }

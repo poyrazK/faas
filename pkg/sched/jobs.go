@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -124,7 +125,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		ramMB = api.JobRAMMB[planIdx]
 	}
 	instanceID := uuid.NewString()
-	nodeID := e.ownerNodeID
+	nodeID := e.nodeForRoute(e.ownerNodeID)
 	req := Request{
 		Instance: instanceID,
 		AppID:    "", // jobs have no appID
@@ -138,15 +139,22 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob admit: %w", err)
 	}
 
+	// Resolve the effective per-run timeout before minting the lease. The run
+	// override must govern both guest enforcement and lease expiry.
+	taskTimeoutSec := job.TaskTimeoutS
+	if run.TaskTimeoutS != nil {
+		taskTimeoutSec = *run.TaskTimeoutS
+	}
+	if taskTimeoutSec <= 0 {
+		taskTimeoutSec = 300
+	}
+
 	// 3. Mint lease + claim. Lease TTL = task_timeout_s + 90s grace
 	// (mirrors the §6.1 cold-boot + cleanup envelope for app
 	// wakes). For Free-plan jobs the task_timeout_s is 0 — we
 	// default to 5 minutes (300s) so a misconfigured job doesn't
 	// pin a tenant-RAM slot forever.
-	ttl := time.Duration(job.TaskTimeoutS) * time.Second
-	if ttl <= 0 {
-		ttl = 5 * time.Minute
-	}
+	ttl := time.Duration(taskTimeoutSec) * time.Second
 	ttl += 90 * time.Second
 	leaseExpires := time.Now().Add(ttl)
 	if e.jobLeaser == nil {
@@ -212,10 +220,6 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_env_invalid")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob decode env overrides: %w", err)
 	}
-	taskTimeoutSec := job.TaskTimeoutS
-	if run.TaskTimeoutS != nil {
-		taskTimeoutSec = *run.TaskTimeoutS
-	}
 	out, err := e.jobVmmClient.JobColdBoot(ctx, JobVmmSpec{
 		AccountID:      accountID,
 		RunID:          runID,
@@ -228,6 +232,10 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		TaskTimeoutSec: taskTimeoutSec,
 		LeaseToken:     string(tok),
 		NodeID:         nodeID,
+		Plan:           plan,
+		KernelKey:      KernelKey(e.fcVer),
+		BaseKey:        BaseKey(""),
+		VcpuCount:      1,
 	})
 	if err != nil {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_vmm_cold_boot_failed")
@@ -244,6 +252,12 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_vmm_node_mismatch")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned node %q, want %q", out.NodeID, nodeID)
 	}
+	e.transitionWithKind(ctx, instanceID, "", state.StateRunning, "job_boot_completed", "job_vmmd_boot_completed")
+	e.startJobExitWatch(JobExitSpec{
+		AccountID: accountID, RunID: runID, TaskIndex: taskIndex,
+		InstanceID: instanceID, NodeID: out.NodeID, LeaseToken: string(tok),
+		Deadline: fcvm.EffectiveDestroyWait(taskTimeoutSec),
+	})
 	return JobWakeResult{
 		InstanceID: instanceID,
 		NodeID:     out.NodeID,
@@ -405,6 +419,14 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		// Already-terminal — vmmd retransmit, swallow.
 		return nil
 	}
+	instanceID := ""
+	if task.InstanceID != nil {
+		instanceID = *task.InstanceID
+	}
+	nodeID := e.ownerNodeID
+	if task.LastLeaseNode != nil && *task.LastLeaseNode != "" {
+		nodeID = *task.LastLeaseNode
+	}
 	if task.LeaseToken == nil || *task.LeaseToken != leaseTokenStr {
 		return ErrLeaseHeldByOther
 	}
@@ -420,20 +442,13 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	// tracks the record. PgLeaser.Release is a no-op if the row is
 	// already gone, so calling it twice is safe.
 	//
-	// CR-G / code-review #2 round-7: the previous shape called
-	// `e.jobLeaser.Release` unconditionally. cmd/schedd/main.go
-	// does NOT wire `WithJobLeaser` (the production wiring defers
-	// to Mega-1.5 because PgLeaser.poolExecutor is incompatible
-	// with *pgxpool.Pool; see job_vmm_stub.go::ErrJobLeaserNil),
-	// so until WithJobLeaser ships, this Release would nil-deref
-	// and panic the schedd goroutine. WakeJob already has the
-	// matching nil-guard at line ~151; mirror it here. Note: this
-	// nil-guard is also defensive against the M7 commit landing
-	// first (the documented ordering pairs the two wirings, but
-	// the code must fail-safe if they're split across PRs).
+	// The nil guard keeps the compatibility/test path safe when a caller
+	// intentionally omits the optional leaser. Production schedd wires the
+	// concrete PgLeaser through AdaptJobLeaser.
 	if tok := LeaseToken(leaseTokenStr); tok != "" && e.jobLeaser != nil {
-		_ = e.jobLeaser.Release(ctx, tok, e.ownerNodeID)
+		_ = e.jobLeaser.Release(ctx, tok, nodeID)
 	}
+	e.cleanupJobInstance(ctx, instanceID, nodeID, "job_exit")
 	// Retry-on-failure: re-queue failed/timeout/oom tasks if budget
 	// remains.
 	if status == "failed" || status == "timeout" || status == "oom" {
@@ -466,6 +481,55 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		return fmt.Errorf("sched: HandleJobExit recompute: %w", err)
 	}
 	return nil
+}
+
+// ReconcileCancelledJobRun tears down VMs for claimed tasks after the state
+// store marks the run cancelled. The cancel write intentionally wins the race
+// with a late guest receipt, so HandleJobExit cannot be the only cleanup path.
+func (e *Engine) ReconcileCancelledJobRun(ctx context.Context, runID string) error {
+	if runID == "" {
+		return fmt.Errorf("sched: reconcile cancelled job: empty run id")
+	}
+	tasks, err := e.store.JobTaskList(ctx, runID, 0, 0)
+	if err != nil {
+		return fmt.Errorf("sched: reconcile cancelled job list: %w", err)
+	}
+	for _, task := range tasks {
+		if task.Status != "cancelled" || task.InstanceID == nil || *task.InstanceID == "" {
+			continue
+		}
+		nodeID := e.ownerNodeID
+		if ins, ierr := e.store.InstanceByID(ctx, *task.InstanceID); ierr == nil && ins.NodeID != "" {
+			nodeID = ins.NodeID
+		}
+		e.cleanupJobInstance(ctx, *task.InstanceID, nodeID, "job_cancelled")
+	}
+	return nil
+}
+
+// cleanupJobInstance releases host resources after a terminal job receipt.
+// Destruction uses a detached bounded context because the dispatch/wait
+// context may already be cancelled when the guest exits.
+func (e *Engine) cleanupJobInstance(ctx context.Context, instanceID, nodeID, reason string) {
+	if instanceID == "" {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DestroyTimeout)
+	defer cancel()
+	if e.vmm != nil {
+		if err := e.vmm.Destroy(cleanupCtx, e.nodeForRoute(nodeID), instanceID); err != nil {
+			e.log.Warn("sched: destroy completed job VM", "instance", instanceID, "node", nodeID, "err", err)
+			// Keep the instance state and ledger reservation intact while the
+			// VM may still be alive. Releasing capacity on a failed destroy
+			// would let the next dispatch over-admit the node; restart or
+			// operator reconciliation must retry the idempotent destroy.
+			return
+		}
+	}
+	if e.ledger != nil {
+		e.ledger.Release(instanceID)
+	}
+	e.transitionWithKind(cleanupCtx, instanceID, "", state.StateStopped, "job_exit", reason)
 }
 
 // dispatchJobsTick is the per-second loop. cmd/schedd/main.go
@@ -551,9 +615,7 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 // ----------------------------------------------------------------------------
 
 // jobVmmClient is the vmmd gRPC client interface the engine uses to
-// boot job-task VMs. The real implementation lands in M7; until
-// then, leaving this nil means WakeJob runs in unit-test mode
-// (no vmmd call, instance row never created).
+// boot job-task VMs.
 type jobVmmClient interface {
 	JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmResult, error)
 }
@@ -572,12 +634,43 @@ type JobVmmSpec struct {
 	TaskTimeoutSec int
 	LeaseToken     string
 	NodeID         string
+	Plan           api.Plan
+	KernelKey      string
+	BaseKey        string
+	VcpuCount      int
 }
 
 // JobVmmResult is the vmmd-side cold-boot outcome.
 type JobVmmResult struct {
 	InstanceID string
 	NodeID     string
+}
+
+// JobExitSpec identifies the claimed task whose guest exit is being awaited.
+// The identity is retained here because the vmmd exit envelope is intentionally
+// small and the scheduler must never trust a receipt for a different task.
+type JobExitSpec struct {
+	AccountID  string
+	RunID      string
+	TaskIndex  int
+	InstanceID string
+	NodeID     string
+	LeaseToken string
+	Deadline   time.Duration
+}
+
+// JobExitResult is the normalized vmmd job-exit envelope.
+type JobExitResult struct {
+	ExitCode           int
+	ErrorClass         string
+	Signal             int
+	FinishedAtUnixNano int64
+	LeaseToken         string
+}
+
+// JobExitWaiter waits for a claimed job task to finish in vmmd.
+type JobExitWaiter interface {
+	WaitJobExit(context.Context, JobExitSpec) (JobExitResult, error)
 }
 
 // Engine wiring. The production schedd main.go fills these
@@ -588,6 +681,51 @@ type JobVmmResult struct {
 func (e *Engine) WithJobVmmClient(c jobVmmClient) *Engine {
 	e.jobVmmClient = c
 	return e
+}
+
+// WithJobExitWaiter wires the asynchronous guest-exit supervisor.
+func (e *Engine) WithJobExitWaiter(w JobExitWaiter) *Engine {
+	e.jobExitWaiter = w
+	return e
+}
+
+func (e *Engine) startJobExitWatch(spec JobExitSpec) {
+	if e.jobExitWaiter == nil {
+		return
+	}
+	ctx := e.jobContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		waitCtx := ctx
+		cancel := func() {}
+		if spec.Deadline > 0 {
+			waitCtx, cancel = context.WithTimeout(ctx, spec.Deadline)
+		}
+		defer cancel()
+		result, err := e.jobExitWaiter.WaitJobExit(waitCtx, spec)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			class, code := "infra", 1
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				class, code = "timeout", 124
+			}
+			if herr := e.HandleJobExit(context.WithoutCancel(ctx), spec.AccountID, spec.RunID, spec.TaskIndex, code, class, spec.LeaseToken); herr != nil {
+				e.log.Warn("sched: handle job exit after wait failure", "run", spec.RunID, "task", spec.TaskIndex, "err", herr)
+			}
+			return
+		}
+		token := result.LeaseToken
+		if token == "" {
+			token = spec.LeaseToken
+		}
+		if herr := e.HandleJobExit(context.WithoutCancel(ctx), spec.AccountID, spec.RunID, spec.TaskIndex, result.ExitCode, result.ErrorClass, token); herr != nil {
+			e.log.Warn("sched: handle job exit", "run", spec.RunID, "task", spec.TaskIndex, "err", herr)
+		}
+	}()
 }
 
 // WithJobLeaser wires the token-only lease primitive into the engine. Use

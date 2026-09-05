@@ -557,6 +557,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifySnapshotPrime,
 		db.NotifyCronRunNow, // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
 		db.NotifyAppDelete,  // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
+		db.NotifyJobChanged, // issue #1184: wake job dispatch and reconcile cancelled task VMs on the existing LISTEN.
 		// PR #1099 P2 redesign: multiplexed onto the existing
 		// LISTEN. Same zero-cost pattern as NotifyCronRunNow +
 		// NotifyAppDelete; one LISTEN connection, one multiplexed
@@ -1603,6 +1604,25 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			return
 		}
 		l.appDelete.evictApp(ctx, p.AppID)
+	case db.NotifyJobChanged:
+		var p struct {
+			Kind  string `json:"kind"`
+			RunID string `json:"run_id"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			l.log.Warn("sched: bad job_changed payload", "err", err)
+			return
+		}
+		if p.Kind == "run_cancelled" && p.RunID != "" {
+			go func() {
+				if err := l.engine.ReconcileCancelledJobRun(context.WithoutCancel(ctx), p.RunID); err != nil {
+					l.log.Warn("sched: cancelled job cleanup failed", "run", p.RunID, "err", err)
+				}
+			}()
+		}
+		if l.jobsDispatched && (p.Kind == "created" || p.Kind == "run_created" || p.Kind == "updated") {
+			l.runJobsDispatchTick(ctx)
+		}
 	case db.NotifyOperatorIntent:
 		// PR #1099 P2 redesign: operator-intent wake. The notify
 		// payload is informational (the row in operator_intents
@@ -2809,9 +2829,8 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 // loop (issue #1184 Workstream A / ADR-099). Wired in pkg/sched/loop.go
 // gated by FAAS_JOBS_DISPATCH — when OFF the select arm never fires.
 // Errors are logged warn-level and the tick continues on the next
-// second; a stuck pgpool is louder (the failOpen vmmd adapter keeps
-// the surface safe under FAAS_JOBS_DISPATCH=1 until the vmmd gRPC
-// JobColdBoot method ships in the follow-up commit).
+// second; a stuck pgpool is louder while the real vmmd job RPC remains
+// the source of truth for boot and exit supervision.
 func (l *Loop) runJobsDispatchTick(ctx context.Context) {
 	if err := l.engine.DispatchJobsTick(ctx); err != nil {
 		l.log.Warn("schedd: jobs dispatch tick failed", "err", err)

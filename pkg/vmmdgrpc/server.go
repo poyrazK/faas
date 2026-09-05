@@ -145,6 +145,14 @@ type VmmdAPI interface {
 	SignalAndKill(ctx context.Context, instance string, signal int32, graceSeconds int32) (killSignalSent bool, exitCode int32, err error)
 }
 
+// JobVMMAPI is the optional job-task slice of fcvm.Manager. It is deliberately
+// separate from VmmdAPI so existing vmmd test fakes and non-job integrations
+// do not need to grow job-specific methods.
+type JobVMMAPI interface {
+	BootJob(context.Context, fcvm.JobBootRequest) (*fcvm.Instance, error)
+	WaitJobExit(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
+}
+
 // flowCounter is the compute-side conntrack seam. Keeping it local to the
 // gRPC package avoids widening VmmdAPI (and every test fake) while allowing
 // production to inject flowcount.Reader and tests to inject a tiny fake.
@@ -524,6 +532,81 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return wakeResponseFromInstance(req.GetInstance(), wr, inst, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
+}
+
+// JobColdBoot starts a job-task VM through the optional Manager job surface.
+func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest) (*vmmdpb.JobColdBootResponse, error) {
+	const op = "JobColdBoot"
+	start := time.Now()
+	jobVMM, ok := s.vmm.(JobVMMAPI)
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Job execution unavailable", "vmmd job execution is not configured")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	boot, err := jobBootRequestFromProto(req)
+	if err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	inst, err := jobVMM.BootJob(ctx, boot)
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if inst == nil {
+		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd returned an empty instance")
+		return nil, grpcerr.ToStatus(err)
+	}
+	return &vmmdpb.JobColdBootResponse{
+		Instance: inst.Lease.Instance,
+		NodeId:   boot.NodeID,
+	}, nil
+}
+
+// WaitJobExit waits for the guest supervisor's terminal job receipt. The
+// scheduler's context carries the task-specific deadline; the fallback keeps
+// direct callers from accidentally creating an unbounded wait.
+func (s *Server) WaitJobExit(ctx context.Context, req *vmmdpb.WaitJobExitRequest) (*vmmdpb.JobExitResponse, error) {
+	const op = "WaitJobExit"
+	start := time.Now()
+	jobVMM, ok := s.vmm.(JobVMMAPI)
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Job execution unavailable", "vmmd job execution is not configured")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	if req.GetInstance() == "" {
+		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid job exit request", "instance is required")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	deadline := fcvm.JobDestroyWaitDefault
+	if until, ok := ctx.Deadline(); ok {
+		deadline = time.Until(until)
+		if deadline <= 0 {
+			err := api.NewProblem(int(codes.DeadlineExceeded), api.CodeInternal,
+				"Job exit wait timed out", "job exit deadline elapsed")
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, grpcerr.ToStatus(err)
+		}
+	}
+	payload, err := jobVMM.WaitJobExit(ctx, req.GetInstance(), deadline)
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.JobExitResponse{
+		ExitCode:           payload.ExitCode,
+		ErrorClass:         payload.ErrorClass,
+		Signal:             payload.Signal,
+		FinishedAtUnixNano: payload.FinishedAtUnixNano,
+		LeaseToken:         payload.LeaseToken,
+	}, nil
 }
 
 // PauseAndSnapshot parks an instance, writing its full snapshot. Destroy

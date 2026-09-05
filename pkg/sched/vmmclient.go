@@ -559,6 +559,50 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	return outcomeFromProto(resp), nil
 }
 
+// JobColdBoot starts one claimed job task through vmmd. The job path is kept
+// separate from AppSpec because it has no readiness probe or snapshot shape.
+func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	resp, err := c.cli.JobColdBoot(ctx, &vmmdpb.JobColdBootRequest{
+		Instance:       spec.InstanceID,
+		AccountId:      spec.AccountID,
+		NodeId:         spec.NodeID,
+		Plan:           string(spec.Plan),
+		RunId:          spec.RunID,
+		TaskIndex:      int32(spec.TaskIndex),
+		ImageRef:       spec.ImageRef,
+		KernelKey:      spec.KernelKey,
+		BaseKey:        spec.BaseKey,
+		Command:        append([]string(nil), spec.Command...),
+		Env:            spec.Env,
+		VcpuCount:      int32(spec.VcpuCount),
+		MemSizeMib:     int32(spec.RAMMB),
+		TaskTimeoutSec: int32(spec.TaskTimeoutSec),
+		LeaseToken:     spec.LeaseToken,
+	})
+	if err != nil {
+		return JobVmmResult{}, liftErr(err)
+	}
+	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId()}, nil
+}
+
+// WaitJobExit waits for the guest supervisor's terminal receipt. The caller
+// owns the task deadline on ctx; vmmd also applies its own bounded fallback.
+func (c *VMMClient) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitResult, error) {
+	resp, err := c.cli.WaitJobExit(ctx, &vmmdpb.WaitJobExitRequest{Instance: spec.InstanceID})
+	if err != nil {
+		return JobExitResult{}, liftErr(err)
+	}
+	return JobExitResult{
+		ExitCode:           int(resp.GetExitCode()),
+		ErrorClass:         resp.GetErrorClass(),
+		Signal:             int(resp.GetSignal()),
+		FinishedAtUnixNano: resp.GetFinishedAtUnixNano(),
+		LeaseToken:         resp.GetLeaseToken(),
+	}, nil
+}
+
 func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)

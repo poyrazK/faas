@@ -402,6 +402,41 @@ func (r *VMMRouter) CreateColdBoot(ctx context.Context, nodeID, instance string,
 	return cli.CreateColdBoot(ctx, instance, app)
 }
 
+type jobVMMClient interface {
+	JobColdBoot(context.Context, JobVmmSpec) (JobVmmResult, error)
+	WaitJobExit(context.Context, JobExitSpec) (JobExitResult, error)
+}
+
+// JobColdBoot routes a claimed job task to its owning vmmd. Job RPCs are
+// optional on the per-node client interface so older test doubles and nodes
+// can continue serving the ordinary VM lifecycle surface.
+func (r *VMMRouter) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+	cli, err := r.resolveFor(ctx, spec.NodeID)
+	if err != nil {
+		return JobVmmResult{}, err
+	}
+	jobClient, ok := cli.(jobVMMClient)
+	if !ok {
+		return JobVmmResult{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Job execution unavailable", "vmmd client does not support jobs")
+	}
+	return jobClient.JobColdBoot(ctx, spec)
+}
+
+// WaitJobExit routes the exit wait to the same vmmd that owns the task VM.
+func (r *VMMRouter) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitResult, error) {
+	cli, err := r.resolveFor(ctx, spec.NodeID)
+	if err != nil {
+		return JobExitResult{}, err
+	}
+	jobClient, ok := cli.(jobVMMClient)
+	if !ok {
+		return JobExitResult{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Job execution unavailable", "vmmd client does not support jobs")
+	}
+	return jobClient.WaitJobExit(ctx, spec)
+}
+
 // CreateFromSnapshot implements RoutedVMM.
 func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
 	cli, err := r.resolveFor(ctx, nodeID)

@@ -15,10 +15,10 @@
 // healthy schedd.
 //
 // On a match the reaper:
-//   1. SIGKILL via vmmd (M7) — the VM may still be alive if vmmd
-//      survived the schedd death; this frees the tenant RAM slot.
-//   2. JobTaskMarkTerminal(timeout) — the row settles to
+//   1. JobTaskMarkTerminal(timeout) atomically settles the row to
 //      status='timeout' so JobRunRecompute can settle the aggregate.
+//   2. SIGKILL/destroy via vmmd (M7) — the VM may still be alive if vmmd
+//      survived the schedd death; this frees the tenant RAM slot.
 //   3. Lease columns are cleared as part of MarkTaskTerminal.
 //
 // Idempotent: a reaper sweep racing with a healthy schedd's
@@ -32,6 +32,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -97,6 +98,14 @@ func (e *Engine) ReapStuckJobTasks(ctx context.Context, cfg StuckJobReaperConfig
 	}
 	reclaimed := 0
 	for _, t := range stuck {
+		instanceID := ""
+		if t.InstanceID != nil {
+			instanceID = *t.InstanceID
+		}
+		nodeID := e.ownerNodeID
+		if t.LastLeaseNode != nil && *t.LastLeaseNode != "" {
+			nodeID = *t.LastLeaseNode
+		}
 		// The MarkTaskTerminal transition is the atomic "reclaim"
 		// — once it commits, the lease_token / lease_expires_at
 		// columns are cleared (per the UPDATE shape in
@@ -116,6 +125,12 @@ func (e *Engine) ReapStuckJobTasks(ctx context.Context, cfg StuckJobReaperConfig
 			continue
 		}
 		reclaimed++
+		if t.LeaseToken != nil && e.jobLeaser != nil {
+			if err := e.jobLeaser.Release(ctx, LeaseToken(*t.LeaseToken), nodeID); err != nil && !errors.Is(err, ErrLeaseNotFound) {
+				e.log.Warn("sched: release reaped job lease", "run", t.RunID, "task", t.TaskIndex, "err", err)
+			}
+		}
+		e.cleanupJobInstance(ctx, instanceID, nodeID, "job_reaper_timeout")
 		// Settle the parent run's aggregate counters. Best-effort:
 		// the next dispatch tick + a successful HandleJobExit will
 		// also drive recompute; double-recompute is harmless.

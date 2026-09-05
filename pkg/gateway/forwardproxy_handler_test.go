@@ -104,6 +104,12 @@ func (s *stubVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromS
 func (s *stubVmmdClient) CreateColdBoot(context.Context, *vmmdpb.CreateColdBootRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateColdBoot: not stubbed in handler integration test")
 }
+func (s *stubVmmdClient) JobColdBoot(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
+	panic("JobColdBoot: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
+	panic("WaitJobExit: not stubbed in handler integration test")
+}
 func (s *stubVmmdClient) PauseAndSnapshot(context.Context, *vmmdpb.PauseAndSnapshotRequest, ...grpc.CallOption) (*vmmdpb.SnapshotResponse, error) {
 	panic("PauseAndSnapshot: not stubbed in handler integration test")
 }

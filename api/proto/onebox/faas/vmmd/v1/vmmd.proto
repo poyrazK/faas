@@ -26,6 +26,15 @@ service Vmmd {
   // first-boot path (M2). Equivalent to Wake with Snapshot == nil.
   rpc CreateColdBoot(CreateColdBootRequest) returns (WakeResponse);
 
+  // JobColdBoot starts a non-listening job-task VM. Jobs own their image,
+  // command, environment, and timeout, so they use a dedicated flat wire
+  // shape instead of AppSpec and never enter the snapshot/readiness path.
+  rpc JobColdBoot(JobColdBootRequest) returns (JobColdBootResponse);
+
+  // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
+  // The caller supplies the deadline on the gRPC context.
+  rpc WaitJobExit(WaitJobExitRequest) returns (JobExitResponse);
+
   // PauseAndSnapshot pauses the VM and writes a full snapshot to the
   // requested host-side paths, then destroys the live VM. After return the
   // instance is gone (§6.1: PARKED is zero-RAM).
@@ -711,6 +720,44 @@ message CreateColdBootRequest {
   // WakeID (issue #517 / ADR-061) — same semantics as
   // CreateFromSnapshotRequest.wake_id.
   string wake_id = 6;
+}
+
+// JobColdBoot is the schedd → vmmd envelope for one claimed job task.
+// vmmd remains stateless about jobs; all scheduling identity is carried here
+// so the guest supervisor can authenticate its exit receipt.
+message JobColdBootRequest {
+  string instance = 1;
+  string account_id = 2;
+  string node_id = 3;
+  string plan = 4;
+  string run_id = 5;
+  int32 task_index = 6;
+  string image_ref = 7;
+  string kernel_key = 8;
+  string base_key = 9;
+  repeated string command = 10;
+  map<string, string> env = 11;
+  int32 vcpu_count = 12;
+  int32 mem_size_mib = 13;
+  int32 task_timeout_sec = 14;
+  string lease_token = 15;
+}
+
+message JobColdBootResponse {
+  string instance = 1;
+  string node_id = 2;
+}
+
+message WaitJobExitRequest {
+  string instance = 1;
+}
+
+message JobExitResponse {
+  int32 exit_code = 1;
+  string error_class = 2;
+  int32 signal = 3;
+  int64 finished_at_unix_nano = 4;
+  string lease_token = 5;
 }
 
 // BuildSpec identifies an instance as a builder VM. vmmd's Destroy waits for

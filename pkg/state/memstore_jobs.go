@@ -442,6 +442,9 @@ func (m *MemStore) JobRunCancel(_ context.Context, runID string) (JobRun, error)
 	for i, t := range tasks {
 		if t.Status == "queued" || t.Status == "claimed" {
 			t.Status = "cancelled"
+			t.LeaseToken = nil
+			t.LeaseExpiresAt = nil
+			t.LastLeaseNode = nil
 			if t.FinishedAt == nil {
 				t.FinishedAt = &now
 			}
