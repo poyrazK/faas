@@ -13,7 +13,9 @@ gregale dev
 
 The CLI detects the application shape, uploads the current working tree
 (including uncommitted changes), waits for the real build, prints a stable URL,
-and watches deployable files for the next change.
+and watches deployable files for the next change. Watching continues while a
+build is running. If another settled edit arrives, Gregale cancels the obsolete
+deployment and builds the newest source instead of letting old saves queue up.
 
 The first sync uploads a complete source snapshot. Later edits transfer only
 new, changed, and deleted archive entries when that is smaller than the full

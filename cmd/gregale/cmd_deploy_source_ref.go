@@ -63,11 +63,14 @@ import (
 // whatever resolveDeployedBy produced (which may be the auto-
 // captured git config user.name).
 func cmdDeployRepoSourceRef(slug, repo, ref string, ann api.DeployAnnotations) int {
+	return cmdDeployRepoSourceRefContext(context.Background(), slug, repo, ref, ann)
+}
+
+func cmdDeployRepoSourceRefContext(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
 	req := api.SourceRefDeployRequest{
 		Repo:       repo,
 		Ref:        ref,
@@ -109,5 +112,5 @@ func cmdDeployRepoSourceRef(slug, repo, ref string, ann api.DeployAnnotations) i
 		// section.
 		return jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
 	}
-	return streamDeployLogs(client, dep)
+	return streamDeployLogsContext(ctx, client, dep)
 }
