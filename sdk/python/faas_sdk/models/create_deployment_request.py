@@ -84,6 +84,12 @@ class CreateDeploymentRequest:
     canary: CanaryPresetSpec | None | Unset = UNSET
     """Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'.
     For preset='custom', stages carries the customer ladder."""
+    full_rootfs_allow_auto: bool | None | Unset = UNSET
+    """Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses
+    the plan default."""
+    full_rootfs_override: bool | None | Unset = UNSET
+    """Tri-state full-rootfs override: null uses the plan default, true forces full-rootfs, false forces the
+    shared-base path."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -176,6 +182,18 @@ class CreateDeploymentRequest:
         else:
             canary = self.canary
 
+        full_rootfs_allow_auto: bool | None | Unset
+        if isinstance(self.full_rootfs_allow_auto, Unset):
+            full_rootfs_allow_auto = UNSET
+        else:
+            full_rootfs_allow_auto = self.full_rootfs_allow_auto
+
+        full_rootfs_override: bool | None | Unset
+        if isinstance(self.full_rootfs_override, Unset):
+            full_rootfs_override = UNSET
+        else:
+            full_rootfs_override = self.full_rootfs_override
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -205,6 +223,10 @@ class CreateDeploymentRequest:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
         if canary is not UNSET:
             field_dict["canary"] = canary
+        if full_rootfs_allow_auto is not UNSET:
+            field_dict["full_rootfs_allow_auto"] = full_rootfs_allow_auto
+        if full_rootfs_override is not UNSET:
+            field_dict["full_rootfs_override"] = full_rootfs_override
 
         return field_dict
 
@@ -381,6 +403,24 @@ class CreateDeploymentRequest:
 
         canary = _parse_canary(d.pop("canary", UNSET))
 
+        def _parse_full_rootfs_allow_auto(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        full_rootfs_allow_auto = _parse_full_rootfs_allow_auto(d.pop("full_rootfs_allow_auto", UNSET))
+
+        def _parse_full_rootfs_override(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        full_rootfs_override = _parse_full_rootfs_override(d.pop("full_rootfs_override", UNSET))
+
         create_deployment_request = cls(
             image=image,
             overrides=overrides,
@@ -395,6 +435,8 @@ class CreateDeploymentRequest:
             pr_number=pr_number,
             rollback_on_5xx=rollback_on_5xx,
             canary=canary,
+            full_rootfs_allow_auto=full_rootfs_allow_auto,
+            full_rootfs_override=full_rootfs_override,
         )
 
         create_deployment_request.additional_properties = d

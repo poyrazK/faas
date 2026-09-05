@@ -1504,6 +1504,15 @@ type Deployment struct {
 	// transiently at the pull path (mirrors app_env_secret
 	// unseal at the same seam).
 	Sidecars json.RawMessage `json:"sidecars,omitempty"`
+	// FullRootfsAllowAuto permits automatic fallback to the self-contained
+	// full-rootfs assembly path when an OCI image is not based on Gregale's
+	// shared runtime base. Paid plans may opt into this per deployment;
+	// Free remains opt-in through FullRootfsOverride.
+	FullRootfsAllowAuto bool `json:"full_rootfs_allow_auto,omitempty"`
+	// FullRootfsOverride is a nullable per-deployment override. nil honors
+	// the plan/auto policy, true forces full-rootfs assembly, and false
+	// preserves the strict shared-base behavior.
+	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
 	// Workflows is the validated ADR-081 workflow definition set attached
 	// to this deployment. Keeping it on the deployment row makes the live
 	// deployment the source of truth for new run snapshots.

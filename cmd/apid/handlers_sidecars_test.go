@@ -31,6 +31,39 @@ func TestBuildDeploymentForInsert_ServiceDefaultsToReadinessRollout(t *testing.T
 	}
 }
 
+func TestBuildDeploymentForInsert_FullRootfsPlanDefaultAndOverride(t *testing.T) {
+	app := state.App{ID: "app-full-rootfs"}
+	limits := testSidecarLimits()
+
+	paid, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{Image: "sha256:test"}, nil, limits, api.PlanHobby)
+	if problem != nil {
+		t.Fatalf("paid buildDeploymentForInsert: %v", problem)
+	}
+	if !paid.FullRootfsAllowAuto {
+		t.Fatal("paid plan should default full-rootfs auto-fallback on")
+	}
+
+	free, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{Image: "sha256:test"}, nil, limits, api.PlanFree)
+	if problem != nil {
+		t.Fatalf("free buildDeploymentForInsert: %v", problem)
+	}
+	if free.FullRootfsAllowAuto {
+		t.Fatal("Free plan should default full-rootfs auto-fallback off")
+	}
+
+	falseValue := false
+	trueValue := true
+	explicit, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{
+		Image: "sha256:test", FullRootfsAllowAuto: &falseValue, FullRootfsOverride: &trueValue,
+	}, nil, limits, api.PlanHobby)
+	if problem != nil {
+		t.Fatalf("explicit buildDeploymentForInsert: %v", problem)
+	}
+	if explicit.FullRootfsAllowAuto || explicit.FullRootfsOverride == nil || !*explicit.FullRootfsOverride {
+		t.Fatalf("explicit full-rootfs policy = auto:%t override:%v", explicit.FullRootfsAllowAuto, explicit.FullRootfsOverride)
+	}
+}
+
 // testSidecarLimits returns the per-plan Limits table
 // the apid gate reads (cmd/apid/main.go populates this at
 // boot from pkg/api::planLimits via the exported LimitsFor

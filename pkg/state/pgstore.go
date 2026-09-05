@@ -4593,10 +4593,11 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          rollout_started_at,
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
-		                          reason, tag, deployed_by, pr_number, workflows)
+		                          reason, tag, deployed_by, pr_number, workflows,
+		                          full_rootfs_allow_auto, full_rootfs_override)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', $19, $20, $21, $22, coalesce(nullif($23, ''), 'default'),
 		         nullif($24, '')::uuid, coalesce(nullif($25, ''), 'api'), nullif($26, '')::inet, nullif($27, ''),
-		         $28, $29, $30, nullif($31, 0), $32)
+		         $28, $29, $30, nullif($31, 0), $32, $33, $34)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.Handler), nullString(d.LogPath),
@@ -4635,7 +4636,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// collapses to NULL rather than tripping the
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
-		notNullEmptyJSONRaw(d.Workflows))
+		notNullEmptyJSONRaw(d.Workflows),
+		d.FullRootfsAllowAuto, d.FullRootfsOverride)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -16917,7 +16919,8 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(priority, 100), coalesce(reordered_by_principal, ''), reordered_at,
 	cancelled_at, coalesce(cancelled_by_principal, ''), coalesce(cancel_reason, ''),
 	deleted_at, coalesce(deleted_by_principal, ''),
-	coalesce(workflows, '[]'::jsonb)`
+	coalesce(workflows, '[]'::jsonb),
+	coalesce(full_rootfs_allow_auto, false), full_rootfs_override`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -16968,7 +16971,8 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.priority, 100), coalesce(d.reordered_by_principal, ''), d.reordered_at,
 	d.cancelled_at, coalesce(d.cancelled_by_principal, ''), coalesce(d.cancel_reason, ''),
 	d.deleted_at, coalesce(d.deleted_by_principal, ''),
-	coalesce(d.workflows, '[]'::jsonb)`
+	coalesce(d.workflows, '[]'::jsonb),
+	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -17077,6 +17081,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.Priority, &d.ReorderedByPrincipal, &d.ReorderedAt,
 		&d.CancelledAt, &d.CancelledByPrincipal, &d.CancelReason,
 		&d.DeletedAt, &d.DeletedByPrincipal, &d.Workflows,
+		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 	); err != nil {
 		return mapErr(err)
 	}

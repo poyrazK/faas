@@ -469,6 +469,21 @@ func (b *callCountingBuilder) BuildBaseFromStaging(ctx context.Context, staging 
 	return rootfs.BaseBuildResult{ImageKey: in.StorageKey}, nil
 }
 
+// BuildFullRootfs (M-3 commit 5+6) is part of the LayerBuilder
+// interface. The full-rootfs build path (ADR-141 §Decision 1) is
+// only reachable via the dispatch table in dispatchFullRootfs;
+// tests in this file exercise the base stage which never enters
+// the full-rootfs branch, so this is a no-op placeholder that
+// still satisfies the interface. Tests that DO want to drive the
+// full-rootfs dispatch should use the `fullRootfs*` builders
+// instead.
+func (b *callCountingBuilder) BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error) {
+	if in.Storage != nil && in.StorageKey != "" {
+		_ = in.Storage.Put(ctx, in.StorageKey, bytes.NewReader([]byte("fake ext4 full-rootfs")))
+	}
+	return rootfs.BuildResult{ImageKey: in.StorageKey}, nil
+}
+
 // failingBuilder always errors from BuildBase. Used to prove cleanup of
 // the .tmp file on failure.
 type failingBuilder struct{ err error }
@@ -481,6 +496,9 @@ func (b *failingBuilder) BuildBase(_ context.Context, _ rootfs.BaseBuildInput) (
 }
 func (b *failingBuilder) BuildBaseFromStaging(_ context.Context, _ string, _ rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
 	return rootfs.BaseBuildResult{}, b.err
+}
+func (b *failingBuilder) BuildFullRootfs(_ context.Context, _ rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error) {
+	return rootfs.BuildResult{}, b.err
 }
 
 // TestEnsureBaseExt4_PerArchPartition — issue #197 B3.3. The same

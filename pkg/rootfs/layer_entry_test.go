@@ -16,7 +16,7 @@ import (
 func TestApplyEntry_TypeDir(t *testing.T) {
 	dir := t.TempDir()
 	hdr := &tar.Header{Name: "sub", Mode: 0o755, Typeflag: tar.TypeDir}
-	if err := applyEntry(dir, filepath.Join(dir, "sub"), hdr, nil); err != nil {
+	if err := applyEntry(dir, filepath.Join(dir, "sub"), hdr, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(filepath.Join(dir, "sub"))
@@ -35,7 +35,7 @@ func TestApplyEntry_TypeRegTruncatesExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	hdr := &tar.Header{Name: "f", Mode: 0o644, Typeflag: tar.TypeReg, Size: 2}
-	if err := applyEntry(dir, target, hdr, strings.NewReader("OK")); err != nil {
+	if err := applyEntry(dir, target, hdr, strings.NewReader("OK"), nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(target)
@@ -59,7 +59,7 @@ func TestApplyEntry_TypeRegReplacesExistingSymlink(t *testing.T) {
 	}
 
 	hdr := &tar.Header{Name: "bin/dmesg", Mode: 0o755, Typeflag: tar.TypeReg, Size: 3}
-	if err := applyEntry(dir, target, hdr, strings.NewReader("new")); err != nil {
+	if err := applyEntry(dir, target, hdr, strings.NewReader("new"), nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(target)
@@ -94,7 +94,7 @@ func TestApplyEntry_SymlinkAbsoluteTargetIsVerbatim(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "link")
 	hdr := &tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/etc/hostname"}
-	if err := applyEntry(dir, target, hdr, nil); err != nil {
+	if err := applyEntry(dir, target, hdr, nil, nil); err != nil {
 		t.Fatalf("applyEntry rejected an absolute symlink target: %v", err)
 	}
 	got, err := os.Readlink(target)
@@ -114,7 +114,7 @@ func TestApplyEntry_HardlinkResolvesRelativeToBase(t *testing.T) {
 	target := filepath.Join(dir, "alias")
 	// Linkname relative to the archive root (== base in applyEntry).
 	hdr := &tar.Header{Name: "alias", Typeflag: tar.TypeLink, Linkname: "real"}
-	if err := applyEntry(dir, target, hdr, nil); err != nil {
+	if err := applyEntry(dir, target, hdr, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(target)
@@ -134,7 +134,7 @@ func TestApplyEntry_HardlinkRejectsPathEscape(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "evil")
 	hdr := &tar.Header{Name: "evil", Typeflag: tar.TypeLink, Linkname: "../../etc/passwd"}
-	if err := applyEntry(dir, target, hdr, nil); err == nil {
+	if err := applyEntry(dir, target, hdr, nil, nil); err == nil {
 		t.Fatal("expected path-escape rejection on hardlink linkname")
 	}
 }
@@ -144,7 +144,7 @@ func TestApplyEntry_UnsupportedTypeReturnsNil(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "dev")
 	hdr := &tar.Header{Name: "dev", Typeflag: tar.TypeChar}
-	if err := applyEntry(dir, target, hdr, nil); err != nil {
+	if err := applyEntry(dir, target, hdr, nil, nil); err != nil {
 		t.Errorf("char entry should be skipped, got %v", err)
 	}
 	if _, err := os.Lstat(target); !os.IsNotExist(err) {
@@ -161,7 +161,7 @@ func TestApplyEntry_TypeRegBadPathReturnsWrapped(t *testing.T) {
 	}
 	target := filepath.Join(dir, "block", "nested", "file")
 	hdr := &tar.Header{Name: "block/nested/file", Mode: 0o644, Typeflag: tar.TypeReg, Size: 1}
-	if err := applyEntry(dir, target, hdr, bytes.NewReader([]byte("x"))); err == nil {
+	if err := applyEntry(dir, target, hdr, bytes.NewReader([]byte("x")), nil); err == nil {
 		t.Fatal("expected error when parent is a regular file")
 	}
 }

@@ -356,8 +356,17 @@ func TestHandleDeployment_RealBuild_BaseMismatchErrors(t *testing.T) {
 	if got.Status != state.DeployFailed {
 		t.Errorf("status = %s, want failed", got.Status)
 	}
-	if !strings.Contains(got.Error, "above base") {
-		t.Errorf("error %q should mention 'above base'", got.Error)
+	// ADR-141 §Decision 3: the prefix-check failure now surfaces
+	// the typed ErrLayersNotAboveBase sentinel (commit 4). The
+	// dispatch skeleton in buildImageLayer routes the sentinel
+	// through dispatchFullRootfs (still a stub until commit 6),
+	// so the persisted error carries the stub's "full-rootfs
+	// build path is not yet wired" message. Free plan + no
+	// override + no commit-6 wiring yet → today-equivalent
+	// failure, surfaced as DeployFailed with the canonical
+	// sentinel lifted to CodeImageManifestInvalid.
+	if !strings.Contains(got.Error, "above base") && !strings.Contains(got.Error, "full-rootfs") {
+		t.Errorf("error %q should mention 'above base' or 'full-rootfs'", got.Error)
 	}
 }
 

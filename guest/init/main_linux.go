@@ -26,10 +26,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Guest device layout (spec §4.6): drive0 (vda) is the shared read-only base and
-// the kernel root; drive1 (vdb) is the per-app writable layer. guest-init mounts
-// vdb, builds an overlay with the base as the read-only lower and the layer as
-// the writable upper, pivots into it, then execs the app.
+// Guest device layout (spec §4.6): the normal two-drive path uses drive0
+// (vda) as the shared read-only base and drive1 (vdb) as the per-app writable
+// layer. Full-rootfs artifacts also use drive1 for wire compatibility, but
+// carry a trusted marker and are pivoted into directly without the shared-base
+// overlay.
 const (
 	layerDevice        = "/dev/vdb"
 	layerMount         = "/overlay"
@@ -65,11 +66,12 @@ func boot() error {
 		return fmt.Errorf("mount basics: %w", err)
 	}
 	guestStage("mount-basics")
-	if err := assembleOverlay(); err != nil {
+	root, err := assembleOverlay()
+	if err != nil {
 		return fmt.Errorf("assemble overlay: %w", err)
 	}
 	guestStage("assemble-overlay")
-	if err := pivotInto(newRoot); err != nil {
+	if err := pivotInto(root); err != nil {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 	guestStage("pivot")
@@ -1627,16 +1629,33 @@ func mountBasics() error {
 // roster file unless a /etc/faas/workloads.json on drive1 lists
 // sidecars. Pre-PR-B VMs never had a roster file, so this keeps the
 // legacy shape working unchanged.
-func assembleOverlay() error {
+func assembleOverlay() (string, error) {
 	if err := os.MkdirAll(layerMount, 0o755); err != nil {
-		return err
+		return "", err
 	}
 	if err := syscall.Mount(layerDevice, layerMount, "ext4", 0, ""); err != nil {
-		return fmt.Errorf("mount layer %s: %w", layerDevice, err)
+		return "", fmt.Errorf("mount layer %s: %w", layerDevice, err)
+	}
+	// Full-rootfs artifacts contain all OCI layers and a marker written by
+	// pkg/rootfs.BuildFullRootfs. They use the existing layer device slot for
+	// wire compatibility, but must become the pivot root directly; stacking
+	// them as an overlay upper would leave the shared base visible underneath.
+	marker := filepath.Join(layerMount, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
+	if _, err := os.Stat(marker); err == nil {
+		content, readErr := os.ReadFile(marker)
+		if readErr != nil {
+			return "", fmt.Errorf("read full-rootfs marker: %w", readErr)
+		}
+		if string(content) != api.FullRootfsMarkerValue {
+			return "", fmt.Errorf("invalid full-rootfs marker payload")
+		}
+		return layerMount, nil
+	} else if !isNotExist(err) {
+		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
 	}
 	for _, d := range []string{"upper", "work", "merged"} {
 		if err := os.MkdirAll(layerMount+"/"+d, 0o755); err != nil {
-			return err
+			return "", err
 		}
 	}
 	// PR-B: discover sidecar count by reading the roster on drive1.
@@ -1646,15 +1665,15 @@ func assembleOverlay() error {
 	// read-only lowers.
 	sidecarDevices, err := discoverSidecarDevices(layerMount)
 	if err != nil {
-		return fmt.Errorf("discover sidecars: %w", err)
+		return "", fmt.Errorf("discover sidecars: %w", err)
 	}
 	for _, dev := range sidecarDevices {
 		mp := layerMount + "/lower-" + dev.name
 		if err := os.MkdirAll(mp, 0o755); err != nil {
-			return fmt.Errorf("mkdir %s: %w", mp, err)
+			return "", fmt.Errorf("mkdir %s: %w", mp, err)
 		}
 		if err := syscall.Mount(dev.device, mp, "ext4", syscall.MS_RDONLY, ""); err != nil {
-			return fmt.Errorf("mount sidecar %s at %s: %w", dev.device, mp, err)
+			return "", fmt.Errorf("mount sidecar %s at %s: %w", dev.device, mp, err)
 		}
 	}
 	// Build lowerdir in stack order (lowest precedence first): base
@@ -1669,9 +1688,9 @@ func assembleOverlay() error {
 		",upperdir=" + layerMount + "/upper" +
 		",workdir=" + layerMount + "/work"
 	if err := syscall.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {
-		return fmt.Errorf("mount overlay: %w", err)
+		return "", fmt.Errorf("mount overlay: %w", err)
 	}
-	return nil
+	return newRoot, nil
 }
 
 // sidecarDevice (issue #463 / ADR-069 / PR-B) is one entry on the
@@ -1776,9 +1795,21 @@ func pivotInto(root string) error {
 
 // lookupUID resolves the app user name to a uid. The runner images create the
 // app user at DefaultAppUID; unknown users fall back to that.
+//
+// M-3 commit 8: when the full-rootfs path is active, the
+// builder writes the merged /etc/passwd entries into
+// /etc/faas/app_passwd (binary table, see pkg/rootfs/writePasswdTable).
+// This function reads that table when present. Missing file /
+// missing entry → fall back to DefaultAppUID (1000) so the
+// two-drive legacy path is unaffected.
+//
+// ADR-142 §Decision 3 (binary-search reader).
 func lookupUID(user string) int {
 	if user == api.DefaultAppUser {
 		return api.DefaultAppUID
+	}
+	if uid, ok := readPasswdTable(user); ok {
+		return uid
 	}
 	return api.DefaultAppUID
 }

@@ -158,6 +158,14 @@ type BuildInput struct {
 	// validateOutputTarget's sibling check). When SBOMRun is nil,
 	// SBOMStorageKey is ignored.
 	SBOMStorageKey string
+	// FullRootfs, when true, routes the build through BuildFullRootfs
+	// instead of the two-drive path (ADR-141 §Decision 1). The
+	// caller supplies the deployment's `FullRootfsOverride` /
+	// `FullRootfsAllowAuto` decision (state.Deployment widens in
+	// commit 6); commit 5 lays the flag wiring only. Default
+	// false preserves today's two-drive behaviour for every
+	// existing caller.
+	FullRootfs bool
 }
 
 // BuildResult reports the produced layer.
@@ -180,6 +188,29 @@ type BuildResult struct {
 
 // Build runs the pipeline. It stages into a temp dir that is always removed.
 func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error) {
+	// ADR-141 §Decision 1: when FullRootfs is true, Build forwards
+	// to BuildFullRootfs. The two paths share Validate() +
+	// validateOutputTarget + the InjectManifest / InjectGuestInit /
+	// mkfs helpers; the only divergence is the layer-application
+	// loop (full-rootfs applies ALL layers, no LayersAboveBase) and
+	// the absence of the /upper staging step (full-rootfs images
+	// become drive0+vda in the guest, not drive1).
+	if in.FullRootfs {
+		return b.BuildFullRootfs(ctx, BuildFullRootfsInput{
+			Layers:              in.Layers,
+			Manifest:            in.Manifest,
+			GuestInitPath:       in.GuestInitPath,
+			Plan:                in.Plan,
+			Storage:             in.Storage,
+			StorageKey:          in.StorageKey,
+			OutImage:            in.OutImage,
+			TarballPath:         in.TarballPath,
+			FunctionHandlerPath: in.FunctionHandlerPath,
+			FunctionRunnerPath:  in.FunctionRunnerPath,
+			SBOMRun:             in.SBOMRun,
+			SBOMStorageKey:      in.SBOMStorageKey,
+		})
+	}
 	limits, ok := api.LimitsFor(in.Plan)
 	if !ok {
 		return BuildResult{}, fmt.Errorf("rootfs: unknown plan %q", in.Plan)
@@ -201,6 +232,13 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		if err := ApplyLayerGz(staging, layer); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
+	}
+	// A customer image must not be able to smuggle the full-rootfs marker
+	// into the optimized two-drive artifact and make guest-init bypass the
+	// shared base. Only BuildFullRootfs writes the marker after all layers
+	// have been applied.
+	if err := removeFullRootfsMarker(staging); err != nil {
+		return BuildResult{}, err
 	}
 	// Function-deploy path (spec §4.9, M7). When TarballPath is set the
 	// customer's source tarball is unpacked at /app; when
@@ -703,7 +741,7 @@ func applyTarballWithCap(dst string, r io.Reader, capBytes int64, prefix string)
 			if err != nil {
 				return err
 			}
-			if err := applyEntry(dst, target, hdr, tr); err != nil {
+			if err := applyEntry(dst, target, hdr, tr, nil); err != nil {
 				return err
 			}
 			continue

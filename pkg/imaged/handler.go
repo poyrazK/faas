@@ -72,6 +72,12 @@ type LayerBuilder interface {
 	// layers via ApplyLayerGz, and hands the dir here — mkfs +
 	// publish, no layer apply inside Build.
 	BuildBaseFromStaging(ctx context.Context, staging string, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error)
+	// BuildFullRootfs (ADR-141 §Decision 1)
+	// assembles a self-contained ext4 rootfs from ALL of the app
+	// image's layers — bypasses the two-drive shared-base path
+	// entirely. Used by imaged.buildFullRootfsLayer when the app
+	// image is NOT built FROM one of our runner-* bases.
+	BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error)
 }
 
 // Handler is the imaged orchestrator. It owns the transition walk that
@@ -1744,6 +1750,22 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// correct auth shape.
 		above, diffs, err := h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
 		if err != nil {
+			// ADR-141 §Decision 3 + §Decision 2: when the app image is
+			// not built FROM our runner-* base, dispatch on the
+			// tri-state FullRootfsAllowAuto / FullRootfsOverride
+			// fields (commit 6 widens state.Deployment). The
+			// typed sentinel is the ONLY signal the dispatch
+			// consults — never a string match — so future wrapping
+			// (telemetry, retries) cannot bypass the gate.
+			//
+			if errors.Is(err, oci.ErrLayersNotAboveBase) {
+				fullErr := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth)
+				if fullErr != nil {
+					_ = h.markDeployFailed(ctx, dep.ID, fullErr, "imaged: full-rootfs dispatch")
+					return fullErr
+				}
+				return nil
+			}
 			// aboveBaseLayers can surface any of the three puller-side
 			// sentinels (image-not-found on app manifest 404, invalid
 			// platform/manifest metadata, egress-denial on a private
@@ -3450,4 +3472,178 @@ func (h *Handler) emitWarmSnapshotStale(ctx context.Context, fcVersion string, b
 			"stale_count": staleThisApp,
 		})
 	}
+}
+
+// dispatchFullRootfs is the typed-sentinel gate that decides whether
+// the deployment proceeds via the full-rootfs build path
+// or surfaces today-equivalent failure (ADR-141 §Decision 2 +
+// §Decision 3).
+//
+// Tri-state resolution:
+//   - dep.FullRootfsOverride=&false → today-equivalent failure (force-off).
+//   - dep.FullRootfsOverride=&true  → full-rootfs (force-on, even on Free).
+//   - dep.FullRootfsOverride=nil:
+//   - dep.FullRootfsAllowAuto && paid plan → full-rootfs (auto).
+//   - else                              → today-equivalent failure.
+//
+// "Paid plan" means PlanHobby / PlanPro / PlanScale per
+// api.PlanMeetsMinimumPlan(_, PlanHobby). Free plan auto-fallback
+// is rejected; the customer MUST opt in via FullRootfsOverride=&true.
+// The two-drive path's behavior is unchanged for any image whose
+// layers prefix one of our runner-* bases.
+func (h *Handler) dispatchFullRootfs(
+	ctx context.Context,
+	app state.App,
+	dep state.Deployment,
+	acct state.Account,
+	manifest api.AppManifest,
+	appAuth *oci.BasicAuth,
+) error {
+	// guest-init's full-rootfs marker makes drive1 the complete pivot root and
+	// therefore bypasses the additional sidecar drives. Reject this combination
+	// before publishing the main artifact instead of silently starting without
+	// the declared sidecars.
+	if hasSidecars, err := deploymentHasSidecars(dep.Sidecars); err != nil {
+		return fmt.Errorf("%w: invalid sidecars for full-rootfs: %w", oci.ErrLayersNotAboveBase, err)
+	} else if hasSidecars {
+		return fmt.Errorf("%w: full-rootfs images cannot declare sidecars", oci.ErrLayersNotAboveBase)
+	}
+	if dep.FullRootfsOverride != nil && !*dep.FullRootfsOverride {
+		// Force-off: surface today-equivalent failure so pkg/api
+		// SentinelToCode maps to CodeImageManifestInvalid (422).
+		return fmt.Errorf("%w: customer forced two-drive path via FullRootfsOverride=&false", oci.ErrLayersNotAboveBase)
+	}
+	if dep.FullRootfsOverride != nil && *dep.FullRootfsOverride {
+		// Force-on: honor regardless of plan / AllowAuto.
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+	}
+	if dep.FullRootfsAllowAuto && api.PlanMeetsFullRootfs(acct.Plan) {
+		// Auto-dispatch: paid plans opt-in by default. Free plans
+		// must explicitly opt in via FullRootfsOverride=&true.
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+	}
+	// Default: today-equivalent failure on Free without override
+	// (and on any future plan whose AllowAuto=false without
+	// override).
+	return fmt.Errorf("%w: plan %s does not auto-dispatch to full-rootfs; pass FullRootfsOverride=&true to opt in",
+		oci.ErrLayersNotAboveBase, acct.Plan)
+}
+
+func deploymentHasSidecars(raw json.RawMessage) (bool, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+		return false, nil
+	}
+	var sidecars api.Sidecars
+	if err := json.Unmarshal(raw, &sidecars); err != nil {
+		return false, err
+	}
+	return len(sidecars) > 0, nil
+}
+
+// buildFullRootfsLayer pulls ALL of the app image's layers
+// (bottom-to-top), calls rootfs.Builder.BuildFullRootfs, and stamps
+// the resulting ext4 to the same appsKey the two-drive path uses
+// (ADR-141 §Decision 4: shared StorageKey shape). No drive0 base
+// pull — full-rootfs images are self-contained.
+//
+// The auth wire mirrors aboveBaseLayers (M6 two-drive path): the
+// app manifest + app blobs carry appAuth; no base is consulted.
+func (h *Handler) buildFullRootfsLayer(
+	ctx context.Context,
+	app state.App,
+	dep state.Deployment,
+	acct state.Account,
+	manifest api.AppManifest,
+	appAuth *oci.BasicAuth,
+) error {
+	mp, ok := h.oci.(oci.ManifestPuller)
+	if !ok {
+		return fmt.Errorf("imaged: full-rootfs requires oci.ManifestPuller; got %T", h.oci)
+	}
+	appRepo := repoWithHost(dep.ImageDigest)
+	if appRepo == "" {
+		return fmt.Errorf("imaged: cannot derive repo from %q", dep.ImageDigest)
+	}
+	start := time.Now()
+	appManifest, err := pullManifestWithAuth(ctx, mp, dep.ImageDigest, appAuth)
+	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
+	if err != nil {
+		return fmt.Errorf("imaged: full-rootfs manifest: %w", err)
+	}
+	// Issue #461 / ADR-062: stamp credential used after a
+	// successful app manifest pull on the full-rootfs path too —
+	// every authenticated pull above this line was either app
+	// manifest, app config, or app blob.
+	refHost := ""
+	if parsedRef, parseErr := oci.ParseReference(dep.ImageDigest); parseErr == nil {
+		refHost = parsedRef.APIHost()
+	}
+	h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
+
+	if len(appManifest.Layers) == 0 {
+		return fmt.Errorf("imaged: full-rootfs image has zero layers")
+	}
+	readers := make([]io.Reader, 0, len(appManifest.Layers))
+	closers := make([]io.Closer, 0, len(appManifest.Layers))
+	for _, l := range appManifest.Layers {
+		start := time.Now()
+		rc, err := pullBlobWithAuth(ctx, mp, appRepo, l.Digest, appAuth)
+		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(start))
+		if err != nil {
+			for _, c := range closers {
+				_ = c.Close()
+			}
+			return fmt.Errorf("imaged: full-rootfs pull blob %s: %w", l.Digest, err)
+		}
+		closers = append(closers, rc)
+		readers = append(readers, rc)
+	}
+	defer func() {
+		for _, c := range closers {
+			_ = c.Close()
+		}
+	}()
+
+	be, err := h.storageFor()
+	if err != nil {
+		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
+	}
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+
+	res, err := h.builder.BuildFullRootfs(ctx, rootfs.BuildFullRootfsInput{
+		Layers:         readers,
+		Manifest:       manifest,
+		GuestInitPath:  h.guestInitPath,
+		Plan:           acct.Plan,
+		Storage:        be,
+		StorageKey:     appsKey,
+		SBOMRun:        h.syftRun,
+		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
+		// BuildFullRootfs derives the image's merged /etc/passwd resolver
+		// while applying the pulled layers; no host-side passwd data is used.
+		Resolver: nil,
+	})
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build full-rootfs: "+err.Error())
+		return fmt.Errorf("imaged: build full-rootfs: %w", err)
+	}
+	h.updateBuildProvenanceSBOM(ctx, dep.ID, res.SBOMKey)
+	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, res.ContentBytes); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp full-rootfs: "+err.Error())
+		return fmt.Errorf("imaged: stamp full-rootfs: %w", err)
+	}
+	if err := h.replicateLayer(ctx, appsKey); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, err.Error())
+		return err
+	}
+	h.log.Info("imaged: build app layer (full-rootfs)",
+		"app", app.Slug,
+		"digest", dep.ImageDigest,
+		"key", res.ImageKey,
+		"bytes", res.ContentBytes,
+		"layers", len(appManifest.Layers),
+		"plan", string(acct.Plan),
+	)
+	return nil
 }
