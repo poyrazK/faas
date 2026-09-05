@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,12 +107,21 @@ func TestHTTPGatewaySynthExecuteStepPreservesDownstreamStatus(t *testing.T) {
 		if r.URL.Path != "/v1/invocations:dispatch" {
 			t.Fatalf("path = %q, want dispatch route", r.URL.Path)
 		}
+		if got := r.Header.Get("Authorization"); got != "Bearer workflow-token" {
+			t.Fatalf("Authorization = %q, want workflow bearer", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":503,"result":{"retry":true}}`))
 	}))
 	defer srv.Close()
 
-	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
+	h := &httpGatewaySynth{
+		client:     srv.Client(),
+		basePrefix: srv.URL,
+		mintInternalSvcToken: func(string) (string, error) {
+			return "workflow-token", nil
+		},
+	}
 	status, body, err := h.ExecuteStep(context.Background(), "app-1", "/flaky", http.MethodPost,
 		map[string]string{"content-type": "application/json"}, []byte(`{"input":1}`), time.Second)
 	if err != nil {
@@ -122,5 +132,16 @@ func TestHTTPGatewaySynthExecuteStepPreservesDownstreamStatus(t *testing.T) {
 	}
 	if string(body) != `{"retry":true}` {
 		t.Fatalf("body = %s, want retry result", body)
+	}
+}
+
+func TestHTTPGatewaySynthExecuteStepRequiresWorkflowTokenMinter(t *testing.T) {
+	h := &httpGatewaySynth{
+		client:     http.DefaultClient,
+		basePrefix: "http://127.0.0.1:1",
+	}
+	_, _, err := h.ExecuteStep(context.Background(), "app-1", "/step", http.MethodPost, nil, nil, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "workflow invocation requires internal service token minter") {
+		t.Fatalf("err = %v, want missing workflow token minter", err)
 	}
 }

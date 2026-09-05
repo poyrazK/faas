@@ -1165,6 +1165,32 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return app.PublicAuthMode
 		})
+	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, stepName string, attempt int) error {
+		run, err := pgStore.GetWorkflowRun(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("load workflow run: %w", err)
+		}
+		if run.AppID != appID {
+			return fmt.Errorf("workflow run belongs to another app")
+		}
+		if run.Status != state.WorkflowRunStatusRunning {
+			return fmt.Errorf("workflow run is %s", run.Status)
+		}
+		steps, err := pgStore.GetWorkflowSteps(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("load workflow steps: %w", err)
+		}
+		for _, step := range steps {
+			if step.StepName != stepName {
+				continue
+			}
+			if step.Status != state.WorkflowStepStatusRunning || step.Attempt != attempt {
+				return fmt.Errorf("workflow step is no longer active")
+			}
+			return nil
+		}
+		return fmt.Errorf("workflow step %q not found", stepName)
+	})
 	// Process-local Prometheus registry (spec §12). Constructed here so
 	// every downstream consumer — handler, warm-hint consumer, top-N
 	// sampler — shares the same registry. The registry is exposed via
