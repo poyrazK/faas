@@ -49,8 +49,8 @@ func TestWorkflowOrchestrator_LinearSuccess(t *testing.T) {
 	spec := api.WorkflowSpec{
 		Name: "linear_flow",
 		Steps: []api.WorkflowStepSpec{
-			{Name: "step_1", Path: "/step1"},
-			{Name: "step_2", Path: "/step2", DependsOn: []string{"step_1"}},
+			{Name: "step_1", Run: "step1"},
+			{Name: "step_2", Run: "step2", DependsOn: []string{"step_1"}},
 		},
 	}
 	specBytes, _ := json.Marshal(spec)
@@ -83,6 +83,9 @@ func TestWorkflowOrchestrator_LinearSuccess(t *testing.T) {
 		if s.Status != state.WorkflowStepStatusSucceeded {
 			t.Fatalf("expected step %s succeeded, got %s", s.StepName, s.Status)
 		}
+	}
+	if exec.attempts["/step1"] != 1 || exec.attempts["/step2"] != 1 {
+		t.Fatalf("run targets = %#v, want /step1 and /step2", exec.attempts)
 	}
 }
 

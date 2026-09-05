@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -83,6 +84,24 @@ func workflowWaitDeadline(createdAt time.Time, timeout time.Duration) time.Time 
 		return time.Now().UTC().Add(workflowNoTimeoutWake)
 	}
 	return createdAt.Add(timeout)
+}
+
+// workflowStepPath resolves the target used by the HTTP wake executor.
+//
+// ADR-081's canonical wire format names a handler with `run`, while the
+// current gateway executor accepts an HTTP path. Keep the additive `path`
+// compatibility field working, and translate the canonical handler name to
+// the app route that invokes it. Both values are validated at the API
+// boundary, so the fallback cannot introduce a path separator or header
+// injection.
+func workflowStepPath(spec api.WorkflowStepSpec) string {
+	if path := strings.TrimSpace(spec.Path); path != "" {
+		return spec.Path
+	}
+	if run := strings.TrimSpace(spec.Run); run != "" {
+		return "/" + run
+	}
+	return ""
 }
 
 // workflowTimeoutHandlerDecision keeps an on_timeout target out of the normal
@@ -442,7 +461,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		timeout = 30 * time.Second
 	}
 
-	statusCode, body, err := o.executor.ExecuteStep(ctx, run.AppID, spec.Path, method, headers, inputBytes, timeout)
+	statusCode, body, err := o.executor.ExecuteStep(ctx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout)
 	duration := time.Since(start)
 
 	if err == nil && statusCode >= 200 && statusCode < 300 {
