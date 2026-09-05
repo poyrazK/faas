@@ -21,16 +21,16 @@ faas_legacy_units:
   - faas-gatewayd.service
   - faas-spool-sync.service
 
-# probe: systemd (is-active is the whole answer) | unix (socket path must
-# exist) | tcp (host:port must accept a connection). Mirrors
-# daemonunitspec.Lifecycle.{Probe,ProbeTarget}.
+# probe: systemd (is-active fallback) | unix (socket path fallback) | tcp
+# (host:port fallback). readyz_url is the dependency-aware HTTP gate and is
+# preferred by fleet_verify. Mirrors daemonunitspec.Lifecycle.
 faas_daemon_probes:
-  faas-vmmd.service: { probe: unix, target: /run/faas/vmmd.sock }
-  faas-apid.service: { probe: systemd, target: "" }
-  faas-schedd.service: { probe: unix, target: /run/faas/schedd.sock }
-  faas-gatewayd-internal.service: { probe: tcp, target: "127.0.0.1:9090" }
-  faas-gatewayd-public.service: { probe: tcp, target: "127.0.0.1:8080" }
-  faas-meterd.service: { probe: systemd, target: "" }
-  faas-githubd.service: { probe: systemd, target: "" }
-  faas-imaged.service: { probe: tcp, target: "127.0.0.1:9102" }
-  faas-builderd.service: { probe: unix, target: /run/faas/builderd.sock }
+  faas-vmmd.service: { probe: unix, target: /run/faas/vmmd.sock, readyz_url: "http://127.0.0.1:9104/readyz" }
+  faas-apid.service: { probe: systemd, target: "", readyz_url: "http://127.0.0.1:9101/readyz" }
+  faas-schedd.service: { probe: unix, target: /run/faas/schedd.sock, readyz_url: "http://127.0.0.1:9103/readyz" }
+  faas-gatewayd-internal.service: { probe: tcp, target: "127.0.0.1:9090", readyz_url: "http://127.0.0.1:9090/readyz" }
+  faas-gatewayd-public.service: { probe: tcp, target: "127.0.0.1:8080", readyz_url: "http://127.0.0.1:9092/readyz" }
+  faas-meterd.service: { probe: systemd, target: "", readyz_url: "http://127.0.0.1:9106/readyz" }
+  faas-githubd.service: { probe: systemd, target: "", readyz_url: "http://127.0.0.1:8083/readyz" }
+  faas-imaged.service: { probe: tcp, target: "127.0.0.1:9102", readyz_url: "http://127.0.0.1:9102/readyz" }
+  faas-builderd.service: { probe: unix, target: /run/faas/builderd.sock, readyz_url: "http://127.0.0.1:9105/readyz" }

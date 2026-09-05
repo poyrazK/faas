@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -543,6 +544,9 @@ func (r hostRuntime) waitReady(ctx context.Context, service string) error {
 	if r.waitReadyOverride != nil {
 		return r.waitReadyOverride(ctx, service)
 	}
+	if entry, ok := daemonEntry(service); ok && entry.Lifecycle.ReadyzURL != "" {
+		return r.waitHTTP(ctx, entry.Lifecycle.ReadyzURL)
+	}
 	probe, target, err := readinessProbeForService(service)
 	if err != nil {
 		return err
@@ -561,12 +565,19 @@ func (r hostRuntime) waitReady(ctx context.Context, service string) error {
 
 func (r hostRuntime) waitHTTP(ctx context.Context, address string) error {
 	deadline := time.Now().Add(r.readyTimeout)
+	lastStatus := 0
+	lastBody := ""
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 		if err == nil {
 			response, err := http.DefaultClient.Do(req)
 			if err == nil {
+				body, readErr := io.ReadAll(io.LimitReader(response.Body, 512))
 				_ = response.Body.Close()
+				lastStatus = response.StatusCode
+				if readErr == nil {
+					lastBody = strings.TrimSpace(string(body))
+				}
 				if response.StatusCode == http.StatusOK {
 					return nil
 				}
@@ -576,7 +587,13 @@ func (r hostRuntime) waitHTTP(ctx context.Context, address string) error {
 			return err
 		}
 	}
-	return fmt.Errorf("health check timed out: %s", address)
+	if lastStatus != 0 {
+		if lastBody != "" {
+			return fmt.Errorf("HTTP check timed out: %s (last status %d: %s)", address, lastStatus, lastBody)
+		}
+		return fmt.Errorf("HTTP check timed out: %s (last status %d)", address, lastStatus)
+	}
+	return fmt.Errorf("HTTP check timed out: %s", address)
 }
 
 func waitPath(ctx context.Context, path string, timeout time.Duration) error {

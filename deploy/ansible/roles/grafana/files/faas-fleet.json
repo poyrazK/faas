@@ -1960,6 +1960,146 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 400,
+      "type": "timeseries",
+      "title": "Daemon readiness",
+      "description": "Dependency-aware readiness from each daemon's /readyz probe.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 190},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "max by (daemon, instance) ({__name__=~\".*_daemon_ready\"})",
+          "legendFormat": "{{daemon}} @ {{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 401,
+      "type": "timeseries",
+      "title": "Daemon uptime (days)",
+      "description": "Process uptime from daemon_uptime_seconds; pair with the version table to find missed rollouts.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 190},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "max by (daemon, instance) ({__name__=~\".*_daemon_uptime_seconds\"}) / 86400",
+          "legendFormat": "{{daemon}} @ {{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "d", "min": 0}, "overrides": []},
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 402,
+      "type": "table",
+      "title": "Daemon build identity",
+      "description": "Current version, git SHA, and build time exported by each daemon.",
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 198},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "max by (daemon, instance, version, git_sha, build_time) ({__name__=~\".*_daemon_build_info\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+    {
+      "id": 403,
+      "type": "stat",
+      "title": "Distinct deployed versions",
+      "description": "More than one visible version indicates rollout skew.",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 198},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "count(count by (version) ({__name__=~\".*_faas_deploy_version\"}))",
+          "legendFormat": "versions",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 2},
+              {"color": "red", "value": 3}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "value"}
+    },
+    {
+      "id": 404,
+      "type": "timeseries",
+      "title": "Daemon restart rate",
+      "description": "Recent restart activity from daemon_restart_count; correlate spikes with rollout and readiness failures.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 206},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (daemon, instance) (rate({__name__=~\".*_daemon_restart_count\"}[5m]))",
+          "legendFormat": "{{daemon}} @ {{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 405,
+      "type": "table",
+      "title": "Current readiness reason class",
+      "description": "One-hot bounded reason class; use the daemon /readyz body for detailed error text.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 214},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "max by (daemon, instance, reason) ({__name__=~\".*_daemon_ready_reason\"} == 1)",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"showHeader": true}
     }
   ],
   "refresh": "30s",
