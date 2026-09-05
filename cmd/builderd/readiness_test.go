@@ -223,3 +223,19 @@ func TestCheckDirWritable_NotWritable(t *testing.T) {
 		t.Errorf("checkDirWritable(%q read-only) = nil, want error", dir)
 	}
 }
+
+func TestReadinessUsesConfiguredDriveWithoutAddingBuilds(t *testing.T) {
+	drive := t.TempDir()
+	pool := &fakePGPool{pingFn: func(context.Context) error { return nil }}
+	p := buildReadinessProbeForDrive(context.Background(), pool, drive, "unused", func(context.Context, string) error { return nil })
+	defer p.Drain("", nil)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ready, _ := p.All(); ready {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_, reason := p.All()
+	t.Fatalf("configured drive never ready: %s", reason)
+}

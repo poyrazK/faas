@@ -176,7 +176,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cfg.BuildDriveDir writable (the overlay mount source).
 	// Constructed after openDB so the pool is live; the vmmd
 	// dial signal races alongside the driver dial below.
-	builderdProbe := BuildReadinessProbe(ctx, pool, cfg.BuildDriveDir, vmmTarget, nil)
 
 	// Issue #95 / ADR-025: dial vmmd through the location-transparent
 	// helper. tcp/dns targets require the tls_* cluster; nil TLS on a
@@ -185,6 +184,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: load vmmd TLS: %w", err)
 	}
+	builderdProbe := buildReadinessProbeForDrive(ctx, pool, cfg.BuildDriveDir, vmmTarget, tlsReadinessDialer(vmmTLS))
+
 	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, cfg.BuilderBase, cfg.BuildDriveDir, cfg.BuildExportDir)
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)

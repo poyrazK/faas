@@ -81,6 +81,9 @@ func TestHandlerObserveEnqueuesRow(t *testing.T) {
 		if row.DeploymentID != deployment {
 			t.Errorf("DeploymentID mismatch: got %v, want %v", row.DeploymentID, deployment)
 		}
+		if row.Route != otherRouteLabel {
+			t.Errorf("route without opt-in = %q, want bounded fallback", row.Route)
+		}
 		if row.Method != http.MethodPost {
 			t.Errorf("Method: got %q, want POST", row.Method)
 		}
@@ -137,5 +140,31 @@ func TestWithAppAndAccountNoOpWhenEmpty(t *testing.T) {
 	got := withAppAndAccount(r, uuid.Nil, uuid.Nil)
 	if got != r {
 		t.Fatalf("expected same *http.Request back when both UUIDs are zero")
+	}
+}
+
+func TestHandlerTelemetryAcceptsCustomRequestIDs(t *testing.T) {
+	for _, id := range []string{"burst100-caller-id", "0123456789abcdef0123456789abcdef"} {
+		t.Run(id, func(t *testing.T) {
+			h := &Handler{requestTelemetry: makeTestRecorder()}
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("x-faas-request-id", id)
+			req = withAppAndAccount(req, uuid.New(), uuid.New())
+			h.observe(req, 200, "app", string(api.PlanScale), false, Target{DeploymentID: uuid.NewString()})
+			rows := h.requestTelemetry.DrainBatch(1)
+			if len(rows) != 1 {
+				t.Fatal("request record was dropped")
+			}
+			want := ""
+			if len(id) == 32 {
+				want = id
+			}
+			if rows[0].TraceID != want {
+				t.Fatalf("trace ID = %q, want %q", rows[0].TraceID, want)
+			}
+			if req.Header.Get("x-faas-request-id") != id {
+				t.Fatal("caller request ID mutated")
+			}
+		})
 	}
 }

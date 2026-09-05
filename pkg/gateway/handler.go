@@ -54,6 +54,8 @@ type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
 	Plan      api.Plan
+	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
+	MaxConcurrency int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -5841,16 +5843,21 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			if target.DeploymentID != "" {
 				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
 			}
+			telemetryRoute := routeLabel
+			if telemetryRoute == "" {
+				// Route metrics are optional; the telemetry schema requires a label.
+				telemetryRoute = otherRouteLabel
+			}
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
 				AccountID:    acctUUID,
 				AppID:        appUUID,
 				DeploymentID: deploymentUUID,
-				Route:        routeLabel,
+				Route:        telemetryRoute,
 				Method:       r.Method,
 				Status:       status,
 				LatencyMS:    int(elapsed / time.Millisecond),
 				ColdBoot:     cold,
-				TraceID:      requestID,
+				TraceID:      telemetryTraceID(requestID),
 				ReceivedAt:   time.Now(),
 			})
 		}

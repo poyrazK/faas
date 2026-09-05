@@ -43,6 +43,22 @@ func (forwardV2IntegrationVMM) NetnsFor(instance string) (string, bool) {
 // manager-owned child instead of receiving an unavailable response from a
 // stale socket or starting a replacement process.
 func TestForwardHTTPStreamV2_ReusesBridgeAcrossRPCs(t *testing.T) {
+	testForwardV2BridgeLifecycle(t, false)
+}
+
+func TestForwardHTTPStreamV2_CanceledRPCPreservesConcurrentRequest(t *testing.T) {
+	testForwardV2BridgeLifecycle(t, true)
+}
+
+func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool) {
+	t.Helper()
+	cancelStarted := make(chan struct{})
+	siblingStarted := make(chan struct{})
+	releaseSibling := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseSibling) }) }
+	t.Cleanup(release)
+
 	bridgePath, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +116,19 @@ func TestForwardHTTPStreamV2_ReusesBridgeAcrossRPCs(t *testing.T) {
 					bodiesMu.Lock()
 					bodies = append(bodies, string(body))
 					bodiesMu.Unlock()
+					switch string(body) {
+					case "cancel":
+						close(cancelStarted)
+						<-r.Context().Done()
+						return
+					case "sibling":
+						close(siblingStarted)
+						select {
+						case <-releaseSibling:
+						case <-r.Context().Done():
+							return
+						}
+					}
 					w.Header().Set("X-Faas-Bridge-Framing", "h1")
 					w.Header().Set("Content-Type", "text/plain")
 					w.WriteHeader(http.StatusOK)
@@ -177,6 +206,67 @@ func TestForwardHTTPStreamV2_ReusesBridgeAcrossRPCs(t *testing.T) {
 	}
 	if !persistentHeadersOK.Load() {
 		t.Fatal("persistent bridge metadata was not preserved on the H2C request")
+	}
+
+	if cancelConcurrent {
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		canceledResult := make(chan error, 1)
+		go func() {
+			_, _, err := forwardV2LifecycleRoundTrip(cancelCtx, client, "instance-lifecycle", "cancel")
+			canceledResult <- err
+		}()
+		select {
+		case <-cancelStarted:
+		case <-time.After(time.Second):
+			t.Fatal("cancelable request did not reach bridge")
+		}
+		siblingCtx, cancelSibling := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelSibling()
+		siblingResult := make(chan error, 1)
+		go func() {
+			code, body, err := forwardV2LifecycleRoundTrip(siblingCtx, client, "instance-lifecycle", "sibling")
+			if err == nil && (code != http.StatusOK || body != "bridge-request-4:sibling") {
+				err = fmt.Errorf("sibling response = (%d, %q)", code, body)
+			}
+			siblingResult <- err
+		}()
+		select {
+		case <-siblingStarted:
+		case <-time.After(time.Second):
+			t.Fatal("sibling request did not reach shared bridge")
+		}
+		cancel()
+		if err := <-canceledResult; err == nil {
+			t.Fatal("canceled RPC succeeded")
+		}
+		// Wait until VMMD has released the canceled RPC's lease while its
+		// sibling still holds one. An invalidation removes the entry.
+		deadline := time.Now().Add(time.Second)
+		for {
+			server.streamBridges.mu.Lock()
+			entry := server.streamBridges.entries["instance-lifecycle"]
+			alive := entry != nil && !entry.closed
+			released := alive && entry.active == 1
+			server.streamBridges.mu.Unlock()
+			if !alive {
+				t.Fatal("canceling one RPC invalidated the shared bridge")
+			}
+			if released {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("canceled RPC lease was not released")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		release()
+		if err := <-siblingResult; err != nil {
+			t.Fatalf("sibling failed: %v", err)
+		}
+		if starts.Load() != 1 {
+			t.Fatal("canceling a request replaced the shared bridge")
+		}
 	}
 
 	if err := server.Close(context.Background()); err != nil {

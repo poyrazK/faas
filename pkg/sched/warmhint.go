@@ -64,6 +64,7 @@ const defaultWarmHintBufCap = 32
 // the broadcaster's emit site reference it without importing the
 // gRPC package; the gRPC package re-exports via a type alias next
 // to the existing LogFrameSink alias (server.go:45).
+// Empty AppID and NodeID with a nonzero WrittenAt indicate a stream heartbeat.
 type WarmHintEvent struct {
 	AppID     string
 	NodeID    string

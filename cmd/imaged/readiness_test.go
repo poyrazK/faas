@@ -121,3 +121,18 @@ func TestBuildReadinessProbe_DrainFlipsFalse(t *testing.T) {
 		t.Errorf("reason = %q, want contains \"draining\"", reason)
 	}
 }
+
+func TestOCIReadinessChecksActualCacheInsteadOfLocalBackendRoot(t *testing.T) {
+	cache := t.TempDir()
+	p := buildImageReadinessProbe("oci", filepath.Join(cache, "unused-local-root"), cache)
+	defer p.Drain("", nil)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ready, _ := p.All(); ready {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_, reason := p.All()
+	t.Fatalf("actual writable cache never ready: %s", reason)
+}

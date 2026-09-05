@@ -262,3 +262,17 @@ func reqContextUUID(ctx context.Context, key any) (uuid.UUID, bool) {
 	v, ok := ctx.Value(key).(uuid.UUID)
 	return v, ok
 }
+
+// A caller-supplied request ID need not be a W3C trace ID. Preserve the
+// request record while omitting an incompatible optional trace reference.
+func telemetryTraceID(requestID string) string {
+	if len(requestID) != 32 {
+		return ""
+	}
+	for _, c := range requestID {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return requestID
+}

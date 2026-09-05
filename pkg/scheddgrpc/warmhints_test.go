@@ -28,11 +28,12 @@ import (
 )
 
 func TestStreamWarmHints_RoundTrip(t *testing.T) {
-	// Drive two events through the broadcaster-shaped sink and
+	// Drive placement events and an idle heartbeat through the sink and
 	// assert the typed Client.Recv sees them.
 	events := []sched.WarmHintEvent{
 		{AppID: "app-a", NodeID: "node-1", WrittenAt: time.Unix(1730000000, 0).UTC()},
 		{AppID: "app-b", NodeID: "node-2", WrittenAt: time.Unix(1730000001, 0).UTC()},
+		{WrittenAt: time.Unix(1730000002, 0).UTC()},
 	}
 	idx := 0
 	cli := newClient(t, &fakeEngine{

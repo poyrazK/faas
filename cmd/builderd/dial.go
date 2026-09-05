@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"github.com/onebox-faas/faas/pkg/wire"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -38,4 +40,15 @@ func dialGRPC(ctx context.Context, target string) error {
 	// /readyz only needs the dial to succeed; close immediately.
 	_ = conn.Close()
 	return nil
+}
+
+func tlsReadinessDialer(tlsConfig *tls.Config) vmmdDialer {
+	return func(ctx context.Context, target string) error {
+		//nolint:staticcheck // WithBlock waits for the authenticated handshake before reporting ready.
+		conn, err := wire.DialContext(ctx, target, tlsConfig, grpc.WithBlock())
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	}
 }

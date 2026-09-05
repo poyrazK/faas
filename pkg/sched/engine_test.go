@@ -4169,3 +4169,27 @@ func (l *loseAlwaysCreateInstance) CreateInstance(ctx context.Context, appID, de
 	l.calls++
 	return state.Instance{}, state.ErrConcurrentWake
 }
+
+func TestEngineWarmHintHeartbeatWithoutTenantTraffic(t *testing.T) {
+	e := newEngine(t, state.NewMemStore(), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ticks := make(chan time.Time, 1)
+	at := time.Now()
+	ticks <- at
+	done := make(chan error, 1)
+	got := make(chan WarmHintEvent, 1)
+	go func() { done <- e.streamWarmHints(ctx, func(ev WarmHintEvent) error { got <- ev; return nil }, ticks) }()
+	select {
+	case ev := <-got:
+		if ev.AppID != "" || ev.NodeID != "" || !ev.WrittenAt.Equal(at) {
+			t.Fatalf("invalid heartbeat: %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("idle stream sent no heartbeat")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

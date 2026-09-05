@@ -7577,6 +7577,12 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 // test that exercises the SchedAPI stub doesn't need the
 // broadcaster.
 func (e *Engine) StreamWarmHints(ctx context.Context, sink WarmHintSink) error {
+	ticker := time.NewTicker(api.WarmHintHeartbeatInterval)
+	defer ticker.Stop()
+	return e.streamWarmHints(ctx, sink, ticker.C)
+}
+
+func (e *Engine) streamWarmHints(ctx context.Context, sink WarmHintSink, heartbeat <-chan time.Time) error {
 	if e.warmBroadcaster == nil {
 		// Pre-axis-4 fixture. Treat as a clean empty stream so the
 		// caller (pkg/scheddgrpc) returns codes.OK + nil and the
@@ -7594,6 +7600,12 @@ func (e *Engine) StreamWarmHints(ctx context.Context, sink WarmHintSink) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case at := <-heartbeat:
+			// Empty IDs and a timestamp form a liveness heartbeat. It never
+			// changes placement; Send stays serialized with normal events.
+			if err := sink(WarmHintEvent{WrittenAt: at}); err != nil {
+				return err
+			}
 		case ev, ok := <-ch:
 			if !ok {
 				// Broadcaster closed the channel (Engine shutdown).

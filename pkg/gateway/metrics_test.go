@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -1152,4 +1153,35 @@ func TestMetricsWSNilSafe(t *testing.T) {
 	m.DecWSSessionEnd("hobby")
 	m.ObserveWSSessionDuration("hobby", WSOutcomeAccepted, time.Second)
 	m.AddWSSessionBytes("hobby", WSDirectionTx, 1024)
+}
+
+func TestMetricsTLSCertExpiryUnknownUntilObserved(t *testing.T) {
+	m := NewMetrics()
+	for _, remaining := range []float64{math.NaN(), -60, 86400} {
+		if !math.IsNaN(remaining) {
+			m.SetTLSCertExpiry(time.Duration(remaining) * time.Second)
+		}
+		families, err := m.Registry().Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, family := range families {
+			if family.GetName() != "gateway_tls_cert_expiry_seconds" {
+				continue
+			}
+			found = true
+			got := family.Metric[0].GetGauge().GetValue()
+			if math.IsNaN(remaining) {
+				if !math.IsNaN(got) {
+					t.Fatalf("unobserved expiry = %v, want NaN", got)
+				}
+			} else if got != remaining {
+				t.Fatalf("expiry = %v, want %v", got, remaining)
+			}
+		}
+		if !found {
+			t.Fatal("expiry gauge missing")
+		}
+	}
 }
