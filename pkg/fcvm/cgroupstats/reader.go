@@ -138,22 +138,26 @@ func (r *Reader) Sample(instance string, plan api.Plan) (Sample, bool) {
 	if runtime.GOOS != linuxGOOS {
 		return Sample{}, false
 	}
-	scope := filepath.Join(r.root, fcvm.ParentCgroupFor(plan), fcvm.PerInstanceScope(instance))
-	if _, err := os.Stat(scope); err != nil {
-		return Sample{}, false
+	parents := []string{fcvm.ParentCgroupFor(plan)}
+	if legacy := fcvm.LegacyParentCgroupFor(plan); legacy != parents[0] {
+		parents = append(parents, legacy)
 	}
-	cpu, throttled, cpuOK := readCPUStat(filepath.Join(scope, "cpu.stat"))
-	if !cpuOK {
-		// CPU is the more sensitive signal — if we can't read it,
-		// return ok=false so the poller doesn't think it has a stale
-		// counter paired with a fresh memory.current.
-		return Sample{}, false
+	for _, parent := range parents {
+		scope := filepath.Join(r.root, parent, fcvm.PerInstanceScope(instance))
+		if _, err := os.Stat(scope); err != nil {
+			continue
+		}
+		cpu, throttled, cpuOK := readCPUStat(filepath.Join(scope, "cpu.stat"))
+		if !cpuOK {
+			continue
+		}
+		rss, rssOK := readMemoryCurrent(filepath.Join(scope, "memory.current"))
+		if !rssOK {
+			continue
+		}
+		return Sample{CPUUsageUsec: cpu, ThrottledUsec: throttled, RSSBytes: rss}, true
 	}
-	rss, rssOK := readMemoryCurrent(filepath.Join(scope, "memory.current"))
-	if !rssOK {
-		return Sample{}, false
-	}
-	return Sample{CPUUsageUsec: cpu, ThrottledUsec: throttled, RSSBytes: rss}, true
+	return Sample{}, false
 }
 
 // Instances enumerates the per-VM cgroup leaves under the per-plan
@@ -190,6 +194,7 @@ func (r *Reader) Instances() ([]InstanceInfo, error) {
 		return nil, err
 	}
 	out := make([]InstanceInfo, 0, len(entries))
+	seen := make(map[string]struct{})
 	plans := api.Plans
 	for _, plan := range plans {
 		// Walk each per-plan sub-slice and enumerate its leaves.
@@ -198,23 +203,34 @@ func (r *Reader) Instances() ([]InstanceInfo, error) {
 		// just yields zero leaves for that plan. systemd drops the
 		// sub-slices at boot, so once any VM has woken on a plan
 		// the dir is sticky for the daemon's lifetime.
-		planDir := filepath.Join(base, "faas-tenant-"+plan.SliceName()+".slice")
-		planEntries, perr := os.ReadDir(planDir)
-		if perr != nil {
-			if errors.Is(perr, fs.ErrNotExist) {
-				continue
-			}
-			return nil, perr
+		parents := []string{fcvm.ParentCgroupFor(plan)}
+		if legacy := fcvm.LegacyParentCgroupFor(plan); legacy != parents[0] {
+			parents = append(parents, legacy)
 		}
-		for _, e := range planEntries {
-			if !e.IsDir() {
-				continue
+		for _, parent := range parents {
+			planDir := filepath.Join(r.root, parent)
+			planEntries, perr := os.ReadDir(planDir)
+			if perr != nil {
+				if errors.Is(perr, fs.ErrNotExist) {
+					continue
+				}
+				return nil, perr
 			}
-			name := e.Name()
-			if strings.Contains(name, ".") || strings.Contains(name, "..") {
-				continue
+			for _, e := range planEntries {
+				if !e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				if strings.Contains(name, ".") || strings.Contains(name, "..") {
+					continue
+				}
+				key := string(plan) + "\x00" + name
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+				out = append(out, InstanceInfo{Instance: name, Plan: plan})
 			}
-			out = append(out, InstanceInfo{Instance: name, Plan: plan})
 		}
 	}
 	// Deterministic order — sort lexicographically by (instance, plan).

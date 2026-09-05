@@ -93,4 +93,6 @@ message BytesFrame {
   string instance_id = 1;
   google.protobuf.Timestamp minute = 2;
   uint64 bytes = 3;
+  uint64 requests = 4;
+  uint64 cold_boots = 5;
 }

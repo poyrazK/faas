@@ -967,18 +967,16 @@ message InstanceStats {
   // "no request observed yet on this instance" — the poller falls
   // back to state.Instance.LastRequestAt in that case.
   google.protobuf.Timestamp last_request_at = 7;
-  // ADR-046 (PR-1 → PR-2): per-tick cumulative byte delta on
+  // ADR-046: cumulative bytes observed on
   // root-side vethHost.rx_bytes for this instance. Wrapper so
   // "absent" means "first sample after cache reset (baseline not
   // yet established) OR cgroup regression (veth recreation
   // detected by pkg/fcvm/netstats.Cache)" — distinct from a real
   // 0 delta. The schedd-side poller (pkg/sched/instancestats/
-  // poller.go) sums this across the 250 ms window into the
-  // per-(instance, minute) accumulator and serves it via
-  // pkg/scheddgrpc.ListInstanceStats as a uint64 additive byte
-  // counter; meterd's SampleAndRoll then appends to
-  // usage_minutes.net_tx_bytes (additive on (instance_id,
-  // minute)). Source: cmd/vmmd/network_poller.go +
+  // poller.go) forwards the cumulative snapshot through
+  // pkg/scheddgrpc.ListInstanceStats; meterd computes the interval
+  // delta before appending
+  // to usage_minutes.net_tx_bytes. Source: cmd/vmmd/network_poller.go +
   // pkg/fcvm/netstats.Cache. The /sys/class/net/<vethHost>/
   // statistics/rx_bytes counter is the same kernel counter the
   // per-plan tc tbf qdisc reads, so the cap and the meter are
@@ -994,6 +992,10 @@ message InstanceStats {
   // value after the first observation. Schedd uses the deltas between Stats
   // samples as a topology-independent RPS signal for reactive scale-up.
   google.protobuf.Int64Value request_count_total = 12;
+  // Cumulative root-side vethHost.tx_bytes for this instance
+  // (root → guest = ingress). Same wrapper/regression contract as
+  // net_tx_bytes; meterd computes interval deltas from both counters.
+  google.protobuf.Int64Value net_rx_bytes = 13;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the

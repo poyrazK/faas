@@ -198,39 +198,45 @@ type parkInstanceParker interface {
 // (vmmd is the canonical producer for that column; the
 // gateway is the canonical producer for tx_bytes).
 type scheddEgressAdapter struct {
-	cpu *scheddCPUAdapter
+	cpu      *scheddCPUAdapter
+	mu       sync.Mutex
+	baseline map[string]networkBaseline
 }
 
-func (a *scheddEgressAdapter) EgressBytes(instanceID string) (uint64, uint64, bool) {
+type networkBaseline struct {
+	tx uint64
+	rx uint64
+}
+
+func (a *scheddEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDeltas, bool) {
 	if a == nil || a.cpu == nil {
-		return 0, 0, false
+		return meter.UsageDeltas{}, false
 	}
 	a.cpu.refresh()
 	a.cpu.mu.Lock()
 	defer a.cpu.mu.Unlock()
 	row, ok := a.cpu.rows[instanceID]
 	if !ok {
-		return 0, 0, false
+		return meter.UsageDeltas{}, false
 	}
-	// TxValid mirrors instancestats.Validity: 0 = Valid, 1 =
-	// Unknown (first sample / regression / netstats cache
-	// miss). The meterd sampler must NOT treat a non-Valid
-	// row as a baseline — the vmmd netstats.Cache already
-	// absorbed the regression (Unknown: it dropped the
-	// baseline). In either case the next valid sample picks
-	// up from the new counter; the meterd side returns
-	// ok=false so AppendUsage writes 0 net_tx_bytes for
-	// that minute (mirrors the cpu path's contract above).
-	if row.TxValid != 0 {
-		return 0, 0, false
+	if row.TxValid != 0 && row.RxValid != 0 {
+		return meter.UsageDeltas{}, false
 	}
-	// txBytes = 0 (gateway column is NOT sourced from schedd;
-	// gatewayEgressAdapter owns it). netTxBytes = the schedd
-	// value. ok = true signals "I have a row" so the
-	// sampler stamps the row's netTxBytes even when
-	// netTxBytes is 0 (zero egress in this tick is a real
-	// value, distinct from "no source wired").
-	return 0, row.NetTxBytes, true
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.baseline == nil {
+		a.baseline = make(map[string]networkBaseline)
+	}
+	prev, have := a.baseline[instanceID]
+	var out meter.UsageDeltas
+	if have && row.TxValid == 0 && row.NetTxBytes >= prev.tx {
+		out.NetTXBytes = row.NetTxBytes - prev.tx
+	}
+	if have && row.RxValid == 0 && row.NetRxBytes >= prev.rx {
+		out.NetRXBytes = row.NetRxBytes - prev.rx
+	}
+	a.baseline[instanceID] = networkBaseline{tx: row.NetTxBytes, rx: row.NetRxBytes}
+	return out, true
 }
 
 // gatewayEgressAdapter (ADR-046, step 8; PR-2 = stream consumer)
@@ -288,7 +294,7 @@ type gatewayEgressAdapter struct {
 	tlsCfg *tls.Config
 
 	mu   sync.Mutex
-	data map[string]map[int64]uint64 // instanceID → minuteUnix → bytes
+	data map[string]map[int64]gatewayUsageBucket
 
 	// dialFn is the unix-socket dialer for the gateway
 	// stream. Tests substitute a fake dialer that returns a
@@ -312,6 +318,43 @@ type gatewayEgressAdapter struct {
 // netTxBytes is always 0 on this path — scheddEgressAdapter
 // owns the net_tx_bytes column. The aggregator picks the
 // right value per column.
+type gatewayUsageBucket struct {
+	bytes     uint64
+	requests  uint64
+	coldBoots uint64
+}
+
+func (a *gatewayEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDeltas, bool) {
+	if a == nil || instanceID == "" {
+		return meter.UsageDeltas{}, false
+	}
+	minute := a.now().UTC().Truncate(time.Minute).Unix()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	rows, ok := a.data[instanceID]
+	if !ok {
+		return meter.UsageDeltas{}, false
+	}
+	var out meter.UsageDeltas
+	found := false
+	for bucketMinute, bucket := range rows {
+		if bucketMinute > minute {
+			continue
+		}
+		found = true
+		out.TXBytes += bucket.bytes
+		out.Requests += int64(bucket.requests)
+		out.ColdBootCount += int32(bucket.coldBoots)
+		delete(rows, bucketMinute)
+	}
+	if len(rows) == 0 {
+		delete(a.data, instanceID)
+	}
+	return out, found
+}
+
+// EgressBytes is the non-draining diagnostic view retained for adapter tests
+// and observability. Production metering uses ReadUsageDeltas.
 func (a *gatewayEgressAdapter) EgressBytes(instanceID string) (uint64, uint64, bool) {
 	if a == nil || instanceID == "" {
 		return 0, 0, false
@@ -323,11 +366,8 @@ func (a *gatewayEgressAdapter) EgressBytes(instanceID string) (uint64, uint64, b
 	if !ok {
 		return 0, 0, false
 	}
-	n, ok := rows[minute]
-	if !ok {
-		return 0, 0, false
-	}
-	return n, 0, true
+	bucket, ok := rows[minute]
+	return bucket.bytes, 0, ok
 }
 
 // startStream dials FAAS_GATEWAY_SYNTH_SOCKET and runs the
@@ -419,10 +459,14 @@ func (a *gatewayEgressAdapter) recordFrame(frame *egresspb.BytesFrame) {
 	defer a.mu.Unlock()
 	rows, ok := a.data[frame.InstanceId]
 	if !ok {
-		rows = make(map[int64]uint64, 4)
+		rows = make(map[int64]gatewayUsageBucket, 4)
 		a.data[frame.InstanceId] = rows
 	}
-	rows[minuteUnix] = frame.Bytes
+	bucket := rows[minuteUnix]
+	bucket.bytes += frame.Bytes
+	bucket.requests += frame.Requests
+	bucket.coldBoots += frame.ColdBoots
+	rows[minuteUnix] = bucket
 }
 
 // Tracked returns the number of distinct instances the adapter
@@ -470,9 +514,9 @@ type egressAggregator struct {
 	gw     *gatewayEgressAdapter
 }
 
-func (a *egressAggregator) EgressBytes(instanceID string) (uint64, uint64, bool) {
+func (a *egressAggregator) ReadUsageDeltas(instanceID string) (meter.UsageDeltas, bool) {
 	if a == nil || instanceID == "" {
-		return 0, 0, false
+		return meter.UsageDeltas{}, false
 	}
 	// Per-column reads. Either adapter may report "no row" for
 	// this instance; the aggregator returns the union — the
@@ -481,20 +525,25 @@ func (a *egressAggregator) EgressBytes(instanceID string) (uint64, uint64, bool)
 	// net_tx_bytes are independent (gateway HTTP response vs
 	// root-side veth rx) and "no gateway traffic but veth rx
 	// present" is a perfectly valid per-minute state.
-	var (
-		txBytes, netTxBytes uint64
-		okSchedd, okGw      bool
-	)
+	var out meter.UsageDeltas
+	var okSchedd, okGw bool
 	if a.schedd != nil {
-		_, netTxBytes, okSchedd = a.schedd.EgressBytes(instanceID)
+		var schedd meter.UsageDeltas
+		schedd, okSchedd = a.schedd.ReadUsageDeltas(instanceID)
+		out.NetTXBytes = schedd.NetTXBytes
+		out.NetRXBytes = schedd.NetRXBytes
 	}
 	if a.gw != nil {
-		txBytes, _, okGw = a.gw.EgressBytes(instanceID)
+		var gateway meter.UsageDeltas
+		gateway, okGw = a.gw.ReadUsageDeltas(instanceID)
+		out.TXBytes = gateway.TXBytes
+		out.Requests = gateway.Requests
+		out.ColdBootCount = gateway.ColdBootCount
 	}
 	if !okSchedd && !okGw {
-		return 0, 0, false
+		return meter.UsageDeltas{}, false
 	}
-	return txBytes, netTxBytes, true
+	return out, true
 }
 
 func main() {
@@ -944,7 +993,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	gwEgress := &gatewayEgressAdapter{
 		now:    deps.now,
 		tlsCfg: gwEgressTLS,
-		data:   make(map[string]map[int64]uint64),
+		data:   make(map[string]map[int64]gatewayUsageBucket),
 		dialFn: dialGatewayEgressStream,
 	}
 	// PR-2: kick off the gateway stream consumer. The unix-socket

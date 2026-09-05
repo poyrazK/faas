@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -896,7 +897,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			for _, u := range rows {
 				mbSec += u.MBSeconds
 			}
-			resp.UsageGBHours = float64(mbSec) / 3_600_000.0
+			resp.UsageGBHours = meter.GBHours(mbSec)
 		}
 	}
 	return resp

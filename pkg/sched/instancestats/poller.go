@@ -290,6 +290,10 @@ func (p *Poller) decodeTelemetrySnapshot(
 			row.TXBytes = uint64(*in.NetTxBytes)
 			row.TX = Valid
 		}
+		if in.NetRxBytes != nil {
+			row.RXBytes = uint64(*in.NetRxBytes)
+			row.RX = Valid
+		}
 		if in.ResidentBytes != nil {
 			mib := float64(*in.ResidentBytes) / float64(1024*1024)
 			row.RSSMB = mib

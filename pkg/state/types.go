@@ -3852,10 +3852,9 @@ type Usage struct {
 	// Sampler.SampleAndRoll → AppendUsage. ADR-048.
 	// Informational — not billed. Unit = interface bytes.
 	NetRxBytes int64
-	// ColdBootCount is the per-month sum of WAKE_RESTORE→
-	// WAKE_COLD_BOOT transitions observed across this app's
-	// instances. Source: scheddgrpc.InstanceStatsRow.
-	// LastWakeMethod, sampled by meterd Sampler.
+	// ColdBootCount is the per-month sum of customer requests whose
+	// wake outcome was WAKE_COLD_BOOT across this app's instances.
+	// Source: gatewayd's minute-bucketed usage stream.
 	// ADR-048. Informational — not billed.
 	ColdBootCount int64
 }

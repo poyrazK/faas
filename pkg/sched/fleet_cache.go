@@ -82,6 +82,7 @@ type NodeTelemetry struct {
 	InflightRequests    int64
 	LastRequestAt       time.Time
 	NetTxBytes          *int64
+	NetRxBytes          *int64
 	OpenConns           int64
 }
 

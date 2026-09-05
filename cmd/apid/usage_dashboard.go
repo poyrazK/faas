@@ -27,7 +27,7 @@ func usageAppData(rows []state.Usage, apps []state.App, totalGBHours float64) []
 			// the row visible without exposing an internal UUID as a label.
 			slug = "deleted app"
 		}
-		used := float64(row.MBSeconds) / 3_600_000.0
+		used := meter.GBHours(row.MBSeconds)
 		share := 0.0
 		if totalGBHours > 0 {
 			share = used / totalGBHours * 100

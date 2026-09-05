@@ -697,9 +697,8 @@ message InstanceStatsRow {
   // cpu_valid mirrors instancestats.Validity (0 = Valid, 1 =
   // Unknown). Callers MUST skip rows where cpu_valid != 0.
   uint32 cpu_valid   = 5;
-  // ADR-046 (step 7): per-tick byte delta on root-side
-  // vethHost.rx_bytes for this instance, summed across the
-  // schedd poller's 250 ms window. Unit is interface bytes
+  // ADR-046: cumulative byte counter on root-side
+  // vethHost.rx_bytes for this instance. Unit is interface bytes
   // (includes Ethernet framing); same kernel counter the
   // per-plan tc tbf qdisc reads. tx_valid mirrors
   // instancestats.Validity (0 = Valid, 1 = Unknown — first
@@ -717,6 +716,10 @@ message InstanceStatsRow {
   // ADR-016 additive — new field at the end. Card ceiling:
   // len(sidecar_ram_mbs) ≤ api.SidecarCapMax = 2.
   repeated int32 sidecar_ram_mbs = 8;
+  // Cumulative root-side vethHost.tx_bytes (root → guest ingress).
+  // rx_valid follows the same Validity convention as tx_valid.
+  uint64 net_rx_bytes = 9;
+  uint32 rx_valid     = 10;
 }
 
 message ListInstanceStatsRequest {
@@ -959,6 +962,7 @@ message InstanceTelemetry {
   // value is transported with the existing persistent capacity stream so
   // schedd does not need a per-node conntrack query.
   int64 open_conns = 9;
+  google.protobuf.Int64Value net_rx_bytes = 10;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

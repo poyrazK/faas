@@ -1055,7 +1055,7 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		ingressBytes += u.NetRxBytes
 		coldBoots += u.ColdBootCount
 	}
-	used := float64(mbSec) / 3_600_000.0
+	used := meter.GBHours(mbSec)
 	// usedEgressGB carries the same framing caveat as the
 	// docstring on api.UsageResponse.TotalEgressGB — see
 	// pkg/api/dto.go for the wire-side semantics.
@@ -1142,7 +1142,7 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		// so the page can surface a single GB number. Informational only.
 		egressBytes += u.TXBytes + u.NetTxBytes
 	}
-	used := float64(mbSec) / 3_600_000.0
+	used := meter.GBHours(mbSec)
 	usedEgressGB := float64(egressBytes) / (1024 * 1024 * 1024)
 	pct := 0.0
 	if limits.IncludedGBHours > 0 {

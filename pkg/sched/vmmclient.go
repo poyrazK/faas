@@ -989,6 +989,10 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		b := v.GetValue()
 		row.NetTxBytes = &b
 	}
+	if v := in.GetNetRxBytes(); v != nil {
+		b := v.GetValue()
+		row.NetRxBytes = &b
+	}
 	if v := in.GetRequestCountTotal(); v != nil {
 		c := v.GetValue()
 		row.RequestCountTotal = &c

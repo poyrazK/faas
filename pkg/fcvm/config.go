@@ -435,6 +435,18 @@ func ParentCgroupFor(plan api.Plan) string {
 	if slice == "" {
 		return defaultParentCgroup
 	}
+	return CgroupMountRoot + "/faas-" + slice + ".slice"
+}
+
+// LegacyParentCgroupFor returns the accidentally double-prefixed per-plan
+// path used before the usage telemetry fix. It is read-only compatibility for
+// rolling upgrades: new jailers must use ParentCgroupFor, while samplers keep
+// discovering VMs created by an older vmmd until those VMs are recycled.
+func LegacyParentCgroupFor(plan api.Plan) string {
+	slice := plan.SliceName()
+	if slice == "" {
+		return defaultParentCgroup
+	}
 	return CgroupMountRoot + "/faas-tenant-" + slice + ".slice"
 }
 
