@@ -898,8 +898,9 @@ func cmdDeployTarball(args []string) int {
 // `gregale deploy` calls leave both fields unset and retain the signal-driven
 // behavior below.
 type deployExecution struct {
-	onQueued        func(api.DeploymentResponse)
-	developerSource *devSourceSyncState
+	onQueued            func(api.DeploymentResponse)
+	developerSource     *devSourceSyncState
+	extraSourceExcludes []string
 }
 
 func (e deployExecution) notifyQueued(dep api.DeploymentResponse) {
@@ -1640,7 +1641,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, _, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides)
+				path, _, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, execution.extraSourceExcludes...)
 				if err != nil {
 					return printErr("Could not pack deploy source", err)
 				}
@@ -1660,7 +1661,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, fw, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides)
+				path, fw, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, execution.extraSourceExcludes...)
 				if err != nil {
 					return printErr("Could not pack deploy source", err)
 				}

@@ -576,6 +576,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
+			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets", Value: "PATH"},
 			{Name: "once", Short: "deploy once and exit"},
 			{Name: "stop", Short: "tear down the developer environment"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},

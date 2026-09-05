@@ -39,7 +39,17 @@ gregale dev --path apps/api    # select one workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
 gregale dev --no-logs          # keep the watcher quiet for scripts
+gregale dev --env-file .env.dev # opt in to syncing local config as secrets
 ```
+
+`--env-file` is explicit and additive/update-only. Each non-empty, non-comment
+`KEY=VALUE` entry is written to the developer app's sealed default secret
+scope; omitted keys are left untouched. The CLI compares and reports key names
+only, never prints values, and refreshes the secrets before the first deploy.
+Changes to the file trigger the same debounced redeploy as source edits. The
+file itself is excluded from the source archive, including when it lives inside
+the watched directory. Use `gregale secrets unset --app <slug> KEY` when a key
+must be removed intentionally.
 
 Watch mode attaches one app-level runtime log stream after the first live sync.
 It follows the stable developer URL across later redeploys, prefixes lines with

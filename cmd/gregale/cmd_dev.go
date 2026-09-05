@@ -274,19 +274,23 @@ func cmdDev(args []string) int {
 	fs := flag.NewFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
+	envFile := fs.String("env-file", "", "sync KEY=VALUE entries as developer secrets (explicit opt-in)")
 	once := fs.Bool("once", false, "deploy once and exit instead of watching for changes")
 	stop := fs.Bool("stop", false, "tear down this project's developer environment")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--once|--stop] [--no-logs]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs]", "dev")
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--once|--stop] [--no-logs]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs]", "dev")
 		return 1
 	}
 	if *once && *stop {
 		return printErr("Invalid flags", fmt.Errorf("--once and --stop are mutually exclusive"))
+	}
+	if *stop && *envFile != "" {
+		return printErr("Invalid flags", fmt.Errorf("--env-file cannot be combined with --stop"))
 	}
 
 	cwd, err := os.Getwd()
@@ -296,6 +300,15 @@ func cmdDev(args []string) int {
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
+	}
+	envFilePath, err := resolveDevEnvFilePath(cwd, *envFile)
+	if err != nil {
+		return printErr("Invalid developer env file", err)
+	}
+	if envFilePath != "" {
+		if _, _, err := readDevEnvFile(envFilePath); err != nil {
+			return printErr("Invalid developer env file", err)
+		}
 	}
 	project := *name
 	if project == "" {
@@ -349,22 +362,46 @@ func cmdDev(args []string) int {
 	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
 	defer cancelRuntimeLogs()
 	runtimeLogsStarted := false
-	lastSynced, err := devSourceFingerprint(sourceDir)
+	lastSynced, err := devSourceFingerprint(sourceDir, envFilePath)
 	if err != nil {
 		return printErr("Could not watch developer source", err)
 	}
 	syncState := &devSourceSyncState{}
+	envSyncState := &devEnvSyncState{}
+	waitForChange := func(waitCtx context.Context, dir string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
+		if envFilePath != "" {
+			return waitForDevSourceChange(waitCtx, dir, previous, envFilePath)
+		}
+		return waitForDevSourceChange(waitCtx, dir, previous)
+	}
 	return runDevWatchLoop(ctx, sourceDir, lastSynced, config, *once, devLoopOps{
 		deploy: func(deployCtx context.Context, config devSourceConfig, queued func(string)) int {
+			if envFilePath != "" {
+				report, syncErr := envSyncState.sync(deployCtx, client, session.App.Slug, envFilePath)
+				if syncErr != nil {
+					_ = printErr("Could not sync developer config", syncErr)
+					return 1
+				}
+				if report.Changed && !jsonOutput {
+					PrintProgress(osStdout, "%s", report.progressLine())
+				}
+			}
 			started := time.Now()
-			code := cmdDeployTarballToExisting(deployCtx, config.deployArgs(session.App.Slug, sourceDir), true, deployExecution{
+			execution := deployExecution{
 				developerSource: syncState,
+				extraSourceExcludes: func() []string {
+					if envFilePath == "" {
+						return nil
+					}
+					return []string{envFilePath}
+				}(),
 				onQueued: func(dep api.DeploymentResponse) {
 					if queued != nil {
 						queued(dep.ID)
 					}
 				},
-			})
+			}
+			code := cmdDeployTarballToExisting(deployCtx, config.deployArgs(session.App.Slug, sourceDir), true, execution)
 			if code == 0 && !jsonOutput {
 				PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
 			}
@@ -387,7 +424,7 @@ func cmdDev(args []string) int {
 			}
 			return cancelErr
 		},
-		waitForChange: waitForDevSourceChange,
+		waitForChange: waitForChange,
 		resolve:       resolveDevSourceConfig,
 		refresh: func(config devSourceConfig) error {
 			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID))
@@ -460,7 +497,7 @@ func upsertDevSession(client *Client, project string, req api.UpsertDevSessionRe
 // devSourceFingerprint hashes only metadata for files the deploy packer would
 // include. This keeps the polling loop cheap for larger repositories while
 // still detecting normal editor writes, renames, creates, and deletes.
-func devSourceFingerprint(sourceDir string) ([sha256.Size]byte, error) {
+func devSourceFingerprint(sourceDir string, extraFiles ...string) ([sha256.Size]byte, error) {
 	h := sha256.New()
 	patterns := loadGregaleignore(sourceDir)
 	err := filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, walkErr error) error {
@@ -495,15 +532,22 @@ func devSourceFingerprint(sourceDir string) ([sha256.Size]byte, error) {
 	if err != nil {
 		return sum, err
 	}
+	for _, extra := range extraFiles {
+		digest, digestErr := devEnvFileFingerprint(extra)
+		if digestErr != nil {
+			return sum, digestErr
+		}
+		_, _ = fmt.Fprintf(h, "extra\x00%s\x00%x\n", filepath.Clean(extra), digest)
+	}
 	copy(sum[:], h.Sum(nil))
 	return sum, nil
 }
 
-func waitForDevSourceChange(ctx context.Context, sourceDir string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
-	return waitForDevSourceChangeWithIntervals(ctx, sourceDir, previous, devWatchPollInterval, devWatchSettleInterval)
+func waitForDevSourceChange(ctx context.Context, sourceDir string, previous [sha256.Size]byte, extraFiles ...string) ([sha256.Size]byte, error) {
+	return waitForDevSourceChangeWithIntervals(ctx, sourceDir, previous, devWatchPollInterval, devWatchSettleInterval, extraFiles...)
 }
 
-func waitForDevSourceChangeWithIntervals(ctx context.Context, sourceDir string, previous [sha256.Size]byte, pollInterval, settleInterval time.Duration) ([sha256.Size]byte, error) {
+func waitForDevSourceChangeWithIntervals(ctx context.Context, sourceDir string, previous [sha256.Size]byte, pollInterval, settleInterval time.Duration, extraFiles ...string) ([sha256.Size]byte, error) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	candidate := previous
@@ -513,7 +557,7 @@ func waitForDevSourceChangeWithIntervals(ctx context.Context, sourceDir string, 
 		case <-ctx.Done():
 			return previous, ctx.Err()
 		case <-ticker.C:
-			current, err := devSourceFingerprint(sourceDir)
+			current, err := devSourceFingerprint(sourceDir, extraFiles...)
 			if err != nil {
 				return previous, err
 			}

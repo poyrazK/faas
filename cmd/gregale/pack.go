@@ -333,6 +333,31 @@ func shouldExclude(relSlashPath string, isDir bool, patterns []gregaleignorePatt
 	return matchGregaleignore(relSlashPath, isDir, patterns)
 }
 
+// packExtraExcludeSet converts absolute customer paths (for example an
+// explicitly synced .env.dev) into paths relative to the archive root. Paths
+// outside the root are ignored because they cannot be packed by this walk.
+// The set is deliberately separate from .gregaleignore: these exclusions are
+// command-scoped and never mutate the customer's repository configuration.
+func packExtraExcludeSet(srcDir string, paths []string) map[string]bool {
+	set := make(map[string]bool, len(paths))
+	root, err := filepath.Abs(srcDir)
+	if err != nil {
+		return set
+	}
+	for _, path := range paths {
+		abs, absErr := filepath.Abs(path)
+		if absErr != nil {
+			continue
+		}
+		rel, relErr := filepath.Rel(root, abs)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		set[filepath.ToSlash(filepath.Clean(rel))] = true
+	}
+	return set
+}
+
 // detectFramework sniffs the TOP-LEVEL entries of srcDir (no recursion) and
 // returns the implied framework. A Dockerfile wins over language markers, in
 // lockstep with pkg/builderd/detect.go. Returns fwUnknown when nothing at the
@@ -922,26 +947,27 @@ const defaultZeroConfigSourceCapMB = 100
 // harness, or `gregale deploy --secret-scan=off`).
 //
 // The gzip→tar→walk shape mirrors cmd/gregale/templates/embed.go:TarGz.
-func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][]byte) (regularFileCount int, err error) {
-	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, filepath.Base(srcDir))
+func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
+	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, filepath.Base(srcDir), extraExcludes...)
 }
 
 // packDirToTarGzFlat writes the directory contents relative to the archive
 // root, without the historical single-directory transport wrapper. Workspace
 // deploys use this shape so source_root is stable across Git HEAD archives and
 // working-tree archives: both describe paths from the repository root.
-func packDirToTarGzFlat(srcDir, destPath string, capMB int, envOverride map[string][]byte) (regularFileCount int, err error) {
-	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, "")
+func packDirToTarGzFlat(srcDir, destPath string, capMB int, envOverride map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
+	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, "", extraExcludes...)
 }
 
 // packDirToTarGzWithRoot is the implementation shared by the legacy wrapped
 // packer and the flat repository-context packer.
-func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string) (regularFileCount int, err error) {
+func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string, extraExcludes ...string) (regularFileCount int, err error) {
 
 	// Load .gregaleignore once (before the walk) so shouldExclude sees
 	// the same patterns for every entry. Missing file → nil → no
 	// project-level exclusions (defaults still apply).
 	gitignorePatterns := loadGregaleignore(srcDir)
+	extraExcludeSet := packExtraExcludeSet(srcDir, extraExcludes)
 
 	f, err := os.Create(destPath)
 	if err != nil {
@@ -978,6 +1004,12 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 			return rerr
 		}
 		relSlash := filepath.ToSlash(rel)
+		if extraExcludeSet[relSlash] {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if shouldExclude(relSlash, d.IsDir(), gitignorePatterns) {
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -1256,7 +1288,7 @@ func autoPackCwd(srcDir string, capMB int, envOverride map[string][]byte) (tarba
 // detectDir. The distinction matters for workspace deploys: the repository is
 // the BuildKit context, but the selected member remains the source root that
 // determines the framework and working directory.
-func autoPackSource(detectDir, packDir string, flat bool, capMB int, envOverride map[string][]byte) (tarballPath string, fw framework, fileCount int, err error) {
+func autoPackSource(detectDir, packDir string, flat bool, capMB int, envOverride map[string][]byte, extraExcludes ...string) (tarballPath string, fw framework, fileCount int, err error) {
 	// Error-explanations cluster (spec §6.4 amendment 1): warn-only
 	// preflight that lifts the cluster's source-side hints via the
 	// whycopy catalog. Hints are printed after the deploy summary by
@@ -1282,9 +1314,9 @@ func autoPackSource(detectDir, packDir string, flat bool, capMB int, envOverride
 
 	var n int
 	if flat {
-		n, err = packDirToTarGzFlat(packDir, path, capMB, envOverride)
+		n, err = packDirToTarGzFlat(packDir, path, capMB, envOverride, extraExcludes...)
 	} else {
-		n, err = packDirToTarGz(packDir, path, capMB, envOverride)
+		n, err = packDirToTarGz(packDir, path, capMB, envOverride, extraExcludes...)
 	}
 	if err != nil {
 		_ = os.Remove(path)
