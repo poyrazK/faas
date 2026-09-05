@@ -221,7 +221,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "apps",
 		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|--ram N|…])",
 		Subcommands: []cliSub{
-			{Name: "scale", Short: "Set max_concurrency / ram_mb"},
+			{Name: "scale", Short: "Set max_concurrency / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
 			{Name: "security", Short: "Toggle require_signed on deploys"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},

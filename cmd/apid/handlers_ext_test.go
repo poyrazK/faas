@@ -1199,6 +1199,9 @@ func TestAppEffectiveLimits_UsesScalingPolicyCeiling(t *testing.T) {
 	if got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != 512 {
 		t.Fatalf("memory limits = %d/%d, want 384/512", got.MemoryLimitMB, got.PlanMemoryMaxMB)
 	}
+	if got.CPULimitMillicores != api.DefaultAppCPUMillicores || got.PlanCPUMaxMillicores != api.DefaultAppCPUMillicores {
+		t.Fatalf("CPU limits = %d/%d, want %d/%d", got.CPULimitMillicores, got.PlanCPUMaxMillicores, api.DefaultAppCPUMillicores, api.DefaultAppCPUMillicores)
+	}
 }
 
 // TestUpdateApp_RAMValid covers the happy path: a valid RAM value persists
@@ -1217,6 +1220,23 @@ func TestUpdateApp_RAMValid(t *testing.T) {
 	}
 	if out.RAMMB != 256 {
 		t.Errorf("RAM = %d, want 256", out.RAMMB)
+	}
+}
+
+func TestUpdateApp_CPUValid(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "upd-cpu")
+	cpu := 250
+	rec := e.do(t, "PATCH", "/v1/apps/upd-cpu", api.UpdateAppRequest{CPUMillicores: &cpu}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.CPUMillicores != 250 || out.EffectiveLimits.CPULimitMillicores != 250 {
+		t.Fatalf("CPU update not reflected: %+v", out)
 	}
 }
 

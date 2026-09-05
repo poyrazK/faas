@@ -10,6 +10,10 @@ import type { ServiceReplicas } from './ServiceReplicas.js';
  */
 export type UpdateAppRequest = {
   ram_mb?: number | null;
+  /**
+   * Sustained CPU allowance per instance. Omit for no change.
+   */
+  cpu_millicores?: 250 | 500 | 1000;
   idle_timeout_s?: number | null;
   max_concurrency?: number | null;
   /**

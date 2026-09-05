@@ -12362,12 +12362,13 @@ components:
     AppEffectiveLimits:
       description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
       type: object
-      required: [memory_limit_mb, plan_memory_max_mb, guest_vcpus, cpu_limit_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
+      required: [memory_limit_mb, plan_memory_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
       properties:
         memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
         plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
         guest_vcpus: { type: integer, description: "Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit." }
         cpu_limit_millicores: { type: integer, description: "Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores." }
+        plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
         cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
         max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
         concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
@@ -12378,16 +12379,26 @@ components:
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
 
+    AppConfiguredResources:
+      description: "The memory and sustained CPU shape selected for each instance of this app."
+      type: object
+      required: [memory_mb, cpu_millicores]
+      properties:
+        memory_mb: { type: integer, minimum: 1, description: "Configured instance memory in MB." }
+        cpu_millicores: { type: integer, enum: [250, 500, 1000], description: "Configured sustained CPU allowance in millicores." }
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
-      required: [id, slug, type, ram_mb, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
+      required: [id, slug, type, ram_mb, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer , example: 256}
+        cpu_millicores: { type: integer, enum: [250, 500, 1000], example: 500 }
+        configured_resources: { $ref: '#/components/schemas/AppConfiguredResources' }
         max_concurrency: { type: integer }
         # Issue #559: platform-advertised per-VM concurrency cap for
         # the customer's plan. Distinct from max_concurrency (the
@@ -12669,6 +12680,11 @@ components:
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
         ram_mb: { type: integer , example: 256}
+        cpu_millicores:
+          type: integer
+          enum: [250, 500, 1000]
+          default: 1000
+          description: "Sustained CPU allowance per instance. Omit for 1000 millicores."
         max_concurrency: { type: integer }
         idle_timeout_s: { type: integer }
         # Service/lifecycle settings are persisted on the app and merged into
@@ -12819,6 +12835,10 @@ components:
       type: object
       properties:
         ram_mb: { type: [integer, "null"] , example: 256}
+        cpu_millicores:
+          type: [integer, "null"]
+          enum: [250, 500, 1000, null]
+          description: "Sustained CPU allowance per instance. Omit for no change."
         idle_timeout_s: { type: [integer, "null"] }
         max_concurrency: { type: [integer, "null"] }
         # Lifecycle settings are partial updates. Setting execution_mode away
@@ -16007,6 +16027,7 @@ components:
       type: object
       properties:
         ram_mb: { type: integer, minimum: 128, maximum: 10240 }
+        cpu_millicores: { type: integer, enum: [250, 500, 1000] }
         idle_timeout_s: { type: integer, minimum: 30, maximum: 600 }
         max_concurrency: { type: integer, minimum: 1, maximum: 200 }
         min_instances: { type: integer, minimum: 0, maximum: 10 }

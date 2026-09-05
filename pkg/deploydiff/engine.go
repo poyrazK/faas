@@ -141,6 +141,12 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 				After: AsAny(*p.RAMMB),
 			})
 		}
+		if p.CPUMillicores != nil {
+			out.Changes = append(out.Changes, Change{
+				Field: "cpu_millicores", Kind: ChangeAdd,
+				After: AsAny(*p.CPUMillicores),
+			})
+		}
 		if p.MaxConcurrency != nil {
 			out.Changes = append(out.Changes, Change{
 				Field: "concurrency", Kind: ChangeAdd,
@@ -229,6 +235,12 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 		out.Changes = append(out.Changes, Change{
 			Field: "memory", Kind: ChangeModify,
 			Before: AsAny(base.RAMMB), After: AsAny(*p.RAMMB),
+		})
+	}
+	if p.CPUMillicores != nil && *p.CPUMillicores != base.CPUMillicores {
+		out.Changes = append(out.Changes, Change{
+			Field: "cpu_millicores", Kind: ChangeModify,
+			Before: AsAny(base.CPUMillicores), After: AsAny(*p.CPUMillicores),
 		})
 	}
 	if p.MaxConcurrency != nil && *p.MaxConcurrency != base.MaxConcurrency {

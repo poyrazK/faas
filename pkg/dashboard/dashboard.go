@@ -335,9 +335,10 @@ type AppDetailData struct {
 	Manifest ManifestView
 	// EffectiveLimits is the customer-visible resource and request
 	// envelope derived from the app plus its current plan.
-	EffectiveLimits api.AppEffectiveLimits
-	Deployments     []DeploymentItem
-	Crons           []CronItem
+	EffectiveLimits     api.AppEffectiveLimits
+	ConfiguredResources api.AppConfiguredResources
+	Deployments         []DeploymentItem
+	Crons               []CronItem
 	// Workflows is the bounded recent-run view for the app detail page.
 	// It intentionally carries step status and operator-facing errors, but
 	// never the workflow input/output payloads.

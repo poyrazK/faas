@@ -66,6 +66,13 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 			Limit:    AsAny(limits.RAMMB),
 		})
 	}
+	if pending.AppConfig.CPUMillicores != nil && !api.ValidAppCPUMillicores(*pending.AppConfig.CPUMillicores) {
+		out = append(out, Break{
+			Code: api.CodeInvalidAppCPU, Severity: SeverityError,
+			Reason: "cpu_millicores must be one of 250, 500, or 1000",
+			Field:  "cpu_millicores", Observed: AsAny(*pending.AppConfig.CPUMillicores),
+		})
+	}
 	// MaxConcurrency cap.
 	if pending.AppConfig.MaxConcurrency != nil && *pending.AppConfig.MaxConcurrency > limits.MaxConcurrency {
 		out = append(out, Break{

@@ -197,7 +197,7 @@ func TestListApps_OK(t *testing.T) {
 	}
 	app := body[0]
 	for _, k := range []string{
-		"id", "slug", "type", "ram_mb", "max_concurrency", "concurrency_per_vm",
+		"id", "slug", "type", "ram_mb", "cpu_millicores", "configured_resources", "max_concurrency", "concurrency_per_vm",
 		"effective_limits", "min_instances", "status", "url", "manifest",
 		"autoscale_target_rps", "autoscale_target_cpu_pct",
 		"require_authn",
@@ -235,7 +235,7 @@ func TestCreateApp_OK(t *testing.T) {
 		t.Errorf("slug: got %v, want hello", got["slug"])
 	}
 	for _, k := range []string{
-		"id", "type", "ram_mb", "max_concurrency", "concurrency_per_vm",
+		"id", "type", "ram_mb", "cpu_millicores", "configured_resources", "max_concurrency", "concurrency_per_vm",
 		"effective_limits", "min_instances", "status", "url", "manifest", "egress_allowlist",
 		"autoscale_target_rps", "autoscale_target_cpu_pct",
 		"require_authn",

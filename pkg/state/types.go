@@ -653,6 +653,7 @@ type App struct {
 	Type           AppType
 	Runtime        string // node22|python312|go124|go124-alpine|node24|python313 for functions
 	RAMMB          int
+	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default
 	MaxConcurrency int
 	// MinInstances is the per-app floor the reaper honors when parking
@@ -3992,6 +3993,7 @@ type CreditLedgerEntry struct {
 // existing resource and scaling settings.
 type UpdateAppParams struct {
 	RAMMB          *int
+	CPUMillicores  *int
 	IdleTimeoutS   *int // explicit 0 clears to plan default
 	SetIdleTimeout bool // distinguishes nil from zero
 	MaxConcurrency *int

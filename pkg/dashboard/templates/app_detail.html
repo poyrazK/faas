@@ -208,8 +208,9 @@
       {{if .Data.EffectiveLimits.MemoryLimitMB}}
       <h2>Effective limits</h2>
       <table>
+        <tr><th>Configured shape</th><td>{{.Data.ConfiguredResources.MemoryMB}} MB · {{.Data.ConfiguredResources.CPUMillicores}}m CPU</td></tr>
         <tr><th>Memory</th><td>{{.Data.EffectiveLimits.MemoryLimitMB}} MB (plan ceiling {{.Data.EffectiveLimits.PlanMemoryMaxMB}} MB)</td></tr>
-        <tr><th>CPU</th><td>{{.Data.EffectiveLimits.GuestVCPUs}} guest vCPU · {{.Data.EffectiveLimits.CPULimitMillicores}}m sustained limit · scheduling weight {{.Data.EffectiveLimits.CPUWeight}}</td></tr>
+        <tr><th>CPU</th><td>{{.Data.EffectiveLimits.GuestVCPUs}} guest vCPU · {{.Data.EffectiveLimits.CPULimitMillicores}}m sustained limit (plan ceiling {{.Data.EffectiveLimits.PlanCPUMaxMillicores}}m) · scheduling weight {{.Data.EffectiveLimits.CPUWeight}}</td></tr>
         <tr><th>Scaling</th><td>up to {{.Data.EffectiveLimits.MaxInstances}} instances · {{.Data.EffectiveLimits.ConcurrencyPerInstance}} concurrent requests per instance</td></tr>
         <tr><th>App request rate</th><td>{{.Data.EffectiveLimits.AppRequestRateRPS}} requests/s · burst {{.Data.EffectiveLimits.AppRequestBurst}}</td></tr>
         <tr><th>Account request rate</th><td>{{.Data.EffectiveLimits.AccountRequestRateRPM}} requests/min across apps</td></tr>

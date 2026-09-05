@@ -7,6 +7,10 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.create_app_request_app_protocol import CreateAppRequestAppProtocol, check_create_app_request_app_protocol
+from ..models.create_app_request_cpu_millicores import (
+    CreateAppRequestCpuMillicores,
+    check_create_app_request_cpu_millicores,
+)
 from ..models.create_app_request_eviction_priority import (
     CreateAppRequestEvictionPriority,
     check_create_app_request_eviction_priority,
@@ -41,6 +45,8 @@ class CreateAppRequest:
     type_: CreateAppRequestType | Unset = UNSET
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
+    cpu_millicores: CreateAppRequestCpuMillicores | Unset = 1000
+    """Sustained CPU allowance per instance. Omit for 1000 millicores."""
     max_concurrency: int | Unset = UNSET
     idle_timeout_s: int | Unset = UNSET
     execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
@@ -106,6 +112,10 @@ class CreateAppRequest:
 
         ram_mb = self.ram_mb
 
+        cpu_millicores: int | Unset = UNSET
+        if not isinstance(self.cpu_millicores, Unset):
+            cpu_millicores = self.cpu_millicores
+
         max_concurrency = self.max_concurrency
 
         idle_timeout_s = self.idle_timeout_s
@@ -165,6 +175,8 @@ class CreateAppRequest:
             field_dict["runtime"] = runtime
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
+        if cpu_millicores is not UNSET:
+            field_dict["cpu_millicores"] = cpu_millicores
         if max_concurrency is not UNSET:
             field_dict["max_concurrency"] = max_concurrency
         if idle_timeout_s is not UNSET:
@@ -226,6 +238,13 @@ class CreateAppRequest:
             runtime = check_create_app_request_runtime(_runtime)
 
         ram_mb = d.pop("ram_mb", UNSET)
+
+        _cpu_millicores = d.pop("cpu_millicores", UNSET)
+        cpu_millicores: CreateAppRequestCpuMillicores | Unset
+        if isinstance(_cpu_millicores, Unset):
+            cpu_millicores = UNSET
+        else:
+            cpu_millicores = check_create_app_request_cpu_millicores(_cpu_millicores)
 
         max_concurrency = d.pop("max_concurrency", UNSET)
 
@@ -293,6 +312,7 @@ class CreateAppRequest:
             type_=type_,
             runtime=runtime,
             ram_mb=ram_mb,
+            cpu_millicores=cpu_millicores,
             max_concurrency=max_concurrency,
             idle_timeout_s=idle_timeout_s,
             execution_mode=execution_mode,

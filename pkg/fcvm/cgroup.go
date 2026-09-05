@@ -53,24 +53,34 @@ var cgroupRoot = "/sys/fs/cgroup"
 // jailer v1.7 only exposes cpu.weight and memory.max through --cgroup;
 // the quota must land in cpu.max so the kernel enforces it.
 func writePlanCgroup(instance string, plan api.Plan, planMB int) error {
+	return writeAppCgroup(instance, plan, planMB, 0)
+}
+
+// writeAppCgroup applies the app's memory and sustained CPU settings. A zero
+// CPU value is accepted for legacy callers and resolves to the plan quota.
+func writeAppCgroup(instance string, plan api.Plan, planMB, cpuMillicores int) error {
 	if planMB < 1 {
 		return fmt.Errorf("fcvm: cgroup: planMB %d < 1", planMB)
 	}
 	if !plan.Valid() {
 		return fmt.Errorf("fcvm: cgroup: invalid plan %q (issue #301 / ADR-044)", plan)
 	}
-	return writePlanCgroupAt(ParentCgroupFor(plan), instance, plan, planMB)
+	return writeAppCgroupAt(ParentCgroupFor(plan), instance, plan, planMB, cpuMillicores)
 }
 
 // writePlanCgroupAt applies the plan fence at an already-resolved parent
 // cgroup. Builders use the same memory accounting shape but live under
 // faas-cp-build.slice, so their parent cannot be derived from the tenant plan.
 func writePlanCgroupAt(parent, instance string, plan api.Plan, planMB int) error {
+	return writeAppCgroupAt(parent, instance, plan, planMB, 0)
+}
+
+func writeAppCgroupAt(parent, instance string, plan api.Plan, planMB, cpuMillicores int) error {
 	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(instance))
 	if err := writeMemoryMaxTo(scope, planMB); err != nil {
 		return err
 	}
-	if err := writeCPUMaxTo(scope, plan); err != nil {
+	if err := writeAppCPUMaxTo(scope, plan, cpuMillicores); err != nil {
 		return err
 	}
 	return nil
@@ -159,6 +169,10 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 // (an unconstrained slice); we validate the plan above so this
 // branch is unreachable in production.
 func writeCPUMaxTo(scope string, plan api.Plan) error {
+	return writeAppCPUMaxTo(scope, plan, 0)
+}
+
+func writeAppCPUMaxTo(scope string, plan api.Plan, cpuMillicores int) error {
 	quota := plan.CPUQuotaUS()
 	period := plan.CPUPeriodUS()
 	if quota <= 0 || period <= 0 {
@@ -167,6 +181,12 @@ func writeCPUMaxTo(scope string, plan api.Plan) error {
 		// is defence-in-depth so a future caller that bypasses
 		// Manager.Wake doesn't silently emit an unbounded slice.
 		return fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", plan, quota, period)
+	}
+	if cpuMillicores > 0 {
+		if !api.ValidAppCPUMillicores(cpuMillicores) {
+			return fmt.Errorf("fcvm: cgroup: invalid cpu_millicores %d", cpuMillicores)
+		}
+		quota = cpuMillicores * period / 1000
 	}
 	path := filepath.Join(scope, "cpu.max")
 	body := fmt.Sprintf("%d %d\n", quota, period)

@@ -512,6 +512,9 @@ message AppSpec {
   // Per-app readiness budget. 0 preserves the vmmd default for legacy
   // callers; schedd sends the plan-resolved value for production wakes.
   int32 startup_deadline_s = 15;
+  // Sustained app CPU allowance enforced with cgroup v2 cpu.max.
+  // 0 preserves the plan-derived quota for legacy callers.
+  int32 cpu_millicores = 16;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
