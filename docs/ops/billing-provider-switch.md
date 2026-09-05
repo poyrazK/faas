@@ -93,8 +93,15 @@ wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
   requires the local invoice UUID, a positive EUR-cent amount, a reason, and
   an explicit `Idempotency-Key`; it binds the Polar order to the target
   account before calling Polar and requires the admin scope plus the operator
-  email allowlist. The Polar provider's idempotency key is the recovery path
-  when the response to a money-moving request is ambiguous.
+  email allowlist. **Polar does not honour the `Idempotency-Key` request
+  header.** The provider therefore stamps the key into the refund's
+  `metadata.faas_idempotency_key`, lists the order's refunds before writing
+  (a refund already carrying the key is returned without a new write), sends
+  exactly one `POST /v1/refunds` with no transport retry, and on an
+  ambiguous failure (connection drop, 408, 429, 5xx) lists the refunds again
+  to recover the refund Polar may have committed. Retry an ambiguous
+  operator refund with the **same** `Idempotency-Key`; a new key is a new
+  refund.
 
 ## Operator checks
 

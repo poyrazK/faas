@@ -628,7 +628,18 @@ func TestCancelAndRefund(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/v1/refunds" {
-			refundIdempotencyKey = r.Header.Get("Idempotency-Key")
+			if r.Method == http.MethodGet {
+				_, _ = io.WriteString(w, `{"items":[],"pagination":{"total_count":0,"max_page":1}}`)
+				return
+			}
+			if h := r.Header.Get("Idempotency-Key"); h != "" {
+				t.Errorf("refund POST must not carry Idempotency-Key (stdlib replays it), got %q", h)
+			}
+			var body struct {
+				Metadata map[string]string `json:"metadata"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			refundIdempotencyKey = body.Metadata[refundMetadataKey]
 			_, _ = io.WriteString(w, `{"id":"refund-1","amount":500,"currency":"eur"}`)
 			return
 		}
@@ -648,9 +659,12 @@ func TestCancelAndRefund(t *testing.T) {
 		t.Fatalf("Refund = %+v, %v", refund, err)
 	}
 	if refundIdempotencyKey != "faas-refund-order-1-500" {
-		t.Fatalf("refund idempotency key = %q", refundIdempotencyKey)
+		t.Fatalf("refund metadata idempotency key = %q", refundIdempotencyKey)
 	}
-	if len(paths) != 2 {
+	// PATCH subscription, then the refund preflight listing, then the
+	// single refund POST — Polar ignores Idempotency-Key, so Refund reads
+	// the order's refunds before writing.
+	if len(paths) != 3 || paths[1] != "GET /v1/refunds" || paths[2] != "POST /v1/refunds" {
 		t.Fatalf("API paths = %v", paths)
 	}
 }
@@ -662,7 +676,15 @@ func TestRefundUsesContextIdempotencyKey(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		got = r.Header.Get("Idempotency-Key")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"items":[],"pagination":{"total_count":0,"max_page":1}}`)
+			return
+		}
+		var body struct {
+			Metadata map[string]string `json:"metadata"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = body.Metadata[refundMetadataKey]
 		_, _ = io.WriteString(w, `{"id":"refund-operator","amount":250,"currency":"eur","status":"pending"}`)
 	}))
 	defer server.Close()
@@ -675,6 +697,6 @@ func TestRefundUsesContextIdempotencyKey(t *testing.T) {
 		t.Fatalf("Refund: %v", err)
 	}
 	if got != "operator-refund-42" {
-		t.Fatalf("refund idempotency key = %q, want operator-refund-42", got)
+		t.Fatalf("refund metadata idempotency key = %q, want operator-refund-42", got)
 	}
 }

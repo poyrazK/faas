@@ -146,9 +146,12 @@ type Provider interface {
 	//
 	//   1. Translating cents → the provider's native unit (Stripe:
 	//      millicents; Paddle: adjustment line-item cents).
-	//   2. Forwarding a ctx-derived Idempotency-Key so a network-blip
-	//      retry does not create a duplicate refund. Stripe: read
-	//      via idempotencyKeyFromCtx; Paddle: ContextWithTransitID).
+	//   2. Making a network-blip retry unable to create a duplicate
+	//      refund. Stripe: ctx-derived Idempotency-Key (honoured by
+	//      Stripe); Paddle: ContextWithTransitID; Polar: Polar ignores
+	//      the header, so the adapter stamps the ctx key into refund
+	//      metadata, reads the order's refunds before writing, POSTs
+	//      exactly once, and re-reads on an ambiguous failure.
 	//   3. Mapping provider errors (Stripe: amount_too_large,
 	//      charge_already_refunded, etc.) onto errors the apid
 	//      handler can dispatch on. Today the handler returns
