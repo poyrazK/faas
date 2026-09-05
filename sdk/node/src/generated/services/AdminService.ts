@@ -10,7 +10,15 @@ import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js
 import type { BillingPaddleOveragePreflightResponse } from '../models/BillingPaddleOveragePreflightResponse.js';
 import type { BillingReconcileResponse } from '../models/BillingReconcileResponse.js';
 import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js';
+import type { ObsAppDetailResponse } from '../models/ObsAppDetailResponse.js';
+import type { ObsCapacityResponse } from '../models/ObsCapacityResponse.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
+import type { ObsNodeDetailResponse } from '../models/ObsNodeDetailResponse.js';
+import type { ObsNodeListResponse } from '../models/ObsNodeListResponse.js';
+import type { ObsOverviewResponse } from '../models/ObsOverviewResponse.js';
+import type { ObsTenant360Response } from '../models/ObsTenant360Response.js';
+import type { ObsTenantActivityResponse } from '../models/ObsTenantActivityResponse.js';
+import type { ObsTenantListResponse } from '../models/ObsTenantListResponse.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
 import type { RekeyProgress } from '../models/RekeyProgress.js';
@@ -685,6 +693,279 @@ export class AdminService {
       errors: {
         401: `code: unauthorized`,
         403: `obs health 403: code: admin_required — caller is not in the FAAS_ADMIN_EMAILS allowlist.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the fleet operator KPI snapshot.
+   * @returns ObsOverviewResponse Fleet counts, node health, and bounded failure buckets.
+   * @throws ApiError
+   */
+  public static getOperatorObservabilityOverview(): CancelablePromise<ObsOverviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/overview',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Read fleet capacity and placement counters.
+   * @returns ObsCapacityResponse Aggregate capacity snapshot with per-node headroom.
+   * @throws ApiError
+   */
+  public static getOperatorCapacity(): CancelablePromise<ObsCapacityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/capacity',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List tenants for the operator console.
+   * @returns ObsTenantListResponse Cursor-paginated tenant inventory.
+   * @throws ApiError
+   */
+  public static listOperatorTenants({
+    limit = 200,
+    cursor,
+    includePii = false,
+  }: {
+    /**
+     * Page size; capped at 500.
+     */
+    limit?: number,
+    /**
+     * Opaque pagination cursor from the previous page.
+     */
+    cursor?: string,
+    /**
+     * Opt-in email projection; every use is audited.
+     */
+    includePii?: boolean,
+  }): CancelablePromise<ObsTenantListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/tenants',
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+        'include_pii': includePii,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the bounded tenant 360 view.
+   * @returns ObsTenant360Response Tenant identity, apps, usage, and bounded billing summary.
+   * @throws ApiError
+   */
+  public static getOperatorTenant360({
+    id,
+    month,
+    includePii = false,
+  }: {
+    /**
+     * Tenant (account) id.
+     */
+    id: string,
+    /**
+     * Usage month as YYYY-MM; defaults to the current month.
+     */
+    month?: string,
+    /**
+     * Opt-in email projection on the 360 view; every use is audited.
+     */
+    includePii?: boolean,
+  }): CancelablePromise<ObsTenant360Response> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/tenants/{id}/360',
+      path: {
+        'id': id,
+      },
+      query: {
+        'month': month,
+        'include_pii': includePii,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Read safe tenant activity metadata.
+   * @returns ObsTenantActivityResponse Invocation and audit metadata without request payloads or results.
+   * @throws ApiError
+   */
+  public static getOperatorTenantActivity({
+    id,
+    limit = 50,
+  }: {
+    /**
+     * Tenant (account) id whose activity to read.
+     */
+    id: string,
+    /**
+     * Max activity rows; capped at 200.
+     */
+    limit?: number,
+  }): CancelablePromise<ObsTenantActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/tenants/{id}/activity',
+      path: {
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List compute nodes with live utilization.
+   * @returns ObsNodeListResponse Cursor-paginated node inventory.
+   * @throws ApiError
+   */
+  public static listOperatorNodes({
+    limit = 200,
+    cursor,
+    includeInactive = '0',
+  }: {
+    /**
+     * Node page size; capped at 500.
+     */
+    limit?: number,
+    /**
+     * Opaque node-page cursor from the previous page.
+     */
+    cursor?: string,
+    /**
+     * Set to '1' to include nodes not accepting placements.
+     */
+    includeInactive?: '0' | '1',
+  }): CancelablePromise<ObsNodeListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/nodes',
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+        'include_inactive': includeInactive,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the apps and instances placed on one node.
+   * @returns ObsNodeDetailResponse Node health, workload placement, and drain safety.
+   * @throws ApiError
+   */
+  public static getOperatorNodeDetail({
+    name,
+  }: {
+    /**
+     * Node name.
+     */
+    name: string,
+  }): CancelablePromise<ObsNodeDetailResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/nodes/{name}/detail',
+      path: {
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Read app, deployment, instance, and health details.
+   * @returns ObsAppDetailResponse Safe workload and health projection for an app.
+   * @throws ApiError
+   */
+  public static getOperatorAppDetail({
+    id,
+    range = '5m',
+  }: {
+    /**
+     * App id.
+     */
+    id: string,
+    /**
+     * Metrics aggregation window.
+     */
+    range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
+  }): CancelablePromise<ObsAppDetailResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/apps/{id}',
+      path: {
+        'id': id,
+      },
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

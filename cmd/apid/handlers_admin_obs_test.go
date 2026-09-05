@@ -101,8 +101,8 @@ func TestObsOverview_AuthGate_RejectsNonAllowlistedEmail(t *testing.T) {
 // successful path: an admin caller whose email is in the
 // allowlist sees the full KPI bundle. We don't assert field
 // values (counts depend on the empty MemStore fixture) —
-// the test is structural: 200 + a non-nil Totals + a
-// generated_at timestamp.
+// the test is structural: 200 + a non-nil Totals and arrays
+// + a generated_at timestamp.
 func TestObsOverview_HappyPath_ReturnsKPIBundle(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
 	rec := e.do(t, "GET", "/v1/admin/obs/overview", nil, nil)
@@ -121,6 +121,15 @@ func TestObsOverview_HappyPath_ReturnsKPIBundle(t *testing.T) {
 		// so this is always 1+. The non-zero check pins that the
 		// projection helper ran (no nil-panic regression).
 		t.Errorf("overview: accounts_active is 0 (projection may not have run)")
+	}
+	if resp.TopRateLimitedAccounts24h == nil {
+		t.Errorf("overview: top_rate_limited_accounts_24h is null; want an empty array")
+	}
+	if resp.NodeHealth == nil {
+		t.Errorf("overview: node_health is null; want an array")
+	}
+	if resp.RecentFailures1h == nil {
+		t.Errorf("overview: recent_failures_1h is null; want an empty array")
 	}
 }
 

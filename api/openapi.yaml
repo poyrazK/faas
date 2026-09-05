@@ -10291,6 +10291,191 @@ paths:
   # Fleet-level sweep of `builds` rows stuck in 'running' past
   # the threshold. Calls state.Store.SweepStuckRunningBuilds
   # directly per user decision (NO builderd gRPC server).
+  /v1/admin/obs/overview:
+    get:
+      tags: [admin]
+      operationId: getOperatorObservabilityOverview
+      summary: Read the fleet operator KPI snapshot.
+      responses:
+        '200':
+          description: Fleet counts, node health, and bounded failure buckets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsOverviewResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/admin/obs/capacity:
+    get:
+      tags: [admin]
+      operationId: getOperatorCapacity
+      summary: Read fleet capacity and placement counters.
+      responses:
+        '200':
+          description: Aggregate capacity snapshot with per-node headroom.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsCapacityResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/admin/obs/tenants:
+    get:
+      tags: [admin]
+      operationId: listOperatorTenants
+      summary: List tenants for the operator console.
+      parameters:
+        - name: limit
+          description: Page size; capped at 500.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - name: cursor
+          description: Opaque pagination cursor from the previous page.
+          in: query
+          schema: { type: string }
+        - name: include_pii
+          in: query
+          schema: { type: boolean, default: false }
+          description: Opt-in email projection; every use is audited.
+      responses:
+        '200':
+          description: Cursor-paginated tenant inventory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsTenantListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/admin/obs/tenants/{id}/360:
+    get:
+      tags: [admin]
+      operationId: getOperatorTenant360
+      summary: Read the bounded tenant 360 view.
+      parameters:
+        - name: id
+          description: Tenant (account) id.
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: month
+          description: Usage month as YYYY-MM; defaults to the current month.
+          in: query
+          schema: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+        - name: include_pii
+          in: query
+          schema: { type: boolean, default: false }
+          description: Opt-in email projection on the 360 view; every use is audited.
+      responses:
+        '200':
+          description: Tenant identity, apps, usage, and bounded billing summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsTenant360Response' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/admin/obs/tenants/{id}/activity:
+    get:
+      tags: [admin]
+      operationId: getOperatorTenantActivity
+      summary: Read safe tenant activity metadata.
+      parameters:
+        - name: id
+          description: Tenant (account) id whose activity to read.
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          description: Max activity rows; capped at 200.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Invocation and audit metadata without request payloads or results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsTenantActivityResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/admin/obs/nodes:
+    get:
+      tags: [admin]
+      operationId: listOperatorNodes
+      summary: List compute nodes with live utilization.
+      parameters:
+        - name: limit
+          description: Node page size; capped at 500.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - name: cursor
+          description: Opaque node-page cursor from the previous page.
+          in: query
+          schema: { type: string }
+        - name: include_inactive
+          description: Set to '1' to include nodes not accepting placements.
+          in: query
+          schema: { type: string, enum: ['0', '1'], default: '0' }
+      responses:
+        '200':
+          description: Cursor-paginated node inventory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsNodeListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/admin/obs/nodes/{name}/detail:
+    get:
+      tags: [admin]
+      operationId: getOperatorNodeDetail
+      summary: Read the apps and instances placed on one node.
+      parameters:
+        - name: name
+          description: Node name.
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Node health, workload placement, and drain safety.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsNodeDetailResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/admin/obs/apps/{id}:
+    get:
+      tags: [admin]
+      operationId: getOperatorAppDetail
+      summary: Read app, deployment, instance, and health details.
+      parameters:
+        - name: id
+          description: App id.
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: range
+          description: Metrics aggregation window.
+          in: query
+          schema: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d], default: 5m }
+      responses:
+        '200':
+          description: Safe workload and health projection for an app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAppDetailResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/admin/builds/sweep-stuck:
     post:
       tags: [admin]
@@ -16369,6 +16554,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -16410,6 +16596,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -16444,6 +16631,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'
@@ -20980,6 +21168,420 @@ components:
         status: { type: string, enum: [queued, running, completed, failed] }
 
 
+    ObsAppDetailResponse:
+      description: Operator app-detail envelope - the app row plus health, deployments, and instances.
+      type: object
+      required: [app, deployments, instances, invocations, health]
+      properties:
+        app: { $ref: '#/components/schemas/ObsAppDetail' }
+        deployments:
+          type: array
+          items: { $ref: '#/components/schemas/ObsDeploymentRow' }
+        instances:
+          type: array
+          items: { $ref: '#/components/schemas/ObsInstanceRow' }
+        invocations:
+          type: array
+          items: { $ref: '#/components/schemas/ObsInvocationRow' }
+        health: { $ref: '#/components/schemas/ObsAppHealth' }
+    ObsCapacityResponse:
+      description: Fleet capacity snapshot - aggregate headroom plus per-node rows.
+      type: object
+      required: [generated_at, summary, nodes]
+      properties:
+        generated_at: { type: string, format: date-time }
+        summary: { $ref: '#/components/schemas/ObsCapacitySummary' }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/ObsCapacityNode' }
+    ObsNodeDetailResponse:
+      description: One node - health, placed workloads, and drain safety.
+      type: object
+      required: [node, apps, instances, drain]
+      properties:
+        node: { $ref: '#/components/schemas/ObsNodeRow' }
+        apps:
+          type: array
+          items: { $ref: '#/components/schemas/ObsNodeApp' }
+        instances:
+          type: array
+          items: { $ref: '#/components/schemas/ObsInstanceRow' }
+        drain: { $ref: '#/components/schemas/ObsNodeDrainStatus' }
+    ObsNodeListResponse:
+      description: Cursor-paginated node inventory for the operator console.
+      type: object
+      required: [items, next_cursor, limit]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ObsNodeRow' }
+        next_cursor: { type: string }
+        limit: { type: integer }
+    ObsOverviewResponse:
+      description: Fleet overview - totals, node health, and bounded failure buckets.
+      type: object
+      required: [generated_at, totals, top_rate_limited_accounts_24h, node_health, recent_failures_1h]
+      properties:
+        generated_at: { type: string, format: date-time }
+        totals: { $ref: '#/components/schemas/ObsOverviewTotals' }
+        top_rate_limited_accounts_24h:
+          type: array
+          items: { $ref: '#/components/schemas/ObsOverviewRateLimited' }
+        node_health:
+          type: array
+          items: { $ref: '#/components/schemas/ObsOverviewNodeHealth' }
+        recent_failures_1h:
+          type: array
+          items: { $ref: '#/components/schemas/ObsOverviewFailureKind' }
+    ObsTenant360Response:
+      description: Bounded tenant 360 view - identity, apps, usage, and billing summary.
+      type: object
+      required: [account, apps, orgs, api_keys, sessions, usage, billing]
+      properties:
+        account: { $ref: '#/components/schemas/ObsTenantRow' }
+        apps:
+          type: array
+          items: { $ref: '#/components/schemas/ObsTenantApp' }
+        orgs:
+          type: array
+          items: { $ref: '#/components/schemas/ObsTenantOrg' }
+        api_keys: { $ref: '#/components/schemas/ObsTenantCounts' }
+        sessions: { $ref: '#/components/schemas/ObsTenantCounts' }
+        usage: { $ref: '#/components/schemas/ObsTenantUsage' }
+        billing: { $ref: '#/components/schemas/ObsTenantBilling' }
+    ObsTenantActivityResponse:
+      description: Tenant activity metadata - invocation and audit rows, never payloads.
+      type: object
+      required: [account_id, generated_at, invocations, audit_events, limit]
+      properties:
+        account_id: { type: string, format: uuid }
+        generated_at: { type: string, format: date-time }
+        invocations:
+          type: array
+          items: { $ref: '#/components/schemas/ObsInvocationRow' }
+        audit_events:
+          type: array
+          items: { $ref: '#/components/schemas/ObsAuditActivityRow' }
+        limit: { type: integer }
+    ObsTenantListResponse:
+      description: Cursor-paginated tenant inventory for the operator console.
+      type: object
+      required: [items, next_cursor, limit]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ObsTenantRow' }
+        next_cursor: { type: string }
+        limit: { type: integer }
+    ObsAppDetail:
+      description: The app row as the operator console projects it.
+      type: object
+      required: [id, account_id, slug, type, runtime, status, ram_mb, max_concurrency, min_instances, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        slug: { type: string }
+        type: { type: string }
+        runtime: { type: string }
+        status: { type: string }
+        ram_mb: { type: integer }
+        max_concurrency: { type: integer }
+        min_instances: { type: integer }
+        created_at: { type: string, format: date-time }
+    ObsDeploymentRow:
+      description: One deployment in the operator app-detail view.
+      type: object
+      required: [id, status, kind, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string }
+        kind: { type: string }
+        image_digest: { type: string }
+        source_url: { type: string }
+        commit_sha: { type: string }
+        error_code: { type: string }
+        created_at: { type: string, format: date-time }
+    ObsInstanceRow:
+      description: One instance in the operator app-detail view.
+      type: object
+      required: [id, app_id, deployment_id, state, ram_mb, started_at, last_request_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string }
+        account_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        node_id: { type: string, format: uuid }
+        node_name: { type: string }
+        state: { type: string }
+        ram_mb: { type: integer }
+        started_at: { type: string, format: date-time }
+        last_request_at: { type: string, format: date-time }
+        parked_at: { type: [string, 'null'], format: date-time }
+    ObsInvocationRow:
+      description: One invocation - metadata only, never the request or result body.
+      type: object
+      required: [id, app_id, state, source, method, path, attempts, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string }
+        state: { type: string }
+        source: { type: string }
+        method: { type: string }
+        path: { type: string }
+        outcome: { type: string }
+        attempts: { type: integer }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+    ObsAppHealth:
+      description: Health counters for one app over the requested window.
+      type: object
+      required: [generated_at, metrics, errors, errors_window_start, errors_window_end]
+      properties:
+        generated_at: { type: string, format: date-time }
+        metrics: { $ref: '#/components/schemas/AppMetricsResponse' }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/AppErrorSummaryItem' }
+        errors_window_start: { type: string, format: date-time }
+        errors_window_end: { type: string, format: date-time }
+    ObsCapacitySummary:
+      description: Aggregate capacity counters across the fleet.
+      type: object
+      required: [total_nodes, active_nodes, inactive_nodes, total_vcpus, total_vcpu_budget, total_mem_mb, total_admission_ceiling_mb, ram_used_mb, admission_margin_mb, instances_live, instances_running, instances_waking, instances_cold_booting, apps_total, tenants_total, unplaced_apps]
+      properties:
+        total_nodes: { type: integer }
+        active_nodes: { type: integer }
+        inactive_nodes: { type: integer }
+        total_vcpus: { type: integer, format: int64 }
+        total_vcpu_budget: { type: integer, format: int64 }
+        total_mem_mb: { type: integer, format: int64 }
+        total_admission_ceiling_mb: { type: integer, format: int64 }
+        ram_used_mb: { type: integer, format: int64 }
+        admission_margin_mb: { type: integer, format: int64 }
+        instances_live: { type: integer, format: int64 }
+        instances_running: { type: integer, format: int64 }
+        instances_waking: { type: integer, format: int64 }
+        instances_cold_booting: { type: integer, format: int64 }
+        apps_total: { type: integer, format: int64 }
+        tenants_total: { type: integer, format: int64 }
+        unplaced_apps: { type: integer, format: int64 }
+    ObsCapacityNode:
+      description: Per-node capacity - resident and reserved footprint against the node size.
+      type: object
+      required: [id, name, active, vpcpus, vcpu_budget, mem_mb, admission_ceiling_mb, instances_live, instances_running, instances_waking, instances_cold_booting, ram_used_mb, admission_margin_mb, apps_count, tenants_count]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        active: { type: boolean }
+        vpcpus: { type: integer }
+        vcpu_budget: { type: integer }
+        mem_mb: { type: integer }
+        admission_ceiling_mb: { type: integer }
+        instances_live: { type: integer, format: int64 }
+        instances_running: { type: integer, format: int64 }
+        instances_waking: { type: integer, format: int64 }
+        instances_cold_booting: { type: integer, format: int64 }
+        ram_used_mb: { type: integer, format: int64 }
+        admission_margin_mb: { type: integer, format: int64 }
+        apps_count: { type: integer, format: int64 }
+        tenants_count: { type: integer, format: int64 }
+    ObsNodeRow:
+      description: One compute node with live utilization counters.
+      type: object
+      required: [id, name, active, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, created_at, instances_live, instances_running, instances_waking, instances_cold_booting, ram_used_mb, admission_margin_mb]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        active: { type: boolean }
+        vpcpus: { type: integer }
+        mem_mb: { type: integer }
+        max_concurrency: { type: integer }
+        admission_ceiling_mb: { type: integer }
+        overlay_ip: { type: string }
+        last_heartbeat_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        instances_live: { type: integer, format: int64 }
+        instances_running: { type: integer, format: int64 }
+        instances_waking: { type: integer, format: int64 }
+        instances_cold_booting: { type: integer, format: int64 }
+        ram_used_mb: { type: integer, format: int64 }
+        admission_margin_mb: { type: integer, format: int64 }
+        cpu_pct_60s: { type: [number, 'null'] }
+        disk_used_bytes: { type: [integer, 'null'], format: int64 }
+    ObsNodeApp:
+      description: One app placed on a node, with its resident footprint.
+      type: object
+      required: [id, slug, account_id, status, instances_live, instances_running, instances_waking, instances_cold_booting, ram_used_mb]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        account_id: { type: string, format: uuid }
+        status: { type: string }
+        instances_live: { type: integer }
+        instances_running: { type: integer }
+        instances_waking: { type: integer }
+        instances_cold_booting: { type: integer }
+        ram_used_mb: { type: integer, format: int64 }
+        last_request_at: { type: [string, 'null'], format: date-time }
+    ObsNodeDrainStatus:
+      description: Whether a node can drain safely, and what blocks it.
+      type: object
+      required: [total_instances, live_instances, running_instances, waking_instances, cold_booting_instances, drain_safe, observed_at]
+      properties:
+        total_instances: { type: integer }
+        live_instances: { type: integer }
+        running_instances: { type: integer }
+        waking_instances: { type: integer }
+        cold_booting_instances: { type: integer }
+        drain_safe: { type: boolean }
+        observed_at: { type: string, format: date-time }
+    ObsOverviewTotals:
+      description: Fleet-wide counts - accounts, apps, instances, invocations.
+      type: object
+      required: [accounts_active, accounts_past_due, accounts_suspended, orgs_total, apps_total, instances_live, instances_waking, nodes_active, nodes_inactive, audit_events_24h]
+      properties:
+        accounts_active: { type: integer }
+        accounts_past_due: { type: integer }
+        accounts_suspended: { type: integer }
+        orgs_total: { type: integer }
+        apps_total: { type: integer }
+        instances_live: { type: integer }
+        instances_waking: { type: integer }
+        nodes_active: { type: integer }
+        nodes_inactive: { type: integer }
+        audit_events_24h: { type: integer }
+    ObsOverviewRateLimited:
+      description: How many accounts and apps are currently throttled.
+      type: object
+      required: [account_id, hits]
+      properties:
+        account_id: { type: string, format: uuid }
+        hits: { type: integer }
+    ObsOverviewNodeHealth:
+      description: Node counts by health state.
+      type: object
+      required: [name, active, stale]
+      properties:
+        name: { type: string }
+        active: { type: boolean }
+        last_heartbeat_at: { type: string, format: date-time }
+        stale: { type: boolean }
+    ObsOverviewFailureKind:
+      description: One bounded failure bucket - kind and count.
+      type: object
+      required: [kind, count]
+      properties:
+        kind: { type: string }
+        count: { type: integer }
+    ObsTenantRow:
+      description: One tenant in the operator inventory.
+      type: object
+      required: [account_id, plan, status, is_personal, created_at, mfa_enrolled, apps_count, deployments_live_count]
+      properties:
+        account_id: { type: string, format: uuid }
+        plan: { type: string }
+        status: { type: string }
+        org_slug: { type: string }
+        is_personal: { type: boolean }
+        created_at: { type: string, format: date-time }
+        mfa_enrolled: { type: boolean }
+        apps_count: { type: integer }
+        deployments_live_count: { type: integer }
+        email: { type: string, format: email }
+    ObsTenantApp:
+      description: One app under a tenant, as the 360 view lists it.
+      type: object
+      required: [id, slug, status, deployments]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        status: { type: string }
+        deployments: { type: integer }
+    ObsTenantOrg:
+      description: One org membership under a tenant.
+      type: object
+      required: [id, slug, role]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        role: { type: string }
+    ObsTenantCounts:
+      description: Resource counts for one tenant.
+      type: object
+      required: [active, revoked]
+      properties:
+        active: { type: integer }
+        revoked: { type: integer }
+    ObsTenantUsage:
+      description: Monthly usage rollup for one tenant.
+      type: object
+      required: [month, used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents, used_cpu_hours, used_egress_gb, used_ingress_gb, cold_boots, requests, apps]
+      properties:
+        month: { type: string }
+        used_gb_hours: { type: number }
+        included_gb_hours: { type: integer, format: int64 }
+        overage_gb_hours: { type: number }
+        overage_cents: { type: integer, format: int64 }
+        used_cpu_hours: { type: number }
+        used_egress_gb: { type: number }
+        used_ingress_gb: { type: number }
+        cold_boots: { type: integer, format: int64 }
+        requests: { type: integer, format: int64 }
+        apps:
+          type: array
+          items: { $ref: '#/components/schemas/ObsTenantUsageApp' }
+    ObsTenantBilling:
+      description: Bounded billing summary - plan, status, and invoice totals only.
+      type: object
+      required: [current_month_overage_cents, active_credits_cents, invoices]
+      properties:
+        current_month_overage_cents: { type: integer, format: int64 }
+        overage_cap_cents: { type: [integer, 'null'], format: int64 }
+        active_credits_cents: { type: integer, format: int64 }
+        invoices:
+          type: array
+          items: { $ref: '#/components/schemas/ObsInvoiceSummary' }
+    ObsAuditActivityRow:
+      description: One audit row in the tenant activity view.
+      type: object
+      required: [id, at, kind]
+      properties:
+        id: { type: string, format: uuid }
+        at: { type: string, format: date-time }
+        kind: { type: string }
+        actor: { type: string }
+        subject: { type: string }
+    ObsTenantUsageApp:
+      description: Per-app usage split inside a tenant month.
+      type: object
+      required: [app_id, mb_seconds, cpu_usec, requests, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boots]
+      properties:
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string }
+        mb_seconds: { type: integer, format: int64 }
+        cpu_usec: { type: integer, format: int64 }
+        requests: { type: integer, format: int64 }
+        tx_bytes: { type: integer, format: int64 }
+        net_tx_bytes: { type: integer, format: int64 }
+        net_rx_bytes: { type: integer, format: int64 }
+        cold_boots: { type: integer, format: int64 }
+    ObsInvoiceSummary:
+      description: One invoice - number, status, and total; no line items.
+      type: object
+      required: [id, provider, status, currency, period_start, period_end, total_cents, amount_paid_cents]
+      properties:
+        id: { type: string, format: uuid }
+        provider: { type: string }
+        number: { type: string }
+        status: { type: string }
+        currency: { type: string }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        total_cents: { type: integer, format: int64 }
+        amount_paid_cents: { type: integer, format: int64 }
   responses:
 
     Unauthorized:

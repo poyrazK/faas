@@ -125,14 +125,14 @@ func toNodeHealthRows(rows []state.ComputeNode, now time.Time) []api.ObsOverview
 // audit-log search endpoint is in place. The shape is here so
 // the wire contract is stable.
 func summariseTopRateLimited(_ *http.Request, _ time.Time) []api.ObsOverviewRateLimited {
-	return nil
+	return []api.ObsOverviewRateLimited{}
 }
 
 // summariseRecentFailures returns the top-N failure kinds over
 // the 1h window. Like summariseTopRateLimited, PR #1 ships an
 // empty list and PR #3 wires the actual audit_log scan.
 func summariseRecentFailures(_ *http.Request, _ time.Time) []api.ObsOverviewFailureKind {
-	return nil
+	return []api.ObsOverviewFailureKind{}
 }
 
 // filterTenantRows applies the ?plan= and ?status= query
