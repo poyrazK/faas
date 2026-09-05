@@ -597,6 +597,52 @@ func TestCreateDeploymentMultipart_FunctionHappyPath(t *testing.T) {
 	// test (server_test.go::TestCreateDeploymentImage).
 }
 
+func TestCreateDeploymentMultipart_WorkspaceSourceRootRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", dir)
+
+	e := setup(t, api.PlanPro)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "workspace-app"}, nil)
+	raw := buildTestTarGz(t, []tar.Header{
+		{Name: "package.json"},
+		{Name: "apps/api/package.json"},
+		{Name: "apps/api/index.js"},
+		{Name: "packages/worker/data/state.db"},
+	}, map[string][]byte{
+		"package.json":                  []byte(`{"private":true,"workspaces":["apps/*"]}`),
+		"apps/api/package.json":         []byte(`{"name":"api"}`),
+		"apps/api/index.js":             []byte("console.log(1)\n"),
+		"packages/worker/data/state.db": []byte("db"),
+	})
+	body, ct := multipartUpload(t, map[string]multipartPart{
+		"source":      {filename: "src.tar.gz", body: raw},
+		"source_root": {body: []byte("apps/api")},
+	})
+	req := httptest.NewRequest("POST", "/v1/apps/workspace-app/deployments", body)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (%s)", rec.Code, rec.Body)
+	}
+	var out api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.SourceRoot != "apps/api" {
+		t.Fatalf("response source_root = %q, want apps/api", out.SourceRoot)
+	}
+	dep, err := e.store.LatestDeployment(t.Context(), out.AppID)
+	if err != nil {
+		t.Fatalf("LatestDeployment: %v", err)
+	}
+	if dep.SourceRoot != "apps/api" {
+		t.Fatalf("stored source_root = %q, want apps/api", dep.SourceRoot)
+	}
+}
+
 // TestCreateDeploymentMultipart_StatelessRejection: end-to-end wire-
 // shape test for the Wave 0 stateless contract. A multipart deploy
 // whose source tarball has a top-level data/ directory must come
@@ -743,6 +789,39 @@ func TestArchiveHasRootDockerfile(t *testing.T) {
 	}))
 	if got, err := archiveHasRootDockerfile(withoutDockerfile); err != nil || got {
 		t.Fatalf("archiveHasRootDockerfile(no Dockerfile): got %v, err %v; want false", got, err)
+	}
+}
+
+func TestWorkspaceSourceRootScopesArchiveChecks(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", dir)
+	raw := buildTestTarGz(t, []tar.Header{
+		{Name: "apps/api/Dockerfile"},
+		{Name: "apps/api/package.json"},
+		{Name: "apps/api/index.js"},
+		{Name: "packages/worker/data/records.db"},
+	}, map[string][]byte{
+		"apps/api/Dockerfile":             []byte("FROM node:22-slim\n"),
+		"apps/api/package.json":           []byte(`{"name":"api"}`),
+		"apps/api/index.js":               []byte("console.log(1)\n"),
+		"packages/worker/data/records.db": []byte("db"),
+	})
+	path := writeTarToSpool(t, dir, raw)
+
+	if present, err := archiveHasSourceRoot(path, "apps/api"); err != nil || !present {
+		t.Fatalf("archiveHasSourceRoot(apps/api) = %v, %v; want true", present, err)
+	}
+	if present, err := archiveHasSourceRoot(path, "apps/missing"); err != nil || present {
+		t.Fatalf("archiveHasSourceRoot(apps/missing) = %v, %v; want false", present, err)
+	}
+	if prob := scanForStatefulShapeAtRoot(path, false, "apps/api"); prob != nil {
+		t.Fatalf("selected workspace rejected because sibling contains data/: %v", prob)
+	}
+	if prob := scanForStatefulShapeAtRoot(path, false, "packages/worker"); prob == nil || prob.Code != api.CodeStatelessOnlyViolation {
+		t.Fatalf("stateful selected workspace problem = %v, want stateless violation", prob)
+	}
+	if got, err := archiveHasRootDockerfileAtRoot(path, "apps/api"); err != nil || !got {
+		t.Fatalf("archiveHasRootDockerfileAtRoot(apps/api) = %v, %v; want true", got, err)
 	}
 }
 

@@ -343,6 +343,33 @@ func TestPackDirToTarGz_TopLevelDirAndCount(t *testing.T) {
 	}
 }
 
+func TestPackDirToTarGzFlat_PreservesRepositoryPaths(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", `{"workspaces":["apps/*"]}`)
+	writeFile(t, dir, "apps/api/package.json", `{"name":"api"}`)
+	writeFile(t, dir, "packages/shared/index.js", "module.exports = {}\n")
+
+	dest := filepath.Join(t.TempDir(), "out.tar.gz")
+	n, err := packDirToTarGzFlat(dir, dest, defaultZeroConfigSourceCapMB, nil)
+	if err != nil {
+		t.Fatalf("pack flat: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("fileCount = %d, want 3", n)
+	}
+	got := tarEntries(t, dest)
+	for _, want := range []string{"package.json", "apps/api/package.json", "packages/shared/index.js"} {
+		if !got[want] {
+			t.Errorf("flat archive missing %q; entries: %v", want, got)
+		}
+	}
+	for name := range got {
+		if strings.HasPrefix(name, filepath.Base(dir)+"/") {
+			t.Errorf("flat archive contains transport wrapper %q", name)
+		}
+	}
+}
+
 func TestPackDirToTarGz_Excludes(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Base(dir)

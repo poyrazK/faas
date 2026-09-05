@@ -611,11 +611,17 @@ func stageExecutable(source, target string) error {
 // firecracker exit cleanly with the build's exit code (vmmd's
 // DestroyResponse.exit_code on the wire — see pkg/vmmdgrpc/server.go).
 func runBuild(m api.BuildManifest) error {
+	if m.BuildContext == "" {
+		m.BuildContext = "/build/src"
+	}
 	if m.Workdir == "" {
 		m.Workdir = "/build/src"
 	}
 	if m.OutDir == "" {
 		m.OutDir = "/build/out"
+	}
+	if err := os.MkdirAll(m.BuildContext, 0o755); err != nil {
+		return writeAndPoweroff(m, fmt.Errorf("mkdir build context: %w", err), "")
 	}
 	if err := os.MkdirAll(m.Workdir, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir workdir: %w", err), "")
@@ -628,7 +634,7 @@ func runBuild(m api.BuildManifest) error {
 	// can preserve an image owner that does not match the mapped worker uid.
 	// Make the exact build paths writable before starting the rootless daemon;
 	// without this, BuildKit fails before it can create its worker state.
-	for _, dir := range []string{"/build", m.Workdir, m.OutDir} {
+	for _, dir := range []string{"/build", m.BuildContext, m.Workdir, m.OutDir} {
 		if err := os.Chmod(dir, 0o777); err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("chmod build workspace %s: %w", dir, err), "")
 		}
@@ -645,13 +651,19 @@ func runBuild(m api.BuildManifest) error {
 
 	// 1. Extract source tarball. guest-init has no login-shell PATH.
 	if m.SourceTarPath != "" {
-		if out, err := exec.Command("/bin/tar", "-xaf", m.SourceTarPath, "-C", m.Workdir).CombinedOutput(); err != nil {
+		if out, err := exec.Command("/bin/tar", "-xaf", m.SourceTarPath, "-C", m.BuildContext).CombinedOutput(); err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("tar extract: %w (%s)", err, out), "")
 		}
-		if err := flattenSingleSourceDir(m.Workdir); err != nil {
-			return writeAndPoweroff(m, fmt.Errorf("normalize source root: %w", err), "")
+		// The legacy packer wraps a self-contained source directory in one
+		// transport directory. Only flatten when the build context and
+		// working directory are the same; a workspace build must preserve
+		// repository-relative siblings below BuildContext.
+		if m.BuildContext == m.Workdir {
+			if err := flattenSingleSourceDir(m.BuildContext); err != nil {
+				return writeAndPoweroff(m, fmt.Errorf("normalize source root: %w", err), "")
+			}
 		}
-		_ = filepath.Walk(m.Workdir, func(p string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(m.BuildContext, func(p string, info os.FileInfo, err error) error {
 			if err == nil {
 				if info.IsDir() {
 					_ = os.Chmod(p, 0o777)
@@ -1223,12 +1235,13 @@ func seedBuildEntropy() error {
 // Extracted from runBuild so the table-driven TestBuildArgv can pin the wire
 // shape without spinning up a builder VM.
 func buildArgv(m api.BuildManifest) []string {
+	contextDir := manifestBuildContext(m)
 	switch m.Framework {
 	case api.FrameworkDockerfile:
 		return []string{
 			"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
 			"--frontend", "dockerfile.v0",
-			"--local", "context=" + m.Workdir,
+			"--local", "context=" + contextDir,
 			"--local", "dockerfile=" + m.Workdir,
 			"--output", "type=oci,dest=" + m.OutDir + "/image.tar",
 		}
@@ -1246,12 +1259,19 @@ func buildArgv(m api.BuildManifest) []string {
 		"--frontend", "gateway.v0",
 		"--opt", "source=ghcr.io/railwayapp/railpack-frontend:latest",
 		"--opt", "filename=railpack-plan.json",
-		"--local", "context=" + shellQuote(m.Workdir),
+		"--local", "context=" + shellQuote(contextDir),
 		"--local", "dockerfile=" + shellQuote(planDir),
 		"--output", "type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")),
 		"--progress", "plain",
 	}, " ")
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build}
+}
+
+func manifestBuildContext(m api.BuildManifest) string {
+	if m.BuildContext != "" {
+		return m.BuildContext
+	}
+	return m.Workdir
 }
 
 // shellQuote quotes a path embedded in the small prepare/build command above.

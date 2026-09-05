@@ -2,6 +2,7 @@ package builderd
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 
 	"github.com/onebox-faas/faas/pkg/markers"
@@ -41,12 +42,23 @@ func NewDetector() *Detector { return &Detector{} }
 // a user_error failure_class (see TestProcessOne_FrameworkDetectFailsFlipsDeployment
 // and TestProcessOne_UnknownFrameworkFails below). See ADR-088.
 func (d *Detector) Detect(path string) (Framework, error) {
-	fw, err := markers.DetectFromTarball(path)
+	return d.DetectAtRoot(path, "")
+}
+
+// DetectAtRoot reads framework markers below sourceRoot while preserving the
+// legacy archive-root behavior for an empty root. The selected root is
+// validated by pkg/markers so malformed deployment metadata fails before a VM
+// is spawned.
+func (d *Detector) DetectAtRoot(path, sourceRoot string) (Framework, error) {
+	fw, err := markers.DetectFromTarballAtRoot(path, sourceRoot)
 	if err != nil {
 		return fw, err
 	}
 	if fw == markers.FrameworkUnknown {
-		return fw, errors.New("detect: no package.json, requirements.txt, pyproject.toml, Pipfile, setup.py, go.mod, or Dockerfile found at tarball root")
+		if sourceRoot == "" || sourceRoot == "." {
+			return fw, errors.New("detect: no package.json, requirements.txt, pyproject.toml, Pipfile, setup.py, go.mod, or Dockerfile found at tarball root")
+		}
+		return fw, fmt.Errorf("detect: no package.json, requirements.txt, pyproject.toml, Pipfile, setup.py, go.mod, or Dockerfile found below source root %q", sourceRoot)
 	}
 	return fw, nil
 }
@@ -70,9 +82,15 @@ func (d *Detector) DetectFromFS(fsys fs.FS) (Framework, error) {
 // failure_class (see TestProcessOne_FrameworkDetectFailsFlipsDeployment
 // and TestProcessOne_UnknownFrameworkFails). ADR-088.
 func (d *Detector) DetectWithVersion(path string) (Framework, string, error) {
-	fw, err := d.Detect(path)
+	return d.DetectWithVersionAtRoot(path, "")
+}
+
+// DetectWithVersionAtRoot is DetectAtRoot plus the source-declared version
+// lookup scoped to the same source root.
+func (d *Detector) DetectWithVersionAtRoot(path, sourceRoot string) (Framework, string, error) {
+	fw, err := d.DetectAtRoot(path, sourceRoot)
 	if err != nil {
 		return fw, "", err
 	}
-	return fw, markers.VersionFromTarball(path, fw), nil
+	return fw, markers.VersionFromTarballAtRoot(path, fw, sourceRoot), nil
 }

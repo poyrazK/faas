@@ -617,6 +617,47 @@ func TestDeployMultipart_FieldsAndIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestDeployMultipartWithSourceRoot_EmitsSourceRoot(t *testing.T) {
+	var gotRoot string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("server multipart reader: %v", err)
+		}
+		for {
+			part, err := reader.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("read multipart part: %v", err)
+			}
+			body, readErr := io.ReadAll(part)
+			if readErr != nil {
+				t.Fatalf("read %s: %v", part.FormName(), readErr)
+			}
+			if part.FormName() == "source_root" {
+				gotRoot = string(body)
+			}
+			_ = part.Close()
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"d1","app_id":"x","status":"pending","created_at":"2026-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClientWithDeployTimeout(srv.URL, "fp_test", 30*time.Second)
+	if _, err := c.DeployMultipartWithSourceRoot(
+		context.Background(), "x", bytes.NewReader([]byte("tarball bytes")),
+		"src.tar.gz", "", "", false, "apps/api", DeployAnnotations{},
+	); err != nil {
+		t.Fatalf("DeployMultipartWithSourceRoot: %v", err)
+	}
+	if gotRoot != "apps/api" {
+		t.Fatalf("source_root = %q, want apps/api", gotRoot)
+	}
+}
+
 // TestDeployMultipart_ProblemError: tarball deploy with a too-large
 // archive returns 413 + CodeSourceTooLarge as *APIError.
 func TestDeployMultipart_ProblemError(t *testing.T) {

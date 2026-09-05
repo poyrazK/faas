@@ -867,10 +867,10 @@ func (q *Queries) CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCus
 }
 
 const createDeployment = `-- name: CreateDeployment :one
-insert into deployments (id, app_id, build_id, image_digest, kind, source_path, source_bytes, handler, log_path, status)
-values (gen_random_uuid(), $1, null, $2, $3, $4, $5, $6, $7, 'pending')
+insert into deployments (id, app_id, build_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, status)
+values (gen_random_uuid(), $1, null, $2, $3, $4, $5, $6, $7, $8, 'pending')
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-          coalesce(source_path, ''), coalesce(source_bytes, 0),
+          coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
           coalesce(handler, ''), coalesce(log_path, ''),
           status, coalesce(error, ''), created_at
 `
@@ -880,6 +880,7 @@ type CreateDeploymentParams struct {
 	ImageDigest string
 	Kind        string
 	SourcePath  pgtype.Text
+	SourceRoot  pgtype.Text
 	SourceBytes pgtype.Int8
 	Handler     pgtype.Text
 	LogPath     pgtype.Text
@@ -892,6 +893,7 @@ type CreateDeploymentRow struct {
 	ImageDigest string
 	Kind        string
 	SourcePath  string
+	SourceRoot  string
 	SourceBytes int64
 	Handler     string
 	LogPath     string
@@ -906,6 +908,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, db DBTX, arg CreateDeplo
 		arg.ImageDigest,
 		arg.Kind,
 		arg.SourcePath,
+		arg.SourceRoot,
 		arg.SourceBytes,
 		arg.Handler,
 		arg.LogPath,
@@ -918,6 +921,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, db DBTX, arg CreateDeplo
 		&i.ImageDigest,
 		&i.Kind,
 		&i.SourcePath,
+		&i.SourceRoot,
 		&i.SourceBytes,
 		&i.Handler,
 		&i.LogPath,
@@ -1442,7 +1446,7 @@ func (q *Queries) DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerP
 
 const deploymentByID = `-- name: DeploymentByID :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-       coalesce(source_path, ''), coalesce(source_bytes, 0),
+       coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
        coalesce(handler, ''), coalesce(log_path, ''),
        status, coalesce(error, ''), created_at
 from deployments where id = $1
@@ -1455,6 +1459,7 @@ type DeploymentByIDRow struct {
 	ImageDigest string
 	Kind        string
 	SourcePath  string
+	SourceRoot  string
 	SourceBytes int64
 	Handler     string
 	LogPath     string
@@ -1473,6 +1478,7 @@ func (q *Queries) DeploymentByID(ctx context.Context, db DBTX, id pgtype.UUID) (
 		&i.ImageDigest,
 		&i.Kind,
 		&i.SourcePath,
+		&i.SourceRoot,
 		&i.SourceBytes,
 		&i.Handler,
 		&i.LogPath,
@@ -2475,7 +2481,7 @@ func (q *Queries) IsMailSuppressed(ctx context.Context, db DBTX, lower string) (
 
 const latestDeployment = `-- name: LatestDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-       coalesce(source_path, ''), coalesce(source_bytes, 0),
+       coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
        coalesce(handler, ''), coalesce(log_path, ''),
        status, coalesce(error, ''), created_at
 from deployments where app_id = $1 order by created_at desc limit 1
@@ -2488,6 +2494,7 @@ type LatestDeploymentRow struct {
 	ImageDigest string
 	Kind        string
 	SourcePath  string
+	SourceRoot  string
 	SourceBytes int64
 	Handler     string
 	LogPath     string
@@ -2506,6 +2513,7 @@ func (q *Queries) LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UU
 		&i.ImageDigest,
 		&i.Kind,
 		&i.SourcePath,
+		&i.SourceRoot,
 		&i.SourceBytes,
 		&i.Handler,
 		&i.LogPath,
@@ -2518,7 +2526,7 @@ func (q *Queries) LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UU
 
 const latestSupersededDeployment = `-- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-       coalesce(source_path, ''), coalesce(source_bytes, 0),
+       coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
        coalesce(handler, ''), coalesce(log_path, ''),
        status, coalesce(error, ''), created_at
 from deployments
@@ -2533,6 +2541,7 @@ type LatestSupersededDeploymentRow struct {
 	ImageDigest string
 	Kind        string
 	SourcePath  string
+	SourceRoot  string
 	SourceBytes int64
 	Handler     string
 	LogPath     string
@@ -2551,6 +2560,7 @@ func (q *Queries) LatestSupersededDeployment(ctx context.Context, db DBTX, appID
 		&i.ImageDigest,
 		&i.Kind,
 		&i.SourcePath,
+		&i.SourceRoot,
 		&i.SourceBytes,
 		&i.Handler,
 		&i.LogPath,
@@ -3331,7 +3341,7 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 
 const listDeploymentsForApp = `-- name: ListDeploymentsForApp :many
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-       coalesce(source_path, ''), coalesce(source_bytes, 0),
+       coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
        coalesce(handler, ''), coalesce(log_path, ''),
        status, coalesce(error, ''), created_at
 from deployments where app_id = $1 order by created_at desc limit $2 offset $3
@@ -3350,6 +3360,7 @@ type ListDeploymentsForAppRow struct {
 	ImageDigest string
 	Kind        string
 	SourcePath  string
+	SourceRoot  string
 	SourceBytes int64
 	Handler     string
 	LogPath     string
@@ -3374,6 +3385,7 @@ func (q *Queries) ListDeploymentsForApp(ctx context.Context, db DBTX, arg ListDe
 			&i.ImageDigest,
 			&i.Kind,
 			&i.SourcePath,
+			&i.SourceRoot,
 			&i.SourceBytes,
 			&i.Handler,
 			&i.LogPath,
@@ -5639,7 +5651,7 @@ update deployments
    set status = 'failed', error = $2, error_code = $3
  where id = $1
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
-          coalesce(source_path, ''), coalesce(source_bytes, 0),
+          coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
           coalesce(handler, ''), coalesce(log_path, ''),
           coalesce(rootfs_path, ''), coalesce(rootfs_key, ''), coalesce(rootfs_bytes, 0),
           status, coalesce(error, ''), coalesce(error_code, ''), created_at
@@ -5658,6 +5670,7 @@ type SetDeploymentFailedRow struct {
 	ImageDigest string
 	Kind        string
 	SourcePath  string
+	SourceRoot  string
 	SourceBytes int64
 	Handler     string
 	LogPath     string
@@ -5693,6 +5706,7 @@ func (q *Queries) SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeplo
 		&i.ImageDigest,
 		&i.Kind,
 		&i.SourcePath,
+		&i.SourceRoot,
 		&i.SourceBytes,
 		&i.Handler,
 		&i.LogPath,

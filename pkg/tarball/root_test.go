@@ -87,3 +87,29 @@ func TestRootPrefix_MixedRootsAreNotStripped(t *testing.T) {
 		t.Fatalf("RootPrefix = %q, want empty for mixed roots", got)
 	}
 }
+
+func TestResolveSourceRoot_PrefersDirectFlatPath(t *testing.T) {
+	path := writeSourceArchive(t, map[string]string{
+		"apps/api/package.json": "{}",
+	}, false, false)
+	got, err := ResolveSourceRoot(path, "apps/api")
+	if err != nil {
+		t.Fatalf("ResolveSourceRoot: %v", err)
+	}
+	if got != "apps/api" {
+		t.Fatalf("ResolveSourceRoot = %q, want apps/api", got)
+	}
+}
+
+func TestResolveSourceRoot_UsesTransportWrapperWhenDirectPathAbsent(t *testing.T) {
+	path := writeSourceArchive(t, map[string]string{
+		"apps/api/package.json": "{}",
+	}, true, true)
+	got, err := ResolveSourceRoot(path, "apps/api")
+	if err != nil {
+		t.Fatalf("ResolveSourceRoot: %v", err)
+	}
+	if got != "project/apps/api" {
+		t.Fatalf("ResolveSourceRoot = %q, want project/apps/api", got)
+	}
+}

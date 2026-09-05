@@ -637,6 +637,7 @@ type Deployment struct {
 	CreatedAt                pgtype.Timestamptz
 	Kind                     string
 	SourcePath               pgtype.Text
+	SourceRoot               pgtype.Text
 	SourceBytes              pgtype.Int8
 	Handler                  pgtype.Text
 	LogPath                  pgtype.Text

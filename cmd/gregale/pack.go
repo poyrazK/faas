@@ -923,7 +923,20 @@ const defaultZeroConfigSourceCapMB = 100
 //
 // The gzip→tar→walk shape mirrors cmd/gregale/templates/embed.go:TarGz.
 func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][]byte) (regularFileCount int, err error) {
-	root := filepath.Base(srcDir)
+	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, filepath.Base(srcDir))
+}
+
+// packDirToTarGzFlat writes the directory contents relative to the archive
+// root, without the historical single-directory transport wrapper. Workspace
+// deploys use this shape so source_root is stable across Git HEAD archives and
+// working-tree archives: both describe paths from the repository root.
+func packDirToTarGzFlat(srcDir, destPath string, capMB int, envOverride map[string][]byte) (regularFileCount int, err error) {
+	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, "")
+}
+
+// packDirToTarGzWithRoot is the implementation shared by the legacy wrapped
+// packer and the flat repository-context packer.
+func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string) (regularFileCount int, err error) {
 
 	// Load .gregaleignore once (before the walk) so shouldExclude sees
 	// the same patterns for every entry. Missing file → nil → no
@@ -998,7 +1011,10 @@ func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][
 		if herr != nil {
 			return 0, fmt.Errorf("header for %s: %w", e.rel, herr)
 		}
-		hdr.Name = root + "/" + e.rel
+		hdr.Name = e.rel
+		if archiveRoot != "" {
+			hdr.Name = archiveRoot + "/" + e.rel
+		}
 		if e.info.IsDir() {
 			hdr.Name += "/"
 		}
@@ -1233,6 +1249,14 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 // entirely — used by `gregale deploy --secret-scan=off` and by callers
 // that already vetted the inputs (cmd/e2e harness, pack_test.go).
 func autoPackCwd(srcDir string, capMB int, envOverride map[string][]byte) (tarballPath string, fw framework, fileCount int, err error) {
+	return autoPackSource(srcDir, srcDir, false, capMB, envOverride)
+}
+
+// autoPackSource packs packDir while detecting the build framework from
+// detectDir. The distinction matters for workspace deploys: the repository is
+// the BuildKit context, but the selected member remains the source root that
+// determines the framework and working directory.
+func autoPackSource(detectDir, packDir string, flat bool, capMB int, envOverride map[string][]byte) (tarballPath string, fw framework, fileCount int, err error) {
 	// Error-explanations cluster (spec §6.4 amendment 1): warn-only
 	// preflight that lifts the cluster's source-side hints via the
 	// whycopy catalog. Hints are printed after the deploy summary by
@@ -1245,7 +1269,7 @@ func autoPackCwd(srcDir string, capMB int, envOverride map[string][]byte) (tarba
 	// on the customer's hot path. The doctor is fail-fast on errors
 	// but still emits warn-only hints for these two — the post-deploy
 	// summary remains useful for callers without --doctor-strict.
-	for _, hint := range runPackPreflight(srcDir, doctorPreflightRan) {
+	for _, hint := range runPackPreflight(detectDir, doctorPreflightRan) {
 		PrintWarn(osStderr, "%s", hint)
 	}
 
@@ -1256,12 +1280,17 @@ func autoPackCwd(srcDir string, capMB int, envOverride map[string][]byte) (tarba
 	path := f.Name()
 	_ = f.Close()
 
-	n, err := packDirToTarGz(srcDir, path, capMB, envOverride)
+	var n int
+	if flat {
+		n, err = packDirToTarGzFlat(packDir, path, capMB, envOverride)
+	} else {
+		n, err = packDirToTarGz(packDir, path, capMB, envOverride)
+	}
 	if err != nil {
 		_ = os.Remove(path)
 		return "", fwUnknown, 0, err
 	}
-	return path, detectFramework(srcDir), n, nil
+	return path, detectFramework(detectDir), n, nil
 }
 
 // runPackPreflight scans the cwd for the 2 source-side failure modes
