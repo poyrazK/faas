@@ -56,23 +56,23 @@ Buildx caches platform-image stages across runs. The first run also compiles a
 checksum-pinned ARM64 kernel with built-in FUSE, overlayfs, user namespaces and
 static IP autoconfiguration. The stock Firecracker CI kernel lacks the FUSE
 support required by the builder's snapshotter. Subsequent runs verify/reuse the
-kernel until the kernel recipe or pinned defaults change. Lima sets a 30-minute
-build budget for this correctness fixture because cold extraction exceeds the
-production 15-minute limit under nested KVM. Override it with
-`FAAS_METAL_BUILD_TIMEOUT_SECONDS` (1–3600). Direct metal invocations retain the
-production default; this test does not establish a production latency SLO.
+kernel until the kernel recipe or pinned defaults change. The default suite
+uses the production build deadline. `FAAS_METAL_BUILD_TIMEOUT_SECONDS` (1–3600)
+can override the test request's deadline without changing production limits.
 
 `TestMetalBuilderAcceptance` covers:
 
 - Dockerfile source executable permissions, OCI export, real imaged conversion,
   and an HTTP response from a cold boot of the resulting app layer.
 - Railpack selecting `apps/api` inside an archive whose repository-root build
-  deliberately fails; its exported image is also converted and booted. The public
-  Node runtime fixture uses the repository’s runner-node24 upstream digest,
-  including the shared libraries required by Node.
+  deliberately fails. Its shell provider builds a BusyBox static-file server;
+  `railpack.json` selects the repository's pinned Debian upstream image for the
+  build and runtime bases. The exported image is converted and booted too.
 - A deliberate Dockerfile failure, including its guest result and no nonempty image.
 - Cancellation after the long-running Dockerfile starts and the Destroy RPC
-  owns export; interrupt plus teardown must finish within 15 seconds.
+  owns export; interrupt plus teardown must finish within 15 seconds. An
+  interrupted filesystem may fail artifact export; the process, drives, leases,
+  and VM resources must still be gone before fallback test cleanup.
 - Removed scratch drives, released leases, versioned jail directories and
   tenant/builder cgroups. The final shell check also checks Firecracker processes
   and jail/export mounts, including after a test failure.
@@ -99,6 +99,20 @@ sudo env FAAS_METAL_BUILD_ACCEPTANCE=1 RUN_GREGALE_RELEASE_INSTALL=0 \
   ./deploy/lima/run-metal.sh -run '^TestMetalBuilderAcceptance$/dockerfile-executable$'
 ```
 
+The full Node workspace case is opt-in with `FAAS_METAL_NODE_ACCEPTANCE=1`.
+It uses the repository's pinned public Node 24 runtime fixture, including its
+shared libraries. **This is an outstanding slow-path gate:** on this ARM64
+nested-KVM host, the cold Node build exceeded both 15- and 30-minute budgets
+while importing/copying the upstream toolchain. The lightweight gate does not
+validate that Node path or establish a production latency SLO. Run the Node
+case on the dedicated x86_64 acceptance host before treating it as accepted:
+
+```sh
+sudo env FAAS_METAL_BUILD_ACCEPTANCE=1 FAAS_METAL_NODE_ACCEPTANCE=1 \
+  RUN_GREGALE_RELEASE_INSTALL=0 ./deploy/lima/run-metal.sh \
+  -run '^TestMetalBuilderAcceptance$/railpack-node-workspace$'
+```
+
 For a dedicated Linux x86_64 acceptance host, stage the matching platform
 builder base at `/srv/fc/base/runner-builder-amd64.ext4`, use the production
 kernel and host network/cgroup setup, and run from the checkout:
@@ -108,7 +122,7 @@ CGO_ENABLED=0 go build -trimpath -o /tmp/faas-metal-vmmd ./cmd/vmmd
 # Set FAAS_TEST_KERNEL, FAAS_TEST_BASE_ROOTFS, FAAS_TEST_FC_VERSION,
 # FAAS_GUEST_INIT and FAAS_BUILDER_BASE_PATH to the staged host assets.
 sudo -E env FAAS_TEST_VMMD_BINARY=/tmp/faas-metal-vmmd \
-  FAAS_METAL_BUILD_ACCEPTANCE=1 \
+  FAAS_METAL_BUILD_ACCEPTANCE=1 FAAS_METAL_NODE_ACCEPTANCE=1 \
   go test -tags metal -count=1 -v -timeout 60m ./pkg/fcvm -run '^TestMetalBuilderAcceptance$'
 sudo make leakcheck
 ```

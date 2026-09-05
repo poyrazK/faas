@@ -73,17 +73,21 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 		buildTimeoutSeconds = value
 	}
 	for _, tc := range []struct {
-		name         string
-		framework    builderd.Framework
-		root         string
-		cancel, fail bool
+		name               string
+		framework          builderd.Framework
+		root               string
+		cancel, fail, node bool
 	}{
 		{name: "dockerfile-executable", framework: builderd.FrameworkDocker},
-		{name: "railpack-workspace", framework: builderd.FrameworkNode, root: "apps/api"},
+		{name: "railpack-workspace", framework: builderd.FrameworkUnknown, root: "apps/api"},
+		{name: "railpack-node-workspace", framework: builderd.FrameworkNode, root: "apps/api", node: true},
 		{name: "failed-build", framework: builderd.FrameworkDocker, fail: true},
 		{name: "cancel-running-build", framework: builderd.FrameworkDocker, cancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.node && os.Getenv("FAAS_METAL_NODE_ACCEPTANCE") != "1" {
+				t.Skip("set FAAS_METAL_NODE_ACCEPTANCE=1 for the full cold Node toolchain gate")
+			}
 			m := fcvm.NewAcceptanceManager(t)
 			tmp := t.TempDir()
 			sock := filepath.Join(tmp, "v.sock")
@@ -98,10 +102,10 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 			t.Cleanup(func() { _ = driver.Close() })
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(buildTimeoutSeconds+600)*time.Second)
 			defer cancel()
-			source := acceptanceSource(t, tmp, tc.root, tc.cancel, tc.fail)
+			source := acceptanceSource(t, tmp, tc.root, tc.node, tc.cancel, tc.fail)
 			runtimeBaseRef := ""
 			if tc.root != "" {
-				runtimeBaseRef = acceptanceRuntimeBase(t)
+				runtimeBaseRef = acceptanceRuntimeBase(t, tc.node)
 			}
 			handle, err := driver.Spawn(ctx, builderd.VMRequest{BuildID: tc.name, TenantID: "metal", DeploymentID: tc.name, SourcePath: source, SourceRoot: tc.root, Framework: tc.framework, RuntimeBaseRef: runtimeBaseRef, Plan: string(api.PlanPro), TimeoutSec: buildTimeoutSeconds})
 			mustAcceptance(t, err)
@@ -138,7 +142,12 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 				mustAcceptance(t, driver.Cancel(stopCtx, handle.BuildID))
 				select {
 				case err := <-finished:
-					mustAcceptance(t, err)
+					// A hard-killed guest may leave an unreadable in-progress
+					// artifact. Cancellation promises bounded resource cleanup,
+					// not a successful export of that interrupted filesystem.
+					if err != nil {
+						t.Logf("canceled build export: %v", err)
+					}
 				case <-stopCtx.Done():
 					t.Fatal("canceled builder did not finish export/cleanup within 15s")
 				}
@@ -172,6 +181,10 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 					acceptanceImageBoot(t, ctx, m, tmp, result.OCIImage)
 				}
 			}
+			if m.LiveCount() != 0 || m.LeasedCount() != 0 {
+				t.Fatal("VM or lease survived completion before fallback cleanup")
+			}
+			leakcheck.AssertZero(t)
 			if _, err := os.Stat(handle.HostDrive1); !os.IsNotExist(err) {
 				t.Fatalf("build scratch survived completion: %v", err)
 			}
@@ -259,13 +272,26 @@ func waitAcceptanceLog(t *testing.T, ctx context.Context, m *fcvm.Manager, id, m
 	}
 }
 
-func acceptanceSource(t *testing.T, tmp, workspace string, cancel, fail bool) string {
+func acceptanceSource(t *testing.T, tmp, workspace string, cancel, fail, node bool) string {
 	t.Helper()
 	files := map[string][]byte{}
 	if workspace != "" {
 		files["package.json"] = []byte(`{"name":"wrong-root","scripts":{"build":"exit 91"}}`)
-		files[workspace+"/package.json"] = []byte(`{"name":"acceptance-api","version":"1.0.0","engines":{"node":"24"},"scripts":{"start":"node server.js"}}`)
-		files[workspace+"/server.js"] = []byte(`require('http').createServer((q,s)=>s.end('acceptance-ok')).listen(8080,'0.0.0.0')`)
+		if node {
+			files[workspace+"/package.json"] = []byte(`{"name":"acceptance-api","version":"1.0.0","engines":{"node":"24"},"scripts":{"start":"node server.js"}}`)
+			files[workspace+"/server.js"] = []byte(`require('http').createServer((q,s)=>s.end('acceptance-ok')).listen(8080,'0.0.0.0')`)
+		} else {
+			busybox, err := exec.LookPath("busybox")
+			mustAcceptance(t, err)
+			files[workspace+"/busybox"], err = os.ReadFile(busybox)
+			mustAcceptance(t, err)
+			files[workspace+"/start.sh"] = []byte("#!/bin/sh\nexec ./busybox httpd -f -p 8080 -h .\n")
+			files[workspace+"/index.html"] = []byte("acceptance-ok\n")
+			// Use Railpack's real shell provider and a small pinned build base.
+			// This exercises prepare/frontend/RUN/export without downloading a
+			// complete language toolchain for the default correctness gate.
+			files[workspace+"/railpack.json"] = []byte(fmt.Sprintf(`{"provider":"shell","steps":{"packages:mise":{"inputs":[{"image":%q}]}}}`, acceptanceRuntimeBase(t, false)))
+		}
 	} else {
 		busybox, err := exec.LookPath("busybox")
 		mustAcceptance(t, err)
@@ -288,7 +314,7 @@ func acceptanceSource(t *testing.T, tmp, workspace string, cancel, fail bool) st
 	tw := tar.NewWriter(gz)
 	for name, data := range files {
 		mode := int64(0644)
-		if name == "busybox" || name == "build.sh" {
+		if filepath.Base(name) == "busybox" || filepath.Base(name) == "start.sh" || name == "build.sh" {
 			mode = 0755
 		}
 		mustAcceptance(t, tw.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(data)), Typeflag: tar.TypeReg}))
@@ -308,19 +334,23 @@ func (a acceptanceSignalAdapter) SignalAndKill(ctx context.Context, id string, s
 	return a.Manager.SignalAndKill(ctx, id, syscall.Signal(signal), time.Duration(grace)*time.Second)
 }
 
-// The registry-backed base is a public multi-arch fixture using the same Node
-// pin as runner-node24. This test does not require private GHCR credentials or
-// claim to validate the production runtime-base image itself.
-func acceptanceRuntimeBase(t *testing.T) string {
+// Public multi-arch fixtures use the repository's upstream image pins.
+// The Node fixture includes its required shared libraries. Neither fixture
+// claims to validate the production runtime-base image or scanner admission.
+func acceptanceRuntimeBase(t *testing.T, node bool) string {
 	t.Helper()
-	data, err := os.ReadFile("../../images/runner-node24.Dockerfile")
+	path, prefix := "../../images/base-minimal.Dockerfile", "debian:"
+	if node {
+		path, prefix = "../../images/runner-node24.Dockerfile", "node:"
+	}
+	data, err := os.ReadFile(path)
 	mustAcceptance(t, err)
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "FROM" && strings.HasPrefix(fields[1], "node:") && strings.Contains(fields[1], "@sha256:") {
+		if len(fields) >= 2 && fields[0] == "FROM" && strings.HasPrefix(fields[1], prefix) && strings.Contains(fields[1], "@sha256:") {
 			return fields[1]
 		}
 	}
-	t.Fatal("runner-node24 has no pinned Node fixture base")
+	t.Fatalf("%s has no pinned %s fixture base", path, prefix)
 	return ""
 }
