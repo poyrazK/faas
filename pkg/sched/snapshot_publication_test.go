@@ -110,3 +110,25 @@ func TestCaptureNotificationCarriesExactKeys(t *testing.T) {
 	}
 	t.Fatal("missing publication")
 }
+
+func TestSnapshotStateLocatorsKeepWarmGenerationPaired(t *testing.T) {
+	e := newEngine(t, state.NewMemStore(), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
+		for _, node := range []string{e.defaultLocalNodeID, "remote-node"} {
+			key := state.SnapshotCaptureMemKey("dep", tier, "capture")
+			snap := state.Snapshot{DeploymentID: "dep", Tier: tier, StorageKey: key}
+			hostPath, storageKey := e.snapshotStateLocators(node, snap)
+			want := state.SnapshotVMStateKey(snap)
+			if hostPath != SnapDir()+"/"+strings.TrimPrefix(want, "snap/") {
+				t.Fatalf("wrong host path: %s", hostPath)
+			}
+			if node == e.defaultLocalNodeID {
+				if storageKey != "" {
+					t.Fatal("legacy local carrier changed")
+				}
+			} else if storageKey != want {
+				t.Fatalf("mixed snapshot pair: %s %s", key, storageKey)
+			}
+		}
+	}
+}
