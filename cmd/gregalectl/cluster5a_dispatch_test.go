@@ -135,7 +135,8 @@ func TestCmdNodeKeyDispatch_Routing(t *testing.T) {
 }
 
 // TestCmdReleaseDispatch_Routing pins cmdReleaseDispatch
-// (commands_release.go:72). Three leaves: bundle, install, kgv.
+// (commands_release.go:72). The release bundle, install, KGV, history, and
+// inspect leaves all remain routable from the parent dispatcher.
 func TestCmdReleaseDispatch_Routing(t *testing.T) {
 	cases := []struct {
 		name string
@@ -144,6 +145,8 @@ func TestCmdReleaseDispatch_Routing(t *testing.T) {
 		{"bundle", "bundle"},
 		{"install", "install"},
 		{"kgv", "kgv"},
+		{"history", "history"},
+		{"inspect", "inspect"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

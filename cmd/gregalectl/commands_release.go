@@ -8,6 +8,8 @@
 //
 //   gregalectl release bundle --bin-dir PATH --git-sha SHA --manifest-hash HASH
 //   gregalectl release install --git-sha SHA [--releases-root PATH] [--node NAME] [--role ROLE] [--defer-activation]
+//   gregalectl release history [--daemon NAME] [--limit N]
+//   gregalectl release inspect SHA
 //
 // Dispatcher shape mirrors commands_manifest.go:
 // flag.Parse for the leaf's own flags, subcommand fan-out in
@@ -35,6 +37,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -43,6 +47,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +66,8 @@ const (
 	subReleaseBundle  = "bundle"
 	subReleaseInstall = "install"
 	subReleaseKGV     = "kgv"
+	subReleaseHistory = "history"
+	subReleaseInspect = "inspect"
 
 	// Canonical release asset names. These are the names attached to a
 	// GitHub Release and retained under each installed release directory.
@@ -82,11 +89,15 @@ func cmdReleaseDispatch(args []string) int {
 		return cmdReleaseInstall(args[1:])
 	case subReleaseKGV:
 		return cmdReleaseKGV(args[1:])
+	case subReleaseHistory:
+		return cmdReleaseHistory(args[1:])
+	case subReleaseInspect:
+		return cmdReleaseInspect(args[1:])
 	case flagHelpShort, flagHelpLong:
 		printReleaseUsage(os.Stderr)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl release: unknown subcommand %q (expected: bundle | install | kgv)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl release: unknown subcommand %q (expected: bundle | install | kgv | history | inspect)\n", args[0])
 		return 1
 	}
 }
@@ -100,6 +111,8 @@ Subcommands:
             INSERTs a row into release_bundles.
   install   Install a release on the local box (atomic symlink flip +
             release_bundles.applied_at first-write-wins stamp).
+  history   Show durable daemon deployment history from PostgreSQL.
+  inspect   Inspect one release bundle and reconcile it with /opt/faas/current.
 
 Flags (bundle):
   --bin-dir PATH        Path to the directory holding the daemon binaries
@@ -116,6 +129,15 @@ Flags (install):
                         installs use NAME.faas).
   --role ROLE            control-plane or compute-only role template.
   --defer-activation     keep a compute row drained until readiness passes.
+  --reason TEXT          operator reason recorded in the deployment ledger.
+
+Flags (history):
+  --daemon NAME          filter to one daemon (default: all).
+  --limit N              maximum rows (default: 50, maximum: 500).
+  --releases-root PATH   releases root (default: /opt/faas/releases).
+
+Arguments (inspect):
+  SHA                    40-char lowercase release git SHA.
 
 Exit codes:
   0  success
@@ -126,6 +148,7 @@ Examples:
   gregalectl release bundle --bin-dir=out/bin --git-sha=$(git rev-parse HEAD) \
       --manifest-hash=sha256:$(sha256sum manifest.yaml | cut -d' ' -f1)
   gregalectl release install --git-sha=$(git rev-parse HEAD)
+  gregalectl release history --limit=25
 `)
 }
 
@@ -310,6 +333,7 @@ func cmdReleaseInstall(args []string) int {
 	// symlink flip.
 	roleFlag := fs.String("role", "", "box role: control-plane|compute-only (ADR-112). Empty = no role templating.")
 	deferActivation := fs.Bool("defer-activation", false, "keep the compute_nodes row drained after install; the deployment pipeline activates it only after readiness gates")
+	reason := fs.String("reason", "", "operator reason recorded in the platform release ledger")
 	// ADR-113: --legacy-bundle-dir is the sunset path for the old
 	// `copyBinIntoRelease` flow. Empty (default) means use the new
 	// tarball + cosign + SBoM-gated path. When set, the install
@@ -491,6 +515,10 @@ func cmdReleaseInstall(args []string) int {
 			}
 		}
 	}
+	currentBefore, currentBeforeErr := releaseinstall.CurrentGitSHA(*releasesRoot)
+	if currentBeforeErr != nil {
+		currentBefore = ""
+	}
 	if err := releaseinstall.AtomicFlip(*releasesRoot, *gitSHA); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: flip symlink: %v\n", err)
 		return 3
@@ -662,6 +690,14 @@ func cmdReleaseInstall(args []string) int {
 			return 3
 		}
 	}
+	auditRecorded := false
+	var auditErr string
+	if err := recordReleaseInstallAudit(context.Background(), releaseinstall.NewDeploymentStore(openPool), *releasesRoot, m, currentBefore != *gitSHA, node, *reason); err != nil {
+		auditErr = err.Error()
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: warning: record deployment history: %v\n", err)
+	} else if currentBefore != *gitSHA {
+		auditRecorded = true
+	}
 	if _, err := releaseretention.Prune(*releasesRoot, releaseinstall.CurrentSymlink(*releasesRoot), releaseretention.DefaultKeepPrevious); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: prune old releases: %v\n", err)
 		return 3
@@ -676,12 +712,197 @@ func cmdReleaseInstall(args []string) int {
 			FirstApplied:  first,
 			Node:          node,
 			ComputeNodeID: cnID,
+			AuditRecorded: auditRecorded,
+			AuditError:    auditErr,
 		})
 	} else {
 		_, _ = fmt.Fprintf(os.Stdout, "flipped current -> %s (first_applied=%v, node=%s, compute_node=%s)\n",
 			*gitSHA, first, node, cnID)
 	}
 	return 0
+}
+
+// cmdReleaseHistory is the read-only operator view over the platform release
+// ledger. It deliberately reads the database and the local current pointer in
+// one command so an operator can spot a host that activated a release without
+// producing the corresponding audit rows.
+func cmdReleaseHistory(args []string) int {
+	if len(args) > 0 && (args[0] == flagHelpLong || args[0] == flagHelpShort) {
+		PrintUsage(os.Stderr, "usage: gregalectl release history [--daemon NAME] [--limit N]", "release")
+		return 0
+	}
+	fs := flag.NewFlagSet("release history", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	daemon := fs.String("daemon", "", "filter to one daemon")
+	limit := fs.Int("limit", 50, "maximum history rows (1-500)")
+	releasesRoot := fs.String("releases-root", "/opt/faas/releases", "releases root directory")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 {
+		_, _ = fmt.Fprintln(os.Stderr, "gregalectl release history: unexpected positional argument")
+		return 1
+	}
+	if *limit < 1 || *limit > 500 {
+		_, _ = fmt.Fprintln(os.Stderr, "gregalectl release history: --limit must be between 1 and 500")
+		return 1
+	}
+	pool, err := openPgPoolFromEnv(context.Background())
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release history: %v\n", err)
+		return 3
+	}
+	defer pool.Close()
+	rows, err := releaseinstall.NewDeploymentStore(pool).List(context.Background(), *daemon, *limit)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release history: %v\n", err)
+		return 3
+	}
+	current, currentErr := releaseinstall.CurrentGitSHA(*releasesRoot)
+	report := releaseHistoryReport{
+		CurrentRelease: current,
+		Daemon:         strings.TrimSpace(*daemon),
+		Deployments:    rows,
+	}
+	if currentErr != nil {
+		report.CurrentError = currentErr.Error()
+	}
+	if jsonEnabled() {
+		jsonEmit(os.Stdout, report)
+		return 0
+	}
+	if report.CurrentRelease == "" {
+		_, _ = fmt.Fprintln(os.Stdout, "current: <none>")
+	} else {
+		_, _ = fmt.Fprintf(os.Stdout, "current: %s\n", report.CurrentRelease)
+	}
+	if report.CurrentError != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "current pointer: error: %s\n", report.CurrentError)
+	}
+	if len(rows) == 0 {
+		_, _ = fmt.Fprintln(os.Stdout, "no daemon deployment history")
+		return 0
+	}
+	_, _ = fmt.Fprintln(os.Stdout, "deployed_at                 daemon             commit_sha                                status        kind       deployed_by")
+	for _, row := range rows {
+		_, _ = fmt.Fprintf(os.Stdout, "%-27s %-18s %-40s %-13s %-10s %s\n",
+			row.DeployedAt.UTC().Format(time.RFC3339), row.Daemon, row.CommitSHA,
+			row.Status, row.DeployKind, row.DeployedBy)
+	}
+	return 0
+}
+
+// cmdReleaseInspect combines the durable release_bundles row with the local
+// manifest and current symlink. It is intentionally read-only and remains
+// useful even when no daemon deployment rows exist yet (for example, during a
+// migration rollout).
+func cmdReleaseInspect(args []string) int {
+	if len(args) > 0 && (args[0] == flagHelpLong || args[0] == flagHelpShort) {
+		PrintUsage(os.Stderr, "usage: gregalectl release inspect SHA [--releases-root PATH]", "release")
+		return 0
+	}
+	fs := flag.NewFlagSet("release inspect", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	releasesRoot := fs.String("releases-root", "/opt/faas/releases", "releases root directory")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		_, _ = fmt.Fprintln(os.Stderr, "gregalectl release inspect: exactly one release SHA is required")
+		return 1
+	}
+	gitSHA := fs.Arg(0)
+	if !releaseinstall.ValidGitSHA(gitSHA) {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release inspect: %q is not a 40-character lowercase git SHA\n", gitSHA)
+		return 1
+	}
+	pool, err := openPgPoolFromEnv(context.Background())
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release inspect: %v\n", err)
+		return 3
+	}
+	defer pool.Close()
+	row, err := releaseinstall.NewStore(pool).GetByGitSHA(context.Background(), gitSHA)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release inspect: %v\n", err)
+		return 3
+	}
+	report := releaseInspectReport{Bundle: row}
+	report.CurrentRelease, err = releaseinstall.CurrentGitSHA(*releasesRoot)
+	if err != nil {
+		report.CurrentError = err.Error()
+	}
+	report.IsCurrent = report.CurrentError == "" && report.CurrentRelease == gitSHA
+	report.OnDisk, err = releaseinstall.IsBundleOnDisk(*releasesRoot, gitSHA)
+	if err != nil {
+		report.OnDiskError = err.Error()
+	} else if report.OnDisk {
+		manifest, readErr := releaseinstall.Read(*releasesRoot, gitSHA)
+		if readErr != nil {
+			report.ManifestError = readErr.Error()
+		} else {
+			report.Manifest = &manifest
+		}
+	}
+	if jsonEnabled() {
+		jsonEmit(os.Stdout, report)
+		return 0
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "release: %s\nmanifest_hash: %s\napplied_at: %s\non_disk: %t\ncurrent: %t\n",
+		row.GitSHA, row.ManifestHash, formatOptionalTime(row.AppliedAt), report.OnDisk, report.IsCurrent)
+	if report.CurrentError != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "current pointer: error: %s\n", report.CurrentError)
+	}
+	if report.OnDiskError != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "on-disk: error: %s\n", report.OnDiskError)
+	}
+	if report.ManifestError != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "manifest: error: %s\n", report.ManifestError)
+	}
+	return 0
+}
+
+func formatOptionalTime(value *time.Time) string {
+	if value == nil {
+		return "<never>"
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func recordReleaseInstallAudit(ctx context.Context, store releaseinstall.DeploymentStore, releasesRoot string, manifest releaseinstall.Manifest, changed bool, node, reason string) error {
+	if !changed {
+		return nil
+	}
+	actor := operatorIdentity()
+	sbomHash := ""
+	if body, err := os.ReadFile(filepath.Join(releaseinstall.BundleRoot(releasesRoot, manifest.GitSHA), releaseSBOMName)); err == nil && len(body) > 0 {
+		digest := sha256.Sum256(body)
+		sbomHash = "sha256:" + hex.EncodeToString(digest[:])
+	}
+	daemons := make([]string, 0, len(manifest.DaemonHashes))
+	for daemon := range manifest.DaemonHashes {
+		daemons = append(daemons, daemon)
+	}
+	sort.Strings(daemons)
+	records := make([]releaseinstall.DeploymentRecord, 0, len(daemons))
+	for _, daemon := range daemons {
+		records = append(records, releaseinstall.DeploymentRecord{
+			Daemon: daemon, Version: manifest.DaemonHashes[daemon], CommitSHA: manifest.GitSHA,
+			SignedBy: manifest.Signature, SBOMSHA256: sbomHash, DeployedBy: actor,
+			DeployKind: releaseinstall.DeploymentInstall,
+			Notes:      map[string]any{"node": node, "reason": reason, "source": "gregalectl release install"},
+		})
+	}
+	return store.RecordSucceeded(ctx, records)
+}
+
+func operatorIdentity() string {
+	for _, key := range []string{"SUDO_USER", "USER", "LOGNAME"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return "gregalectl"
 }
 
 // canonicalComputeNodeName returns the database identity used by vmmd for a
@@ -1141,6 +1362,26 @@ type releaseInstallReport struct {
 	// UPSERT failures without dropping the load-bearing symlink flip.
 	ComputeNodeID    string `json:"compute_node_id,omitempty"`
 	ComputeNodeError string `json:"compute_node_error,omitempty"`
+	AuditRecorded    bool   `json:"audit_recorded,omitempty"`
+	AuditError       string `json:"audit_error,omitempty"`
+}
+
+type releaseHistoryReport struct {
+	CurrentRelease string                         `json:"current_release,omitempty"`
+	CurrentError   string                         `json:"current_error,omitempty"`
+	Daemon         string                         `json:"daemon,omitempty"`
+	Deployments    []releaseinstall.DeploymentRow `json:"deployments"`
+}
+
+type releaseInspectReport struct {
+	Bundle         releaseinstall.BundleRow `json:"bundle"`
+	CurrentRelease string                   `json:"current_release,omitempty"`
+	CurrentError   string                   `json:"current_error,omitempty"`
+	IsCurrent      bool                     `json:"is_current"`
+	OnDisk         bool                     `json:"on_disk"`
+	OnDiskError    string                   `json:"on_disk_error,omitempty"`
+	Manifest       *releaseinstall.Manifest `json:"manifest,omitempty"`
+	ManifestError  string                   `json:"manifest_error,omitempty"`
 }
 
 // _ keeps bytes imported even if the future JSON marshaller is
