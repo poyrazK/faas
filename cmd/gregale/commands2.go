@@ -3151,7 +3151,7 @@ func cmdLogs(args []string) int {
 	// --explain` actionable — the customer no longer has to read the
 	// whole stream to know which error fired.
 	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain]", "logs")
 		return 1
 	}
@@ -3199,7 +3199,7 @@ func cmdLogsTail(args []string) int {
 	grep := fs.String("grep", "", "only show lines matching this substring")
 	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs tail <slug> [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error]", "logs")
 		return 1
 	}
@@ -3291,7 +3291,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			// side). Move 3's `not_implemented` shape is dead code;
 			// removed.
 			if e.Event == "degraded" {
-				fmt.Fprintln(os.Stderr, "Log stream degraded: the scheduler is temporarily unavailable")
+				fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}
