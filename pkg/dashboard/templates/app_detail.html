@@ -205,6 +205,19 @@
         </td></tr>
       </table>
 
+      {{if .Data.EffectiveLimits.MemoryLimitMB}}
+      <h2>Effective limits</h2>
+      <table>
+        <tr><th>Memory</th><td>{{.Data.EffectiveLimits.MemoryLimitMB}} MB (plan ceiling {{.Data.EffectiveLimits.PlanMemoryMaxMB}} MB)</td></tr>
+        <tr><th>CPU</th><td>{{.Data.EffectiveLimits.GuestVCPUs}} guest vCPU · {{.Data.EffectiveLimits.CPULimitMillicores}}m sustained limit · scheduling weight {{.Data.EffectiveLimits.CPUWeight}}</td></tr>
+        <tr><th>Scaling</th><td>up to {{.Data.EffectiveLimits.MaxInstances}} instances · {{.Data.EffectiveLimits.ConcurrencyPerInstance}} concurrent requests per instance</td></tr>
+        <tr><th>App request rate</th><td>{{.Data.EffectiveLimits.AppRequestRateRPS}} requests/s · burst {{.Data.EffectiveLimits.AppRequestBurst}}</td></tr>
+        <tr><th>Account request rate</th><td>{{.Data.EffectiveLimits.AccountRequestRateRPM}} requests/min across apps</td></tr>
+        <tr><th>Request budget</th><td>{{.Data.EffectiveLimits.RequestBudgetMS}} ms default · {{.Data.EffectiveLimits.RequestBudgetMaxMS}} ms maximum</td></tr>
+        <tr><th>Response write timeout</th><td>{{.Data.EffectiveLimits.ResponseWriteTimeoutS}} s</td></tr>
+      </table>
+      {{end}}
+
       <h2>Recent deployments</h2>
       {{if .Data.Deployments}}
         <table>

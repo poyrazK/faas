@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppEffectiveLimits } from './AppEffectiveLimits.js';
 import type { AppManifest } from './AppManifest.js';
 import type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
 import type { PublicAuthStatus } from './PublicAuthStatus.js';
@@ -20,6 +21,7 @@ export type AppResponse = {
   ram_mb: number;
   max_concurrency: number;
   concurrency_per_vm: number;
+  effective_limits: AppEffectiveLimits;
   idle_timeout_s?: number | null;
   min_instances: number;
   status: string;

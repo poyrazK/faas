@@ -15,6 +15,7 @@ from ..models.app_response_type import AppResponseType, check_app_response_type
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_effective_limits import AppEffectiveLimits
     from ..models.app_manifest import AppManifest
     from ..models.parked_deployment_ref import ParkedDeploymentRef
     from ..models.public_auth_status import PublicAuthStatus
@@ -37,6 +38,9 @@ class AppResponse:
     ram_mb: int
     max_concurrency: int
     concurrency_per_vm: int
+    effective_limits: AppEffectiveLimits
+    """The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the
+    app configuration and current plan; they describe enforcement rather than guest hardware alone."""
     min_instances: int
     status: str
     url: str
@@ -145,6 +149,8 @@ class AppResponse:
         max_concurrency = self.max_concurrency
 
         concurrency_per_vm = self.concurrency_per_vm
+
+        effective_limits = self.effective_limits.to_dict()
 
         min_instances = self.min_instances
 
@@ -270,6 +276,7 @@ class AppResponse:
                 "ram_mb": ram_mb,
                 "max_concurrency": max_concurrency,
                 "concurrency_per_vm": concurrency_per_vm,
+                "effective_limits": effective_limits,
                 "min_instances": min_instances,
                 "status": status,
                 "url": url,
@@ -329,6 +336,7 @@ class AppResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_effective_limits import AppEffectiveLimits
         from ..models.app_manifest import AppManifest
         from ..models.parked_deployment_ref import ParkedDeploymentRef
         from ..models.public_auth_status import PublicAuthStatus
@@ -346,6 +354,8 @@ class AppResponse:
         max_concurrency = d.pop("max_concurrency")
 
         concurrency_per_vm = d.pop("concurrency_per_vm")
+
+        effective_limits = AppEffectiveLimits.from_dict(d.pop("effective_limits"))
 
         min_instances = d.pop("min_instances")
 
@@ -536,6 +546,7 @@ class AppResponse:
             ram_mb=ram_mb,
             max_concurrency=max_concurrency,
             concurrency_per_vm=concurrency_per_vm,
+            effective_limits=effective_limits,
             min_instances=min_instances,
             status=status,
             url=url,

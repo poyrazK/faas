@@ -12291,10 +12291,29 @@ components:
 
     # ─── Apps ─────────────────────────────────────────────────────────────
 
+    AppEffectiveLimits:
+      description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
+      type: object
+      required: [memory_limit_mb, plan_memory_max_mb, guest_vcpus, cpu_limit_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
+      properties:
+        memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
+        plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
+        guest_vcpus: { type: integer, description: "Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit." }
+        cpu_limit_millicores: { type: integer, description: "Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores." }
+        cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
+        max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
+        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
+        app_request_rate_rps: { type: integer, description: "Per-app edge token-bucket refill rate, in requests per second." }
+        app_request_burst: { type: integer, description: "Per-app edge token-bucket burst capacity." }
+        account_request_rate_rpm: { type: integer, description: "Account-wide edge token-bucket refill rate across all apps, in requests per minute." }
+        request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
+        request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
+        response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
-      required: [id, slug, type, ram_mb, max_concurrency, concurrency_per_vm, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
+      required: [id, slug, type, ram_mb, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
@@ -12314,6 +12333,7 @@ components:
         # event loop, Python asyncio, Go net/http — yes; sync
         # subprocess-per-request handlers — no).
         concurrency_per_vm: { type: integer, example: 80 }
+        effective_limits: { $ref: '#/components/schemas/AppEffectiveLimits' }
         idle_timeout_s: { type: [integer, "null"] }
         min_instances: { type: integer }
         status: { type: string , example: "active"}
