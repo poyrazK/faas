@@ -752,50 +752,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}()
 
 	// Mega-1 jobs wiring (issue #1184 Workstream A / ADR-099).
-	// FAAS_JOBS_DISPATCH=1 opts this schedd into dispatching
-	// queued job_tasks; default OFF keeps the cluster-wide gate
-	// closed while the vmmd gRPC JobColdBoot surface ships in a
-	// follow-up commit. Two seams:
-	//
-	//   * WithJobLeaser  — PgLeaser over the same pool the rest
-	//     of schedd uses, keyed by the schedd's ownerNodeID (so a
-	//     lease survives restart-and-rebind).
-	//   * WithJobVmmClient — fail-open adapter that returns
-	//     ErrJobVMMNotWired until the vmmd gRPC JobColdBoot proto
-	//     lands. WakeJob records the error on the run as
-	//     failed → retry → dead_letter; a customer whose job
-	//     dead-letters on a node with FAAS_JOBS_DISPATCH=1 gets
-	//     a clear wire response (CodeJobVMMUnavailable) and the
-	//     run stays in DB so the audit trail is complete.
-	//
-	// Both are wired UNCONDITIONALLY so FAAS_JOBS_DISPATCH can be
-	// flipped at runtime without a schedd restart (the dispatch
-	// + reaper tickers in loop.Run are gated on jobsDispatched;
-	// the engine methods stay wired so a missed tick in one
-	// window drains on the next).
+	// FAAS_JOBS_DISPATCH=1 opts this schedd into dispatching queued
+	// job_tasks; the engine seams are wired regardless of the gate so
+	// enabling dispatch does not select a fail-open/no-op implementation.
 	jobsDispatched := jobsDispatchEnabled(os.Getenv("FAAS_JOBS_DISPATCH"))
 	if jobsDispatched {
 		log.Info("schedd jobs dispatch enabled — clustering flag FAAS_JOBS_DISPATCH=1 set")
 	} else {
 		log.Info("schedd jobs dispatch disabled — set FAAS_JOBS_DISPATCH=1 to enable (Mega-1 cluster-wide gate)")
 	}
-	engine.WithJobVmmClient(sched.NewFailOpenJobVMMClient(log))
-	// WithJobLeaser is NOT wired because the PgLeaser's
-	// poolExecutor interface does not match *pgxpool.Pool's
-	// pgconn.CommandTag return type (local pgxCommandTag shim
-	// for unit tests, ADR-134 unifies post-Mega-1). WakeJob's
-	// nil-leaser branch at jobs.go:142 returns ErrJobLeaserNil
-	// which dispatchJobsTick classifies as failed → retryable;
-	// dead-letter when retries exhaust. Customers see
-	// CodeJobLeaserUnavailable on the wire. This is fail-closed
-	// by design: shipping the wrong leaser would be worse than
-	// no leaser (a real lease bug in production > a clear
-	// dead-lettered run the operator can replay once the
-	// Mega-1.5 follow-up wires the real PgLeaser).
-	if ownerNodeID != "" {
-		log.Info("schedd jobs lease primitive deferred to Mega-1.5 — node id", "node_id", ownerNodeID)
-	} else {
-		log.Info("schedd jobs lease primitive deferred to Mega-1.5 — single-box schedd")
+	engine.WithJobVmmClient(vmmRouter).WithJobExitWaiter(vmmRouter)
+	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
+		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
 
 	// Rebuild admission accounting from any instances still live from a prior

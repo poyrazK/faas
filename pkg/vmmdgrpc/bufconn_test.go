@@ -74,6 +74,8 @@ type fakeVMM struct {
 	// (stamped, appID, runtime) return tuple. nil = stamps
 	// successfully with empty app/runner labels.
 	frameworkReadyFn func(ctx context.Context, instance string, warmupMs int64) (bool, string, string, error)
+	jobBootFn        func(context.Context, fcvm.JobBootRequest) (*fcvm.Instance, error)
+	jobExitFn        func(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
 	live             int
 	leased           int
 }
@@ -273,6 +275,20 @@ func (f *fakeVMM) MarkInstanceFrameworkReady(ctx context.Context, instance strin
 	return true, "", "", nil
 }
 
+func (f *fakeVMM) BootJob(ctx context.Context, req fcvm.JobBootRequest) (*fcvm.Instance, error) {
+	if f.jobBootFn != nil {
+		return f.jobBootFn(ctx, req)
+	}
+	return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance}}, nil
+}
+
+func (f *fakeVMM) WaitJobExit(ctx context.Context, instance string, deadline time.Duration) (fcvm.JobExitPayload, error) {
+	if f.jobExitFn != nil {
+		return f.jobExitFn(ctx, instance, deadline)
+	}
+	return fcvm.JobExitPayload{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: "lease"}, nil
+}
+
 // errNotLive is a sentinel for the Manager-equivalent "not live" error.
 type stringErr string
 
@@ -339,6 +355,71 @@ func TestCreateColdBoot_RejectsMissingInstance(t *testing.T) {
 	}
 	if code := status.Code(err); code != codes.InvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", code)
+	}
+}
+
+func TestJobLifecycle_RoundTripsThroughVmmd(t *testing.T) {
+	var boot fcvm.JobBootRequest
+	var waited time.Duration
+	f := &fakeVMM{
+		jobBootFn: func(_ context.Context, req fcvm.JobBootRequest) (*fcvm.Instance, error) {
+			boot = req
+			return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance}}, nil
+		},
+		jobExitFn: func(_ context.Context, instance string, deadline time.Duration) (fcvm.JobExitPayload, error) {
+			if instance != "job-1" {
+				t.Fatalf("WaitJobExit instance = %q, want job-1", instance)
+			}
+			waited = deadline
+			return fcvm.JobExitPayload{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: "lease-1"}, nil
+		},
+	}
+	cli, _ := newServer(t, f)
+	if _, err := cli.JobColdBoot(context.Background(), &vmmdpb.JobColdBootRequest{
+		Instance: "job-1", AccountId: "acct-1", NodeId: "node-1", Plan: "pro",
+		RunId: "run-1", TaskIndex: 2, ImageRef: "image", KernelKey: "kernel/1",
+		BaseKey: "base/base.ext4", Command: []string{"/bin/job"},
+		Env: map[string]string{"MODE": "test"}, VcpuCount: 1, MemSizeMib: 256,
+		TaskTimeoutSec: 30, LeaseToken: "lease-1",
+	}); err != nil {
+		t.Fatalf("JobColdBoot: %v", err)
+	}
+	if boot.Instance != "job-1" || string(boot.Plan) != "pro" || boot.TaskIndex != 2 || boot.Env["MODE"] != "test" {
+		t.Fatalf("BootJob request = %+v", boot)
+	}
+	resp, err := cli.WaitJobExit(context.Background(), &vmmdpb.WaitJobExitRequest{Instance: "job-1"})
+	if err != nil {
+		t.Fatalf("WaitJobExit: %v", err)
+	}
+	if resp.GetExitCode() != 0 || resp.GetErrorClass() != "succeeded" || resp.GetLeaseToken() != "lease-1" {
+		t.Fatalf("JobExitResponse = %+v", resp)
+	}
+	if waited != fcvm.JobDestroyWaitDefault {
+		t.Fatalf("default wait deadline = %s, want %s", waited, fcvm.JobDestroyWaitDefault)
+	}
+}
+
+func TestJobColdBoot_RejectsIncompleteRequest(t *testing.T) {
+	cli, _ := newServer(t, &fakeVMM{})
+	_, err := cli.JobColdBoot(context.Background(), &vmmdpb.JobColdBootRequest{Instance: "job-1"})
+	if err == nil {
+		t.Fatal("JobColdBoot returned nil error for incomplete request")
+	}
+	if code := status.Code(err); code != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", code)
+	}
+}
+
+func TestJobColdBoot_RejectsTimeoutOverHostLimit(t *testing.T) {
+	cli, _ := newServer(t, &fakeVMM{})
+	_, err := cli.JobColdBoot(context.Background(), &vmmdpb.JobColdBootRequest{
+		Instance: "job-1", AccountId: "acct-1", NodeId: "node-1", Plan: "pro",
+		RunId: "run-1", TaskIndex: 0, ImageRef: "image", KernelKey: "kernel/1",
+		BaseKey: "base/base.ext4", Command: []string{"/bin/job"}, VcpuCount: 1,
+		MemSizeMib: 256, TaskTimeoutSec: fcvm.JobMaxTaskTimeoutSec + 1, LeaseToken: "lease-1",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", status.Code(err))
 	}
 }
 

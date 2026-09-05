@@ -35,6 +35,81 @@ func deploymentIDFromContext(ctx context.Context) string {
 	return corr.DeploymentID
 }
 
+// jobBootRequestFromProto converts the scheduler's flat job envelope into
+// the Manager request. Keeping validation here makes malformed callers fail
+// before vmmd allocates a slot or stages any image bytes.
+func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootRequest, error) {
+	if req == nil {
+		return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Missing request", "request is required")
+	}
+	checks := []struct {
+		value string
+		name  string
+	}{
+		{req.GetInstance(), "instance"},
+		{req.GetAccountId(), "account_id"},
+		{req.GetNodeId(), "node_id"},
+		{req.GetPlan(), "plan"},
+		{req.GetRunId(), "run_id"},
+		{req.GetImageRef(), "image_ref"},
+		{req.GetKernelKey(), "kernel_key"},
+		{req.GetBaseKey(), "base_key"},
+		{req.GetLeaseToken(), "lease_token"},
+	}
+	for _, check := range checks {
+		if check.value == "" {
+			return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
+				api.CodeValidation, "Invalid job request", check.name+" is required")
+		}
+	}
+	plan := api.Plan(req.GetPlan())
+	if !plan.Valid() {
+		return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid job request", "plan is invalid")
+	}
+	if len(req.GetCommand()) == 0 || len(req.GetCommand()) > 64 {
+		return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid job request", "command must contain between 1 and 64 arguments")
+	}
+	if req.GetTaskIndex() < 0 || req.GetVcpuCount() < 1 || req.GetMemSizeMib() < 1 || req.GetTaskTimeoutSec() < 1 {
+		return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid job request", "task_index, vcpu_count, mem_size_mib, and task_timeout_sec must be valid")
+	}
+	if req.GetTaskTimeoutSec() > fcvm.JobMaxTaskTimeoutSec {
+		return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid job request", "task_timeout_sec exceeds the host limit")
+	}
+	return fcvm.JobBootRequest{
+		Instance:       req.GetInstance(),
+		AccountID:      req.GetAccountId(),
+		NodeID:         req.GetNodeId(),
+		Plan:           plan,
+		RunID:          req.GetRunId(),
+		TaskIndex:      int(req.GetTaskIndex()),
+		ImageRef:       req.GetImageRef(),
+		KernelKey:      req.GetKernelKey(),
+		BaseKey:        req.GetBaseKey(),
+		Command:        append([]string(nil), req.GetCommand()...),
+		Env:            cloneStringMap(req.GetEnv()),
+		VcpuCount:      int(req.GetVcpuCount()),
+		MemSizeMiB:     int(req.GetMemSizeMib()),
+		TaskTimeoutSec: int(req.GetTaskTimeoutSec()),
+		LeaseToken:     req.GetLeaseToken(),
+	}, nil
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
 // toWakeRequest flattens CreateFromSnapshotRequest into an fcvm.WakeRequest.
 // The caller resolves (app) here; vmmd stores none of it (ADR-014).
 func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, error) {

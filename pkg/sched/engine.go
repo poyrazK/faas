@@ -367,6 +367,11 @@ type Engine struct {
 	// a synthetic JobWakeResult without touching vmmd. Production
 	// cmd/schedd wires the real client via WithJobVmmClient (M7).
 	jobVmmClient jobVmmClient
+	// jobExitWaiter supervises the guest job-exit receipt asynchronously so
+	// the dispatch tick is never held open for the task's full runtime.
+	jobExitWaiter JobExitWaiter
+	// jobContext is the schedd lifecycle context used by exit supervisors.
+	jobContext context.Context
 
 	// rebalanceCooldownSeconds is the Tier A4 (ADR-064) cooldown
 	// between two successful reassignments of the same app. Default
@@ -673,6 +678,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		notif:           notif,
 		fcVer:           fcVer,
 		log:             log,
+		jobContext:      ctx,
 		appMu:           map[string]*sync.Mutex{},
 		serviceAppMu:    map[string]*sync.Mutex{},
 		serviceMu:       map[string]*sync.Mutex{},

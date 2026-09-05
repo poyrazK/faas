@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // pgLeaseRecord is the per-lease row returned by PgLeaser.Acquire.
@@ -106,6 +107,32 @@ func NewPgLeaser(pool poolExecutor, nodeID string, now func() time.Time) *PgLeas
 		nodeID: nodeID,
 		now:    now,
 	}
+}
+
+// NewPgLeaserFromPool adapts the concrete pgxpool return types to the small
+// interfaces used by PgLeaser. Keeping the adapter here removes the unsafe
+// production type assertion that previously left jobs without a leaser.
+func NewPgLeaserFromPool(pool *pgxpool.Pool, nodeID string, now func() time.Time) *PgLeaser {
+	if pool == nil {
+		return nil
+	}
+	return NewPgLeaser(pgxPoolExecutor{pool: pool}, nodeID, now)
+}
+
+type pgxPoolExecutor struct {
+	pool *pgxpool.Pool
+}
+
+func (p pgxPoolExecutor) Exec(ctx context.Context, sql string, args ...any) (pgxCommandTag, error) {
+	return p.pool.Exec(ctx, sql, args...)
+}
+
+func (p pgxPoolExecutor) Query(ctx context.Context, sql string, args ...any) (pgxRows, error) {
+	return p.pool.Query(ctx, sql, args...)
+}
+
+func (p pgxPoolExecutor) QueryRow(ctx context.Context, sql string, args ...any) pgxRow {
+	return p.pool.QueryRow(ctx, sql, args...)
 }
 
 // Acquire issues a fresh lease against the (runID, taskIndex) tuple.

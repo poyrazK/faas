@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -14,6 +15,17 @@ type recordingJobVMM struct {
 	spec  JobVmmSpec
 	err   error
 	calls int
+}
+
+type blockingJobExitWaiter struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingJobExitWaiter) WaitJobExit(_ context.Context, spec JobExitSpec) (JobExitResult, error) {
+	close(w.started)
+	<-w.release
+	return JobExitResult{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: spec.LeaseToken}, nil
 }
 
 func (v *recordingJobVMM) JobColdBoot(_ context.Context, spec JobVmmSpec) (JobVmmResult, error) {
@@ -108,5 +120,58 @@ func TestEngineWakeJobFailureRequeuesAndReleases(t *testing.T) {
 	}
 	if failed.State != string(state.StateFailed) {
 		t.Fatalf("failed job instance = %+v, want terminal failed state", failed)
+	}
+}
+
+func TestEngineWakeJobSupervisesExitAndCleansUp(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	lease := NewMemLeaser(nil)
+	waiter := &blockingJobExitWaiter{started: make(chan struct{}), release: make(chan struct{})}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(lease)).
+		WithJobVmmClient(&recordingJobVMM{}).
+		WithJobExitWaiter(waiter)
+
+	result, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0)
+	if err != nil {
+		t.Fatalf("WakeJob: %v", err)
+	}
+	ins, err := store.InstanceByID(context.Background(), result.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if ins.State != string(state.StateRunning) {
+		t.Fatalf("job instance state = %q, want running", ins.State)
+	}
+	select {
+	case <-waiter.started:
+	case <-time.After(time.Second):
+		t.Fatal("job exit waiter did not start")
+	}
+	close(waiter.release)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		ins, err = store.InstanceByID(context.Background(), result.InstanceID)
+		if err == nil && ins.State == string(state.StateStopped) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if ins.State != string(state.StateStopped) {
+		t.Fatalf("job instance after exit = %q, want stopped", ins.State)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Fatalf("resident RAM after exit = %d, want 0", got)
+	}
+	if got := lease.Size(); got != 0 {
+		t.Fatalf("active leases after exit = %d, want 0", got)
+	}
+	task, err := store.JobTaskGet(context.Background(), run.ID, 0)
+	if err != nil {
+		t.Fatalf("JobTaskGet: %v", err)
+	}
+	if task.Status != "succeeded" {
+		t.Fatalf("task after exit = %q, want succeeded", task.Status)
 	}
 }

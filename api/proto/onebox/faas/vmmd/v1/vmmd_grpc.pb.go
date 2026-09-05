@@ -24,6 +24,8 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Vmmd_CreateFromSnapshot_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
 	Vmmd_CreateColdBoot_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
+	Vmmd_JobColdBoot_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
+	Vmmd_WaitJobExit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
 	Vmmd_FrameworkReady_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
@@ -64,6 +66,13 @@ type VmmdClient interface {
 	// CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
 	// first-boot path (M2). Equivalent to Wake with Snapshot == nil.
 	CreateColdBoot(ctx context.Context, in *CreateColdBootRequest, opts ...grpc.CallOption) (*WakeResponse, error)
+	// JobColdBoot starts a non-listening job-task VM. Jobs own their image,
+	// command, environment, and timeout, so they use a dedicated flat wire
+	// shape instead of AppSpec and never enter the snapshot/readiness path.
+	JobColdBoot(ctx context.Context, in *JobColdBootRequest, opts ...grpc.CallOption) (*JobColdBootResponse, error)
+	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
+	// The caller supplies the deadline on the gRPC context.
+	WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error)
 	// PauseAndSnapshot pauses the VM and writes a full snapshot to the
 	// requested host-side paths, then destroys the live VM. After return the
 	// instance is gone (§6.1: PARKED is zero-RAM).
@@ -397,6 +406,26 @@ func (c *vmmdClient) CreateColdBoot(ctx context.Context, in *CreateColdBootReque
 	return out, nil
 }
 
+func (c *vmmdClient) JobColdBoot(ctx context.Context, in *JobColdBootRequest, opts ...grpc.CallOption) (*JobColdBootResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JobColdBootResponse)
+	err := c.cc.Invoke(ctx, Vmmd_JobColdBoot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JobExitResponse)
+	err := c.cc.Invoke(ctx, Vmmd_WaitJobExit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) PauseAndSnapshot(ctx context.Context, in *PauseAndSnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SnapshotResponse)
@@ -657,6 +686,13 @@ type VmmdServer interface {
 	// CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
 	// first-boot path (M2). Equivalent to Wake with Snapshot == nil.
 	CreateColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error)
+	// JobColdBoot starts a non-listening job-task VM. Jobs own their image,
+	// command, environment, and timeout, so they use a dedicated flat wire
+	// shape instead of AppSpec and never enter the snapshot/readiness path.
+	JobColdBoot(context.Context, *JobColdBootRequest) (*JobColdBootResponse, error)
+	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
+	// The caller supplies the deadline on the gRPC context.
+	WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error)
 	// PauseAndSnapshot pauses the VM and writes a full snapshot to the
 	// requested host-side paths, then destroys the live VM. After return the
 	// instance is gone (§6.1: PARKED is zero-RAM).
@@ -976,6 +1012,12 @@ func (UnimplementedVmmdServer) CreateFromSnapshot(context.Context, *CreateFromSn
 func (UnimplementedVmmdServer) CreateColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateColdBoot not implemented")
 }
+func (UnimplementedVmmdServer) JobColdBoot(context.Context, *JobColdBootRequest) (*JobColdBootResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method JobColdBoot not implemented")
+}
+func (UnimplementedVmmdServer) WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WaitJobExit not implemented")
+}
 func (UnimplementedVmmdServer) PauseAndSnapshot(context.Context, *PauseAndSnapshotRequest) (*SnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PauseAndSnapshot not implemented")
 }
@@ -1098,6 +1140,42 @@ func _Vmmd_CreateColdBoot_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).CreateColdBoot(ctx, req.(*CreateColdBootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_JobColdBoot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JobColdBootRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).JobColdBoot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_JobColdBoot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).JobColdBoot(ctx, req.(*JobColdBootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_WaitJobExit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WaitJobExitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).WaitJobExit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_WaitJobExit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).WaitJobExit(ctx, req.(*WaitJobExitRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1501,6 +1579,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateColdBoot",
 			Handler:    _Vmmd_CreateColdBoot_Handler,
+		},
+		{
+			MethodName: "JobColdBoot",
+			Handler:    _Vmmd_JobColdBoot_Handler,
+		},
+		{
+			MethodName: "WaitJobExit",
+			Handler:    _Vmmd_WaitJobExit_Handler,
 		},
 		{
 			MethodName: "PauseAndSnapshot",
