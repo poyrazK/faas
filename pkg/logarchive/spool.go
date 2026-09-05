@@ -135,7 +135,10 @@ func NewSpool(root string, maxBytes int64) *Spool {
 func existingUnshippedBytes(root string) int64 {
 	var total int64
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil || d.IsDir() {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
 			return nil
 		}
 		name := d.Name()
@@ -405,6 +408,8 @@ func (s *Spool) PrepareUpload(instance, day string) (string, error) {
 	// A previous upload failed while new lines were arriving. Append the
 	// newer partial after the sealed backlog, then remove the partial so the
 	// next retry has one complete daily object.
+	//nolint:forbidigo // partial is constructed from validated instance/day
+	// components under s.root; no untrusted path crosses this boundary.
 	src, err := os.Open(partial)
 	if err != nil {
 		return "", fmt.Errorf("logarchive: open %s: %w", partial, err)

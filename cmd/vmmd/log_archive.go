@@ -178,9 +178,10 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 			log.Warn("vmmd: log archive stopped", "err", err)
 		}
 	}()
+	shutdownBase := context.WithoutCancel(ctx)
 	cleanup := func() {
 		archiveCancel()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(shutdownBase, 5*time.Second)
 		defer cancel()
 		select {
 		case <-done:
