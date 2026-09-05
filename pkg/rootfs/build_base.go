@@ -268,7 +268,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	// `Uname="node", Uid=0` lands on uid 0 in the guest, which
 	// spec §11 forbids.
 	passwdEntries := make(map[string]PasswdEntry)
-	var resolver Resolver = in.Resolver
+	resolver := in.Resolver
 	if len(in.Layers) > 0 {
 		// Layer zero may introduce /etc/passwd and files whose tar headers
 		// use that layer's named users. Spool it once so it can be applied
@@ -280,7 +280,9 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 			return BuildResult{}, fmt.Errorf("rootfs: spool layer 0: %w", err)
 		}
 		defer cleanup()
-		f, err := os.Open(layer0)
+		// layer0 is a server-owned temporary spool created above; it is not
+		// a customer-controlled path.
+		f, err := os.Open(layer0) //nolint:forbidigo
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: open layer 0: %w", err)
 		}
@@ -297,7 +299,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 			passwdEntries = entries
 		}
 		resolver = NewPasswdResolver(passwdEntries)
-		f, err = os.Open(layer0)
+		f, err = os.Open(layer0) //nolint:forbidigo // layer0 is a server-owned temporary spool
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: reopen layer 0: %w", err)
 		}
@@ -510,14 +512,16 @@ const passwdTablePath = "/etc/faas/app_passwd"
 // source of truth).
 func parseStagingPasswd(staging string) (map[string]PasswdEntry, error) {
 	p := filepath.Join(staging, "etc", "passwd")
-	f, err := os.Open(p)
+	// p is beneath the builder-owned staging directory created by MkdirTemp;
+	// it is not a customer-supplied path.
+	f, err := os.Open(p) //nolint:forbidigo
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return ParsePasswd(f)
 }
 
@@ -662,12 +666,12 @@ func (b *Builder) emitFullRootfsSBOM(ctx context.Context, in BuildFullRootfsInpu
 	if in.Storage == nil || in.SBOMStorageKey == "" {
 		return "", nil
 	}
-	body, err := in.SBOMRun(ctx, staging)
-	if err != nil || !json.Valid(body) {
+	body, _ := in.SBOMRun(ctx, staging) //nolint:nilerr
+	if !json.Valid(body) {
 		return "", nil
 	}
 	if err := in.Storage.Put(ctx, in.SBOMStorageKey, bytes.NewReader(body)); err != nil {
-		return "", nil
+		return "", nil //nolint:nilerr
 	}
 	return in.SBOMStorageKey, nil
 }
@@ -697,7 +701,7 @@ func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsI
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rootfs: close full-rootfs tmp ext4: %w", err)
 	}
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if err := b.run.Run(ctx, MkfsCommand(staging, tmpPath, sizeMB)); err != nil {
 		return fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
 	}
@@ -705,7 +709,7 @@ func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsI
 	if err != nil {
 		return fmt.Errorf("rootfs: open full-rootfs mkfs output: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
 		return fmt.Errorf("rootfs: publish full-rootfs %q: %w", in.StorageKey, err)
 	}

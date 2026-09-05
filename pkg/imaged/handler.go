@@ -3504,7 +3504,7 @@ func (h *Handler) dispatchFullRootfs(
 	// before publishing the main artifact instead of silently starting without
 	// the declared sidecars.
 	if hasSidecars, err := deploymentHasSidecars(dep.Sidecars); err != nil {
-		return fmt.Errorf("%w: invalid sidecars for full-rootfs: %v", oci.ErrLayersNotAboveBase, err)
+		return fmt.Errorf("%w: invalid sidecars for full-rootfs: %w", oci.ErrLayersNotAboveBase, err)
 	} else if hasSidecars {
 		return fmt.Errorf("%w: full-rootfs images cannot declare sidecars", oci.ErrLayersNotAboveBase)
 	}
