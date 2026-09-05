@@ -41,15 +41,24 @@ func MaterializeParentExt4(ctx context.Context, lowerdir, targetDir string) erro
 // copyParentTree is kept separate so the content-vs-directory copy contract
 // is testable without requiring a real loopback mount or privileged paths.
 func copyParentTree(ctx context.Context, lowerdir, targetDir string) error {
-	// cp -a preserves symlinks, modes, ownership, timestamps, and sparse
-	// files from the Debian parent. The target is created by imaged and is
-	// intentionally shared under /dev/shm so the unprivileged caller can
-	// apply the child OCI layers and run mkfs.ext4 -d afterwards.
-	// Keep the trailing `/.` intact. filepath.Join(lowerdir, ".") cleans it
-	// back to lowerdir, which makes cp place the whole parent directory under
-	// targetDir instead of copying the parent's contents.
-	src := lowerdir + string(filepath.Separator) + "."
-	cmd := exec.CommandContext(ctx, "cp", "-a", src, targetDir)
+	// Copy each child, including dotfiles, rather than lowerdir/. .
+	// cp -a lowerdir/. targetDir also replaces targetDir's metadata with
+	// the mounted root's uid/mode. That hands a root-owned 0755 directory
+	// back to unprivileged imaged, which cannot apply its runtime delta.
+	// Child metadata stays intact; the staging root stays caller-owned.
+	entries, err := os.ReadDir(lowerdir)
+	if err != nil {
+		return fmt.Errorf("vmmdmount: materialize parent: list contents: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	args := []string{"-a", "--"}
+	for _, entry := range entries {
+		args = append(args, filepath.Join(lowerdir, entry.Name()))
+	}
+	args = append(args, targetDir)
+	cmd := exec.CommandContext(ctx, "cp", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("vmmdmount: materialize parent: cp %q -> %q: %w (%s)",
 			lowerdir, targetDir, err, strings.TrimSpace(string(out)))
