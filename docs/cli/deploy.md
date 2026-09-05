@@ -3,41 +3,48 @@
 `gregale deploy` ships a directory, tarball, OCI image, or pinned
 GitHub ref to an app on the control plane. The path that runs is
 inferred from flags + the cwd's git state; this page captures the
-non-obvious pieces (which files actually get shipped, what the
-`--json` envelope looks like, when a "deploy this subdir only"
-intent needs a different command).
+non-obvious pieces (which files actually get shipped and what the
+`--json` envelope looks like).
 
 ## Source-root semantics
 
-When cwd is inside a git repository whose `origin` is a recognised
-GitHub URL, `gregale deploy` ships the **committed tree at HEAD from
-the repo root**, not the cwd subdir. `git archive HEAD` is run with
-gitDir = the enclosing repo root (see `gitArchiveHEAD` at
-`cmd/gregale/git_local.go:345`), so a `cd apps/services/api && gregale
-deploy` from inside a monorepo uploads the **entire** committed tree.
+When cwd is inside a git repository with an `origin` remote, `gregale
+deploy` without a source selector still ships the
+**committed tree at HEAD from the repo root**, preserving the original
+zero-config behavior. A nested working directory does not implicitly
+change the build root.
 
-Two reasons:
-
-1. The control plane's builder reads the framework hint from the
-   top of the tree (Railpack's `package.json`, `requirements.txt`,
-   `go.mod`, `Dockerfile`, etc.). Shipping only the subdir loses
-   monorepo-hosting files (lockfiles at root, shared config) and
-   the build silently misdetects the framework.
-2. Reproducibility is anchored at HEAD's full tree hash. A
-   subdir-only upload can't be replayed deterministically against
-   the upstream remote.
-
-For a subdir-only deploy, `cd` to the subdir and use the cwd-auto-pack
-fallback (no git, no origin — the CLI packs the cwd):
+Use `--path` when one self-contained service in a monorepo should be
+deployed as its own app:
 
 ```bash
-cd monorepo/packages/api
-rm -rf .git                   # strip any nested git dirs first
-unset GREGALE_GIT_DEPTH_CHECK  # or pass --no-git if running interactively
-gregale deploy --tarball /tmp/api.tar.gz
+cd monorepo
+gregale deploy --path packages/api --name api
 ```
 
-For a decomposed monorepo deploy (one CLI invocation, N apps), use
+`--path` is resolved relative to the current directory. Inside a Git
+repository with an `origin` remote it archives `HEAD:<path>` and makes the selected directory
+the uploaded archive root, so its `package.json`, `go.mod`, or
+`Dockerfile` is detected normally. It never requires removing `.git`.
+The default remains reproducible and excludes uncommitted changes.
+
+Use `--worktree` to explicitly deploy local files from the selected
+directory, including uncommitted and untracked files:
+
+```bash
+gregale deploy --path packages/api --worktree --name api
+```
+
+`--worktree` without `--path` applies the same behavior to the current
+directory. Both modes keep the repository's `commit_sha` in the JSON
+receipt when Git metadata is available; `dirty: true` indicates that
+the repository had local changes at deploy time.
+
+This first source-root path is intended for self-contained services. A
+service that needs workspace lockfiles, shared packages, or build
+configuration outside `--path` should use the project-plan flow until
+server-side build-context support is available. For a decomposed
+monorepo deploy (one CLI invocation, N apps), use
 `gregale scan --path .` and the project-plan apply path; see the
 decomposition PR (issue #791 / ADR-090).
 
@@ -94,11 +101,13 @@ boundary.
 Three flavors of "what was deployed", pinned differently:
 
 - **Zero-config (`gregale deploy` from a git repo)**: pinned at
-  `commit_sha` (HEAD) + the committed tree of HEAD. Re-runs of the
-  same SHA are byte-identical assuming the working tree was clean at
-  deploy time; `dirty:true` in the receipt flags a deploy whose
-  working tree had uncommitted changes (the SHA is still pinned;
-  the uncommitted bytes were NOT shipped).
+  `commit_sha` (HEAD) + the committed tree of HEAD. Without `--path`,
+  that tree is the repository root; with `--path`, it is the selected
+  `HEAD:<path>` tree. Re-runs of the same SHA are byte-identical
+  assuming the selected tree is unchanged.
+- **Working-tree zero-config (`--worktree`)**: pinned by the shipped
+  `source_sha256`; `commit_sha` and `dirty` remain useful provenance,
+  but local edits and untracked files are intentionally included.
 - **Tarball (`gregale deploy --tarball foo.tar.gz`)**: pinned at
   `source_sha256` (the bytes shipped). Re-runs of the same SHA
   are byte-identical. No `commit_sha` because no git detection ran.

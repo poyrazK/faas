@@ -862,7 +862,7 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 }
 
 // cmdDeployTarball implements `gregale deploy` (image / tarball / repo
-// / template / zero-config). Zero-config (issue #313) packs the cwd
+// / template / zero-config). Zero-config (issue #313) packs the selected source directory
 // and proceeds down the --tarball path. Issue #737 / ADR-083 added the
 // function-vs-app auto-detect on the zero-config path and the
 // --function / --app explicit-shape flags.
@@ -877,6 +877,8 @@ func cmdDeployTarball(args []string) int {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
+	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
+	worktree := fs.Bool("worktree", false, "deploy the selected source directory from the working tree, including local changes")
 	// Issue #739 / ADR-092: --repo pairs with --ref to drive the
 	// headless source-ref deploy (server-side foundation lives in
 	// cmd/apid/handlers_source_ref.go). The previous M7.5 dashboard
@@ -893,7 +895,7 @@ func cmdDeployTarball(args []string) int {
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
-	name := fs.String("name", "", "app name (default: current directory)")
+	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	// Issue #737 / ADR-083: explicit shape override. Without either flag
 	// the CLI auto-detects from the cwd (handler.*-only → function,
 	// otherwise app). With --function or --app, detection is skipped.
@@ -1040,7 +1042,7 @@ func cmdDeployTarball(args []string) int {
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--doctor-strict] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--doctor-strict] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
 	// run() consumes the global --json before dispatch. Keep the
@@ -1064,6 +1066,13 @@ func cmdDeployTarball(args []string) int {
 	// pick. Mirrors the --require-authn/--no-require-authn check above.
 	if *function && *app {
 		return printErr("Invalid flags", fmt.Errorf("--function and --app are mutually exclusive"))
+	}
+	// --path and --worktree select the local zero-config source. They
+	// cannot be combined with another source shape: silently preferring
+	// an image or an explicit tarball would make the selected directory
+	// appear to have been deployed when it was never uploaded.
+	if (*sourcePath != "" || *worktree) && (*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet) {
+		return printErr("Invalid flags", fmt.Errorf("--path/--worktree can only be used with a local zero-config deploy"))
 	}
 	// --secret-scan=off is the documented escape hatch for customers who
 	// genuinely need to ship a Stripe test key at boot (local dev
@@ -1279,15 +1288,15 @@ func cmdDeployTarball(args []string) int {
 		}
 	}
 
-	// Zero-config (issue #313): no source flag → pack the current directory
-	// and deploy it, mirroring the --template branch above (temp tarball →
-	// set *tarball → fall through to the shared upload path). This is an
-	// App-type deploy (runtime/handler stay unset) so the server's builder
-	// detects the framework; we only detect locally for the UX line and to
-	// set --dockerfile when a Dockerfile is at the root. --repo returned
+	// Zero-config (issue #313): no source flag → pack the selected source
+	// directory and deploy it, mirroring the --template branch above (temp
+	// tarball → set *tarball → fall through to the shared upload path). This
+	// is an App-type deploy (runtime/handler stay unset) so the server's
+	// builder detects the framework; we only detect locally for the UX line and
+	// to set --dockerfile when a Dockerfile is at the root. --repo returned
 	// earlier and --template already set *tarball, so reaching here with both
 	// *image and *tarball empty means the customer gave no source at all.
-	// Issue #737 / ADR-083: resolved shape from cwd auto-detection or
+	// Issue #737 / ADR-083: resolved shape from the selected source directory or
 	// the explicit --function/--app short-circuit. Defaults to
 	// shapeApp so a --tarball / --image / --template deploy (no cwd
 	// pack) stays on the existing app-shaped path. The CreateApp call
@@ -1326,8 +1335,22 @@ func cmdDeployTarball(args []string) int {
 		// the error there if needed.
 		cwd = ""
 	}
+	sourceDir := cwd
+	if *sourcePath != "" {
+		if cwdErr != nil {
+			return printErr("Could not resolve deploy source", cwdErr)
+		}
+		var sourceErr error
+		sourceDir, sourceErr = resolveDeploySourceDir(cwd, *sourcePath)
+		if sourceErr != nil {
+			return printErr("Invalid deploy source", sourceErr)
+		}
+		if *name == "" {
+			slug = sanitizeSlug(filepath.Base(sourceDir))
+		}
+	}
 	// Cluster A: --doctor-strict pre-upload gate. Runs runDoctorChecks
-	// against the cwd BEFORE any HTTP / pack. Errors exit 1 with the
+	// against the selected source directory BEFORE any HTTP / pack. Errors exit 1 with the
 	// doctor report printed to stderr (pre-network, no half-state).
 	// Warnings render but don't fail (mirrors the standalone cmdDoctor
 	// exit semantics). The cwd scan fires regardless of --tarball /
@@ -1337,8 +1360,8 @@ func cmdDeployTarball(args []string) int {
 	// cwd itself is unreachable (cwdErr != nil) does the gate
 	// skip — in that case the server-side validators on upload are
 	// the catch.
-	if *doctorStrict && cwd != "" {
-		rep := runDoctorChecks(cwd)
+	if *doctorStrict && sourceDir != "" {
+		rep := runDoctorChecks(sourceDir)
 		if rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {
@@ -1363,9 +1386,9 @@ func cmdDeployTarball(args []string) int {
 			return printErr("Could not read current directory", cwdErr)
 		}
 		// Issue #1182: refactored zero-config `gregale deploy` (no
-		// flags). When cwd is in a git repo with an `origin` remote
-		// we pack via `git archive HEAD` (the committed tree, not the
-		// working tree) and fall through to the normal
+		// flags). When the selected source is in a git repo with an
+		// `origin` remote we pack via `git archive HEAD` (the committed
+		// tree, not the working tree) and fall through to the normal
 		// buildCreateRequest → CreateApp → DeployTarball pipeline
 		// below. The legacy cmdDeployZeroConfig + mustOpen +
 		// sourceTarballSidecar trio is gone — that path bypassed
@@ -1375,6 +1398,11 @@ func cmdDeployTarball(args []string) int {
 		// path) by NOT routing through it; it goes through the same
 		// CreateApp + DeployTarball wire as --tarball / --template.
 		//
+		// `--path` changes only the selected tree: `git archive
+		// HEAD:path/to/app` makes that directory the archive root. The
+		// explicit `--worktree` opt-in skips the Git archive and packs
+		// the selected directory from disk, including local changes.
+		//
 		// Three outcomes from resolveZeroConfigProvenance:
 		//   - ok=true,  err=nil   → pack HEAD, stamp provenance
 		//   - ok=false, err=ErrNotInGitRepo / ErrNoGitRemote → fall
@@ -1382,13 +1410,13 @@ func cmdDeployTarball(args []string) int {
 		//     (existing behavior preserved for non-git dirs and for
 		//     git repos without origin)
 		//   - ok=false, err=other → surface the error
-		if provVal, ok, perr := resolveZeroConfigProvenance(cwd); ok {
+		if provVal, ok, perr := resolveZeroConfigProvenance(sourceDir); ok {
 			prov = &provVal
 			if provVal.Dirty {
-				// Print a dirty warning naming the SHA + dirty count
-				// so the operator sees exactly what they're shipping
-				// (HEAD only, no working-tree changes). The deploy
-				// still proceeds — Ctrl-C is the operator's opt-out.
+				// Print a dirty warning naming the SHA + dirty count so
+				// the operator sees exactly what they're shipping. In
+				// the default mode the deploy is HEAD-only; --worktree
+				// makes the local bytes intentional.
 				if dirtyOut, derr := runGitCmd(provVal.Root, "status", "--porcelain"); derr == nil {
 					dirtyFiles := 0
 					for _, line := range strings.Split(strings.TrimRight(dirtyOut, "\n"), "\n") {
@@ -1396,31 +1424,51 @@ func cmdDeployTarball(args []string) int {
 							dirtyFiles++
 						}
 					}
-					if dirtyFiles > 0 {
+					if dirtyFiles > 0 && *worktree {
+						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying working-tree source (%s)",
+							dirtyFiles, provVal.SHA[:7])
+					} else if dirtyFiles > 0 {
 						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying HEAD (%s) only — commit first to include the changes",
 							dirtyFiles, provVal.SHA[:7])
 					}
 				}
 			}
-			// Materialise HEAD as a temp gzipped tar via `git archive`.
-			// os.CreateTemp returns a *File we close immediately —
-			// gitArchiveHEAD writes to the path, no fd leak on this
-			// path. The temp file is removed by the defer; the open
-			// that follows uses openCustomerFile + defer Close (the
-			// existing --tarball branch), which is fd-safe.
-			tmpFile, terr := os.CreateTemp("", "gregale-git-*.tar.gz")
-			if terr != nil {
-				return printErr("Could not create temp tarball", terr)
+			if !*worktree {
+				// Materialise HEAD as a temp gzipped tar via `git
+				// archive`. os.CreateTemp returns a *File we close
+				// immediately — the archive helper writes to the path,
+				// no fd leak on this path. The open that follows uses
+				// openCustomerFile + defer Close (the existing
+				// --tarball branch), which is fd-safe.
+				tmpFile, terr := os.CreateTemp("", "gregale-git-*.tar.gz")
+				if terr != nil {
+					return printErr("Could not create temp tarball", terr)
+				}
+				tmpPath := tmpFile.Name()
+				_ = tmpFile.Close()
+				defer func() { _ = os.Remove(tmpPath) }()
+				archiveErr := error(nil)
+				if *sourcePath == "" {
+					archiveErr = gitArchiveHEAD(provVal.Root, tmpPath)
+				} else {
+					relPath, relErr := gitRelativePath(provVal.Root, sourceDir)
+					if relErr != nil {
+						return printErr("Could not resolve deploy source", relErr)
+					}
+					archiveErr = gitArchiveHEADPath(provVal.Root, relPath, tmpPath)
+				}
+				if archiveErr != nil {
+					return printErr("Could not archive git HEAD", archiveErr)
+				}
+				gitArchivePath = tmpPath
+				if *sourcePath == "" {
+					PrintProgress(os.Stderr, "archiving HEAD (%s) from %s",
+						provVal.SHA[:7], filepath.Base(cwd))
+				} else {
+					PrintProgress(os.Stderr, "archiving HEAD (%s) from --path %s",
+						provVal.SHA[:7], *sourcePath)
+				}
 			}
-			tmpPath := tmpFile.Name()
-			_ = tmpFile.Close()
-			defer func() { _ = os.Remove(tmpPath) }()
-			if err := gitArchiveHEAD(provVal.Root, tmpPath); err != nil {
-				return printErr("Could not archive git HEAD", err)
-			}
-			gitArchivePath = tmpPath
-			PrintProgress(os.Stderr, "archiving HEAD (%s) from %s",
-				provVal.SHA[:7], filepath.Base(cwd))
 			// Auto-capture `git config user.name` as deployed_by
 			// unless the operator explicitly passed --deployed-by.
 			// Mirrors the legacy path at cmd_deploy_zero_config.go
@@ -1431,9 +1479,8 @@ func cmdDeployTarball(args []string) int {
 			// resolvedShape stays shapeApp — `git archive HEAD` ships
 			// the committed tree and the server-side builder detects
 			// the framework from there (same as a --tarball upload).
-			// The cwd shape detector at lines 1264+ only runs when
-			// no git origin is present, which is the only case where
-			// a *tarball-less path can land here after this block.
+			// The source-directory detector below runs when --worktree is
+			// set or when the selected source has no GitHub origin.
 		} else if !errors.Is(perr, ErrNotInGitRepo) && !errors.Is(perr, ErrNoGitRemote) {
 			return printErr("Could not resolve git metadata", perr)
 		}
@@ -1477,7 +1524,7 @@ func cmdDeployTarball(args []string) int {
 				return printErr("Could not pack committed HEAD", packErr)
 			}
 			if n == 0 {
-				return printErr("No deployable source found in "+filepath.Base(cwd),
+				return printErr("No deployable source found in "+filepath.Base(sourceDir),
 					errors.New("the committed HEAD contains no regular source files after deploy exclusions"))
 			}
 			defer func() { _ = os.Remove(path) }()
@@ -1485,18 +1532,13 @@ func cmdDeployTarball(args []string) int {
 			PrintProgress(os.Stderr, "packing %d file(s) from committed HEAD", n)
 			*tarball = path
 		}
-		// Issue #1182 §3.3: only run the cwd auto-detect + auto-pack
-		// switch when no tarball was set by the git-archive branch
-		// above. The previous run unconditionally re-packed the
-		// working tree, silently overwriting the HEAD tarball and
-		// shipping uncommitted / untracked files despite the
-		// "deploying HEAD only" warning. With this guard the
-		// auto-pack branch is reachable only from the non-git /
-		// non-origin cwd-auto-pack fallback (existing behaviour).
+		// Run the source-directory auto-detect + auto-pack switch when
+		// no Git archive was selected. This covers the existing
+		// non-git/non-origin fallback and the explicit --worktree mode.
 		if *tarball == "" {
-			detected, rt, hnd, err := resolveDeployShape(cwd, *function, *app, jsonOutput)
+			detected, rt, hnd, err := resolveDeployShape(sourceDir, *function, *app, jsonOutput)
 			if err != nil {
-				return printErr("No deployable source found in "+filepath.Base(cwd), err)
+				return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 			}
 			switch detected {
 			case shapeFunction:
@@ -1518,34 +1560,34 @@ func cmdDeployTarball(args []string) int {
 				// tarball is sealed so a Stripe key committed to
 				// .env.production by accident is dropped before it leaves
 				// the workstation; --secret-scan=off disables it.
-				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(cwd, secretScanMode)
+				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(sourceDir, secretScanMode)
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, _, n, err := autoPackCwd(cwd, planCapMB, overrides)
+				path, _, n, err := autoPackCwd(sourceDir, planCapMB, overrides)
 				if err != nil {
-					return printErr("Could not pack current directory", err)
+					return printErr("Could not pack deploy source", err)
 				}
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
-				PrintProgress(os.Stderr, "packing %d file(s) from %s", n, filepath.Base(cwd))
+				PrintProgress(os.Stderr, "packing %d file(s) from %s", n, filepath.Base(sourceDir))
 				*tarball = path
 				resolvedShape = shapeFunction
 			case shapeApp:
-				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(cwd, secretScanMode)
+				overrides, scanFindings, scanErr := scanAndRedactEnvFiles(sourceDir, secretScanMode)
 				if scanErr != nil {
 					return printErr("Secret scan failed", scanErr)
 				}
-				path, fw, n, err := autoPackCwd(cwd, planCapMB, overrides)
+				path, fw, n, err := autoPackCwd(sourceDir, planCapMB, overrides)
 				if err != nil {
-					return printErr("Could not pack current directory", err)
+					return printErr("Could not pack deploy source", err)
 				}
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				if fw == fwDocker {
 					*dockerfile = true
 				}
-				PrintProgress(os.Stderr, "packing %d file(s) from %s", n, filepath.Base(cwd))
+				PrintProgress(os.Stderr, "packing %d file(s) from %s", n, filepath.Base(sourceDir))
 				*tarball = path
 				resolvedShape = shapeApp
 			}
@@ -1564,7 +1606,7 @@ func cmdDeployTarball(args []string) int {
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff never ships a deploy.
 	if *diff {
-		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, cwd, requireAuthnPtr, appProtocolPtr)
+		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient
@@ -1667,7 +1709,7 @@ func cmdDeployTarball(args []string) int {
 		return 0
 	}
 
-	workflowDefs, err := loadWorkflowManifestForDeploy(ctx, client, cwd)
+	workflowDefs, err := loadWorkflowManifestForDeploy(ctx, client, sourceDir)
 	if err != nil {
 		return printErr("Workflow manifest validation failed", err)
 	}
@@ -1684,7 +1726,7 @@ func cmdDeployTarball(args []string) int {
 	// hasn't shipped yet, but CreateCronIfUnderQuota is the durable
 	// record). --no-triggers opts out of the entire fan-out.
 	if !*noTriggers {
-		if err := deployManifestTriggers(ctx, client, slug, cwd); err != nil {
+		if err := deployManifestTriggers(ctx, client, slug, sourceDir); err != nil {
 			return printErr("Manifest triggers fan-out failed", err)
 		}
 	}

@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -180,6 +181,224 @@ func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 	// Sanity: Whoami fired too (per-plan cap round-trip).
 	if stub.gotCalls["whoami"] == 0 {
 		t.Errorf("Whoami round-trip for per-plan cap should have fired")
+	}
+}
+
+// TestDeployZeroConfig_PathArchivesSelectedTree pins the monorepo source-root
+// contract: --path selects a tracked subdirectory, archives its committed
+// HEAD tree as the uploaded root, and does not leak files from the repository
+// root or the working tree.
+func TestDeployZeroConfig_PathArchivesSelectedTree(t *testing.T) {
+	repo := initZeroConfigRepo(t)
+	service := filepath.Join(repo, "apps", "api")
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatalf("mkdir service: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "index.js"), []byte("console.log('api')\n"), 0o644); err != nil {
+		t.Fatalf("write index.js: %v", err)
+	}
+	for _, args := range [][]string{{"add", "apps/api"}, {"commit", "-q", "-m", "add api service"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	// Neither of these files belongs to the committed selected tree.
+	if err := os.WriteFile(filepath.Join(service, "local.txt"), []byte("working tree\n"), 0o644); err != nil {
+		t.Fatalf("write local.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "root-local.txt"), []byte("root working tree\n"), 0o644); err != nil {
+		t.Fatalf("write root-local.txt: %v", err)
+	}
+	withCwd(t, repo)
+
+	var sourceBytes []byte
+	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+		switch {
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			z.gotCalls["create"]++
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "api"})
+		case r.URL.Path == "/v1/apps/api/deployments" && r.Method == http.MethodPost:
+			z.gotCalls["deploy"]++
+			mr, err := r.MultipartReader()
+			if err != nil {
+				t.Errorf("multipart read: %v", err)
+				return
+			}
+			for {
+				part, err := mr.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Errorf("multipart next part: %v", err)
+					break
+				}
+				if part.FormName() == "source" {
+					sourceBytes, _ = io.ReadAll(part)
+				}
+				_ = part.Close()
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "api"})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	})
+	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdDeployTarball([]string{"--path", "apps/api", "--no-wait"}); code != 0 {
+		t.Fatalf("--path deploy exit = %d, want 0", code)
+	}
+	if len(sourceBytes) == 0 {
+		t.Fatal("selected source archive was empty")
+	}
+	entries := readCapturedDeployArchive(t, sourceBytes)
+	for _, want := range []string{"package.json", "index.js"} {
+		if _, ok := entries[want]; !ok {
+			t.Errorf("selected archive missing %q; entries=%v", want, entries)
+		}
+	}
+	for _, omitted := range []string{"apps/api/package.json", "README.md", "root-local.txt", "local.txt"} {
+		if _, ok := entries[omitted]; ok {
+			t.Errorf("selected archive contains non-selected entry %q", omitted)
+		}
+	}
+}
+
+// TestDeployZeroConfig_PathWorktreeIncludesLocalChanges pins the explicit
+// opt-in escape hatch for local development. --worktree uses the selected
+// directory packer, so a modified tracked file and an untracked file are both
+// present in the uploaded source while the default --path mode remains
+// committed-HEAD-only.
+func TestDeployZeroConfig_PathWorktreeIncludesLocalChanges(t *testing.T) {
+	repo := initZeroConfigRepo(t)
+	service := filepath.Join(repo, "apps", "api")
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatalf("mkdir service: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "package.json"), []byte("{\"name\":\"committed\"}\n"), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "index.js"), []byte("console.log('committed')\n"), 0o644); err != nil {
+		t.Fatalf("write index.js: %v", err)
+	}
+	for _, args := range [][]string{{"add", "apps/api"}, {"commit", "-q", "-m", "add api service"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(service, "package.json"), []byte("{\"name\":\"working-tree\"}\n"), 0o644); err != nil {
+		t.Fatalf("modify package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "local.txt"), []byte("local\n"), 0o644); err != nil {
+		t.Fatalf("write local.txt: %v", err)
+	}
+	withCwd(t, repo)
+
+	var sourceBytes []byte
+	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+		switch {
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			z.gotCalls["create"]++
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "api"})
+		case r.URL.Path == "/v1/apps/api/deployments" && r.Method == http.MethodPost:
+			z.gotCalls["deploy"]++
+			mr, err := r.MultipartReader()
+			if err != nil {
+				t.Errorf("multipart read: %v", err)
+				return
+			}
+			for {
+				part, err := mr.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Errorf("multipart next part: %v", err)
+					break
+				}
+				if part.FormName() == "source" {
+					sourceBytes, _ = io.ReadAll(part)
+				}
+				_ = part.Close()
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "api"})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	})
+	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdDeployTarball([]string{"--path", "apps/api", "--worktree", "--name", "api", "--no-wait"}); code != 0 {
+		t.Fatalf("--path --worktree deploy exit = %d, want 0", code)
+	}
+	entries := readCapturedDeployArchive(t, sourceBytes)
+	var packageBody []byte
+	for name, body := range entries {
+		if filepath.Base(name) == "package.json" {
+			packageBody = body
+		}
+	}
+	if !bytes.Contains(packageBody, []byte("working-tree")) {
+		t.Errorf("working-tree package.json was not uploaded: %q", packageBody)
+	}
+	sawLocal := false
+	for name := range entries {
+		if filepath.Base(name) == "local.txt" {
+			sawLocal = true
+		}
+	}
+	if !sawLocal {
+		t.Errorf("working-tree archive omitted untracked local.txt; entries=%v", entries)
+	}
+}
+
+func readCapturedDeployArchive(t *testing.T, sourceBytes []byte) map[string][]byte {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(sourceBytes))
+	if err != nil {
+		t.Fatalf("open captured gzip: %v", err)
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	entries := map[string][]byte{}
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return entries
+		}
+		if err != nil {
+			t.Fatalf("read captured tar: %v", err)
+		}
+		if hdr.Typeflag == tar.TypeDir {
+			continue
+		}
+		body, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("read captured entry %q: %v", hdr.Name, err)
+		}
+		entries[hdr.Name] = body
+	}
+}
+
+func TestDeployZeroConfig_PathSelectorRejectsExplicitSource(t *testing.T) {
+	cases := [][]string{
+		{"--path", "apps/api", "--tarball", "source.tar.gz"},
+		{"--path", "apps/api", "--image", "registry.example/api:latest"},
+		{"--worktree", "--template", "hello-node"},
+	}
+	for _, args := range cases {
+		if code := cmdDeployTarball(args); code != 1 {
+			t.Errorf("cmdDeployTarball(%v) = %d, want 1", args, code)
+		}
 	}
 }
 

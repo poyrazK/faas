@@ -384,6 +384,29 @@ func TestPackDirToTarGz_Excludes(t *testing.T) {
 	}
 }
 
+func TestPackDirToTarGz_ExcludesLinkedWorktreeGitFile(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Base(dir)
+	writeFile(t, dir, ".git", "gitdir: /tmp/linked-worktree\n")
+	writeFile(t, dir, "package.json", "{}")
+
+	dest := filepath.Join(t.TempDir(), "out.tar.gz")
+	n, err := packDirToTarGz(dir, dest, defaultZeroConfigSourceCapMB, nil)
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("fileCount = %d, want 1", n)
+	}
+	got := tarEntries(t, dest)
+	if got[base+"/.git"] {
+		t.Errorf("archive contains linked-worktree .git file")
+	}
+	if !got[base+"/package.json"] {
+		t.Errorf("archive missing package.json")
+	}
+}
+
 func TestPackDirToTarGz_RejectsSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.Symlink not supported on Windows")

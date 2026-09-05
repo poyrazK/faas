@@ -353,6 +353,92 @@ func TestGitArchiveHEAD_HappyPath(t *testing.T) {
 	}
 }
 
+// TestGitArchiveHEADPath makes sure a selected monorepo service is archived
+// as the build root. The repository itself contains a root-level file and the
+// service contains its own framework marker; only the service files should be
+// visible to the downstream source packer.
+func TestGitArchiveHEADPath(t *testing.T) {
+	dir := initTestRepo(t)
+	service := filepath.Join(dir, "apps", "api")
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatalf("mkdir service: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "workspace.lock"), []byte("root-only\n"), 0o644); err != nil {
+		t.Fatalf("write workspace lock: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "index.js"), []byte("console.log('api')\n"), 0o644); err != nil {
+		t.Fatalf("write index.js: %v", err)
+	}
+	mustGit(t, dir, "add", "apps/api", "workspace.lock")
+	mustGit(t, dir, "commit", "-q", "-m", "add api service")
+
+	out := filepath.Join(t.TempDir(), "api.tar.gz")
+	if err := gitArchiveHEADPath(dir, "apps/api", out); err != nil {
+		t.Fatalf("gitArchiveHEADPath: %v", err)
+	}
+	entries := readGitArchiveFixture(t, out)
+	for _, want := range []string{"package.json", "index.js"} {
+		if _, ok := entries[want]; !ok {
+			t.Errorf("selected archive missing %q; entries=%v", want, entries)
+		}
+	}
+	for _, omitted := range []string{"apps/api/package.json", "README.md", "workspace.lock"} {
+		if _, ok := entries[omitted]; ok {
+			t.Errorf("selected archive contains non-selected entry %q", omitted)
+		}
+	}
+}
+
+func TestResolveDeploySourceDir(t *testing.T) {
+	base := t.TempDir()
+	service := filepath.Join(base, "apps", "api")
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatalf("mkdir service: %v", err)
+	}
+
+	got, err := resolveDeploySourceDir(base, "apps/api")
+	if err != nil {
+		t.Fatalf("resolveDeploySourceDir: %v", err)
+	}
+	if got != service {
+		t.Errorf("resolved path = %q, want %q", got, service)
+	}
+
+	file := filepath.Join(base, "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if _, err := resolveDeploySourceDir(base, file); err == nil {
+		t.Fatal("file source should fail")
+	}
+
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(service, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := resolveDeploySourceDir(base, link); err == nil {
+		t.Fatal("symlink source should fail")
+	}
+}
+
+func TestGitRelativePath(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "apps", "api")
+	got, err := gitRelativePath(root, inside)
+	if err != nil {
+		t.Fatalf("gitRelativePath: %v", err)
+	}
+	if got != "apps/api" {
+		t.Errorf("relative path = %q, want apps/api", got)
+	}
+	if _, err := gitRelativePath(root, filepath.Dir(root)); err == nil {
+		t.Fatal("outside source should fail")
+	}
+}
+
 // TestGitArchiveHEAD_EmptyRepo pins the empty-repo guard. A fresh
 // `git init` with no commits must return a non-nil error (the
 // rev-parse HEAD^{commit} pre-check). The caller surfaces this as
