@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,6 +39,7 @@ type RegistryClient struct {
 var (
 	_ Puller         = (*RegistryClient)(nil)
 	_ ManifestPuller = (*RegistryClient)(nil)
+	_ ImageResolver  = (*RegistryClient)(nil)
 )
 
 // Option configures a RegistryClient.
@@ -111,10 +111,8 @@ var manifestAccept = strings.Join([]string{
 	"application/vnd.docker.distribution.manifest.list.v2+json",
 }, ", ")
 
-// layerMediaTypes are the manifest media types we will walk for layer blobs.
-// Indexes / manifest lists are NOT supported here — they require choosing a
-// platform; a digest-pinned reference to a single-arch image is the M5
-// contract (spec §17 G1: public registries, digest-pinned).
+// imageManifestMediaTypes identifies executable manifests. Indexes are resolved
+// to a compatible Linux/amd64 child before reading config or layers.
 var imageManifestMediaTypes = []string{
 	"application/vnd.oci.image.manifest.v1+json",
 	"application/vnd.docker.distribution.manifest.v2+json",
@@ -329,48 +327,16 @@ func (c *RegistryClient) fetchManifest(ctx context.Context, r Reference) (imageM
 // (issue #461 / ADR-062). The `auth` value is forwarded to the
 // realm endpoint on a 401 challenge.
 func (c *RegistryClient) fetchManifestWithAuth(ctx context.Context, r Reference, auth *BasicAuth) (imageManifest, []byte, error) {
-	var empty imageManifest
-	manifestURL := c.baseURL(r) + "/v2/" + r.Repository + "/manifests/" + r.ManifestRef()
-	body, ct, err := c.fetchManifestJSONWithAuth(ctx, manifestURL, auth)
-	if err != nil {
-		return empty, nil, err
-	}
-	var m imageManifest
-	if err := json.Unmarshal(body, &m); err != nil {
-		return empty, nil, fmt.Errorf("oci: decode manifest %s: %w", r.String(), err)
-	}
-	// Reject index/manifest-list for v1 — we accept only single-arch image
-	// manifests. Surfacing a clear error here is friendlier than silently
-	// ignoring the layers array.
-	//
-	// ADR-021: this is one of the puller-side failure modes that maps to
-	// the RFC 7807 CodeImageManifestInvalid (422). imaged's buildImageLayer
-	// failure path runs errors.As(err, ErrImageManifestInvalid) and
-	// persists the resulting code on deployments.error_code. Wrap with %w
-	// so errors.Is matches both the bare sentinel and any further
-	// %w-wrapped form by imaged.
-	if !isImageManifest(ct, m.MediaType) {
-		return empty, nil, fmt.Errorf("%w: %s is a manifest list/index, not an image manifest (mediaType=%q); digest-pinned to a single-arch image is required",
-			ErrImageManifestInvalid, r.String(), m.MediaType)
-	}
-	return m, body, nil
+	resolved, err := c.resolveImageManifest(ctx, r, auth)
+	return resolved.manifest, resolved.body, err
 }
 
 // isImageManifest reports whether the manifest is a single-arch image
 // manifest (as opposed to an index / manifest-list).
 func isImageManifest(contentType, mediaType string) bool {
-	if mediaType != "" {
-		for _, mt := range imageManifestMediaTypes {
-			if mediaType == mt {
-				return true
-			}
-		}
-		return false
-	}
-	// Some registries omit mediaType in the body; fall back to the response's
-	// Content-Type header.
+	resolved := imageMediaType(contentType, mediaType)
 	for _, mt := range imageManifestMediaTypes {
-		if contentType == mt {
+		if resolved == mt {
 			return true
 		}
 	}
@@ -412,6 +378,7 @@ func parseImageConfig(b []byte) (ImageConfig, error) {
 	return ImageConfig{
 		OS:               raw.OS,
 		Architecture:     raw.Architecture,
+		Variant:          raw.Variant,
 		Volumes:          volumes,
 		Entrypoint:       f.Entrypoint,
 		Cmd:              f.Cmd,
@@ -450,6 +417,9 @@ func (c *RegistryClient) fetchManifestJSONWithAuth(ctx context.Context, url stri
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, "", fmt.Errorf("%w: registry returned 404", ErrImageNotFound)
+		}
 		return nil, "", fmt.Errorf("oci: manifest returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -549,6 +519,16 @@ func (c *RegistryClient) resolveDigest(ctx context.Context, r Reference) (string
 // resolveDigestWithAuth is the AuthPuller variant of resolveDigest.
 // `auth == nil` is the anonymous path (issue #461 / ADR-062).
 func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference, auth *BasicAuth) (string, error) {
+	if r.Digest != "" {
+		body, _, err := c.fetchManifestJSONWithAuth(ctx, c.baseURL(r)+"/v2/"+r.Repository+"/manifests/"+r.Digest, auth)
+		if err != nil {
+			return "", err
+		}
+		if imageContentDigest(body) != r.Digest {
+			return "", fmt.Errorf("%w: manifest content does not match requested digest", ErrImageManifestInvalid)
+		}
+		return r.Digest, nil
+	}
 	url := c.baseURL(r) + "/v2/" + r.Repository + "/manifests/" + r.ManifestRef()
 
 	resp, err := c.getManifest(ctx, url, "")

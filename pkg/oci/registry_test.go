@@ -274,7 +274,7 @@ func TestRegistryPullLayers_HappyPath(t *testing.T) {
 	wantManifestDigest := f.withImageManifest(t, config, layer1, layer2)
 
 	res, err := f.client().PullLayers(context.Background(),
-		"ghcr.io/org/app@sha256:"+strings.Repeat("a", 64))
+		"ghcr.io/org/app@"+digestOf(f.manifestBody))
 	if err != nil {
 		t.Fatalf("PullLayers: %v", err)
 	}
@@ -306,26 +306,26 @@ func TestRegistryPullLayers_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRegistryPullLayers_ManifestListRejected asserts a manifest list / index
-// response is rejected (M5 contract: digest-pinned single arch).
-func TestRegistryPullLayers_ManifestListRejected(t *testing.T) {
+// TestRegistryPullLayers_NoCompatiblePlatform asserts a manifest list / index
+// without compatible children is rejected.
+func TestRegistryPullLayers_NoCompatiblePlatform(t *testing.T) {
 	f := newFakeRegistry(t)
 	f.manifestBody = []byte(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.list.v2+json","manifests":[]}`)
 	f.manifestMT = "application/vnd.docker.distribution.manifest.list.v2+json"
 
 	_, err := f.client().PullLayers(context.Background(),
-		"ghcr.io/org/app@sha256:"+strings.Repeat("a", 64))
+		"ghcr.io/org/app:latest")
 	if err == nil {
-		t.Fatal("expected error for manifest list")
+		t.Fatal("expected error for empty index")
 	}
-	if !strings.Contains(err.Error(), "manifest list") {
-		t.Errorf("error should mention manifest list: %v", err)
+	if !strings.Contains(err.Error(), "no compatible image") {
+		t.Errorf("error should explain the missing compatible image: %v", err)
 	}
-	// ADR-021: the manifest-list rejection must lift to
+	// ADR-021: platform selection failures must lift to
 	// ErrImageManifestInvalid so pkg/imaged can persist
 	// deployments.error_code = image_manifest_invalid.
 	if !errors.Is(err, ErrImageManifestInvalid) {
-		t.Errorf("PullLayers manifest-list err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
+		t.Errorf("PullLayers platform selection err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
 	}
 }
 
@@ -343,7 +343,7 @@ func TestRegistryPullLayers_LayerMissing(t *testing.T) {
 	}
 
 	_, err := f.client().PullLayers(context.Background(),
-		"ghcr.io/org/app@sha256:"+strings.Repeat("a", 64))
+		"ghcr.io/org/app@"+digestOf(f.manifestBody))
 	if err == nil {
 		t.Fatal("expected error when a layer blob is missing")
 	}
@@ -358,7 +358,7 @@ func TestRegistryPullLayers_NoCmdOK(t *testing.T) {
 	_ = f.withImageManifest(t, config, layer)
 
 	res, err := f.client().PullLayers(context.Background(),
-		"ghcr.io/org/app@sha256:"+strings.Repeat("a", 64))
+		"ghcr.io/org/app@"+digestOf(f.manifestBody))
 	if err != nil {
 		t.Fatalf("PullLayers: %v", err)
 	}

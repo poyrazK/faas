@@ -24,6 +24,7 @@ type ImageConfig struct {
 	// Platform metadata is inspected without fetching filesystem layers.
 	OS           string
 	Architecture string
+	Variant      string
 	Volumes      map[string]struct{}
 	// Entrypoint is the image's ENTRYPOINT argv (Docker v2 + OCI).
 	// Joined with Cmd when projecting onto AppManifest.Entrypoint.

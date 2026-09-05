@@ -140,3 +140,28 @@ func TestDoctorImageHumanReport(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorImagePlatformResolutionReport(t *testing.T) {
+	source := "example.com/org/app@sha256:" + strings.Repeat("a", 64)
+	child := "example.com/org/app@sha256:" + strings.Repeat("b", 64)
+	inspector := doctorInspectorFunc(func(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error) {
+		return oci.ImageInspection{InputReference: "example.com/org/app:latest", SourceReference: source, Reference: child, Config: oci.ImageConfig{OS: "linux", Architecture: "amd64", Cmd: []string{"./app"}}}, nil
+	})
+	rep := runDoctorImageChecks(context.Background(), "example.com/org/app:latest", nil, inspector)
+	if rep.HasErrors() || rep.Image.InputReference != "example.com/org/app:latest" || rep.Image.SourceReference != source || rep.Image.Reference != child {
+		t.Fatalf("lost resolution provenance: %+v", rep)
+	}
+	body, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"input_reference", "source_reference", "reference"} {
+		if !strings.Contains(string(body), `"`+key+`"`) {
+			t.Fatalf("missing JSON field %s: %s", key, body)
+		}
+	}
+	finding := doctorImageAccessError(&oci.PlatformSelectionError{Reason: "no compatible image", Available: []string{"linux/arm64"}})
+	if finding.Status != "error" || !strings.Contains(finding.Hint, "linux/arm64") || !strings.Contains(finding.Fix, "Linux/amd64") {
+		t.Fatalf("missing actionable platform diagnostic: %+v", finding)
+	}
+}
