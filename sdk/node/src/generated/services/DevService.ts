@@ -10,7 +10,7 @@ import { request as __request } from '../core/request.js';
 export class DevService {
   /**
    * Create or refresh a remote developer environment.
-   * Creates one stable preview app per account and project, or renews its 24-hour lease.
+   * Creates one stable preview app per account, project, and developer workspace, or renews its 24-hour lease. Omitting workspace_id retains the legacy account-and-project identity.
    * @returns DevSessionResponse Existing developer environment refreshed.
    * @throws ApiError
    */
@@ -19,7 +19,7 @@ export class DevService {
     requestBody,
   }: {
     /**
-     * Stable local project identity used to derive the account-scoped developer URL.
+     * Stable local project label used to derive the developer URL.
      */
     project: string,
     requestBody: UpsertDevSessionRequest,
@@ -51,11 +51,16 @@ export class DevService {
    */
   public static destroyDevSession({
     project,
+    workspaceId,
   }: {
     /**
-     * Stable local project identity used to derive the account-scoped developer URL.
+     * Stable local project label used to derive the developer URL.
      */
     project: string,
+    /**
+     * Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session.
+     */
+    workspaceId?: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -63,7 +68,11 @@ export class DevService {
       path: {
         'project': project,
       },
+      query: {
+        'workspace_id': workspaceId,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429. Two response shapes:

@@ -13,7 +13,7 @@ import (
 func TestDevSessionCreateRefreshAndDestroy(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	project := "gregale-api"
-	wantSlug := devSessionSlug(e.acct.ID, project)
+	wantSlug := devSessionSlug(e.acct.ID, project, "")
 
 	created := e.do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{}, nil)
 	if created.Code != 201 {
@@ -67,9 +67,9 @@ func TestDevSessionRejectsFunctionWithoutRuntime(t *testing.T) {
 }
 
 func TestDevSessionSlugStableAndBounded(t *testing.T) {
-	a := devSessionSlug("account-a", "a-very-long-project-name-that-needs-truncation")
-	b := devSessionSlug("account-a", "a-very-long-project-name-that-needs-truncation")
-	c := devSessionSlug("account-b", "a-very-long-project-name-that-needs-truncation")
+	a := devSessionSlug("account-a", "a-very-long-project-name-that-needs-truncation", "")
+	b := devSessionSlug("account-a", "a-very-long-project-name-that-needs-truncation", "")
+	c := devSessionSlug("account-b", "a-very-long-project-name-that-needs-truncation", "")
 	if a != b {
 		t.Fatalf("slug is not stable: %q != %q", a, b)
 	}
@@ -78,5 +78,62 @@ func TestDevSessionSlugStableAndBounded(t *testing.T) {
 	}
 	if len(a) > 40 {
 		t.Fatalf("slug length = %d, want <= 40: %q", len(a), a)
+	}
+	if legacy := devSessionSlug("account-a", "gregale-api", ""); legacy != "dev-gregale-api-ef301a416b46" {
+		t.Fatalf("legacy slug changed: %q", legacy)
+	}
+}
+
+func TestDevSessionsAreIsolatedByWorkspace(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	const (
+		project    = "gregale-api"
+		workspaceA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		workspaceB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+
+	create := func(workspaceID string) api.DevSessionResponse {
+		t.Helper()
+		rec := e.do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{WorkspaceID: workspaceID}, nil)
+		if rec.Code != 201 {
+			t.Fatalf("create workspace %s status = %d, want 201: %s", workspaceID, rec.Code, rec.Body.String())
+		}
+		var response api.DevSessionResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode workspace %s: %v", workspaceID, err)
+		}
+		return response
+	}
+
+	first := create(workspaceA)
+	second := create(workspaceB)
+	if first.App.ID == second.App.ID || first.App.Slug == second.App.Slug {
+		t.Fatalf("workspace sessions collided: first=%+v second=%+v", first.App, second.App)
+	}
+	if first.App.Slug != devSessionSlug(e.acct.ID, project, workspaceA) || second.App.Slug != devSessionSlug(e.acct.ID, project, workspaceB) {
+		t.Fatalf("unexpected workspace slugs: first=%q second=%q", first.App.Slug, second.App.Slug)
+	}
+
+	destroyed := e.do(t, "DELETE", "/v1/dev/sessions/"+project+"?workspace_id="+workspaceA, nil, nil)
+	if destroyed.Code != 204 {
+		t.Fatalf("destroy workspace A status = %d, want 204: %s", destroyed.Code, destroyed.Body.String())
+	}
+	if _, err := e.store.AppBySlug(t.Context(), first.App.Slug); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("workspace A after destroy: err=%v, want ErrNotFound", err)
+	}
+	if _, err := e.store.AppBySlug(t.Context(), second.App.Slug); err != nil {
+		t.Fatalf("workspace B was removed with workspace A: %v", err)
+	}
+}
+
+func TestDevSessionRejectsInvalidWorkspaceID(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	rec := e.do(t, "PUT", "/v1/dev/sessions/gregale-api", api.UpsertDevSessionRequest{WorkspaceID: "not-a-workspace"}, nil)
+	if rec.Code != 400 {
+		t.Fatalf("PUT status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, "DELETE", "/v1/dev/sessions/gregale-api?workspace_id=ABCDEF0123456789ABCDEF0123456789", nil, nil)
+	if rec.Code != 400 {
+		t.Fatalf("DELETE status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 }
