@@ -490,10 +490,15 @@ type Engine struct {
 	// separate from appMu because reconciliation invokes admission, which
 	// must acquire appMu itself.
 	serviceMu map[string]*sync.Mutex
-	// wakeCoord is the per-app single-flight coordinator (ADR-098).
+	// wakeCoord is the per-app demand-aware wake coordinator (ADR-098).
 	// Lazily initialised in NewEngine. Lock discipline is a LEAF:
 	// wakeCoord.mu is taken and released BEFORE e.lockApp(appID).
 	wakeCoord *wakeCoord
+	// wakeFanoutCache memoises the per-app fan-out policy for
+	// wakeFanoutCacheTTL so a burst does not put an app+account read on
+	// the wake hot path for every queued caller.
+	wakeFanoutMu    sync.Mutex
+	wakeFanoutCache map[string]wakeFanoutEntry
 
 	// warmAffinity is the sticky-warm cache (placement scheduler PR,
 	// ADR-025). Defaults to a zero-TTL cache that always returns "no
@@ -1490,10 +1495,10 @@ func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, i
 	return false
 }
 
-// EnsureWake (ADR-098) is the single-flight-safe wake entry point.
+// EnsureWake (ADR-098) is the coordinated wake entry point.
 // Every wake producer (gateway, cron, floor, scaleup, targets) routes
-// through this method so a concurrent burst coalesces into one virtual
-// boot per parked app.
+// through this method. Calls coalesce while existing and in-flight instances
+// have capacity; cold bursts fan out only when queued demand exceeds it.
 //
 // Three phases for the leader:
 //
@@ -1505,7 +1510,7 @@ func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, i
 //  3. Run e.Wake. The deferred Complete fires when the function
 //     returns, regardless of which path it took.
 //
-// Followers block on the leader's Complete and inherit the outcome.
+// Followers block on their assigned leader's Complete and inherit its outcome.
 //
 // Lock discipline: wakeCoord.mu is acquired and released BEFORE
 // e.lockApp(appID) is touched. The defer-close pattern keeps the
@@ -1550,7 +1555,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 			)
 		}
 	}
-	call, isLeader, err := e.wakeCoord.Enter(appID)
+	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutFor(ctx, appID))
 	if err != nil {
 		return CoordOutcome{}, err
 	}
@@ -1569,7 +1574,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	//nolint:contextcheck // leader's ensure deliberately detaches from the
 	// caller's ctx via context.Background() + TTL — the wake must outlive
 	// the triggering request so other queued waiters get the same instance.
-	// This is the load-bearing single-flight coalescing invariant (spec
+	// This is the load-bearing coordinated-wake invariant (spec
 	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
 	// goroutine detach.
 	leaderCtx, cancel := context.WithTimeout(context.Background(), e.wakeCoord.TTL())
@@ -1582,7 +1587,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	//nolint:contextcheck // leader's ensure deliberately detaches from the
 	// caller's ctx via context.Background() + TTL — the wake must outlive
 	// the triggering request so other queued waiters get the same instance.
-	// This is the load-bearing single-flight coalescing invariant (spec
+	// This is the load-bearing coordinated-wake invariant (spec
 	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
 	// goroutine detach.
 	res, err := e.Wake(leaderCtx, appID, "", "", trigger)

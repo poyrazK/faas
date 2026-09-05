@@ -254,6 +254,54 @@ schedds observe the same winner via the retry helper" was
 removed — the loser now exits cleanly with an empty
 `Instance`.
 
+## Amendment 3 — Demand-aware cold-burst fan-out with a live-capacity baseline
+
+Strict single-flight protects a parked app from duplicate boots, but one cold
+instance cannot absorb every burst. PR #1300 allowed additional coordinator
+leaders when queued demand exceeded the capacity of in-flight wakes. Its rule
+ignored instances that were already live. In production, 50 concurrent requests
+against an app with 16 running instances started unnecessary wakes and regressed
+responses to 30 HTTP 200s, 19 HTTP 504s, and one HTTP 503. PR #1301 reverted the
+change.
+
+The corrected rule counts both existing instances and wakes started by the
+current coordinator generation:
+
+```text
+capacity = existing_at_generation_start + in_flight_wakes
+fan_out = waiting > capacity * concurrency_per_vm
+          && capacity < max_concurrency
+```
+
+`existing_at_generation_start` comes from `NodeLedger.Concurrency(appID)`, which
+counts `RUNNING`, `WAKING`, and `COLD_BOOTING` reservations. The first leader
+captures that value for the generation, and every sibling reuses it. This detail
+prevents a fresh ledger read from counting the generation's own reservations once
+as existing capacity and again as coordinator wakes.
+
+The app's `max_concurrency` and the plan's `ConcurrencyPerVMBound` are cached for
+15 seconds to keep app and account reads off the burst hot path. The ledger count
+is read on every call and is never cached. A lookup failure disables fan-out for
+that call; the ledger remains the final admission authority and continues to
+enforce the application and node ceilings.
+
+Followers join the least-loaded active wake. The 512-caller cap still applies per
+wake, and app deletion completes every active wake with `ErrAppDeleted`. The
+gateway's local burst admission remains complementary: it sees a single
+gateway's request pressure, while this coordinator safely combines gateway,
+cron, floor, scaleup, and targets producers.
+
+Regression coverage:
+
+- `TestWakeCoord_ExistingCapacityPreventsWarmBurstFanout` pins the production
+  shape: 16 existing instances at 80 requests per VM absorb 200 callers without
+  creating sibling coordinator leaders.
+- `TestWakeCoord_FansOutWhenDemandExceedsOneInstance` proves a cold generation
+  still starts a second wake even after the first reservation appears in the
+  ledger snapshot.
+- `TestEngineWakeFanoutForRefreshesExistingFromLedger` proves only static policy
+  is cached and the live ledger count is refreshed.
+
 ## Rejected alternatives
 
 - **Extend `pkg/gateway/WakeGate` to cover cron / floor / scaleup / targets.**

@@ -7,14 +7,16 @@ import (
 	"time"
 )
 
-// Wake coordinator (ADR-098): per-app single-flight for the wake hot path.
+// Wake coordinator (ADR-098): per-app, demand-aware coordination for the wake
+// hot path.
 //
 // This is the schedd-side mirror of pkg/gateway/gate.go (the per-process
 // gateway wake gate). The gateway gate only coalesces requests landing on
 // one gatewayd-internal process; cron, floor, scaleup, and targets each
 // call into schedd independently and bypassed the gate. Hoisting the
-// per-app "wake in progress" state onto the Engine collapses all five
-// wake producers into one virtual boot per parked app.
+// per-app "wake in progress" state onto the Engine coalesces all five wake
+// producers within the capacity that live and starting instances can serve.
+// A cold burst may start additional wakes when that capacity is exhausted.
 //
 // Lock discipline (load-bearing — see ADR-098 §Decision):
 //
@@ -35,7 +37,8 @@ import (
 // follow-on callers still depend on.
 //
 // Error semantics:
-//   - ErrQueueFull: per-app follower cap exceeded; the leader is unaffected.
+//   - ErrQueueFull: every usable wake has reached its follower cap; leaders are
+//     unaffected.
 //   - ErrAppDeleted: the app was deleted while we were waiting; Forget()
 //     closed done with this value so followers unwind promptly.
 //   - ctx.Err(): the caller's ctx was cancelled before the leader finished.
@@ -43,7 +46,7 @@ import (
 
 const (
 	// WakeCapDefault mirrors pkg/api/limits.go WakeQueueCap = 512. The
-	// Engine-level coordinator cap is intentionally more generous than the
+	// Engine-level per-wake cap is intentionally more generous than the
 	// gateway's per-process gate because the coordinator is shared across
 	// every wake producer on the box. We do not raise the gateway cap here;
 	// the gateway remains a pre-filter (a cache in front of the authority).
@@ -55,7 +58,7 @@ const (
 	wakeCoordTTLDefault = 30 * time.Second
 )
 
-// ErrQueueFull is returned when the per-app follower cap is exceeded.
+// ErrQueueFull is returned when every usable wake has reached its follower cap.
 // Callers must convert this to a 503/ResourceExhausted response.
 var ErrQueueFull = errors.New("sched: wake coordinator queue full")
 
@@ -74,7 +77,7 @@ var ErrAppDeleted = errors.New("sched: app deleted")
 // forwarded as a 200 with zero-valued Instance.
 var ErrAtCapacity = errors.New("sched: at capacity")
 
-// CoordOutcome is the result of a single-flight wake. On success
+// CoordOutcome is the result of a coordinated wake. On success
 // Instance is non-nil and Err is nil. On failure Instance is nil and Err
 // is one of ErrQueueFull / ErrAppDeleted / ctx.Err() / the leader's
 // ensure error.
@@ -107,11 +110,69 @@ type CoordInstance struct {
 	ColdBoot bool
 }
 
-// wakeCoord is the per-app single-flight state. Mirrors pkg/gateway/gate.go's
-// wakeCall shape but with a Shared Outcome instead of just an error.
+// WakeFanout bounds how far a single burst may scale an app out.
+//
+// Strict single-flight (one in-flight wake per app) is the right answer
+// when one instance can absorb the demand, and the wrong answer for a
+// cold burst: 1000 concurrent requests against a parked app woke ONE
+// instance and queued everything else behind it, so everything past that
+// instance's own concurrency ceiling timed out. Measured 2026-09-04 —
+// 1000 requests at 200 concurrency against a cold app returned 9.5%
+// success, while the same app pre-warmed to 10 instances served 99.9%.
+// The requests that got through were fast (p50 928 ms), so the ceiling
+// was fan-out, never latency.
+//
+// MaxInFlight is the app's instance ceiling (apps.max_concurrency);
+// PerVM is how many concurrent requests one instance is expected to
+// absorb (the plan's ConcurrencyPerVMBound). Existing is the scheduler
+// ledger's count for the app across RUNNING, WAKING, and COLD_BOOTING
+// when a coordinator generation begins. A zero or negative value in
+// either limit field disables fan-out and restores strict single-flight,
+// which is the conservative default for any caller that cannot resolve
+// the app's limits.
+type WakeFanout struct {
+	MaxInFlight int
+	PerVM       int
+	Existing    int
+}
+
+// wants reports whether demand justifies starting an additional wake
+// alongside the ones already running.
+//
+// The rule is "the instances already running or starting cannot absorb
+// the callers already waiting". Deliberately NOT "any waiter starts a
+// new wake": with 16 live instances and PerVM=80, a 200-request burst is
+// already covered. Starting more coordinator leaders in that case caused
+// the production regression that forced PR #1300 to be reverted.
+//
+// inFlight is the number of wakes currently running; waiting counts the
+// callers queued behind them, including the one asking now.
+func (f WakeFanout) wants(inFlight, waiting int) bool {
+	if f.MaxInFlight <= 0 || f.PerVM <= 0 {
+		return false // fan-out disabled: strict single-flight
+	}
+	capacity := inFlight
+	if f.Existing > 0 {
+		capacity += f.Existing
+	}
+	if capacity >= f.MaxInFlight {
+		return false // at the app's instance ceiling (invariant §6.2-1)
+	}
+	return waiting > capacity*f.PerVM
+}
+
+// wakeCoord is the per-app wake coordinator. Mirrors pkg/gateway/gate.go's
+// wakeCall shape but with a Shared Outcome instead of just an error, and
+// with demand-driven fan-out (see WakeFanout) instead of a hard
+// single-flight.
 type wakeCoord struct {
-	mu       sync.Mutex
-	inflight map[string]*wakeCoordCall
+	mu sync.Mutex
+	// inflight holds the wakes currently running for an app. It is a
+	// slice, not a single call, so a burst that outgrows one instance
+	// can start additional wakes up to the app's ceiling. The common
+	// case is length 1 and behaves exactly as the pre-fan-out
+	// single-flight did.
+	inflight map[string][]*wakeCoordCall
 	cap      int
 	ttl      time.Duration
 }
@@ -127,6 +188,11 @@ type wakeCoordCall struct {
 	outcome   CoordOutcome
 	waiters   int
 	completed bool
+	// existingAtStart is the ledger concurrency observed before the first
+	// leader in this coordinator generation started. Every sibling copies
+	// the same baseline so its own ledger reservation is never counted
+	// twice as both Existing and an in-flight coordinator wake.
+	existingAtStart int
 }
 
 // newWakeCoord returns a coordinator with the repo-default cap + TTL.
@@ -134,14 +200,14 @@ type wakeCoordCall struct {
 // so a pushed-up gateway cap never silently inflates the schedd cap.
 func newWakeCoord() *wakeCoord {
 	return &wakeCoord{
-		inflight: map[string]*wakeCoordCall{},
+		inflight: map[string][]*wakeCoordCall{},
 		cap:      wakeCoordCap,
 		ttl:      wakeCoordTTLDefault,
 	}
 }
 
 // Enter attempts to register a wake for appID. The returned call is the
-// single-flight handle; the caller MUST eventually call Release.
+// coordinator handle; the caller MUST eventually call Release.
 //
 // enter returns:
 //
@@ -150,7 +216,7 @@ func newWakeCoord() *wakeCoord {
 //   - (call, false) — caller is a follower. It must block on call.done and
 //     call Release when it returns. The leader's outcome is available via
 //     call.outcome after done is closed.
-//   - (nil, false)  — ErrQueueFull. The caller is the (cap+1)'th follower.
+//   - (nil, false)  — ErrQueueFull. Every usable wake is already at its cap.
 //
 // cancel is the registrant's "I gave up" hook. If a cancel fires AFTER
 // Release has dropped us to 0 waiters, the coordinator is expected to
@@ -158,31 +224,61 @@ func newWakeCoord() *wakeCoord {
 // regardless; this hook is only for compliance with the "completed and
 // un-drained" read on the gateway gate — wake_coord.go closes done
 // inside Complete, so the leader's Complete itself is the cancellation.
-func (c *wakeCoord) Enter(appID string) (*wakeCoordCall, bool /*leader*/, error) {
+func (c *wakeCoord) Enter(appID string, fanout WakeFanout) (*wakeCoordCall, bool /*leader*/, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if call, ok := c.inflight[appID]; ok {
-		// ADR-098 C11 review fix: between Complete and the last
-		// Release, the entry still lives in c.inflight. A new
-		// caller landing here used to receive the cached prior
-		// outcome — which can be a stale instance ID if the
-		// instance has parked since. Detect completion and
-		// fast-path a fresh entry: if the previous wake is
-		// already done, drop the entry, take leadership of a
-		// new wake. Followers arriving in the same window
-		// (release-pending) still see the prior wake's
-		// outcome — Release will drop them on a closed done.
-		if call.completed {
-			delete(c.inflight, appID)
-		} else if call.waiters >= c.cap {
-			return nil, false, ErrQueueFull
-		} else {
-			call.waiters++
-			return call, false, nil
+
+	// ADR-098 C11 review fix: between Complete and the last Release, a
+	// call still lives in c.inflight. A new caller landing on one used
+	// to receive the cached prior outcome — which can be a stale
+	// instance ID if the instance has parked since. Drop completed
+	// calls here so this caller either joins a live wake or starts a
+	// fresh one. Followers already parked on a completed call still see
+	// its outcome; Release drops them on a closed done.
+	active := c.inflight[appID][:0:0]
+	for _, call := range c.inflight[appID] {
+		if !call.completed {
+			active = append(active, call)
 		}
 	}
-	call := &wakeCoordCall{coord: c, done: make(chan struct{}), waiters: 1}
-	c.inflight[appID] = call
+
+	if len(active) > 0 {
+		// Every sibling in one generation uses the first leader's ledger
+		// baseline. A fresh policy snapshot may already include reservations
+		// made by these active leaders; adding it here would double-count
+		// their capacity and suppress valid cold fan-out.
+		fanout.Existing = active[0].existingAtStart
+		// Pick the least-loaded live wake — with fan-out there can be
+		// several, and piling every follower onto the first one would
+		// hit the per-call cap while its siblings sat idle.
+		best := active[0]
+		waiting := 0
+		for _, call := range active {
+			waiting += call.waiters
+			if call.waiters < best.waiters {
+				best = call
+			}
+		}
+		// Start another wake only when the ones already running cannot
+		// absorb the callers queued behind them (this one included).
+		if !fanout.wants(len(active), waiting+1) {
+			if best.waiters >= c.cap {
+				c.inflight[appID] = active
+				return nil, false, ErrQueueFull
+			}
+			best.waiters++
+			c.inflight[appID] = active
+			return best, false, nil
+		}
+	}
+
+	call := &wakeCoordCall{
+		coord:           c,
+		done:            make(chan struct{}),
+		waiters:         1,
+		existingAtStart: fanout.Existing,
+	}
+	c.inflight[appID] = append(active, call)
 	return call, true, nil
 }
 
@@ -244,9 +340,23 @@ func (c *wakeCoord) Release(appID string, call *wakeCoordCall) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	call.waiters--
-	if call.completed && call.waiters == 0 {
-		delete(c.inflight, appID)
+	if !call.completed || call.waiters > 0 {
+		return
 	}
+	// Drop just this wake; siblings started by fan-out may still be
+	// running for the same app.
+	calls := c.inflight[appID]
+	kept := calls[:0]
+	for _, other := range calls {
+		if other != call {
+			kept = append(kept, other)
+		}
+	}
+	if len(kept) == 0 {
+		delete(c.inflight, appID)
+		return
+	}
+	c.inflight[appID] = kept
 }
 
 // Forget evicts the entry for appID, closing done with ErrAppDeleted so
@@ -262,26 +372,30 @@ func (c *wakeCoord) Release(appID string, call *wakeCoordCall) {
 func (c *wakeCoord) Forget(appID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	call, ok := c.inflight[appID]
+	calls, ok := c.inflight[appID]
 	if !ok {
 		return
 	}
 	// Mark complete first so release() drops the entry the next time a
 	// follower has finished Await. Closing done unblocks any Await that
-	// is racing us.
+	// is racing us. Fan-out means there may be several wakes in flight
+	// for this app; a deleted app must unwind all of them.
 	delete(c.inflight, appID)
-	call.completed = true
-	// Close done without overwriting a leader-set outcome — if a leader
-	// already populated the outcome, we preserve it. Followers will see
-	// the ErrAppDeleted only if the leader hadn't finished.
-	if call.outcome.Err == nil {
-		call.outcome = CoordOutcome{Err: ErrAppDeleted}
-	}
-	select {
-	case <-call.done:
-		// Already closed by the leader's Complete; do not double-close.
-	default:
-		close(call.done)
+	for _, call := range calls {
+		call.completed = true
+		// Close done without overwriting a leader-set outcome — if a
+		// leader already populated the outcome, we preserve it.
+		// Followers see ErrAppDeleted only if the leader hadn't
+		// finished.
+		if call.outcome.Err == nil {
+			call.outcome = CoordOutcome{Err: ErrAppDeleted}
+		}
+		select {
+		case <-call.done:
+			// Already closed by the leader's Complete; do not double-close.
+		default:
+			close(call.done)
+		}
 	}
 }
 
@@ -289,3 +403,59 @@ func (c *wakeCoord) Forget(appID string) {
 // once at the top of the leader's goroutine and reuse it for the
 // ensure call.
 func (c *wakeCoord) TTL() time.Duration { return c.ttl }
+
+// wakeFanoutCacheTTL bounds how stale a cached fan-out policy may be. A
+// burst is exactly the moment this is read hardest — resolving the app +
+// account per request would put two DB reads on the wake hot path for
+// every queued caller — so the policy is cached briefly. The values are
+// plan/app limits that change on a human timescale, and the downstream
+// admission ledger enforces the real ceiling regardless, so a few
+// seconds of staleness cannot violate invariant §6.2-1.
+const wakeFanoutCacheTTL = 15 * time.Second
+
+type wakeFanoutEntry struct {
+	fanout WakeFanout
+	at     time.Time
+}
+
+// wakeFanoutFor resolves how far appID may fan out on a burst.
+//
+// The app and plan limits are cached briefly; Existing is always read from
+// the ledger so live capacity is never stale. Any resolution error returns
+// the zero WakeFanout, disabling fan-out rather than guessing a ceiling.
+func (e *Engine) wakeFanoutFor(ctx context.Context, appID string) WakeFanout {
+	if e == nil || e.store == nil {
+		return WakeFanout{}
+	}
+	now := time.Now()
+	e.wakeFanoutMu.Lock()
+	if ent, ok := e.wakeFanoutCache[appID]; ok && now.Sub(ent.at) < wakeFanoutCacheTTL {
+		e.wakeFanoutMu.Unlock()
+		fanout := ent.fanout
+		if e.ledger != nil {
+			fanout.Existing = e.ledger.Concurrency(appID)
+		}
+		return fanout
+	}
+	e.wakeFanoutMu.Unlock()
+
+	app, _, limits, err := e.resolveAppForDeploy(ctx, appID)
+	if err != nil {
+		return WakeFanout{}
+	}
+	fanout := WakeFanout{
+		MaxInFlight: app.MaxConcurrency,
+		PerVM:       limits.ConcurrencyPerVMBound,
+	}
+
+	e.wakeFanoutMu.Lock()
+	if e.wakeFanoutCache == nil {
+		e.wakeFanoutCache = map[string]wakeFanoutEntry{}
+	}
+	e.wakeFanoutCache[appID] = wakeFanoutEntry{fanout: fanout, at: now}
+	e.wakeFanoutMu.Unlock()
+	if e.ledger != nil {
+		fanout.Existing = e.ledger.Concurrency(appID)
+	}
+	return fanout
+}
