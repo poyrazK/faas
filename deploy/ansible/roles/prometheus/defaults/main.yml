@@ -30,6 +30,7 @@ prom_data_dir: /var/lib/prometheus
 # on the next refresh without editing Ansible or restarting Prometheus.
 prom_compute_metrics_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/targets"
 prom_compute_metrics_discovery_refresh_interval: "15s"
+prom_compute_promtail_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/promtail-targets"
 
 # Alertmanager — loopback-only (operator dials the bridge to reach it).
 # Wired into prometheus.yml.j2 via the `alerting:` block. The role
@@ -94,3 +95,7 @@ prom_targets:
   - job: node
     host: 127.0.0.1
     port: 9100
+  - job: promtail
+    host: 127.0.0.1
+    port: 9080
+    box_roles: [control-plane]

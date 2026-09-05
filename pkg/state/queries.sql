@@ -1783,3 +1783,214 @@ SELECT EXISTS (
     WHERE lower(email) = lower($1)
       AND (expires_at IS NULL OR expires_at > now())
 ) AS suppressed;
+
+-- ----------------------------------------------------------------------
+-- NodeLifecycleStore (Workstream B, issue #1184)
+--
+-- 12 queries wrap the recovery arbiter's DB I/O. The arbiter reads via
+-- NodeGet/NodeList/NodeListRecoverable/NodeListDrainable and writes via
+-- NodeSetLifecycle (CAS on the prior lifecycle, so two competing writers
+-- can't race from 'active'→'draining' vs 'active'→'unavailable'). Drain
+-- initiation stamps `drain_initiated_at`; the drain-complete sweep marks
+-- `drain_completed_at` once the last live instance migrates or recreates.
+--
+-- DeploymentRecordSnapshotMiss / DeploymentClearSnapshotBackoff are the
+-- per-deployment backoff state added by 00585 — wake flow records a
+-- miss and stamps a `Retry-After` until, the recovery arbiter clears
+-- it after a successful migrate-or-recreate sweep. Partial index
+-- `deployments_snapshot_backoff_idx` makes the wake-side check an
+-- index-only scan.
+-- ----------------------------------------------------------------------
+
+-- name: NodeGet :one
+-- Resolve a single compute_nodes row by its UUID. Used by the recovery
+-- arbiter's per-tick decision and by the apid drain handler.
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE id = $1;
+
+-- name: NodeGetByName :one
+-- Same as NodeGet but by the human-stable name. The apid handler
+-- (POST /v1/compute-nodes/{name}/drain) and the recovery arbiter's
+-- cold-start reconciliation path both key by name because operator
+-- input is name-based.
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE name = $1;
+
+-- name: NodeList :many
+-- All nodes, optionally filtered by lifecycle. The recovery arbiter
+-- passes NULL to enumerate every row on cold-start reconciliation;
+-- the placement filter passes lifecycle='active' (via the existing
+-- `WHERE active = true` partial-index path — unchanged). $1 is the
+-- lifecycle filter; pass the empty string for "any".
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE ($1 = '' OR lifecycle::text = $1)
+ORDER BY name;
+
+-- name: NodeSetLifecycle :execrows
+-- CAS lifecycle transition. Returns 0 if the prior state didn't match
+-- $2 (i.e. another writer raced us) — the caller treats that as a
+-- soft no-op and re-reads via NodeGet. Returns 1 on success.
+--
+-- Args:
+--   $1 = node id (UUID)
+--   $2 = expected prior lifecycle text
+--   $3 = new lifecycle text
+--   $4 = wall-clock timestamp to stamp on the relevant audit column:
+--        'draining'        → drain_initiated_at
+--        'unavailable'     → NULL (heartbeat gap is the writer; this
+--                             path is for the rare explicit flip)
+--        'recovering'      → recovery_initiated_at
+--        'active'          → drain_completed_at (last step of a
+--                             successful drain) OR NULL when called
+--                             from the heartbeat reactivator
+UPDATE compute_nodes
+SET lifecycle = $3::compute_node_lifecycle,
+    drain_initiated_at    = CASE WHEN $3::compute_node_lifecycle = 'draining'  THEN $4 ELSE drain_initiated_at    END,
+    recovery_initiated_at = CASE WHEN $3::compute_node_lifecycle = 'recovering' THEN $4 ELSE recovery_initiated_at END,
+    drain_completed_at    = CASE WHEN $3::compute_node_lifecycle = 'active'     THEN $4 ELSE drain_completed_at    END
+WHERE id = $1
+  AND lifecycle::text = $2;
+
+-- name: NodeMarkDrainCompleted :execrows
+-- Stamps drain_completed_at + flips lifecycle='active'. Called once
+-- the drain arbiter confirms zero live instances remain on the node.
+-- CAS on lifecycle='draining' so a concurrent reactivate can't race.
+UPDATE compute_nodes
+SET lifecycle         = 'active',
+    drain_completed_at = $2
+WHERE id = $1
+  AND lifecycle = 'draining';
+
+-- name: NodeMarkRecovered :execrows
+-- Stamps last_recovery_outcome='succeeded' and flips lifecycle='active'.
+-- Called by the recovery arbiter after the migrate-or-recreate sweep
+-- has cleared all stranded instances on a 'recovering' node. CAS on
+-- 'recovering' so a fresh heartbeat-driven reactivate wins cleanly.
+UPDATE compute_nodes
+SET lifecycle            = 'active',
+    last_recovery_outcome = 'succeeded'
+WHERE id = $1
+  AND lifecycle = 'recovering';
+
+-- name: NodeListRecoverable :many
+-- Nodes that need the recovery arbiter's attention. Two lifecycle
+-- states qualify:
+--   'unavailable'  → heartbeat gap detected; instances stranded.
+--   'recovering'   → first post-failure ping succeeded; sweep to
+--                    confirm zero stranded instances.
+-- Caller is the recovery arbiter; one tick enumerates both classes
+-- and applies the same decision matrix.
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE lifecycle IN ('unavailable', 'recovering')
+ORDER BY name;
+
+-- name: NodeListDrainable :many
+-- Drainable candidates: lifecycle='active' AND zero live instances.
+-- The drain handler refuses to flip lifecycle='draining' for nodes
+-- with active traffic (it surfaces RFC 7807 `node_draining_refused`
+-- instead) and waits for the operator to clear the load first; this
+-- query is the "safe to drain right now" enumeration.
+SELECT
+    id, name, target_url, vpcpus, mem_mb, max_concurrency,
+    admission_ceiling_mb,
+    lifecycle::text AS lifecycle, active, last_heartbeat_at, created_at,
+    region, zone, schedd_target_url, vcpu_budget, public_ip, public_ip_set_at,
+    release_id, manifest_hash, host_certificate, cert_fingerprint, role,
+    generation, gateway_target_url,
+    drain_initiated_at, drain_completed_at, recovery_initiated_at,
+    last_recovery_outcome
+FROM compute_nodes
+WHERE lifecycle = 'active'
+  AND NOT EXISTS (
+      SELECT 1 FROM instances
+      WHERE instances.node_id = compute_nodes.id
+        AND instances.state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
+  )
+ORDER BY name;
+
+-- name: InstanceListByNodeForRecovery :many
+-- Live instances on a specific node — input to the arbiter's
+-- per-instance decision. Limited to states the arbiter can act on:
+-- 'running' (live-migrate), 'cold_booting' (recreate, the snapshot
+-- may not have made it to the destination yet), 'waking' (recreate —
+-- same reason). The arbiter only needs the
+-- (app_id, deployment_id, state, id) tuple — account_id is reachable
+-- via the existing app/deployment joins if needed by downstream
+-- code, but the per-tick hot loop doesn't pay for it here.
+SELECT id, state, app_id, deployment_id
+FROM instances
+WHERE node_id = $1
+  AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
+ORDER BY started_at;
+
+-- name: DeploymentRecordSnapshotMiss :exec
+-- Bump snapshot_miss_count + stamp Retry-After until. Called by the
+-- wake flow when the snapshot-fetch path fails (stale cache, missing
+-- replica on the destination, etc.). Capped-exponential backoff math
+-- lives in pkg/sched/snapshot_backoff.go; this query is the state
+-- write only.
+--
+-- $1 = deployment id
+-- $2 = backoff_until timestamp
+UPDATE deployments
+SET snapshot_miss_count          = snapshot_miss_count + 1,
+    snapshot_miss_last_at        = now(),
+    snapshot_miss_backoff_until  = $2
+WHERE id = $1;
+
+-- name: DeploymentClearSnapshotBackoff :exec
+-- Called by the recovery arbiter after a successful migrate-or-
+-- recreate sweep has restored the destination's snapshot set, OR by
+-- the wake flow on a successful cold boot. Resets the counter and
+-- clears the backoff_until so future wakes don't short-circuit.
+UPDATE deployments
+SET snapshot_miss_count         = 0,
+    snapshot_miss_last_at       = NULL,
+    snapshot_miss_backoff_until = NULL
+WHERE id = $1;
+
+-- name: DeploymentSnapshotBackoffActive :one
+-- The wake-side gate. Returns the row while a backoff timestamp is
+-- present; the store computes whether it is still active. Returning
+-- expired rows preserves the miss count for the next backoff stamp.
+-- The partial index `deployments_snapshot_backoff_idx` covers this lookup.
+SELECT snapshot_miss_count, snapshot_miss_backoff_until
+FROM deployments
+WHERE id = $1
+  AND snapshot_miss_backoff_until IS NOT NULL;

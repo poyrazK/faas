@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -967,14 +968,45 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pkg/alerts/evaluator.go.
 	evaluator := buildAlertEvaluator(deps, store, log, ops)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
-	// cron. The FAAS_UPSTREAM_PROBE feature flag is OFF by default
-	// (per the cluster outline's rollout gate — flip PR-C last);
-	// when OFF both helpers return nil and the loop skips the
-	// upstream_probe + upstream_part ticks. The probe needs the
-	// meterd region (declared on the host via FAAS_REGION, mirrored
-	// from schedd) so each data_upstream_probes row carries the
-	// region label.
+	// cron. The FAAS_UPSTREAM_PROBE environment value is the
+	// bootstrap fallback; the durable data-placement flag can
+	// enable or disable both ticks without restarting meterd. The
+	// probe needs the meterd region (declared on the host via
+	// FAAS_REGION, mirrored from schedd) so each data_upstream_probes
+	// row carries the region label.
 	probe := buildUpstreamProbe(deps, store, ops, log)
+	dataPlacementEnabled := runtimeconfig.NewBoolFlag(deps.getenv("FAAS_UPSTREAM_PROBE") != "")
+	partitionCreate := PartitionCreateOnceFn(poolAdapter{pool}, log)
+	gatedPartitionCreate := func(ctx context.Context) {
+		if dataPlacementEnabled.Load() {
+			partitionCreate(ctx)
+		}
+	}
+	// ADR-132: the data-placement flag controls both the scheduler affinity
+	// reader and this probe. Keep the probe goroutine alive while disabled so
+	// a hot enable is picked up on the next interval.
+	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
+	defer runtimeCancel()
+	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
+		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			enabled, err := runtimeconfig.Bool(value)
+			if err != nil {
+				return err
+			}
+			if key == runtimeconfig.KeyDataPlacement {
+				dataPlacementEnabled.Store(enabled)
+				probe.SetEnabled(enabled)
+			}
+			return nil
+		}, log)
+	if err := watcher.Reconcile(runtimeCtx); err != nil {
+		log.Warn("meterd: initial runtime config reconcile failed", "err", err)
+	}
+	go func() {
+		if err := watcher.Run(runtimeCtx); err != nil && !runtimeconfig.IsContextDone(err) {
+			log.Error("meterd: runtime config watcher exited", "err", err)
+		}
+	}()
 	canaryProg, canaryAPID := buildCanaryProgression(deps, store, ops, log)
 	safeDeployOrch := buildSafeDeployOrchestrator(deps, store, ops, log, canaryAPID, evaluator)
 	// ADR-099 / issue #1184 Workstream A: 7 job-task Prometheus
@@ -989,7 +1021,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
 		WithEgress(egress).
 		WithProbe(probe).
-		WithPartitionCreate(PartitionCreateOnceFn(poolAdapter{pool}, log)).
+		WithPartitionCreate(gatedPartitionCreate).
 		WithCanaryProgression(canaryProg).
 		WithSafeDeploy(safeDeployOrch)
 	errc := make(chan error, 1)
@@ -1309,10 +1341,10 @@ func buildAlertEvaluator(deps runDeps, store state.Store, log *slog.Logger, ops 
 }
 
 // buildUpstreamProbe (ADR-098 PR-C) wires the connection-aware
-// upstream probe driver. Returns nil when FAAS_UPSTREAM_PROBE is
-// unset (default OFF per the cluster outline's rollout gate —
-// flip PR-C last, one month after PR-B). When ON, instantiates
-// the probe with:
+// upstream probe driver. It always returns a gated probe so the
+// durable data-placement flag can be changed without restarting
+// meterd. FAAS_UPSTREAM_PROBE is used only as the bootstrap
+// fallback. The probe is instantiated with:
 //
 //   - the meterd region (declared on the host via FAAS_REGION,
 //     mirrored from schedd) so each data_upstream_probes row
@@ -1327,16 +1359,16 @@ func buildAlertEvaluator(deps runDeps, store state.Store, log *slog.Logger, ops 
 // api.UpstreamProbeMaxConcurrent) — never plain host strings —
 // so the §11 secret rule is enforced end-to-end.
 func buildUpstreamProbe(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger) *meter.Probe {
-	if deps.getenv("FAAS_UPSTREAM_PROBE") == "" {
-		log.Info("meterd: upstream probe disabled — FAAS_UPSTREAM_PROBE unset; running without upstream_probe tick")
-		return nil
+	enabled := deps.getenv("FAAS_UPSTREAM_PROBE") != ""
+	if !enabled {
+		log.Info("meterd: upstream probe disabled — FAAS_UPSTREAM_PROBE unset; probe remains wired for runtime enable")
 	}
 	region := deps.getenv("FAAS_REGION")
 	if region == "" {
-		log.Warn("meterd: FAAS_UPSTREAM_PROBE set but FAAS_REGION empty; using \"unknown\" region label")
+		log.Warn("meterd: FAAS_REGION empty; using \"unknown\" region label")
 		region = "unknown"
 	}
-	return meter.NewProbe(store, region, log)
+	return meter.NewProbe(store, region, log).SetEnabled(enabled)
 }
 
 // buildCanaryProgression (issue #976 / ADR-122 / SAFE-RELEASES-A)

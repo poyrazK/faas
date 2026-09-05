@@ -27,7 +27,7 @@ export type CreateDeploymentRequest = {
    */
   sidecars?: Array<Sidecar>;
   /**
-   * Workflow DAG definitions for this deployment. Paid-plan only; runtime deployment persistence is staged separately.
+   * Workflow DAG definitions for this deployment. Paid-plan only; persisted with the deployment and snapshotted at run start.
    */
   workflows?: Array<WorkflowSpec>;
   /**

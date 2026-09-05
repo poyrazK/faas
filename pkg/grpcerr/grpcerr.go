@@ -41,8 +41,10 @@ func codeToGRPC(code string) codes.Code {
 		api.CodeQuotaExhausted,
 		api.CodeCapacity,
 		api.CodeWaitForWarm,
+		api.CodeSnapshotBackoff,
 		api.CodeMirrorSlotAtCapacity:
-		// CodeWaitForWarm (PR-D, issue #462) is a 503 on the HTTP
+		// CodeWaitForWarm (PR-D, issue #462) and CodeSnapshotBackoff
+		// are 503s on the HTTP
 		// surface and ResourceExhausted on gRPC. The gRPC code is
 		// the lossy carrier — the HTTP status is re-derived from
 		// api.StatusForCode on the FromStatus side. Shared class
@@ -65,6 +67,8 @@ func codeToGRPC(code string) codes.Code {
 		// grpcerr seam so every gRPC handler that emits api.CodeNotFound
 		// picks up the correct wire code.
 		return codes.NotFound
+	case api.CodeNotImplemented:
+		return codes.Unimplemented
 	case api.CodeBuildOOM,
 		api.CodeBuildTimeout:
 		return codes.ResourceExhausted

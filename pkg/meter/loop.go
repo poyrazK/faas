@@ -72,8 +72,9 @@ type Loop struct {
 	egress EgressSource
 
 	// probe (ADR-098 PR-C) is the connection-aware upstream
-	// probe driver. nil ⇒ the probe tick is skipped (FAAS_UPSTREAM_PROBE
-	// flag is off). Set via WithProbe from cmd/meterd/main.go.
+	// probe driver. The production probe remains wired while its
+	// runtime gate is off so a durable enable can take effect on the
+	// next tick. nil still skips the tick for tests.
 	probe *Probe
 	// partitionCreate (ADR-098 PR-C) is the data_upstream_probes
 	// partition-create cron. nil ⇒ the partition tick is
@@ -167,11 +168,12 @@ func (l *Loop) WithEgress(egress EgressSource) *Loop {
 }
 
 // WithProbe attaches the ADR-098 PR-C connection-aware probe
-// driver. cmd/meterd calls this when FAAS_UPSTREAM_PROBE=1 is
-// set; tests that don't exercise the probe surface leave it
-// unwired (the loop skips the upstream_probe tick when l.probe
-// is nil — see Run and Health). Returns the receiver so the
-// call site is one line:
+// driver. cmd/meterd wires it unconditionally so the durable
+// data-placement flag can enable it without a restart; the probe
+// itself is a no-op while disabled. Tests that don't exercise the
+// probe surface may leave it unwired (the loop skips the tick when
+// l.probe is nil — see Run and Health). Returns the receiver so
+// the call site is one line:
 //
 //	loop := meter.NewLoop(...).WithProbe(meter.NewProbe(...))
 //
@@ -187,13 +189,12 @@ func (l *Loop) WithProbe(p *Probe) *Loop {
 }
 
 // WithPartitionCreate attaches the data_upstream_probes
-// partition-create cron. cmd/meterd calls this when
-// FAAS_UPSTREAM_PROBE=1; the cron is gated on the same feature
-// flag as the probe driver so the table's partitions are
-// pre-created on the same one-month rollout boundary. nil
-// disables the tick (Loop.Run skips the goroutine and
-// Loop.Health omits "upstream_part" from /healthz). Returns
-// the receiver so the call site mirrors WithProbe.
+// partition-create cron. cmd/meterd wires a runtime-gated
+// function; the durable data-placement flag controls whether a
+// tick performs work. nil disables the tick entirely (Loop.Run
+// skips the goroutine and Loop.Health omits "upstream_part" from
+// /healthz). Returns the receiver so the call site mirrors
+// WithProbe.
 func (l *Loop) WithPartitionCreate(fn func(ctx context.Context)) *Loop {
 	if fn == nil {
 		return l
@@ -323,9 +324,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		}()
 	}
 	// ADR-098 PR-C: connection-aware upstream probe + partition
-	// cron. Both gated on the FAAS_UPSTREAM_PROBE feature flag;
-	// cmd/meterd wires WithProbe + WithPartitionCreate when the
-	// flag is on. The probe tick body calls Probe.Run which
+	// cron. cmd/meterd wires both drivers and gates their work on
+	// the durable data-placement flag. The probe tick body calls Probe.Run which
 	// fans out per-(host_redacted_hash, kind, port) dials up to
 	// Probe.MaxConcurrent and writes one data_upstream_probes
 	// row per (hash, region). The partition cron is a free-

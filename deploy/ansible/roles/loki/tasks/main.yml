@@ -1,0 +1,155 @@
+# loki — pinned single-binary Loki backend for the dedicated observability
+# host (issue #274). The role owns the backend; promtail owns journal reads on
+# FaaS hosts. Customer requests never depend on this process synchronously.
+
+- name: loki — assert SHA-256 pin was supplied
+  ansible.builtin.assert:
+    that:
+      - loki_release_sha256 is defined
+      - loki_release_sha256 | length == 64
+    fail_msg: >-
+      loki_release_sha256 is not set. Pin the checksum from the Grafana Loki
+      release before installing the backend.
+
+- name: loki — require an explicit non-wildcard bind address
+  ansible.builtin.assert:
+    that:
+      - loki_http_listen_address | length > 0
+      - loki_http_listen_address not in ['0.0.0.0', '::']
+    fail_msg: >-
+      loki_http_listen_address={{ loki_http_listen_address }} is empty or
+      wildcard. Bind Loki to the observability host's private address.
+
+- name: loki — require an off-host production bind address
+  ansible.builtin.assert:
+    that:
+      - loki_http_listen_address is not match('^127\\.')
+      - loki_http_listen_address != '::1'
+      - loki_http_listen_address != 'localhost'
+    fail_msg: >-
+      Production Loki must listen on the observability host's private address,
+      not {{ loki_http_listen_address }}. Set loki_http_listen_address in
+      provider-owned inventory, or explicitly enable loki_dev_mode for local
+      role validation.
+  when: not (loki_dev_mode | bool)
+
+- name: loki — create service account
+  ansible.builtin.user:
+    name: loki
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ loki_data_dir }}"
+    create_home: false
+
+- name: loki — create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: loki
+    group: loki
+    mode: "0750"
+  loop:
+    - "{{ loki_data_dir }}"
+    - "{{ loki_data_dir }}/chunks"
+    - "{{ loki_data_dir }}/rules"
+    - "{{ loki_data_dir }}/wal"
+    - "{{ loki_data_dir }}/index"
+    - "{{ loki_data_dir }}/index-cache"
+    - "{{ loki_data_dir }}/compactor"
+    - /etc/loki
+
+- name: loki — stat mTLS material
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop:
+    - { name: ca, path: "{{ loki_tls_ca_file }}" }
+    - { name: cert, path: "{{ loki_tls_cert_file }}" }
+    - { name: key, path: "{{ loki_tls_key_file }}" }
+  register: loki_tls_stats
+  when: not (loki_dev_mode | bool)
+  no_log: true
+
+- name: loki — require mTLS material in production
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - (item.stat.mode | default('0000')) in ['0400', '0440', '0444', '0640', '0644']
+    fail_msg: >-
+      Loki TLS {{ item.item.name }} is missing or has an unsupported mode;
+      provision the certificate bundle out-of-band and keep the private key
+      restricted to root:loki.
+  loop: "{{ loki_tls_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: not (loki_dev_mode | bool)
+  no_log: true
+
+- name: loki — download release archive
+  ansible.builtin.get_url:
+    url: "https://github.com/grafana/loki/releases/download/v{{ loki_version }}/loki-linux-amd64.zip"
+    dest: "/tmp/loki-{{ loki_version }}-linux-amd64.zip"
+    checksum: "sha256:{{ loki_release_sha256 }}"
+    mode: "0644"
+
+- name: loki — unpack release archive
+  ansible.builtin.unarchive:
+    src: "/tmp/loki-{{ loki_version }}-linux-amd64.zip"
+    dest: /tmp
+    remote_src: true
+    creates: "/tmp/loki-linux-amd64"
+
+- name: loki — install binary
+  ansible.builtin.copy:
+    src: /tmp/loki-linux-amd64
+    dest: /usr/local/bin/loki
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  notify: restart loki
+
+- name: loki — render config
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ loki_config_path }}"
+    owner: loki
+    group: loki
+    mode: "0640"
+  notify: restart loki
+
+- name: loki — verify rendered config
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/loki
+      - -verify-config=true
+      - -config.file={{ loki_config_path }}
+  changed_when: false
+  check_mode: false
+
+- name: loki — install systemd unit
+  ansible.builtin.template:
+    src: loki.service.j2
+    dest: /etc/systemd/system/loki.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - daemon-reload
+    - restart loki
+
+- name: loki — enable and start service
+  ansible.builtin.service:
+    name: loki
+    enabled: true
+    state: started
+
+- name: loki — remove downloaded archive
+  ansible.builtin.file:
+    path: "/tmp/loki-{{ loki_version }}-linux-amd64.zip"
+    state: absent
+
+- name: loki — remove unpacked binary
+  ansible.builtin.file:
+    path: /tmp/loki-linux-amd64
+    state: absent

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -97,5 +98,29 @@ func TestHTTPGatewaySynthInvokeWithWakeCarriesTarget(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("InvokeWithWake: %v", err)
+	}
+}
+
+func TestHTTPGatewaySynthExecuteStepPreservesDownstreamStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/invocations:dispatch" {
+			t.Fatalf("path = %q, want dispatch route", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":503,"result":{"retry":true}}`))
+	}))
+	defer srv.Close()
+
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
+	status, body, err := h.ExecuteStep(context.Background(), "app-1", "/flaky", http.MethodPost,
+		map[string]string{"content-type": "application/json"}, []byte(`{"input":1}`), time.Second)
+	if err != nil {
+		t.Fatalf("ExecuteStep: %v", err)
+	}
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", status)
+	}
+	if string(body) != `{"retry":true}` {
+		t.Fatalf("body = %s, want retry result", body)
 	}
 }

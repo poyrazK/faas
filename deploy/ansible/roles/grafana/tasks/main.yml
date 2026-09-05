@@ -302,6 +302,21 @@
     - restart grafana-server
     - reload grafana provisioning
 
+# Issue #274 — off-host journald → Promtail → Loki pipeline health.
+# Byte-identical copy of deploy/grafana/loki-pipeline.json; the dashboard
+# shows target availability, source ingestion, successful sends, drops, and
+# the stable loki_send_total recording rule.
+- name: "grafana — drop loki-pipeline dashboard JSON (issue #274)"
+  ansible.builtin.copy:
+    src: loki-pipeline.json
+    dest: "{{ gv_dashboards_dir }}/loki-pipeline.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 # ADR-127 §D3 / G19 — bridge wire-protocol framing protection
 # dashboard. Byte-identical copy of deploy/grafana/
 # bridge-protection.json (Makefile:172-185 grafana-mirror-check

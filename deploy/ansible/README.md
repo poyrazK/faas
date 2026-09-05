@@ -3,6 +3,18 @@
 `bootstrap.yml` is the only production host bootstrap playbook. It has
 separate control-plane and compute-only plays and refuses a single-box role.
 
+The observability overlay is `site.yml`. It expects a dedicated
+`[observability]` inventory group for Loki, then installs Promtail on the
+control-plane and compute groups. This separation keeps a FaaS host loss from
+also deleting its incident logs:
+
+```
+make ANSIBLE_INVENTORY=/path/to/inventory.ini bootstrap-observability
+```
+
+Set `promtail_loki_url` and the Loki/Promtail mTLS file paths in provider-owned
+inventory variables. Secret contents are never stored in this repository.
+
 ## What it does
 
 In order (each role is independent and verifies its own preconditions):

@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -35,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
@@ -106,15 +108,6 @@ type runDeps struct {
 	// want the channel can leave it nil — the cold-start sweep
 	// below still reconciles orphans on boot).
 	subscribeRebalancer func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
-	// subscribeLiveMigrator (Tier A5 / ADR-066) is the
-	// producer-side seam for the compute_node_changed consumer
-	// that migrates live instances (state in {WAKING,
-	// COLD_BOOTING, RUNNING, SNAPSHOTTING}) from a freshly-
-	// inactive compute_node onto the local schedd via the
-	// four-phase handoff. Mirrors subscribeRebalancer's shape;
-	// nil = subscriber not started (the cold-start sweep
-	// below still reconciles live instances on boot).
-	subscribeLiveMigrator func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeNodeKeyChanges (ADR-053) is the producer-side seam
 	// for the 'compute_node_changed' pg_notify consumer that
 	// refreshes the in-memory NodeKeyRegistry on every relevant
@@ -205,15 +198,6 @@ func defaultDeps() runDeps {
 		subscribeRebalancer: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
 			return db.Subscribe(ctx, p, []string{db.NotifyComputeNodeChanged})
 		},
-		// Tier A5 / ADR-066: live-instance migration watcher.
-		// Same channel as the parked-app rebalancer — both
-		// filter to active=false + valid node_id and dispatch
-		// to their respective Engine method. A separate
-		// subscribe keeps the watcher logic (filter shape +
-		// log context) cleanly scoped per ADR-066 §"Trigger".
-		subscribeLiveMigrator: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
-			return db.Subscribe(ctx, p, []string{db.NotifyComputeNodeChanged})
-		},
 		// Production wires db.Subscribe on the
 		// 'compute_node_changed' channel. Migration 00075's
 		// trigger fires on both compute_nodes AND
@@ -251,6 +235,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	// All startup goroutines share a context owned by this run. Cancel it
+	// before releasing the database pool so notification subscribers can
+	// relinquish their connections on every startup or serve error path.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// DEPLOY-1 / ADR-075 capdecl gate. schedd's capsDecl is
 	// the empty declaration (no Allow, no Deny) — schedd is
 	// unprivileged. The capCheck seam (review finding M2)
@@ -287,7 +277,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+	defer func() {
+		cancel()
+		pool.Close()
+	}()
 	if err := deps.migrate(ctx, pool); err != nil {
 		return err
 	}
@@ -515,29 +508,59 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
 	engine.WithNodeRegistry(nodeRegistry)
-	// ADR-098 PR-D: connection-aware upstream affinity. Wired
-	// when FAAS_UPSTREAM_AFFINITY=1 is set (default OFF per the
-	// cluster outline's rollout gate — flip PR-D last, one
-	// month after PR-C). When OFF, the engine's upstreamAffinity
-	// stays nil and the chooser falls back to the legacy
-	// tie-break (Score returns ok=false → Request.PreferredRegion
-	// stays empty). FAAS_UPSTREAM_AFFINITY_TTL is operator-
-	// overridable (default api.UpstreamAffinityTTL = 30 s, matching
-	// the meterd probe cadence so the cache is never more than
-	// one probe-cycle stale).
-	if os.Getenv("FAAS_UPSTREAM_AFFINITY") != "" {
-		ttl := api.UpstreamAffinityTTL
-		if v := os.Getenv("FAAS_UPSTREAM_AFFINITY_TTL"); v != "" {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				ttl = d
-			} else {
-				log.Warn("FAAS_UPSTREAM_AFFINITY_TTL parse failed; using default", "got", v, "err", err)
-			}
+	// ADR-098 PR-D: connection-aware upstream affinity. The
+	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
+	// fallback; the durable data-placement flag can switch the
+	// chooser without restarting schedd. When disabled, the
+	// engine's upstreamAffinity stays nil and the chooser falls
+	// back to the legacy tie-break. FAAS_UPSTREAM_AFFINITY_TTL is
+	// operator-overridable (default api.UpstreamAffinityTTL = 30 s,
+	// matching the meterd probe cadence so the cache is never more
+	// than one probe-cycle stale).
+	ttl := api.UpstreamAffinityTTL
+	if v := os.Getenv("FAAS_UPSTREAM_AFFINITY_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			ttl = d
+		} else {
+			log.Warn("FAAS_UPSTREAM_AFFINITY_TTL parse failed; using default", "got", v, "err", err)
 		}
-		engine.WithUpstreamAffinity(sched.NewUpstreamAffinity(ttl, store))
+	}
+	upstreamAffinity := sched.NewUpstreamAffinity(ttl, store)
+	upstreamAffinityEnabled := runtimeconfig.NewBoolFlag(os.Getenv("FAAS_UPSTREAM_AFFINITY") != "")
+	if upstreamAffinityEnabled.Load() {
+		engine.WithUpstreamAffinity(upstreamAffinity)
 	} else {
 		log.Info("schedd: upstream affinity disabled — FAAS_UPSTREAM_AFFINITY unset; using legacy chooser")
 	}
+	// ADR-132: data placement is a fleet flag, not an apid-only toggle.
+	// schedd keeps the affinity cache ready and switches the engine's pointer
+	// atomically when the acknowledged runtime value changes.
+	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
+	defer runtimeCancel()
+	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
+		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			enabled, err := runtimeconfig.Bool(value)
+			if err != nil {
+				return err
+			}
+			if key == runtimeconfig.KeyDataPlacement {
+				upstreamAffinityEnabled.Store(enabled)
+				if enabled {
+					engine.WithUpstreamAffinity(upstreamAffinity)
+				} else {
+					engine.WithUpstreamAffinity(nil)
+				}
+			}
+			return nil
+		}, log)
+	if err := watcher.Reconcile(runtimeCtx); err != nil {
+		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
+	}
+	go func() {
+		if err := watcher.Run(runtimeCtx); err != nil && !runtimeconfig.IsContextDone(err) {
+			log.Error("schedd: runtime config watcher exited", "err", err)
+		}
+	}()
 
 	// Issue #555 PR-6 — per-deployment 100% sampling window.
 	//
@@ -682,7 +705,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// {wake_id}/timeline endpoint still uses pg_notify; the
 	// Broadcaster is the in-process fast path.
 	bc := events.New()
-	engine.WithEvents(events.NewPlatform("schedd", store, log, ops, bc))
+	eventsPlatform := events.NewPlatform("schedd", store, log, ops, bc)
+	engine.WithEvents(eventsPlatform)
+
+	// Workstream B / ADR-137: the recovery arbiter is driven by a durable
+	// per-schedd sweep. It owns the migrate-vs-recreate decision and the
+	// lifecycle-completion CAS; the old notify-only migrator is intentionally
+	// not started below, otherwise the same node event would have two drivers.
+	recoveryArbiter := sched.NewArbiter(
+		sched.MigrationDispatcherFunc(engine.MigrateRecoveryInstance),
+		engine,
+	)
+	engine.WithRecoveryArbiter(recoveryArbiter)
+	recoveryRunner := sched.NewRecoveryRunner(store, recoveryArbiter, eventsPlatform, log)
+	go func() {
+		if err := recoveryRunner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("schedd: recovery runner: run returned", "err", err)
+		}
+	}()
 
 	// Issue #554 / ADR-078 — per-deployment liveness-restart
 	// sliding window. The Engine calls RecordRestart on every
@@ -1145,25 +1185,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
-	// Tier A5 / ADR-066: live-instance migration subscriber.
-	// Same channel + filter as the rebalancer, but the per-
-	// instance path is the four-phase handoff (Tier A5). The
-	// parked-app rebalancer (Tier A4) handles apps in
-	// 'parked'/'stopped' state; this one handles instances in
-	// {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING}. The two
-	// must remain distinct watchers — they have different
-	// retry loops, different metric labels, and different
-	// per-tick caps.
-	if deps.subscribeLiveMigrator != nil && ownerNodeID != "" {
-		lvm := sched.NewLiveMigrator(
-			func(ctx context.Context, deadNodeID string) (int, error) {
-				return engine.MigrateLiveInstances(ctx, deadNodeID)
-			},
-			log,
-		)
-		go subscribeWithReconnect(ctx, "live_migrator", log, deps.subscribeLiveMigrator, pool, lvm.Run)
-	}
-
 	// Cold-start sweep: pg_notify is fire-and-forget, so a schedd
 	// that was down while an apid createApp landed missed the
 	// kind="created" notify. ListUnplacedApps at boot closes that
@@ -1211,31 +1232,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
-	// Tier A5 / ADR-066: live-instance migration cold-start
-	// sweep. Same fire-and-forget-notify reasoning as the
-	// rebalance cold-start sweep above — a schedd that was
-	// down while a drain event landed missed the
-	// compute_node_changed active=false notify, so any live
-	// instance still owned by an inactive compute_node would
-	// be pinned until the next notify. MigrateLiveInstances
-	// with deadNodeID="" reconciles every dead-node-owned
-	// live instance regardless of which dead node. Runs once.
-	if ownerNodeID != "" {
-		go func() {
-			attempted, err := engine.MigrateLiveInstances(ctx, "")
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Warn("schedd: cold-start sweep: live migrate", "err", err)
-				return
-			}
-			if attempted > 0 {
-				log.Info("schedd: cold-start sweep: live migrate reconciled", "attempted", attempted)
-			}
-		}()
-	}
-
 	// PR #114 / ADR-025 axis 3: per-node liveness sweep. Every
 	// `HeartbeatInterval` (default 30s) the heartbeat goroutine
 	// probes active nodes through a bounded worker pool. Each probe still uses a
@@ -1246,7 +1242,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// interval through runDeps.heartbeatInterval.
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
-		WithNodeRegistry(nodeRegistry)
+		WithNodeRegistry(nodeRegistry).
+		WithEvents(eventsPlatform)
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
 	if deps.heartbeatInterval > 0 {
@@ -1616,6 +1613,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 			loop.WithGatewaySynth(synth)
+			if workflowsDispatchEnabled(os.Getenv("FAAS_WORKFLOWS_ENABLED")) {
+				if executor, ok := synth.(sched.WorkflowStepExecutor); ok {
+					loop.WithWorkflowsDispatched(true).
+						WithWorkflowOrchestrator(sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, nil, log)).
+						WithWorkflowRetention(sched.NewWorkflowRetention(store, log))
+					log.Info("schedd workflows dispatch enabled — FAAS_WORKFLOWS_ENABLED=1")
+				} else {
+					log.Error("schedd workflows dispatch requested but gateway synth has no workflow executor")
+				}
+			} else {
+				log.Info("schedd workflows dispatch disabled — set FAAS_WORKFLOWS_ENABLED=1 to enable")
+			}
 		}
 	}
 
@@ -1862,6 +1871,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 // non-empty value (including "0" or "false") as enabled makes a templated
 // production environment unexpectedly activate an incomplete jobs path.
 func jobsDispatchEnabled(value string) bool {
+	return strings.TrimSpace(value) == "1"
+}
+
+// workflowsDispatchEnabled is an exact opt-in so a partially configured
+// workflow runtime cannot activate from a truthy-but-ambiguous environment
+// value. It mirrors the jobs dispatch gate above.
+func workflowsDispatchEnabled(value string) bool {
 	return strings.TrimSpace(value) == "1"
 }
 

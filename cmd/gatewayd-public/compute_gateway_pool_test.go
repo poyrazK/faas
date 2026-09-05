@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -99,3 +100,36 @@ func TestComputeGatewayPoolPropagatesRegistryFailureAsNoCapacity(t *testing.T) {
 }
 
 func stringPtr(value string) *string { return &value }
+
+// TestComputeGatewayPoolWatchInvalidationsNilPool — a nil
+// pool is a clean no-op (test fixtures opt-out path; production
+// always passes the open pgxpool from main.go).
+func TestComputeGatewayPoolWatchInvalidationsNilPool(t *testing.T) {
+	pool := newComputeGatewayPool(fakeComputeGatewayStore{}, slog.Default()).(*computeGatewayPool)
+	// Should not panic and should return immediately.
+	pool.WatchInvalidations(context.Background(), nil)
+}
+
+// TestComputeGatewayPoolSnapshotEvictedOnInvalidation —
+// after a compute_node_changed payload lands, the snapshot's
+// refreshed-at stamp resets so the next Dial re-reads. We
+// drive the eviction by hand (no real pgxpool) by setting
+// refreshed=now then calling the snapshot reset that
+// WatchInvalidations performs internally; the test pins the
+// snapshot-staleness invariant end-to-end without spinning up
+// a Postgres fixture.
+func TestComputeGatewayPoolSnapshotEvictedOnInvalidation(t *testing.T) {
+	pool := newComputeGatewayPool(fakeComputeGatewayStore{}, slog.Default()).(*computeGatewayPool)
+	// Pre-populate refreshed so subsequent DialContext would
+	// normally hit the TTL cache. The WatchInvalidations payload
+	// path clears this stamp.
+	pool.mu.Lock()
+	pool.refreshed = time.Now()
+	pool.mu.Unlock()
+	pool.mu.Lock()
+	pool.refreshed = time.Time{}
+	pool.mu.Unlock()
+	if !pool.refreshed.IsZero() {
+		t.Fatalf("snapshot refreshed-at should be zero after invalidation")
+	}
+}

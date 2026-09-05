@@ -289,10 +289,27 @@ func (s *server) obsNodeDetail(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("could not list node apps"))
 		return
 	}
-	instances, err := s.store.ListInstancesByNodeID(r.Context(), node.ID)
+	instances, err := s.store.ListInstancesOnNodeID(r.Context(), node.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list node instances"))
 		return
+	}
+	appByID := make(map[string]state.App, len(apps))
+	for _, app := range apps {
+		appByID[app.ID] = app
+	}
+	// Apps are normally owned by the node, but a live migration can leave
+	// the physical instance on this node before scheduler ownership moves.
+	// Fill in metadata for those rows so the node detail remains useful.
+	for _, instance := range instances {
+		if _, ok := appByID[instance.AppID]; ok {
+			continue
+		}
+		app, appErr := s.store.AppByID(r.Context(), instance.AppID)
+		if appErr == nil {
+			apps = append(apps, app)
+			appByID[app.ID] = app
+		}
 	}
 	live, err := s.store.PerNodeLiveStats(r.Context())
 	if err != nil {
@@ -305,10 +322,6 @@ func (s *server) obsNodeDetail(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	rows, _ := paginateNodes([]state.ComputeNode{node}, 1, live, heartbeats)
-	appByID := make(map[string]state.App, len(apps))
-	for _, app := range apps {
-		appByID[app.ID] = app
-	}
 	writeJSON(w, http.StatusOK, api.ObsNodeDetailResponse{
 		Node:      rows[0],
 		Apps:      projectObsNodeApps(apps, instances),
@@ -351,7 +364,7 @@ func (s *server) postObsNodeMutation(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Node not found", err.Error()))
 		return
 	}
-	instances, err := s.store.ListInstancesByNodeID(r.Context(), node.ID)
+	instances, err := s.store.ListInstancesOnNodeID(r.Context(), node.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not inspect node instances"))
 		return
@@ -523,19 +536,19 @@ func projectObsNodeApps(apps []state.App, instances []state.Instance) []api.ObsN
 		if stat == nil {
 			continue
 		}
-		switch instance.State {
-		case "RUNNING", "WAKING", "COLD_BOOTING":
+		instanceState := state.State(strings.ToLower(instance.State))
+		if instanceState.CountsForRAM() {
 			stat.live++
 			stat.ram += int64(instance.RAMMB) + 8
 			if instance.LastRequestAt.After(stat.last) {
 				stat.last = instance.LastRequestAt
 			}
-			switch instance.State {
-			case "RUNNING":
+			switch instanceState {
+			case state.StateRunning:
 				stat.running++
-			case "WAKING":
+			case state.StateWaking:
 				stat.waking++
-			case "COLD_BOOTING":
+			case state.StateColdBooting:
 				stat.coldBooting++
 			}
 		}
@@ -565,10 +578,11 @@ func projectObsNodeApps(apps []state.App, instances []state.Instance) []api.ObsN
 }
 
 func countObsLiveInstances(rows []state.Instance) int {
+	// The operator workload surface excludes parked rows but includes
+	// every RAM-resident state, including snapshotting and migrating.
 	count := 0
 	for _, row := range rows {
-		switch row.State {
-		case "RUNNING", "WAKING", "COLD_BOOTING":
+		if state.IsLive(strings.ToLower(row.State)) {
 			count++
 		}
 	}
@@ -581,16 +595,18 @@ func projectObsDrainStatus(rows []state.Instance) api.ObsNodeDrainStatus {
 		ObservedAt:     time.Now().UTC(),
 	}
 	for _, row := range rows {
-		switch row.State {
-		case "RUNNING":
+		switch instanceState := state.State(strings.ToLower(row.State)); instanceState {
+		case state.StateRunning:
 			status.LiveInstances++
 			status.RunningInstances++
-		case "WAKING":
+		case state.StateWaking:
 			status.LiveInstances++
 			status.WakingInstances++
-		case "COLD_BOOTING":
+		case state.StateColdBooting:
 			status.LiveInstances++
 			status.ColdBooting++
+		case state.StateSnapshotting, state.StateMigrating:
+			status.LiveInstances++
 		}
 	}
 	status.DrainSafe = status.LiveInstances == 0

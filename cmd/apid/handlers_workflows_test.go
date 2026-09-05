@@ -26,6 +26,21 @@ func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
 	if err != nil {
 		t.Fatalf("CreateApp(%q): %v", slug, err)
 	}
+	definitions := []api.WorkflowSpec{
+		{Name: "process-order", Steps: []api.WorkflowStepSpec{{Name: "main", Path: "/process-order"}}},
+		{Name: "w1", Steps: []api.WorkflowStepSpec{{Name: "main", Path: "/w1"}}},
+		{Name: "approval", Steps: []api.WorkflowStepSpec{{Name: "step_one", WaitForEvent: "manager.approved", Timeout: time.Hour}}},
+	}
+	raw, err := json.Marshal(definitions)
+	if err != nil {
+		t.Fatalf("marshal workflow definitions: %v", err)
+	}
+	if _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "registry.example.com/test@sha256:" + strings.Repeat("a", 64),
+		Status: state.DeployLive, Workflows: raw,
+	}); err != nil {
+		t.Fatalf("CreateDeployment(%q): %v", slug, err)
+	}
 	return app
 }
 
@@ -66,6 +81,13 @@ func TestCreateWorkflowRun_HappyPath(t *testing.T) {
 	}
 	if resp.Status != state.WorkflowRunStatusPending {
 		t.Fatalf("expected pending status, got %s", resp.Status)
+	}
+	stored, err := e.store.GetWorkflowRun(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("GetWorkflowRun: %v", err)
+	}
+	if !strings.Contains(string(stored.DefinitionSnapshot), "/process-order") {
+		t.Fatalf("definition snapshot = %s, want live deployment definition", stored.DefinitionSnapshot)
 	}
 }
 
@@ -129,7 +151,20 @@ func TestWorkflowSteps_Events_And_Cancel(t *testing.T) {
 		t.Fatalf("expected step_one, got %+v", stepsResp.Steps)
 	}
 
-	// Inject event
+	// An unrelated event is recorded but must not complete the parked step.
+	unrelatedRec := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
+		EventName: "manager.rejected",
+		Payload:   json.RawMessage(`{"approved":false}`),
+	}, nil)
+	if unrelatedRec.Code != http.StatusOK {
+		t.Fatalf("unrelated event expected 200, got %d; body=%s", unrelatedRec.Code, unrelatedRec.Body.String())
+	}
+	parkedSteps, _ := e.store.GetWorkflowSteps(context.Background(), run.ID)
+	if parkedSteps[0].Status != state.WorkflowStepStatusAwaitingEvent {
+		t.Fatalf("unrelated event changed step status to %s", parkedSteps[0].Status)
+	}
+
+	// Inject the event the step actually waits for.
 	eventRec := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
 		EventName: "manager.approved",
 		Payload:   json.RawMessage(`{"approved":true}`),

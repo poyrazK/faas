@@ -451,12 +451,6 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 			api.WriteProblem(w, p)
 			return
 		}
-		// PR-1279 contains the schema/state foundation; the runtime
-		// deployment persistence path is delivered by the stacked
-		// workflow runtime change. Fail explicitly until that path is
-		// available so a valid definition cannot be silently dropped.
-		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
-		return
 	}
 	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,

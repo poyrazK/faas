@@ -429,6 +429,15 @@ type Engine struct {
 	// always fresh — an operator tweak to the env var doesn't
 	// require a schedd restart (the next tick picks it up).
 	deadNodeReconcilerStalenessSeconds int
+	// recoveryArbiter (Workstream B / issue #1184 / ADR-137) is the
+	// single per-tick decision policy the migrator + deadnode
+	// reconciler consult before any per-instance work. Task #61
+	// folds both paths through it so the migrate-vs-recreate
+	// verdict lives in one place (recovery_arbiter.go). nil is
+	// tolerated — MigrateLiveInstances and ReconcileDeadNodeInstances
+	// fall back to their legacy in-method decisions when the
+	// arbiter isn't wired (unit-test fixtures; bootstrap window).
+	recoveryArbiter *Arbiter
 	// pressureAggregator (Tier A9 / ADR-087) is the in-process
 	// sliding-window per-app counter of WakeResult{AtCapacity: true}
 	// returns. The engine increments it at every AtCapacity return
@@ -497,7 +506,8 @@ type Engine struct {
 	// ok=false → chooser falls back to legacy tie-break) so a
 	// missed wiring is a silent no-op rather than a nil-deref
 	// panic — parallel to warmAffinity's contract above.
-	upstreamAffinity *UpstreamAffinity
+	upstreamAffinityMu sync.RWMutex
+	upstreamAffinity   *UpstreamAffinity
 
 	// overage is the spend-cap pause-workload seam (issue #561).
 	// Nil tolerates the gate branch as a no-op (pre-#561 fixtures
@@ -717,8 +727,23 @@ func (e *Engine) WithWarmAffinity(w *WarmAffinity) *Engine {
 // legacy tie-break) so legacy test fixtures that don't wire
 // this keep their existing single-box behaviour.
 func (e *Engine) WithUpstreamAffinity(u *UpstreamAffinity) *Engine {
+	e.upstreamAffinityMu.Lock()
 	e.upstreamAffinity = u
+	e.upstreamAffinityMu.Unlock()
 	return e
+}
+
+// UpstreamAffinity returns the currently configured placement cache. It is a
+// snapshot accessor for the runtime-config watcher; nil means the chooser
+// should fail open to its legacy placement order.
+func (e *Engine) UpstreamAffinity() *UpstreamAffinity {
+	if e == nil {
+		return nil
+	}
+	e.upstreamAffinityMu.RLock()
+	u := e.upstreamAffinity
+	e.upstreamAffinityMu.RUnlock()
+	return u
 }
 
 // WithOverageChecker attaches the spend-cap pause-workload seam
@@ -999,6 +1024,24 @@ func (e *Engine) WithOwnerNodeID(nodeID string) *Engine {
 		return e
 	}
 	e.ownerNodeID = nodeID
+	return e
+}
+
+// WithRecoveryArbiter wires the single per-tick decision policy
+// (Workstream B / issue #1184 / ADR-137). Task #61 folds the
+// live_migrator + deadnode_reconciler paths through the arbiter;
+// before this setter lands they carried duplicate per-instance
+// decision logic that raced. cmd/schedd constructs one Arbiter
+// (sharing the dispatchers it wires — Engine itself satisfies
+// the RecreateDispatcher interface) and passes it here. nil
+// is tolerated for the unit tests that don't exercise the
+// recovery flow (recovery_arbiter_test.go pins the
+// nil-arbiter behaviour).
+func (e *Engine) WithRecoveryArbiter(a *Arbiter) *Engine {
+	if e == nil {
+		return e
+	}
+	e.recoveryArbiter = a
 	return e
 }
 
@@ -2076,6 +2119,22 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	wakeID := wakeUUID.String()
 
+	// Consult the per-deployment snapshot-miss backoff before touching the
+	// snapshot cache. Repeated cache misses must be visible as bounded 503s;
+	// silently forcing another cold boot defeats the backoff and can exhaust
+	// the node's RAM/capacity under a hot request loop.
+	backoff, backoffActive, backoffErr := e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID)
+	if backoffErr != nil {
+		e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", backoffErr)
+	} else if backoffActive && !bypassGates {
+		if e.ops != nil {
+			e.ops.WakeSnapshotTier("cold_boot_fallback").Inc()
+			e.ops.SnapshotBackoffGateOutcome("gated").Inc()
+		}
+		release()
+		return WakeResult{}, api.ErrSnapshotBackoff(snapshotBackoffRetryAfter(backoff.SnapshotMissBackoffUntil))
+	}
+
 	// Restore iff a fresh, version-matched snapshot exists; else cold boot
 	// (ADR-005: cold boot always works, snapshot is cache). The plan
 	// gate (issue #470 / PR A / ADR-055) is consulted here: a
@@ -2089,8 +2148,21 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
 	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan))
+	if !haveSnap {
+		// Only a deployment that has had a snapshot can be said to have
+		// missed one. This avoids starting the exponential backoff on a
+		// brand-new cold deployment that never had a cache entry.
+		if hasHistory, historyErr := e.store.HasSnapshotHistory(ctx, dep.ID); historyErr != nil {
+			e.log.Warn("wake: snapshot history lookup failed", "deployment_id", dep.ID, "err", historyErr)
+		} else if hasHistory {
+			_, _, _ = e.RecordSnapshotMiss(ctx, dep.ID, backoff.SnapshotMissCount)
+		}
+	}
 	if e.ops != nil {
 		e.ops.WakeSnapshotTier(chosenTier).Inc()
+		if backoffActive {
+			e.ops.SnapshotBackoffGateOutcome("miss").Inc()
+		}
 	}
 
 	initState := state.StateColdBooting
@@ -2153,10 +2225,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// is already in scope here; the empty-string fallback at
 	// appDeploymentKeyOf covers the cold-path branch where dep
 	// is nil (legacy callers).
-	preferredRegion, _, _ := e.upstreamAffinity.Score(appID, dep.ID)
-	if preferredRegion == "" && e.upstreamAffinity != nil {
-		if rerr := e.upstreamAffinity.Refresh(ctx, acct.ID, appID, dep.ID); rerr == nil {
-			preferredRegion, _, _ = e.upstreamAffinity.Score(appID, dep.ID)
+	upstreamAffinity := e.UpstreamAffinity()
+	preferredRegion, _, _ := upstreamAffinity.Score(appID, dep.ID)
+	if preferredRegion == "" && upstreamAffinity != nil {
+		if rerr := upstreamAffinity.Refresh(ctx, acct.ID, appID, dep.ID); rerr == nil {
+			preferredRegion, _, _ = upstreamAffinity.Score(appID, dep.ID)
 		} else {
 			// best-effort: log at debug, fall through to legacy
 			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", appID, "err", rerr)
@@ -2338,6 +2411,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// plan before crossing the scheduler/vmmd boundary.
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
 		Plan:             acct.Plan, AccountID: acct.ID,
+		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv,
 		Sidecars:  sidecars,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
@@ -2803,6 +2877,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	e.transition(ctx, bootInput.insID, bootInput.appID, state.StateRunning)
+	// A completed wake proves that the deployment can boot again. Clear any
+	// expired snapshot-miss backoff so a later miss starts a fresh sequence;
+	// this is idempotent for deployments that never had a backoff row.
+	if err := e.ClearSnapshotBackoff(ctx, bootInput.depID); err != nil {
+		e.log.Warn("wake: clear snapshot backoff after successful boot", "deployment_id", bootInput.depID, "err", err)
+	}
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
 	//   - admit_to_rpc = rpcStartedAt - bootInput.startedAt.
@@ -3899,6 +3979,8 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
 		Plan:             acct.Plan,
 		AccountID:        acct.ID,
+		AppID:            app.ID,
+		DeploymentID:     dep.ID,
 		SealedEnv:        sealedEnv,
 		Sidecars:         sidecars,
 		// ADR-045: api_env plaintext layer; the loadAPIEnv
@@ -3991,6 +4073,12 @@ func (e *Engine) MigrateLiveInstances(ctx context.Context, deadNodeID string) (i
 		e.ownerNodeID, e.BuildAppSpecForMigration, e.ledger,
 		e.resolveNodeCeiling)
 	harness.SetMaxPerTick(maxPerTick)
+	// Workstream B / Task #66: share the recovery-timeline
+	// Platform so a successful Phase 4 ack emits
+	// instance.migrated alongside the wake timeline.
+	if e.events != nil {
+		harness.WithEvents(e.events)
+	}
 	leaseSeconds := api.MigrateLiveLeaseSeconds
 	if e.migrateLiveLeaseSeconds > 0 {
 		leaseSeconds = e.migrateLiveLeaseSeconds
@@ -3998,6 +4086,47 @@ func (e *Engine) MigrateLiveInstances(ctx context.Context, deadNodeID string) (i
 	harness.SetLeaseSeconds(leaseSeconds)
 
 	migrated, attempted := 0, 0
+	// Task #61: when the recovery arbiter is wired, ask it for the
+	// per-instance verdict before driving the 4-phase handoff. The
+	// arbiter's Recreate verdict routes to Engine.RecreateInstance
+	// (the dead-VM-shaped PARKED landing) and skips the migration
+	// entirely — there is no usable snapshot to migrate, so the
+	// 4-phase handoff would orphan the row. With no arbiter, the
+	// legacy behaviour stands (every instance attempts the handoff).
+	if e.recoveryArbiter != nil {
+		if cn, lookupErr := e.store.ComputeNodeByID(ctx, deadNodeID); lookupErr == nil {
+			for _, ins := range liveInstances {
+				attempted++
+				handled, dispatchErr := e.dispatchRecovery(ctx, cn, ins.ID)
+				if dispatchErr != nil {
+					e.log.Warn("sched: live migrate: dispatch failed",
+						"instance_id", ins.ID, "from", deadNodeID,
+						"to", e.ownerNodeID, "err", dispatchErr)
+					continue
+				}
+				if handled {
+					migrated++
+					continue
+				}
+				if err := harness.MigrateOne(ctx, ins.ID, deadNodeID); err == nil {
+					migrated++
+				} else if errors.Is(err, state.ErrConflict) {
+					e.log.Debug("sched: live migrate: peer conflict",
+						"instance_id", ins.ID, "from", deadNodeID,
+						"to", e.ownerNodeID)
+				} else {
+					e.log.Warn("sched: live migrate: instance failed",
+						"instance_id", ins.ID, "from", deadNodeID,
+						"to", e.ownerNodeID, "err", err)
+				}
+			}
+			e.log.Info("sched: live migrate batch done",
+				"dead_node_id", deadNodeID,
+				"attempted", attempted, "migrated", migrated,
+				"to_node", e.ownerNodeID)
+			return attempted, nil
+		}
+	}
 	for _, ins := range liveInstances {
 		attempted++
 		err := harness.MigrateOne(ctx, ins.ID, deadNodeID)
@@ -4024,6 +4153,58 @@ func (e *Engine) MigrateLiveInstances(ctx context.Context, deadNodeID string) (i
 		"attempted", attempted, "migrated", migrated,
 		"to_node", e.ownerNodeID)
 	return attempted, nil
+}
+
+// MigrateRecoveryInstance dispatches one arbiter-approved RUNNING instance
+// to this schedd's owner node. Keeping the single-instance adapter on Engine
+// lets the recovery runner use the same four-phase handoff as the legacy
+// notify path, while the arbiter remains the sole migrate-vs-recreate policy.
+func (e *Engine) MigrateRecoveryInstance(ctx context.Context, instanceID string) error {
+	if e == nil || e.store == nil {
+		return nil
+	}
+	if e.ownerNodeID == "" {
+		return nil
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("sched: recovery migration: load instance %s: %w", instanceID, err)
+	}
+	if ins.NodeID == "" || ins.NodeID == e.ownerNodeID {
+		// A schedd must never hand an instance back to its current owner.
+		// In particular, the source node's own recovery runner can observe
+		// the row while a peer is racing to adopt it.
+		return nil
+	}
+	if ins.State != string(state.StateRunning) {
+		return fmt.Errorf("sched: recovery migration: instance %s is %q, want running", instanceID, ins.State)
+	}
+	if e.vmm == nil {
+		return fmt.Errorf("sched: recovery migration: vmmd router is not configured")
+	}
+	if e.ledger == nil {
+		return fmt.Errorf("sched: recovery migration: node ledger is not configured")
+	}
+	metrics := e.ops
+	if metrics == nil {
+		metrics = wire.NewOpsMetrics("schedd")
+	}
+	harness := NewMigrationHarness(ctx, e.store, e.vmm, metrics, e.log,
+		e.ownerNodeID, e.BuildAppSpecForMigration, e.ledger,
+		e.resolveNodeCeiling)
+	harness.SetMaxPerTick(1)
+	leaseSeconds := api.MigrateLiveLeaseSeconds
+	if e.migrateLiveLeaseSeconds > 0 {
+		leaseSeconds = e.migrateLiveLeaseSeconds
+	}
+	harness.SetLeaseSeconds(leaseSeconds)
+	if e.events != nil {
+		harness.WithEvents(e.events)
+	}
+	return harness.MigrateOne(ctx, instanceID, ins.NodeID)
 }
 
 // ReconcileExpiredMigrations (Tier A6 / ADR-067 migrating-
@@ -4145,6 +4326,53 @@ func (e *Engine) ReconcileExpiredMigrations(ctx context.Context) (int, error) {
 	return reconciled, nil
 }
 
+// dispatchRecovery asks the recovery arbiter for the per-
+// (node, instance) verdict and dispatches accordingly. Returns
+// (handled bool, err error) — handled=true means the arbiter
+// already disposed of the row (RecreateInstance transitioned it
+// to PARKED), so the caller should skip its own per-instance
+// work. handled=false means DecisionLiveMigrate (caller proceeds
+// with migrate) or DecisionNone (caller should skip silently).
+//
+// nil arbiter ⇒ returns (false, nil) so legacy callers without
+// the arbiter wired keep their pre-#1184 semantics (no behavior
+// change). This is the nil-arbiter bootstrap path
+// recovery_arbiter_test.go pins.
+func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, instanceID string) (handled bool, err error) {
+	if e.recoveryArbiter == nil {
+		return false, nil
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			// Peer already removed the row — caller should skip.
+			return true, nil
+		}
+		return false, fmt.Errorf("sched: dispatchRecovery: load %s: %w", instanceID, err)
+	}
+	switch e.recoveryArbiter.Decide(node, state.RecoveryInstance{
+		ID:           ins.ID,
+		State:        ins.State,
+		AppID:        ins.AppID,
+		DeploymentID: ins.DeploymentID,
+	}) {
+	case DecisionRecreate:
+		// The arbiter's recreate verdict wins; the row transitions
+		// to PARKED with kind='recovery_recreate' (Task #60). The
+		// legacy migration-handoff path is skipped — there is
+		// nothing to migrate.
+		if recErr := e.RecreateInstance(ctx, ins.ID); recErr != nil {
+			return false, recErr
+		}
+		return true, nil
+	case DecisionNone:
+		return true, nil
+	case DecisionLiveMigrate:
+		return false, nil
+	}
+	return false, nil
+}
+
 // ReconcileDeadNodeInstances closes the dead-node billing leak.
 //
 // The gap it fills: schedd's heartbeat sweep calls
@@ -4222,12 +4450,36 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 			e.log.Warn("sched: reconcile dead-node instances: failed orphaned instance",
 				"instance_id", ins.ID, "app_id", ins.AppID, "node_id", ins.NodeID,
 				"ram_mb", ins.RAMMB)
+			if e.events != nil {
+				e.events.EmitRecovery(ctx, events.InstanceFailedEvent{
+					EmitAt:     time.Now().UTC(),
+					InstanceID: ins.ID,
+					AppID:      ins.AppID,
+					NodeID:     ins.NodeID,
+					Reason:     "liveness_lost",
+				})
+			}
 			if ins.Mode == string(state.InstanceModeService) {
 				e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 			}
 			reconciled++
 		case errors.Is(recErr, state.ErrConflict):
-			// Node recovered, or a peer moved the row first. Benign.
+			// Node recovered, or a peer moved the row first. Benign
+			// at the row level — but Task #62 source-ledger
+			// backstop closes the billing side of the same race:
+			// the peer's failure path might not have freed the
+			// admission slot (the gateway-listener used to be the
+			// only path that called Release on terminal transitions;
+			// a peer that crashed before reaching it leaked the
+			// slot). ResidentFor + Release is the idempotent
+			// cleanup so the deadnode reconciler is the canonical
+			// path for "row is no longer billable" regardless of
+			// who moved it.
+			if e.ledger.ResidentFor(ins.ID) {
+				e.ledger.Release(ins.ID)
+				e.log.Info("sched: reconcile dead-node instances: ledger backstop released",
+					"instance_id", ins.ID, "node_id", ins.NodeID)
+			}
 			if e.ops != nil {
 				e.ops.DeadNodeReconcileDecisions("conflict").Inc()
 			}
@@ -4363,6 +4615,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// as ordinary wakes, so first boot and later wakes agree.
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
 		Plan:             acct.Plan, AccountID: acct.ID,
+		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv,
 		Sidecars:  sidecars,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
@@ -6853,6 +7106,62 @@ func (e *Engine) rollbackAdmittedInstance(ctx context.Context, instanceID, appID
 // KillStuck's "watchdog_timeout", snapshotAndPark's "park_snapshot_error")
 // go through here. The transition body itself is unchanged from
 // transition() — only the appended events row differs.
+// transitionWithKindCAS is the CAS-aware sibling of transitionWithKind,
+// added by ADR-137 follow-up / fix #5. It performs the same
+// load → validate edge → write → audit-log flow but returns
+// (ok, error) so race-losers can suppress their metric / event
+// emission. ok=true means the state write landed AND the
+// from→to edge was legal AND the row existed; ok=false means the
+// row wasn't found, the edge was refused, or the write failed
+// (the error distinguishes the failure shape).
+//
+// Used by callers that race with peers on the same row —
+// Engine.RecreateInstance is the load-bearing one (the recovery
+// arbiter and the deadnode reconciler can both target the same
+// stranded row; the loser must not double-count).
+func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID string, to state.State, kind, reason string) (bool, error) {
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		return false, err
+	}
+	from := state.State(ins.State)
+	if from == to {
+		return false, nil // benign no-op (idempotent re-entry); not a CAS win
+	}
+	if !state.CanTransition(from, to) {
+		e.log.Error("transition: illegal edge refused", "instance", instanceID, "from", from, "to", to)
+		return false, nil
+	}
+	if to == state.StateStopped || to == state.StateFailed {
+		if err := e.store.UpdateInstanceStateToTerminal(ctx, instanceID, string(to), time.Now().UTC()); err != nil {
+			return false, err
+		}
+	} else if err := updateInstanceStateCAS(ctx, e.store, instanceID, string(from), string(to)); err != nil {
+		return false, err
+	}
+	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
+	subject := instanceID
+	data, _ := json.Marshal(map[string]any{
+		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, data); err != nil {
+		e.log.Warn("transition: append event", "instance", instanceID, "from", from, "to", to, "kind", kind, "err", err)
+		if e.ops != nil {
+			e.ops.EventsWriteFailures().Inc()
+		}
+	}
+	return true, nil
+}
+
+// updateInstanceStateCAS is kept behind the state.Store interface so the
+// recovery primitive cannot silently fall back to an unconditional write.
+// Both production stores implement this method; the explicit assertion also
+// makes a partially wired test/store fail closed instead of reintroducing the
+// load-then-write race this helper exists to close.
+func updateInstanceStateCAS(ctx context.Context, store state.Store, instanceID, expectedState, nextState string) error {
+	return store.UpdateInstanceStateIf(ctx, instanceID, expectedState, nextState)
+}
+
 func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID string, to state.State, kind, reason string) {
 	ins, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
@@ -6957,6 +7266,10 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 	})
 	if err := e.notif.Notify(ctx, db.NotifySnapshotWritten, string(payload)); err != nil {
 		e.log.Warn("emit snapshot_written", "deployment", deploymentID, "tier", tier, "err", err)
+		return
+	}
+	if err := e.ClearSnapshotBackoff(ctx, deploymentID); err != nil {
+		e.log.Warn("emit snapshot_written: clear snapshot backoff", "deployment", deploymentID, "err", err)
 	}
 }
 

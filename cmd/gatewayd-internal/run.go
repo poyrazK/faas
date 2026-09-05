@@ -65,6 +65,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -235,15 +236,11 @@ func routeMetricsEnabledFromEnv() bool {
 }
 
 // certIssuerFor (ADR-100 / issue #879) constructs the per-surface
-// cert-remint engine wired to PGBackend. Returns nil when the
-// feature flag is off so the pg_notify subscriber no-ops (a
-// tenant_surface_changed event still arrives but
-// PGBackend.RequestCertForSurface short-circuits on a nil issuer).
-// The flag is the same dark-launch switch as the apid HTTP
-// surface (PR-C) so a single env var controls the entire
-// surface stack — operator sets it on the apid + gatewayd box
-// pair when PR-C is ready, unsets it to roll back without
-// bouncing any daemon.
+// cert-remint engine wired to PGBackend. The runtime gate is kept
+// in runtimeGatedCertIssuer so the delegate can be constructed once
+// and enabled later without rebuilding gatewayd. The flag is the
+// same dark-launch switch as the apid HTTP surface (PR-C), so a
+// single durable value controls the entire surface stack.
 //
 // metrics may be nil (tests + the pre-construction window before
 // deps.metrics is built); ObserveTenantSurfaceCert guards.
@@ -319,6 +316,29 @@ func certIssuerFor(store state.Store, metrics *gateway.Metrics, enabled bool, dn
 	return gateway.NewTenantSurfaceCertIssuer(store, metrics, le, nil)
 }
 
+// runtimeGatedCertIssuer keeps certificate work aligned with the same
+// runtime tenant-surface gate used by routing. The issuer is constructed at
+// boot so enabling the flag later does not require rebuilding gatewayd; calls
+// while the surface is disabled are harmless no-ops.
+type runtimeGatedCertIssuer struct {
+	enabled  func() bool
+	delegate gateway.CertIssuer
+}
+
+func (i runtimeGatedCertIssuer) RequestCertForSurface(ctx context.Context, surfaceID string) error {
+	if i.enabled != nil && !i.enabled() {
+		return nil
+	}
+	if i.delegate == nil {
+		return nil
+	}
+	return i.delegate.RequestCertForSurface(ctx, surfaceID)
+}
+
+func gateCertIssuer(enabled func() bool, delegate gateway.CertIssuer) gateway.CertIssuer {
+	return runtimeGatedCertIssuer{enabled: enabled, delegate: delegate}
+}
+
 // dnsTokenLookupFromEnv resolves the DNS provider's API token
 // from the FAAS_TLS_DNS_TOKEN environment variable. The token
 // is sealed at rest by the operator's host.age bundle (CLAUDE.md
@@ -341,9 +361,10 @@ func dnsTokenLookupFromEnv(provider string) string {
 // wake-only path left cron traffic invisible to the runner and the
 // meter (spec §4.4, M7).
 type synthAdapter struct {
-	backend gateway.Backend
-	wake    func(ctx context.Context, appID string) error
-	invoke  func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
+	backend          gateway.Backend
+	wake             func(ctx context.Context, appID string) error
+	invoke           func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
+	invokeWithStatus func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error)
 	// forward is the same HTTP→vmmd bridge installed on the public
 	// gateway handler. Synthetic invocations must use that bridge too;
 	// waking an instance without delivering the envelope leaves the row
@@ -364,6 +385,14 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 		return inv, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
 	}
 	return a.invoke(ctx, appID, inv)
+}
+
+func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+	if a.invokeWithStatus != nil {
+		return a.invokeWithStatus(ctx, appID, inv)
+	}
+	out, err := a.Invoke(ctx, appID, inv)
+	return out, http.StatusOK, err
 }
 
 // InvokeWithTarget is the pre-woken synthetic invocation path. Schedd owns
@@ -387,8 +416,13 @@ func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv s
 // completes the invocation row, which is what makes sync invoke and async
 // polling return the function's actual response.
 func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, error) {
+	out, _, err := a.forwardInvocationWithStatus(ctx, target, inv)
+	return out, err
+}
+
+func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, error) {
 	if a.forward == nil {
-		return inv, fmt.Errorf("gateway synth: invocation forwarder is not wired")
+		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
 
 	method := inv.Method
@@ -404,12 +438,12 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 	}
 	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(inv.Payload))
 	if err != nil {
-		return inv, fmt.Errorf("gateway synth: build request: %w", err)
+		return inv, 0, fmt.Errorf("gateway synth: build request: %w", err)
 	}
 	if len(inv.Headers) > 0 {
 		var headers map[string]string
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
-			return inv, fmt.Errorf("gateway synth: decode invocation headers: %w", err)
+			return inv, 0, fmt.Errorf("gateway synth: decode invocation headers: %w", err)
 		}
 		for key, value := range headers {
 			req.Header.Set(key, value)
@@ -442,7 +476,7 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 		} else {
 			encoded, err := json.Marshal(string(body))
 			if err != nil {
-				return inv, fmt.Errorf("gateway synth: encode response: %w", err)
+				return inv, 0, fmt.Errorf("gateway synth: encode response: %w", err)
 			}
 			inv.Result = encoded
 		}
@@ -450,7 +484,7 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 		inv.Result = nil
 	}
 	inv.State = state.InvocationDispatching
-	return inv, nil
+	return inv, rec.Code, nil
 }
 
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
@@ -853,7 +887,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if appsDomain == "" {
 		appsDomain = cfg.AppsDomain
 	}
-	router := pgRouter{store: pgStore, appsSuffix: appsSuffix(appsDomain)}
+	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
+	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
+	httpsec.SetHSTSEnabled(hstsFlag.Load())
+	router := pgRouter{
+		store:                 pgStore,
+		appsSuffix:            appsSuffix(appsDomain),
+		tenantSurfacesEnabled: tenantSurfacesFlag.Load,
+	}
 	// ADR-025 axis 4: sticky-warm affinity cache. Built first so the
 	// picker's WarmHintFunc reads from it on every Pick. The cache
 	// itself is empty at this point — it gets populated by the
@@ -949,7 +990,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// (after deps.metrics is built) so the
 		// gateway_tenant_surface_cert_total counter ticks
 		// from boot.
-		WithCertIssuer(certIssuerFor(pgStore, nil, api.TenantSurfacesEnabled(), dnsTokenLookupFromEnv, log))
+		WithCertIssuer(gateCertIssuer(tenantSurfacesFlag.Load, certIssuerFor(pgStore, nil, true, dnsTokenLookupFromEnv, log)))
 
 	// Phase 2 / Gate A: gate the resolveSched legacy fallback on the
 	// active fleet. Single-box posture (only default-local active)
@@ -1068,6 +1109,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 			inv.InstanceID = instanceID
 			return synth.forwardInvocation(ctx, target, inv)
 		},
+		invokeWithStatus: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+			app, err := pgStore.AppByID(ctx, appID)
+			if err != nil {
+				return inv, 0, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
+			}
+			cli, err := deps.scheddRouter.ScheddForApp(ctx, app)
+			if err != nil {
+				return inv, 0, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
+			}
+			instanceID, nodeID, deploymentID, wakeID, port, err := cli.Wake(ctx, appID, "", "")
+			if err != nil {
+				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
+			}
+			target := gateway.Target{InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}
+			backend.RecordTarget(appID, target)
+			inv.InstanceID = instanceID
+			return synth.forwardInvocationWithStatus(ctx, target, inv)
+		},
 	}
 	// Construct the SynthServer before wiring the gate — the
 	// WithInternalSvcVerifier / WithMetrics / WithAudit /
@@ -1126,7 +1185,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// guards on nil but skipping the increment in production
 	// made the dashboard panel observability-dead. The feature
 	// flag is the same env var (PR-C dark-launch switch).
-	backend.WithCertIssuer(certIssuerFor(pgStore, deps.metrics, api.TenantSurfacesEnabled(), dnsTokenLookupFromEnv, log))
+	backend.WithCertIssuer(gateCertIssuer(tenantSurfacesFlag.Load, certIssuerFor(pgStore, deps.metrics, true, dnsTokenLookupFromEnv, log)))
 
 	// PR-D commit 3: cert-renewer goroutine. Periodically
 	// re-mints tenant surfaces whose cert_not_after < now +
@@ -1136,12 +1195,42 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// to CertIssuer.RequestCertForSurface), so the state
 	// machine stays single-writer.
 	//
-	// Skipped when the tenant-surfaces feature flag is off —
-	// the renewer would loop on a closed cartesian and emit
-	// noisy "0 due" log lines every tick.
-	if api.TenantSurfacesEnabled() {
-		renewer := gateway.NewSurfaceCertRenewer(pgStore, log)
-		go renewer.Run(ctx)
+	// The renewer stays alive while the flag is off and gates each
+	// tick, so a durable hot enable takes effect without restarting
+	// gatewayd-internal.
+	renewer := gateway.NewSurfaceCertRenewer(pgStore, log).SetEnabled(tenantSurfacesFlag.Load)
+	go renewer.Run(ctx)
+
+	// ADR-132: routing and certificate lifecycle consume the same durable
+	// runtime flag as apid. The watcher applies only acknowledged values and
+	// repairs missed notifications on its five-second interval.
+	if pool != nil {
+		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
+		defer runtimeCancel()
+		watcher := runtimeconfig.New(pgStore, pool,
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS},
+			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+				enabled, err := runtimeconfig.Bool(value)
+				if err != nil {
+					return err
+				}
+				switch key {
+				case runtimeconfig.KeyTenantSurfaces:
+					tenantSurfacesFlag.Store(enabled)
+				case runtimeconfig.KeyHSTS:
+					hstsFlag.Store(enabled)
+					httpsec.SetHSTSEnabled(enabled)
+				}
+				return nil
+			}, log)
+		if err := watcher.Reconcile(runtimeCtx); err != nil {
+			log.Warn("gatewayd: initial runtime config reconcile failed", "err", err)
+		}
+		go func() {
+			if err := watcher.Run(runtimeCtx); err != nil && !runtimeconfig.IsContextDone(err) {
+				log.Error("gatewayd: runtime config watcher exited", "err", err)
+			}
+		}()
 	}
 
 	// Forward the operator-configured apid loopback URL through the
@@ -2222,10 +2311,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		publicHandler,
 	))
 
-	// Issue #249: HSTS gate. RFC 6797 §7.2 says UAs ignore HSTS on
-	// plain HTTP, so on a dev plaintext listener this is cosmetic.
-	// Production TLS listener always emits it (the default).
-	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(osGetenv))
+	// HSTS is seeded from the environment before the listener is built and
+	// then reconciled by the runtime-config watcher above. Do not re-read the
+	// environment here: doing so after reconciliation could briefly overwrite
+	// a durable operator value on startup.
+	if deps.pool == nil {
+		// Keep the dependency-injected listener tests source-compatible; they
+		// do not construct the production watcher and still rely on the env
+		// helper to select the header behavior.
+		httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(osGetenv))
+	}
 
 	// Private listener: control plane only — never authenticated (it's on a
 	// private bind), never reachable from the public-internet path.

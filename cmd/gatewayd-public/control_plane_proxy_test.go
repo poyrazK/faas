@@ -60,11 +60,18 @@ func TestControlPlaneProxyDoesNotExposeMetricsDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newControlPlaneProxy: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "http://edge.local/v1/internal/metrics/targets", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404", rec.Code)
+	for _, path := range []string{
+		"/v1/internal/metrics/targets",
+		"/v1/internal/metrics/promtail-targets",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://edge.local"+path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status=%d, want 404", rec.Code)
+			}
+		})
 	}
 	if upstreamHits != 0 {
 		t.Fatalf("upstream hits=%d, want 0", upstreamHits)

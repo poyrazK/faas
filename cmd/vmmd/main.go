@@ -1170,7 +1170,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		wire.TraceServerOptions()...,
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
-		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{}))
+		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
+		WithNodeID(nodeID)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the corroborating-observation
 	// source for wake.boot_started (mirror at the gRPC server
@@ -1179,6 +1180,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// local path).
 	if store != nil {
 		impl.WithEvents(events.NewPlatform("vmmd", store, log, ops, nil))
+		impl.WithMigrationStore(store)
 	}
 	impl.Register(gsrv)
 	defer func() {

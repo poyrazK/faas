@@ -125,6 +125,10 @@ func TestWorkflowOrchestrator_RetryAndFail(t *testing.T) {
 	if steps[0].Attempt != 1 || steps[0].Status != state.WorkflowStepStatusPending {
 		t.Fatalf("expected attempt 1 pending, got attempt=%d status=%s", steps[0].Attempt, steps[0].Status)
 	}
+	queued, _ := store.GetWorkflowRun(ctx, run.ID)
+	if queued.Status != state.WorkflowRunStatusPending || !queued.ScheduledFor.After(time.Now().UTC()) {
+		t.Fatalf("retry run = status %s scheduled_for %s, want pending in the future", queued.Status, queued.ScheduledFor)
+	}
 
 	// Tick 2: advances run again -> attempt 2 -> retries exhausted -> dead
 	_ = orch.AdvanceWorkflowRun(ctx, run.ID)
@@ -149,8 +153,9 @@ func TestWorkflowOrchestrator_WaitForEvent(t *testing.T) {
 		Name: "approval_flow",
 		Steps: []api.WorkflowStepSpec{
 			{Name: "prepare", Path: "/prep"},
-			{Name: "await_approval", WaitForEvent: "order.approved", Timeout: 1 * time.Hour, DependsOn: []string{"prepare"}},
+			{Name: "await_approval", WaitForEvent: "order.approved", Timeout: 1 * time.Hour, OnTimeout: "fallback", DependsOn: []string{"prepare"}},
 			{Name: "fulfill", Path: "/fulfill", DependsOn: []string{"await_approval"}},
+			{Name: "fallback", Path: "/fallback"},
 		},
 	}
 	specBytes, _ := json.Marshal(spec)
@@ -179,6 +184,50 @@ func TestWorkflowOrchestrator_WaitForEvent(t *testing.T) {
 	finalRun, _ := store.GetWorkflowRun(ctx, run.ID)
 	if finalRun.Status != state.WorkflowRunStatusSucceeded {
 		t.Fatalf("expected succeeded after event, got %s", finalRun.Status)
+	}
+	if exec.attempts["/fallback"] != 0 {
+		t.Fatalf("timeout handler attempts = %d, want 0 on event path", exec.attempts["/fallback"])
+	}
+	steps, _ := store.GetWorkflowSteps(ctx, run.ID)
+	for _, step := range steps {
+		if step.StepName == "fallback" && step.Status != state.WorkflowStepStatusSkipped {
+			t.Fatalf("timeout handler status = %s, want skipped on event path", step.Status)
+		}
+	}
+}
+
+func TestWorkflowOrchestrator_WaitTimeoutRunsHandler(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	exec := newMockExecutor()
+	orch := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil)
+	spec := api.WorkflowSpec{
+		Name: "timeout_flow",
+		Steps: []api.WorkflowStepSpec{
+			{Name: "wait", WaitForEvent: "never", Timeout: time.Nanosecond, OnTimeout: "fallback"},
+			{Name: "fallback", Path: "/fallback"},
+		},
+	}
+	specBytes, _ := json.Marshal(spec)
+	run := &state.WorkflowRun{AppID: "app-timeout", WorkflowName: spec.Name, DefinitionSnapshot: specBytes}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatalf("CreateWorkflowRun: %v", err)
+	}
+	if err := orch.DispatchTick(ctx); err != nil {
+		t.Fatalf("DispatchTick: %v", err)
+	}
+	finalRun, err := store.GetWorkflowRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetWorkflowRun: %v", err)
+	}
+	if finalRun.Status != state.WorkflowRunStatusSucceeded {
+		t.Fatalf("status = %s, want succeeded after timeout handler", finalRun.Status)
+	}
+	steps, _ := store.GetWorkflowSteps(ctx, run.ID)
+	for _, step := range steps {
+		if step.Status != state.WorkflowStepStatusSucceeded {
+			t.Fatalf("step %s status = %s, want succeeded", step.StepName, step.Status)
+		}
 	}
 }
 

@@ -313,3 +313,4 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMM_TLS_CERT_PATH` | imaged | `dropin` |  |
 | `FAAS_VMM_TLS_KEY_PATH` | imaged | `dropin` |  |
 | `FAAS_WEBHOOK_SECRET` | gatewayd-internal | `secrets-env` | delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal) |
+| `FAAS_WORKFLOWS_ENABLED` | schedd | `unit` | explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch |

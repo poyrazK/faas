@@ -14,6 +14,15 @@ func TestLegalTransitions(t *testing.T) {
 		{StateStopped, StateColdBooting},  // next wake cold boots
 		{StateRunning, StateFailed},       // crash loop
 		{StateColdBooting, StateFailed},   // boot timeout
+		// Workstream B / issue #1184 / ADR-137: the recovery_recreate
+		// primitive (Engine.RecreateInstance) lands a stranded live
+		// row in PARKED without the SNAPSHOTTING detour. The audit
+		// row's kind='recovery_recreate' tag discriminates this from
+		// a normal idle-timeout Park. Normal Parks still go
+		// RUNNING → SNAPSHOTTING → PARKED.
+		{StateRunning, StateParked},
+		{StateColdBooting, StateParked},
+		{StateWaking, StateParked},
 	}
 	for _, e := range legal {
 		if !CanTransition(e[0], e[1]) {
@@ -25,7 +34,6 @@ func TestLegalTransitions(t *testing.T) {
 func TestIllegalTransitions(t *testing.T) {
 	illegal := [][2]State{
 		{StateParked, StateRunning},      // must wake first
-		{StateRunning, StateParked},      // must snapshot first
 		{StateParked, StateParked},       // no self-loop
 		{StateRunning, StateColdBooting}, // can't re-boot a running vm
 		{StateFailed, StateRunning},      // failed re-parks, not resumes

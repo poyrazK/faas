@@ -182,6 +182,66 @@ func (m *MemStore) ClaimNextPendingRun(_ context.Context) (*WorkflowRun, error) 
 	return &cp, nil
 }
 
+// ClaimNextDueWorkflowRun claims the oldest pending or parked run whose
+// scheduled time has arrived. A parked wait uses scheduled_for as its timeout
+// deadline, so this same claim path handles both normal dispatch and wakeups.
+func (m *MemStore) ClaimNextDueWorkflowRun(_ context.Context) (*WorkflowRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now().UTC()
+	var candidates []WorkflowRun
+	for _, r := range m.workflowRuns {
+		if (r.Status == WorkflowRunStatusPending || r.Status == WorkflowRunStatusAwaitingEvent) && !r.ScheduledFor.After(now) {
+			candidates = append(candidates, r)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, ErrNotFound
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].ScheduledFor.Equal(candidates[j].ScheduledFor) {
+			return candidates[i].ID < candidates[j].ID
+		}
+		return candidates[i].ScheduledFor.Before(candidates[j].ScheduledFor)
+	})
+	chosen := candidates[0]
+	chosen.Status = WorkflowRunStatusRunning
+	chosen.StartedAt = firstWorkflowTime(chosen.StartedAt, now)
+	chosen.UpdatedAt = now
+	m.workflowRuns[chosen.ID] = chosen
+	cp := chosen
+	cp.Input = cloneWorkflowJSON(chosen.Input)
+	cp.Output = cloneWorkflowJSON(chosen.Output)
+	cp.DefinitionSnapshot = cloneWorkflowJSON(chosen.DefinitionSnapshot)
+	return &cp, nil
+}
+
+// ScheduleWorkflowRun changes a run's scheduler-visible state and deadline.
+func (m *MemStore) ScheduleWorkflowRun(_ context.Context, id, status string, scheduledFor time.Time) error {
+	if err := validateWorkflowRunStatus(status); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.workflowRuns[id]
+	if !ok {
+		return ErrWorkflowRunNotFound
+	}
+	r.Status = status
+	r.ScheduledFor = scheduledFor.UTC()
+	r.UpdatedAt = time.Now().UTC()
+	m.workflowRuns[id] = r
+	return nil
+}
+
+func firstWorkflowTime(current *time.Time, fallback time.Time) *time.Time {
+	if current != nil {
+		return current
+	}
+	return &fallback
+}
+
 // CountActiveRunsByApp counts runs currently in pending, running, or awaiting_event states.
 func (m *MemStore) CountActiveRunsByApp(_ context.Context, appID string) (int, error) {
 	m.mu.Lock()

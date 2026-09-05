@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -79,6 +78,36 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 
+	// Runs must snapshot a definition from the current live deployment.
+	// This keeps a run deterministic even when a later deployment changes
+	// the workflow, and avoids accepting a name that was never deployed.
+	dep, err := s.store.LiveDeployment(r.Context(), app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
+		return
+	}
+	var definitions []api.WorkflowSpec
+	if err := json.Unmarshal(dep.Workflows, &definitions); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("deployed workflow definitions are invalid"))
+		return
+	}
+	var definition *api.WorkflowSpec
+	for i := range definitions {
+		if definitions[i].Name == workflowName {
+			definition = &definitions[i]
+			break
+		}
+	}
+	if definition == nil {
+		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
+		return
+	}
+	defSnapshot, err := json.Marshal(definition)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("failed to snapshot workflow definition"))
+		return
+	}
+
 	// Gating: check concurrent workflow runs quota
 	activeRuns, err := s.store.CountActiveRunsByApp(r.Context(), app.ID)
 	if err != nil {
@@ -106,9 +135,6 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 		}
 		inputRaw = bodyBytes
 	}
-
-	// Default definition snapshot with entrypoint step
-	defSnapshot := json.RawMessage(fmt.Sprintf(`{"name":%q,"steps":[{"name":"main","path":"/"}]}`, workflowName))
 
 	run := &state.WorkflowRun{
 		AppID:              app.ID,
@@ -268,15 +294,30 @@ func (s *server) injectWorkflowEvent(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 
-	// If run is awaiting this event, resume it
+	// Resume only steps that explicitly wait for this event. Events remain in
+	// the ledger for audit/replay, but an unrelated event must not complete a
+	// parked step.
 	if run.Status == state.WorkflowRunStatusAwaitingEvent {
+		var definition api.WorkflowSpec
+		if err := json.Unmarshal(run.DefinitionSnapshot, &definition); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("deployed workflow definition is invalid"))
+			return
+		}
+		waitsFor := make(map[string]bool, len(definition.Steps))
+		for _, stepSpec := range definition.Steps {
+			waitsFor[stepSpec.Name] = stepSpec.WaitForEvent == req.EventName
+		}
+		matched := false
 		steps, _ := s.store.GetWorkflowSteps(r.Context(), run.ID)
 		for _, step := range steps {
-			if step.Status == state.WorkflowStepStatusAwaitingEvent {
+			if step.Status == state.WorkflowStepStatusAwaitingEvent && waitsFor[step.StepName] {
 				_ = s.store.MarkWorkflowStepStatus(r.Context(), run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, req.Payload, nil)
+				matched = true
 			}
 		}
-		_ = s.store.MarkWorkflowRunStatus(r.Context(), run.ID, state.WorkflowRunStatusRunning, nil, nil)
+		if matched {
+			_ = s.store.ScheduleWorkflowRun(r.Context(), run.ID, state.WorkflowRunStatusPending, time.Now().UTC())
+		}
 	}
 
 	writeJSON(w, http.StatusOK, api.InjectWorkflowEventResponse{

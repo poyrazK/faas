@@ -16,23 +16,24 @@ import (
 )
 
 type runtimeConfigEntryResponse struct {
-	Key            string          `json:"key"`
-	Label          string          `json:"label"`
-	Description    string          `json:"description"`
-	Category       string          `json:"category"`
-	Kind           string          `json:"kind"`
-	DefaultValue   json.RawMessage `json:"default_value"`
-	DesiredValue   json.RawMessage `json:"desired_value"`
-	EffectiveValue json.RawMessage `json:"effective_value"`
-	Source         string          `json:"source"`
-	ApplyMode      string          `json:"apply_mode"`
-	Mutable        bool            `json:"mutable"`
-	Sensitive      bool            `json:"sensitive"`
-	Status         string          `json:"status"`
-	LastError      string          `json:"last_error,omitempty"`
-	Version        int64           `json:"version"`
-	UpdatedAt      string          `json:"updated_at,omitempty"`
-	AppliedAt      string          `json:"applied_at,omitempty"`
+	Key               string          `json:"key"`
+	Label             string          `json:"label"`
+	Description       string          `json:"description"`
+	Category          string          `json:"category"`
+	Kind              string          `json:"kind"`
+	DefaultValue      json.RawMessage `json:"default_value"`
+	DesiredValue      json.RawMessage `json:"desired_value"`
+	EffectiveValue    json.RawMessage `json:"effective_value"`
+	Source            string          `json:"source"`
+	ApplyMode         string          `json:"apply_mode"`
+	ControllerEnabled bool            `json:"controller_enabled"`
+	Mutable           bool            `json:"mutable"`
+	Sensitive         bool            `json:"sensitive"`
+	Status            string          `json:"status"`
+	LastError         string          `json:"last_error,omitempty"`
+	Version           int64           `json:"version"`
+	UpdatedAt         string          `json:"updated_at,omitempty"`
+	AppliedAt         string          `json:"applied_at,omitempty"`
 }
 
 type runtimeConfigListResponse struct {
@@ -104,19 +105,20 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 	for _, def := range s.runtimeConfig.Definitions() {
 		row, exists := byKey[def.Key]
 		item := runtimeConfigEntryResponse{
-			Key:            def.Key,
-			Label:          def.Label,
-			Description:    def.Description,
-			Category:       def.Category,
-			Kind:           def.Kind,
-			DefaultValue:   append(json.RawMessage(nil), def.Default...),
-			DesiredValue:   s.runtimeConfig.Value(def.Key),
-			EffectiveValue: s.runtimeConfig.Value(def.Key),
-			Source:         "default_or_environment",
-			ApplyMode:      string(def.ApplyMode),
-			Mutable:        def.Mutable,
-			Sensitive:      def.Sensitive,
-			Status:         string(state.RuntimeConfigApplied),
+			Key:               def.Key,
+			Label:             def.Label,
+			Description:       def.Description,
+			Category:          def.Category,
+			Kind:              def.Kind,
+			DefaultValue:      append(json.RawMessage(nil), def.Default...),
+			DesiredValue:      s.runtimeConfig.Value(def.Key),
+			EffectiveValue:    s.runtimeConfig.Value(def.Key),
+			Source:            "default_or_environment",
+			ApplyMode:         string(def.ApplyMode),
+			ControllerEnabled: def.ControllerEnabled,
+			Mutable:           def.Mutable,
+			Sensitive:         def.Sensitive,
+			Status:            string(state.RuntimeConfigApplied),
 		}
 		if exists {
 			item.DesiredValue = append(json.RawMessage(nil), row.DesiredValue...)
@@ -207,6 +209,28 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 				"operation_id": operation.ID, "reason": req.Reason, "actor": acct.ID,
 			})
 		}
+		if !def.ControllerEnabled {
+			// A durable operation without a production consumer would remain
+			// pending forever and mislead the operator into waiting for an
+			// apply that cannot happen. Fail closed with a terminal, auditable
+			// state until the corresponding daemon controller is deployed.
+			reason := fmt.Sprintf("no production controller is enabled for %s apply; use a rolling deployment", def.ApplyMode)
+			if blockErr := s.store.MarkRuntimeConfigOperationBlocked(r.Context(), operation.ID, "controller_unavailable", reason); blockErr != nil {
+				api.WriteProblem(w, api.ErrCapacity("could not finalize runtime configuration operation"))
+				return
+			}
+			if s.audit != nil {
+				s.audit.Emit(r.Context(), "operator.runtime_config_apply_blocked", nil, map[string]any{
+					"key": key, "version": row.Version, "apply_mode": def.ApplyMode,
+					"operation_id": operation.ID, "reason": reason, "actor": acct.ID,
+				})
+			}
+			operation, err = s.store.GetRuntimeConfigOperation(r.Context(), operation.ID)
+			if err != nil {
+				api.WriteProblem(w, api.ErrCapacity("could not read runtime configuration operation"))
+				return
+			}
+		}
 		_ = s.notif.Notify(r.Context(), db.NotifyRuntimeConfigOperationChanged, operation.ID)
 		w.Header().Set("Location", "/v1/admin/config-operations/"+operation.ID)
 		writeJSON(w, http.StatusAccepted, runtimeConfigOperationResponse(operation))
@@ -233,22 +257,23 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 	row.EffectiveValue = append(json.RawMessage(nil), req.Value...)
 	row.Status = state.RuntimeConfigApplied
 	writeJSON(w, http.StatusOK, runtimeConfigEntryResponse{
-		Key:            def.Key,
-		Label:          def.Label,
-		Description:    def.Description,
-		Category:       def.Category,
-		Kind:           def.Kind,
-		DefaultValue:   append(json.RawMessage(nil), def.Default...),
-		DesiredValue:   append(json.RawMessage(nil), req.Value...),
-		EffectiveValue: append(json.RawMessage(nil), req.Value...),
-		Source:         "operator",
-		ApplyMode:      string(def.ApplyMode),
-		Mutable:        def.Mutable,
-		Sensitive:      def.Sensitive,
-		Status:         string(state.RuntimeConfigApplied),
-		Version:        row.Version,
-		UpdatedAt:      row.UpdatedAt.UTC().Format(time.RFC3339),
-		AppliedAt:      nowUTCString(),
+		Key:               def.Key,
+		Label:             def.Label,
+		Description:       def.Description,
+		Category:          def.Category,
+		Kind:              def.Kind,
+		DefaultValue:      append(json.RawMessage(nil), def.Default...),
+		DesiredValue:      append(json.RawMessage(nil), req.Value...),
+		EffectiveValue:    append(json.RawMessage(nil), req.Value...),
+		Source:            "operator",
+		ApplyMode:         string(def.ApplyMode),
+		ControllerEnabled: def.ControllerEnabled,
+		Mutable:           def.Mutable,
+		Sensitive:         def.Sensitive,
+		Status:            string(state.RuntimeConfigApplied),
+		Version:           row.Version,
+		UpdatedAt:         row.UpdatedAt.UTC().Format(time.RFC3339),
+		AppliedAt:         nowUTCString(),
 	})
 }
 
@@ -380,7 +405,8 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		DesiredValue:   append(json.RawMessage(nil), row.DesiredValue...),
 		EffectiveValue: append(json.RawMessage(nil), row.EffectiveValue...),
 		Source:         "operator", ApplyMode: string(def.ApplyMode), Mutable: def.Mutable,
-		Sensitive: def.Sensitive, Status: string(state.RuntimeConfigApplied),
+		ControllerEnabled: def.ControllerEnabled,
+		Sensitive:         def.Sensitive, Status: string(state.RuntimeConfigApplied),
 		Version: row.Version, UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339), AppliedAt: nowUTCString(),
 	})
 }

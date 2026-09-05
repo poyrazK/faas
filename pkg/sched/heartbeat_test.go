@@ -324,14 +324,10 @@ func TestHeartbeat_DeadNodeFlipsInactive(t *testing.T) {
 	}
 }
 
-// TestHeartbeat_NoActiveNodesIsNoOp pins the empty-fleet case: a
-// Tick with no active compute_nodes (e.g. an admin deactivated the
-// synthetic default-local before the loop ever saw it) must not
-// error and must not call Dial. This protects the very first Tick
-// after schedd starts when the migration seed hasn't landed yet
-// (CI flakes on a slow migration apply would otherwise trigger a
-// loop of errors).
-func TestHeartbeat_NoActiveNodesIsNoOp(t *testing.T) {
+// TestHeartbeat_ProbesUnavailableNodes pins the recovery path: an
+// unavailable node is outside the admitting set but must remain in the
+// heartbeat sweep so a later successful probe can move it to recovering.
+func TestHeartbeat_ProbesUnavailableNodes(t *testing.T) {
 	store := state.NewMemStore()
 	seeded, err := store.ActiveComputeNodes(context.Background())
 	if err != nil {
@@ -347,8 +343,47 @@ func TestHeartbeat_NoActiveNodesIsNoOp(t *testing.T) {
 	if err := h.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if got := len(dialer.dials); got != 0 {
-		t.Errorf("Dial calls = %d, want 0 on empty active set", got)
+	if got := len(dialer.dials); got != len(seeded) {
+		t.Errorf("Dial calls = %d, want %d recovery probes", got, len(seeded))
+	}
+	for _, n := range seeded {
+		recovered, err := store.ComputeNodeByID(context.Background(), n.ID)
+		if err != nil {
+			t.Fatalf("ComputeNodeByID(%s): %v", n.ID, err)
+		}
+		if recovered.Lifecycle != state.NodeLifecycleRecovering || !recovered.Active {
+			t.Errorf("node %s lifecycle=%q active=%v, want recovering/true", n.ID, recovered.Lifecycle, recovered.Active)
+		}
+	}
+}
+
+func TestHeartbeat_ProbesUnavailableNodesWithStaleHeartbeat(t *testing.T) {
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+		Name:            "stale-unavailable",
+		TargetURL:       "tcp://10.0.0.9:50051",
+		Lifecycle:       state.NodeLifecycleUnavailable,
+		Active:          false,
+		LastHeartbeatAt: time.Now().Add(-10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	dialer := &heartbeatFakeDialer{}
+	h := NewHeartbeat(store, dialer, nil, nil).WithOwnerNodeID(node.ID)
+	h.Staleness = time.Minute
+	if err := h.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := len(dialer.dials); got != 1 {
+		t.Fatalf("Dial calls = %d, want 1 for stale unavailable node", got)
+	}
+	recovered, err := store.ComputeNodeByID(context.Background(), node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if recovered.Lifecycle != state.NodeLifecycleRecovering || !recovered.Active {
+		t.Fatalf("node lifecycle=%q active=%v, want recovering/true", recovered.Lifecycle, recovered.Active)
 	}
 }
 
@@ -427,7 +462,7 @@ func TestHeartbeat_TableDriven(t *testing.T) {
 				deadAfter.Active, liveAfter.Active, liveAfter.LastHeartbeatAt)
 		}
 	})
-	t.Run("no active nodes is no-op", func(t *testing.T) {
+	t.Run("unavailable nodes are probed for recovery", func(t *testing.T) {
 		store := state.NewMemStore()
 		seeded, _ := store.ActiveComputeNodes(context.Background())
 		for _, n := range seeded {
@@ -438,8 +473,8 @@ func TestHeartbeat_TableDriven(t *testing.T) {
 		if err := h.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
-		if got := len(dialer.dials); got != 0 {
-			t.Errorf("Dial calls = %d, want 0", got)
+		if got := len(dialer.dials); got != len(seeded) {
+			t.Errorf("Dial calls = %d, want %d recovery probes", got, len(seeded))
 		}
 	})
 	t.Run("dial-error flips inactive, others still pinged", func(t *testing.T) {
@@ -606,9 +641,11 @@ func TestHeartbeat_RecoveryLeavesOperatorDrainedNodesAlone(t *testing.T) {
 		t.Fatalf("CreateComputeNode: %v", err)
 	}
 	// The operator drains it. It is perfectly reachable — the dialer
-	// has no error for its target — it is simply not wanted.
-	if err := store.SetComputeNodeActive(ctx, drained.ID, false); err != nil {
-		t.Fatalf("SetComputeNodeActive: %v", err)
+	// has no error for its target — it is simply not wanted. The
+	// lifecycle API distinguishes this durable operator intent from
+	// the legacy active=false/watchdog-unavailable transition.
+	if err := store.NodeSetLifecycle(ctx, drained.ID, state.NodeLifecycleActive, state.NodeLifecycleDraining); err != nil {
+		t.Fatalf("NodeSetLifecycle: %v", err)
 	}
 
 	h := NewHeartbeat(store, &heartbeatFakeDialer{}, nil, nil)

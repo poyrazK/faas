@@ -55,8 +55,8 @@ class CreateDeploymentRequest:
     """Up to 2 stateless sidecars (1 init + 1 sidecar). nil/omitted = no sidecars. See ADR-068 for the hard 2-cap
     and stateless-only contract."""
     workflows: list[WorkflowSpec] | Unset = UNSET
-    """Workflow DAG definitions for this deployment. Paid-plan only; runtime deployment persistence is staged
-    separately."""
+    """Workflow DAG definitions for this deployment. Paid-plan only; persisted with the deployment and snapshotted
+    at run start."""
     traffic_percent: int | None | Unset = UNSET
     """Per-deployment traffic-split weight (issue #556 PR-A). nil = server default 100; explicit 0..100 = opt into
     canary (Pro/Scale only)."""

@@ -149,7 +149,7 @@ func TestMigrateInstanceOwner_HappyPath(t *testing.T) {
 	if err := store.MarkInstanceMigrating(ctx, insID, "dying", "lease-1"); err != nil {
 		t.Fatalf("MarkInstanceMigrating: %v", err)
 	}
-	lease := "lease-" + uuid.NewString()
+	lease := "lease-1"
 	if err := store.MigrateInstanceOwner(ctx, insID, "dying", "new-owner", lease); err != nil {
 		t.Fatalf("MigrateInstanceOwner: %v", err)
 	}

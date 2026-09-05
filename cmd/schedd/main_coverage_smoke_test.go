@@ -55,7 +55,7 @@ func TestEnvOrAndDefaultDeps(t *testing.T) {
 	if deps.listen == nil {
 		t.Errorf("defaultDeps.listen is nil")
 	}
-	// The seven subscribe* seams must all be populated (production
+	// The subscribe* seams must all be populated (production
 	// wiring; tests inject fakes via runDeps).
 	wireCount := 0
 	for _, f := range []any{
@@ -63,7 +63,6 @@ func TestEnvOrAndDefaultDeps(t *testing.T) {
 		deps.subscribeEgressDrift,
 		deps.subscribePlacementClaim,
 		deps.subscribeRebalancer,
-		deps.subscribeLiveMigrator,
 		deps.subscribeNodeKeyChanges,
 		deps.subscribeRouterRefresh,
 		deps.subscribeAppDelete,
@@ -72,8 +71,8 @@ func TestEnvOrAndDefaultDeps(t *testing.T) {
 			wireCount++
 		}
 	}
-	if wireCount != 8 {
-		t.Errorf("defaultDeps subscribe seams populated = %d, want 8", wireCount)
+	if wireCount != 7 {
+		t.Errorf("defaultDeps subscribe seams populated = %d, want 7", wireCount)
 	}
 }
 

@@ -84,9 +84,12 @@ The byte cap is enforced BEFORE the row hits PG (defense in depth —
 `PutAppEnvRequest.Validate` checks against `limits.EnvValueMaxBytes`,
 mirroring the `PutAppSecretRequest` seal path's pre-write check).
 
-**5. Semantics: applies on next wake (cold-boot OR snapshot-restore).**
-No snapshot invalidation, no new vmmd RPC, no in-place env update
-of a running instance. Wire contract: schedd's `Engine.Wake` loads
+**5. Semantics: applies on the next cold wake.**
+There is no in-place env update of a running instance. When an env row is
+changed, apid marks every restorable snapshot for every deployment of the app
+stale. This covers traffic splits and rollback windows, so the next wake
+cannot restore a process image carrying the old environment.
+The wake then cold-boots and stages the new file. Wire contract: schedd's `Engine.Wake` loads
 `ListAppEnv` at line 516 (and the prime path at line 897) and
 threads the rows through the existing `AppSpec.APIEnv` field into
 the `vmmdpb.AppSpec.api_env` proto field (#9). vmmd's

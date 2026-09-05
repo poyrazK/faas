@@ -141,6 +141,38 @@ func TestMigrationTracker_ListExpiredEmpty(t *testing.T) {
 	}
 }
 
+func TestMigrationTracker_DeleteByLeaseTokenDoesNotDeleteReplacement(t *testing.T) {
+	now := time.Now().UTC()
+	tr := newMigrationTracker()
+	old := &activeMigration{
+		instanceID:     "inst-replaced",
+		leaseToken:     "old-token",
+		leaseExpiresAt: now.Add(-time.Minute),
+	}
+	if err := tr.put(old); err != nil {
+		t.Fatalf("put old: %v", err)
+	}
+	expired := tr.listExpired(now)
+	if len(expired) != 1 {
+		t.Fatalf("listExpired = %d, want 1", len(expired))
+	}
+	tr.delete(old.instanceID)
+	replacement := &activeMigration{
+		instanceID:     old.instanceID,
+		leaseToken:     "new-token",
+		leaseExpiresAt: now.Add(time.Minute),
+	}
+	if err := tr.put(replacement); err != nil {
+		t.Fatalf("put replacement: %v", err)
+	}
+	if tr.deleteByLeaseToken(expired[0].leaseToken) {
+		t.Fatal("deleteByLeaseToken(old) = true, want false after replacement")
+	}
+	if _, err := tr.get(replacement.instanceID, replacement.leaseToken); err != nil {
+		t.Fatalf("replacement lease was deleted: %v", err)
+	}
+}
+
 // TestErrAlreadyActive_Message — pins the user-visible error
 // string. Phase-1 / Phase-3 callers log this verbatim; a string
 // change breaks log-grep tooling.

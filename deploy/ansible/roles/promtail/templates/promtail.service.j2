@@ -1,0 +1,36 @@
+[Unit]
+Description=Promtail journald shipper for Gregale
+Documentation=https://grafana.com/docs/loki/latest/send-data/promtail/
+Wants=network-online.target
+After=network-online.target faas-apid.service faas-schedd.service faas-meterd.service faas-gatewayd-public.service faas-gatewayd-internal.service faas-githubd.service faas-vmmd.service faas-imaged.service faas-builderd.service prometheus.service alertmanager.service grafana-server.service node_exporter.service
+
+[Service]
+User=promtail
+Group=promtail
+SupplementaryGroups=systemd-journal
+Type=simple
+ExecStart=/usr/local/bin/promtail --config.file={{ promtail_config_path }}
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+MemoryMax=256M
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/faas
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/run/log/journal /var/log/journal
+ReadWritePaths=/var/lib/promtail
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
