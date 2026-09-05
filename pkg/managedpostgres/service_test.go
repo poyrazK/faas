@@ -82,7 +82,7 @@ func testSpec() Spec {
 	}
 }
 
-func testRegistry(t *testing.T, provider *fakeProvider, mutate func(*Config)) *Registry {
+func testRegistry(t *testing.T, provider Provider, mutate func(*Config)) *Registry {
 	t.Helper()
 	config := Config{
 		DefaultRegion:          "us-east-1",
@@ -113,7 +113,11 @@ func testService(t *testing.T, registry *Registry, store Store) *Service {
 	t.Helper()
 	sequence := 0
 	service, err := NewService(registry, store, ServiceOptions{
-		Now: func() time.Time { return time.Date(2026, 9, 5, 12, 0, sequence, 0, time.UTC) },
+		PollInterval: time.Second,
+		Now: func() time.Time {
+			sequence++
+			return time.Date(2026, 9, 5, 12, 0, sequence, 0, time.UTC)
+		},
 		NewID: func() string {
 			sequence++
 			return fmt.Sprintf("database-%d", sequence)

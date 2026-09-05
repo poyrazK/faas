@@ -12,11 +12,14 @@ import (
 const (
 	defaultLeaseDuration   = 2 * time.Minute
 	defaultProviderTimeout = 30 * time.Second
+	defaultPollInterval    = 15 * time.Second
+	defaultStoreTimeout    = 5 * time.Second
 )
 
 type ServiceOptions struct {
 	LeaseDuration   time.Duration
 	ProviderTimeout time.Duration
+	PollInterval    time.Duration
 	Now             func() time.Time
 	NewID           func() string
 	NewLeaseToken   func() string
@@ -27,6 +30,7 @@ type Service struct {
 	store           Store
 	leaseDuration   time.Duration
 	providerTimeout time.Duration
+	pollInterval    time.Duration
 	now             func() time.Time
 	newID           func() string
 	newLeaseToken   func() string
@@ -48,7 +52,10 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 	if options.ProviderTimeout == 0 {
 		options.ProviderTimeout = defaultProviderTimeout
 	}
-	if options.LeaseDuration < time.Second || options.ProviderTimeout < time.Second {
+	if options.PollInterval == 0 {
+		options.PollInterval = defaultPollInterval
+	}
+	if options.LeaseDuration < time.Second || options.ProviderTimeout < time.Second || options.PollInterval < time.Second {
 		return nil, ErrInvalid
 	}
 	if options.Now == nil {
@@ -65,6 +72,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		store:           store,
 		leaseDuration:   options.LeaseDuration,
 		providerTimeout: options.ProviderTimeout,
+		pollInterval:    options.PollInterval,
 		now:             options.Now,
 		newID:           options.NewID,
 		newLeaseToken:   options.NewLeaseToken,
@@ -137,18 +145,18 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	default:
 		return Database{}, ErrConflict
 	}
-	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
-	if err != nil {
-		return Database{}, err
-	}
-	if err := backend.Capabilities.Supports(database.Spec); err != nil {
-		return Database{}, err
-	}
 	now := s.now()
 	leaseToken := s.newLeaseToken()
 	database, err = s.store.Claim(ctx, accountID, databaseID, leaseToken, StateProvisioning, now, now.Add(s.leaseDuration))
 	if err != nil {
 		return Database{}, err
+	}
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return Database{}, s.releaseKnownError(ctx, database, StateFailed, "backend_unavailable", ErrUnavailable, time.Hour)
+	}
+	if err := backend.Capabilities.Supports(database.Spec); err != nil {
+		return Database{}, s.releaseKnownError(ctx, database, StateFailed, "unsupported", err, time.Hour)
 	}
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
@@ -163,7 +171,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 			if observed.ProviderResourceID == "" {
 				err = ErrUnavailable
 			} else {
-				err = s.store.RecordProviderResource(ctx, database.ID, leaseToken, observed.ProviderResourceID, s.now())
+				err = s.recordProviderResource(ctx, database.ID, leaseToken, observed.ProviderResourceID)
 				database.ProviderResourceID = observed.ProviderResourceID
 			}
 		}
@@ -179,29 +187,23 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		}
 	}
 	if err != nil {
-		return Database{}, s.releaseProviderError(ctx, database.ID, leaseToken, StateProvisioning, err)
+		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
 	switch observed.Status {
 	case ProviderStatusPending, ProviderStatusDeleting:
-		if err := s.store.Release(ctx, database.ID, leaseToken, StateProvisioning, "", s.now()); err != nil {
+		if err := s.release(ctx, database.ID, leaseToken, StateProvisioning, "", s.pollInterval); err != nil {
 			return Database{}, err
 		}
 		return s.store.Get(ctx, accountID, databaseID)
 	case ProviderStatusReady:
 		if observed.Spec != database.Spec {
-			if releaseErr := s.store.Release(ctx, database.ID, leaseToken, StateFailed, "spec_mismatch", s.now()); releaseErr != nil {
-				return Database{}, releaseErr
-			}
-			return Database{}, ErrConflict
+			return Database{}, s.releaseKnownError(ctx, database, StateFailed, "spec_mismatch", ErrConflict, time.Hour)
 		}
-		return s.store.FinishProvision(ctx, database.ID, leaseToken, s.now())
+		return s.finishProvision(ctx, database.ID, leaseToken)
 	case ProviderStatusFailed:
-		if releaseErr := s.store.Release(ctx, database.ID, leaseToken, StateFailed, "provider_failed", s.now()); releaseErr != nil {
-			return Database{}, releaseErr
-		}
-		return Database{}, ErrUnavailable
+		return Database{}, s.releaseKnownError(ctx, database, StateFailed, "provider_failed", ErrUnavailable, time.Hour)
 	default:
-		return Database{}, s.releaseProviderError(ctx, database.ID, leaseToken, StateFailed, ErrUnavailable)
+		return Database{}, s.releaseProviderError(ctx, database, StateFailed, ErrUnavailable)
 	}
 }
 
@@ -220,14 +222,11 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 		return Database{}, err
 	}
 	if database.ProviderResourceID == "" {
-		return s.store.FinishDelete(ctx, database.ID, leaseToken, s.now())
+		return s.finishDelete(ctx, database.ID, leaseToken)
 	}
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {
-		if releaseErr := s.store.Release(ctx, database.ID, leaseToken, StateDeleting, "backend_unavailable", s.now()); releaseErr != nil {
-			return Database{}, errors.Join(err, releaseErr)
-		}
-		return Database{}, err
+		return Database{}, s.releaseKnownError(ctx, database, StateDeleting, "backend_unavailable", ErrUnavailable, time.Hour)
 	}
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
@@ -240,15 +239,15 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 		err = nil
 	}
 	if err != nil {
-		return Database{}, s.releaseProviderError(ctx, database.ID, leaseToken, StateDeleting, err)
+		return Database{}, s.releaseProviderError(ctx, database, StateDeleting, err)
 	}
 	if !result.Done {
-		if err := s.store.Release(ctx, database.ID, leaseToken, StateDeleting, "", s.now()); err != nil {
+		if err := s.release(ctx, database.ID, leaseToken, StateDeleting, "", s.pollInterval); err != nil {
 			return Database{}, err
 		}
 		return s.store.Get(ctx, accountID, databaseID)
 	}
-	return s.store.FinishDelete(ctx, database.ID, leaseToken, s.now())
+	return s.finishDelete(ctx, database.ID, leaseToken)
 }
 
 func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Database, error) {
@@ -262,10 +261,50 @@ func (s *Service) List(ctx context.Context, accountID string) ([]Database, error
 	return s.store.List(ctx, accountID)
 }
 
-func (s *Service) releaseProviderError(ctx context.Context, databaseID, leaseToken string, next State, providerErr error) error {
+func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {
 	normalized := normalizeProviderError(providerErr)
-	if err := s.store.Release(ctx, databaseID, leaseToken, next, providerErrorCode(providerErr), s.now()); err != nil {
-		return errors.Join(normalized, fmt.Errorf("release managed postgres lease: %w", err))
+	return s.releaseKnownError(ctx, database, next, providerErrorCode(providerErr), normalized, retryDelay(normalized, database.AttemptCount))
+}
+
+func (s *Service) releaseKnownError(ctx context.Context, database Database, next State, code string, operationErr error, delay time.Duration) error {
+	if err := s.release(ctx, database.ID, database.LeaseToken, next, code, delay); err != nil {
+		return errors.Join(operationErr, fmt.Errorf("release managed postgres lease: %w", err))
 	}
-	return normalized
+	return operationErr
+}
+
+func (s *Service) release(ctx context.Context, databaseID, leaseToken string, next State, code string, delay time.Duration) error {
+	now := s.now()
+	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+	defer cancel()
+	return s.store.Release(finishContext, databaseID, leaseToken, next, code, now, now.Add(delay))
+}
+
+func (s *Service) recordProviderResource(ctx context.Context, databaseID, leaseToken, providerResourceID string) error {
+	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+	defer cancel()
+	return s.store.RecordProviderResource(finishContext, databaseID, leaseToken, providerResourceID, s.now())
+}
+
+func (s *Service) finishProvision(ctx context.Context, databaseID, leaseToken string) (Database, error) {
+	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+	defer cancel()
+	return s.store.FinishProvision(finishContext, databaseID, leaseToken, s.now())
+}
+
+func (s *Service) finishDelete(ctx context.Context, databaseID, leaseToken string) (Database, error) {
+	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+	defer cancel()
+	return s.store.FinishDelete(finishContext, databaseID, leaseToken, s.now())
+}
+
+func retryDelay(err error, attempt int32) time.Duration {
+	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrQuotaExceeded) {
+		return time.Hour
+	}
+	delay := 30 * time.Second
+	for i := int32(1); i < attempt && delay < 15*time.Minute; i++ {
+		delay *= 2
+	}
+	return min(delay, 15*time.Minute)
 }

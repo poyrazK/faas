@@ -315,6 +315,8 @@ type Database struct {
 	LastErrorCode      string
 	LeaseToken         string
 	LeaseUntil         time.Time
+	AttemptCount       int32
+	RetryAt            time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	DeletedAt          *time.Time
@@ -359,10 +361,11 @@ type Store interface {
 	FindByName(context.Context, string, string) (Database, error)
 	Get(context.Context, string, string) (Database, error)
 	List(context.Context, string) ([]Database, error)
+	Due(context.Context, bool, int, time.Time) ([]Database, error)
 	Claim(context.Context, string, string, string, State, time.Time, time.Time) (Database, error)
 	RecordProviderResource(context.Context, string, string, string, time.Time) error
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
-	Release(context.Context, string, string, State, string, time.Time) error
+	Release(context.Context, string, string, State, string, time.Time, time.Time) error
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
 }
 
@@ -372,6 +375,14 @@ func ValidName(name string) bool {
 	}
 	validName := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	return validName.MatchString(name)
+}
+
+func validErrorCode(code string) bool {
+	if code == "" {
+		return true
+	}
+	validCode := regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+	return validCode.MatchString(code)
 }
 
 func normalizeProviderError(err error) error {
