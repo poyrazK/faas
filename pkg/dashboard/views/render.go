@@ -355,5 +355,9 @@ func RenderUsageSparkline(points []appmetrics.SparklinePoint, width, height int)
 		b.WriteString(line)
 	}
 	b.WriteString(`</svg>`)
+	//nolint:gosec // G203: b.String() is a fixed-shape SVG built from
+	// floats + ints (sparkline points) + escaped aria-label + compile-time
+	// colour constants. No user-supplied string flows through. The
+	// template.HTML cast is load-bearing for embedding the SVG.
 	return template.HTML(b.String())
 }
