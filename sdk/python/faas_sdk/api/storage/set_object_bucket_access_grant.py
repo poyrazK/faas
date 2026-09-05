@@ -6,47 +6,43 @@ from uuid import UUID
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.list_bucket_objects_response_200 import ListBucketObjectsResponse200
+from ...models.object_bucket_access_grant import ObjectBucketAccessGrant
 from ...models.problem import Problem
-from ...types import UNSET, Response, Unset
+from ...models.set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
+from ...types import Response
 
 
 def _get_kwargs(
     slug: str,
     bucket: UUID,
+    key: UUID,
     *,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
+    body: SetObjectBucketAccessGrantRequest,
 ) -> dict[str, Any]:
-
-    params: dict[str, Any] = {}
-
-    params["prefix"] = prefix
-
-    params["cursor"] = cursor
-
-    params["limit"] = limit
-
-    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/apps/{slug}/buckets/{bucket}/objects".format(
+        "method": "put",
+        "url": "/v1/apps/{slug}/buckets/{bucket}/access-grants/{key}".format(
             slug=quote(str(slug), safe=""),
             bucket=quote(str(bucket), safe=""),
+            key=quote(str(key), safe=""),
         ),
-        "params": params,
     }
 
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ListBucketObjectsResponse200 | Problem:
+) -> ObjectBucketAccessGrant | Problem:
     if response.status_code == 200:
-        response_200 = ListBucketObjectsResponse200.from_dict(response.json())
+        response_200 = ObjectBucketAccessGrant.from_dict(response.json())
 
         return response_200
 
@@ -57,7 +53,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ListBucketObjectsResponse200 | Problem]:
+) -> Response[ObjectBucketAccessGrant | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -69,38 +65,36 @@ def _build_response(
 def sync_detailed(
     slug: str,
     bucket: UUID,
+    key: UUID,
     *,
     client: AuthenticatedClient | Client,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
-) -> Response[ListBucketObjectsResponse200 | Problem]:
-    """List objects with opaque cursor pagination
+    body: SetObjectBucketAccessGrantRequest,
+) -> Response[ObjectBucketAccessGrant | Problem]:
+    """Create or replace an API-key grant for a bucket
 
-     Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+     Requires storage:manage or admin. The target key must be active or in grace and carry the storage
+    scopes needed by the requested permission. Admin keys do not need and cannot receive grants.
 
     Args:
         slug (str):
         bucket (UUID):
-        prefix (str | Unset):
-        cursor (str | Unset):
-        limit (int | Unset):  Default: 100.
+        key (UUID):
+        body (SetObjectBucketAccessGrantRequest): Desired data-plane permission for the target API
+            key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ListBucketObjectsResponse200 | Problem]
+        Response[ObjectBucketAccessGrant | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
         bucket=bucket,
-        prefix=prefix,
-        cursor=cursor,
-        limit=limit,
+        key=key,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -113,77 +107,73 @@ def sync_detailed(
 def sync(
     slug: str,
     bucket: UUID,
+    key: UUID,
     *,
     client: AuthenticatedClient | Client,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
-) -> ListBucketObjectsResponse200 | Problem | None:
-    """List objects with opaque cursor pagination
+    body: SetObjectBucketAccessGrantRequest,
+) -> ObjectBucketAccessGrant | Problem | None:
+    """Create or replace an API-key grant for a bucket
 
-     Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+     Requires storage:manage or admin. The target key must be active or in grace and carry the storage
+    scopes needed by the requested permission. Admin keys do not need and cannot receive grants.
 
     Args:
         slug (str):
         bucket (UUID):
-        prefix (str | Unset):
-        cursor (str | Unset):
-        limit (int | Unset):  Default: 100.
+        key (UUID):
+        body (SetObjectBucketAccessGrantRequest): Desired data-plane permission for the target API
+            key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ListBucketObjectsResponse200 | Problem
+        ObjectBucketAccessGrant | Problem
     """
 
     return sync_detailed(
         slug=slug,
         bucket=bucket,
+        key=key,
         client=client,
-        prefix=prefix,
-        cursor=cursor,
-        limit=limit,
+        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
     slug: str,
     bucket: UUID,
+    key: UUID,
     *,
     client: AuthenticatedClient | Client,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
-) -> Response[ListBucketObjectsResponse200 | Problem]:
-    """List objects with opaque cursor pagination
+    body: SetObjectBucketAccessGrantRequest,
+) -> Response[ObjectBucketAccessGrant | Problem]:
+    """Create or replace an API-key grant for a bucket
 
-     Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+     Requires storage:manage or admin. The target key must be active or in grace and carry the storage
+    scopes needed by the requested permission. Admin keys do not need and cannot receive grants.
 
     Args:
         slug (str):
         bucket (UUID):
-        prefix (str | Unset):
-        cursor (str | Unset):
-        limit (int | Unset):  Default: 100.
+        key (UUID):
+        body (SetObjectBucketAccessGrantRequest): Desired data-plane permission for the target API
+            key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ListBucketObjectsResponse200 | Problem]
+        Response[ObjectBucketAccessGrant | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
         bucket=bucket,
-        prefix=prefix,
-        cursor=cursor,
-        limit=limit,
+        key=key,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -194,39 +184,37 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     bucket: UUID,
+    key: UUID,
     *,
     client: AuthenticatedClient | Client,
-    prefix: str | Unset = UNSET,
-    cursor: str | Unset = UNSET,
-    limit: int | Unset = 100,
-) -> ListBucketObjectsResponse200 | Problem | None:
-    """List objects with opaque cursor pagination
+    body: SetObjectBucketAccessGrantRequest,
+) -> ObjectBucketAccessGrant | Problem | None:
+    """Create or replace an API-key grant for a bucket
 
-     Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this
-    bucket.
+     Requires storage:manage or admin. The target key must be active or in grace and carry the storage
+    scopes needed by the requested permission. Admin keys do not need and cannot receive grants.
 
     Args:
         slug (str):
         bucket (UUID):
-        prefix (str | Unset):
-        cursor (str | Unset):
-        limit (int | Unset):  Default: 100.
+        key (UUID):
+        body (SetObjectBucketAccessGrantRequest): Desired data-plane permission for the target API
+            key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ListBucketObjectsResponse200 | Problem
+        ObjectBucketAccessGrant | Problem
     """
 
     return (
         await asyncio_detailed(
             slug=slug,
             bucket=bucket,
+            key=key,
             client=client,
-            prefix=prefix,
-            cursor=cursor,
-            limit=limit,
+            body=body,
         )
     ).parsed

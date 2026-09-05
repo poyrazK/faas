@@ -63,8 +63,9 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Delete one object by exact key
 
-     Requires deploy:write or admin. With provider-side versioning this may create a delete marker;
-    version management is not part of this preview.
+     Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this
+    bucket. With provider-side versioning this may create a delete marker; version management is not
+    part of this preview.
 
     Args:
         slug (str):
@@ -101,8 +102,9 @@ def sync(
 ) -> Any | Problem | None:
     """Delete one object by exact key
 
-     Requires deploy:write or admin. With provider-side versioning this may create a delete marker;
-    version management is not part of this preview.
+     Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this
+    bucket. With provider-side versioning this may create a delete marker; version management is not
+    part of this preview.
 
     Args:
         slug (str):
@@ -134,8 +136,9 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Delete one object by exact key
 
-     Requires deploy:write or admin. With provider-side versioning this may create a delete marker;
-    version management is not part of this preview.
+     Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this
+    bucket. With provider-side versioning this may create a delete marker; version management is not
+    part of this preview.
 
     Args:
         slug (str):
@@ -170,8 +173,9 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Delete one object by exact key
 
-     Requires deploy:write or admin. With provider-side versioning this may create a delete marker;
-    version management is not part of this preview.
+     Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this
+    bucket. With provider-side versioning this may create a delete marker; version management is not
+    part of this preview.
 
     Args:
         slug (str):

@@ -114,6 +114,13 @@ func (m *MemStore) FinishObjectBucket(_ context.Context, id, token, next string)
 	b.State, b.LeaseToken, b.LeaseUntil, b.UpdatedAt = next, "", time.Time{}, time.Now().UTC()
 	b.AttemptCount, b.LastErrorCode, b.RetryAt = 0, "", b.UpdatedAt
 	m.objectBuckets[id] = b
+	if next == "deleted" {
+		for key, grant := range m.objectAccessGrants {
+			if grant.BucketID == id {
+				delete(m.objectAccessGrants, key)
+			}
+		}
+	}
 	return nil
 }
 

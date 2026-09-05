@@ -111,6 +111,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 142 | Timestamp migration IDs + post-cutover out-of-order apply; freezes legacy 1–590 and retires slot reservations | accepted | migration concurrency; supersedes ADR-041 for new migrations |
 | 146 | [OCI platform selection](146-oci-platform-selection.md): shared Linux/amd64 resolution and immutable source/child references | accepted | container compatibility; index-aware image preflight and deployment |
 | 147 | Full-rootfs fallback for arbitrary OCI images: paid-plan all-layer ext4 assembly, marker-based direct pivot, bounded named-user lookup, and direct-root sidecars | accepted | container compatibility; migration `20260905110000000_deployment_full_rootfs_columns.sql` |
+| 157 | [Provider-neutral object-storage access grants](157-object-storage-access-control.md): separate storage manage/read/write scopes plus explicit per-bucket API-key grants; rotation inheritance; no provider-native credentials | accepted | object-storage application access; migration `20260905200000000_object_storage_access_control.sql`; extends ADR-151 and ADR-156 |
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work

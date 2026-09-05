@@ -30,10 +30,8 @@ class APIKeyExportResponse:
     id: str
     prefix: str
     scopes: list[APIKeyExportResponseScopesItem]
-    """Permission set attached to the key. Closed vocabulary (IAM-1, ADR-034 rev2): `admin` is the legacy full-
-    access scope; `apps:read` covers GETs across the apps/deployments/audit/secrets-list surface; `deploy:write`
-    covers POST/PUT/PATCH/DELETE on apps+queues; `secrets:write` covers PUT/DELETE on /apps/{slug}/secrets/{key};
-    `usage:read` covers GET /v1/usage*."""
+    """Permission set attached to the exported key. Object-storage data scopes additionally require an explicit
+    per-bucket grant; admin remains full access."""
     created_at: datetime.datetime
     label: None | str | Unset = UNSET
     last_used_at: datetime.datetime | None | Unset = UNSET

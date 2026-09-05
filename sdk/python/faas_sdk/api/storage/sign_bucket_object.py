@@ -67,7 +67,8 @@ def sync_detailed(
 ) -> Response[ObjectSignedRequest | Problem]:
     """Issue a short-lived direct upload or download URL
 
-     GET requires apps:read or admin; PUT requires deploy:write or admin.
+     GET requires storage:read or admin; PUT requires storage:write or admin.
+    Non-admin keys also require a matching per-bucket grant.
     PUT must declare size_bytes, enforced by signed length (or an empty-body
     digest for zero bytes). These reusable bearer URLs expire within 15
     minutes and are not retained by the API idempotency cache. Send only
@@ -109,7 +110,8 @@ def sync(
 ) -> ObjectSignedRequest | Problem | None:
     """Issue a short-lived direct upload or download URL
 
-     GET requires apps:read or admin; PUT requires deploy:write or admin.
+     GET requires storage:read or admin; PUT requires storage:write or admin.
+    Non-admin keys also require a matching per-bucket grant.
     PUT must declare size_bytes, enforced by signed length (or an empty-body
     digest for zero bytes). These reusable bearer URLs expire within 15
     minutes and are not retained by the API idempotency cache. Send only
@@ -146,7 +148,8 @@ async def asyncio_detailed(
 ) -> Response[ObjectSignedRequest | Problem]:
     """Issue a short-lived direct upload or download URL
 
-     GET requires apps:read or admin; PUT requires deploy:write or admin.
+     GET requires storage:read or admin; PUT requires storage:write or admin.
+    Non-admin keys also require a matching per-bucket grant.
     PUT must declare size_bytes, enforced by signed length (or an empty-body
     digest for zero bytes). These reusable bearer URLs expire within 15
     minutes and are not retained by the API idempotency cache. Send only
@@ -186,7 +189,8 @@ async def asyncio(
 ) -> ObjectSignedRequest | Problem | None:
     """Issue a short-lived direct upload or download URL
 
-     GET requires apps:read or admin; PUT requires deploy:write or admin.
+     GET requires storage:read or admin; PUT requires storage:write or admin.
+    Non-admin keys also require a matching per-bucket grant.
     PUT must declare size_bytes, enforced by signed length (or an empty-body
     digest for zero bytes). These reusable bearer URLs expire within 15
     minutes and are not retained by the API idempotency cache. Send only

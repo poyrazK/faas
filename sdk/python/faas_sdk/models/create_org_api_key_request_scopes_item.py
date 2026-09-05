@@ -1,7 +1,20 @@
 from typing import Literal
 
 CreateOrgAPIKeyRequestScopesItem = Literal[
-    "admin", "apps:read", "deploy:write", "env:read", "env:write", "secrets:read", "secrets:write", "usage:read"
+    "admin",
+    "apps:read",
+    "deploy:write",
+    "env:read",
+    "env:write",
+    "registry_credentials:read",
+    "registry_credentials:write",
+    "secrets:read",
+    "secrets:write",
+    "storage:manage",
+    "storage:read",
+    "storage:write",
+    "upstreams:write",
+    "usage:read",
 ]
 
 CREATE_ORG_API_KEY_REQUEST_SCOPES_ITEM_VALUES: set[CreateOrgAPIKeyRequestScopesItem] = {
@@ -10,8 +23,14 @@ CREATE_ORG_API_KEY_REQUEST_SCOPES_ITEM_VALUES: set[CreateOrgAPIKeyRequestScopesI
     "deploy:write",
     "env:read",
     "env:write",
+    "registry_credentials:read",
+    "registry_credentials:write",
     "secrets:read",
     "secrets:write",
+    "storage:manage",
+    "storage:read",
+    "storage:write",
+    "upstreams:write",
     "usage:read",
 }
 

@@ -235,6 +235,8 @@ export type { MirrorRuleResponse } from './models/MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './models/MirrorSummaryResponse.js';
 export type { OAuthProviderCapability } from './models/OAuthProviderCapability.js';
 export type { ObjectBucket } from './models/ObjectBucket.js';
+export type { ObjectBucketAccessGrant } from './models/ObjectBucketAccessGrant.js';
+export type { ObjectBucketAccessGrantList } from './models/ObjectBucketAccessGrantList.js';
 export type { ObjectBucketList } from './models/ObjectBucketList.js';
 export type { ObjectSignedRequest } from './models/ObjectSignedRequest.js';
 export type { ObjectSignRequest } from './models/ObjectSignRequest.js';
@@ -332,6 +334,7 @@ export type { SessionsRevokeAllResponse } from './models/SessionsRevokeAllRespon
 export type { SetAccountEgressAllowlistExtraRequest } from './models/SetAccountEgressAllowlistExtraRequest.js';
 export type { SetAppStaticEgressIPRequest } from './models/SetAppStaticEgressIPRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
+export type { SetObjectBucketAccessGrantRequest } from './models/SetObjectBucketAccessGrantRequest.js';
 export type { SetPasswordRequest } from './models/SetPasswordRequest.js';
 export type { SeverityCounts } from './models/SeverityCounts.js';
 export type { Sidecar } from './models/Sidecar.js';

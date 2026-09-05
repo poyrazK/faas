@@ -167,11 +167,36 @@ func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 		t.Fatal("cross account access", r.Code)
 	}
 	pt, hash, _ = api.GenerateAPIKey()
-	_, err = e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "read-only", []string{api.ScopeAppsRead})
+	readKey, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "read-only", []string{api.ScopeStorageRead})
 	if err != nil {
 		t.Fatal(err)
 	}
 	headers := map[string]string{"Authorization": "Bearer " + pt}
+	managerPlaintext, managerHash, _ := api.GenerateAPIKey()
+	if _, err = e.store.CreateAPIKey(context.Background(), e.acct.ID, managerHash, "storage-manager", []string{api.ScopeStorageManage}); err != nil {
+		t.Fatal(err)
+	}
+	managerHeaders := map[string]string{"Authorization": "Bearer " + managerPlaintext}
+	if r := e.do(t, "POST", sign, map[string]any{"method": "GET", "key": "file"}, headers); r.Code != 403 {
+		t.Fatal("ungranted key read bucket", r.Code, r.Body.String())
+	}
+	grantPath := path + "/" + first.ID + "/access-grants/" + readKey.ID
+	if r := e.do(t, "PUT", grantPath, api.SetObjectBucketAccessGrantRequest{Permission: api.ObjectBucketPermissionRead}, managerHeaders); r.Code != 200 {
+		t.Fatal("grant read key", r.Code, r.Body.String())
+	}
+	if r := e.do(t, "GET", path+"/"+first.ID+"/access-grants", nil, headers); r.Code != 403 {
+		t.Fatal("data key managed grants", r.Code)
+	}
+	var grantList api.ObjectBucketAccessGrantList
+	grantResponse := e.do(t, "GET", path+"/"+first.ID+"/access-grants", nil, managerHeaders)
+	if grantResponse.Code != 200 || json.Unmarshal(grantResponse.Body.Bytes(), &grantList) != nil || len(grantList.Items) != 1 {
+		t.Fatal("manager grant list", grantResponse.Code, grantResponse.Body.String())
+	}
+	var visible api.ObjectBucketList
+	visibleResponse := e.do(t, "GET", path, nil, headers)
+	if visibleResponse.Code != 200 || json.Unmarshal(visibleResponse.Body.Bytes(), &visible) != nil || len(visible.Items) != 1 || visible.Items[0].ID != first.ID {
+		t.Fatal("grant-filtered bucket list", visibleResponse.Code, visibleResponse.Body.String())
+	}
 	if r := e.do(t, "POST", sign, map[string]any{"method": "GET", "key": "file"}, headers); r.Code != 200 {
 		t.Fatal(r.Code, r.Body.String())
 	}
@@ -180,6 +205,12 @@ func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 	}
 	if r := e.do(t, "DELETE", path+"/"+first.ID, nil, headers); r.Code != 403 {
 		t.Fatal("read key deleted", r.Code)
+	}
+	if r := e.do(t, "DELETE", grantPath, nil, managerHeaders); r.Code != 204 {
+		t.Fatal("manager revoked grant", r.Code, r.Body.String())
+	}
+	if r := e.do(t, "POST", sign, map[string]any{"method": "GET", "key": "file"}, headers); r.Code != 403 {
+		t.Fatal("revoked grant still authorized", r.Code, r.Body.String())
 	}
 }
 

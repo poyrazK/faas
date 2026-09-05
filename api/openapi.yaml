@@ -285,6 +285,7 @@ paths:
     get:
       operationId: listObjectBuckets
       summary: List private object buckets and configured creation capabilities
+      description: storage:manage lists every bucket. storage:read/storage:write keys see only buckets with an explicit grant. Admin and dashboard sessions list every bucket.
       tags: [storage]
       responses:
         '200':
@@ -301,7 +302,7 @@ paths:
       operationId: createObjectBucket
       summary: Create a private bucket on the region's current default backend
       description: |
-        Requires deploy:write or admin. Idempotent by app, scope and name, not
+        Requires storage:manage or admin. Idempotent by app, scope and name, not
         by Idempotency-Key. Retry provisioning by submitting the same name and
         scope. Existing buckets retain their backend when the default changes.
       tags: [storage]
@@ -341,12 +342,72 @@ paths:
     delete:
       operationId: deleteObjectBucket
       summary: Delete an empty bucket
-      description: Requires deploy:write or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat after successful deletion returns 404.
+      description: Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat after successful deletion returns 404.
       tags: [storage]
       responses:
         '204': { description: Bucket deleted }
         default:
           description: Access denied, bucket missing/nonempty/busy, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/access-grants:
+    parameters:
+      - { name: slug, description: App containing the bucket access binding., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket whose API-key grants are being managed., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectBucketAccessGrants
+      summary: List API-key access grants for a bucket
+      description: Requires storage:manage or admin. Revoked keys remain visible until their key row is deleted.
+      tags: [storage]
+      responses:
+        '200':
+          description: Logical grants; provider credentials are never exposed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketAccessGrantList' }
+        default:
+          description: Access denied or bucket unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}:
+    parameters:
+      - { name: slug, description: App that owns the logical bucket., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket whose API-key grant is being managed., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: key, description: Account API-key identifier., in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      operationId: setObjectBucketAccessGrant
+      summary: Create or replace an API-key grant for a bucket
+      description: Requires storage:manage or admin. The target key must be active or in grace and carry the storage scopes needed by the requested permission. Admin keys do not need and cannot receive grants.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetObjectBucketAccessGrantRequest' }
+      responses:
+        '200':
+          description: Grant created or replaced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketAccessGrant' }
+        default:
+          description: Invalid request, missing key/bucket, scope mismatch, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteObjectBucketAccessGrant
+      summary: Revoke an API-key grant for a bucket
+      description: Requires storage:manage or admin. Revocation takes effect before this response returns; already-signed provider URLs remain valid until their short expiry.
+      tags: [storage]
+      responses:
+        '204': { description: Grant deleted }
+        default:
+          description: Grant or bucket missing, or access denied
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -358,6 +419,7 @@ paths:
     get:
       operationId: listBucketObjects
       summary: List objects with opaque cursor pagination
+      description: Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket.
       tags: [storage]
       parameters:
         - { name: prefix, description: Only return keys starting with this prefix., in: query, schema: { type: string, maxLength: 1024 } }
@@ -390,7 +452,7 @@ paths:
     delete:
       operationId: deleteBucketObject
       summary: Delete one object by exact key
-      description: Requires deploy:write or admin. With provider-side versioning this may create a delete marker; version management is not part of this preview.
+      description: Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this bucket. With provider-side versioning this may create a delete marker; version management is not part of this preview.
       tags: [storage]
       parameters:
         - { name: key, description: Exact object key to delete; URL-encode it., in: query, required: true, schema: { type: string, minLength: 1, maxLength: 1024 } }
@@ -410,7 +472,8 @@ paths:
       operationId: signBucketObject
       summary: Issue a short-lived direct upload or download URL
       description: |
-        GET requires apps:read or admin; PUT requires deploy:write or admin.
+        GET requires storage:read or admin; PUT requires storage:write or admin.
+        Non-admin keys also require a matching per-bucket grant.
         PUT must declare size_bytes, enforced by signed length (or an empty-body
         digest for zero bytes). These reusable bearer URLs expire within 15
         minutes and are not retained by the API idempotency cache. Send only
@@ -11695,6 +11758,30 @@ components:
         default_region: { type: string }
         max_upload_bytes: { type: integer, format: int64 }
         max_buckets_per_app: { type: integer }
+    ObjectBucketAccessGrant:
+      description: Provider-independent access binding between one Gregale API key and one logical bucket.
+      type: object
+      required: [key_id, key_label, key_status, permission, created_at, updated_at]
+      properties:
+        key_id: { type: string, format: uuid }
+        key_label: { type: string }
+        key_status: { type: string, enum: [active, grace, revoked] }
+        permission: { type: string, enum: [read, write, read_write] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ObjectBucketAccessGrantList:
+      description: Access grants for one logical bucket.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectBucketAccessGrant' } }
+    SetObjectBucketAccessGrantRequest:
+      description: Desired data-plane permission for the target API key.
+      type: object
+      additionalProperties: false
+      required: [permission]
+      properties:
+        permission: { type: string, enum: [read, write, read_write] }
     ObjectStoragePolicy:
       description: Operator safety limits; zero values mean unconfigured and block signing.
       type: object
@@ -12581,8 +12668,8 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, deploy:write, secrets:read, secrets:write, usage:read, apps:read, env:read, env:write] }
-          description: "Permission set attached to the key. Closed vocabulary (IAM-1, ADR-034 rev2): `admin` is the legacy full-access scope; `apps:read` covers GETs across the apps/deployments/audit/secrets-list surface; `deploy:write` covers POST/PUT/PATCH/DELETE on apps+queues; `secrets:write` covers PUT/DELETE on /apps/{slug}/secrets/{key}; `usage:read` covers GET /v1/usage*."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          description: "Permission set attached to the exported key. Object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
@@ -18133,8 +18220,8 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, deploy:write, secrets:read, secrets:write, usage:read, apps:read, env:read, env:write] }
-          description: "Permission set attached to the key. Closed vocabulary (IAM-1, ADR-034 rev2): admin is the legacy full-access scope; apps:read covers GETs across the apps/deployments/audit/secrets-list surface; deploy:write covers POST/PUT/PATCH/DELETE on apps+queues; secrets:write covers PUT/DELETE on /apps/{slug}/secrets/{key}; usage:read covers GET /v1/usage*."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          description: "Closed permission set attached to the key. storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time, example: "2026-07-25T13:25:00Z" }
@@ -18159,8 +18246,8 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, deploy:write, secrets:read, secrets:write, usage:read, apps:read, env:read, env:write] }
-          description: "Requested permission set. Server validates each entry against the closed vocabulary and rejects unknown scopes at mint time. `admin` is the legacy full-access scope; the other five cover narrower surfaces (see APIKeyResponse.scopes). See IAM-1, ADR-034 rev2."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          description: "Requested permission set. The server rejects unknown scopes. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
     RotateKeyResponse:
@@ -18186,8 +18273,8 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, deploy:write, secrets:read, secrets:write, usage:read, apps:read, env:read, env:write] }
-          description: "Requested permission set for the org-scoped key. Server validates each entry against the closed vocabulary and rejects unknown scopes at mint time. `admin` is the legacy full-access scope; the other five cover narrower surfaces (see APIKeyResponse.scopes). See IAM-1, ADR-034 rev2. PR 6 keeps the legacy and org-scoped shapes in lockstep so SDK callers can swap one request body for the other."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 
     ListOrgAPIKeysResponse:

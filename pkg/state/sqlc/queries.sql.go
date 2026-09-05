@@ -5125,6 +5125,198 @@ func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLife
 	return result.RowsAffected(), nil
 }
 
+const objectBucketAccessCheck = `-- name: ObjectBucketAccessCheck :one
+SELECT EXISTS (
+    SELECT 1
+    FROM object_storage_access_grants g
+    JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+    JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+    WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+      AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+      AND (($4::text = 'read' AND g.permission IN ('read', 'read_write'))
+        OR ($4::text = 'write' AND g.permission IN ('write', 'read_write')))
+      AND (($4::text = 'read' AND k.scopes @> ARRAY['storage:read']::text[])
+        OR ($4::text = 'write' AND k.scopes @> ARRAY['storage:write']::text[]))
+) AS allowed
+`
+
+type ObjectBucketAccessCheckParams struct {
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+	ApiKeyID  pgtype.UUID
+	Column4   string
+}
+
+func (q *Queries) ObjectBucketAccessCheck(ctx context.Context, db DBTX, arg ObjectBucketAccessCheckParams) (bool, error) {
+	row := db.QueryRow(ctx, objectBucketAccessCheck,
+		arg.AccountID,
+		arg.BucketID,
+		arg.ApiKeyID,
+		arg.Column4,
+	)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const objectBucketAccessGrantDelete = `-- name: ObjectBucketAccessGrantDelete :execrows
+DELETE FROM object_storage_access_grants g
+USING object_buckets b, api_keys k
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+  AND b.id = g.bucket_id AND b.account_id = g.account_id AND b.state <> 'deleted'
+  AND k.id = g.api_key_id AND k.account_id = g.account_id
+`
+
+type ObjectBucketAccessGrantDeleteParams struct {
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+	ApiKeyID  pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketAccessGrantDelete(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketAccessGrantDelete, arg.AccountID, arg.BucketID, arg.ApiKeyID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectBucketAccessGrantGet = `-- name: ObjectBucketAccessGrantGet :one
+SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
+       coalesce(k.label, '')::text AS key_label, k.status AS key_status,
+       g.created_at, g.updated_at
+FROM object_storage_access_grants g
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+  AND b.state <> 'deleted'
+`
+
+type ObjectBucketAccessGrantGetParams struct {
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+	ApiKeyID  pgtype.UUID
+}
+
+type ObjectBucketAccessGrantGetRow struct {
+	AccountID  pgtype.UUID
+	BucketID   pgtype.UUID
+	ApiKeyID   pgtype.UUID
+	Permission string
+	KeyLabel   string
+	KeyStatus  string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketAccessGrantGet(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantGetParams) (ObjectBucketAccessGrantGetRow, error) {
+	row := db.QueryRow(ctx, objectBucketAccessGrantGet, arg.AccountID, arg.BucketID, arg.ApiKeyID)
+	var i ObjectBucketAccessGrantGetRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.BucketID,
+		&i.ApiKeyID,
+		&i.Permission,
+		&i.KeyLabel,
+		&i.KeyStatus,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketAccessGrantList = `-- name: ObjectBucketAccessGrantList :many
+SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
+       coalesce(k.label, '')::text AS key_label, k.status AS key_status,
+       g.created_at, g.updated_at
+FROM object_storage_access_grants g
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND b.state <> 'deleted'
+ORDER BY g.created_at, g.api_key_id
+`
+
+type ObjectBucketAccessGrantListParams struct {
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+type ObjectBucketAccessGrantListRow struct {
+	AccountID  pgtype.UUID
+	BucketID   pgtype.UUID
+	ApiKeyID   pgtype.UUID
+	Permission string
+	KeyLabel   string
+	KeyStatus  string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketAccessGrantList(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantListParams) ([]ObjectBucketAccessGrantListRow, error) {
+	rows, err := db.Query(ctx, objectBucketAccessGrantList, arg.AccountID, arg.BucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucketAccessGrantListRow{}
+	for rows.Next() {
+		var i ObjectBucketAccessGrantListRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.BucketID,
+			&i.ApiKeyID,
+			&i.Permission,
+			&i.KeyLabel,
+			&i.KeyStatus,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectBucketAccessGrantUpsert = `-- name: ObjectBucketAccessGrantUpsert :execrows
+INSERT INTO object_storage_access_grants (account_id, bucket_id, api_key_id, permission)
+SELECT b.account_id, b.id, k.id, $1::text
+FROM object_buckets b
+JOIN api_keys k ON k.account_id = b.account_id
+WHERE b.account_id = $2 AND b.id = $3
+  AND b.state <> 'deleted' AND k.id = $4
+  AND k.status IN ('active', 'grace')
+  AND NOT ('admin' = ANY(k.scopes))
+  AND ($1::text <> 'read' OR k.scopes @> ARRAY['storage:read']::text[])
+  AND ($1::text <> 'write' OR k.scopes @> ARRAY['storage:write']::text[])
+  AND ($1::text <> 'read_write' OR k.scopes @> ARRAY['storage:read', 'storage:write']::text[])
+ON CONFLICT (bucket_id, api_key_id) DO UPDATE
+SET permission = EXCLUDED.permission, updated_at = now()
+`
+
+type ObjectBucketAccessGrantUpsertParams struct {
+	Permission string
+	AccountID  pgtype.UUID
+	BucketID   pgtype.UUID
+	ApiKeyID   pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantUpsertParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketAccessGrantUpsert,
+		arg.Permission,
+		arg.AccountID,
+		arg.BucketID,
+		arg.ApiKeyID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectBucketByName = `-- name: ObjectBucketByName :one
 SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
@@ -5358,6 +5550,61 @@ type ObjectBucketListParams struct {
 
 func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucketListParams) ([]ObjectBucket, error) {
 	rows, err := db.Query(ctx, objectBucketList, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectBucketListForKey = `-- name: ObjectBucketListForKey :many
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code
+FROM object_buckets b
+JOIN object_storage_access_grants g
+  ON g.bucket_id = b.id AND g.account_id = b.account_id
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+WHERE b.account_id = $1 AND b.app_id = $2 AND g.api_key_id = $3
+  AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+ORDER BY b.created_at, b.id
+`
+
+type ObjectBucketListForKeyParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	ApiKeyID  pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketListForKey(ctx context.Context, db DBTX, arg ObjectBucketListForKeyParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectBucketListForKey, arg.AccountID, arg.AppID, arg.ApiKeyID)
 	if err != nil {
 		return nil, err
 	}

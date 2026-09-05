@@ -68,7 +68,7 @@ def sync_detailed(
 ) -> Response[ObjectBucket | Problem]:
     """Create a private bucket on the region's current default backend
 
-     Requires deploy:write or admin. Idempotent by app, scope and name, not
+     Requires storage:manage or admin. Idempotent by app, scope and name, not
     by Idempotency-Key. Retry provisioning by submitting the same name and
     scope. Existing buckets retain their backend when the default changes.
 
@@ -104,7 +104,7 @@ def sync(
 ) -> ObjectBucket | Problem | None:
     """Create a private bucket on the region's current default backend
 
-     Requires deploy:write or admin. Idempotent by app, scope and name, not
+     Requires storage:manage or admin. Idempotent by app, scope and name, not
     by Idempotency-Key. Retry provisioning by submitting the same name and
     scope. Existing buckets retain their backend when the default changes.
 
@@ -135,7 +135,7 @@ async def asyncio_detailed(
 ) -> Response[ObjectBucket | Problem]:
     """Create a private bucket on the region's current default backend
 
-     Requires deploy:write or admin. Idempotent by app, scope and name, not
+     Requires storage:manage or admin. Idempotent by app, scope and name, not
     by Idempotency-Key. Retry provisioning by submitting the same name and
     scope. Existing buckets retain their backend when the default changes.
 
@@ -169,7 +169,7 @@ async def asyncio(
 ) -> ObjectBucket | Problem | None:
     """Create a private bucket on the region's current default backend
 
-     Requires deploy:write or admin. Idempotent by app, scope and name, not
+     Requires storage:manage or admin. Idempotent by app, scope and name, not
     by Idempotency-Key. Retry provisioning by submitting the same name and
     scope. Existing buckets retain their backend when the default changes.
 

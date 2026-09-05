@@ -1147,6 +1147,15 @@ type ObjectBucket struct {
 	LastErrorCode      string
 }
 
+type ObjectStorageAccessGrant struct {
+	AccountID  pgtype.UUID
+	BucketID   pgtype.UUID
+	ApiKeyID   pgtype.UUID
+	Permission string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type ObjectStorageAuthorization struct {
 	AccountID   pgtype.UUID
 	PeriodStart pgtype.Timestamptz
