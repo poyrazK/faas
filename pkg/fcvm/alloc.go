@@ -116,6 +116,9 @@ type Lease struct {
 	// set there before it drops privileges; vmmd's post-boot CPU fence remains
 	// a separate write.
 	MemoryMaxMiB int
+	// CPUMillicores is the app-selected sustained CPU quota. Zero keeps the
+	// plan-derived legacy quota for internal callers and builder paths.
+	CPUMillicores int
 }
 
 // Allocator hands out unique Leases and recycles slots on release. Safe for

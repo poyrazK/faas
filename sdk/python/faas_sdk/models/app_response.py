@@ -9,12 +9,14 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app_response_app_protocol
+from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
 from ..models.app_response_type import AppResponseType, check_app_response_type
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_configured_resources import AppConfiguredResources
     from ..models.app_effective_limits import AppEffectiveLimits
     from ..models.app_manifest import AppManifest
     from ..models.parked_deployment_ref import ParkedDeploymentRef
@@ -36,6 +38,9 @@ class AppResponse:
     slug: str
     type_: AppResponseType
     ram_mb: int
+    cpu_millicores: AppResponseCpuMillicores
+    configured_resources: AppConfiguredResources
+    """The memory and sustained CPU shape selected for each instance of this app."""
     max_concurrency: int
     concurrency_per_vm: int
     effective_limits: AppEffectiveLimits
@@ -145,6 +150,10 @@ class AppResponse:
         type_: str = self.type_
 
         ram_mb = self.ram_mb
+
+        cpu_millicores: int = self.cpu_millicores
+
+        configured_resources = self.configured_resources.to_dict()
 
         max_concurrency = self.max_concurrency
 
@@ -274,6 +283,8 @@ class AppResponse:
                 "slug": slug,
                 "type": type_,
                 "ram_mb": ram_mb,
+                "cpu_millicores": cpu_millicores,
+                "configured_resources": configured_resources,
                 "max_concurrency": max_concurrency,
                 "concurrency_per_vm": concurrency_per_vm,
                 "effective_limits": effective_limits,
@@ -336,6 +347,7 @@ class AppResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_configured_resources import AppConfiguredResources
         from ..models.app_effective_limits import AppEffectiveLimits
         from ..models.app_manifest import AppManifest
         from ..models.parked_deployment_ref import ParkedDeploymentRef
@@ -350,6 +362,10 @@ class AppResponse:
         type_ = check_app_response_type(d.pop("type"))
 
         ram_mb = d.pop("ram_mb")
+
+        cpu_millicores = check_app_response_cpu_millicores(d.pop("cpu_millicores"))
+
+        configured_resources = AppConfiguredResources.from_dict(d.pop("configured_resources"))
 
         max_concurrency = d.pop("max_concurrency")
 
@@ -544,6 +560,8 @@ class AppResponse:
             slug=slug,
             type_=type_,
             ram_mb=ram_mb,
+            cpu_millicores=cpu_millicores,
+            configured_resources=configured_resources,
             max_concurrency=max_concurrency,
             concurrency_per_vm=concurrency_per_vm,
             effective_limits=effective_limits,

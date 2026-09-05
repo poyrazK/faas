@@ -718,6 +718,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.MaxConcurrency != nil {
 		mc = *req.MaxConcurrency
 	}
+	if req.CPUMillicores != nil {
+		if prob := api.ValidateAppCPUMillicores(*req.CPUMillicores); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	if prob := api.ValidateAppConfig(limits, ram, mc); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -858,6 +864,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	lifecycleManifest, lifecycleChanged := stateManifestForUpdate(app, &req)
 	params := state.UpdateAppParams{
 		RAMMB:              req.RAMMB,
+		CPUMillicores:      req.CPUMillicores,
 		IdleTimeoutS:       req.IdleTimeoutS,
 		SetIdleTimeout:     req.IdleTimeoutS != nil,
 		MaxConcurrency:     req.MaxConcurrency,
@@ -1074,6 +1081,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.RAMMB != nil {
 		oldApp["ram_mb"] = app.RAMMB
 		newApp["ram_mb"] = updated.RAMMB
+	}
+	if req.CPUMillicores != nil {
+		oldApp["cpu_millicores"] = effectiveAppCPUMillicores(app, acct.Plan)
+		newApp["cpu_millicores"] = effectiveAppCPUMillicores(updated, acct.Plan)
 	}
 	if req.MaxConcurrency != nil {
 		oldApp["max_concurrency"] = app.MaxConcurrency

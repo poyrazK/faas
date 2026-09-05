@@ -90,6 +90,25 @@ func TestWriteMemoryMaxAppendsNewline(t *testing.T) {
 	}
 }
 
+func TestWriteAppCgroupUsesConfiguredCPU(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	inst := "configured-cpu"
+	scope := filepath.Join(dir, ParentCgroupFor(api.PlanPro), PerInstanceScope(inst))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := writeAppCgroup(inst, api.PlanPro, 256, 500); err != nil {
+		t.Fatalf("writeAppCgroup: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read cpu.max: %v", err)
+	}
+	if got, want := string(body), "250000 500000\n"; got != want {
+		t.Fatalf("cpu.max = %q, want %q", got, want)
+	}
+}
+
 func TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
 	inst := "snapshot-headroom"

@@ -25,9 +25,10 @@ import (
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug           string `json:"slug"`
-	Type           string `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime        string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB          int    `json:"ram_mb,omitempty"`  // 0 => plan default
+	Type           string `json:"type,omitempty"`           // "app" (default) | "function"
+	Runtime        string `json:"runtime,omitempty"`        // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB          int    `json:"ram_mb,omitempty"`         // 0 => plan default
+	CPUMillicores  int    `json:"cpu_millicores,omitempty"` // 0 => 1000; allowed: 250, 500, 1000
 	MaxConcurrency int    `json:"max_concurrency,omitempty"`
 	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
@@ -152,6 +153,7 @@ type DevSessionResponse struct {
 // "set to zero".
 type UpdateAppRequest struct {
 	RAMMB          *int `json:"ram_mb,omitempty"`
+	CPUMillicores  *int `json:"cpu_millicores,omitempty"`
 	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
 	MaxConcurrency *int `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
@@ -544,6 +546,7 @@ type AppEffectiveLimits struct {
 	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
 	GuestVCPUs             int   `json:"guest_vcpus"`
 	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
+	PlanCPUMaxMillicores   int   `json:"plan_cpu_max_millicores"`
 	CPUWeight              int   `json:"cpu_weight"`
 	MaxInstances           int   `json:"max_instances"`
 	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
@@ -555,6 +558,14 @@ type AppEffectiveLimits struct {
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
 }
 
+// AppConfiguredResources is the resource shape selected for an app. It is
+// separate from EffectiveLimits because guest topology and plan ceilings can
+// differ from the app's sustained CPU and memory settings.
+type AppConfiguredResources struct {
+	MemoryMB      int `json:"memory_mb"`
+	CPUMillicores int `json:"cpu_millicores"`
+}
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
 	ID             string `json:"id"`
@@ -562,6 +573,7 @@ type AppResponse struct {
 	Type           string `json:"type"`
 	Runtime        string `json:"runtime,omitempty"`
 	RAMMB          int    `json:"ram_mb"`
+	CPUMillicores  int    `json:"cpu_millicores"`
 	MaxConcurrency int    `json:"max_concurrency"`
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
@@ -577,8 +589,9 @@ type AppResponse struct {
 	ConcurrencyPerVMBound int `json:"concurrency_per_vm"`
 	// EffectiveLimits makes the complete resource and request envelope
 	// visible without requiring the customer to infer it from their plan.
-	EffectiveLimits AppEffectiveLimits `json:"effective_limits"`
-	IdleTimeoutS    int                `json:"idle_timeout_s,omitempty"`
+	EffectiveLimits     AppEffectiveLimits     `json:"effective_limits"`
+	ConfiguredResources AppConfiguredResources `json:"configured_resources"`
+	IdleTimeoutS        int                    `json:"idle_timeout_s,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
@@ -2934,6 +2947,16 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
 			WithDocs(docsBase + "/plans#concurrency")
 	}
 	return nil
+}
+
+// ValidateAppCPUMillicores validates the closed set supported by the first
+// configurable CPU release.
+func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
+	if ValidAppCPUMillicores(cpuMillicores) {
+		return nil
+	}
+	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppCPU,
+		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000")
 }
 
 // --- G6 account self-service (spec §17 G6, ADR-021) -------------------------

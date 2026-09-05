@@ -331,11 +331,12 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
-	BaseKey    string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey   string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount  int32  // 2, or 4 for Scale
-	MemSizeMiB int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	EgressMbit int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount     int32  // 2, or 4 for Scale
+	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
+	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -1040,6 +1041,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		LayerKey:        a.LayerKey,
 		VcpuCount:       a.VCPUCount,
 		MemSizeMib:      a.MemSizeMiB,
+		CpuMillicores:   a.CPUMillicores,
 		EgressMbit:      a.EgressMbit,
 		AppId:           a.AppID,
 		SealedEnv:       sealed,

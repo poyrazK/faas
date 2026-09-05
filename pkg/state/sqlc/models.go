@@ -191,6 +191,7 @@ type App struct {
 	Type                   string
 	Runtime                pgtype.Text
 	RamMb                  int32
+	CpuMillicores          int32
 	IdleTimeoutS           pgtype.Int4
 	MaxConcurrency         int32
 	Status                 string

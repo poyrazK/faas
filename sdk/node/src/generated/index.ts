@@ -26,6 +26,7 @@ export type { AlertPresetResponse } from './models/AlertPresetResponse.js';
 export type { AlertRuleResponse } from './models/AlertRuleResponse.js';
 export type { APIKeyExportResponse } from './models/APIKeyExportResponse.js';
 export type { APIKeyResponse } from './models/APIKeyResponse.js';
+export type { AppConfiguredResources } from './models/AppConfiguredResources.js';
 export type { AppEffectiveLimits } from './models/AppEffectiveLimits.js';
 export type { AppEnvListResponse } from './models/AppEnvListResponse.js';
 export type { AppEnvResponse } from './models/AppEnvResponse.js';
