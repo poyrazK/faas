@@ -76,6 +76,10 @@ export class OperatorService {
       scope?: 'global' | 'control_plane' | 'daemon' | 'node';
       scope_id?: string;
       rollout_percent?: number;
+      /**
+       * For daemon-scoped canaries, automatically advance through the rollout ladder after each healthy observation window.
+       */
+      auto_promote?: boolean;
     },
   }): CancelablePromise<OperatorRuntimeConfig | OperatorRuntimeConfigOperation> {
     return __request(OpenAPI, {

@@ -12,6 +12,7 @@ export type OperatorRuntimeConfigRevision = {
   scope_id: string;
   version: number;
   rollout_percent: number;
+  auto_promote: boolean;
   old_value: any;
   new_value: any;
   actor_id?: string;

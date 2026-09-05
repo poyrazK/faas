@@ -54,16 +54,24 @@ type RolloutController struct {
 	Log      *slog.Logger
 	Interval time.Duration
 	MinAge   time.Duration
-	Now      func() time.Time
+	// Steps is the ordered rollout ladder used for opt-in automatic
+	// promotion. A nil or invalid ladder falls back to DefaultRolloutSteps.
+	Steps []int
+	Now   func() time.Time
 }
 
 type RolloutStats struct {
 	Observed   int
+	Promoted   int
 	RolledBack int
 	Paused     int
 	Unhealthy  int
 	Errors     int
 }
+
+// DefaultRolloutSteps keeps each automatic step small near the start of a
+// rollout while still reaching the full fleet in a bounded number of passes.
+var DefaultRolloutSteps = []int{1, 5, 25, 50, 100}
 
 // NewRolloutController builds the background safety worker. The worker is
 // deliberately inert when no Prometheus client is configured, except that a
@@ -75,7 +83,8 @@ func NewRolloutController(store RolloutStore, health PrometheusHealthProvider, n
 	return &RolloutController{
 		Store: store, Health: health, Policy: health.Policy, Notifier: notifier,
 		Audit: audit, Log: log, Interval: 30 * time.Second, MinAge: time.Minute,
-		Now: time.Now,
+		Steps: append([]int(nil), DefaultRolloutSteps...),
+		Now:   time.Now,
 	}
 }
 
@@ -136,6 +145,20 @@ func (c *RolloutController) RunOnce(ctx context.Context) (RolloutStats, error) {
 			continue
 		}
 		if reason == "" {
+			if !row.AutoPromote {
+				continue
+			}
+			promoted, err := c.promote(ctx, row)
+			if err != nil {
+				stats.Errors++
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			if promoted {
+				stats.Promoted++
+			}
 			continue
 		}
 		stats.Unhealthy++
@@ -160,7 +183,8 @@ func (c *RolloutController) isCandidate(row state.RuntimeConfig) bool {
 	return row.Scope == state.RuntimeConfigScopeDaemon &&
 		row.ApplyMode == state.RuntimeConfigApplyHot &&
 		row.Status == state.RuntimeConfigApplied &&
-		row.RolloutPercent > 0 && row.RolloutPercent < 100
+		row.RolloutPercent > 0 && row.RolloutPercent < 100 &&
+		(row.RolloutState == state.RuntimeConfigRolloutCanary || row.RolloutState == state.RuntimeConfigRolloutPromoting)
 }
 
 // failureReason returns (reason, ready). ready is false when there is not
@@ -194,12 +218,99 @@ func (c *RolloutController) failureReason(ctx context.Context, row state.Runtime
 		c.Log.Warn("runtime_config rollout health unavailable; leaving canary live", "key", row.Key, "scope_id", row.ScopeID, "version", row.Version, "err", err)
 		return "", false, nil
 	}
-	if policyFailure := c.policy().Evaluate(snapshot); policyFailure != nil {
+	policy := c.policy().normalized()
+	if snapshot.Requests < policy.MinRequests {
+		// An idle canary has not produced enough evidence to promote or
+		// roll back. Leave it live and wait for the next observation window.
+		return "", false, nil
+	}
+	if policyFailure := policy.Evaluate(snapshot); policyFailure != nil {
 		// A policy breach is expected evidence for rollback, not a controller
 		// execution error. Return it as the durable operator-facing reason.
 		return policyFailure.Error(), true, nil //nolint:nilerr // policy breaches are rollback reasons, not controller errors
 	}
 	return "", true, nil
+}
+
+// promote advances an opt-in canary to the next fixed ladder step. The
+// write is version-protected so an operator edit wins cleanly over a stale
+// controller pass. Intermediate steps are marked promoting while they wait
+// for their next observation window; 100% is terminal stable state.
+func (c *RolloutController) promote(ctx context.Context, row state.RuntimeConfig) (bool, error) {
+	next := c.nextRolloutPercent(row.RolloutPercent)
+	if next <= row.RolloutPercent {
+		return false, nil
+	}
+	expected := row.Version
+	percent := next
+	autoPromote := next < 100
+	reason := fmt.Sprintf("automatic promotion of v%d from %d%% to %d%%", row.Version, row.RolloutPercent, next)
+	updated, err := c.Store.UpsertRuntimeConfig(ctx, state.RuntimeConfigUpdate{
+		Key: row.Key, Scope: row.Scope, ScopeID: row.ScopeID,
+		DesiredValue: row.DesiredValue, RolloutPercent: &percent,
+		AutoPromote: autoPromote, ApplyMode: state.RuntimeConfigApplyHot,
+		Reason: reason, ExpectedVersion: &expected,
+	})
+	if err != nil {
+		if errors.Is(err, state.ErrRuntimeConfigConflict) {
+			return false, nil
+		}
+		return false, fmt.Errorf("write automatic promotion for %s v%d: %w", row.Key, row.Version, err)
+	}
+	if err := c.Store.MarkRuntimeConfigApplied(ctx, updated.Key, updated.Scope, updated.ScopeID, updated.Version, updated.DesiredValue, ""); err != nil {
+		if errors.Is(err, state.ErrRuntimeConfigConflict) {
+			return false, nil
+		}
+		return false, fmt.Errorf("apply automatic promotion for %s v%d: %w", row.Key, updated.Version, err)
+	}
+	if stateStore, ok := c.Store.(RolloutStateStore); ok {
+		rolloutState := state.RuntimeConfigRolloutPromoting
+		if next == 100 {
+			rolloutState = state.RuntimeConfigRolloutStable
+		}
+		if err := stateStore.MarkRuntimeConfigRolloutState(ctx, updated.Key, updated.Scope, updated.ScopeID, updated.Version, rolloutState, ""); err != nil && !errors.Is(err, state.ErrRuntimeConfigConflict) {
+			return false, fmt.Errorf("mark automatic promotion for %s v%d: %w", row.Key, updated.Version, err)
+		}
+	}
+	if c.Notifier != nil {
+		_ = c.Notifier.Notify(ctx, db.NotifyRuntimeConfigChanged, row.Key)
+	}
+	if c.Audit != nil {
+		c.Audit(ctx, "operator.runtime_config_auto_promote", map[string]any{
+			"key": row.Key, "scope": row.Scope, "scope_id": row.ScopeID,
+			"from_version": row.Version, "to_version": updated.Version,
+			"from_percent": row.RolloutPercent, "to_percent": next,
+		})
+	}
+	c.Log.Info("runtime_config canary automatically promoted", "key", row.Key, "scope_id", row.ScopeID, "from_percent", row.RolloutPercent, "to_percent", next, "version", updated.Version)
+	return true, nil
+}
+
+func (c *RolloutController) nextRolloutPercent(current int) int {
+	steps := c.Steps
+	if !validRolloutSteps(steps) {
+		steps = DefaultRolloutSteps
+	}
+	for _, step := range steps {
+		if step > current {
+			return step
+		}
+	}
+	return current
+}
+
+func validRolloutSteps(steps []int) bool {
+	if len(steps) == 0 {
+		return false
+	}
+	previous := 0
+	for _, step := range steps {
+		if step <= previous || step < 1 || step > 100 {
+			return false
+		}
+		previous = step
+	}
+	return steps[len(steps)-1] == 100
 }
 
 // rollback restores the newest older revision that was fleet-stable
@@ -232,7 +343,7 @@ func (c *RolloutController) rollback(ctx context.Context, row state.RuntimeConfi
 	rollbackReason := fmt.Sprintf("automatic rollback of v%d to v%d: %s", row.Version, previous.Version, reason)
 	updated, err := c.Store.UpsertRuntimeConfig(ctx, state.RuntimeConfigUpdate{
 		Key: row.Key, Scope: row.Scope, ScopeID: row.ScopeID,
-		DesiredValue: previous.NewValue, RolloutPercent: &percent,
+		DesiredValue: previous.NewValue, RolloutPercent: &percent, AutoPromote: previous.AutoPromote,
 		ApplyMode: state.RuntimeConfigApplyHot, Reason: rollbackReason,
 		ExpectedVersion: &expected,
 	})

@@ -19,6 +19,7 @@ type OperatorRuntimeConfig struct {
 	ScopeID           string                     `json:"scope_id,omitempty"`
 	RolloutPercent    int                        `json:"rollout_percent"`
 	RolloutState      string                     `json:"rollout_state"`
+	AutoPromote       bool                       `json:"auto_promote"`
 	Source            string                     `json:"source"`
 	ApplyMode         string                     `json:"apply_mode"`
 	ControllerEnabled bool                       `json:"controller_enabled"`
@@ -73,6 +74,7 @@ type OperatorRuntimeConfigRevision struct {
 	ScopeID        string          `json:"scope_id"`
 	Version        int64           `json:"version"`
 	RolloutPercent int             `json:"rollout_percent"`
+	AutoPromote    bool            `json:"auto_promote"`
 	OldValue       json.RawMessage `json:"old_value"`
 	NewValue       json.RawMessage `json:"new_value"`
 	ActorID        string          `json:"actor_id,omitempty"`

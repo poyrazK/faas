@@ -23,6 +23,9 @@ class UpdateOperatorRuntimeConfigBody:
     scope: UpdateOperatorRuntimeConfigBodyScope | Unset = "global"
     scope_id: str | Unset = UNSET
     rollout_percent: int | Unset = 100
+    auto_promote: bool | Unset = False
+    """For daemon-scoped canaries, automatically advance through the rollout ladder after each healthy observation
+    window."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +43,8 @@ class UpdateOperatorRuntimeConfigBody:
 
         rollout_percent = self.rollout_percent
 
+        auto_promote = self.auto_promote
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,6 +61,8 @@ class UpdateOperatorRuntimeConfigBody:
             field_dict["scope_id"] = scope_id
         if rollout_percent is not UNSET:
             field_dict["rollout_percent"] = rollout_percent
+        if auto_promote is not UNSET:
+            field_dict["auto_promote"] = auto_promote
 
         return field_dict
 
@@ -79,6 +86,8 @@ class UpdateOperatorRuntimeConfigBody:
 
         rollout_percent = d.pop("rollout_percent", UNSET)
 
+        auto_promote = d.pop("auto_promote", UNSET)
+
         update_operator_runtime_config_body = cls(
             value=value,
             reason=reason,
@@ -86,6 +95,7 @@ class UpdateOperatorRuntimeConfigBody:
             scope=scope,
             scope_id=scope_id,
             rollout_percent=rollout_percent,
+            auto_promote=auto_promote,
         )
 
         update_operator_runtime_config_body.additional_properties = d

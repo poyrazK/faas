@@ -15,7 +15,7 @@ func (s *PgStore) ListRuntimeConfigs(ctx context.Context, scope RuntimeConfigSco
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, config_key, scope, scope_id, desired_value,
 		       COALESCE(effective_value, 'null'::jsonb), version,
-		       rollout_percent, rollout_state,
+		       rollout_percent, rollout_state, rollout_auto_promote,
 		       apply_mode, status, COALESCE(last_error, ''),
 		       COALESCE(actor_id::text, ''), COALESCE(reason, ''),
 		       updated_at, applied_at
@@ -45,7 +45,7 @@ func (s *PgStore) GetRuntimeConfig(ctx context.Context, key string, scope Runtim
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, config_key, scope, scope_id, desired_value,
 		       COALESCE(effective_value, 'null'::jsonb), version,
-		       rollout_percent, rollout_state,
+		       rollout_percent, rollout_state, rollout_auto_promote,
 		       apply_mode, status, COALESCE(last_error, ''),
 		       COALESCE(actor_id::text, ''), COALESCE(reason, ''),
 		       updated_at, applied_at
@@ -110,22 +110,22 @@ func (s *PgStore) UpsertRuntimeConfig(ctx context.Context, update RuntimeConfigU
 			INSERT INTO runtime_config_entries
 			    (id, config_key, scope, scope_id, desired_value,
 			     effective_value, version, rollout_percent, rollout_state,
-			     apply_mode, status, actor_id, reason)
-			VALUES ($1, $2, $3, $4, $5::jsonb, NULL, $6, $7, $8, $9,
-			        'pending', NULLIF($10, '')::uuid, $11)`,
+			     rollout_auto_promote, apply_mode, status, actor_id, reason)
+			VALUES ($1, $2, $3, $4, $5::jsonb, NULL, $6, $7, $8, $9, $10,
+			        'pending', NULLIF($11, '')::uuid, $12)`,
 			id, update.Key, string(update.Scope), update.ScopeID,
 			string(update.DesiredValue), currentVersion, rolloutPercent,
-			runtimeConfigRolloutState(rolloutPercent), string(update.ApplyMode),
+			runtimeConfigRolloutState(rolloutPercent), update.AutoPromote, string(update.ApplyMode),
 			update.ActorID, update.Reason); err != nil {
 			return RuntimeConfig{}, fmt.Errorf("state: insert runtime config: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO runtime_config_revisions
 			    (entry_id, config_key, scope, scope_id, version,
-			     rollout_percent, old_value, new_value, actor_id, reason)
-			VALUES ($1, $2, $3, $4, $5, $6, NULL, $7::jsonb, NULLIF($8, '')::uuid, $9)`,
+			     rollout_percent, rollout_auto_promote, old_value, new_value, actor_id, reason)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8::jsonb, NULLIF($9, '')::uuid, $10)`,
 			id, update.Key, string(update.Scope), update.ScopeID,
-			currentVersion, rolloutPercent, string(update.DesiredValue), update.ActorID, update.Reason); err != nil {
+			currentVersion, rolloutPercent, update.AutoPromote, string(update.DesiredValue), update.ActorID, update.Reason); err != nil {
 			return RuntimeConfig{}, fmt.Errorf("state: insert runtime config revision: %w", err)
 		}
 	} else if err != nil {
@@ -142,27 +142,28 @@ func (s *PgStore) UpsertRuntimeConfig(ctx context.Context, update RuntimeConfigU
 			    version = $3,
 			    rollout_percent = $4,
 			    rollout_state = $5,
-			    apply_mode = $6,
+			    rollout_auto_promote = $6,
+			    apply_mode = $7,
 			    status = 'pending',
 			    last_error = NULL,
-			    actor_id = NULLIF($7, '')::uuid,
-			    reason = $8,
+			    actor_id = NULLIF($8, '')::uuid,
+			    reason = $9,
 			    updated_at = now(),
 			    applied_at = NULL
 			WHERE id = $1`,
 			id, string(update.DesiredValue), currentVersion, rolloutPercent,
-			runtimeConfigRolloutState(rolloutPercent), string(update.ApplyMode),
+			runtimeConfigRolloutState(rolloutPercent), update.AutoPromote, string(update.ApplyMode),
 			update.ActorID, update.Reason); err != nil {
 			return RuntimeConfig{}, fmt.Errorf("state: update runtime config: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO runtime_config_revisions
 			    (entry_id, config_key, scope, scope_id, version,
-			     rollout_percent, old_value, new_value, actor_id, reason)
-			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb,
-			        NULLIF($9, '')::uuid, $10)`,
+			     rollout_percent, rollout_auto_promote, old_value, new_value, actor_id, reason)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb,
+			        NULLIF($10, '')::uuid, $11)`,
 			id, update.Key, string(update.Scope), update.ScopeID,
-			currentVersion, rolloutPercent, string(oldValue), string(update.DesiredValue),
+			currentVersion, rolloutPercent, update.AutoPromote, string(oldValue), string(update.DesiredValue),
 			update.ActorID, update.Reason); err != nil {
 			return RuntimeConfig{}, fmt.Errorf("state: insert runtime config revision: %w", err)
 		}
@@ -239,7 +240,7 @@ func (s *PgStore) ListRuntimeConfigRevisions(ctx context.Context, key string, sc
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, config_key, scope, scope_id, version,
-		       rollout_percent, COALESCE(old_value, 'null'::jsonb), new_value,
+		       rollout_percent, rollout_auto_promote, COALESCE(old_value, 'null'::jsonb), new_value,
 		       COALESCE(actor_id::text, ''), COALESCE(reason, ''), created_at
 		FROM runtime_config_revisions
 		WHERE config_key = $1 AND scope = $2 AND scope_id = $3
@@ -255,7 +256,7 @@ func (s *PgStore) ListRuntimeConfigRevisions(ctx context.Context, key string, sc
 		var scopeText string
 		var oldValue, newValue []byte
 		if err := rows.Scan(&revision.ID, &revision.Key, &scopeText, &revision.ScopeID,
-			&revision.Version, &revision.RolloutPercent, &oldValue, &newValue, &revision.ActorID,
+			&revision.Version, &revision.RolloutPercent, &revision.AutoPromote, &oldValue, &newValue, &revision.ActorID,
 			&revision.Reason, &revision.CreatedAt); err != nil {
 			return nil, fmt.Errorf("state: scan runtime config revision: %w", err)
 		}
@@ -276,13 +277,13 @@ func (s *PgStore) GetRuntimeConfigRevision(ctx context.Context, key string, scop
 	var oldValue, newValue []byte
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, config_key, scope, scope_id, version,
-		       rollout_percent, COALESCE(old_value, 'null'::jsonb), new_value,
+		       rollout_percent, rollout_auto_promote, COALESCE(old_value, 'null'::jsonb), new_value,
 		       COALESCE(actor_id::text, ''), COALESCE(reason, ''), created_at
 		FROM runtime_config_revisions
 		WHERE config_key = $1 AND scope = $2 AND scope_id = $3 AND version = $4`,
 		key, string(scope), scopeID, version).
 		Scan(&revision.ID, &revision.Key, &scopeText, &revision.ScopeID,
-			&revision.Version, &revision.RolloutPercent, &oldValue, &newValue, &revision.ActorID,
+			&revision.Version, &revision.RolloutPercent, &revision.AutoPromote, &oldValue, &newValue, &revision.ActorID,
 			&revision.Reason, &revision.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RuntimeConfigRevision{}, ErrRuntimeConfigNotFound
@@ -309,7 +310,7 @@ func scanRuntimeConfig(row runtimeConfigScanner) (RuntimeConfig, error) {
 	)
 	err := row.Scan(
 		&config.ID, &config.Key, &scope, &config.ScopeID,
-		&desired, &effective, &config.Version, &config.RolloutPercent, &rolloutState, &mode, &status,
+		&desired, &effective, &config.Version, &config.RolloutPercent, &rolloutState, &config.AutoPromote, &mode, &status,
 		&lastError, &actorID, &reason, &config.UpdatedAt, &config.AppliedAt,
 	)
 	if err != nil {
