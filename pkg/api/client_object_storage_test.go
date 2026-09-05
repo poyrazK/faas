@@ -9,7 +9,7 @@ import (
 )
 
 func TestClientObjectStorage(t *testing.T) {
-	for _, method := range []string{"list", "create", "delete-bucket", "objects", "delete-object", "sign"} {
+	for _, method := range []string{"list", "create", "delete-bucket", "objects", "delete-object", "sign", "usage", "report"} {
 		t.Run(method, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer gregale-test-token" {
@@ -22,6 +22,16 @@ func TestClientObjectStorage(t *testing.T) {
 					t.Error("key encoding")
 				}
 				w.Header().Set("Content-Type", "application/json")
+				if method == "usage" && r.URL.Path != "/v1/account/object-storage-usage" {
+					t.Error(r.URL.Path)
+				}
+				if method == "report" {
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/admin/object-storage/usage-reports" || r.Header.Get("Idempotency-Key") == "" {
+						t.Error("report request contract")
+					}
+					w.WriteHeader(204)
+					return
+				}
 				if method == "delete-bucket" || method == "delete-object" {
 					if r.Method != http.MethodDelete {
 						t.Error(r.Method)
@@ -43,6 +53,10 @@ func TestClientObjectStorage(t *testing.T) {
 			ctx := context.Background()
 			var err error
 			switch method {
+			case "usage":
+				_, err = client.GetObjectStorageUsage(ctx)
+			case "report":
+				err = client.RecordObjectStorageUsage(ctx, ObjectStorageUsageReport{})
 			case "list":
 				_, err = client.ListObjectBuckets(ctx, "demo")
 			case "create":

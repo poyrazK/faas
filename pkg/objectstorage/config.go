@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 
@@ -16,17 +17,19 @@ import (
 // Config contains only non-secret settings and environment variable names.
 // Backend IDs are permanent: retain an old entry while buckets reference it.
 type Config struct {
-	DefaultRegion    string            `json:"default_region"`
-	Defaults         map[string]string `json:"defaults"`
-	MaxBucketsPerApp int               `json:"max_buckets_per_app"`
-	MaxUploadBytes   int64             `json:"max_upload_bytes"`
-	Backends         []BackendConfig   `json:"backends"`
+	Accounting       *api.ObjectStoragePolicy `json:"accounting,omitempty"`
+	DefaultRegion    string                   `json:"default_region"`
+	Defaults         map[string]string        `json:"defaults"`
+	MaxBucketsPerApp int                      `json:"max_buckets_per_app"`
+	MaxUploadBytes   int64                    `json:"max_upload_bytes"`
+	Backends         []BackendConfig          `json:"backends"`
 }
 
 type BackendConfig struct {
-	ID     string `json:"id"`
-	Driver string `json:"driver"`
-	Region string `json:"region"`
+	UsageReportsPath string `json:"usage_reports_path,omitempty"`
+	ID               string `json:"id"`
+	Driver           string `json:"driver"`
+	Region           string `json:"region"`
 	// Namespace identifies the upstream account/cluster. Changing it, the
 	// endpoint or S3 region fences existing buckets instead of misrouting data.
 	Namespace       string   `json:"namespace"`
@@ -41,6 +44,8 @@ type BackendConfig struct {
 }
 
 type Registry struct {
+	usageReportPaths map[string]string
+	Accounting       api.ObjectStoragePolicy
 	DefaultRegion    string
 	MaxBucketsPerApp int
 	MaxUploadBytes   int64
@@ -63,8 +68,21 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		return nil, errors.New("object storage: invalid bucket or upload limit")
 	}
 	r := &Registry{DefaultRegion: c.DefaultRegion, MaxBucketsPerApp: c.MaxBucketsPerApp, MaxUploadBytes: c.MaxUploadBytes, backends: map[string]Backend{}, defaults: map[string]string{}}
+	r.usageReportPaths = map[string]string{}
+	if c.Accounting != nil {
+		if !c.Accounting.Valid() {
+			return nil, errors.New("object storage: invalid accounting policy")
+		}
+		r.Accounting = *c.Accounting
+	}
 	validID := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	for _, b := range c.Backends {
+		if b.UsageReportsPath != "" {
+			if !filepath.IsAbs(b.UsageReportsPath) {
+				return nil, errors.New("object storage: usage_reports_path must be absolute")
+			}
+			r.usageReportPaths[b.ID] = b.UsageReportsPath
+		}
 		if !validID.MatchString(b.ID) || !validID.MatchString(b.Region) || b.Namespace == "" || b.S3Region == "" {
 			return nil, errors.New("object storage: invalid backend identity or region")
 		}

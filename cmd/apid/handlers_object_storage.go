@@ -37,6 +37,12 @@ func viewBucket(b state.ObjectBucket) bucketView {
 func bucketProblem(w http.ResponseWriter, err error) {
 	status, code, detail := 503, "object_storage_unavailable", "Object storage is unavailable; retry later."
 	switch {
+	case errors.Is(err, state.ErrObjectUsageStale):
+		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new URLs are blocked."
+	case errors.Is(err, state.ErrObjectBudget):
+		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new URLs are blocked."
+	case errors.Is(err, state.ErrObjectCapacity):
+		status, code, detail = 409, "object_storage_capacity_reserved", "The object storage capacity limit would be exceeded by this upload reservation."
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, objectstorage.ErrNotFound):
 		status, code, detail = 404, "object_storage_not_found", "Bucket or object not found."
 	case errors.Is(err, objectstorage.ErrInvalid):
@@ -46,7 +52,14 @@ func bucketProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrConflict), errors.Is(err, objectstorage.ErrConflict):
 		status, code, detail = 409, "object_storage_conflict", "Bucket is busy, conflicts with this request, or the bucket limit was reached."
 	}
-	api.WriteProblem(w, api.NewProblem(status, code, http.StatusText(status), detail))
+	problem := api.NewProblem(status, code, http.StatusText(status), detail)
+	var limit *state.ObjectStorageLimitError
+	if errors.As(err, &limit) {
+		problem.Limit, problem.Observed = &limit.Limit, &limit.Observed
+		problem.Detail = detail + " Limit: " + limit.Kind + "."
+		problem.DocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#accounting-and-safety-budgets"
+	}
+	api.WriteProblem(w, problem)
 }
 
 func decodeBucketRequest(w http.ResponseWriter, r *http.Request, out any) bool {
@@ -295,6 +308,13 @@ func (s *server) signBucketObject(w http.ResponseWriter, r *http.Request, acct s
 			return
 		}
 		if err := req.Validate(s.objectStorage.MaxUploadBytes); err != nil {
+			bucketProblem(w, err)
+			return
+		}
+		// Commit capacity and authorization accounting before exposing a URL.
+		// Signer/network failures intentionally do not refund the reservation:
+		// a lost response is not proof that no usable capability was issued.
+		if err := s.admitObjectURL(r.Context(), b, req); err != nil {
 			bucketProblem(w, err)
 			return
 		}

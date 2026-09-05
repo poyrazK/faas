@@ -6,6 +6,7 @@ import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
 import type { ObjectSignedRequest } from '../models/ObjectSignedRequest.js';
 import type { ObjectSignRequest } from '../models/ObjectSignRequest.js';
+import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -226,6 +227,19 @@ export class StorageService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read object storage accounting and safety limits
+   * Requires usage read scope. Reservations are capacity commitments, not billed usage. Fresh false blocks new signed URLs.
+   * @returns ObjectStorageUsageResponse Current account usage; Cache-Control no-store
+   * @returns Problem Access denied or accounting unavailable
+   * @throws ApiError
+   */
+  public static getObjectStorageUsage(): CancelablePromise<ObjectStorageUsageResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/object-storage-usage',
     });
   }
 }

@@ -2222,3 +2222,71 @@ SELECT node_id::text AS node_id, false AS is_origin
 FROM snapshot_replicas
 WHERE snapshot_id = $1::uuid AND state = 'ready'
 ORDER BY node_id, is_origin DESC;
+
+-- name: ObjectUsageLockAccount :one
+SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
+
+-- name: ObjectUsageBucketAccount :one
+SELECT account_id FROM object_buckets WHERE id=$1;
+
+-- name: ObjectUsageBuckets :many
+SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
+u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
+WHERE b.account_id = $1;
+
+-- name: ObjectUsageGrant :one
+SELECT max_bytes FROM object_storage_key_grants WHERE bucket_id = $1 AND key_hash = $2;
+
+-- name: ObjectUsageGrantUpsert :exec
+INSERT INTO object_storage_key_grants (bucket_id, key_hash, max_bytes) VALUES ($1,$2,$3)
+ON CONFLICT (bucket_id,key_hash) DO UPDATE SET max_bytes = greatest(object_storage_key_grants.max_bytes, EXCLUDED.max_bytes);
+
+-- name: ObjectUsageGrantIncrement :exec
+UPDATE object_storage_bucket_usage SET granted_bytes = granted_bytes + $2, granted_keys = granted_keys + $3 WHERE bucket_id = $1;
+
+-- name: ObjectUsageAuthorizationCount :one
+SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2;
+
+-- name: ObjectUsageAuthorize :exec
+INSERT INTO object_storage_authorizations (account_id, period_start, count) VALUES ($1,$2,1)
+ON CONFLICT (account_id,period_start) DO UPDATE SET count = object_storage_authorizations.count + 1;
+
+-- name: ObjectUsageReports :many
+SELECT r.* FROM object_storage_usage_heads h JOIN object_storage_usage_reports r
+USING (account_id,backend_id,period_start,observed_at)
+WHERE h.account_id=$1 AND h.period_start=$2 ORDER BY h.backend_id;
+
+-- name: ObjectUsageReportHead :exec
+INSERT INTO object_storage_usage_heads (account_id,backend_id,period_start,observed_at) VALUES ($1,$2,$3,$4)
+ON CONFLICT (account_id,period_start,backend_id) DO UPDATE SET observed_at=EXCLUDED.observed_at;
+
+-- name: ObjectUsageReportGet :one
+SELECT * FROM object_storage_usage_reports WHERE account_id=$1 AND backend_id=$2 AND period_start=$3 AND observed_at=$4;
+
+-- name: ObjectUsageReportInsert :exec
+INSERT INTO object_storage_usage_reports (account_id,backend_id,backend_fingerprint,source,period_start,observed_at,stored_byte_hours,request_count,egress_bytes,cost_millicents)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
+
+-- name: ObjectInventoriesDue :many
+SELECT b.* FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
+AND (u.lease_until IS NULL OR u.lease_until < now())
+ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1;
+
+-- name: ObjectInventoryClaim :execrows
+INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
+SELECT id, now(), now()+interval '2 minutes', sqlc.arg(token)::text FROM object_buckets WHERE id=$1 AND state='ready'
+ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=now(),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
+WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now();
+
+-- name: ObjectInventoryFinish :execrows
+UPDATE object_storage_bucket_usage SET baseline_bytes = CASE WHEN observed_at IS NULL THEN sqlc.arg(bytes)::bigint ELSE baseline_bytes END,
+baseline_keys = CASE WHEN observed_at IS NULL THEN sqlc.arg(objects)::bigint ELSE baseline_keys END,
+observed_bytes=sqlc.arg(bytes),observed_keys=sqlc.arg(objects),observed_at=attempt_at,lease_until=NULL,token=''
+WHERE bucket_id=$1 AND token=$2 AND lease_until > now()
+AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready');
+
+-- name: ObjectInventorySample :exec
+INSERT INTO object_storage_inventory_samples (token,bucket_id,observed_at,bytes,objects)
+SELECT $2,u.bucket_id,u.observed_at,u.observed_bytes,u.observed_keys FROM object_storage_bucket_usage u WHERE u.bucket_id=$1;

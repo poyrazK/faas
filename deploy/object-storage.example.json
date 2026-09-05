@@ -3,6 +3,7 @@
   "defaults": { "us-east-1": "managed-virginia-v1" },
   "max_buckets_per_app": 10,
   "max_upload_bytes": 104857600,
+  "accounting": null,
   "backends": [
     {
       "id": "managed-virginia-v1",
