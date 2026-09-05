@@ -85,3 +85,34 @@ func TestCopyParentTreeEmptyParent(t *testing.T) {
 		t.Fatalf("empty parent produced %d entries", len(entries))
 	}
 }
+
+func TestCopyParentTreeRefusesNonemptyRecoveryDirectory(t *testing.T) {
+	source, target := t.TempDir(), t.TempDir()
+	recovery := filepath.Join(source, "lost+found")
+	if err := os.Mkdir(recovery, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(recovery, "recovered"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyParentTree(context.Background(), source, target); err == nil {
+		t.Fatal("nonempty recovery directory was silently discarded")
+	}
+}
+
+func TestCopyParentTreeSkipsEmptyRecoveryDirectory(t *testing.T) {
+	source, target := t.TempDir(), t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "lost+found"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyParentTree(context.Background(), source, target); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("copied recovery directory: %v", entries)
+	}
+}

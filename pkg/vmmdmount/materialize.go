@@ -50,12 +50,25 @@ func copyParentTree(ctx context.Context, lowerdir, targetDir string) error {
 	if err != nil {
 		return fmt.Errorf("vmmdmount: materialize parent: list contents: %w", err)
 	}
-	if len(entries) == 0 {
-		return nil
-	}
 	args := []string{"-a", "--"}
 	for _, entry := range entries {
+		// mkfs creates lost+found as root:root 0700. It is filesystem
+		// recovery metadata, not OCI content, and the output filesystem
+		// creates its own. Never silently discard recovered files.
+		if entry.Name() == "lost+found" && entry.IsDir() {
+			recovered, err := os.ReadDir(filepath.Join(lowerdir, entry.Name()))
+			if err != nil {
+				return fmt.Errorf("vmmdmount: inspect parent lost+found: %w", err)
+			}
+			if len(recovered) != 0 {
+				return fmt.Errorf("vmmdmount: parent lost+found is not empty; inspect recovered files before staging")
+			}
+			continue
+		}
 		args = append(args, filepath.Join(lowerdir, entry.Name()))
+	}
+	if len(args) == 2 {
+		return nil
 	}
 	args = append(args, targetDir)
 	cmd := exec.CommandContext(ctx, "cp", args...)

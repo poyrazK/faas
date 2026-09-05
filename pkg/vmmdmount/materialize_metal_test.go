@@ -22,12 +22,18 @@ func TestMetalCopyParentTreeUnprivilegedHandoff(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "parent"), []byte("root-owned"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(source, "lost+found"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	const workerUID = 65534
 	if err := os.Chown(target, workerUID, workerUID); err != nil {
 		t.Fatal(err)
 	}
 	if err := copyParentTree(context.Background(), source, target); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "lost+found")); !os.IsNotExist(err) {
+		t.Fatalf("filesystem recovery directory was copied: %v", err)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
