@@ -56,6 +56,7 @@ type RunnerSignal struct {
 	once      sync.Once
 	runtime   string
 	startTime time.Time
+	stderr    *os.File
 }
 
 // NewRunnerSignal returns a fresh fire-and-forget signal helper.
@@ -64,7 +65,7 @@ type RunnerSignal struct {
 // The wake_local signal is the dedupe key — the home-grown
 // helper skips double-firing on the same wake.
 func NewRunnerSignal(runtime string, startTime time.Time) *RunnerSignal {
-	return &RunnerSignal{runtime: runtime, startTime: startTime}
+	return &RunnerSignal{runtime: runtime, startTime: startTime, stderr: os.Stderr}
 }
 
 // StartTime returns the moment the runner booted. The signal
@@ -103,7 +104,7 @@ func (s *RunnerSignal) SignalReady(warmupMs int64) {
 		dial := dialProxy
 		go func() {
 			if err := signalFrameworkReady(s.runtime, warmupMs, dial); err != nil {
-				fmt.Fprintf(os.Stderr, "framework_ready signal failed: %v\n", err)
+				_, _ = fmt.Fprintf(s.stderr, "framework_ready signal failed: %v\n", err)
 			}
 		}()
 	})

@@ -1276,6 +1276,8 @@ jobs:
         with:
           version: v1.7.12
           args: -shellcheck ''
+      - name: native builder Go toolchain bundle contract
+        run: bash scripts/ci/package-go-toolchain_test.sh
 
   packer-validate:
     # ADR-111: Packer-builder syntax gate. PR #928 lands
