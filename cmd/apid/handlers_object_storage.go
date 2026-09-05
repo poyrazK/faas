@@ -23,6 +23,10 @@ func (s *server) WithObjectStorage(registry *objectstorage.Registry) *server {
 	return s
 }
 
+func (s *server) objectStorageEnabled() bool {
+	return s.objectStorage != nil && s.runtimeBool(runtimeConfigS3, false)
+}
+
 // bucketView deliberately excludes operator placement, credentials and leases.
 type bucketView = api.ObjectBucket
 
@@ -87,7 +91,7 @@ func (s *server) listBuckets(w http.ResponseWriter, r *http.Request, acct state.
 		regions, defaultRegion = s.objectStorage.Regions(), s.objectStorage.DefaultRegion
 		maxBytes, maxBuckets = s.objectStorage.MaxUploadBytes, s.objectStorage.MaxBucketsPerApp
 	}
-	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorage != nil, Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
+	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorageEnabled(), Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
 }
 
 type createBucketRequest struct {
@@ -112,7 +116,7 @@ func (s *server) createBucket(w http.ResponseWriter, r *http.Request, acct state
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
-	if s.objectStorage == nil {
+	if !s.objectStorageEnabled() {
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
@@ -134,7 +138,6 @@ func (s *server) createBucket(w http.ResponseWriter, r *http.Request, acct state
 		bucketProblem(w, err)
 		return
 	}
-	s.audit.Emit(r.Context(), "object_bucket.created", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": b.ID})
 	writeJSON(w, 201, viewBucket(b))
 }
 
@@ -169,28 +172,19 @@ func (s *server) reserveBucket(ctx context.Context, st state.ObjectBucketStore, 
 }
 
 func (s *server) provisionBucket(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket) (state.ObjectBucket, error) {
-	backend, err := s.objectStorage.Resolve(b.BackendID, b.BackendFingerprint)
-	if err != nil {
-		return b, err
+	if !s.objectStorageEnabled() {
+		return b, objectstorage.ErrUnavailable
 	}
 	token := uuid.NewString()
-	b, err = st.ClaimObjectBucket(ctx, b.AccountID, b.AppID, b.ID, token, "provisioning")
+	b, err := st.ClaimObjectBucket(ctx, b.AccountID, b.AppID, b.ID, token, "provisioning")
 	if err != nil {
 		return b, err
 	}
-	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
-	next := "ready"
-	if err != nil {
-		next = "provisioning"
+	err = s.executeBucketOperation(ctx, st, b)
+	if err == nil {
+		b.State = "ready"
 	}
-	finishErr := finishBucket(ctx, st, b.ID, token, next)
-	if err != nil {
-		return b, err
-	}
-	b.State = next
-	return b, finishErr
+	return b, err
 }
 
 func finishBucket(ctx context.Context, st state.ObjectBucketStore, id, token, next string) error {
@@ -226,7 +220,7 @@ func (s *server) loadBucket(w http.ResponseWriter, r *http.Request, acct state.A
 }
 
 func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	b, st, provider, ok := s.loadBucket(w, r, acct, false)
+	b, st, _, ok := s.loadBucket(w, r, acct, false)
 	if !ok {
 		return
 	}
@@ -236,26 +230,11 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 		bucketProblem(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-	defer cancel()
-	err = provider.DeleteBucket(ctx, b.PhysicalName)
-	next := "deleted"
-	if err != nil {
-		next = "deleting"
-	}
-	if errors.Is(err, objectstorage.ErrNotEmpty) {
-		next = "ready"
-	}
-	finishErr := finishBucket(r.Context(), st, b.ID, token, next)
+	err = s.executeBucketOperation(r.Context(), st, b)
 	if err != nil {
 		bucketProblem(w, err)
 		return
 	}
-	if finishErr != nil {
-		bucketProblem(w, finishErr)
-		return
-	}
-	s.audit.Emit(r.Context(), "object_bucket.deleted", &acct.ID, map[string]any{"app_id": b.AppID, "bucket_id": b.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -307,6 +286,10 @@ func (s *server) signBucketObject(w http.ResponseWriter, r *http.Request, acct s
 	}
 	// POST is a read capability for GET URLs, but PUT requires write scope.
 	handler := func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if !s.objectStorageEnabled() {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
 		b, _, provider, ok := s.loadBucket(w, r, acct, true)
 		if !ok {
 			return

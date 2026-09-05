@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/aws/smithy-go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,75 @@ func testCredentials(name string) string {
 		return "test-secret"
 	}
 	return ""
+}
+
+func TestS3RecoveryErrorClassification(t *testing.T) {
+	for _, tt := range []struct {
+		code string
+		want error
+	}{
+		{"AccessDenied", ErrConfiguration}, {"InvalidAccessKeyId", ErrConfiguration},
+		{"SignatureDoesNotMatch", ErrConfiguration}, {"ExpiredToken", ErrConfiguration},
+		{"InvalidToken", ErrConfiguration}, {"AuthorizationHeaderMalformed", ErrConfiguration},
+		{"InvalidRequest", ErrInvalid}, {"OperationAborted", ErrConflict}, {"SlowDown", ErrUnavailable},
+	} {
+		got := normalize(&smithy.GenericAPIError{Code: tt.code, Message: "secret-provider-detail"})
+		if !errors.Is(got, tt.want) || strings.Contains(got.Error(), "secret-provider-detail") {
+			t.Fatal(tt.code, got)
+		}
+	}
+}
+
+func TestS3RecoveryAfterPartialProvisioning(t *testing.T) {
+	var created bool
+	var corsCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if r.URL.Path != "/gregale-recovery" {
+			t.Error("changed physical name", r.URL.Path)
+		}
+		switch {
+		case r.Method == "DELETE":
+			w.WriteHeader(404)
+			_, _ = io.WriteString(w, `<Error><Code>NoSuchBucket</Code></Error>`)
+		case r.URL.Query().Has("cors"):
+			corsCalls++
+			if corsCalls == 1 {
+				w.WriteHeader(403)
+				_, _ = io.WriteString(w, `<Error><Code>AccessDenied</Code><Message>private-detail</Message></Error>`)
+			}
+		case created:
+			w.WriteHeader(409)
+			_, _ = io.WriteString(w, `<Error><Code>BucketAlreadyOwnedByYou</Code></Error>`)
+		default:
+			created = true
+		}
+	}))
+	defer upstream.Close()
+	c := testBackend()
+	c.Endpoint = upstream.URL
+	c.AllowedOrigins = []string{"https://console.example.test"}
+	p, err := NewS3(c, testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreateBucket(context.Background(), "gregale-recovery"); !errors.Is(err, ErrConfiguration) {
+		t.Fatal(err)
+	}
+	// Restarting the driver loses process state, but repeats the durable name.
+	p, err = NewS3(c, testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreateBucket(context.Background(), "gregale-recovery"); err != nil {
+		t.Fatal(err)
+	}
+	if !created || corsCalls != 2 {
+		t.Fatal(created, corsCalls)
+	}
+	if err := p.DeleteBucket(context.Background(), "gregale-recovery"); err != nil {
+		t.Fatal("lost delete response not idempotent", err)
+	}
 }
 func testBackend() BackendConfig {
 	return BackendConfig{ID: "external-a", Driver: "s3", Region: "us-east-1", Namespace: "test-project", Endpoint: "https://s3.example.test", S3Region: "us-east-1", PathStyle: true, AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET"}

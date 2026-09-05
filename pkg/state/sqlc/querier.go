@@ -662,6 +662,8 @@ type Querier interface {
 	ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucketListParams) ([]ObjectBucket, error)
 	ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBucketLockAppParams) (pgtype.UUID, error)
 	ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error)
+	ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucketsDueParams) ([]ObjectBucket, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)

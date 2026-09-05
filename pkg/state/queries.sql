@@ -2127,12 +2127,28 @@ SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted';
 
 -- name: ObjectBucketClaim :one
-UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now()
+UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now(),
+attempt_count = CASE WHEN state <> $1 THEN 1 ELSE least(attempt_count + 1, 30) END,
+last_error_code = CASE WHEN state <> $1 THEN '' ELSE last_error_code END, retry_at = now()
 WHERE account_id = $4 AND app_id = $5 AND id = $6 AND state <> 'deleted' AND (lease_until IS NULL OR lease_until < now())
-AND ($1 = 'deleting' OR state = 'provisioning') RETURNING *;
+AND ($1 = 'deleting' OR state = 'provisioning')
+AND (NOT sqlc.arg(recovery)::boolean OR state = $1)
+AND (retry_at <= now() OR state <> $1) RETURNING *;
 
 -- name: ObjectBucketFinish :execrows
-UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now() WHERE id = $2 AND lease_token = $3;
+UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now(),
+attempt_count = 0, last_error_code = '', retry_at = now() WHERE id = $2 AND lease_token = $3;
+
+-- name: ObjectBucketRetry :execrows
+UPDATE object_buckets SET lease_token = NULL, lease_until = NULL, updated_at = now(),
+last_error_code = $3, retry_at = now() + ($4::int * interval '1 second')
+WHERE id = $1 AND lease_token = $2 AND state IN ('provisioning', 'deleting');
+
+-- name: ObjectBucketsDue :many
+SELECT * FROM object_buckets
+WHERE (state = 'deleting' OR (sqlc.arg(include_provisioning)::boolean AND state = 'provisioning'))
+AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
+ORDER BY retry_at, id LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: SnapshotLocalityNodes :many
 SELECT node_id::text AS node_id, true AS is_origin

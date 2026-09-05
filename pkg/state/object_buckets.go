@@ -23,6 +23,9 @@ type ObjectBucket struct {
 	UpdatedAt          time.Time
 	LeaseToken         string
 	LeaseUntil         time.Time
+	AttemptCount       int32
+	RetryAt            time.Time
+	LastErrorCode      string
 }
 
 // ObjectBucketStore is separate from Store so test doubles unrelated to
@@ -33,6 +36,21 @@ type ObjectBucketStore interface {
 	GetObjectBucket(context.Context, string, string, string) (ObjectBucket, error)
 	ClaimObjectBucket(context.Context, string, string, string, string, string) (ObjectBucket, error)
 	FinishObjectBucket(context.Context, string, string, string) error
+	RetryObjectBucket(context.Context, string, string, string, time.Duration) error
+	DueObjectBuckets(context.Context, bool, int32) ([]ObjectBucket, error)
+	ClaimObjectBucketRecovery(context.Context, string, string, string, string, string) (ObjectBucket, error)
 }
 
 const ObjectBucketLeaseDuration = 2 * time.Minute
+
+func validObjectBucketRetry(code string, delay time.Duration) bool {
+	if delay < time.Second || delay > time.Hour {
+		return false
+	}
+	switch code {
+	case "temporary", "configuration", "conflict", "invalid":
+		return true
+	default:
+		return false
+	}
+}
