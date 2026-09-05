@@ -217,6 +217,7 @@ from .csrf_token_response import CSRFTokenResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
+from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
 from .data_upstream_list_response import DataUpstreamListResponse
 from .data_upstream_response import DataUpstreamResponse
@@ -932,6 +933,7 @@ __all__ = (
     "CustomDomainResponse",
     "CustomStage",
     "DailyUsageListResponse",
+    "DailyUsagePoint",
     "DailyUsageResponse",
     "DataUpstreamListResponse",
     "DataUpstreamResponse",

@@ -72,6 +72,16 @@ func TestRenderLatencySparkline_EmptySeries(t *testing.T) {
 	}
 }
 
+func TestRenderUsageSparkline(t *testing.T) {
+	points := makePoints([]float64{0.5, 1.0, 0.75})
+	out := string(views.RenderUsageSparkline(points, 480, 100))
+	for _, want := range []string{`<svg`, `role="img"`, `daily GB-hours`, `<path`, `<polyline`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("usage sparkline missing %q: %s", want, out)
+		}
+	}
+}
+
 // TestRenderLatencySparkline_PartialSeries: only one
 // percentile populated → exactly one <polyline>. The
 // absent percentiles render nothing (no zero-line).

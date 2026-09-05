@@ -978,6 +978,29 @@ type WakeTimelinePageData struct {
 	RenderTable          template.HTML // pre-rendered at the handler
 }
 
+// UsageAppData is the customer-facing monthly usage projection for one app.
+// The handler resolves the app slug and computes display units so the
+// template remains a pure renderer.
+type UsageAppData struct {
+	Slug        string
+	Linkable    bool
+	UsedGBHours float64
+	SharePct    float64
+	Requests    int64
+	CPUHours    float64
+	EgressGB    float64
+	IngressGB   float64
+	ColdBoots   int64
+}
+
+// UsageDailyPoint is one row in the account's trailing daily usage trend.
+type UsageDailyPoint struct {
+	Date          string
+	GBHours       float64
+	TopAppSlug    string
+	TopAppGBHours float64
+}
+
 // UsageData is the /dashboard/usage page payload.
 type UsageData struct {
 	Month           string
@@ -985,6 +1008,7 @@ type UsageData struct {
 	IncludedGBHours int64
 	OverageGBHours  float64
 	UsedPct         float64 // 0..100+
+	Requests        int64
 	// UsedEgressGB (ADR-046, step 10) is the per-month
 	// informational egress roll-up (Σ tx_bytes +
 	// net_tx_bytes across all apps). Not billed; the
@@ -992,7 +1016,13 @@ type UsageData struct {
 	// "this much egress" line. The gateway-side tx_bytes
 	// producer lands in PR-2; until then the value is
 	// 0 because NetTxBytes is the only source populated.
-	UsedEgressGB float64
+	UsedEgressGB       float64
+	UsedIngressGB      float64
+	UsedCPUHours       float64
+	ColdBoots          int64
+	PerApp             []UsageAppData
+	Daily              []UsageDailyPoint
+	DailySparklineHTML template.HTML
 }
 
 // BillingData is the /dashboard/billing page payload (issue #253).

@@ -4531,6 +4531,20 @@ func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("could not load usage"))
 		return
 	}
+	dailyRows, err := s.store.UsageDailyForAccount(r.Context(), acct.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load daily usage"))
+		return
+	}
+	var apps []state.App
+	if len(dailyRows) > 0 {
+		apps, err = s.store.ListApps(r.Context(), acct.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not load usage apps"))
+			return
+		}
+	}
+	daily := usageDailyPoints(dailyRows, apps)
 	var mbSec, cpuUsec, netRxBytes, coldBoots int64
 	for _, u := range rows {
 		mbSec += u.MBSeconds
@@ -4569,6 +4583,7 @@ func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state
 		// informational, not billed.
 		UsedIngressGB: float64(netRxBytes) / (1024 * 1024 * 1024),
 		ColdBootTotal: coldBoots,
+		Daily:         daily,
 	})
 }
 

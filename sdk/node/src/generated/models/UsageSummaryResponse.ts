@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DailyUsagePoint } from './DailyUsagePoint.js';
 /**
- * Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, and informational used_cpu_hours (issue #279 / PR-B). The CPU dimension is observable but not yet billed; the GB-hours fields drive the overage math.
+ * Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage dimensions, and a trailing 30-day daily trend (issue #308). The GB-hours fields drive the overage math; the other dimensions are informational.
  */
 export type UsageSummaryResponse = {
   month: string;
@@ -30,5 +31,9 @@ export type UsageSummaryResponse = {
    * Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not billed). ADR-048.
    */
   cold_boots?: number;
+  /**
+   * Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows exist. issue #308.
+   */
+  daily?: Array<DailyUsagePoint>;
 };
 

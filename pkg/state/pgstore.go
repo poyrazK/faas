@@ -15119,6 +15119,36 @@ func (s *PgStore) UsageDaily(ctx context.Context, accountID string, day time.Tim
 	return out, rows.Err()
 }
 
+// UsageDailyForAccount returns the trailing 30 UTC calendar days of the
+// materialised daily usage rollup. The UTC conversion is explicit rather than
+// relying on the Postgres session timezone so a customer in a non-UTC session
+// never loses the boundary day. ADR-048 / issue #308.
+func (s *PgStore) UsageDailyForAccount(ctx context.Context, accountID string) ([]DailyUsage, error) {
+	rows, err := s.pool.Query(ctx,
+		`select app_id, day, mb_seconds, requests, cpu_usec,
+		        tx_bytes, net_tx_bytes, net_rx_bytes,
+		        cold_boot_count, builder_seconds, tail_seconds
+		   from usage_daily
+		  where account_id = $1
+		    and day >= ((now() at time zone 'UTC')::date - 29)
+		    and day <=  (now() at time zone 'UTC')::date
+		  order by day, app_id`,
+		accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DailyUsage
+	for rows.Next() {
+		u := DailyUsage{AccountID: accountID}
+		if err := rows.Scan(&u.AppID, &u.Day, &u.MBSeconds, &u.Requests, &u.CPUUsec, &u.TXBytes, &u.NetTxBytes, &u.NetRxBytes, &u.ColdBootCount, &u.BuilderSeconds, &u.TailSeconds); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // UsageSLOForApp returns the customer-facing SLO rollup
 // (instance_hours, gb_hours) for one app over the half-open
 // UTC range [start, end). Powers GET /v1/apps/{slug}/slo

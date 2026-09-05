@@ -113,6 +113,7 @@ export type { CSRFTokenResponse } from './models/CSRFTokenResponse.js';
 export type { CustomDomainResponse } from './models/CustomDomainResponse.js';
 export type { CustomStage } from './models/CustomStage.js';
 export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js';
+export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
 export type { DailyUsageResponse } from './models/DailyUsageResponse.js';
 export type { DataUpstreamListResponse } from './models/DataUpstreamListResponse.js';
 export type { DataUpstreamResponse } from './models/DataUpstreamResponse.js';
