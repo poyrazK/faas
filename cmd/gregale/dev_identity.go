@@ -80,7 +80,7 @@ func loadOrCreateDeveloperID() (string, error) {
 		return "", err
 	}
 	temporaryPath := file.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return "", err
