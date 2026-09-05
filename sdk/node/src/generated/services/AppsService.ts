@@ -19,6 +19,7 @@ import type { DebugCompareResponse } from '../models/DebugCompareResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
+import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -760,6 +761,49 @@ export class AppsService {
         'limit': limit,
       },
       errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get one request telemetry record (ADR-127).
+   * Returns one request telemetry row by id for the app. The
+   * lookup is scoped to the app resolved from `slug`, so a request
+   * id belonging to another app is returned as not found. This
+   * direct lookup is not limited to the first page of recent
+   * requests. Plan-gated by `DebugTelemetryEnabled`.
+   *
+   * @returns DebugTelemetryRequestItem Request telemetry record.
+   * @throws ApiError
+   */
+  public static getAppDebugRequest({
+    slug,
+    reqId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Telemetry record UUID to retrieve.
+     */
+    reqId: string,
+  }): CancelablePromise<DebugTelemetryRequestItem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/requests/{req_id}',
+      path: {
+        'slug': slug,
+        'req_id': reqId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,

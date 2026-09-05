@@ -21003,6 +21003,13 @@ func (s *PgStore) ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRe
 	return s.appErrorsQueries().ListRequestTelemetryByApp(ctx, s.pool, arg)
 }
 
+// GetRequestTelemetryByAppAndID backs the direct customer debugger
+// drill-down. The sqlc query filters by app_id before matching the
+// request id, preserving the app's tenant boundary in the database.
+func (s *PgStore) GetRequestTelemetryByAppAndID(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIDParams) (sqlc.GetRequestTelemetryByAppAndIDRow, error) {
+	return s.appErrorsQueries().GetRequestTelemetryByAppAndID(ctx, s.pool, arg)
+}
+
 // RequestTelemetryByDeployment backs the per-deployment drilldown
 // and the regression detector (PR-B cron).
 func (s *PgStore) RequestTelemetryByDeployment(ctx context.Context, arg sqlc.RequestTelemetryByDeploymentParams) ([]sqlc.RequestTelemetryByDeploymentRow, error) {

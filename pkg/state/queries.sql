@@ -1580,6 +1580,19 @@ WHERE app_id = $1
 ORDER BY received_at DESC
 LIMIT $4;
 
+-- name: GetRequestTelemetryByAppAndID :one
+-- Direct request drill-down for the customer debugger. The app_id
+-- predicate is the database-side tenant boundary; the handler has
+-- already resolved the slug through the caller's account.
+SELECT id, deployment_id, route, method, status, latency_ms,
+       cold_boot, trace_id, received_at
+FROM request_telemetry
+WHERE app_id = $1
+  AND id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+LIMIT 1;
+
 -- name: RequestTelemetryByDeployment :many
 -- Per-deployment drilldown. Used by gregale debug compare and the
 -- regression detector (PR-B). Uses
