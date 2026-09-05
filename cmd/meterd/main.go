@@ -655,6 +655,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	// SAFE-RELEASES-F3: canary progression and safedeploy action dispatch
+	// are one activation unit. The action dispatcher needs the APID client
+	// created from the canary token; fail before opening Postgres if an
+	// operator stages only one secret and would otherwise leave rollouts in
+	// a partially automated state.
+	if err := validateSafeDeployTokenPair(
+		safeDeployToken(deps.getenv, "FAAS_CANARY_PROGRESSION_TOKEN"),
+		safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN"),
+	); err != nil {
+		return err
+	}
 	// Gate-B box-role gate. meterd is a control-plane daemon —
 	// it refuses to start under RoleComputeOnly. The role is
 	// set from TOML or FAAS_METERD_ROLE at deploy time; default
@@ -1390,7 +1401,7 @@ func buildUpstreamProbe(deps runDeps, store state.Store, ops *wire.OpsMetrics, l
 // call sites nil-check the progression and skip the goroutine,
 // preserving the pre-PR meterd behaviour exactly.
 func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger) (*canary.Progression, *api.Client) {
-	token := deps.getenv("FAAS_CANARY_PROGRESSION_TOKEN")
+	token := safeDeployToken(deps.getenv, "FAAS_CANARY_PROGRESSION_TOKEN")
 	if token == "" {
 		log.Info("meterd: canary_progression disabled — FAAS_CANARY_PROGRESSION_TOKEN unset; running without canary_progression tick")
 		return nil, nil
@@ -1429,7 +1440,7 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 // doesn't know about pkg/alerts; the seam lives at
 // alerts.Evaluator.SetActionExec).
 func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, apidClient *api.Client, evaluator *alerts.Evaluator) *safedeploy.Orchestrator {
-	token := deps.getenv("FAAS_SAFEDEPLOY_TOKEN")
+	token := safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN")
 	if token == "" {
 		log.Info("meterd: safedeploy disabled — FAAS_SAFEDEPLOY_TOKEN unset; running without safedeploy tick")
 		return nil

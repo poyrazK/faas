@@ -71,7 +71,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILDERD_ROLE` | builderd, shared | `dropin` |  |
 | `FAAS_BUILDER_BASE_PATH` | imaged, shared | `default` |  |
 | `FAAS_BUILDER_BASE_REF` | imaged | `dropin` |  |
-| `FAAS_CANARY_PROGRESSION_TOKEN` | meterd | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_CANARY_PROGRESSION_TOKEN` | meterd | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); Safe Deploy activation requires this and FAAS_SAFEDEPLOY_TOKEN together |
 | `FAAS_CERT_EXPIRY_REFRESHER_INTERVAL` | meterd | `default` |  |
 | `FAAS_CLI_AUTH_URL_BASE` | apid | `default` |  |
 | `FAAS_COMPLETION_CACHE_PATH` | shared | `client` | read by the CLI/SDK on the operator's machine, never by a daemon |
@@ -243,7 +243,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |
-| `FAAS_SAFEDEPLOY_TOKEN` | meterd | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_SAFEDEPLOY_TOKEN` | meterd | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); Safe Deploy activation requires this and FAAS_CANARY_PROGRESSION_TOKEN together |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |
 | `FAAS_SBOM_ROOT` | apid | `default` |  |
 | `FAAS_SCAN_SPOOL_ROOT` | apid | `default` |  |
