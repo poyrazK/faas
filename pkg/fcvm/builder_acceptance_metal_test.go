@@ -102,7 +102,7 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 			t.Cleanup(func() { _ = driver.Close() })
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(buildTimeoutSeconds+600)*time.Second)
 			defer cancel()
-			source := acceptanceSource(t, tmp, tc.root, tc.node, tc.cancel, tc.fail)
+			source := acceptanceSource(t, tmp, tc.root, acceptanceSourceOptions{node: tc.node, cancel: tc.cancel, fail: tc.fail})
 			runtimeBaseRef := ""
 			if tc.root != "" {
 				runtimeBaseRef = acceptanceRuntimeBase(t, tc.node)
@@ -272,12 +272,14 @@ func waitAcceptanceLog(t *testing.T, ctx context.Context, m *fcvm.Manager, id, m
 	}
 }
 
-func acceptanceSource(t *testing.T, tmp, workspace string, cancel, fail, node bool) string {
+type acceptanceSourceOptions struct{ node, cancel, fail bool }
+
+func acceptanceSource(t *testing.T, tmp, workspace string, opts acceptanceSourceOptions) string {
 	t.Helper()
 	files := map[string][]byte{}
 	if workspace != "" {
 		files["package.json"] = []byte(`{"name":"wrong-root","scripts":{"build":"exit 91"}}`)
-		if node {
+		if opts.node {
 			files[workspace+"/package.json"] = []byte(`{"name":"acceptance-api","version":"1.0.0","engines":{"node":"24"},"scripts":{"start":"node server.js"}}`)
 			files[workspace+"/server.js"] = []byte(`require('http').createServer((q,s)=>s.end('acceptance-ok')).listen(8080,'0.0.0.0')`)
 		} else {
@@ -290,7 +292,7 @@ func acceptanceSource(t *testing.T, tmp, workspace string, cancel, fail, node bo
 			// Use Railpack's real shell provider and a small pinned build base.
 			// This exercises prepare/frontend/RUN/export without downloading a
 			// complete language toolchain for the default correctness gate.
-			files[workspace+"/railpack.json"] = []byte(fmt.Sprintf(`{"provider":"shell","steps":{"packages:mise":{"inputs":[{"image":%q}]}}}`, acceptanceRuntimeBase(t, false)))
+			files[workspace+"/railpack.json"] = []byte(fmt.Sprintf(`{"provider":"shell","steps":{"build":{"inputs":[{"image":%q},{"local":true,"include":["."]}]}}}`, acceptanceRuntimeBase(t, false)))
 		}
 	} else {
 		busybox, err := exec.LookPath("busybox")
@@ -298,10 +300,10 @@ func acceptanceSource(t *testing.T, tmp, workspace string, cancel, fail, node bo
 		files["busybox"], err = os.ReadFile(busybox)
 		mustAcceptance(t, err)
 		script := "#!/busybox sh\n/busybox mkdir -p /www\necho acceptance-ok > /www/index.html\n"
-		if cancel {
+		if opts.cancel {
 			script = "#!/busybox sh\necho acceptance-build-running\n/busybox sleep 300\n"
 		}
-		if fail {
+		if opts.fail {
 			script = "#!/busybox sh\nexit 42\n"
 		}
 		files["build.sh"] = []byte(script)
