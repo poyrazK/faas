@@ -44,6 +44,7 @@ groups:
         labels:
           severity: warn
           component: vmmd
+          family: bridge
         annotations:
           summary: "Sustained bridge framing mismatch — surgical rollback in progress or H2C base image regressed"
           description: |
@@ -70,6 +71,7 @@ groups:
                 1" (revert to unset).
 
             Runbook: docs/ops/h2c-rollback.md
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/h2c-rollback.md"
 
       - alert: FaasBridgeRollbackStuck
         # Same surface as FaasBridgeFramingMismatch but tightened
@@ -84,6 +86,7 @@ groups:
         labels:
           severity: page
           component: vmmd
+          family: bridge
         annotations:
           summary: "Surgical rollback running for >4h — operator likely forgot to flip FAAS_BRIDGE_PROTOCOL back"
           description: |
@@ -98,5 +101,5 @@ groups:
             meant to be permanent?) and either revert the env
             override or update the runbook to document the
             long-running rollback.
-
             Runbook: docs/ops/h2c-rollback.md
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/h2c-rollback.md"

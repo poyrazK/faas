@@ -61,7 +61,16 @@ When you receive a page:
 | `restart_loop` | warn | [`FaasRestartLoop.md`](FaasRestartLoop.md) | (See `daemon_restart_loop` above.) |
 | `repeated_restart` | warn | [`FaasRepeatedRestart.md`](FaasRepeatedRestart.md) | (See `daemon_repeated_restart` above.) |
 | `stuck_activating` | warn | [`FaasStuckActivating.md`](FaasStuckActivating.md) | (See `daemon_stuck_activating` above.) |
-| `pg_backup` | page | [`PostgresBackup.md`](PostgresBackup.md) | Network blip on the off-host push channel; check `journalctl -u faas-pg-basebackup-push`. |
+| `pg_backup` | page | [`PostgresBackup.md`](../runbooks/PostgresBackup.md) | Network blip on the off-host push channel; check `journalctl -u faas-pg-basebackup-push`. |
+| `loki_pipeline` | page/warn | [`FaasLokiPipelineDegraded.md`](../runbooks/FaasLokiPipelineDegraded.md) | Promtail or Loki maintenance can temporarily pause shipping; confirm dropped entries and backend reachability before escalating. |
+| `compute_metrics_discovery` | warn | [`FaasComputeMetricsDiscoveryDegraded.md`](../runbooks/FaasComputeMetricsDiscoveryDegraded.md) | A planned compute-node drain can make the registry and target snapshot differ briefly; check the latest discovery timestamp first. |
+| `compute_metrics_scrape` | warn | [`FaasComputeMetricsDiscoveryDegraded.md`](../runbooks/FaasComputeMetricsDiscoveryDegraded.md) | A node listener restart or private-route flap can reduce coverage while discovery remains fresh. |
+| `log_archive` | page/warn | [`FaasLogArchiveShipperDegraded.md`](../runbooks/FaasLogArchiveShipperDegraded.md) | An intentional object-store maintenance window may create bounded local spool growth; verify capacity and failure reason. |
+| `telemetry_pipeline` | info/warn | [`FaasOTLPMetricsExporterDown.md`](../runbooks/FaasOTLPMetricsExporterDown.md) | OTLP export is optional; local Prometheus and trace-ring data remain available when the remote collector is disabled or unavailable. |
+| `obs_trace` | info/page | [`FaasOperatorActionTraceCompletenessLow.md`](../runbooks/FaasOperatorActionTraceCompletenessLow.md) | A fresh schedd may not have completed its first driver tick; distinguish cold start from a stalled Postgres-backed loop. |
+| `bridge` | page/warn | [`h2c-rollback.md`](h2c-rollback.md) | A deliberate H1 surgical rollback can produce mismatch alerts; confirm the rollback owner and expiry before reverting it. |
+| `prometheus_health` | page | [`FaasPrometheusAlertingPathDegraded.md`](../runbooks/FaasPrometheusAlertingPathDegraded.md) | A short Prometheus restart can leave self-scrape series absent; verify service readiness and the active rule groups. |
+| `alertmanager_health` | page/warn | [`FaasAlertmanagerDeliveryDegraded.md`](../runbooks/FaasAlertmanagerDeliveryDegraded.md) | Receiver provider outages or a deliberate notification disablement can fail delivery while alert evaluation remains healthy. |
 
 ## Cross-cutting triage commands
 

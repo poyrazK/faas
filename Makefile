@@ -265,6 +265,10 @@ grafana-mirror-check: ## SHA-256 byte-identity check for deploy/grafana/ → dep
 	  fi; \
 	done
 
+.PHONY: prometheus-alert-metadata-check
+prometheus-alert-metadata-check: ## Assert every checked-in Prometheus alert has a family label and an existing runbook.
+	bash scripts/ci/check_prometheus_alert_metadata.sh $(CURDIR)
+
 .PHONY: verify-secrets
 verify-secrets: ## PR-P4: assert /etc/faas/sealed.env (or the file passed via SECRETS_FILE) is shaped correctly. CI runs this on every PR.
 	@test -x deploy/scripts/verify-secrets.sh || (echo "deploy/scripts/verify-secrets.sh missing or not executable" ; exit 1)

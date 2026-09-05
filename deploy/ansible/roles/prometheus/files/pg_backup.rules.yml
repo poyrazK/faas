@@ -10,7 +10,7 @@
 # degrading silently — the cluster keeps running but the off-host
 # recovery point slides into the local archive's retention window.
 #
-# Runbook: docs/ops/PostgresBackup.md.
+# Runbook: docs/runbooks/PostgresBackup.md.
 
 groups:
   - name: faas.pg_backup
@@ -26,10 +26,12 @@ groups:
         for: 5m
         labels:
           severity: page
+          family: pg_backup
         annotations:
           summary: "Postgres basebackup not pushed to Hetzner Storage Box for >24h"
           description: |
             Last successful push: {{ $value | humanizeDuration }} ago.
             Check `systemctl status faas-pg-basebackup-push.timer` and
             `journalctl -u faas-pg-basebackup-push.service` on the CP host.
-            Runbook: docs/ops/PostgresBackup.md
+            Runbook: docs/runbooks/PostgresBackup.md
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
