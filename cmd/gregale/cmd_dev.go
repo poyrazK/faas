@@ -63,6 +63,7 @@ type devLoopOps struct {
 	refresh         func(devSourceConfig) error
 	onWatching      func()
 	onChange        func()
+	onLive          func()
 	onSuperseded    func()
 	onDeployFailed  func(int)
 	onCancelFailed  func(error)
@@ -225,6 +226,8 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 			}
 			if current.superseded {
 				cancelCurrent()
+			} else if ctx.Err() == nil && result.code == 0 && ops.onLive != nil {
+				ops.onLive()
 			} else if ctx.Err() == nil && result.code != 0 && ops.onDeployFailed != nil {
 				ops.onDeployFailed(result.code)
 			}
@@ -273,12 +276,13 @@ func cmdDev(args []string) int {
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
 	once := fs.Bool("once", false, "deploy once and exit instead of watching for changes")
 	stop := fs.Bool("stop", false, "tear down this project's developer environment")
+	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--once|--stop]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--once|--stop] [--no-logs]", "dev")
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--once|--stop]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--once|--stop] [--no-logs]", "dev")
 		return 1
 	}
 	if *once && *stop {
@@ -342,6 +346,9 @@ func cmdDev(args []string) int {
 
 	ctx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
+	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
+	defer cancelRuntimeLogs()
+	runtimeLogsStarted := false
 	lastSynced, err := devSourceFingerprint(sourceDir)
 	if err != nil {
 		return printErr("Could not watch developer source", err)
@@ -362,6 +369,14 @@ func cmdDev(args []string) int {
 				PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
 			}
 			return code
+		},
+		onLive: func() {
+			if *once || *noLogs || jsonOutput || runtimeLogsStarted {
+				return
+			}
+			runtimeLogsStarted = true
+			PrintProgress(osStdout, "runtime logs attached (Ctrl-C to stop watching)")
+			go followDevRuntimeLogs(runtimeLogCtx, client, session.App.Slug)
 		},
 		cancelDeploy: func(cancelCtx context.Context, deploymentID string) error {
 			cancelCtx, cancel := context.WithTimeout(cancelCtx, 15*time.Second)
