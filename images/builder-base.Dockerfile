@@ -130,6 +130,7 @@ ARG TARGETARCH
 ARG BUILDKIT_SOURCE_SHA256
 ARG GO_ARCHIVE_VERSION
 COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
+COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
 # BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
 # v1.82.1. Keep the source release's vendored dependency graph for a fast,
 # reproducible build, but replace the source's vulnerable modules with fixed
@@ -144,7 +145,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       echo "${BUILDKIT_SOURCE_SHA256}  /tmp/buildkit-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/buildkit-source.tgz --strip-components=1 -C /src/buildkit && \
       rm /tmp/buildkit-source.tgz && \
-      git apply /tmp/buildkit-session-health.patch && \
+      git apply /tmp/buildkit-session-health.patch /tmp/buildkit-frontend-startup.patch && \
       go mod edit -require=github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} && \
       go mod edit -require=golang.org/x/net@v0.57.0 && \
       go mod edit -require=golang.org/x/crypto@v0.56.0 && \
@@ -164,6 +165,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
         -e "s#golang.org/x/crypto v0.54.0#golang.org/x/crypto v0.56.0#" \
         -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v1.83.1#" \
         vendor/modules.txt && \
+      go test -mod=vendor ./frontend/gateway -run '^TestServeWaitsForColdFrontend$' -count=1 && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         go build -mod=vendor -trimpath -o /out/buildkitd ./cmd/buildkitd && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \

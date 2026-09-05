@@ -22,9 +22,32 @@
 # gate. The M1/M3 tests additionally need real base/layer rootfs images (M2).
 set -euo pipefail
 
-export FAAS_TEST_KERNEL="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.128}"
+REPO="${FAAS_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+cd "$REPO"
+if [[ "$(id -u)" != 0 ]]; then
+  echo "ERROR: metal tests require root inside a dedicated KVM test host." >&2
+  exit 1
+fi
+mkdir -p /var/log/faas
+./deploy/lima/stage-metal.sh
+METAL_WORK=$(mktemp -d /tmp/faas-metal-run.XXXXXX)
+trap 'rm -rf "$METAL_WORK"' EXIT
+CGO_ENABLED=0 go build -trimpath -o "$METAL_WORK/vmmd" ./cmd/vmmd
+export FAAS_TEST_VMMD_BINARY="$METAL_WORK/vmmd"
+export FAAS_GUEST_INIT=/usr/local/bin/faas-guest-init
+if [[ "${FAAS_METAL_BUILD_ACCEPTANCE:-0}" == 1 ]]; then
+  export FAAS_BUILDER_BASE_PATH="${FAAS_BUILDER_BASE_PATH:-/srv/fc/base/runner-builder-$(go env GOARCH).ext4}"
+fi
 
-# The V6 acceptance rootfs is staged by the Lima provisioner at
+if [[ "${FAAS_METAL_BUILD_ACCEPTANCE:-0}" == 1 ]]; then
+  ./deploy/lima/stage-kernel.sh
+  kernel_version=$(sed -n 's/^fc_kernel_version: "\([^"]*\)"$/\1/p' deploy/ansible/roles/firecracker/defaults/main.yml)
+  export FAAS_TEST_KERNEL="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-$kernel_version-arm64}"
+else
+  export FAAS_TEST_KERNEL="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.128}"
+fi
+
+# The V6 acceptance rootfs is refreshed by stage-metal.sh at
 # /srv/fc/base/v6-{base,layer}.ext4. Both paths flow to TestMetal*:
 #
 #   - FAAS_TEST_BASE_ROOTFS / FAAS_TEST_LAYER_ROOTFS feed metalImages()
@@ -42,8 +65,7 @@ V6_BASE="${FAAS_TEST_V6_BASE:-/srv/fc/base/v6-base.ext4}"
 V6_LAYER="${FAAS_TEST_V6_LAYER:-/srv/fc/base/v6-layer.ext4}"
 if [ ! -f "$V6_BASE" ] || [ ! -f "$V6_LAYER" ]; then
   echo "WARN: V6 rootfs not staged at $V6_BASE / $V6_LAYER" >&2
-  echo "      Re-provision the Lima VM (limactl delete -f faas-metal && limactl start ...)" >&2
-  echo "      to rebuild from guest-init source. TestMetalTwoRestoresDistinctUUID will skip." >&2
+  echo "      Check the FAAS_TEST_V6_* overrides; stage-metal.sh refreshes the defaults." >&2
 else
   export FAAS_TEST_V6_BASE="$V6_BASE"
   export FAAS_TEST_V6_LAYER="$V6_LAYER"
@@ -69,6 +91,18 @@ if ! ip link show br-tenants >/dev/null 2>&1; then
 fi
 sysctl -wq net.ipv4.ip_forward=1
 
+# Production host policy provides this second NAT hop. Lima only configures
+# its own/Docker subnets; without these scoped rules the builder's DNS and
+# registry traffic never leaves br-tenants. Retain per-VM egress filtering.
+uplink=$(ip -4 route show default | awk 'NR==1 {print $5}')
+test -n "$uplink"
+iptables -t nat -C POSTROUTING -s 10.100.0.0/16 -o "$uplink" -j MASQUERADE 2>/dev/null || \
+  iptables -t nat -A POSTROUTING -s 10.100.0.0/16 -o "$uplink" -j MASQUERADE
+iptables -C FORWARD -i br-tenants -o "$uplink" -s 10.100.0.0/16 -j ACCEPT 2>/dev/null || \
+  iptables -I FORWARD 1 -i br-tenants -o "$uplink" -s 10.100.0.0/16 -j ACCEPT
+iptables -C FORWARD -i "$uplink" -o br-tenants -d 10.100.0.0/16 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || \
+  iptables -I FORWARD 1 -i "$uplink" -o br-tenants -d 10.100.0.0/16 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
 # Lima-cgroup shim: the nested-KVM arm64 guest leaves /sys/fs/cgroup/faas-tenant.slice
 # in a state where writing PIDs returns EBUSY (the kernel can't migrate
 # processes across controllers when the slice's subtree_control is
@@ -80,6 +114,8 @@ if ! mountpoint -q /sys/fs/cgroup/faas-tenant.slice; then
   if rmdir /sys/fs/cgroup/faas-tenant.slice 2>/dev/null; then
     mkdir /sys/fs/cgroup/faas-tenant.slice
     mount -t cgroup2 none /sys/fs/cgroup/faas-tenant.slice
+    # Controller names are space-separated words, not one per line.
+    # shellcheck disable=SC2013
     for _ctl in $(cat /sys/fs/cgroup/cgroup.controllers); do
       echo "+$_ctl" > /sys/fs/cgroup/faas-tenant.slice/cgroup.subtree_control 2>/dev/null || true
     done
@@ -163,4 +199,8 @@ echo "kernel=$FAAS_TEST_KERNEL fc=$FAAS_TEST_FC_VERSION target=$RUN_TARGET"
 # §14 V2 wake-latency 100-cycle loop (cmd/e2e/deploy_wake_metal_test.go).
 # Default Go test timeout is 10m which the 100-cycle loop overruns on Lima
 # nested-virt even when cold-boot is cached.
-exec go test -tags metal -count=1 -v -timeout 60m "${RUN_ARGS[@]}" "$RUN_TARGET"
+status=0
+go test -tags metal -count=1 -v -timeout 60m "${RUN_ARGS[@]}" "$RUN_TARGET" || status=$?
+# Run even after a failing test: resource leaks must be visible in its report.
+bash deploy/scripts/leakcheck.sh || status=1
+exit "$status"

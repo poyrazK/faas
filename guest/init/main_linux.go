@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -833,27 +834,33 @@ func runBuild(m api.BuildManifest) error {
 	// it to the VM console. A rootless solve can spend minutes in an image
 	// fetch/unpack step; without the console mirror the host only sees a hot
 	// Firecracker process and cannot distinguish progress from a deadlock.
+	bk.WaitDelay = 2 * time.Second
 	bk.Stdout = io.MultiWriter(os.Stdout, &buildkitLog)
 	bk.Stderr = io.MultiWriter(os.Stderr, &buildkitLog)
 	if err := bk.Start(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("start buildkitd: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
 	guestStage("buildkit-started")
-	defer func() {
-		if bk.Process == nil {
-			return
-		}
-		_ = syscall.Kill(-bk.Process.Pid, syscall.SIGKILL)
-		_ = bk.Process.Kill()
-	}()
-	for i := 0; i < 25; i++ {
+	bkDone := make(chan error, 1)
+	go func() { bkDone <- bk.Wait(); close(bkDone) }()
+	stopBuildkit := sync.OnceFunc(func() { stopBuildDaemon(bk, bkDone) })
+	defer stopBuildkit()
+	finish := func(err error, tail string) error {
+		stopBuildkit()
+		return writeAndPoweroff(m, err, tail)
+	}
+	// A cold BuildKit on nested KVM can need more than five seconds to
+	// initialize its rootless worker. Use the same bounded minute as the
+	// subsequent worker readiness RPC; keep polling so fast boots pay no delay.
+	startupDeadline := time.Now().Add(time.Minute)
+	for time.Now().Before(startupDeadline) {
 		if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err == nil {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err != nil {
-		return writeAndPoweroff(m, fmt.Errorf("buildkitd socket never appeared: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
+		return finish(fmt.Errorf("buildkitd socket never appeared: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
 	guestStage("buildkit-socket")
 	checkCtx, checkCancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -869,35 +876,33 @@ func runBuild(m api.BuildManifest) error {
 		// status is included in the build marker instead of reporting only
 		// the client-side closed-socket error.
 		_ = bk.Process.Signal(syscall.SIGQUIT)
-		waitCh := make(chan error, 1)
-		go func() { waitCh <- bk.Wait() }()
 		select {
-		case waitErr := <-waitCh:
+		case waitErr := <-bkDone:
 			time.Sleep(100 * time.Millisecond)
 			diagnostic = append(diagnostic, buildkitLog.Bytes()...)
 			diagnostic = append(diagnostic, []byte(fmt.Sprintf("buildkitd exit: %v\n", waitErr))...)
 		case <-time.After(2 * time.Second):
 			_ = bk.Process.Kill()
 			select {
-			case waitErr := <-waitCh:
+			case waitErr := <-bkDone:
 				diagnostic = append(diagnostic, []byte(fmt.Sprintf("buildkitd exit after kill: %v\n", waitErr))...)
 			case <-time.After(1 * time.Second):
 				diagnostic = append(diagnostic, []byte("buildkitd exit: wait timeout\n")...)
 			}
 		}
-		return writeAndPoweroff(m, fmt.Errorf("buildkitd readiness: %w (%s)", workerErr, workerOut), tailOf(diagnostic, m.LogTailBytes))
+		return finish(fmt.Errorf("buildkitd readiness: %w (%s)", workerErr, workerOut), tailOf(diagnostic, m.LogTailBytes))
 	}
 	guestStage("buildkit-ready")
 
 	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
-		return writeAndPoweroff(m, fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
+		return finish(fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
 	}
 	var restoreRailpackConfig func() error
 	if m.Framework != api.FrameworkDockerfile {
 		var err error
 		restoreRailpackConfig, err = prepareRailpackConfig(m)
 		if err != nil {
-			return writeAndPoweroff(m, fmt.Errorf("prepare Railpack runtime base: %w", err), "")
+			return finish(fmt.Errorf("prepare Railpack runtime base: %w", err), "")
 		}
 	}
 
@@ -944,7 +949,7 @@ func runBuild(m api.BuildManifest) error {
 		if restoreRailpackConfig != nil {
 			_ = restoreRailpackConfig()
 		}
-		return writeAndPoweroff(m, fmt.Errorf("start build command: %w", err), "")
+		return finish(fmt.Errorf("start build command: %w", err), "")
 	}
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -961,6 +966,10 @@ func runBuild(m api.BuildManifest) error {
 		// descendant prevents exec.Cmd.Wait from returning.
 		err = context.DeadlineExceeded
 	}
+	// A deferred stop runs after writeAndPoweroff, which never returns on a
+	// successful halt. Quiesce the daemon before reading its log and syncing
+	// the writable drive so export cannot observe partially written metadata.
+	stopBuildkit()
 	fmt.Printf("guest-init: build command finished, err=%v, output bytes=%d\n", err, buf.Len())
 	if buf.Len() > 0 {
 		fmt.Printf("--- build output ---\n%s\n--- end build output ---\n", buf.String())
@@ -983,7 +992,19 @@ func runBuild(m api.BuildManifest) error {
 			}
 		}
 	}
-	return writeAndPoweroff(m, err, combined.String())
+	return finish(err, combined.String())
+}
+
+// stopBuildDaemon stops writers before syncing the export drive. Bound the wait
+// because a broken FUSE mount can leave a worker in an uninterruptible syscall.
+func stopBuildDaemon(cmd *exec.Cmd, done <-chan error) {
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	_ = cmd.Process.Kill()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		fmt.Fprintln(os.Stderr, "guest-init: buildkitd did not reap within shutdown budget")
+	}
 }
 
 // probeBuilderWorkspace verifies the exact user/mount namespace boundary used
@@ -1241,6 +1262,11 @@ func buildArgv(m api.BuildManifest) []string {
 			"--output", "type=oci,dest=" + m.OutDir + "/image.tar",
 		}
 	}
+	// Railpack plans local COPY paths relative to the directory passed to
+	// prepare. A repository-wide context would copy a different package.json
+	// (and sources) when building a selected workspace. Dockerfiles above keep
+	// their explicit repository context for cross-directory COPY instructions.
+	contextDir = m.Workdir
 	planDir := filepath.Dir(m.OutDir)
 	planPath := filepath.Join(planDir, "railpack-plan.json")
 	infoPath := filepath.Join(planDir, "railpack-info.json")

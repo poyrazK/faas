@@ -285,7 +285,9 @@ gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; 
 
 .PHONY: test-metal
 test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
-	$(GO) test -tags metal -race -count=1 $(PKGS)
+	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
+	  CGO_ENABLED=0 $(GO) build -trimpath -o "$$helper_dir/vmmd" ./cmd/vmmd; \
+	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(PKGS)
 
 .PHONY: leakcheck
 leakcheck: ## Assert zero leaked netns/TAPs/jail uids/cgroups after tests
@@ -361,6 +363,11 @@ lint-pg-restore-verify: ## Static lint of the off-host restore-verify script (is
 metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see deploy/lima/README.md)
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
+
+.PHONY: metal-lima-build
+metal-lima-build: ## Real builder VM acceptance: Dockerfile, Railpack workspace, failure, cancellation, imaged and cleanup
+	@if limactl list -q 2>/dev/null | grep -qx faas-metal; then limactl start faas-metal --tty=false; else limactl start deploy/lima/faas-metal.yaml --tty=false; fi
+	limactl shell --workdir "$(CURDIR)" faas-metal sudo env FAAS_METAL_BUILD_ACCEPTANCE=1 RUN_GREGALE_RELEASE_INSTALL=0 ./deploy/lima/run-metal.sh -run '^TestMetalBuilderAcceptance$$'
 
 .PHONY: metal-lima-m5
 metal-lima-m5: ## Run the M5 §14 deploy-to-park cold-boot acceptance on Lima (subtest 1 only)

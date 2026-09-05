@@ -90,3 +90,31 @@ func TestDestroyCancelledContextKillsChildAndCleansUp(t *testing.T) {
 		t.Fatal("process record leaked")
 	}
 }
+
+func TestAppDestroyDoesNotWaitForBuilderTimeout(t *testing.T) {
+	v, id, rec := runningBuildProcess(t)
+	rec.isBuilder = false
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { _, err := v.DestroyWithExport(ctx, Lease{Instance: id}, ""); finished <- err }()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("app destruction waited for natural exit instead of killing the VM")
+	}
+	select {
+	case <-rec.done:
+	default:
+		t.Fatal("app process survived destroy")
+	}
+	v.mu.Lock()
+	_, exists := v.recs[id]
+	v.mu.Unlock()
+	if exists {
+		t.Fatal("app process record survived destroy")
+	}
+}
