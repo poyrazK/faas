@@ -21,6 +21,7 @@ registry. Adding, draining, or replacing a compute node therefore does not
 require editing the Prometheus target list or restarting Prometheus. The
 public gateway explicitly rejects that internal endpoint.
 - `meterd`    `:9106`
+- `prometheus` `:9095` (loopback self-scrape for alerting-path health)
 - `githubd`   `:8083`
 - `alertmanager` `:9094`
 - `node`      `:9100`

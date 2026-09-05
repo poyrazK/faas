@@ -266,6 +266,9 @@ jobs:
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             pkg/promqlrules/data_placement.yaml
 
+      - name: Prometheus alert metadata check
+        run: make prometheus-alert-metadata-check
+
       # ansible syntax gate. deploy/ansible/ is the source of truth for the
       # box's systemd units, sysctls and secret file modes, but nothing in
       # CI ever parsed it — so it rotted. When this gate was added, SIX role

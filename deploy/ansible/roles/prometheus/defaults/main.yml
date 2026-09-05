@@ -100,6 +100,9 @@ prom_targets:
   - job: meterd
     host: 127.0.0.1
     port: 9106
+  - job: prometheus
+    host: 127.0.0.1
+    port: 9095
   - job: alertmanager
     host: 127.0.0.1
     port: 9094
