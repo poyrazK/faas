@@ -14,9 +14,108 @@ import (
 )
 
 const (
-	devWatchPollInterval = 750 * time.Millisecond
-	devSessionFunction   = "function"
+	devWatchPollInterval   = 250 * time.Millisecond
+	devWatchSettleInterval = 500 * time.Millisecond
+	devSessionFunction     = "function"
 )
+
+type devSourceConfig struct {
+	shape   shape
+	runtime string
+	handler string
+}
+
+func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
+	resolvedShape, runtime, handler, err := resolveDeployShape(sourceDir, false, false, jsonOutput)
+	if err != nil {
+		return devSourceConfig{}, err
+	}
+	return devSourceConfig{shape: resolvedShape, runtime: runtime, handler: handler}, nil
+}
+
+func (c devSourceConfig) sessionRequest() api.UpsertDevSessionRequest {
+	req := api.UpsertDevSessionRequest{}
+	if c.shape == shapeFunction {
+		req.Type = devSessionFunction
+		req.Runtime = c.runtime
+	}
+	return req
+}
+
+func (c devSourceConfig) deployArgs(slug, sourceDir string) []string {
+	args := []string{"--name", slug, "--path", sourceDir, "--worktree"}
+	if c.shape == shapeFunction {
+		return append(args, "--function", "--runtime", c.runtime, "--handler", c.handler)
+	}
+	return append(args, "--app")
+}
+
+// devLoopOps keeps the watch-state machine independently testable. Production
+// closures below own the API client and terminal rendering; the loop itself
+// only decides when a failed sync may be retried and when source configuration
+// must be resolved again.
+type devLoopOps struct {
+	deploy          func(devSourceConfig) int
+	waitForChange   func(context.Context, string, [sha256.Size]byte) ([sha256.Size]byte, error)
+	resolve         func(string) (devSourceConfig, error)
+	refresh         func(devSourceConfig) error
+	onWatching      func()
+	onChange        func()
+	onDeployFailed  func(int)
+	onResolveFailed func(error)
+	onRefreshFailed func(error)
+	onWatchFailed   func(error) int
+}
+
+func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Size]byte, initial devSourceConfig, once bool, ops devLoopOps) int {
+	code := ops.deploy(initial)
+	if once {
+		return code
+	}
+	if code != 0 && ops.onDeployFailed != nil {
+		ops.onDeployFailed(code)
+	}
+
+	for {
+		if ops.onWatching != nil {
+			ops.onWatching()
+		}
+		next, err := ops.waitForChange(ctx, sourceDir, previous)
+		if err != nil {
+			if ctx.Err() != nil {
+				return 0
+			}
+			if ops.onWatchFailed != nil {
+				return ops.onWatchFailed(err)
+			}
+			return 1
+		}
+		// A failed build is still a handled snapshot. Wait for another edit
+		// instead of repeatedly redeploying the same broken source.
+		previous = next
+
+		config, err := ops.resolve(sourceDir)
+		if err != nil {
+			if ops.onResolveFailed != nil {
+				ops.onResolveFailed(err)
+			}
+			continue
+		}
+		if err := ops.refresh(config); err != nil {
+			if ops.onRefreshFailed != nil {
+				ops.onRefreshFailed(err)
+			}
+			continue
+		}
+		if ops.onChange != nil {
+			ops.onChange()
+		}
+		code = ops.deploy(config)
+		if code != 0 && ops.onDeployFailed != nil {
+			ops.onDeployFailed(code)
+		}
+	}
+}
 
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
@@ -73,17 +172,12 @@ func cmdDev(args []string) int {
 		return 0
 	}
 
-	resolvedShape, runtime, handler, err := resolveDeployShape(sourceDir, false, false, jsonOutput)
+	config, err := resolveDevSourceConfig(sourceDir)
 	if err != nil {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
-	sessionReq := api.UpsertDevSessionRequest{}
-	if resolvedShape == shapeFunction {
-		sessionReq.Type = devSessionFunction
-		sessionReq.Runtime = runtime
-	}
 
-	session, err := upsertDevSession(client, project, sessionReq)
+	session, err := upsertDevSession(client, project, config.sessionRequest())
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
@@ -98,38 +192,50 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Could not watch developer source", err)
 	}
-	for {
-		deployArgs := []string{"--name", session.App.Slug, "--path", sourceDir, "--worktree"}
-		if resolvedShape == shapeFunction {
-			deployArgs = append(deployArgs, "--function", "--runtime", runtime, "--handler", handler)
-		} else {
-			deployArgs = append(deployArgs, "--app")
-		}
-		if code := cmdDeployTarballToExisting(deployArgs, true); code != 0 {
-			return code
-		}
-		if *once {
-			return 0
-		}
-		if !jsonOutput {
-			PrintProgress(osStdout, "watching for changes (Ctrl-C to stop watching; environment remains available)")
-		}
-		next, waitErr := waitForDevSourceChange(ctx, sourceDir, lastSynced)
-		if waitErr != nil {
-			if ctx.Err() != nil {
-				return 0
+	return runDevWatchLoop(ctx, sourceDir, lastSynced, config, *once, devLoopOps{
+		deploy: func(config devSourceConfig) int {
+			return cmdDeployTarballToExisting(config.deployArgs(session.App.Slug, sourceDir), true)
+		},
+		waitForChange: waitForDevSourceChange,
+		resolve:       resolveDevSourceConfig,
+		refresh: func(config devSourceConfig) error {
+			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest())
+			if refreshErr == nil {
+				session = refreshed
 			}
+			return refreshErr
+		},
+		onWatching: func() {
+			if !jsonOutput {
+				PrintProgress(osStdout, "watching for changes (Ctrl-C to stop watching; environment remains available)")
+			}
+		},
+		onChange: func() {
+			if !jsonOutput {
+				PrintProgress(osStdout, "change detected; syncing to %s", session.App.URL)
+			}
+		},
+		onDeployFailed: func(_ int) {
+			if !jsonOutput {
+				PrintWarn(osStderr, "developer sync failed; fix the source and save to retry (environment remains available at %s)", session.App.URL)
+			}
+		},
+		onResolveFailed: func(resolveErr error) {
+			_ = printErr("Could not prepare developer sync", resolveErr)
+			if !jsonOutput {
+				PrintWarn(osStderr, "sync skipped; fix the source and save to retry")
+			}
+		},
+		onRefreshFailed: func(refreshErr error) {
+			_ = printErr("Could not refresh developer environment", refreshErr)
+			if !jsonOutput {
+				PrintWarn(osStderr, "sync skipped; save again to retry")
+			}
+		},
+		onWatchFailed: func(waitErr error) int {
 			return printErr("Could not watch developer source", waitErr)
-		}
-		lastSynced = next
-		session, err = upsertDevSession(client, project, sessionReq)
-		if err != nil {
-			return printErr("Could not refresh developer environment", err)
-		}
-		if !jsonOutput {
-			PrintProgress(osStdout, "change detected; syncing to %s", session.App.URL)
-		}
-	}
+		},
+	})
 }
 
 func upsertDevSession(client *Client, project string, req api.UpsertDevSessionRequest) (api.DevSessionResponse, error) {
@@ -181,8 +287,14 @@ func devSourceFingerprint(sourceDir string) ([sha256.Size]byte, error) {
 }
 
 func waitForDevSourceChange(ctx context.Context, sourceDir string, previous [sha256.Size]byte) ([sha256.Size]byte, error) {
-	ticker := time.NewTicker(devWatchPollInterval)
+	return waitForDevSourceChangeWithIntervals(ctx, sourceDir, previous, devWatchPollInterval, devWatchSettleInterval)
+}
+
+func waitForDevSourceChangeWithIntervals(ctx context.Context, sourceDir string, previous [sha256.Size]byte, pollInterval, settleInterval time.Duration) ([sha256.Size]byte, error) {
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	candidate := previous
+	var stableSince time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -192,7 +304,16 @@ func waitForDevSourceChange(ctx context.Context, sourceDir string, previous [sha
 			if err != nil {
 				return previous, err
 			}
-			if current != previous {
+			if current != candidate {
+				candidate = current
+				if current == previous {
+					stableSince = time.Time{}
+				} else {
+					stableSince = time.Now()
+				}
+				continue
+			}
+			if current != previous && !stableSince.IsZero() && time.Since(stableSince) >= settleInterval {
 				return current, nil
 			}
 		}
