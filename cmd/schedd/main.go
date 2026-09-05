@@ -51,8 +51,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/wire/otelinit"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 )
 
@@ -849,11 +847,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		mux := http.NewServeMux()
 		// The canonical scrape combines the wire metrics and the dashboard
 		// gauges. Keep the sibling endpoint below for existing operators.
-		mux.Handle(metricsPath, promhttp.HandlerFor(
-			prometheus.Gatherers{ops.Registry(), dashGauges.Registry()},
-			promhttp.HandlerOpts{Registry: ops.Registry()},
-		))
-		mux.Handle(metricsPath+"/fcvm", dashGauges.Handler())
+		registerSchedulerMetrics(mux, ops.Registry(), dashGauges.Registry())
 		// Issue #571 PR-A2: /healthz + /readyz on the metrics mux
 		// (operator-side, loopback-only). Source of truth is the
 		// same BuildReadinessProbe wired at the deps.listen site

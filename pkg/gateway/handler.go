@@ -5857,7 +5857,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				Status:       status,
 				LatencyMS:    int(elapsed / time.Millisecond),
 				ColdBoot:     cold,
-				TraceID:      requestID,
+				TraceID:      telemetryTraceID(requestID),
 				ReceivedAt:   time.Now(),
 			})
 		}
