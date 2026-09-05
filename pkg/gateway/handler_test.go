@@ -3791,3 +3791,32 @@ func TestStampRequestBudget_DoesNotCancelImmediately(t *testing.T) {
 		t.Fatalf("cancelStampedRequestBudget error = %v, want context.Canceled", err)
 	}
 }
+
+func TestWarmForwardingDoesNotReuseCachedWakeTimeline(t *testing.T) {
+	b := &warmPathBackend{
+		fakeBackend: &fakeBackend{app: App{ID: "app-warm", AccountID: "acct-1", Plan: api.PlanScale}, host: "warm.apps.dom"},
+		warmPick:    PickResult{Target: Target{NodeID: "node-1", InstanceID: "instance-warm", WakeID: "old-wake"}, OK: true},
+	}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.WithForwarding(func(target Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if target.WakeID != "" {
+				t.Errorf("warm request reused wake %q", target.WakeID)
+			}
+			if r.Header.Get("x-faas-app") != "app-warm" {
+				t.Errorf("app attribution = %q", r.Header.Get("x-faas-app"))
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://warm.apps.dom/", nil)
+	req.Header.Set("x-faas-app", "untrusted-app")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	if b.warmPick.Target.WakeID != "old-wake" {
+		t.Fatal("request mutated cached target")
+	}
+}
