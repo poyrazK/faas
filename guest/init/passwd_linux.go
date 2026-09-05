@@ -105,7 +105,7 @@ func readImagePasswd(root, name string) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	body, err := io.ReadAll(io.LimitReader(f, maxImagePasswdBytes+1))
 	if err != nil || len(body) > maxImagePasswdBytes {
 		return 0, false
