@@ -15,14 +15,16 @@ import (
 func TestWriteBuildManifest_RoundTrip(t *testing.T) {
 	mp := t.TempDir()
 	m := api.BuildManifest{
-		SchemaVersion: 1,
-		BuildID:       "b-test",
-		TenantID:      "t-1",
-		DeploymentID:  "d-1",
-		SourceTarPath: "/build/src.tar",
-		Framework:     api.FrameworkRailpackNode,
-		TimeoutSec:    600,
-		LogTailBytes:  4096,
+		SchemaVersion:         1,
+		BuildID:               "b-test",
+		TenantID:              "t-1",
+		DeploymentID:          "d-1",
+		SourceTarPath:         "/build/src.tar",
+		Framework:             api.FrameworkRailpackNode,
+		DependencyCache:       true,
+		DependencyCacheImport: true,
+		TimeoutSec:            600,
+		LogTailBytes:          4096,
 	}
 	if err := writeBuildManifest(mp, m); err != nil {
 		t.Fatalf("writeBuildManifest: %v", err)
@@ -35,7 +37,8 @@ func TestWriteBuildManifest_RoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.BuildID != m.BuildID || got.Framework != m.Framework || got.TimeoutSec != m.TimeoutSec {
+	if got.BuildID != m.BuildID || got.Framework != m.Framework || got.TimeoutSec != m.TimeoutSec ||
+		got.DependencyCache != m.DependencyCache || got.DependencyCacheImport != m.DependencyCacheImport {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", got, m)
 	}
 }
