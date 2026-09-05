@@ -118,6 +118,8 @@ func run(args []string) (status int) {
 		return cmdWhoami()
 	case "deploy":
 		return cmdDeployTarball(args[1:])
+	case "canary":
+		return cmdCanary(args[1:])
 	case "preview":
 		// Mega-C PR-1 / issue #961 leaf 3: `gregale preview
 		// destroy <slug>`. Currently a single sub-command;
