@@ -74,3 +74,21 @@ scrape_configs:
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
     metrics_path: "/metrics"
 {% endif %}
+{% if prom_loki_metrics_target | default('') | length > 0 %}
+  # Dedicated Loki meta-monitoring. The /metrics endpoint is intentionally
+  # scraped independently of Promtail so a backend outage is distinguishable
+  # from a shipper outage. Loki's HTTP listener requires the provider-owned
+  # client certificate in production.
+  - job_name: "loki"
+    scheme: https
+    static_configs:
+      - targets: ["{{ prom_loki_metrics_target }}:{{ prom_loki_metrics_port }}"]
+        labels:
+          job: "loki"
+    metrics_path: "/metrics"
+    tls_config:
+      ca_file: "{{ prom_loki_metrics_ca_file }}"
+      cert_file: "{{ prom_loki_metrics_client_cert_file }}"
+      key_file: "{{ prom_loki_metrics_client_key_file }}"
+      server_name: "{{ prom_loki_metrics_server_name }}"
+{% endif %}

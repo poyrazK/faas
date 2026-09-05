@@ -79,6 +79,56 @@ groups:
           description: "Promtail read journal lines but recorded no successful Loki sends for 10m. This is the backpressure signal; check the dropped-entry counter and the Loki mTLS/client path."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
 
+      - alert: FaasLokiBackendDown
+        expr: up{job="loki"} == 0
+        for: 5m
+        labels:
+          severity: page
+          component: loki
+          family: loki_pipeline
+        annotations:
+          summary: "Loki backend is down"
+          description: "The dedicated Loki metrics endpoint has not been scrapeable for 5m. Promtail may continue buffering briefly, but new platform and customer-context logs are at risk. Check the Loki service, private route, and mTLS material on the observability host."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
+
+      - alert: FaasLokiRetentionStalled
+        expr: |
+          (
+            time() - max(loki_compactor_apply_retention_last_successful_run_timestamp_seconds) > 93600
+          )
+          and
+          (
+            max(loki_compactor_apply_retention_last_successful_run_timestamp_seconds) > 0
+          )
+        for: 30m
+        labels:
+          severity: warn
+          component: loki
+          family: loki_pipeline
+        annotations:
+          summary: "Loki retention sweep is stale"
+          description: "Loki's compactor has not completed a successful retention pass for more than 26h. Expired log data may accumulate beyond the configured 7-day retention window and consume the backend filesystem. Check compactor logs and the Loki data directory before storage pressure becomes an outage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
+
+      - alert: FaasLokiCompactionStalled
+        expr: |
+          (
+            time() - max(loki_boltdb_shipper_compact_tables_operation_last_successful_run_timestamp_seconds) > 21600
+          )
+          and
+          (
+            max(loki_boltdb_shipper_compact_tables_operation_last_successful_run_timestamp_seconds) > 0
+          )
+        for: 30m
+        labels:
+          severity: warn
+          component: loki
+          family: loki_pipeline
+        annotations:
+          summary: "Loki compaction is stale"
+          description: "Loki has not completed a successful index compaction for more than 6h. Query performance and filesystem growth may degrade even when the backend remains reachable. Check the compactor service and its working directory."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
+
   # ────────────────────────────────────────────────────────────────────
   # Traffic anomaly recording rules (issue #303, ADR-039).
   # 3-day rolling baseline vs current 5m window. Series:

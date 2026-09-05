@@ -32,6 +32,17 @@ prom_compute_metrics_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/t
 prom_compute_metrics_discovery_refresh_interval: "15s"
 prom_compute_promtail_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/promtail-targets"
 
+# Optional dedicated Loki meta-monitoring target. The provider supplies the
+# observability host address and mTLS files; an empty target keeps the normal
+# control-plane bootstrap connection-free when the observability overlay is
+# not enabled.
+prom_loki_metrics_target: ""
+prom_loki_metrics_port: 3100
+prom_loki_metrics_server_name: ""
+prom_loki_metrics_ca_file: /etc/faas/secrets/loki/tls/ca.crt
+prom_loki_metrics_client_cert_file: /etc/faas/secrets/loki/tls/prometheus.crt
+prom_loki_metrics_client_key_file: /etc/faas/secrets/loki/tls/prometheus.key
+
 # Alertmanager — loopback-only (operator dials the bridge to reach it).
 # Wired into prometheus.yml.j2 via the `alerting:` block. The role
 # asserts at template time that the parsed host is loopback (127/8 or

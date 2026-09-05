@@ -13,7 +13,7 @@
       "id": 1,
       "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "sum(up{job=\"promtail\"})", "refId": "A"}],
+      "targets": [{"expr": "sum(up{job=~\"promtail|promtail-compute\"})", "refId": "A"}],
       "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}},
       "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
     },
@@ -56,6 +56,26 @@
       "targets": [{"expr": "loki_send_total", "legendFormat": "{{instance}}", "refId": "A"}],
       "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "showPoints": "never"}}},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "stat",
+      "title": "Loki backend up",
+      "id": 6,
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(up{job=\"loki\"})", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}},
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "type": "stat",
+      "title": "Retention sweep age (h)",
+      "id": 7,
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "(time() - max(loki_compactor_apply_retention_last_successful_run_timestamp_seconds)) / 3600", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "h", "decimals": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 26}, {"color": "red", "value": 48}]}}},
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
     }
   ],
   "refresh": "30s",
@@ -67,6 +87,6 @@
   "timezone": "browser",
   "title": "FaaS Loki Pipeline",
   "uid": "faas-loki-pipeline",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

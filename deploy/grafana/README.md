@@ -176,6 +176,21 @@ Runbook: `docs/runbooks/FaasOTLPMetricsExporterDown.md`.
 
 Trace exporter runbook: `docs/runbooks/FaasOTLPTraceExporterDown.md`.
 
+## `loki-pipeline.json` (issue #274 follow-up)
+
+The Loki pipeline dashboard covers both control-plane and compute Promtail
+targets, plus direct backend availability, retention-sweep age, source
+ingestion, successful sends, and dropped entries. The Prometheus role must be
+configured with `prom_loki_metrics_target` for the backend panels and alerts
+to have data. The dashboard is mirrored at
+`deploy/ansible/roles/grafana/files/loki-pipeline.json`; `make
+grafana-mirror-check` enforces byte identity.
+
+When `gv_loki_url` is configured, the Grafana role also provisions a `Loki`
+datasource using provider-owned mTLS PEM values from
+`/etc/grafana/secrets/loki.env`. This makes the health panels and Grafana
+Explore use the same private transport and tenant boundary as Promtail.
+
 ## Provisioning (PR #141, ADR-031)
 
 The canonical install path is `deploy/ansible/roles/grafana/`, which
