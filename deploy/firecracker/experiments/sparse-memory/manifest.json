@@ -20,16 +20,15 @@
       "sha256": "995bda2aeff09ecbda9a1892a6c47beb087e99c9be924dc8fa6416f6813f4edc"
     }
   ],
-  "firecracker_sha256": "6c1dba40dded05b1919b6f72f92d559ef5bab62456f0c3d04db7abcee62810aa",
+  "firecracker_sha256": "7e7d3a7f239ac91571fe1d1a4b4afb6268792a873f9c81ff9a004e5a8e317480",
   "patches": {
-    "memory.patch": "848a96f2ea2f06f7d8cc657f563f4e1472f2b53538782a2d009d594400663250",
+    "memory.patch": "f06020f1954c6801efaff2107597c745cd02ace3171416a898457ddd33d508ed",
     "../../tsc-restore-order.patch": "c5402d36de7cfd6bc28d468da83ebc075a6f05a7dac8da80341fc1d9ac576118"
   },
   "seccomp": "unchanged",
   "deployed": false,
-  "status": "private SSD experiment; not a fleet runtime pin",
-  "storage_commit": "fd6a0ad21230d2eed16f74871eb49fd1e7bdb132",
-  "vmmd_network_refresh_commit": "6225a45b0",
-  "vmmd_sha256": "bf42c3bb356ccfc234201ba5a1a3a8e7bcd9154f5dd2595aa40aaa1aa84c450a",
-  "vmmd_base_commit": "4a742818d7f8181c376003fb82f56c4c5ebaef73"
+  "status": "guarded SSD candidate; rollout held after snapshot queue-state rejection in gateway soak",
+  "previous_unguarded_firecracker_sha256": "6c1dba40dded05b1919b6f72f92d559ef5bab62456f0c3d04db7abcee62810aa",
+  "vmmd_base_commit": "911efd866ddf96d4ca9883f4ec8b0d1db8de5fd6",
+  "vmmd_sha256": "a20363445b0b48237a094581fab10745c88689db53cae17da71d1f25a805d7ef"
 }

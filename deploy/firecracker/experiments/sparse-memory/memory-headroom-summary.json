@@ -1,0 +1,30 @@
+{
+  "dense_input": {
+    "n": 60,
+    "p50_ms": 399.710247,
+    "p95_ms": 440.667883,
+    "max_ms": 459.152021,
+    "peak_bytes": 25874432,
+    "memory_max_bytes": [
+      276824064
+    ],
+    "memory_max_events": 0,
+    "oom_events": 0,
+    "oom_kills": 0,
+    "fence_samples": 60
+  },
+  "sparse_input": {
+    "n": 60,
+    "p50_ms": 123.215122,
+    "p95_ms": 138.971825,
+    "max_ms": 141.968044,
+    "peak_bytes": 147091456,
+    "memory_max_bytes": [
+      276824064
+    ],
+    "memory_max_events": 0,
+    "oom_events": 0,
+    "oom_kills": 0,
+    "fence_samples": 60
+  }
+}

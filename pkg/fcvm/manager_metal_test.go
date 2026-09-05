@@ -325,7 +325,7 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
 		t.Skipf("/sys/fs/cgroup not mounted (Lima/macOS dev): %v", err)
 	}
-	scopeBase := filepath.Join(cgroupRoot, ParentCgroupRoot, PerInstanceScope("mem"))
+	scopeBase := filepath.Join(cgroupRoot, ParentCgroupFor("hobby"), PerInstanceScope("mem"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -333,6 +333,7 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	const memMB = 128
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "mem",
+		Plan:       "hobby",
 		BaseKey:    busybox,
 		LayerKey:   busybox,
 		VcpuCount:  2,
@@ -389,6 +390,7 @@ func TestMetalEgressCapEnforced(t *testing.T) {
 	const rateMbit = 25 // Hobby plan
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "egress",
+		Plan:       "hobby",
 		BaseKey:    busybox,
 		LayerKey:   busybox,
 		VcpuCount:  2,
