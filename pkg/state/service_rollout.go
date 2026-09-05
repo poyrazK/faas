@@ -10,7 +10,7 @@ func IsServiceRollout(d Deployment) bool {
 }
 
 // normalizedDeploymentScope is the state-layer equivalent of the database's
-// coalesce(nullif(scope, ''), 'default') write rule. MemStore tests and legacy
+// coalesce(nullif(scope, blank), 'default') write rule. MemStore tests and legacy
 // fixtures can still contain an empty scope, so readers that compare scopes
 // must collapse both representations to the same logical environment.
 func normalizedDeploymentScope(scope string) string {
