@@ -224,6 +224,7 @@ export type { ObsHealthResponse } from './ObsHealthResponse.js';
 export type { OperatorIntentAcceptedResponse } from './OperatorIntentAcceptedResponse.js';
 export type { OperatorIntentResponse } from './OperatorIntentResponse.js';
 export type { OperatorRuntimeConfig } from './OperatorRuntimeConfig.js';
+export type { OperatorRuntimeConfigAck } from './OperatorRuntimeConfigAck.js';
 export type { OperatorRuntimeConfigOperation } from './OperatorRuntimeConfigOperation.js';
 export type { OperatorRuntimeConfigRevision } from './OperatorRuntimeConfigRevision.js';
 export type { OrgAccountID } from './OrgAccountID.js';

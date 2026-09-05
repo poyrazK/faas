@@ -3159,6 +3159,48 @@ func TestStreamingStatusMatrix(t *testing.T) {
 	}
 }
 
+// TestRuntimeOperatorGates verifies that the request-time gates can change
+// without rebuilding the handler. Production supplies atomic BoolFlag.Load;
+// this test uses a closure so the transition is explicit and race-free.
+func TestRuntimeOperatorGates(t *testing.T) {
+	streamingEnabled := true
+	routeMetricsEnabled := true
+	rawStreamEnabled := true
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.WithStreamingEnabled(false).
+		WithStreamingEnabledFunc(func() bool { return streamingEnabled }).
+		WithRouteMetricsEnabled(false).
+		WithRouteMetricsEnabledFunc(func() bool { return routeMetricsEnabled }).
+		WithRawForwardingEnabledFunc(func() bool { return rawStreamEnabled })
+
+	app := App{ID: "runtime-gated", Plan: api.PlanPro, StreamingEnabled: true}
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/stream", nil)
+	dec, ok := decideStreaming(h, req, app)
+	if !ok || dec.Status != api.StreamingStatusStreaming {
+		t.Fatalf("initial streaming gate = (%q, %v), want streaming/true", dec.Status, ok)
+	}
+	if !h.routeMetricsEnabledNow() {
+		t.Fatal("initial route metrics gate = false, want true")
+	}
+	if !h.rawForwardingEnabledNow() {
+		t.Fatal("initial raw stream gate = false, want true")
+	}
+
+	streamingEnabled = false
+	routeMetricsEnabled = false
+	rawStreamEnabled = false
+	dec, ok = decideStreaming(h, req, app)
+	if ok || dec.Status != api.StreamingStatusOperatorDisabled {
+		t.Fatalf("updated streaming gate = (%q, %v), want operator-disabled/false", dec.Status, ok)
+	}
+	if h.routeMetricsEnabledNow() {
+		t.Fatal("updated route metrics gate = true, want false")
+	}
+	if h.rawForwardingEnabledNow() {
+		t.Fatal("updated raw stream gate = true, want false")
+	}
+}
+
 // TestStreamingStatusHeader_StampUnconditional pins the B3 fix:
 // the Streaming-Status response header is stamped on EVERY
 // response, including the buffered path. The unconditional stamp

@@ -19,13 +19,17 @@ import (
 )
 
 const (
-	runtimeConfigTenantSurfaces  = "tenant_surfaces_enabled"
-	runtimeConfigDomainDoctor    = "domain_doctor_enabled"
-	runtimeConfigDomainDoctorTTL = "domain_doctor_ttl_seconds"
-	runtimeConfigDataPlacement   = "data_placement_enabled"
-	runtimeConfigAppErrors       = "app_errors_enabled"
-	runtimeConfigRekey           = "rekey_enabled"
-	runtimeConfigHSTS            = "hsts_enabled"
+	runtimeConfigTenantSurfaces      = "tenant_surfaces_enabled"
+	runtimeConfigStaticEgress        = "static_egress_ip_enabled"
+	runtimeConfigGatewayStreaming    = "gateway_streaming_enabled"
+	runtimeConfigGatewayRouteMetrics = "gateway_route_metrics_enabled"
+	runtimeConfigGatewayRawStream    = "gateway_raw_stream_enabled"
+	runtimeConfigDomainDoctor        = "domain_doctor_enabled"
+	runtimeConfigDomainDoctorTTL     = "domain_doctor_ttl_seconds"
+	runtimeConfigDataPlacement       = "data_placement_enabled"
+	runtimeConfigAppErrors           = "app_errors_enabled"
+	runtimeConfigRekey               = "rekey_enabled"
+	runtimeConfigHSTS                = "hsts_enabled"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
 	// bounds convergence when a notification is lost during a database or
@@ -52,6 +56,10 @@ type runtimeConfigDefinition struct {
 
 var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigStaticEgress, Label: "Static egress IP", Description: "Expose the per-app static egress IP API when operator-provisioned addresses are available.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigGatewayStreaming, Label: "Gateway streaming", Description: "Enable streaming responses for apps that opt in to the streaming response path.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigGatewayRouteMetrics, Label: "Gateway route metrics", Description: "Enable per-route gateway metrics for apps that opt in.", Category: "Observability", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigGatewayRawStream, Label: "Gateway raw streams", Description: "Allow new WebSocket and other HTTP upgrade sessions through the raw stream bridge.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -98,6 +106,14 @@ func runtimeConfigEnvDefault(def runtimeConfigDefinition, getenv func(string) st
 	switch def.Key {
 	case runtimeConfigTenantSurfaces:
 		envName = "FAAS_TENANT_SURFACES_ENABLED"
+	case runtimeConfigStaticEgress:
+		envName = "FAAS_STATIC_EGRESS_IP_ENABLED"
+	case runtimeConfigGatewayStreaming:
+		envName = "FAAS_GATEWAY_STREAMING"
+	case runtimeConfigGatewayRouteMetrics:
+		envName = "FAAS_GATEWAY_ROUTE_METRICS"
+	case runtimeConfigGatewayRawStream:
+		envName = "FAAS_GATEWAY_RAW_STREAM_ENABLED"
 	case runtimeConfigDomainDoctor:
 		envName = "FAAS_DOMAIN_DOCTOR_ENABLED"
 	case runtimeConfigDataPlacement:

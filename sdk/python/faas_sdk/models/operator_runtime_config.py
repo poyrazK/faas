@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -15,6 +15,9 @@ from ..models.operator_runtime_config_kind import OperatorRuntimeConfigKind, che
 from ..models.operator_runtime_config_source import OperatorRuntimeConfigSource, check_operator_runtime_config_source
 from ..models.operator_runtime_config_status import OperatorRuntimeConfigStatus, check_operator_runtime_config_status
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operator_runtime_config_ack import OperatorRuntimeConfigAck
 
 T = TypeVar("T", bound="OperatorRuntimeConfig")
 
@@ -41,6 +44,8 @@ class OperatorRuntimeConfig:
     last_error: str | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
     applied_at: datetime.datetime | Unset = UNSET
+    acks: list[OperatorRuntimeConfigAck] | Unset = UNSET
+    """Per-daemon observations of the requested configuration version."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +89,13 @@ class OperatorRuntimeConfig:
         if not isinstance(self.applied_at, Unset):
             applied_at = self.applied_at.isoformat()
 
+        acks: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.acks, Unset):
+            acks = []
+            for acks_item_data in self.acks:
+                acks_item = acks_item_data.to_dict()
+                acks.append(acks_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -111,11 +123,15 @@ class OperatorRuntimeConfig:
             field_dict["updated_at"] = updated_at
         if applied_at is not UNSET:
             field_dict["applied_at"] = applied_at
+        if acks is not UNSET:
+            field_dict["acks"] = acks
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operator_runtime_config_ack import OperatorRuntimeConfigAck
+
         d = dict(src_dict)
         key = d.pop("key")
 
@@ -163,6 +179,15 @@ class OperatorRuntimeConfig:
         else:
             applied_at = datetime.datetime.fromisoformat(_applied_at)
 
+        _acks = d.pop("acks", UNSET)
+        acks: list[OperatorRuntimeConfigAck] | Unset = UNSET
+        if _acks is not UNSET:
+            acks = []
+            for acks_item_data in _acks:
+                acks_item = OperatorRuntimeConfigAck.from_dict(acks_item_data)
+
+                acks.append(acks_item)
+
         operator_runtime_config = cls(
             key=key,
             label=label,
@@ -182,6 +207,7 @@ class OperatorRuntimeConfig:
             last_error=last_error,
             updated_at=updated_at,
             applied_at=applied_at,
+            acks=acks,
         )
 
         operator_runtime_config.additional_properties = d

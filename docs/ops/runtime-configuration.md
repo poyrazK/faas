@@ -21,6 +21,14 @@ silently leave a daemon stale. Version-ordered application also prevents an
 older concurrent PATCH from overwriting a newer value already live in a
 process.
 
+For daemon-level convergence, each watcher may also write a row to
+`runtime_config_acks`. The row is keyed by setting, consumer, and node and
+records the version plus `applied` or `failed` status. This separates the
+control-plane acknowledgement from an edge daemon's observation and gives
+the operations UI a durable basis for reporting partial fleet convergence.
+Missing acknowledgement rows mean that a consumer has not observed that
+version yet; they are not treated as successful application.
+
 ## Apply modes
 
 `hot` settings are validated, swapped into the process snapshot, acknowledged,

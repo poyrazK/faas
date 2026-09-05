@@ -457,6 +457,8 @@ from .operator_intent_response import OperatorIntentResponse
 from .operator_intent_response_kind import OperatorIntentResponseKind
 from .operator_intent_response_status import OperatorIntentResponseStatus
 from .operator_runtime_config import OperatorRuntimeConfig
+from .operator_runtime_config_ack import OperatorRuntimeConfigAck
+from .operator_runtime_config_ack_status import OperatorRuntimeConfigAckStatus
 from .operator_runtime_config_apply_mode import OperatorRuntimeConfigApplyMode
 from .operator_runtime_config_kind import OperatorRuntimeConfigKind
 from .operator_runtime_config_operation import OperatorRuntimeConfigOperation
@@ -1144,6 +1146,8 @@ __all__ = (
     "OperatorIntentResponseKind",
     "OperatorIntentResponseStatus",
     "OperatorRuntimeConfig",
+    "OperatorRuntimeConfigAck",
+    "OperatorRuntimeConfigAckStatus",
     "OperatorRuntimeConfigApplyMode",
     "OperatorRuntimeConfigKind",
     "OperatorRuntimeConfigOperation",

@@ -230,6 +230,7 @@ export type { OIDCExchangeResponse } from './models/OIDCExchangeResponse.js';
 export type { OperatorIntentAcceptedResponse } from './models/OperatorIntentAcceptedResponse.js';
 export type { OperatorIntentResponse } from './models/OperatorIntentResponse.js';
 export type { OperatorRuntimeConfig } from './models/OperatorRuntimeConfig.js';
+export type { OperatorRuntimeConfigAck } from './models/OperatorRuntimeConfigAck.js';
 export type { OperatorRuntimeConfigOperation } from './models/OperatorRuntimeConfigOperation.js';
 export type { OperatorRuntimeConfigRevision } from './models/OperatorRuntimeConfigRevision.js';
 export type { OrgAccountID } from './models/OrgAccountID.js';

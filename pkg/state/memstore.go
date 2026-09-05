@@ -198,6 +198,7 @@ type MemStore struct {
 	runtimeConfigs          map[string]RuntimeConfig
 	runtimeConfigOperations map[string]RuntimeConfigOperation
 	runtimeConfigRevisions  []RuntimeConfigRevision
+	runtimeConfigAcks       map[string]RuntimeConfigAck
 	// alertRules mirrors alert_rules for handler tests. Keyed by
 	// ruleID. AlertDelivery rows are kept separately so the
 	// delivery list query can walk just the matching subset on
@@ -735,6 +736,7 @@ func NewMemStore() *MemStore {
 		runtimeConfigs:            map[string]RuntimeConfig{},
 		runtimeConfigOperations:   map[string]RuntimeConfigOperation{},
 		runtimeConfigRevisions:    []RuntimeConfigRevision{},
+		runtimeConfigAcks:         map[string]RuntimeConfigAck{},
 		alertRules:                map[string]AlertRule{},
 		alertDeliveries:           map[string]AlertDelivery{},
 		appWebhooks:               map[string]AppWebhook{},

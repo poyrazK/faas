@@ -190,6 +190,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// operator change from producing different security headers at the edge.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
+	nodeID := os.Getenv("FAAS_NODE_NAME")
+	if nodeID == "" {
+		nodeID, _ = os.Hostname()
+	}
 	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
@@ -201,7 +205,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				httpsec.SetHSTSEnabled(enabled)
 			}
 			return nil
-		}, log)
+		}, log).WithIdentity("gatewayd-public", nodeID)
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("gatewayd-public: initial runtime config reconcile failed", "err", err)
 	}

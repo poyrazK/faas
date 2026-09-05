@@ -58,7 +58,7 @@ func staticEgressIPNotEnabled() *api.Problem {
 // without a separate plan lookup. Customer-scoped (no admin
 // required).
 func (s *server) getAppStaticEgressIP(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !api.StaticEgressIPEnabled() {
+	if !s.runtimeBool(runtimeConfigStaticEgress, api.StaticEgressIPEnabled()) {
 		api.WriteProblem(w, staticEgressIPNotEnabled())
 		return
 	}
@@ -75,7 +75,7 @@ func (s *server) getAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 // pin (mirrors the DELETE wire shape so the same handler covers all
 // three verbs in a single body type).
 func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !api.StaticEgressIPEnabled() {
+	if !s.runtimeBool(runtimeConfigStaticEgress, api.StaticEgressIPEnabled()) {
 		api.WriteProblem(w, staticEgressIPNotEnabled())
 		return
 	}
@@ -205,7 +205,7 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 // and the reservation will be re-released on the next SIGHUP-
 // triggered reconcile).
 func (s *server) clearAppStaticEgressIP(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !api.StaticEgressIPEnabled() {
+	if !s.runtimeBool(runtimeConfigStaticEgress, api.StaticEgressIPEnabled()) {
 		api.WriteProblem(w, staticEgressIPNotEnabled())
 		return
 	}

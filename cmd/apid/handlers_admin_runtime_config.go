@@ -16,24 +16,36 @@ import (
 )
 
 type runtimeConfigEntryResponse struct {
-	Key               string          `json:"key"`
-	Label             string          `json:"label"`
-	Description       string          `json:"description"`
-	Category          string          `json:"category"`
-	Kind              string          `json:"kind"`
-	DefaultValue      json.RawMessage `json:"default_value"`
-	DesiredValue      json.RawMessage `json:"desired_value"`
-	EffectiveValue    json.RawMessage `json:"effective_value"`
-	Source            string          `json:"source"`
-	ApplyMode         string          `json:"apply_mode"`
-	ControllerEnabled bool            `json:"controller_enabled"`
-	Mutable           bool            `json:"mutable"`
-	Sensitive         bool            `json:"sensitive"`
-	Status            string          `json:"status"`
-	LastError         string          `json:"last_error,omitempty"`
-	Version           int64           `json:"version"`
-	UpdatedAt         string          `json:"updated_at,omitempty"`
-	AppliedAt         string          `json:"applied_at,omitempty"`
+	Key               string                     `json:"key"`
+	Label             string                     `json:"label"`
+	Description       string                     `json:"description"`
+	Category          string                     `json:"category"`
+	Kind              string                     `json:"kind"`
+	DefaultValue      json.RawMessage            `json:"default_value"`
+	DesiredValue      json.RawMessage            `json:"desired_value"`
+	EffectiveValue    json.RawMessage            `json:"effective_value"`
+	Source            string                     `json:"source"`
+	ApplyMode         string                     `json:"apply_mode"`
+	ControllerEnabled bool                       `json:"controller_enabled"`
+	Mutable           bool                       `json:"mutable"`
+	Sensitive         bool                       `json:"sensitive"`
+	Status            string                     `json:"status"`
+	LastError         string                     `json:"last_error,omitempty"`
+	Version           int64                      `json:"version"`
+	UpdatedAt         string                     `json:"updated_at,omitempty"`
+	AppliedAt         string                     `json:"applied_at,omitempty"`
+	Acks              []runtimeConfigAckResponse `json:"acks,omitempty"`
+}
+
+type runtimeConfigAckResponse struct {
+	Consumer       string          `json:"consumer"`
+	NodeID         string          `json:"node_id,omitempty"`
+	Version        int64           `json:"version"`
+	Status         string          `json:"status"`
+	EffectiveValue json.RawMessage `json:"effective_value,omitempty"`
+	Error          string          `json:"error,omitempty"`
+	UpdatedAt      string          `json:"updated_at"`
+	AppliedAt      string          `json:"applied_at,omitempty"`
 }
 
 type runtimeConfigListResponse struct {
@@ -101,6 +113,30 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 	for _, row := range rows {
 		byKey[row.Key] = row
 	}
+	acksByKey := make(map[string][]runtimeConfigAckResponse)
+	if ackStore, ok := s.store.(interface {
+		ListRuntimeConfigAcks(context.Context, string, state.RuntimeConfigScope, string) ([]state.RuntimeConfigAck, error)
+	}); ok {
+		acks, ackErr := ackStore.ListRuntimeConfigAcks(r.Context(), "", state.RuntimeConfigScopeGlobal, "")
+		if ackErr != nil {
+			if s.log != nil {
+				s.log.Warn("could not list runtime configuration acknowledgements", "err", ackErr)
+			}
+		} else {
+			for _, ack := range acks {
+				acksByKey[ack.Key] = append(acksByKey[ack.Key], runtimeConfigAckResponse{
+					Consumer:       ack.Consumer,
+					NodeID:         ack.NodeID,
+					Version:        ack.Version,
+					Status:         string(ack.Status),
+					EffectiveValue: append(json.RawMessage(nil), ack.EffectiveValue...),
+					Error:          ack.Error,
+					UpdatedAt:      ack.UpdatedAt.UTC().Format(time.RFC3339),
+					AppliedAt:      timePtrString(ack.AppliedAt),
+				})
+			}
+		}
+	}
 	items := make([]runtimeConfigEntryResponse, 0, len(runtimeConfigCatalog))
 	for _, def := range s.runtimeConfig.Definitions() {
 		row, exists := byKey[def.Key]
@@ -134,10 +170,14 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 				item.AppliedAt = row.AppliedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
 			}
 		}
+		item.Acks = append([]runtimeConfigAckResponse(nil), acksByKey[def.Key]...)
 		if def.Sensitive {
 			item.DesiredValue = json.RawMessage(`"[redacted]"`)
 			item.EffectiveValue = json.RawMessage(`"[redacted]"`)
 			item.DefaultValue = json.RawMessage(`"[redacted]"`)
+			for i := range item.Acks {
+				item.Acks[i].EffectiveValue = json.RawMessage(`"[redacted]"`)
+			}
 		}
 		items = append(items, item)
 	}

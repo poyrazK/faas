@@ -11137,6 +11137,24 @@ components:
         version: { type: integer, format: int64 }
         updated_at: { type: string, format: date-time }
         applied_at: { type: string, format: date-time }
+        acks:
+          type: array
+          description: "Per-daemon observations of the requested configuration version."
+          items: { $ref: '#/components/schemas/OperatorRuntimeConfigAck' }
+
+    OperatorRuntimeConfigAck:
+      description: "One daemon/node acknowledgement of a runtime configuration version."
+      type: object
+      required: [consumer, version, status, updated_at]
+      properties:
+        consumer: { type: string }
+        node_id: { type: string }
+        version: { type: integer, format: int64 }
+        status: { type: string, enum: [applied, failed] }
+        effective_value: {}
+        error: { type: string }
+        updated_at: { type: string, format: date-time }
+        applied_at: { type: string, format: date-time }
 
     OperatorRuntimeConfigOperation:
       description: "Durable asynchronous runtime-configuration apply request."
