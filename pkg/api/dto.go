@@ -2150,14 +2150,18 @@ type RollbackRequest struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
-	ID            string        `json:"id"`
-	Email         string        `json:"email"`
-	Plan          string        `json:"plan"`
-	Status        string        `json:"status"`
-	Limits        AccountLimits `json:"limits"`
-	UsageGBHours  float64       `json:"usage_gb_hours"`
-	AppCount      int           `json:"app_count"`
-	GitHubInstall string        `json:"github_install_id,omitempty"`
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	// EmailVerificationGraceEndsAt is present only for unverified password
+	// accounts so API and dashboard clients can render the 30-day deadline.
+	EmailVerificationGraceEndsAt *time.Time    `json:"email_verification_grace_ends_at,omitempty"`
+	Plan                         string        `json:"plan"`
+	Status                       string        `json:"status"`
+	Limits                       AccountLimits `json:"limits"`
+	UsageGBHours                 float64       `json:"usage_gb_hours"`
+	AppCount                     int           `json:"app_count"`
+	GitHubInstall                string        `json:"github_install_id,omitempty"`
 	// PlanChangeStatus and RequestedPlan are populated only when a plan
 	// change was accepted by the billing provider but is not yet reflected
 	// in the local entitlement. Keeping the current Plan in this response

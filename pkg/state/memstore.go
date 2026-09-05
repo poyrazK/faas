@@ -340,6 +340,9 @@ type MemStore struct {
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
 	loginTokens map[string]LoginToken
+	// emailVerificationTokens is separate from loginTokens because consume
+	// verifies the account but never authenticates the caller.
+	emailVerificationTokens map[string]EmailVerificationToken
 	// cliAuthCodes is keyed by the SHA-256 hash of the raw code
 	// (same key format as loginTokens). AccountID is empty until the
 	// dashboard claims the code; the claim statement fills it in
@@ -770,17 +773,18 @@ func NewMemStore() *MemStore {
 		oidcTrustPolicies:   map[string]OIDCTrustPolicy{},
 		oidcExchangedTokens: map[string]OIDCExchangedToken{},
 		// ADR-100 / tenant surfaces — see memstore_tenant_surface.go.
-		tenantSurfaces:    map[string]TenantSurface{},
-		tenantHostnames:   map[string]TenantHostname{},
-		invocations:       map[string]Invocation{},
-		accountAsyncQuota: map[string]accountAsyncQuotaRow{},
-		instances:         map[string]Instance{},
-		loginTokens:       map[string]LoginToken{},
-		cliAuthCodes:      map[string]CliAuthCode{},
-		accountPasswords:  map[string]AccountPassword{},
-		oauthLinks:        map[string]OAuthLink{},
-		deploymentLogs:    map[string][]LogEntry{},
-		deploymentSeq:     map[string]int64{},
+		tenantSurfaces:          map[string]TenantSurface{},
+		tenantHostnames:         map[string]TenantHostname{},
+		invocations:             map[string]Invocation{},
+		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
+		instances:               map[string]Instance{},
+		loginTokens:             map[string]LoginToken{},
+		emailVerificationTokens: map[string]EmailVerificationToken{},
+		cliAuthCodes:            map[string]CliAuthCode{},
+		accountPasswords:        map[string]AccountPassword{},
+		oauthLinks:              map[string]OAuthLink{},
+		deploymentLogs:          map[string][]LogEntry{},
+		deploymentSeq:           map[string]int64{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -895,7 +899,8 @@ func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan)
 			return Account{}, fmt.Errorf("state: account with email %q exists", email)
 		}
 	}
-	a := Account{ID: newID(), Email: email, Plan: plan, Status: AccountActive, CreatedAt: time.Now()}
+	now := time.Now().UTC()
+	a := Account{ID: newID(), Email: email, Plan: plan, Status: AccountActive, CreatedAt: now, EmailVerifiedAt: &now}
 	m.accounts[a.ID] = a
 	return a, nil
 }
@@ -924,6 +929,10 @@ func (m *MemStore) CreateAccountWithPersonalOrg(_ context.Context, params Create
 		Plan:      params.Plan,
 		Status:    AccountActive,
 		CreatedAt: now,
+	}
+	if !params.RequireEmailVerification {
+		verifiedAt := now
+		acct.EmailVerifiedAt = &verifiedAt
 	}
 	m.accounts[acct.ID] = acct
 
@@ -12452,6 +12461,67 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 		}
 	}
 	return removed, nil
+}
+
+// IssueEmailVerificationToken stores a one-shot verification token hash.
+func (m *MemStore) IssueEmailVerificationToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[accountID]; !ok {
+		return ErrNotFound
+	}
+	if m.emailVerificationTokens == nil {
+		m.emailVerificationTokens = map[string]EmailVerificationToken{}
+	}
+	m.emailVerificationTokens[string(tokenHash)] = EmailVerificationToken{
+		TokenHash: append([]byte(nil), tokenHash...),
+		AccountID: accountID,
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+// ConsumeEmailVerificationToken atomically consumes tokenHash and marks the
+// bound account verified. Unknown, expired, and replayed tokens collapse to
+// ErrNotFound so callers do not expose token state.
+func (m *MemStore) ConsumeEmailVerificationToken(_ context.Context, tokenHash []byte) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tok, ok := m.emailVerificationTokens[string(tokenHash)]
+	if !ok || tok.ConsumedAt != nil || !tok.ExpiresAt.After(time.Now()) {
+		delete(m.emailVerificationTokens, string(tokenHash))
+		return "", ErrNotFound
+	}
+	acct, ok := m.accounts[tok.AccountID]
+	if !ok {
+		return "", ErrNotFound
+	}
+	now := time.Now().UTC()
+	tok.ConsumedAt = &now
+	m.emailVerificationTokens[string(tokenHash)] = tok
+	if acct.EmailVerifiedAt == nil {
+		acct.EmailVerifiedAt = &now
+		m.accounts[acct.ID] = acct
+	}
+	return tok.AccountID, nil
+}
+
+// MarkAccountEmailVerified marks accountID verified without consuming an
+// email-verification token. Magic-link login uses this because following its
+// emailed one-shot link already proves control of the same address.
+func (m *MemStore) MarkAccountEmailVerified(_ context.Context, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	acct, ok := m.accounts[accountID]
+	if !ok {
+		return ErrNotFound
+	}
+	if acct.EmailVerifiedAt == nil {
+		now := time.Now().UTC()
+		acct.EmailVerifiedAt = &now
+		m.accounts[accountID] = acct
+	}
+	return nil
 }
 
 // DeleteOldEvents (ADR-075) prunes audit-log events whose `at` is

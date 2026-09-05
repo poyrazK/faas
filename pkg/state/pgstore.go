@@ -123,13 +123,14 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 
 	// 1. Account INSERT.
 	acct, err := scanAccountCols(tx.QueryRow(ctx,
-		`insert into accounts (email, plan, status) values ($1, $2, 'active')
+		`insert into accounts (email, plan, status, email_verified_at)
+		 values ($1, $2, 'active', case when $3 then null else now() end)
 		 returning id, email, plan, status, coalesce(provider_customer_id,''),
 		           coalesce(stripe_subscription_item,''), created_at,
 		           deletion_requested_at, last_quota_warning_at, past_due_at,
 		           mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash,
-		           mfa_required, egress_allowlist_extra`,
-		params.Email, string(params.Plan)).Scan)
+		           mfa_required, egress_allowlist_extra, email_verified_at`,
+		params.Email, string(params.Plan), params.RequireEmailVerification).Scan)
 	if err != nil {
 		return CreateAccountWithPersonalOrgResult{}, mapErr(err)
 	}
@@ -170,7 +171,7 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 
 func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra from accounts where id = $1`, id)
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at from accounts where id = $1`, id)
 	return scanAccount(row)
 }
 
@@ -193,7 +194,7 @@ func (s *PgStore) AccountsByIDs(ctx context.Context, ids []string) (map[string]A
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra from accounts where id = any($1::uuid[])`, ids)
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at from accounts where id = any($1::uuid[])`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("state: accounts by IDs: %w", err)
 	}
@@ -213,13 +214,13 @@ func (s *PgStore) AccountsByIDs(ctx context.Context, ids []string) (map[string]A
 
 func (s *PgStore) AccountByEmail(ctx context.Context, email string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra from accounts where email = $1`, email)
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at from accounts where email = $1`, email)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select a.id, a.email, a.plan, a.status, coalesce(a.provider_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at, a.last_quota_warning_at, a.past_due_at, a.mfa_enrolled_at, a.mfa_secret_encrypted, a.mfa_recovery_codes_hash, a.mfa_required, a.egress_allowlist_extra
+		`select a.id, a.email, a.plan, a.status, coalesce(a.provider_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at, a.last_quota_warning_at, a.past_due_at, a.mfa_enrolled_at, a.mfa_secret_encrypted, a.mfa_recovery_codes_hash, a.mfa_required, a.egress_allowlist_extra, a.email_verified_at
 		 from accounts a join api_keys k on k.account_id = a.id where k.key_sha256 = $1`, hash)
 	return scanAccount(row)
 }
@@ -952,7 +953,7 @@ func Sha256Equal(a, b []byte) bool {
 // map.
 func (s *PgStore) AccountByProviderCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at
 		 from accounts where provider_customer_id = $1`,
 		stripeCustomerID)
 	return scanAccount(row)
@@ -962,7 +963,7 @@ func (s *PgStore) AccountByProviderCustomerID(ctx context.Context, stripeCustome
 // tick + hourly Stripe push; bounded by the customer count on the box.
 func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at
 		 from accounts order by created_at`)
 	if err != nil {
 		return nil, err
@@ -1006,8 +1007,8 @@ func scanAccountCols(scan func(...any) error) (Account, error) {
 	a := Account{}
 	var planStr, statusStr string
 	var deletionAt, lastWarnAt, pastDueAt *time.Time
-	var mfaEnrolledAt *time.Time
-	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.ProviderCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt, &lastWarnAt, &pastDueAt, &mfaEnrolledAt, &a.MFASecretEncrypted, &a.MFARecoveryCodesHash, &a.MFARequired, &a.EgressAllowlistExtra); err != nil {
+	var mfaEnrolledAt, emailVerifiedAt *time.Time
+	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.ProviderCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt, &lastWarnAt, &pastDueAt, &mfaEnrolledAt, &a.MFASecretEncrypted, &a.MFARecoveryCodesHash, &a.MFARequired, &a.EgressAllowlistExtra, &emailVerifiedAt); err != nil {
 		return Account{}, err
 	}
 	a.Plan = api.Plan(planStr)
@@ -1023,6 +1024,9 @@ func scanAccountCols(scan func(...any) error) (Account, error) {
 	}
 	if mfaEnrolledAt != nil {
 		a.MFAEnrolledAt = mfaEnrolledAt
+	}
+	if emailVerifiedAt != nil {
+		a.EmailVerifiedAt = emailVerifiedAt
 	}
 	return a, nil
 }
@@ -17900,6 +17904,62 @@ func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (i
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// IssueEmailVerificationToken persists only the SHA-256 token hash. The raw
+// token exists only in the email sent by apid.
+func (s *PgStore) IssueEmailVerificationToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into email_verification_tokens (token_hash, account_id, expires_at)
+		 values ($1, $2, $3)
+		 on conflict (token_hash) do nothing`,
+		tokenHash, accountID, expiresAt)
+	return mapErr(err)
+}
+
+// ConsumeEmailVerificationToken consumes a live token and marks its account
+// verified in one SQL statement. A replay, expiry, or unknown token returns
+// ErrNotFound with the same shape.
+func (s *PgStore) ConsumeEmailVerificationToken(ctx context.Context, tokenHash []byte) (string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx, `
+		with consumed as (
+			update email_verification_tokens
+			   set consumed_at = now()
+			 where token_hash = $1
+			   and consumed_at is null
+			   and expires_at > now()
+			 returning account_id
+		)
+		update accounts a
+		   set email_verified_at = coalesce(a.email_verified_at, now())
+		  from consumed c
+		 where a.id = c.account_id
+		 returning a.id`, tokenHash).Scan(&accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return accountID, nil
+}
+
+// MarkAccountEmailVerified marks an account verified without changing an
+// existing timestamp. Magic-link login calls this after consuming its own
+// one-shot token because the emailed link is already proof of address control.
+func (s *PgStore) MarkAccountEmailVerified(ctx context.Context, accountID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update accounts
+		    set email_verified_at = coalesce(email_verified_at, now())
+		  where id = $1`, accountID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // DeleteOldEvents (ADR-075) prunes audit-log events whose `at` is

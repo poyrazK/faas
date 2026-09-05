@@ -66,6 +66,37 @@ func (s *server) requireMFA(next accountHandler) accountHandler {
 	return authAccountHandler(pkgHandler)
 }
 
+// requireVerifiedEmail gates customer actions that publish code or touch
+// money. Authentication and read-only account access remain available so an
+// unverified customer can sign in and follow the dashboard guidance.
+func (s *server) requireVerifiedEmail(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if !acct.EmailVerified() {
+			api.WriteProblem(w, api.ErrEmailVerificationRequired())
+			return
+		}
+		next(w, r, acct)
+	}
+}
+
+// requireVerifiedEmailHandler is the http.Handler counterpart for dashboard
+// routes that have already passed through sessionAuth.
+func (s *server) requireVerifiedEmailHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acct, ok := AccountFrom(r.Context())
+		if !ok {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+				"Unauthorized", "sign in is required."))
+			return
+		}
+		if !acct.EmailVerified() {
+			api.WriteProblem(w, api.ErrEmailVerificationRequired())
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // requireStepUp delegates to pkg/auth.Middleware.RequireStepUp
 // (IAM-hardening-mega-PR logical change 6, ADR-077). Compose order
 // for a sensitive-op route is:

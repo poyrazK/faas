@@ -238,6 +238,38 @@ export class AuthService {
     });
   }
   /**
+   * Verify a password-signup email address.
+   * Consumes a 24-hour, single-use verification token and marks the
+   * account email verified. This endpoint does not create a session;
+   * the returned HTML page prompts the customer to sign in again.
+   *
+   * @returns string Email verified; HTML sign-in prompt.
+   * @throws ApiError
+   */
+  public static verifyEmail({
+    token,
+  }: {
+    /**
+     * The raw 24-hour verification token delivered by email.
+     */
+    token: string,
+  }): CancelablePromise<string> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/auth/verify-email',
+      query: {
+        'token': token,
+      },
+      errors: {
+        410: `Verification link expired, invalid, or already used.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Render the password-reset form.
    * Validates the token shape; renders the
    * `password_reset_form.html` template on a valid token.

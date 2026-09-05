@@ -75,7 +75,7 @@ export class DeploymentsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range.`,
+        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
         429: `429. Two response shapes:
@@ -158,6 +158,7 @@ export class DeploymentsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `code: not_found`,
         409: `code: dev_source_base_missing. Retry with a complete source snapshot.`,
         413: `code: source_too_large`,
@@ -222,6 +223,7 @@ export class DeploymentsService {
         SHA, branch, or tag.
         `,
         401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `No durable GitHub install bound to the caller's account
         (code: github_install_not_found).
         `,
@@ -314,6 +316,7 @@ export class DeploymentsService {
         sidecar JSON, or invalid tarball shape.
         `,
         401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `code: not_found. The slug does not exist OR belongs to
         another account (loadAppAndPreflight's IDOR silent-404 —
         apid deliberately returns the same shape for both cases

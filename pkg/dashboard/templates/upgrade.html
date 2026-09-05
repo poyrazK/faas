@@ -31,6 +31,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     {{if .Data}}
       {{if .Data.Notice}}<p class="notice">{{.Data.Notice}}</p>{{end}}
       {{if .Data.Target}}

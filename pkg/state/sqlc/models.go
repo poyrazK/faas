@@ -74,6 +74,7 @@ type Account struct {
 	OverageCapCents        pgtype.Int8
 	KeyGraceWindowDays     pgtype.Int4
 	EgressAllowlistExtra   int32
+	EmailVerifiedAt        pgtype.Timestamptz
 }
 
 type AccountAsyncQuotum struct {
@@ -812,6 +813,14 @@ type EgressPolicy struct {
 	ChangedAt                          pgtype.Timestamptz
 	OverlayExceptions                  []string
 	DangerAcceptRfc1918LateralMovement bool
+}
+
+type EmailVerificationToken struct {
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
 }
 
 type Event struct {

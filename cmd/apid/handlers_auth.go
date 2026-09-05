@@ -131,6 +131,14 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "link expired or already used", http.StatusGone)
 		return
 	}
+	// The magic link was delivered to acct.Email, so consuming it also
+	// proves address ownership. This leaves OAuth behavior unchanged and
+	// avoids sending passwordless customers through a second email loop.
+	if err := a.srv.store.MarkAccountEmailVerified(r.Context(), accountID); err != nil {
+		a.log.Error("auth.verify.mark_email_verified", "err", err, "account", accountID)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
 	mfaPending := mfaSessionPending(acct)
 	// IAM-3 (ADR-039): the magic-link verify path now mints a sid
 	// + creates the sessions row + emits auth.session.created

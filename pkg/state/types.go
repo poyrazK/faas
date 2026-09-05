@@ -432,6 +432,12 @@ type Account struct {
 	// subscribed yet never lands on the billing dashboard.
 	StripeSubscriptionItem string
 	CreatedAt              time.Time
+	// EmailVerifiedAt is the moment Gregale proved control of Email.
+	// Password signups leave it nil until a 24-hour verification token is
+	// consumed. OAuth accounts and existing accounts are verified at creation
+	// or migration time. Keeping this timestamp on the account makes the
+	// deploy and billing gates independent of the credential used on a request.
+	EmailVerifiedAt *time.Time
 	// DeletionRequestedAt is stamped when the customer schedules the
 	// account for deletion (G6, ADR-021). NULL on every row that has
 	// never been scheduled. pkg/grace uses it to decide whether the
@@ -504,6 +510,9 @@ type Account struct {
 
 // Active reports whether the account may deploy (not suspended/deleted).
 func (a Account) Active() bool { return a.Status == AccountActive || a.Status == AccountPastDue }
+
+// EmailVerified reports whether the account has proved control of its email.
+func (a Account) EmailVerified() bool { return a.EmailVerifiedAt != nil }
 
 // MFAEnrolled reports whether the customer has at least one
 // successful TOTP confirmation. An enrolled customer has opted in
@@ -4398,6 +4407,16 @@ type LoginToken struct {
 	ConsumedAt *time.Time
 }
 
+// EmailVerificationToken is a one-shot proof-of-email token. It is separate
+// from LoginToken because consuming it verifies the account without creating
+// a session.
+type EmailVerificationToken struct {
+	TokenHash  []byte
+	AccountID  string
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+}
+
 // CliAuthCode is one row of the cli_auth_codes table (spec §2.2
 // device-code flow). AccountID is empty between mint and claim; the
 // claim statement fills it in atomically. The 4-byte entropy + 5-min
@@ -5006,6 +5025,10 @@ func PersonalOrgSlug(accountID string) string {
 type CreateAccountWithPersonalOrgParams struct {
 	Email string
 	Plan  api.Plan
+	// RequireEmailVerification leaves email_verified_at NULL. The zero value
+	// preserves the historical trusted-creation behavior used by OAuth,
+	// operator, migration, and test call sites.
+	RequireEmailVerification bool
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted

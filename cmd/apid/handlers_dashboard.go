@@ -1592,10 +1592,12 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		n = 0
 	}
 	return &dashboard.AccountView{
-		ID:       acct.ID,
-		Email:    acct.Email,
-		Plan:     string(acct.Plan),
-		AppCount: n,
+		ID:                         acct.ID,
+		Email:                      acct.Email,
+		Plan:                       string(acct.Plan),
+		AppCount:                   n,
+		EmailVerified:              acct.EmailVerified(),
+		EmailVerificationGraceEnds: acct.CreatedAt.Add(emailVerificationGrace).UTC().Format("2006-01-02"),
 	}
 }
 

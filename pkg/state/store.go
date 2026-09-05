@@ -1311,6 +1311,13 @@ type Store interface {
 	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
 	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
 
+	// Email verification tokens prove control of accounts.email without
+	// authenticating the browser. ConsumeEmailVerificationToken atomically
+	// consumes the one-shot token and stamps accounts.email_verified_at.
+	IssueEmailVerificationToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error
+	ConsumeEmailVerificationToken(ctx context.Context, tokenHash []byte) (string, error)
+	MarkAccountEmailVerified(ctx context.Context, accountID string) error
+
 	// Audit events (IAM-4 / ADR-035, retention ADR-075). The
 	// events table grows ~3-4 GB/year per active-tier customer
 	// through the auth / key / secret / account / stateless

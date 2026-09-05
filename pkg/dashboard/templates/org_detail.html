@@ -39,6 +39,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     {{if .Data}}
       {{$d := .Data}}
       <h1>{{$d.Org.Name}} <code>{{$d.Org.Slug}}</code>

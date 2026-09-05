@@ -123,6 +123,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/auth/google/callback": true, // 302 to dashboard (browser-only)
 	"GET /v1/auth/github":          true, // 302 to GitHub consent (browser-only)
 	"GET /v1/auth/github/callback": true, // 302 to dashboard (browser-only)
+	"GET /v1/auth/verify-email":    true, // HTML email-confirmation landing page (browser-only)
 	"GET /auth/reset":              true, // HTML form render (browser-only)
 	"POST /logout":                 true, // dashboard form post (browser-only); SDK's Logout wraps the same handler as a convenience
 

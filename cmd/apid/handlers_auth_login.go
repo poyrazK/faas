@@ -43,6 +43,7 @@ import (
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -75,6 +76,13 @@ const (
 	// guidance) and is short enough that a leaked email doesn't
 	// outlive the customer's session window.
 	passwordResetTTL = 15 * time.Minute
+	// emailVerificationTTL is deliberately longer than a login/reset link:
+	// it proves address ownership and does not authenticate the browser.
+	emailVerificationTTL = 24 * time.Hour
+	// emailVerificationGrace is surfaced in the persistent dashboard notice.
+	// Sensitive deploy and payment actions still require verification now.
+	emailVerificationGrace = 30 * 24 * time.Hour
+	emailVerificationPath  = "/v1/auth/verify-email"
 )
 
 // postLogin is the PR #2 (issue #165) password login path. JSON body
@@ -116,6 +124,9 @@ func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
+	if !acct.EmailVerified() {
+		s.sendEmailVerification(r.Context(), r, acct)
+	}
 	s.issueSessionCookie(w, r, acct)
 	writeLoginJSON(w, acct)
 }
@@ -152,8 +163,9 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		// sign-in path so the duplicate caller signs in (idempotent)
 		// rather than learning "this email is taken".
 		res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
-			Email: email,
-			Plan:  api.PlanFree,
+			Email:                    email,
+			Plan:                     api.PlanFree,
+			RequireEmailVerification: true,
 		})
 		created := res.Account
 		if createErr != nil {
@@ -180,6 +192,9 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				s.issueSessionCookie(w, r, existing)
+				if !existing.EmailVerified() {
+					s.sendEmailVerification(r.Context(), r, existing)
+				}
 				writeLoginJSON(w, existing)
 				return
 			}
@@ -205,6 +220,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 				"internal_error", "Internal Error", "failed to set password"))
 			return
 		}
+		s.sendEmailVerification(r.Context(), r, created)
 		s.issueSessionCookie(w, r, created)
 		writeLoginJSON(w, created)
 		return
@@ -245,6 +261,9 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.issueSessionCookie(w, r, acct)
+	if !acct.EmailVerified() {
+		s.sendEmailVerification(r.Context(), r, acct)
+	}
 	writeLoginJSON(w, acct)
 }
 
@@ -263,7 +282,7 @@ func (s *server) postForgotPassword(w http.ResponseWriter, r *http.Request) {
 	// response is identical and the mailer only fires on a real
 	// account hit.
 	if email != "" && looksLikeEmail(email) {
-		if acct, err := s.store.AccountByEmail(r.Context(), email); err == nil {
+		if acct, err := s.store.AccountByEmail(r.Context(), email); err == nil && acct.EmailVerified() {
 			s.sendPasswordResetEmail(r.Context(), r, acct, email)
 		}
 	}
@@ -642,6 +661,22 @@ func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string
 	return acct, true
 }
 
+// verifyOAuthAccountEmail records the address proof supplied by an OAuth
+// provider. Fresh OAuth accounts already default verified; this closes the
+// existing-password-account path when the customer later signs in through a
+// provider with the same verified address.
+func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account) (state.Account, error) {
+	if acct.EmailVerified() {
+		return acct, nil
+	}
+	if err := s.store.MarkAccountEmailVerified(ctx, acct.ID); err != nil {
+		return state.Account{}, err
+	}
+	verifiedAt := time.Now().UTC()
+	acct.EmailVerifiedAt = &verifiedAt
+	return acct, nil
+}
+
 // issueSessionCookie mints a session via the server's session.Manager
 // and sets the HttpOnly + SameSite=Lax faas_sid cookie. The
 // Secure flag is set when the request arrived via TLS or when the
@@ -742,8 +777,9 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 		// the idempotent sign-in path so the duplicate caller never
 		// learns "this email is taken".
 		res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
-			Email: email,
-			Plan:  api.PlanFree,
+			Email:                    email,
+			Plan:                     api.PlanFree,
+			RequireEmailVerification: true,
 		})
 		if createErr != nil {
 			if errors.Is(createErr, state.ErrConflict) {
@@ -755,6 +791,9 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 						r.UserAgent())
 					api.WriteProblem(w, api.ErrInvalidCredentials())
 					return
+				}
+				if !existing.EmailVerified() {
+					s.sendEmailVerification(r.Context(), r, existing)
 				}
 				s.mintAndWriteV1AuthJSON(w, r, existing, email)
 				return
@@ -780,6 +819,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 				"internal_error", "Internal Error", "failed to set password"))
 			return
 		}
+		s.sendEmailVerification(r.Context(), r, created)
 		s.mintAndWriteV1AuthJSON(w, r, created, email)
 		return
 	}
@@ -797,6 +837,9 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 			r.UserAgent())
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
+	}
+	if !existing.EmailVerified() {
+		s.sendEmailVerification(r.Context(), r, existing)
 	}
 	s.mintAndWriteV1AuthJSON(w, r, existing, email)
 }
@@ -819,6 +862,9 @@ func (s *server) postV1AuthLogin(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
+	if !acct.EmailVerified() {
+		s.sendEmailVerification(r.Context(), r, acct)
+	}
 	s.mintAndWriteV1AuthJSON(w, r, acct, email)
 }
 
@@ -838,8 +884,9 @@ func (s *server) postV1AuthSignupMagicLink(w http.ResponseWriter, r *http.Reques
 			// session for a fresh address. Mirrors the same shape as
 			// postForgotPassword (mailer fires only on a real hit).
 			res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
-				Email: email,
-				Plan:  api.PlanFree,
+				Email:                    email,
+				Plan:                     api.PlanFree,
+				RequireEmailVerification: true,
 			})
 			if createErr == nil {
 				acct = res.Account
@@ -983,6 +1030,67 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 		TextBody: body,
 	}); err != nil {
 		s.log.Error("v1auth_signup_magic.mailer", "err", err)
+	}
+}
+
+// sendEmailVerification mints a 24-hour, single-use address-verification
+// token. Delivery errors remain server-side because signup has already
+// committed; a same-credential signup retry mints and sends a fresh link.
+func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acct state.Account) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		s.log.Error("email_verification.rand", "err", err)
+		return
+	}
+	hash := api.HashToken(raw)
+	expiresAt := time.Now().Add(emailVerificationTTL)
+	if err := s.store.IssueEmailVerificationToken(ctx, hash, acct.ID, expiresAt); err != nil {
+		s.log.Error("email_verification.issue_token", "err", err, "account_id", acct.ID)
+		return
+	}
+	scheme := schemeHTTP
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+		scheme = schemeHTTPS
+	}
+	host := r.Host
+	if s.domain != "" && s.domain != domainUnset {
+		host = s.domain
+		scheme = schemeHTTPS
+	}
+	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))
+	subject, body := mailpkg.EmailVerificationBody(acct.Email, link, expiresAt)
+	if err := s.mailer.Send(ctx, Message{
+		To:       []string{acct.Email},
+		Subject:  subject,
+		TextBody: body,
+	}); err != nil {
+		s.log.Error("email_verification.mailer", "err", err, "account_id", acct.ID)
+	}
+}
+
+// verifyEmail consumes a verification token without authenticating the
+// browser. The success page explicitly sends the customer back through sign
+// in, so possession of the email link never becomes a session credential.
+func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(raw) != 32 {
+		http.Error(w, "verification link expired or already used", http.StatusGone)
+		return
+	}
+	accountID, err := s.store.ConsumeEmailVerificationToken(r.Context(), api.HashToken(raw))
+	if err != nil {
+		s.log.Info("email_verification.invalid_token", "err", err)
+		http.Error(w, "verification link expired or already used", http.StatusGone)
+		return
+	}
+	s.audit.Emit(r.Context(), "auth.email_verified", &accountID, map[string]any{
+		"method": "email_link",
+	})
+	page := dashboard.Page{Title: "Email verified", Body: "email_verified"}
+	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
+		s.log.Error("dashboard render email verified", "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
 }
 

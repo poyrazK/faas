@@ -73,7 +73,7 @@ func TestAccount_OK(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	for _, k := range []string{"id", "email", "plan", "status", "limits", "usage_gb_hours", "app_count"} {
+	for _, k := range []string{"id", "email", "email_verified", "plan", "status", "limits", "usage_gb_hours", "app_count"} {
 		if _, ok := body[k]; !ok {
 			t.Errorf("missing required AccountResponse field %q in body: %+v", k, body)
 		}

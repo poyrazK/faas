@@ -56,9 +56,10 @@ func (s *server) renderPreviewsList(w http.ResponseWriter, r *http.Request, log 
 	}
 	nonce := httpsec.NonceFromContext(ctx)
 	page := dashboard.Page{
-		Title: "Previews",
-		Body:  "previews_list",
-		Data:  items,
+		Title:   "Previews",
+		Body:    "previews_list",
+		Account: dashboardAccountView(acct, len(items)),
+		Data:    items,
 	}
 	if err := dashboard.Render(w, log, nonce, page); err != nil {
 		log.Error("dashboard renderPreviewsList: template", "err", err, "account_id", acct.ID)

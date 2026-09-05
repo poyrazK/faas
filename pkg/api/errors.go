@@ -1357,10 +1357,14 @@ const (
 	//     can branch on it without inventing a new code.
 	CodeInvalidCredentials = "invalid_credentials"
 	CodeEmailNotVerified   = "email_not_verified"
-	CodePasswordTooWeak    = "password_too_weak"
-	CodeResetTokenInvalid  = "reset_token_invalid"
-	CodeResetTokenExpired  = "reset_token_expired"
-	CodeAccountExists      = "account_exists"
+	// CodeEmailVerificationRequired is returned by authenticated deploy
+	// and billing mutations when a password-signup account has not yet
+	// consumed its verification link.
+	CodeEmailVerificationRequired = "email_verification_required"
+	CodePasswordTooWeak           = "password_too_weak"
+	CodeResetTokenInvalid         = "reset_token_invalid"
+	CodeResetTokenExpired         = "reset_token_expired"
+	CodeAccountExists             = "account_exists"
 
 	// CodeOAuthProviderUnavailable is the 503 returned by the
 	// /v1/auth/{google,github}{,/callback} handlers when the
@@ -1868,6 +1872,8 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
+	case CodeEmailVerificationRequired:
+		return http.StatusForbidden
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired:
@@ -4677,6 +4683,15 @@ func ErrEmailNotVerified(provider string) *Problem {
 		"Email not verified",
 		fmt.Sprintf("the %s account's primary email is not verified; verify it on the provider and retry.", provider)).
 		WithDocs(docsBase + "/auth/oauth")
+}
+
+// ErrEmailVerificationRequired is the authenticated 403 gate for deploy and
+// payment actions. The account remains usable for sign-in and read-only work.
+func ErrEmailVerificationRequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
+		"Email verification required",
+		"verify your email address before deploying apps or changing billing settings.").
+		WithDocs(docsBase + "/auth/email-verification")
 }
 
 // ErrPasswordTooWeak is the 400 returned by POST /signup and POST

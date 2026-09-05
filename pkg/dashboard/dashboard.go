@@ -70,10 +70,12 @@ type Page struct {
 // AccountView is the dashboard-facing slice of state.Account. Never
 // log secrets here. Source data is pkg/state.Account; slices 3+4 expand.
 type AccountView struct {
-	ID       string
-	Email    string
-	Plan     string
-	AppCount int
+	ID                         string
+	Email                      string
+	Plan                       string
+	AppCount                   int
+	EmailVerified              bool
+	EmailVerificationGraceEnds string
 }
 
 // DPAView is the page-specific payload for the dashboard DPA route

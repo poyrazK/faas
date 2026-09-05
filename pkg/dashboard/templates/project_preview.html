@@ -54,6 +54,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
 
     {{if .Data.ProjectNotFound}}

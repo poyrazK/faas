@@ -33,6 +33,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     <h1>Organizations</h1>
     <p>Orgs you belong to. Click through to manage members, view pending invitations, or change seat limits.</p>
     {{if .Data}}

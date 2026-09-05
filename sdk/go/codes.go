@@ -69,6 +69,7 @@ const (
 	CodeAppConcurReached              = api.CodeAppConcurReached
 	CodeInvalidCredentials            = api.CodeInvalidCredentials
 	CodeEmailNotVerified              = api.CodeEmailNotVerified
+	CodeEmailVerificationRequired     = api.CodeEmailVerificationRequired
 	CodePasswordTooWeak               = api.CodePasswordTooWeak
 	CodeResetTokenInvalid             = api.CodeResetTokenInvalid
 	CodeResetTokenExpired             = api.CodeResetTokenExpired

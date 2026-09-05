@@ -175,6 +175,7 @@
     </nav>
   </header>
   <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+    {{template "email-verification-banner" .}}
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
          with ?fired=1 (success) or ?fired=error (failure); the

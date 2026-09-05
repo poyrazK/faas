@@ -37,6 +37,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     <h1>Invoices</h1>
     <form method="get" action="/dashboard/invoices" class="form-row">
       <label>Month (YYYY-MM)

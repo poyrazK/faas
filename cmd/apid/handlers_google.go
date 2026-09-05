@@ -286,7 +286,7 @@ func (s *server) provisionOrFetchGoogleAccount(ctx context.Context, info GoogleU
 	if link, err := s.store.OAuthLinkByProviderSubject(ctx, "google", info.ID); err == nil {
 		acct, err := s.store.AccountByID(ctx, link.AccountID)
 		if err == nil {
-			return acct, nil
+			return s.verifyOAuthAccountEmail(ctx, acct)
 		}
 		// Link references a missing account: fall through to
 		// email-based recovery. The link was created against a
@@ -307,7 +307,7 @@ func (s *server) provisionOrFetchGoogleAccount(ctx context.Context, info GoogleU
 		if err := s.store.UpsertOAuthLink(ctx, acct.ID, "google", info.ID, email, info.VerifiedEmail); err != nil {
 			s.log.Error("google.upsert_link", "err", err)
 		}
-		return acct, nil
+		return s.verifyOAuthAccountEmail(ctx, acct)
 	}
 
 	// Neither sub nor email is bound: create a fresh account on

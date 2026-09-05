@@ -656,7 +656,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -707,7 +707,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
         '202':
           description: The provider accepted a deferred plan change; the current local entitlement remains active until the provider webhook confirms it.
           content:
@@ -717,6 +717,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -1214,6 +1215,31 @@ paths:
                 properties:
                   status: { type: string, enum: [ok] }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/auth/verify-email:
+    get:
+      tags: [auth]
+      operationId: verifyEmail
+      summary: Verify a password-signup email address.
+      description: |
+        Consumes a 24-hour, single-use verification token and marks the
+        account email verified. This endpoint does not create a session;
+        the returned HTML page prompts the customer to sign in again.
+      parameters:
+        - in: query
+          name: token
+          required: true
+          description: The raw 24-hour verification token delivered by email.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Email verified; HTML sign-in prompt.
+          content:
+            text/html:
+              schema: { type: string }
+        '410':
+          description: Verification link expired, invalid, or already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/reset:
@@ -1889,7 +1915,7 @@ paths:
                 example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"concurrency_per_vm":5,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z","require_authn":false}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/PlanLimit' }
+        '403': { $ref: '#/components/responses/AppCreateForbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -2976,7 +3002,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
-        '403': { $ref: '#/components/responses/SourceEgressDenied' }
+        '403': { $ref: '#/components/responses/DeploymentForbidden' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -3048,6 +3074,7 @@ paths:
                 $ref: '#/components/schemas/DeploymentResponse'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: "code: dev_source_base_missing. Retry with a complete source snapshot."
@@ -3105,6 +3132,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '404':
           description: |
             No durable GitHub install bound to the caller's account
@@ -3196,6 +3224,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '404':
           description: |
             code: not_found. The slug does not exist OR belongs to
@@ -9902,6 +9931,7 @@ paths:
                   exp_month: 12
                   exp_year: 2027
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ─── Billing retry (issue #242) ────────────────────────────────────────
@@ -9942,6 +9972,7 @@ paths:
                 status: "pending_provider_confirmation"
                 next_billing_at: null
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '404':
           description: No open charge to retry — the account is in good standing, or the operator has not configured a billing provider.
           content:
@@ -10004,6 +10035,7 @@ paths:
                 cancel_scheduled: true
                 effective_at: "2026-09-08T00:00:00Z"
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '409':
           description: Already cancelled. CLI renders a friendly hint.
           content:
@@ -12015,12 +12047,17 @@ components:
     # ─── Account ──────────────────────────────────────────────────────────
 
     AccountResponse:
-      description: "Account profile: id, email, plan, status, limits snapshot, current-month usage, and total app count."
+      description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, and total app count."
       type: object
-      required: [id, email, plan, status, limits, usage_gb_hours, app_count]
+      required: [id, email, email_verified, plan, status, limits, usage_gb_hours, app_count]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         email: { type: string, format: email }
+        email_verified: { type: boolean }
+        email_verification_grace_ends_at:
+          type: string
+          format: date-time
+          description: "30-day verification deadline; present only while email_verified is false."
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         status: { type: string, enum: [active, past_due, suspended, deleted_pending] , example: "active"}
         limits: { $ref: '#/components/schemas/AccountLimits' }
@@ -21758,6 +21795,24 @@ components:
 
     PaymentRequired:
       description: 'code: billing_past_due — account is suspended; pay invoice to resume.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    EmailVerificationRequired:
+      description: 'code: email_verification_required — verify the account email before deploying code or changing billing settings.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    AppCreateForbidden:
+      description: 'code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied | email_verification_required'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    DeploymentForbidden:
+      description: 'code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -42,6 +42,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     <h1>Usage · {{.Data.Month}}</h1>
     {{if .Data}}
       {{$d := .Data}}

@@ -908,6 +908,7 @@ CREATE TABLE public.accounts (
     overage_cap_cents bigint,
     key_grace_window_days integer,
     egress_allowlist_extra integer DEFAULT 0 NOT NULL,
+    email_verified_at timestamp with time zone,
     CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
     CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
     CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
@@ -2130,6 +2131,19 @@ CREATE TABLE public.egress_policy (
     danger_accept_rfc1918_lateral_movement boolean DEFAULT false NOT NULL,
     CONSTRAINT egress_policy_pair_check CHECK (((NOT danger_accept_rfc1918_lateral_movement) OR (COALESCE(array_length(overlay_exceptions, 1), 0) > 0))),
     CONSTRAINT egress_policy_singleton CHECK ((id = 'singleton'::text))
+);
+
+
+--
+-- Name: email_verification_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.email_verification_tokens (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -4197,6 +4211,14 @@ ALTER TABLE ONLY public.login_tokens
 
 
 --
+-- Name: email_verification_tokens email_verification_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_tokens
+    ADD CONSTRAINT email_verification_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
 -- Name: mail_suppressions mail_suppressions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5774,6 +5796,13 @@ CREATE UNIQUE INDEX jobs_account_name_uniq ON public.jobs USING btree (account_i
 --
 
 CREATE INDEX login_tokens_account_idx ON public.login_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: email_verification_tokens_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_tokens USING btree (account_id, expires_at);
 
 
 --
@@ -7560,6 +7589,14 @@ ALTER TABLE ONLY public.jobs
 
 ALTER TABLE ONLY public.login_tokens
     ADD CONSTRAINT login_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: email_verification_tokens email_verification_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_tokens
+    ADD CONSTRAINT email_verification_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
