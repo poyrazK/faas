@@ -92,8 +92,14 @@ type EgressSink struct {
 // held across I/O. Always taken after s.mu, never before.
 type instanceBuckets struct {
 	mu        sync.Mutex
-	bytes     map[int64]uint64 // minuteUnix → cumulative bytes
+	usage     map[int64]usageBucket
 	lastTouch time.Time
+}
+
+type usageBucket struct {
+	bytes     uint64
+	requests  uint64
+	coldBoots uint64
 }
 
 // NewEgressSink returns a sink with the real time clock. Use
@@ -144,14 +150,40 @@ func (s *EgressSink) RecordResponseBytes(instanceID string, n int64) {
 	s.mu.Lock()
 	inst, ok := s.instances[instanceID]
 	if !ok {
-		inst = &instanceBuckets{
-			bytes: make(map[int64]uint64, BucketsToKeep),
-		}
+		inst = &instanceBuckets{usage: make(map[int64]usageBucket, BucketsToKeep)}
 		s.instances[instanceID] = inst
 	}
 	inst.mu.Lock()
 	s.mu.Unlock()
-	inst.bytes[minute] += uint64(n)
+	bucket := inst.usage[minute]
+	bucket.bytes += uint64(n)
+	inst.usage[minute] = bucket
+	inst.lastTouch = s.now()
+	inst.mu.Unlock()
+}
+
+// RecordRequest records one request that reached a selected instance. A cold
+// boot is counted only when that request's authoritative wake outcome was a
+// cold boot; restores and already-running requests leave coldBoots unchanged.
+func (s *EgressSink) RecordRequest(instanceID string, coldBoot bool) {
+	if instanceID == "" {
+		return
+	}
+	minute := s.now().UTC().Truncate(time.Minute).Unix()
+	s.mu.Lock()
+	inst, ok := s.instances[instanceID]
+	if !ok {
+		inst = &instanceBuckets{usage: make(map[int64]usageBucket, BucketsToKeep)}
+		s.instances[instanceID] = inst
+	}
+	inst.mu.Lock()
+	s.mu.Unlock()
+	bucket := inst.usage[minute]
+	bucket.requests++
+	if coldBoot {
+		bucket.coldBoots++
+	}
+	inst.usage[minute] = bucket
 	inst.lastTouch = s.now()
 	inst.mu.Unlock()
 }
@@ -179,9 +211,9 @@ func (s *EgressSink) DrainRecords() []Record {
 		// Drop buckets older than the lookback window; without this
 		// the per-instance map grows by one entry per minute for
 		// the daemon's lifetime, regardless of activity.
-		for minute := range inst.bytes {
+		for minute := range inst.usage {
 			if minute < sweepCutoff.Unix() {
-				delete(inst.bytes, minute)
+				delete(inst.usage, minute)
 			}
 		}
 		// Snapshot remaining buckets, then delete them in the same
@@ -196,16 +228,18 @@ func (s *EgressSink) DrainRecords() []Record {
 		// next drain re-attaches it; the per-minute attribution is
 		// preserved because minute keys are immutable.
 		var drained uint64
-		for minute, n := range inst.bytes {
-			if n == 0 {
+		for minute, bucket := range inst.usage {
+			if bucket.bytes == 0 && bucket.requests == 0 && bucket.coldBoots == 0 {
 				continue
 			}
 			out = append(out, Record{
 				InstanceID: id,
 				Minute:     time.Unix(minute, 0).UTC(),
-				Bytes:      n,
+				Bytes:      bucket.bytes,
+				Requests:   bucket.requests,
+				ColdBoots:  bucket.coldBoots,
 			})
-			drained += n
+			drained += bucket.bytes + bucket.requests + bucket.coldBoots
 		}
 		// Wipe the bucket map: a future Record on a different
 		// minute-key populates a fresh entry on a different key, so
@@ -213,7 +247,7 @@ func (s *EgressSink) DrainRecords() []Record {
 		// defeat the per-instance eviction check below (len > 0
 		// even though everything is drained), so the row would
 		// leak forever.
-		clear(inst.bytes)
+		clear(inst.usage)
 		empty := drained == 0
 		// Stale-instance eviction: a row whose drain returned
 		// nothing is cold (per-instance mu is held, so no Record
@@ -237,14 +271,16 @@ func (s *EgressSink) Snapshot() []Record {
 	out := make([]Record, 0, len(s.instances)*BucketsToKeep)
 	for id, inst := range s.instances {
 		inst.mu.Lock()
-		for minute, n := range inst.bytes {
-			if n == 0 {
+		for minute, bucket := range inst.usage {
+			if bucket.bytes == 0 && bucket.requests == 0 && bucket.coldBoots == 0 {
 				continue
 			}
 			out = append(out, Record{
 				InstanceID: id,
 				Minute:     time.Unix(minute, 0).UTC(),
-				Bytes:      n,
+				Bytes:      bucket.bytes,
+				Requests:   bucket.requests,
+				ColdBoots:  bucket.coldBoots,
 			})
 		}
 		inst.mu.Unlock()
@@ -268,4 +304,6 @@ type Record struct {
 	InstanceID string    `json:"instance_id"`
 	Minute     time.Time `json:"minute"` // truncated to the minute
 	Bytes      uint64    `json:"bytes"`  // cumulative within the bucket
+	Requests   uint64    `json:"requests"`
+	ColdBoots  uint64    `json:"cold_boots"`
 }

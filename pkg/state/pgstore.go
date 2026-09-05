@@ -14171,7 +14171,7 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 	//   tx_bytes         — ADR-046 (gateway HTTP response body bytes)
 	//   net_tx_bytes     — ADR-046 (root-side vethHost.rx_bytes delta)
 	//   net_rx_bytes     — ADR-048 (root-side vethHost.tx_bytes delta; ingress)
-	//   cold_boot_count  — ADR-048 (WAKE_RESTORE→WAKE_COLD_BOOT transitions)
+	//   cold_boot_count  — ADR-048 (requests whose wake outcome was a cold boot)
 	//   tail_seconds     — issue #667 / ADR-078 (per-minute wall-clock
 	//                      seconds draining waitUntil tasks;
 	//                      INFORMATIONAL ONLY — does not enter billing;

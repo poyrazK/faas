@@ -36,8 +36,9 @@ import (
 //   - the resident bytes from the caller are always populated
 func TestBuildInstanceStatsRow_PopulatesNetTxBytes(t *testing.T) {
 	netCache := netstats.New(func() time.Time { return time.Unix(0, 0) })
-	netCache.Observe(netstats.Observation{InstanceID: "vm-A", RXBytes: 0, At: time.Unix(0, 0)})
-	netCache.Observe(netstats.Observation{InstanceID: "vm-A", RXBytes: 4096, At: time.Unix(1, 0)})
+	netCache.Observe(netstats.Observation{InstanceID: "vm-A", RXBytes: 0, TXBytes: 0, At: time.Unix(0, 0)})
+	netCache.Observe(netstats.Observation{InstanceID: "vm-A", RXBytes: 4096, TXBytes: 2048, At: time.Unix(1, 0)})
+	netCache.Observe(netstats.Observation{InstanceID: "vm-A", RXBytes: 8192, TXBytes: 3072, At: time.Unix(2, 0)})
 
 	row := buildInstanceStatsRow("vm-A", 8192, nil, netCache, nil, wire.NewOpsMetrics("vmmd_test"))
 
@@ -50,8 +51,11 @@ func TestBuildInstanceStatsRow_PopulatesNetTxBytes(t *testing.T) {
 	if row.NetTxBytes == nil {
 		t.Fatalf("NetTxBytes nil, want non-nil wrapper (cache had Valid reading)")
 	}
-	if got := row.NetTxBytes.Value; got != 4096 {
-		t.Errorf("NetTxBytes.Value = %d, want 4096", got)
+	if got := row.NetTxBytes.Value; got != 8192 {
+		t.Errorf("NetTxBytes.Value = %d, want cumulative 8192", got)
+	}
+	if row.NetRxBytes == nil || row.NetRxBytes.Value != 3072 {
+		t.Errorf("NetRxBytes = %v, want cumulative 3072", row.NetRxBytes)
 	}
 	// CPU fields: nil cache → absent wrappers (mirrors the legacy
 	// behaviour: a test that doesn't wire the CPU cache gets

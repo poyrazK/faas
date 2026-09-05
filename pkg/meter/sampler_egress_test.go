@@ -191,3 +191,29 @@ func TestSampler_RolledRow_EgressFieldsPopulated(t *testing.T) {
 		t.Errorf("RolledRow.NetTxBytes = %d, want 9_000_000", out[0].NetTxBytes)
 	}
 }
+
+func TestSampler_DrainsFinalParkedInstanceActivity(t *testing.T) {
+	store, acctID, _, instID, minute := seedMinuteUsageEgress(t)
+	if err := store.UpdateInstanceState(context.Background(), instID, string(state.StateParked)); err != nil {
+		t.Fatal(err)
+	}
+	egress := newFakeEgressSource()
+	egress.SetUsage(instID, UsageDeltas{
+		TXBytes:       123,
+		NetRXBytes:    456,
+		Requests:      4,
+		ColdBootCount: 1,
+	})
+	sampler := NewSamplerWithEgress(store, nil, egress, func() time.Time { return minute })
+	rows, err := sampler.SampleAndRoll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].MBSeconds != 0 || rows[0].TXBytes != 123 || rows[0].NetRxBytes != 456 || rows[0].ColdBootCount != 1 {
+		t.Fatalf("parked telemetry row = %+v", rows)
+	}
+	usage, err := store.UsageByHour(context.Background(), acctID, minute.Add(-time.Minute), minute.Add(time.Minute))
+	if err != nil || len(usage) != 1 || usage[0].Requests != 4 {
+		t.Fatalf("parked usage = %+v, err=%v", usage, err)
+	}
+}

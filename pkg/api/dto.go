@@ -2555,8 +2555,8 @@ type UsageResponse struct {
 	// HTTP-response byte delta — informational only. Source:
 	// gateway statusRecorder.Bytes → meterd SampleAndRoll →
 	// usage_minutes.tx_bytes. Not billed (ADR-046 §6); the
-	// gateway-side producer lands in PR-2. 0 when no meterd
-	// sample has accumulated yet.
+	// gateway-side producer. 0 when no meterd sample has
+	// accumulated yet.
 	TXBytes int64 `json:"tx_bytes"`
 	// NetTxBytes (ADR-046, step 10) is the per-app monthly
 	// byte delta on root-side vethHost.rx_bytes —
@@ -2573,18 +2573,14 @@ type UsageResponse struct {
 	// instancestats.Poller → meterd SampleAndRoll →
 	// usage_minutes.net_rx_bytes. Informational only —
 	// not billed (ADR-048 §5). 0 when no meterd sample has
-	// accumulated yet or the wire regen that surfaces the
-	// ingress field has not yet landed (PR-A commit #2
-	// follow-up).
+	// accumulated yet.
 	NetRxBytes int64 `json:"net_rx_bytes"`
 	// ColdBootCount (ADR-048) is the per-app monthly
-	// count of WAKE_RESTORE → WAKE_COLD_BOOT transitions
-	// observed across this app's instances. Source:
-	// scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled
-	// by meterd SampleAndRoll → usage_minutes.
+	// count of customer requests whose authoritative wake outcome
+	// was WAKE_COLD_BOOT. Source: gatewayd's minute-bucketed
+	// usage stream → meterd SampleAndRoll → usage_minutes.
 	// cold_boot_count. Informational only — not billed.
-	// 0 when no meterd sample has accumulated yet or the
-	// wire regen has not yet landed.
+	// 0 when no meterd sample has accumulated yet.
 	ColdBootCount int64 `json:"cold_boots"`
 }
 
@@ -2894,10 +2890,10 @@ type DailyUsagePoint struct {
 // billed. The two egress columns (tx_bytes + net_tx_bytes) are
 // exposed separately at the per-app UsageResponse level; the
 // summary rolls them up for the dashboard's single-number
-// panel. The gateway-side tx_bytes producer lands in PR-2.
+// panel.
 type UsageSummaryResponse struct {
 	Month           string  `json:"month"`             // YYYY-MM
-	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
+	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 1024 / 3600
 	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
 	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
@@ -2921,8 +2917,8 @@ type UsageSummaryResponse struct {
 	// per-app breakdown lives at UsageResponse.NetRxBytes.
 	UsedIngressGB float64 `json:"used_ingress_gb"`
 	// ColdBootTotal (ADR-048) is the per-month Σ of
-	// WAKE_RESTORE → WAKE_COLD_BOOT transitions across
-	// every app on this account. Informational only — not
+	// customer requests whose wake outcome was WAKE_COLD_BOOT
+	// across every app on this account. Informational only — not
 	// billed. The dashboard's "this customer's cold-boot
 	// bill of health" panel reads this single number; the
 	// per-app breakdown lives at UsageResponse.ColdBootCount.

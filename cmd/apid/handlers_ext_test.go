@@ -2192,7 +2192,8 @@ func TestUsageSummary_DailyTopApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	today := time.Now().UTC()
-	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appA.ID, "instance-api", today, 7_200_000, 10, 0, 0, 0, 0, 0, 0); err != nil {
+	const gib = int64(1024 * 1024 * 1024)
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appA.ID, "instance-api", today, 7_200_000, 10, 3_600_000_000, gib, 2*gib, 3*gib, 2, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appB.ID, "instance-worker", today, 3_600_000, 5, 0, 0, 0, 0, 0, 0); err != nil {
@@ -2210,8 +2211,23 @@ func TestUsageSummary_DailyTopApp(t *testing.T) {
 	if len(out.Daily) != 1 {
 		t.Fatalf("daily = %+v, want one point", out.Daily)
 	}
-	if out.Daily[0].TopAppSlug != "api" || out.Daily[0].GBHours != 3 || out.Daily[0].TopAppGBHours != 2 {
+	if out.Daily[0].TopAppSlug != "api" || out.Daily[0].GBHours != 2.9296875 || out.Daily[0].TopAppGBHours != 1.953125 {
 		t.Fatalf("daily point = %+v", out.Daily[0])
+	}
+	if out.UsedGBHours != 2.9296875 {
+		t.Errorf("used GB-hours = %v, want 2.9296875", out.UsedGBHours)
+	}
+	if out.UsedCPUHours != 1 {
+		t.Errorf("used CPU-hours = %v, want 1", out.UsedCPUHours)
+	}
+	if out.UsedEgressGB != 3 {
+		t.Errorf("used egress GB = %v, want 3", out.UsedEgressGB)
+	}
+	if out.UsedIngressGB != 3 {
+		t.Errorf("used ingress GB = %v, want 3", out.UsedIngressGB)
+	}
+	if out.ColdBootTotal != 2 {
+		t.Errorf("cold boots = %d, want 2", out.ColdBootTotal)
 	}
 }
 

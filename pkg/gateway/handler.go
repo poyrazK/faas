@@ -5579,6 +5579,7 @@ haveApp:
 		// via evts.Platform so the session-level accounting
 		// doesn't double-count.
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
+		h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 		return
 	}
 	if h.proxyByNode != nil {
@@ -5669,6 +5670,7 @@ haveApp:
 		h.streamingFallbackLog(app.ID, rec.ContentType)
 	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
+	h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 	// PR-B residual capture. On the streaming path the per-flush
 	// deltas already attributed every byte that hit the wire; the
 	// one outstanding delta is the trailing slice between the
@@ -5983,6 +5985,17 @@ func (h *Handler) recordEgress(rec *statusRecorder, target Target, app App) {
 	if h.metrics != nil && app.ID != "" {
 		h.metrics.ObserveResponseBytes(app.ID, string(app.Plan), rec.Bytes)
 	}
+}
+
+// recordUsageRequest attributes one request that reached an instance to the
+// same minute-bucketed stream as response bytes. The wake method comes from
+// schedd's authoritative wake result, so restores are not mislabeled as cold
+// boots merely because the request had to wake a parked instance.
+func (h *Handler) recordUsageRequest(target Target, coldBoot bool) {
+	if h.egressSink == nil || target.InstanceID == "" {
+		return
+	}
+	h.egressSink.RecordRequest(target.InstanceID, coldBoot)
 }
 
 // writeAppRateLimitHeaders writes the X-RateLimit-{Limit,Remaining,Reset}

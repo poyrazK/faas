@@ -4556,14 +4556,15 @@ func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state
 		}
 	}
 	daily := usageDailyPoints(dailyRows, apps)
-	var mbSec, cpuUsec, netRxBytes, coldBoots int64
+	var mbSec, cpuUsec, egressBytes, netRxBytes, coldBoots int64
 	for _, u := range rows {
 		mbSec += u.MBSeconds
 		cpuUsec += u.CPUUsec
+		egressBytes += u.TXBytes + u.NetTxBytes
 		netRxBytes += u.NetRxBytes
 		coldBoots += u.ColdBootCount
 	}
-	usedGB := float64(mbSec) / 3_600_000.0
+	usedGB := meter.GBHours(mbSec)
 	// usedCPUHours is the per-month CPU-hours — informational only
 	// (issue #279 / PR-B). Billing math is on usedGB (plan RAM +
 	// 8 MB per running second). The conversion is the same shape
@@ -4589,6 +4590,7 @@ func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state
 		OverageGBHours:  overage,
 		OverageCents:    overageCents,
 		UsedCPUHours:    usedCPUHours,
+		UsedEgressGB:    float64(egressBytes) / (1024 * 1024 * 1024),
 		// ADR-048: ingress Σ + cold-boot Σ across every
 		// app on this account for the month. Both
 		// informational, not billed.
