@@ -233,6 +233,9 @@ func TestDecode_RoundTripBasic(t *testing.T) {
 		Documentation:         "https://docs.example.com",
 		After:                 []string{"network.target"},
 		Wants:                 []string{"faas-cp.slice"},
+		Requires:              []string{"postgresql.service"},
+		StartLimitIntervalSec: "60s",
+		StartLimitBurst:       "5",
 		Type:                  "simple",
 		User:                  "faas-apid",
 		Group:                 "faas",
@@ -285,6 +288,12 @@ func TestDecode_RoundTripBasic(t *testing.T) {
 	}
 	if u.MemoryMax != parsed.MemoryMax {
 		t.Errorf("MemoryMax: %q != %q", u.MemoryMax, parsed.MemoryMax)
+	}
+	if u.StartLimitIntervalSec != parsed.StartLimitIntervalSec {
+		t.Errorf("StartLimitIntervalSec: %q != %q", u.StartLimitIntervalSec, parsed.StartLimitIntervalSec)
+	}
+	if u.StartLimitBurst != parsed.StartLimitBurst {
+		t.Errorf("StartLimitBurst: %q != %q", u.StartLimitBurst, parsed.StartLimitBurst)
 	}
 	if (u.PrivateTmp == nil) != (parsed.PrivateTmp == nil) {
 		t.Errorf("PrivateTmp nilness: %v vs %v", u.PrivateTmp, parsed.PrivateTmp)

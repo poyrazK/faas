@@ -32,9 +32,12 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // ships across fsn-1 / fsn-2.
 func UnitSchedd() daemonunit.Unit {
 	return daemonunit.Unit{
-		Description: "onebox-faas schedd — scheduler + lifecycle owner",
-		After:       []string{"network.target", "faas-cp.slice", "faas-brokerq.slice"},
-		Wants:       []string{"faas-cp.slice", "faas-brokerq.slice"},
+		Description:           "onebox-faas schedd — scheduler + lifecycle owner",
+		After:                 []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-brokerq.slice"},
+		Wants:                 []string{"faas-cp.slice", "faas-brokerq.slice"},
+		Requires:              []string{"postgresql.service"},
+		StartLimitIntervalSec: "60s",
+		StartLimitBurst:       "5",
 
 		Type:  "simple",
 		User:  "faas-schedd",

@@ -74,11 +74,13 @@ type LoadCred struct {
 // dropped by Render() (systemd would warn, but we keep the surface flat).
 type Unit struct {
 	// [Unit]
-	Description   string
-	Documentation string
-	After         []string
-	Wants         []string
-	Requires      []string
+	Description           string
+	Documentation         string
+	After                 []string
+	Wants                 []string
+	Requires              []string
+	StartLimitIntervalSec string
+	StartLimitBurst       string
 
 	// [Service]
 	Type               string // "simple" for every faas daemon today
@@ -166,6 +168,8 @@ func (u Unit) Render() []byte {
 	writeStringList(&buf, "After", u.After)
 	writeStringList(&buf, "Wants", u.Wants)
 	writeStringList(&buf, "Requires", u.Requires)
+	writeStringKV(&buf, "StartLimitIntervalSec", u.StartLimitIntervalSec)
+	writeStringKV(&buf, "StartLimitBurst", u.StartLimitBurst)
 	buf.WriteByte('\n')
 
 	buf.WriteString("[Service]\n")
@@ -465,6 +469,10 @@ func apply(u *Unit, section, key, val string) error {
 		u.Wants = strings.Fields(val)
 	case "[Unit]/Requires":
 		u.Requires = strings.Fields(val)
+	case "[Unit]/StartLimitIntervalSec":
+		u.StartLimitIntervalSec = val
+	case "[Unit]/StartLimitBurst":
+		u.StartLimitBurst = val
 
 	case "[Service]/Type":
 		u.Type = val
@@ -653,6 +661,8 @@ func Diff(a, b Unit) []string {
 	add("[Unit]", "After", fmt.Sprintf("%v", sortClone(a.After)), fmt.Sprintf("%v", sortClone(b.After)))
 	add("[Unit]", "Wants", fmt.Sprintf("%v", sortClone(a.Wants)), fmt.Sprintf("%v", sortClone(b.Wants)))
 	add("[Unit]", "Requires", fmt.Sprintf("%v", sortClone(a.Requires)), fmt.Sprintf("%v", sortClone(b.Requires)))
+	add("[Unit]", "StartLimitIntervalSec", a.StartLimitIntervalSec, b.StartLimitIntervalSec)
+	add("[Unit]", "StartLimitBurst", a.StartLimitBurst, b.StartLimitBurst)
 	add("[Service]", "Type", a.Type, b.Type)
 	add("[Service]", "User", a.User, b.User)
 	add("[Service]", "Group", a.Group, b.Group)

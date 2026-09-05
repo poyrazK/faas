@@ -51,6 +51,18 @@ for rel in "${units[@]}"; do
       errors=$((errors + 1))
     fi
   done
+  # A daemon that repeatedly fails during a host or dependency outage must
+  # stop in a bounded state so systemd does not spin forever. Keep this on
+  # the committed FaaS daemon units; the Loki/Promtail templates in this
+  # list have their own role-specific restart policy.
+  if [[ "$rel" == */faas-*.service ]]; then
+    for directive in StartLimitIntervalSec=60s StartLimitBurst=5; do
+      if ! grep -Fqx "$directive" "$file"; then
+        echo "systemd-hardening-check: ${rel}: missing ${directive}" >&2
+        errors=$((errors + 1))
+      fi
+    done
+  fi
   # Every daemon must bound its own memory. The value is per-daemon (256M
   # for the small control-plane services, 4G for imaged's layer work), so
   # this is a presence check rather than an exact-line match.
@@ -80,6 +92,82 @@ for rel in "${units[@]}"; do
   fi
   if grep -Eiq '(^|[[:space:]])(FAAS_[A-Z0-9_]*DEBUG|FAAS_[A-Z0-9_]*DIAGNOSTIC|GODEBUG|LOG_LEVEL=debug)=' "$file"; then
     echo "systemd-hardening-check: ${rel}: diagnostic/debug environment is not release-safe" >&2
+    errors=$((errors + 1))
+  fi
+done
+
+# Split-box hosts use a remote PostgreSQL instance for compute daemons, so a
+# blanket Requires=postgresql.service would make those units fail on hosts
+# that intentionally do not run a local database. Control-plane daemons are
+# different: the postgres role owns the local aggregate target and these
+# units must wait for it before opening their pools.
+has_directive_value() {
+  local file="$1" directive="$2" wanted="$3"
+  awk -v directive="$directive" -v wanted="$wanted" '
+    index($0, directive "=") == 1 {
+      value = substr($0, length(directive) + 2)
+      count = split(value, fields, /[[:space:]]+/)
+      for (i = 1; i <= count; i++) {
+        if (fields[i] == wanted) {
+          found = 1
+        }
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$file"
+}
+
+control_plane_db_units=(
+  "deploy/ansible/roles/control_plane_service/files/faas-apid.service"
+  "deploy/ansible/roles/control_plane_service/files/faas-schedd.service"
+  "deploy/ansible/roles/control_plane_service/files/faas-meterd.service"
+  "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.service"
+  "deploy/ansible/roles/githubd_service/files/faas-githubd.service"
+  "deploy/systemd/faas-apid.service"
+  "deploy/systemd/faas-schedd.service"
+  "deploy/systemd/faas-gatewayd-public.service"
+)
+
+for rel in "${control_plane_db_units[@]}"; do
+  file="${root}/${rel}"
+  if [[ ! -f "$file" ]]; then
+    echo "systemd-hardening-check: missing ${file}" >&2
+    errors=$((errors + 1))
+    continue
+  fi
+  if ! has_directive_value "$file" After postgresql.service; then
+    echo "systemd-hardening-check: ${rel}: database daemon must start after postgresql.service" >&2
+    errors=$((errors + 1))
+  fi
+  if ! has_directive_value "$file" Requires postgresql.service; then
+    echo "systemd-hardening-check: ${rel}: database daemon must require postgresql.service" >&2
+    errors=$((errors + 1))
+  fi
+done
+
+# The compute-only role is deliberately remote-DB capable. This tripwire
+# prevents a future copy/paste of the control-plane dependency from making a
+# split-box node depend on a PostgreSQL service that is not installed there.
+compute_only_units=(
+  "deploy/ansible/roles/builderd_service/files/faas-builderd.service"
+  "deploy/ansible/roles/compute_only_service/files/faas-imaged.service"
+  "deploy/ansible/roles/gatewayd_internal_service/files/faas-gatewayd-internal.service"
+  "deploy/ansible/roles/vmmd_service/files/faas-vmmd.service"
+  "deploy/systemd/faas-builderd.service"
+  "deploy/systemd/faas-imaged.service"
+  "deploy/systemd/faas-gatewayd-internal.service"
+  "deploy/systemd/faas-vmmd.service"
+)
+
+for rel in "${compute_only_units[@]}"; do
+  file="${root}/${rel}"
+  if [[ ! -f "$file" ]]; then
+    echo "systemd-hardening-check: missing ${file}" >&2
+    errors=$((errors + 1))
+    continue
+  fi
+  if has_directive_value "$file" Requires postgresql.service; then
+    echo "systemd-hardening-check: ${rel}: compute-only daemon must not require a local postgresql.service" >&2
     errors=$((errors + 1))
   fi
 done

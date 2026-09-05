@@ -40,10 +40,13 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // See ADR-078 for the migration that wiped these from the unit body.
 func UnitApid() daemonunit.Unit {
 	return daemonunit.Unit{
-		Description:   "onebox-faas apid — public control-plane API (spec §4.1)",
-		Documentation: "https://docs.gregale.dev/ops/apid",
-		After:         []string{"network.target", "faas-cp.slice"},
-		Wants:         []string{"faas-cp.slice"},
+		Description:           "onebox-faas apid — public control-plane API (spec §4.1)",
+		Documentation:         "https://docs.gregale.dev/ops/apid",
+		After:                 []string{"network.target", "postgresql.service", "faas-cp.slice"},
+		Wants:                 []string{"faas-cp.slice"},
+		Requires:              []string{"postgresql.service"},
+		StartLimitIntervalSec: "60s",
+		StartLimitBurst:       "5",
 
 		Type:               "simple",
 		User:               "faas-apid",

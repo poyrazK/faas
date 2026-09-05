@@ -2,6 +2,9 @@
 Description=onebox-faas meterd — metering and billing
 After=network.target postgresql.service faas-schedd.service faas-cp.slice
 Wants=faas-cp.slice faas-schedd.service
+Requires=postgresql.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple

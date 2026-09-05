@@ -45,6 +45,8 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
 		},
+		StartLimitIntervalSec: "60s",
+		StartLimitBurst:       "5",
 
 		Type: "simple",
 		// No User=/Group=: vmmd is root by design.

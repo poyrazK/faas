@@ -11,10 +11,10 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 //   - meterd reads DATABASE_URL from /etc/faas/compute-db.env
 //     (EnvironmentFile=). The DSN points at the local Postgres;
-//     billing writes are durable across reboots because Postgres is
-//     started out of band by ansible (cp-ans role does this), not via
-//     a `Requires=postgresql.service` directive. (Spec §11 single-public-
-//     listener invariant; CLAUDE.md component ownership.)
+//     billing writes are durable across reboots because the unit waits for
+//     and requires the local PostgreSQL aggregate target before it opens
+//     its pool. (Spec §11 single-public-listener invariant; CLAUDE.md
+//     component ownership.)
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 //
@@ -24,9 +24,12 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // billing.env (0400 root:root), not from the full sealed.env.
 func UnitMeterd() daemonunit.Unit {
 	return daemonunit.Unit{
-		Description: "onebox-faas meterd — metering and billing",
-		After:       []string{"network.target", "postgresql.service", "faas-schedd.service", "faas-cp.slice"},
-		Wants:       []string{"faas-cp.slice", "faas-schedd.service"},
+		Description:           "onebox-faas meterd — metering and billing",
+		After:                 []string{"network.target", "postgresql.service", "faas-schedd.service", "faas-cp.slice"},
+		Wants:                 []string{"faas-cp.slice", "faas-schedd.service"},
+		Requires:              []string{"postgresql.service"},
+		StartLimitIntervalSec: "60s",
+		StartLimitBurst:       "5",
 
 		Type:               "simple",
 		User:               "faas-meterd",

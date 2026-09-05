@@ -39,9 +39,12 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // readKeyPEMDefault finds it on first boot.
 func UnitGithubd() daemonunit.Unit {
 	return daemonunit.Unit{
-		Description: "onebox-faas githubd — GitHub App integration",
-		After:       []string{"network.target", "postgresql.service", "faas-cp.slice"},
-		Wants:       []string{"faas-cp.slice"},
+		Description:           "onebox-faas githubd — GitHub App integration",
+		After:                 []string{"network.target", "postgresql.service", "faas-cp.slice"},
+		Wants:                 []string{"faas-cp.slice"},
+		Requires:              []string{"postgresql.service"},
+		StartLimitIntervalSec: "60s",
+		StartLimitBurst:       "5",
 
 		Type:               "simple",
 		User:               "faas",

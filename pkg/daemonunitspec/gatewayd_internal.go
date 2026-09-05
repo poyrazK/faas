@@ -55,8 +55,10 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// only produced "Unit is masked" noise at every start. It dials
 		// both over the split-box mTLS transport, so vmmd is the only
 		// local dependency.
-		After: []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service"},
-		Wants: []string{"faas-cp.slice", "faas-vmmd.service"},
+		After:                 []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service"},
+		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service"},
+		StartLimitIntervalSec: "60s",
+		StartLimitBurst:       "5",
 
 		Type:               "simple",
 		User:               "faas",
