@@ -139,7 +139,7 @@ func TestMetalLifecycle_StartupFail(t *testing.T) {
 	kernel, _, _ := metalImages(t)
 	m := NewManager(
 		wire.ExecRunner{},
-		NewJailerVMM(JailChrootBase, 10*time.Second),
+		newMetalVMM(t, 10*time.Second),
 		Paths{Kernel: kernel},
 		os.Getenv("FAAS_TEST_FC_VERSION"),
 		nil, nil,

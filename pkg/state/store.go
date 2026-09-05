@@ -5493,6 +5493,12 @@ type Store interface {
 	// be pre-clamped to api.DebugTelemetryMaxLimit by the handler.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
 
+	// GetRequestTelemetryByAppAndID backs GET
+	// /v1/apps/{slug}/debug/requests/{req_id}. The app_id and bounded
+	// received_at predicates keep the direct lookup tenant-scoped and
+	// within the caller's plan retention window.
+	GetRequestTelemetryByAppAndID(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIDParams) (sqlc.GetRequestTelemetryByAppAndIDRow, error)
+
 	// RequestTelemetryByDeployment backs the per-deployment
 	// drilldown and the regression detector (PR-B cron). Uses
 	// request_telemetry_app_dep_received_idx. Same limit contract

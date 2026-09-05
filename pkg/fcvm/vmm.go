@@ -1705,10 +1705,9 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 // only if exportDir != "" loopback-mounts the chroot-local drive1 to copy out
 // /etc/faas/build-done.json and /build/out/* before removing the chroot.
 //
-// exportDir="" means "app VM", and the method becomes Kill-equivalent: wait
-// for the child, drop the chroot, return (0, nil). Existing app-VM callers
-// (Manager.Destroy) keep their contract — only builderd opts in via the
-// BuildSpec.ExportDir field.
+// Ordinary app VMs with exportDir="" are killed immediately, matching
+// Manager.Destroy's contract. Builder records wait for completion even when
+// a caller suppresses export; cancellation interrupts them via InterruptBuild.
 func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir string) (int, error) {
 	v.mu.Lock()
 	rec, ok := v.recs[l.Instance]
@@ -1718,6 +1717,13 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 		v.closeClient(l.Instance)
 		_ = os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance))
 		return 0, nil
+	}
+
+	// App VMs run until explicitly stopped; waiting for natural exit here
+	// holds their network and lease for the builder timeout. Only builders
+	// need to finish and flush artifacts before teardown.
+	if exportDir == "" && !rec.isBuilder {
+		return 0, v.Kill(ctx, l)
 	}
 
 	// 1. Wait for the firecracker child to exit. The watchdog goroutine started
@@ -2005,6 +2011,34 @@ const secretsEnvPath = "upper/etc/faas/secrets.env"
 // manifest_env > os.environ".
 const apiEnvPath = "upper/etc/faas/env.json"
 
+// stagedDrivePath selects the on-disk contract location for drive1. The
+// optimized two-drive artifact stores mutable runtime files below /upper;
+// full-rootfs artifacts are already mounted as the guest's root and therefore
+// receive the same files directly under /. The marker is written only by the
+// platform builder, so a malformed value fails closed instead of silently
+// writing state to a path guest-init will never read.
+func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
+	marker := filepath.Join(mountRoot, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
+	info, err := os.Lstat(marker)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return filepath.Join(mountRoot, optimizedPath), nil
+		}
+		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("full-rootfs marker is not a regular file")
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return "", fmt.Errorf("read full-rootfs marker: %w", err)
+	}
+	if string(data) != api.FullRootfsMarkerValue {
+		return "", fmt.Errorf("invalid full-rootfs marker payload")
+	}
+	return filepath.Join(mountRoot, strings.TrimPrefix(optimizedPath, "upper/")), nil
+}
+
 // StageSecretsEnv loopback-mounts drive1 (the per-app layer, the only fs
 // the VM can write at runtime), writes /etc/faas/secrets.env with mode
 // 0400, and umounts. The plaintext is read off the chroot-local image
@@ -2037,7 +2071,10 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, secretsEnvPath)
+	target, err := stagedDrivePath(mp, secretsEnvPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2078,7 +2115,10 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, apiEnvPath)
+	target, err := stagedDrivePath(mp, apiEnvPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2118,7 +2158,11 @@ func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []b
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, workloadEnvPath, workloadName, "env.json")
+	base, err := stagedDrivePath(mp, workloadEnvPath)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(base, workloadName, "env.json")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir workload env: %w", err)
 	}
@@ -2226,7 +2270,10 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	if err != nil {
 		return fmt.Errorf("marshal workload manifest: %w", err)
 	}
-	target := filepath.Join(mp, workloadManifestPath)
+	target, err := stagedDrivePath(mp, workloadManifestPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2432,7 +2479,10 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	if err != nil {
 		return fmt.Errorf("marshal workload roster: %w", err)
 	}
-	target := filepath.Join(mp, workloadRosterPath)
+	target, err := stagedDrivePath(mp, workloadRosterPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}

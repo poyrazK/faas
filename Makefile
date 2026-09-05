@@ -289,7 +289,24 @@ gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; 
 
 .PHONY: test-metal
 test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
-	$(GO) test -tags metal -race -count=1 $(PKGS)
+	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
+	  CGO_ENABLED=0 $(GO) build -trimpath -o "$$helper_dir/vmmd" ./cmd/vmmd; \
+	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) $(PKGS)
+
+.PHONY: test-metal-builder
+test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root
+	@test -c /dev/kvm || (echo "/dev/kvm missing; run on the native KVM acceptance host" >&2; exit 1)
+	@test -r "$$FAAS_TEST_KERNEL" || (echo "FAAS_TEST_KERNEL must name the staged kernel" >&2; exit 1)
+	@test -r "$$FAAS_TEST_BASE_ROOTFS" || (echo "FAAS_TEST_BASE_ROOTFS must name the staged minimal base" >&2; exit 1)
+	@test -x "$$FAAS_GUEST_INIT" || (echo "FAAS_GUEST_INIT must name the staged guest-init" >&2; exit 1)
+	@test -r "$$FAAS_BUILDER_BASE_PATH" || (echo "FAAS_BUILDER_BASE_PATH must name the staged builder base" >&2; exit 1)
+	@test -n "$$FAAS_TEST_FC_VERSION" || (echo "FAAS_TEST_FC_VERSION must match the installed Firecracker release" >&2; exit 1)
+	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
+	  CGO_ENABLED=0 $(GO) build -trimpath -o "$$helper_dir/vmmd" ./cmd/vmmd; \
+	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" FAAS_METAL_BUILD_ACCEPTANCE=1 \
+	  $(GO) test -tags metal -race -count=1 -run '^TestMetalBuilderAcceptance$$' \
+	  -v -timeout "$${METAL_BUILDER_TIMEOUT:-30m}" ./pkg/fcvm
+	$(MAKE) leakcheck
 
 .PHONY: leakcheck
 leakcheck: ## Assert zero leaked netns/TAPs/jail uids/cgroups after tests

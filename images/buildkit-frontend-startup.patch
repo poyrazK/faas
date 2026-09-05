@@ -1,0 +1,108 @@
+--- a/frontend/gateway/gateway.go
++++ b/frontend/gateway/gateway.go
+@@ -1,6 +1,7 @@
+ package gateway
+ 
+ import (
++	"bufio"
+ 	"context"
+ 	"encoding/json"
+ 	"fmt"
+@@ -1730,13 +1731,46 @@
+ }
+ 
+ func serve(ctx context.Context, grpcServer *grpc.Server, conn net.Conn) {
++	ctx, cancel := context.WithCancel(ctx)
++	defer cancel()
+ 	go func() {
+ 		<-ctx.Done()
+ 		conn.Close()
+ 	}()
++	// This is a private frontend stdio pipe, opened before runc mounts and
++	// launches the frontend. Do not spend HTTP/2's ten-second preface budget
++	// on container startup. Wait for a complete preface with a bounded minute
++	// and retain buffered bytes for ServeConn to validate and consume.
++	reader := bufio.NewReader(conn)
++	ready := make(chan error, 1)
++	go func() {
++		_, err := reader.Peek(len(http2.ClientPreface))
++		ready <- err
++	}()
++	timer := time.NewTimer(time.Minute)
++	defer timer.Stop()
++	select {
++	case <-ctx.Done():
++		return
++	case <-timer.C:
++		bklog.G(ctx).Warn("frontend handshake did not start within one minute")
++		return
++	case err := <-ready:
++		if err != nil {
++			bklog.G(ctx).WithError(err).Debug("frontend handshake closed")
++			return
++		}
++	}
+ 	bklog.G(ctx).Debugf("serving grpc connection")
+-	(&http2.Server{}).ServeConn(conn, &http2.ServeConnOpts{Handler: grpcServer})
+-}
++	(&http2.Server{}).ServeConn(&frontendBufferedConn{Conn: conn, reader: reader}, &http2.ServeConnOpts{Handler: grpcServer})
++}
++
++type frontendBufferedConn struct {
++	net.Conn
++	reader *bufio.Reader
++}
++
++func (c *frontendBufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+ 
+ type markTypeFrontend struct{}
+ 
+--- /dev/null
++++ b/frontend/gateway/gregale_startup_test.go
+@@ -0,0 +1,46 @@
++package gateway
++
++import (
++	"context"
++	"io"
++	"net"
++	"testing"
++	"time"
++
++	"golang.org/x/net/http2"
++	"google.golang.org/grpc"
++)
++
++// The internal bridge starts before runc has mounted and launched a cold
++// frontend. HTTP/2's default ten-second preface timer must not kill it first.
++func TestServeWaitsForColdFrontend(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	server, client := net.Pipe()
++	defer server.Close()
++	defer client.Close()
++	finished := make(chan struct{})
++	go func() { serve(ctx, grpc.NewServer(), server); close(finished) }()
++	go func() { _, _ = io.Copy(io.Discard, client) }()
++	time.Sleep(11 * time.Second)
++	select {
++	case <-finished:
++		t.Fatal("bridge closed before the frontend could start")
++	default:
++	}
++	if err := client.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := io.WriteString(client, http2.ClientPreface); err != nil {
++		t.Fatal(err)
++	}
++	if err := http2.NewFramer(client, nil).WriteSettings(); err != nil {
++		t.Fatal(err)
++	}
++	cancel()
++	select {
++	case <-finished:
++	case <-time.After(time.Second):
++		t.Fatal("bridge did not close after cancellation")
++	}
++}

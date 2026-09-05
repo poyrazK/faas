@@ -542,15 +542,22 @@ func (c *Client) PutDevSessionsProject(ctx context.Context, project string, req 
 	return out, c.do(ctx, "PUT", "/v1/dev/sessions/"+project, req, &out)
 }
 
-// DestroyDevSession tears down the developer preview for a project.
-func (c *Client) DestroyDevSession(ctx context.Context, project string) error {
-	return c.DeleteDevSessionsProject(ctx, project)
+// DestroyDevSession tears down the developer preview for a project. Passing a
+// workspace ID targets an isolated developer workspace; omission retains the
+// legacy account+project behavior.
+func (c *Client) DestroyDevSession(ctx context.Context, project string, workspaceID ...string) error {
+	return c.DeleteDevSessionsProject(ctx, project, workspaceID...)
 }
 
 // DeleteDevSessionsProject is the path-shaped SDK method for
 // DELETE /v1/dev/sessions/{project}.
-func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string) error {
-	return c.do(ctx, "DELETE", "/v1/dev/sessions/"+project, nil, nil)
+func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, workspaceID ...string) error {
+	path := "/v1/dev/sessions/" + project
+	if len(workspaceID) > 0 && workspaceID[0] != "" {
+		query := url.Values{"workspace_id": {workspaceID[0]}}
+		path += "?" + query.Encode()
+	}
+	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
 // Deploy creates a deployment for an app slug (JSON variant).
@@ -4095,6 +4102,15 @@ func (c *Client) ListAppDebugRequests(ctx context.Context, slug, since string) (
 	if since != "" {
 		path += "?since=" + url.QueryEscape(since)
 	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugRequest returns one request-telemetry row by id. The
+// server scopes the lookup to the app resolved from slug, so a request
+// id from another app is indistinguishable from a missing request.
+func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (DebugTelemetryRequestItem, error) {
+	var out DebugTelemetryRequestItem
+	path := "/v1/apps/" + slug + "/debug/requests/" + reqID
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 

@@ -73,6 +73,45 @@ func TestInjectWorkloadManifest_RejectsPathTraversal(t *testing.T) {
 	}
 }
 
+func TestEnsureWorkloadMountpointsCreatesOCITargets(t *testing.T) {
+	staging := t.TempDir()
+	if err := ensureWorkloadMountpoints(staging); err != nil {
+		t.Fatalf("ensureWorkloadMountpoints: %v", err)
+	}
+	for _, name := range []string{"dev", "proc", "sys", "tmp"} {
+		info, err := os.Stat(filepath.Join(staging, name))
+		if err != nil {
+			t.Fatalf("mountpoint %q: %v", name, err)
+		}
+		if !info.IsDir() {
+			t.Errorf("mountpoint %q is not a directory", name)
+		}
+	}
+}
+
+func TestEnsureRuntimeDirectoryRejectsFile(t *testing.T) {
+	staging := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staging, "proc"), []byte("file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureRuntimeDirectory(staging, "proc"); err == nil {
+		t.Fatal("ensureRuntimeDirectory accepted a file mountpoint")
+	}
+}
+
+func TestEnsureRuntimeDirectoryRejectsFinalSymlink(t *testing.T) {
+	staging := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(staging, "var", "tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/var/tmp", filepath.Join(staging, "tmp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureRuntimeDirectory(staging, "tmp"); err == nil {
+		t.Fatal("ensureRuntimeDirectory accepted a symlink mountpoint")
+	}
+}
+
 func TestInjectGuestInit_HappyPath(t *testing.T) {
 	staging := t.TempDir()
 	src := filepath.Join(t.TempDir(), "init")

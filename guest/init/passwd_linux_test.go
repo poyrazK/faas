@@ -7,6 +7,8 @@ package main
 
 import (
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -96,6 +98,9 @@ func TestLookupUID_DefaultUser(t *testing.T) {
 	if got := lookupUID("app"); got != 1000 {
 		t.Errorf("lookupUID(\"app\") = %d; want 1000 (DefaultAppUID)", got)
 	}
+	if got := lookupUID("65532"); got != 65532 {
+		t.Errorf("lookupUID(\"65532\") = %d; want numeric uid 65532", got)
+	}
 }
 
 // TestLookupUID_FallbackWhenNoTable — when /etc/faas/app_passwd
@@ -107,5 +112,48 @@ func TestLookupUID_FallbackWhenNoTable(t *testing.T) {
 	// must surface as DefaultAppUID.
 	if got := lookupUID("ghost-user"); got != 1000 {
 		t.Errorf("lookupUID(\"ghost-user\") = %d; want 1000 (DefaultAppUID fallback)", got)
+	}
+}
+
+func TestLookupUIDInRoot_UsesImagePasswd(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	passwd := "root:x:0:0:root:/root:/bin/sh\nnode:x:1001:1001:node:/home/node:/bin/sh\n"
+	if err := os.WriteFile(filepath.Join(root, "etc", "passwd"), []byte(passwd), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := lookupUIDInRoot(root, "node"); got != 1001 {
+		t.Errorf("lookupUIDInRoot(node) = %d; want 1001", got)
+	}
+	if got := lookupUIDInRoot(root, "65532"); got != 65532 {
+		t.Errorf("lookupUIDInRoot(numeric) = %d; want 65532", got)
+	}
+	if got := lookupUIDInRoot(root, "missing"); got != 1000 {
+		t.Errorf("lookupUIDInRoot(missing) = %d; want 1000 fallback", got)
+	}
+}
+
+func TestLookupUIDInRoot_MalformedPasswdFallsBack(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc", "passwd"), []byte("node:x:not-a-uid:1001:node:/home/node:/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := lookupUIDInRoot(root, "node"); got != 1000 {
+		t.Errorf("lookupUIDInRoot(malformed) = %d; want 1000 fallback", got)
+	}
+}
+
+func TestLookupUIDInRoot_RejectsPasswdSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Symlink("/", filepath.Join(root, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if got := lookupUIDInRoot(root, "root"); got != 1000 {
+		t.Errorf("lookupUIDInRoot(symlink escape) = %d; want 1000 fallback", got)
 	}
 }

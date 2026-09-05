@@ -244,6 +244,7 @@ jobs:
           # every unrelated daemon change.
           BUILDER_SOURCE_SHA="$(git log --first-parent --format='%H' -n 1 "$GIT_SHA" -- \
             images/builder-base.Dockerfile \
+            images/buildkit-frontend-startup.patch \
             images/Dockerfile.lock \
             guest/init \
             .github/workflows/images.yml)"

@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,7 +31,8 @@ import (
 // (vda) as the shared read-only base and drive1 (vdb) as the per-app writable
 // layer. Full-rootfs artifacts also use drive1 for wire compatibility, but
 // carry a trusted marker and are pivoted into directly without the shared-base
-// overlay.
+// overlay. When the roster declares sidecars, drive2+ are mounted as their own
+// read-only roots below /run/faas/sidecars after the pivot.
 const (
 	layerDevice        = "/dev/vdb"
 	layerMount         = "/overlay"
@@ -75,6 +77,16 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 	guestStage("pivot")
+	if fullRootfs, markerErr := fullRootfsMarkerPresent("/"); markerErr != nil {
+		return fmt.Errorf("inspect full-rootfs marker after pivot: %w", markerErr)
+	} else if fullRootfs {
+		// Mount sidecar roots after pivot so image-provided absolute symlinks
+		// such as /run -> /var/run are resolved inside the image root rather
+		// than against the pre-pivot guest filesystem.
+		if err := mountFullRootfsSidecars("/"); err != nil {
+			return fmt.Errorf("mount full-rootfs sidecars: %w", err)
+		}
+	}
 	mode, buildManifest, err := decideMode(os.DirFS("/"))
 	if err != nil {
 		return err
@@ -835,27 +847,33 @@ func runBuild(m api.BuildManifest) error {
 	// it to the VM console. A rootless solve can spend minutes in an image
 	// fetch/unpack step; without the console mirror the host only sees a hot
 	// Firecracker process and cannot distinguish progress from a deadlock.
+	bk.WaitDelay = 2 * time.Second
 	bk.Stdout = io.MultiWriter(os.Stdout, &buildkitLog)
 	bk.Stderr = io.MultiWriter(os.Stderr, &buildkitLog)
 	if err := bk.Start(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("start buildkitd: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
 	guestStage("buildkit-started")
-	defer func() {
-		if bk.Process == nil {
-			return
-		}
-		_ = syscall.Kill(-bk.Process.Pid, syscall.SIGKILL)
-		_ = bk.Process.Kill()
-	}()
-	for i := 0; i < 25; i++ {
+	bkDone := make(chan error, 1)
+	go func() { bkDone <- bk.Wait(); close(bkDone) }()
+	stopBuildkit := sync.OnceFunc(func() { stopBuildDaemon(bk, bkDone) })
+	defer stopBuildkit()
+	finish := func(err error, tail string) error {
+		stopBuildkit()
+		return writeAndPoweroff(m, err, tail)
+	}
+	// A cold BuildKit on nested KVM can need more than five seconds to
+	// initialize its rootless worker. Use the same bounded minute as the
+	// subsequent worker readiness RPC; keep polling so fast boots pay no delay.
+	startupDeadline := time.Now().Add(time.Minute)
+	for time.Now().Before(startupDeadline) {
 		if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err == nil {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err != nil {
-		return writeAndPoweroff(m, fmt.Errorf("buildkitd socket never appeared: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
+		return finish(fmt.Errorf("buildkitd socket never appeared: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
 	guestStage("buildkit-socket")
 	checkCtx, checkCancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -871,35 +889,33 @@ func runBuild(m api.BuildManifest) error {
 		// status is included in the build marker instead of reporting only
 		// the client-side closed-socket error.
 		_ = bk.Process.Signal(syscall.SIGQUIT)
-		waitCh := make(chan error, 1)
-		go func() { waitCh <- bk.Wait() }()
 		select {
-		case waitErr := <-waitCh:
+		case waitErr := <-bkDone:
 			time.Sleep(100 * time.Millisecond)
 			diagnostic = append(diagnostic, buildkitLog.Bytes()...)
 			diagnostic = append(diagnostic, []byte(fmt.Sprintf("buildkitd exit: %v\n", waitErr))...)
 		case <-time.After(2 * time.Second):
 			_ = bk.Process.Kill()
 			select {
-			case waitErr := <-waitCh:
+			case waitErr := <-bkDone:
 				diagnostic = append(diagnostic, []byte(fmt.Sprintf("buildkitd exit after kill: %v\n", waitErr))...)
 			case <-time.After(1 * time.Second):
 				diagnostic = append(diagnostic, []byte("buildkitd exit: wait timeout\n")...)
 			}
 		}
-		return writeAndPoweroff(m, fmt.Errorf("buildkitd readiness: %w (%s)", workerErr, workerOut), tailOf(diagnostic, m.LogTailBytes))
+		return finish(fmt.Errorf("buildkitd readiness: %w (%s)", workerErr, workerOut), tailOf(diagnostic, m.LogTailBytes))
 	}
 	guestStage("buildkit-ready")
 
 	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
-		return writeAndPoweroff(m, fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
+		return finish(fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
 	}
 	var restoreRailpackConfig func() error
 	if m.Framework != api.FrameworkDockerfile {
 		var err error
 		restoreRailpackConfig, err = prepareRailpackConfig(m)
 		if err != nil {
-			return writeAndPoweroff(m, fmt.Errorf("prepare Railpack runtime base: %w", err), "")
+			return finish(fmt.Errorf("prepare Railpack runtime base: %w", err), "")
 		}
 	}
 
@@ -946,7 +962,7 @@ func runBuild(m api.BuildManifest) error {
 		if restoreRailpackConfig != nil {
 			_ = restoreRailpackConfig()
 		}
-		return writeAndPoweroff(m, fmt.Errorf("start build command: %w", err), "")
+		return finish(fmt.Errorf("start build command: %w", err), "")
 	}
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -963,6 +979,10 @@ func runBuild(m api.BuildManifest) error {
 		// descendant prevents exec.Cmd.Wait from returning.
 		err = context.DeadlineExceeded
 	}
+	// A deferred stop runs after writeAndPoweroff, which never returns on a
+	// successful halt. Quiesce the daemon before reading its log and syncing
+	// the writable drive so export cannot observe partially written metadata.
+	stopBuildkit()
 	fmt.Printf("guest-init: build command finished, err=%v, output bytes=%d\n", err, buf.Len())
 	if buf.Len() > 0 {
 		fmt.Printf("--- build output ---\n%s\n--- end build output ---\n", buf.String())
@@ -985,7 +1005,19 @@ func runBuild(m api.BuildManifest) error {
 			}
 		}
 	}
-	return writeAndPoweroff(m, err, combined.String())
+	return finish(err, combined.String())
+}
+
+// stopBuildDaemon stops writers before syncing the export drive. Bound the wait
+// because a broken FUSE mount can leave a worker in an uninterruptible syscall.
+func stopBuildDaemon(cmd *exec.Cmd, done <-chan error) {
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	_ = cmd.Process.Kill()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		fmt.Fprintln(os.Stderr, "guest-init: buildkitd did not reap within shutdown budget")
+	}
 }
 
 // probeBuilderWorkspace verifies the exact user/mount namespace boundary used
@@ -1243,6 +1275,11 @@ func buildArgv(m api.BuildManifest) []string {
 			"--output", "type=oci,dest=" + m.OutDir + "/image.tar",
 		}
 	}
+	// Railpack plans local COPY paths relative to the directory passed to
+	// prepare. A repository-wide context would copy a different package.json
+	// (and sources) when building a selected workspace. Dockerfiles above keep
+	// their explicit repository context for cross-directory COPY instructions.
+	contextDir = m.Workdir
 	planDir := filepath.Dir(m.OutDir)
 	planPath := filepath.Join(planDir, "railpack-plan.json")
 	infoPath := filepath.Join(planDir, "railpack-info.json")
@@ -1640,18 +1677,10 @@ func assembleOverlay() (string, error) {
 	// pkg/rootfs.BuildFullRootfs. They use the existing layer device slot for
 	// wire compatibility, but must become the pivot root directly; stacking
 	// them as an overlay upper would leave the shared base visible underneath.
-	marker := filepath.Join(layerMount, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
-	if _, err := os.Stat(marker); err == nil {
-		content, readErr := os.ReadFile(marker)
-		if readErr != nil {
-			return "", fmt.Errorf("read full-rootfs marker: %w", readErr)
-		}
-		if string(content) != api.FullRootfsMarkerValue {
-			return "", fmt.Errorf("invalid full-rootfs marker payload")
-		}
-		return layerMount, nil
-	} else if !isNotExist(err) {
+	if fullRootfs, err := fullRootfsMarkerPresent(layerMount); err != nil {
 		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
+	} else if fullRootfs {
+		return layerMount, nil
 	}
 	for _, d := range []string{"upper", "work", "merged"} {
 		if err := os.MkdirAll(layerMount+"/"+d, 0o755); err != nil {
@@ -1703,8 +1732,9 @@ func assembleOverlay() (string, error) {
 // virtio-blk names. If a future caller needs a different layout,
 // the device field is the only thing to override.
 type sidecarDevice struct {
-	name   string // "sidecar-0", "sidecar-1", ...
-	device string // "/dev/vdc", "/dev/vdd", ...
+	name         string // "sidecar-0", "sidecar-1", ...
+	device       string // "/dev/vdc", "/dev/vdd", ...
+	workloadName string // validated deployment name, e.g. "metrics"
 }
 
 // discoverSidecarDevices reads the roster file from drive1 (the
@@ -1718,11 +1748,11 @@ type sidecarDevice struct {
 // the function returns nil and assembleOverlay emits the legacy
 // 2-drive overlay.
 //
-// A missing or malformed roster file is the legacy path: the
-// function logs and returns nil. A roster file that lists more
-// sidecars than the underlying device count can support (e.g.
-// 3 sidecars but no vde) is caught at mount time by the syscall
-// in assembleOverlay's loop; this helper never touches devices.
+// A missing roster file is the legacy path and returns nil. A malformed
+// roster, invalid sidecar name, or sidecar count above the hard cap fails the
+// boot rather than silently starting a partial deployment. Device availability
+// is checked by the mount syscall in the caller; this helper never touches
+// devices.
 func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 	rosterPath := mountRoot + "/" + workloadRosterPath
 	data, err := os.ReadFile(rosterPath)
@@ -1739,18 +1769,136 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 	if len(roster.Sidecars) == 0 {
 		return nil, nil // present but empty — legacy supervisor shape
 	}
+	if len(roster.Sidecars) > api.SidecarCapMax {
+		return nil, fmt.Errorf("roster has %d sidecars; cap is %d", len(roster.Sidecars), api.SidecarCapMax)
+	}
 	out := make([]sidecarDevice, 0, len(roster.Sidecars))
+	seenNames := make(map[string]struct{}, len(roster.Sidecars))
 	for i := range roster.Sidecars {
+		workloadName := roster.Sidecars[i].Name
+		if !validSidecarWorkloadName(workloadName) {
+			return nil, fmt.Errorf("sidecar %d has invalid workload name %q", i, roster.Sidecars[i].Name)
+		}
+		if _, exists := seenNames[workloadName]; exists {
+			return nil, fmt.Errorf("sidecar workload name %q appears more than once", workloadName)
+		}
+		seenNames[workloadName] = struct{}{}
 		// Device naming: /dev/vda = drive0 (base), /dev/vdb =
 		// drive1 (main, the per-app rw upper). Sidecar 0 starts
 		// at /dev/vdc (drive2) and increments. The cap of 2
 		// sidecars per deployment (ADR-068) caps this at vdd.
 		out = append(out, sidecarDevice{
-			name:   fmt.Sprintf("sidecar-%d", i),
-			device: fmt.Sprintf("/dev/vd%c", 'c'+i),
+			name:         fmt.Sprintf("sidecar-%d", i),
+			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),
+			workloadName: workloadName,
 		})
 	}
 	return out, nil
+}
+
+// mountFullRootfsSidecars attaches each sidecar artifact below the trusted
+// full-rootfs main image. Sidecar artifacts built by pkg/rootfs use the
+// optimized two-drive layout, so their complete image tree is under /upper;
+// runSidecar chroots into that directory while the main workload continues to
+// use the direct pivot root.
+func mountFullRootfsSidecars(mainRoot string) error {
+	devices, err := discoverSidecarDevices(mainRoot)
+	if err != nil {
+		return err
+	}
+	if len(devices) == 0 {
+		return nil
+	}
+	// A fresh mount namespace normally copies the guest's mount tree, but
+	// shared propagation would still let a privileged sidecar alter mounts
+	// visible to the main workload. Make the PID-1 tree private before adding
+	// any sidecar mounts; each child then gets an isolated copy via CLONE_NEWNS.
+	if err := syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
+		return fmt.Errorf("make guest mount tree private: %w", err)
+	}
+	mountRoot := filepath.Join(mainRoot, strings.TrimPrefix(api.FullRootfsSidecarMountPath, "/"))
+	if err := ensureMountDirectory(mountRoot); err != nil {
+		return fmt.Errorf("sidecar mount root: %w", err)
+	}
+	for _, dev := range devices {
+		if !validSidecarWorkloadName(dev.workloadName) {
+			return fmt.Errorf("sidecar %q has invalid workload name", dev.workloadName)
+		}
+		mountpoint := filepath.Join(mountRoot, dev.workloadName)
+		if err := ensureMountDirectory(mountpoint); err != nil {
+			return fmt.Errorf("sidecar %q mountpoint: %w", dev.workloadName, err)
+		}
+		if err := syscall.Mount(dev.device, mountpoint, "ext4", syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV, ""); err != nil {
+			return fmt.Errorf("mount %s at %s: %w", dev.device, mountpoint, err)
+		}
+		sidecarRoot := filepath.Join(mountpoint, "upper")
+		info, statErr := os.Lstat(sidecarRoot)
+		if statErr != nil {
+			return fmt.Errorf("sidecar %q root %s: %w", dev.workloadName, sidecarRoot, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("sidecar %q root %s is a symlink", dev.workloadName, sidecarRoot)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("sidecar %q root %s is not a directory", dev.workloadName, sidecarRoot)
+		}
+		if err := mountSidecarRuntimeFilesystems(sidecarRoot); err != nil {
+			return fmt.Errorf("sidecar %q runtime mounts: %w", dev.workloadName, err)
+		}
+	}
+	return nil
+}
+
+// ensureMountDirectory creates a platform-owned mount target and rejects a
+// pre-existing symlink or non-directory at the final component. The main
+// full-rootfs builder reserves the parent path, while the workload name has
+// already passed the strict sidecar-name validator.
+func ensureMountDirectory(path string) error {
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("mount target is a symlink")
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("mount target is not a directory")
+		}
+		return nil
+	} else if !isNotExist(err) {
+		return err
+	}
+	return os.MkdirAll(path, 0o755)
+}
+
+// mountSidecarRuntimeFilesystems supplies the pseudo-filesystems expected by
+// ordinary OCI processes after runSidecar chroots into its image root. The
+// mounts are inherited by the workload's private mount namespace; /tmp is a
+// per-sidecar tmpfs, while /proc, /sys, and /dev are the guest's already-
+// mounted views. /run remains image-provided so common /run -> /var/run
+// symlinks keep their OCI semantics.
+func mountSidecarRuntimeFilesystems(root string) error {
+	for _, name := range []string{"proc", "sys", "dev"} {
+		target := filepath.Join(root, name)
+		if err := ensureMountDirectory(target); err != nil {
+			return fmt.Errorf("%s target: %w", name, err)
+		}
+		if err := syscall.Mount("/"+name, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+			return fmt.Errorf("bind %s: %w", name, err)
+		}
+	}
+	for _, mount := range []struct {
+		name string
+		mode string
+	}{
+		{name: "tmp", mode: "mode=1777"},
+	} {
+		target := filepath.Join(root, mount.name)
+		if err := ensureMountDirectory(target); err != nil {
+			return fmt.Errorf("%s target: %w", mount.name, err)
+		}
+		if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, mount.mode); err != nil {
+			return fmt.Errorf("tmpfs %s: %w", mount.name, err)
+		}
+	}
+	return nil
 }
 
 // pivotInto makes root the new root filesystem.
@@ -1807,6 +1955,9 @@ func pivotInto(root string) error {
 func lookupUID(user string) int {
 	if user == api.DefaultAppUser {
 		return api.DefaultAppUID
+	}
+	if uid, ok := numericUID(user); ok {
+		return uid
 	}
 	if uid, ok := readPasswdTable(user); ok {
 		return uid

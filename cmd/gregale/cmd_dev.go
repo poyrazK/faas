@@ -33,8 +33,8 @@ func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
 	return devSourceConfig{shape: resolvedShape, runtime: runtime, handler: handler}, nil
 }
 
-func (c devSourceConfig) sessionRequest() api.UpsertDevSessionRequest {
-	req := api.UpsertDevSessionRequest{}
+func (c devSourceConfig) sessionRequest(workspaceID string) api.UpsertDevSessionRequest {
+	req := api.UpsertDevSessionRequest{WorkspaceID: workspaceID}
 	if c.shape == shapeFunction {
 		req.Type = devSessionFunction
 		req.Runtime = c.runtime
@@ -154,6 +154,14 @@ func cmdDev(args []string) int {
 	if project != sanitizeSlug(project) || len(project) < 3 || len(project) > 40 {
 		return printErr("Invalid --name", fmt.Errorf("use 3–40 lowercase letters, digits, and hyphens"))
 	}
+	developerID, err := loadOrCreateDeveloperID()
+	if err != nil {
+		return printErr("Could not load local developer identity", err)
+	}
+	workspaceID, err := deriveDevWorkspaceID(developerID, sourceDir)
+	if err != nil {
+		return printErr("Could not identify developer workspace", err)
+	}
 
 	client, err := authedClient()
 	if err != nil {
@@ -162,7 +170,7 @@ func cmdDev(args []string) int {
 	if *stop {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := client.DestroyDevSession(ctx, project); err != nil {
+		if err := client.DestroyDevSession(ctx, project, workspaceID); err != nil {
 			return printErr("Could not stop developer environment", err)
 		}
 		if jsonOutput {
@@ -177,7 +185,7 @@ func cmdDev(args []string) int {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
 
-	session, err := upsertDevSession(client, project, config.sessionRequest())
+	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
@@ -199,7 +207,7 @@ func cmdDev(args []string) int {
 		waitForChange: waitForDevSourceChange,
 		resolve:       resolveDevSourceConfig,
 		refresh: func(config devSourceConfig) error {
-			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest())
+			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID))
 			if refreshErr == nil {
 				session = refreshed
 			}

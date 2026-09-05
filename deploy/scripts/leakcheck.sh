@@ -27,33 +27,41 @@ if command -v ip >/dev/null 2>&1; then
 
   # 2. Orphan tap devices in the root namespace
   while read -r dev; do
-    [[ "$dev" == tap-* || "$dev" == ve-* ]] && note "netdev $dev"
+    [[ "$dev" == tap-* || "$dev" == ve-* || "$dev" =~ ^vh[0-9]+(@.*)?$ ]] && note "netdev $dev"
   done < <(ip -o link show 2>/dev/null | awk -F': ' '{print $2}')
 fi
 
-# 3. Jailer chroots
-if [[ -d /srv/fc/jail ]]; then
-  shopt -s nullglob
-  for d in /srv/fc/jail/*/; do
-    note "jail chroot $d"
-  done
-fi
+# 3. Versioned jailer instance directories (empty version parents are normal).
+shopt -s nullglob
+for d in /srv/fc/jail/firecracker*/*/; do
+  note "jail chroot $d"
+done
 
-# 4. Tenant VM cgroup scopes
-# The scope directory name == instance id (no 'vm-' prefix, no '.scope'
-# suffix — jailer v1.7 rejects '.' in --id). Treat any child dir that
-# looks like a per-VM scope (has cgroup.procs or memory.max) as a leak.
-if [[ -d /sys/fs/cgroup/faas-tenant.slice ]]; then
-  shopt -s nullglob dotglob
-  for scope in /sys/fs/cgroup/faas-tenant.slice/*/; do
-    if [[ -e "$scope/cgroup.procs" || -e "$scope/memory.max" ]]; then
-      note "cgroup scope $scope"
-    fi
-  done
-fi
+# 4. Current plan/builder scopes and the legacy tenant hierarchy.
+for scope in /sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-*/*/ \
+             /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/*/ \
+             /sys/fs/cgroup/faas-tenant.slice/*/; do
+  case "$scope" in
+    /sys/fs/cgroup/faas-tenant.slice/tenant-free/|/sys/fs/cgroup/faas-tenant.slice/tenant-hobby/|/sys/fs/cgroup/faas-tenant.slice/tenant-pro/|/sys/fs/cgroup/faas-tenant.slice/tenant-scale/) continue ;;
+  esac
+  [[ -e "$scope/cgroup.procs" ]] && note "cgroup scope $scope"
+done
+
+# 5. Live Firecracker processes, even if their jail was accidentally unlinked.
+for exe in /proc/[0-9]*/exe; do
+  target=$(readlink "$exe" 2>/dev/null || true)
+  [[ "${target##*/}" == firecracker* ]] && note "process ${exe%/exe}: $target"
+done
+
+# 6. Per-instance jail and export mounts. The shared jail tmpfs is expected.
+while read -r _ _ _ _ mountpoint _; do
+  case "$mountpoint" in
+    /srv/fc/jail/firecracker*/*/*|/tmp/faas-vmm-*|/tmp/faas-build-*) note "mount $mountpoint" ;;
+  esac
+done < /proc/self/mountinfo
 
 if [[ "$fail" -ne 0 ]]; then
   echo "leakcheck FAILED"
   exit 1
 fi
-echo "leakcheck OK — no leaked netns/taps/jails/cgroups"
+echo "leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts"

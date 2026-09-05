@@ -8,8 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -376,8 +378,8 @@ func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 	if !strings.Contains(joined, "railpack prepare '/build/src/apps/api'") {
 		t.Fatalf("workspace argv does not prepare selected workdir: %s", joined)
 	}
-	if !strings.Contains(joined, "--local context='/build/src'") {
-		t.Fatalf("workspace argv does not use repository build context: %s", joined)
+	if !strings.Contains(joined, "--local context='/build/src/apps/api'") {
+		t.Fatalf("workspace argv does not use the plan’s selected source directory: %s", joined)
 	}
 
 	docker := buildArgv(api.BuildManifest{
@@ -523,4 +525,24 @@ func equalSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// Shutdown must reap the daemon before the guest syncs and powers off.
+func TestStopBuildDaemonReapsBeforeReturn(t *testing.T) {
+	cmd := exec.Command("sleep", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait(); close(done) }()
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	start := time.Now()
+	stopBuildDaemon(cmd, done)
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Fatalf("daemon shutdown took %s", elapsed)
+	}
+	if err := syscall.Kill(cmd.Process.Pid, 0); err != syscall.ESRCH {
+		t.Fatalf("daemon was not reaped before return: %v", err)
+	}
 }

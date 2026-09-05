@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { AppResponse } from './AppResponse.js';
 /**
- * Stable remote developer environment and its renewable lease.
+ * Stable remote developer workspace and its renewable lease.
  */
 export type DevSessionResponse = {
   app: AppResponse;

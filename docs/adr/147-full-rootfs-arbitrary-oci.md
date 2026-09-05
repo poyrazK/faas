@@ -1,6 +1,6 @@
 # ADR-147: Full-rootfs fallback for arbitrary OCI images
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-05
 
 ## Context
@@ -22,8 +22,14 @@ layer, preserving the existing two-drive wire format without overlaying the
 shared base. Free plans require the explicit full-rootfs override.
 
 The builder derives named-user ownership from the image's `/etc/passwd` and
-writes a bounded binary lookup table for guest-init. Full-rootfs deployments
-reject sidecars until a direct-root sidecar mount contract exists; the normal
+writes a bounded binary lookup table for guest-init. Sidecars are supported in
+the full-rootfs path through a direct-root contract: each sidecar remains a
+self-contained optimized artifact, is mounted read-only from drive2 or drive3
+under `/run/faas/sidecars/<name>`, and runs chrooted into its own `/upper` tree
+with a private mount namespace. Guest-init supplies the sidecar's `/dev`,
+`/proc`, `/sys`, and private `/tmp`; deployment overrides stay in the main
+instance root and are staged through the existing name-scoped env files. The
+sidecar's named user is resolved from its own `/etc/passwd`. The normal
 two-drive sidecar path is unchanged. Per-plan unpacked-size and passwd-entry
 limits apply, and all marker operations use the layer extractor's symlink
 containment checks.
@@ -33,10 +39,11 @@ containment checks.
 Arbitrary OCI images can deploy on the existing x86 compute fleet without
 requiring an image rebuild from a Gregale base. Paid-plan images consume more
 per-deployment storage than a shared-base delta, while still using the current
-snapshot and replication paths. Sidecar support for full-rootfs images remains
-an explicit follow-up rather than silently dropping sidecars.
+snapshot and replication paths. Full-rootfs sidecars consume one additional
+read-only drive per sidecar (with the existing hard cap of two) and do not share
+the main image's filesystem or user database.
 
 Validation covers all-layer publication, marker handling, named-user parsing,
-guest-init lookup, plan defaults, migration persistence, and the complete Go
-test suite. Metal tests remain the acceptance gate for real Alpine/distroless
-boot behavior.
+guest-init lookup, direct-root sidecar mounting and chroot isolation, plan
+defaults, migration persistence, and the complete Go test suite. Metal tests
+remain the acceptance gate for real Alpine/distroless boot behavior.

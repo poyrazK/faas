@@ -263,6 +263,7 @@ from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseP
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_tag import DeploymentResponseTag
+from .dev_session_response import DevSessionResponse
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_eviction_priority import DiffAppConfigPatchEvictionPriority
@@ -695,6 +696,9 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .upsert_dev_session_request import UpsertDevSessionRequest
+from .upsert_dev_session_request_runtime import UpsertDevSessionRequestRuntime
+from .upsert_dev_session_request_type import UpsertDevSessionRequestType
 from .usage_export_response import UsageExportResponse
 from .usage_response import UsageResponse
 from .usage_summary_response import UsageSummaryResponse
@@ -975,6 +979,7 @@ __all__ = (
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
     "DeploymentResponseTag",
+    "DevSessionResponse",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchEvictionPriority",
@@ -1399,6 +1404,9 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UpsertDevSessionRequest",
+    "UpsertDevSessionRequestRuntime",
+    "UpsertDevSessionRequestType",
     "UsageExportResponse",
     "UsageResponse",
     "UsageSummaryResponse",
