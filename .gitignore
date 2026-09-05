@@ -58,3 +58,5 @@ vmlinux-*
 .claude/ci/__pycache__/
 # ansible fact cache (deploy/ansible/ansible.cfg) + make ansible-scale-check render
 /.cache/
+# Temporary credentials emitted by google-github-actions/auth.
+gha-creds-*.json

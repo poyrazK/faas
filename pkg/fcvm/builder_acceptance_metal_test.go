@@ -53,10 +53,17 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 	}
 	selected, err := os.Stat(os.Getenv("FAAS_BUILDER_BASE_PATH"))
 	mustAcceptance(t, err)
-	canonical, err := os.Stat(filepath.Join("/srv/fc", sched.BaseKey("builder")))
+	acceptanceRoot := os.Getenv("FAAS_METAL_ACCEPTANCE_ROOT")
+	if acceptanceRoot == "" {
+		acceptanceRoot = "/srv/fc"
+	}
+	if !filepath.IsAbs(acceptanceRoot) {
+		t.Fatal("FAAS_METAL_ACCEPTANCE_ROOT must be absolute")
+	}
+	canonical, err := os.Stat(filepath.Join(filepath.Clean(acceptanceRoot), sched.BaseKey("builder")))
 	mustAcceptance(t, err)
 	if !os.SameFile(selected, canonical) {
-		t.Fatal("builder fixture must be staged at the canonical /srv/fc/base/runner-builder-<arch>.ext4 path used by vmmd")
+		t.Fatal("builder fixture must be staged at the canonical base/runner-builder-<arch>.ext4 path below FAAS_METAL_ACCEPTANCE_ROOT")
 	}
 	if os.Geteuid() != 0 {
 		t.Fatal("builder acceptance requires root on a dedicated KVM host")
