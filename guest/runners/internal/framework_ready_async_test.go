@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -111,5 +113,56 @@ func TestFrameworkReadyBackgroundSignalKeepsReadDeadline(t *testing.T) {
 	// connection without keeping an unbounded goroutine alive in the runner.
 	if _, err := reader.ReadByte(); !errors.Is(err, io.EOF) {
 		t.Fatalf("unacknowledged signal did not close before test deadline: %v", err)
+	}
+}
+
+func TestFrameworkReadyBackgroundSignalCapturesStderr(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = writer
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWorker := func() { releaseOnce.Do(func() { close(release) }) }
+	previous := SetProxyDialHook(func(_, _ string) (net.Conn, error) {
+		close(entered)
+		<-release
+		return nil, errors.New("controlled unavailable proxy")
+	})
+	defer func() {
+		releaseWorker()
+		os.Stderr = original
+		SetProxyDialHook(previous)
+		_ = writer.Close()
+		_ = reader.Close()
+	}()
+
+	signal := NewRunnerSignal("node24", time.Now())
+	signal.SignalReady(42)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("signal never reached proxy dial")
+	}
+
+	// Restore the process-global before the background worker logs. The
+	// worker must retain the destination captured with the signal instead
+	// of racing with this assignment or redirecting the message.
+	os.Stderr = original
+	releaseWorker()
+
+	if err := reader.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	message, err := bufio.NewReader(reader).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read captured stderr: %v", err)
+	}
+	if !strings.Contains(message, "framework_ready signal failed: dial proxy: controlled unavailable proxy") {
+		t.Fatalf("captured stderr = %q", message)
 	}
 }
