@@ -65,6 +65,15 @@
     .cron-section header { font-weight: 600; }
     .cron-flash-ok      { background: #d1fae5; color: #065f46; padding: 0.5rem 0.75rem; border-radius: 4px; margin: 0.5rem 0; }
     .cron-flash-error   { background: #fee2e2; color: #991b1b; padding: 0.5rem 0.75rem; border-radius: 4px; margin: 0.5rem 0; }
+    /* Durable workflow run panel. Keep the row dense like cron runs while
+       making terminal and active states readable at a glance. */
+    .workflow-run       { margin: 0.4rem 0 0.7rem 0; padding: 0.5rem 0.6rem; background: #fafafa; border-radius: 4px; }
+    .workflow-run header { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+    .workflow-run .status { font-weight: 600; }
+    .workflow-run .step-list { margin: 0.35rem 0 0 1rem; padding: 0; }
+    .workflow-run .step-list li { padding: 0.12rem 0; }
+    .workflow-run .step-error { color: #c62828; }
+    .workflow-run .meta { color: #6b7280; font-size: 0.85rem; }
     /* Issue #272 / ADR-095 PR-C — preview environments panel.
        Mirrors the cron-panel layout (chip + meta + action button)
        so a preview row reads as a sibling of the cron rows. The
@@ -315,6 +324,38 @@
         </table>
       {{else}}
         <p>No wakes yet — this app has not run since the last cold boot.</p>
+      {{end}}
+
+      <h2>Workflows</h2>
+      {{if .Data.Workflows}}
+        <p class="muted">Recent durable workflow runs. Inputs and outputs stay in the workflow API; this view is for run state and step diagnostics.</p>
+        {{range .Data.Workflows}}
+          <section class="workflow-run" aria-label="Workflow run {{.ID}}">
+            <header>
+              <strong>{{.WorkflowName}}</strong>
+              <span class="status">{{.Status}}</span>
+              {{if .CurrentStep}}<span class="meta">current step: <code>{{.CurrentStep}}</code></span>{{end}}
+              <span class="meta">run <code>{{.ID}}</code></span>
+            </header>
+            <div class="meta">
+              Created {{.CreatedAt}}
+              {{if .StartedAt}} · Started {{.StartedAt}}{{end}}
+              {{if .FinishedAt}} · Finished {{.FinishedAt}}{{end}}
+            </div>
+            {{if .LastError}}<p class="step-error">Run error: <code>{{.LastError}}</code></p>{{end}}
+            {{if .Steps}}
+              <ul class="step-list">
+                {{range .Steps}}
+                  <li><code>{{.Name}}</code> — <span class="status">{{.Status}}</span> (attempt {{.Attempt}}){{if .Error}}: <span class="step-error">{{.Error}}</span>{{end}}</li>
+                {{end}}
+              </ul>
+            {{else}}
+              <div class="meta">Step details unavailable.</div>
+            {{end}}
+          </section>
+        {{end}}
+      {{else}}
+        <p>No workflow runs yet.</p>
       {{end}}
 
       <!-- Issue #273 / ADR-042. Best-effort metrics snapshot. nil =
