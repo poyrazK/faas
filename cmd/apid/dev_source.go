@@ -84,8 +84,13 @@ func (s *server) prepareDevSource(acct state.Account, app state.App, uploadedPat
 		return "", 0, prob
 	}
 	archiveLimits := sourceDeltaLimits(limits)
+	uploaded, err := openDevSourceArchive(uploadedPath)
+	if err != nil {
+		return "", 0, api.ErrSourceInvalid("open developer source: " + err.Error())
+	}
+	defer func() { _ = uploaded.Close() }()
 	if meta.base == "" {
-		manifest, err := sourcedelta.Inspect(uploadedPath, archiveLimits)
+		manifest, err := sourcedelta.Inspect(uploaded, archiveLimits)
 		if err != nil {
 			return "", 0, api.ErrSourceInvalid("inspect developer source: " + err.Error())
 		}
@@ -101,29 +106,56 @@ func (s *server) prepareDevSource(acct state.Account, app state.App, uploadedPat
 	if !ok {
 		return "", 0, api.ErrDevSourceBaseMissing()
 	}
-	outputPath := filepath.Join(spoolRoot(), randomToken(12)+".tar.gz")
-	manifest, err := sourcedelta.Apply(basePath, uploadedPath, outputPath, meta.base, meta.target, meta.deleted, archiveLimits)
+	base, err := openDevSourceArchive(basePath)
+	if err != nil {
+		return "", 0, api.ErrDevSourceBaseMissing()
+	}
+	defer func() { _ = base.Close() }()
+	output, err := os.CreateTemp(spoolRoot(), "dev-source-*.tar.gz")
+	if err != nil {
+		return "", 0, api.ErrSourceInvalid("create reconstructed developer source: " + err.Error())
+	}
+	outputPath := output.Name()
+	defer func() { _ = output.Close() }()
+	manifest, err := sourcedelta.Apply(base, uploaded, output, meta.base, meta.target, meta.deleted, archiveLimits)
 	if errors.Is(err, sourcedelta.ErrBaseRevision) {
+		// codeql[go/path-injection] basePath is a canonical digest path beneath the daemon-owned spool root.
 		_ = os.Remove(basePath)
+		_ = os.Remove(outputPath)
 		return "", 0, api.ErrDevSourceBaseMissing()
 	}
 	if err != nil {
+		_ = os.Remove(outputPath)
 		return "", 0, api.ErrSourceInvalid("apply developer source delta: " + err.Error())
+	}
+	if err := output.Close(); err != nil {
+		_ = os.Remove(outputPath)
+		return "", 0, api.ErrSourceInvalid("close reconstructed developer source: " + err.Error())
 	}
 	return outputPath, manifest.CompressedBytes, nil
 }
 
 func (s *server) devSourceBasePath(acct state.Account, app state.App, revision string) (string, bool) {
-	path := filepath.Join(s.devSourceCacheDir(acct, app), revision+".tar.gz")
-	info, err := os.Stat(path)
+	canonical, ok := canonicalDevSourceRevision(revision)
+	if !ok {
+		return "", false
+	}
+	cachePath := filepath.Join(s.devSourceCacheDir(acct, app), canonical+".tar.gz")
+	f, err := openDevSourceArchive(cachePath)
+	if err != nil {
+		return "", false
+	}
+	info, err := f.Stat()
+	_ = f.Close()
 	if err != nil || !info.Mode().IsRegular() {
 		return "", false
 	}
 	if time.Since(info.ModTime()) > api.DevSourceCacheTTL {
-		_ = os.Remove(path)
+		// codeql[go/path-injection] cachePath uses a decoded and re-encoded SHA-256 beneath a hashed daemon-owned directory.
+		_ = os.Remove(cachePath)
 		return "", false
 	}
-	return path, true
+	return cachePath, true
 }
 
 func (s *server) devSourceCacheDir(acct state.Account, app state.App) string {
@@ -132,7 +164,8 @@ func (s *server) devSourceCacheDir(acct state.Account, app state.App) string {
 }
 
 func (s *server) publishDevSource(acct state.Account, app state.App, sourcePath, revision string, limits api.Limits) error {
-	if !sourcedelta.ValidRevision(revision) {
+	canonical, ok := canonicalDevSourceRevision(revision)
+	if !ok {
 		return errors.New("invalid developer source revision")
 	}
 	s.devSourceCacheMu.Lock()
@@ -141,16 +174,21 @@ func (s *server) publishDevSource(acct state.Account, app state.App, sourcePath,
 	if err := os.MkdirAll(dir, 0o770); err != nil {
 		return fmt.Errorf("create developer source cache: %w", err)
 	}
-	dst := filepath.Join(dir, revision+".tar.gz")
-	tmp := dst + "." + randomToken(6) + ".tmp"
-	in, err := os.Open(sourcePath) //nolint:gosec,forbidigo // apid-owned random spool path already validated by sourcedelta.Inspect.
+	dst := filepath.Join(dir, canonical+".tar.gz")
+	in, err := openDevSourceArchive(sourcePath)
 	if err != nil {
 		return fmt.Errorf("open developer source: %w", err)
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o660)
+	out, err := os.CreateTemp(dir, ".dev-source-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create developer source cache file: %w", err)
+	}
+	tmp := out.Name()
+	if err := out.Chmod(0o660); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("set developer source cache permissions: %w", err)
 	}
 	keep := false
 	defer func() {
@@ -182,11 +220,52 @@ func (s *server) publishDevSource(acct state.Account, app state.App, sourcePath,
 		return nil
 	}
 	for _, entry := range entries {
-		if entry.Name() != revision+".tar.gz" {
+		if entry.Name() != canonical+".tar.gz" {
 			_ = os.Remove(filepath.Join(dir, entry.Name()))
 		}
 	}
 	return pruneDevSourceCache(filepath.Join(spoolRoot(), "dev-source-cache"), dst)
+}
+
+func canonicalDevSourceRevision(revision string) (string, bool) {
+	if !sourcedelta.ValidRevision(revision) {
+		return "", false
+	}
+	digest, err := hex.DecodeString(revision)
+	if err != nil || len(digest) != sha256.Size {
+		return "", false
+	}
+	return hex.EncodeToString(digest), true
+}
+
+func openDevSourceArchive(filename string) (*os.File, error) {
+	rootPath, err := filepath.Abs(spoolRoot())
+	if err != nil {
+		return nil, fmt.Errorf("resolve spool root: %w", err)
+	}
+	clean, err := filepath.Abs(filename)
+	if err != nil {
+		return nil, fmt.Errorf("resolve archive path: %w", err)
+	}
+	rel, err := filepath.Rel(rootPath, clean)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return nil, errors.New("developer source path escapes the spool root")
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("open spool root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, errors.New("developer source is not a regular file")
+	}
+	return f, nil
 }
 
 func pruneDevSourceCache(root, preserve string) error {

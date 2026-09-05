@@ -18,19 +18,23 @@ func TestCreateApplyRoundTrip(t *testing.T) {
 	outputPath := filepath.Join(dir, "output.tar.gz")
 	writeTestArchive(t, basePath, map[string]string{"app/a.txt": "old", "app/delete.txt": "gone", "app/same.txt": "same"})
 	writeTestArchive(t, targetPath, map[string]string{"app/a.txt": "new", "app/new.txt": "hello", "app/same.txt": "same"})
+	baseFile := openTestArchive(t, basePath, false)
+	targetFile := openTestArchive(t, targetPath, false)
+	deltaFile := openTestArchive(t, deltaPath, true)
+	outputFile := openTestArchive(t, outputPath, true)
 	limits := Limits{MaxEntries: 100, MaxCompressedBytes: 1 << 20}
-	base, err := Inspect(basePath, limits)
+	base, err := Inspect(baseFile, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := Create(base, targetPath, deltaPath, limits)
+	result, err := Create(base, targetFile, deltaFile, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.ChangedFiles != 2 || len(result.Deleted) != 1 || result.Deleted[0] != "app/delete.txt" {
 		t.Fatalf("unexpected delta result: %+v", result)
 	}
-	got, err := Apply(basePath, deltaPath, outputPath, base.Revision, result.Target.Revision, result.Deleted, limits)
+	got, err := Apply(baseFile, deltaFile, outputFile, base.Revision, result.Target.Revision, result.Deleted, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +50,10 @@ func TestApplyRejectsWrongBase(t *testing.T) {
 	deltaPath := filepath.Join(dir, "delta.tar.gz")
 	writeTestArchive(t, basePath, map[string]string{"app/a": "a"})
 	writeTestArchive(t, deltaPath, map[string]string{"app/b": "b"})
-	_, err := Apply(basePath, deltaPath, filepath.Join(dir, "out.tar.gz"), string(make([]byte, 64)), string(make([]byte, 64)), nil, Limits{MaxEntries: 10, MaxCompressedBytes: 1 << 20})
+	baseFile := openTestArchive(t, basePath, false)
+	deltaFile := openTestArchive(t, deltaPath, false)
+	outputFile := openTestArchive(t, filepath.Join(dir, "out.tar.gz"), true)
+	_, err := Apply(baseFile, deltaFile, outputFile, string(make([]byte, 64)), string(make([]byte, 64)), nil, Limits{MaxEntries: 10, MaxCompressedBytes: 1 << 20})
 	if !errors.Is(err, ErrBaseRevision) {
 		t.Fatalf("error = %v, want ErrBaseRevision", err)
 	}
@@ -75,7 +82,8 @@ func TestInspectRejectsUnsafeAndLinkEntries(t *testing.T) {
 			_ = tw.Close()
 			_ = gz.Close()
 			_ = f.Close()
-			if _, err := Inspect(filename, Limits{MaxEntries: 10, MaxCompressedBytes: 1 << 20}); err == nil {
+			archive := openTestArchive(t, filename, false)
+			if _, err := Inspect(archive, Limits{MaxEntries: 10, MaxCompressedBytes: 1 << 20}); err == nil {
 				t.Fatal("Inspect succeeded, want rejection")
 			}
 		})
@@ -86,9 +94,24 @@ func TestInspectRejectsExpandedArchiveOverLimit(t *testing.T) {
 	t.Parallel()
 	filename := filepath.Join(t.TempDir(), "source.tar.gz")
 	writeTestArchive(t, filename, map[string]string{"large.txt": "three"})
-	if _, err := Inspect(filename, Limits{MaxEntries: 10, MaxCompressedBytes: 1 << 20, MaxExpandedBytes: 3}); err == nil {
+	archive := openTestArchive(t, filename, false)
+	if _, err := Inspect(archive, Limits{MaxEntries: 10, MaxCompressedBytes: 1 << 20, MaxExpandedBytes: 3}); err == nil {
 		t.Fatal("Inspect succeeded above expanded-byte limit")
 	}
+}
+
+func openTestArchive(t *testing.T, filename string, writable bool) *os.File {
+	t.Helper()
+	flags := os.O_RDONLY
+	if writable {
+		flags = os.O_CREATE | os.O_TRUNC | os.O_RDWR
+	}
+	f, err := os.OpenFile(filename, flags, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
 }
 
 func writeTestArchive(t *testing.T, filename string, files map[string]string) {

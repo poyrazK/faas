@@ -21,7 +21,12 @@ func deployDeveloperSource(client *Client, ctx context.Context, slug, fullPath, 
 		return DeployTarballWithSourceRoot(client, ctx, slug, fullPath, runtime, handler, dockerfile, sourceRoot, ann)
 	}
 	limits := sourcedelta.Limits{MaxEntries: api.SourceArchiveMaxEntries}
-	current, err := sourcedelta.Inspect(fullPath, limits)
+	fullFile, err := openCustomerFile(fullPath)
+	if err != nil {
+		return api.DeploymentResponse{}, fmt.Errorf("open developer source: %w", err)
+	}
+	defer func() { _ = fullFile.Close() }()
+	current, err := sourcedelta.Inspect(fullFile, limits)
 	if err != nil {
 		return api.DeploymentResponse{}, fmt.Errorf("inspect developer source: %w", err)
 	}
@@ -38,9 +43,9 @@ func deployDeveloperSource(client *Client, ctx context.Context, slug, fullPath, 
 			return api.DeploymentResponse{}, fmt.Errorf("create developer source delta: %w", createErr)
 		}
 		deltaPath := deltaFile.Name()
-		_ = deltaFile.Close()
+		defer func() { _ = deltaFile.Close() }()
 		defer func() { _ = os.Remove(deltaPath) }()
-		result, createErr := sourcedelta.Create(state.manifest, fullPath, deltaPath, limits)
+		result, createErr := sourcedelta.Create(state.manifest, fullFile, deltaFile, limits)
 		if createErr != nil {
 			return api.DeploymentResponse{}, fmt.Errorf("create developer source delta: %w", createErr)
 		}

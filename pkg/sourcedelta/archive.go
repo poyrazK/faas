@@ -70,24 +70,23 @@ func ValidRevision(value string) bool {
 	return err == nil
 }
 
-// Inspect validates and hashes a complete or delta archive.
-func Inspect(filename string, limits Limits) (Manifest, error) {
+// Inspect validates and hashes a complete or delta archive. The caller owns
+// archive and must keep it open for the duration of the call.
+func Inspect(archive *os.File, limits Limits) (Manifest, error) {
 	if limits.MaxEntries <= 0 {
 		return Manifest{}, errors.New("source delta MaxEntries must be positive")
 	}
-	info, err := os.Stat(filename)
+	info, err := archive.Stat()
 	if err != nil {
 		return Manifest{}, fmt.Errorf("stat archive: %w", err)
 	}
 	if limits.MaxCompressedBytes > 0 && info.Size() > limits.MaxCompressedBytes {
 		return Manifest{}, fmt.Errorf("compressed archive is %d bytes (limit %d)", info.Size(), limits.MaxCompressedBytes)
 	}
-	f, err := os.Open(filename) //nolint:gosec,forbidigo // caller owns this package's temp/spool archive; Inspect validates its contents before use.
-	if err != nil {
-		return Manifest{}, fmt.Errorf("open archive: %w", err)
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		return Manifest{}, fmt.Errorf("rewind archive: %w", err)
 	}
-	defer func() { _ = f.Close() }()
-	gz, err := gzip.NewReader(f)
+	gz, err := gzip.NewReader(archive)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("open gzip stream: %w", err)
 	}
@@ -136,15 +135,15 @@ func Inspect(filename string, limits Limits) (Manifest, error) {
 	return m, nil
 }
 
-// Create writes the entries that differ from base into deltaPath and reports
-// paths removed from the target. targetPath remains the source of truth.
-func Create(base Manifest, targetPath, deltaPath string, limits Limits) (result Result, err error) {
-	target, err := Inspect(targetPath, limits)
+// Create writes the entries that differ from base into delta and reports paths
+// removed from target. The caller owns both files; delta must be writable.
+func Create(base Manifest, target, delta *os.File, limits Limits) (result Result, err error) {
+	targetManifest, err := Inspect(target, limits)
 	if err != nil {
 		return Result{}, fmt.Errorf("inspect target archive: %w", err)
 	}
 	changed := make(map[string]struct{})
-	for name, entry := range target.Entries {
+	for name, entry := range targetManifest.Entries {
 		if previous, ok := base.Entries[name]; !ok || previous != entry {
 			changed[name] = struct{}{}
 			result.Changed = append(result.Changed, name)
@@ -156,32 +155,32 @@ func Create(base Manifest, targetPath, deltaPath string, limits Limits) (result 
 		}
 	}
 	for name := range base.Entries {
-		if _, ok := target.Entries[name]; !ok {
+		if _, ok := targetManifest.Entries[name]; !ok {
 			result.Deleted = append(result.Deleted, name)
 		}
 	}
 	sort.Strings(result.Changed)
 	sort.Strings(result.Deleted)
-	if err := filterArchive(targetPath, deltaPath, changed, limits.MaxCompressedBytes); err != nil {
+	if err := filterArchive(target, delta, changed, limits.MaxCompressedBytes); err != nil {
 		return Result{}, err
 	}
-	info, err := os.Stat(deltaPath)
+	info, err := delta.Stat()
 	if err != nil {
 		return Result{}, fmt.Errorf("stat source delta: %w", err)
 	}
-	result.Target = target
+	result.Target = targetManifest
 	result.DeltaBytes = info.Size()
 	return result, nil
 }
 
 // Apply reconstructs a complete source archive from base + delta - deleted.
 // The result is rejected unless both advertised revisions match content.
-func Apply(basePath, deltaPath, outputPath, expectedBase, expectedTarget string, deleted []string, limits Limits) (Manifest, error) {
-	base, err := Inspect(basePath, limits)
+func Apply(baseFile, deltaFile, output *os.File, expectedBase, expectedTarget string, deleted []string, limits Limits) (Manifest, error) {
+	base, err := Inspect(baseFile, limits)
 	if err != nil || base.Revision != expectedBase {
 		return Manifest{}, ErrBaseRevision
 	}
-	delta, err := Inspect(deltaPath, limits)
+	delta, err := Inspect(deltaFile, limits)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("inspect source delta: %w", err)
 	}
@@ -203,16 +202,16 @@ func Apply(basePath, deltaPath, outputPath, expectedBase, expectedTarget string,
 	for name := range delta.Entries {
 		replaced[name] = struct{}{}
 	}
-	if err := mergeArchives(basePath, deltaPath, outputPath, removed, replaced, limits.MaxCompressedBytes); err != nil {
+	if err := mergeArchives(baseFile, deltaFile, output, removed, replaced, limits.MaxCompressedBytes); err != nil {
 		return Manifest{}, err
 	}
-	result, err := Inspect(outputPath, limits)
+	result, err := Inspect(output, limits)
 	if err != nil {
-		_ = os.Remove(outputPath)
+		clearArchive(output)
 		return Manifest{}, fmt.Errorf("inspect reconstructed source: %w", err)
 	}
 	if result.Revision != expectedTarget {
-		_ = os.Remove(outputPath)
+		clearArchive(output)
 		return Manifest{}, ErrTargetRevision
 	}
 	return result, nil
@@ -271,13 +270,13 @@ func manifestRevision(entries map[string]Entry) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func filterArchive(sourcePath, outputPath string, include map[string]struct{}, maxBytes int64) (err error) {
-	in, tr, closeIn, err := openArchive(sourcePath)
+func filterArchive(source, output *os.File, include map[string]struct{}, maxBytes int64) (err error) {
+	tr, closeIn, err := openArchive(source)
 	if err != nil {
 		return err
 	}
 	defer closeIn()
-	out, tw, closeOut, err := createArchive(outputPath, maxBytes)
+	tw, closeOut, err := createArchive(output, maxBytes)
 	if err != nil {
 		return err
 	}
@@ -285,10 +284,8 @@ func filterArchive(sourcePath, outputPath string, include map[string]struct{}, m
 		if closeErr := closeOut(); err == nil {
 			err = closeErr
 		}
-		_ = out.Close()
-		_ = in.Close()
 		if err != nil {
-			_ = os.Remove(outputPath)
+			clearArchive(output)
 		}
 	}()
 	for {
@@ -315,8 +312,8 @@ func filterArchive(sourcePath, outputPath string, include map[string]struct{}, m
 	}
 }
 
-func mergeArchives(basePath, deltaPath, outputPath string, removed, replaced map[string]struct{}, maxBytes int64) (err error) {
-	out, tw, closeOut, err := createArchive(outputPath, maxBytes)
+func mergeArchives(base, delta, output *os.File, removed, replaced map[string]struct{}, maxBytes int64) (err error) {
+	tw, closeOut, err := createArchive(output, maxBytes)
 	if err != nil {
 		return err
 	}
@@ -324,25 +321,23 @@ func mergeArchives(basePath, deltaPath, outputPath string, removed, replaced map
 		if closeErr := closeOut(); err == nil {
 			err = closeErr
 		}
-		_ = out.Close()
 		if err != nil {
-			_ = os.Remove(outputPath)
+			clearArchive(output)
 		}
 	}()
-	copyFrom := func(filename string, skip func(string) bool) error {
-		in, tr, closeIn, openErr := openArchive(filename)
+	copyFrom := func(label string, archive *os.File, skip func(string) bool) error {
+		tr, closeIn, openErr := openArchive(archive)
 		if openErr != nil {
 			return openErr
 		}
 		defer closeIn()
-		defer func() { _ = in.Close() }()
 		for {
 			hdr, nextErr := tr.Next()
 			if nextErr == io.EOF {
 				return nil
 			}
 			if nextErr != nil {
-				return fmt.Errorf("read archive %s: %w", filename, nextErr)
+				return fmt.Errorf("read %s archive: %w", label, nextErr)
 			}
 			name, _, normErr := normalizeHeader(hdr)
 			if normErr != nil {
@@ -359,27 +354,25 @@ func mergeArchives(basePath, deltaPath, outputPath string, removed, replaced map
 			}
 		}
 	}
-	if err := copyFrom(basePath, func(name string) bool {
+	if err := copyFrom("base", base, func(name string) bool {
 		_, drop := removed[name]
 		_, replace := replaced[name]
 		return drop || replace
 	}); err != nil {
 		return err
 	}
-	return copyFrom(deltaPath, nil)
+	return copyFrom("delta", delta, nil)
 }
 
-func openArchive(filename string) (*os.File, *tar.Reader, func(), error) {
-	f, err := os.Open(filename) //nolint:gosec,forbidigo // path is a caller-owned temp/spool archive and every entry is normalized before copying.
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("open archive: %w", err)
+func openArchive(archive *os.File) (*tar.Reader, func(), error) {
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		return nil, nil, fmt.Errorf("rewind archive: %w", err)
 	}
-	gz, err := gzip.NewReader(f)
+	gz, err := gzip.NewReader(archive)
 	if err != nil {
-		_ = f.Close()
-		return nil, nil, nil, fmt.Errorf("open gzip stream: %w", err)
+		return nil, nil, fmt.Errorf("open gzip stream: %w", err)
 	}
-	return f, tar.NewReader(gz), func() { _ = gz.Close() }, nil
+	return tar.NewReader(gz), func() { _ = gz.Close() }, nil
 }
 
 type cappedWriter struct {
@@ -397,12 +390,14 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func createArchive(filename string, maxBytes int64) (*os.File, *tar.Writer, func() error, error) {
-	f, err := os.Create(filename)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create archive: %w", err)
+func createArchive(archive *os.File, maxBytes int64) (*tar.Writer, func() error, error) {
+	if err := archive.Truncate(0); err != nil {
+		return nil, nil, fmt.Errorf("truncate archive: %w", err)
 	}
-	gz := gzip.NewWriter(&cappedWriter{w: f, max: maxBytes})
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		return nil, nil, fmt.Errorf("rewind archive: %w", err)
+	}
+	gz := gzip.NewWriter(&cappedWriter{w: archive, max: maxBytes})
 	tw := tar.NewWriter(gz)
 	closeAll := func() error {
 		if err := tw.Close(); err != nil {
@@ -412,10 +407,15 @@ func createArchive(filename string, maxBytes int64) (*os.File, *tar.Writer, func
 		if err := gz.Close(); err != nil {
 			return fmt.Errorf("close gzip stream: %w", err)
 		}
-		if err := f.Sync(); err != nil {
+		if err := archive.Sync(); err != nil {
 			return fmt.Errorf("sync archive: %w", err)
 		}
-		return f.Close()
+		return nil
 	}
-	return f, tw, closeAll, nil
+	return tw, closeAll, nil
+}
+
+func clearArchive(archive *os.File) {
+	_ = archive.Truncate(0)
+	_, _ = archive.Seek(0, io.SeekStart)
 }

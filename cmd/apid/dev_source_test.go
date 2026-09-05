@@ -36,8 +36,13 @@ func TestDevSourceDeployFullThenDelta(t *testing.T) {
 	if err := os.WriteFile(basePath, baseRaw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	baseFile, err := openDevSourceArchive(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = baseFile.Close() }()
 	limits := sourcedelta.Limits{MaxEntries: api.SourceArchiveMaxEntries, MaxCompressedBytes: 100 << 20}
-	base, err := sourcedelta.Inspect(basePath, limits)
+	base, err := sourcedelta.Inspect(baseFile, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +61,17 @@ func TestDevSourceDeployFullThenDelta(t *testing.T) {
 	if err := os.WriteFile(targetPath, targetRaw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	delta, err := sourcedelta.Create(base, targetPath, deltaPath, limits)
+	targetFile, err := openDevSourceArchive(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = targetFile.Close() }()
+	deltaFile, err := os.OpenFile(deltaPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = deltaFile.Close() }()
+	delta, err := sourcedelta.Create(base, targetFile, deltaFile, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +96,12 @@ func TestDevSourceDeployFullThenDelta(t *testing.T) {
 	if !ok {
 		t.Fatal("target revision was not published to developer source cache")
 	}
-	cached, err := sourcedelta.Inspect(cachePath, limits)
+	cacheFile, err := openDevSourceArchive(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cacheFile.Close() }()
+	cached, err := sourcedelta.Inspect(cacheFile, limits)
 	if err != nil || cached.Revision != delta.Target.Revision {
 		t.Fatalf("cached target = %+v, err=%v", cached, err)
 	}
