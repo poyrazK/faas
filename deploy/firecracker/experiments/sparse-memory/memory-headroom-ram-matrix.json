@@ -1,0 +1,65 @@
+{
+  "128": {
+    "restores": 12,
+    "fence_samples": 12,
+    "memory_max_bytes": [
+      142606336
+    ],
+    "peak_bytes": 11309056,
+    "memory_max_events": 0,
+    "oom_events": 0,
+    "oom_kills": 0,
+    "sparse_input": {
+      "n": 6,
+      "p95_ms": 355.256686,
+      "max_ms": 355.256686
+    },
+    "dense_input": {
+      "n": 6,
+      "p95_ms": 366.57634,
+      "max_ms": 366.57634
+    }
+  },
+  "512": {
+    "restores": 12,
+    "fence_samples": 12,
+    "memory_max_bytes": [
+      545259520
+    ],
+    "peak_bytes": 138985472,
+    "memory_max_events": 0,
+    "oom_events": 0,
+    "oom_kills": 0,
+    "sparse_input": {
+      "n": 6,
+      "p95_ms": 155.427222,
+      "max_ms": 155.427222
+    },
+    "dense_input": {
+      "n": 6,
+      "p95_ms": 341.41264,
+      "max_ms": 341.41264
+    }
+  },
+  "1024": {
+    "restores": 12,
+    "fence_samples": 12,
+    "memory_max_bytes": [
+      1082130432
+    ],
+    "peak_bytes": 152117248,
+    "memory_max_events": 0,
+    "oom_events": 0,
+    "oom_kills": 0,
+    "sparse_input": {
+      "n": 6,
+      "p95_ms": 168.447892,
+      "max_ms": 168.447892
+    },
+    "dense_input": {
+      "n": 6,
+      "p95_ms": 359.566206,
+      "max_ms": 359.566206
+    }
+  }
+}

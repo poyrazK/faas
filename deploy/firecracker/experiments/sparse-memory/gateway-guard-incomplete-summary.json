@@ -1,0 +1,13 @@
+{
+  "scenario": "single",
+  "n": 27,
+  "errors": 0,
+  "cold_boot_fallbacks": 1,
+  "p50_ms": 196.142382,
+  "p95_ms": 350.301429,
+  "max_ms": 2549.903045,
+  "completed": false,
+  "meets_latency_target": false,
+  "background_requests": 0,
+  "background_errors": 0
+}
