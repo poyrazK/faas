@@ -33,8 +33,11 @@ type adminRefundPayload struct {
 //
 // Refunds are deliberately MFA-gated at the route level, restricted to the
 // operator email allowlist, and require an explicit Idempotency-Key. The
-// provider receives that same key so a retry after an ambiguous network
-// failure cannot create a second refund. The endpoint currently supports the
+// provider receives that same key through the context; the Polar adapter
+// stamps it into refund metadata and reads the order's refunds back before
+// and (on an ambiguous failure) after its single POST, because Polar does
+// not honour the Idempotency-Key header — so a retry with the same key
+// cannot create a second refund. The endpoint currently supports the
 // Polar order identity stored in provider_invoice_id; other providers use
 // different invoice/charge identities and must not be guessed here.
 func (s *server) refundAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {

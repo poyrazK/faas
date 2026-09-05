@@ -71,6 +71,47 @@ func TestDetectFromTarball_Node(t *testing.T) {
 	}
 }
 
+func TestDetectFromTarballAtRoot_WorkspaceMember(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "src.tar.gz")
+	makeTarball(t, path, []string{
+		"package.json",
+		"apps/api/package.json",
+		"apps/api/index.js",
+		"packages/shared/package.json",
+	})
+
+	got, err := DetectFromTarballAtRoot(path, "apps/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != FrameworkNode {
+		t.Fatalf("framework = %s, want node for selected workspace member", got)
+	}
+	got, err = DetectFromTarballAtRoot(path, "packages/missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != FrameworkUnknown {
+		t.Fatalf("framework = %s, want unknown for missing workspace member", got)
+	}
+}
+
+func TestDetectFromTarballAtRoot_WrappedWorkspaceMember(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "src.tar.gz")
+	writeWrappedPAXTarGz(t, path, map[string]string{
+		"apps/api/package.json": "{}",
+	})
+
+	got, err := DetectFromTarballAtRoot(path, "apps/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != FrameworkNode {
+		t.Fatalf("framework = %s, want node below transport wrapper", got)
+	}
+}
+
 func TestDetectFromTarball_PackedTopLevelDirectory(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "src.tar.gz")

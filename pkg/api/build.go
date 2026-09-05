@@ -46,9 +46,10 @@ type BuildManifest struct {
 	BuildID       string         `json:"build_id"`
 	TenantID      string         `json:"tenant_id"`
 	DeploymentID  string         `json:"deployment_id"`
-	SourceTarPath string         `json:"source_tar_path"` // absolute path on drive1
-	Workdir       string         `json:"workdir"`         // default /build/src
-	OutDir        string         `json:"out_dir"`         // default /build/out
+	SourceTarPath string         `json:"source_tar_path"`         // absolute path on drive1
+	BuildContext  string         `json:"build_context,omitempty"` // extracted repository context
+	Workdir       string         `json:"workdir"`                 // default /build/src
+	OutDir        string         `json:"out_dir"`                 // default /build/out
 	Framework     BuildFramework `json:"framework"`
 	// Runtime and RuntimeBaseRef make the builder output reproducible with
 	// imaged's deployment layer. Railpack otherwise chooses its own mutable

@@ -4,9 +4,9 @@
 // HIGH-2 fix: deploymentResponse was calling the markers API on
 // every listDeployments row, which meant a 50-deployment list did
 // 50 tarball opens + 50 marker-file reads. The spool path
-// (d.SourcePath) for a given deployment row is immutable — a re-deploy
-// lands a NEW deployment row with a NEW spool path. So caching by
-// path is sound; the only invalidation event we need is "the file
+// (d.SourcePath) and source root for a given deployment row are immutable —
+// a re-deploy lands a NEW deployment row with a NEW spool path. So caching by
+// path + source root is sound; the only invalidation event we need is "the file
 // changed on disk under the same path", which we approximate with
 // the file's mtime (a fresh spool write bumps it).
 //
@@ -43,8 +43,8 @@ const buildPlanCacheSize = 1024
 const buildPlanCacheTTL = 5 * time.Minute
 
 // buildPlanCacheEntry holds the marker detection result for a
-// given spool path. cachedAt + mtime together form the
-// invalidation key.
+// given spool path + source root. cachedAt + mtime together form
+// the invalidation key.
 type buildPlanCacheEntry struct {
 	fw       markers.Framework
 	version  string
@@ -77,6 +77,13 @@ func initBuildPlanCache() *buildPlanCache {
 // tarball at path, consulting the cache first. The mtime check
 // ensures a re-spool of the same path re-runs detection.
 func getCachedBuildPlan(path string) (markers.Framework, string) {
+	return getCachedBuildPlanAtRoot(path, "")
+}
+
+// getCachedBuildPlanAtRoot is the workspace-aware cache path. The source root
+// is part of the key because one archive can contain several independently
+// detectable workspace members.
+func getCachedBuildPlanAtRoot(path, sourceRoot string) (markers.Framework, string) {
 	if path == "" {
 		return markers.FrameworkUnknown, ""
 	}
@@ -94,34 +101,42 @@ func getCachedBuildPlan(path string) (markers.Framework, string) {
 		return markers.FrameworkUnknown, ""
 	}
 	mtime := fi.ModTime()
+	cacheKey := buildPlanCacheKey(path, sourceRoot)
 
 	planCache.mu.Lock()
-	defer planCache.mu.Unlock()
-
-	if e, ok := planCache.entries[path]; ok {
+	if e, ok := planCache.entries[cacheKey]; ok {
 		if e.mtime.Equal(mtime) && time.Since(e.cachedAt) < buildPlanCacheTTL {
+			planCache.mu.Unlock()
 			return e.fw, e.version
 		}
 		// mtime changed or TTL expired — drop the stale entry.
-		delete(planCache.entries, path)
-		planCache.removeFromOrder(path)
+		delete(planCache.entries, cacheKey)
+		planCache.removeFromOrder(cacheKey)
 	}
+	planCache.mu.Unlock()
 
-	// Miss: re-detect and store. We do the detect OUTSIDE the
-	// lock next, but the lock pattern here is acceptable because
-	// markers.DetectFromTarball is fast (a single tar read of the
-	// top-level marker files — see pkg/markers/detect.go) and
-	// listDeployments is the only contended caller. If the
-	// detector ever becomes expensive we can split the lock.
-	fw, _ := markers.DetectFromTarball(path)
+	// Miss: re-detect outside the cache lock. Marker detection opens and
+	// reads the archive, and deployment responses can be built concurrently;
+	// holding the mutex across this work would serialize every response and
+	// deadlock if detection ever consulted the cache itself.
+	fw, _ := markers.DetectFromTarballAtRoot(path, sourceRoot)
 	var ver string
 	if fw != markers.FrameworkUnknown {
-		ver = markers.VersionFromTarball(path, fw)
+		ver = markers.VersionFromTarballAtRoot(path, fw, sourceRoot)
 	}
-	planCache.putLocked(path, &buildPlanCacheEntry{
+	planCache.mu.Lock()
+	planCache.putLocked(cacheKey, &buildPlanCacheEntry{
 		fw: fw, version: ver, mtime: mtime, cachedAt: time.Now(),
 	})
+	planCache.mu.Unlock()
 	return fw, ver
+}
+
+func buildPlanCacheKey(path, sourceRoot string) string {
+	if sourceRoot == "" {
+		return path
+	}
+	return path + "\x00" + sourceRoot
 }
 
 // putLocked inserts an entry, evicting the oldest if the cache is

@@ -1372,6 +1372,7 @@ type Deployment struct {
 	Kind        DeploymentKind
 	SourcePath  string // tarball spool path (kind=tarball|dockerfile)
 	SourceBytes int64
+	SourceRoot  string // repository-relative build root inside SourcePath; empty = archive root
 	Handler     string // function handler (kind=tarball when type=function)
 	LogPath     string // build log spool path
 	// SourceURL is the canonical upstream URL the build was triggered

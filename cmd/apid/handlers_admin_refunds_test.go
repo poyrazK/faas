@@ -49,24 +49,34 @@ func TestAdminRefund_HappyPathForwardsIdempotencyAndAudits(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	e.s.WithAdminAllowlist(e.acct.Email)
 	invoice := seedPaidPolarInvoice(t, e, "paid", e.acct.ID)
-	var gotKey string
+	var gotKey, gotHeader string
 	var gotBody struct {
-		OrderID string `json:"order_id"`
-		Amount  int64  `json:"amount"`
-		Reason  string `json:"reason"`
+		OrderID  string            `json:"order_id"`
+		Amount   int64             `json:"amount"`
+		Reason   string            `json:"reason"`
+		Metadata map[string]string `json:"metadata"`
 	}
 	provider := newAdminRefundProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Polar ignores Idempotency-Key, so the adapter lists the
+		// order's refunds before its single POST and carries the key in
+		// metadata (pkg/billing/polar refund_test.go pins the contract).
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/refunds" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"items":[],"pagination":{"total_count":0,"max_page":1}}`)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/refunds" {
 			t.Errorf("provider request = %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		gotKey = r.Header.Get("Idempotency-Key")
+		gotHeader = r.Header.Get("Idempotency-Key")
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decode provider body: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		gotKey = gotBody.Metadata["faas_idempotency_key"]
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"refund-1","amount":500,"currency":"eur","status":"succeeded"}`)
 	}))
@@ -80,7 +90,10 @@ func TestAdminRefund_HappyPathForwardsIdempotencyAndAudits(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
 	}
 	if gotKey != key {
-		t.Errorf("provider Idempotency-Key = %q, want %q", gotKey, key)
+		t.Errorf("provider metadata idempotency key = %q, want %q", gotKey, key)
+	}
+	if gotHeader != "" {
+		t.Errorf("refund POST must not carry Idempotency-Key (net/http replays it), got %q", gotHeader)
 	}
 	if gotBody.OrderID != invoice.ProviderInvoiceID || gotBody.Amount != 500 || gotBody.Reason != "customer_request" {
 		t.Errorf("provider body = %+v", gotBody)

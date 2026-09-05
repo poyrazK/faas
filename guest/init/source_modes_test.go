@@ -12,8 +12,11 @@ func TestBuildSourceModesPreserveExecutablesAndSkipSymlinks(t *testing.T) {
 		name string
 		mode os.FileMode
 		want os.FileMode
-	}{{"build.sh", 0o755, 0o777}, {"package.json", 0o644, 0o666}, {"private-tool", 0o700, 0o766}} {
+	}{{"build.sh", 0o755, 0o777}, {"package.json", 0o644, 0o666}, {"private-tool", 0o700, 0o766}, {"apps/api/build.sh", 0o755, 0o777}, {"packages/shared/generate.sh", 0o700, 0o766}} {
 		path := filepath.Join(root, file.name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(path, []byte("source"), file.mode); err != nil {
 			t.Fatal(err)
 		}
@@ -31,7 +34,7 @@ func TestBuildSourceModesPreserveExecutablesAndSkipSymlinks(t *testing.T) {
 	if err := prepareBuildSourceModes(root); err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string]os.FileMode{"build.sh": 0o777, "package.json": 0o666, "private-tool": 0o766} {
+	for name, want := range map[string]os.FileMode{"build.sh": 0o777, "package.json": 0o666, "private-tool": 0o766, "apps/api/build.sh": 0o777, "packages/shared/generate.sh": 0o766, "apps/api": 0o777, "packages/shared": 0o777} {
 		info, err := os.Stat(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)

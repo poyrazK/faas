@@ -573,7 +573,38 @@ type refundResponse struct {
 	Status   string `json:"status"`
 }
 
+// refundMetadataKey is the Polar refund metadata field that carries the
+// caller's idempotency key. Polar does not honour the Idempotency-Key
+// request header, so this marker is the only durable link between a
+// refund attempt and the refund Polar actually created.
+const refundMetadataKey = "faas_idempotency_key"
+
+// refundLookupMaxPages bounds the pre-/post-flight refund listing. An
+// order with more than 500 refunds is not a shape Gregale produces.
+const refundLookupMaxPages = 5
+
 // Refund maps the billing interface's charge ID to Polar's order ID.
+//
+// Money safety: Polar ignores the Idempotency-Key header, so a blind
+// transport retry of POST /v1/refunds can refund the same amount twice
+// (a partial refund below the order's refundable balance is accepted
+// again). The routine therefore never retries the POST. Instead it
+// stamps the caller's key into refund metadata and:
+//
+//  1. lists the order's refunds first — a refund already carrying the
+//     key (an operator retry, or a previous attempt whose response was
+//     lost) is returned as-is with no new provider write;
+//  2. sends exactly one POST;
+//  3. on an ambiguous failure (transport error, 408, 429, 5xx) lists the
+//     refunds again — if Polar committed the refund before the failure,
+//     that refund is returned; otherwise the error surfaces and the
+//     caller may retry with the SAME key, which lands on step 1.
+//
+// Callers must supply a distinct key per intended refund via
+// billing.ContextWithIdempotencyKey (apid's operator route requires the
+// Idempotency-Key header). Without one the key defaults to
+// (order, amount), which collapses two separate refunds of the same
+// amount on one order into one — the safe direction, never the double.
 func (p *Provider) Refund(ctx context.Context, chargeID string, amountCents int64) (*billing.RefundResult, error) {
 	if chargeID == "" {
 		return nil, errors.New("polar: refund requires order ID")
@@ -581,32 +612,108 @@ func (p *Provider) Refund(ctx context.Context, chargeID string, amountCents int6
 	if amountCents <= 0 {
 		return nil, errors.New("polar: refund amount must be positive cents")
 	}
-	body := map[string]any{
-		"order_id": chargeID,
-		"reason":   "customer_request",
-		"amount":   amountCents,
-	}
-	var refund refundResponse
 	idem := fmt.Sprintf("faas-refund-%s-%d", chargeID, amountCents)
 	if key, ok := billing.IdempotencyKeyFromContext(ctx); ok {
 		idem = key
 	}
-	if err := p.doJSON(ctx, http.MethodPost, "/v1/refunds", body, &refund, idem); err != nil {
+	if existing, err := p.findRefundByKey(ctx, chargeID, idem); err != nil {
+		return nil, fmt.Errorf("polar: refund preflight order=%s: %w", chargeID, err)
+	} else if existing != nil {
+		p.log.Info("polar: refund already exists for idempotency key; not re-issuing",
+			"order_id", chargeID, "refund_id", existing.ID)
+		return existing.result(chargeID, amountCents), nil
+	}
+	body := map[string]any{
+		"order_id": chargeID,
+		"reason":   "customer_request",
+		"amount":   amountCents,
+		"metadata": map[string]any{refundMetadataKey: idem},
+	}
+	var refund refundResponse
+	if err := p.doJSONOnce(ctx, http.MethodPost, "/v1/refunds", body, &refund, idem); err != nil {
+		if ambiguousPolarFailure(ctx, err) {
+			if existing, lerr := p.findRefundByKey(ctx, chargeID, idem); lerr == nil && existing != nil {
+				p.log.Warn("polar: refund response lost but refund exists; recovered by metadata lookup",
+					"order_id", chargeID, "refund_id", existing.ID, "err", err)
+				return existing.result(chargeID, amountCents), nil
+			}
+		}
 		return nil, fmt.Errorf("polar: create refund order=%s: %w", chargeID, err)
 	}
 	if refund.ID == "" {
 		return nil, fmt.Errorf("polar: refund order=%s returned empty ID", chargeID)
 	}
-	if refund.Amount <= 0 {
-		refund.Amount = amountCents
+	return refund.result(chargeID, amountCents), nil
+}
+
+// result converts the provider response into the interface result,
+// defaulting the amount to the requested cents when Polar omitted it.
+func (r refundResponse) result(chargeID string, amountCents int64) *billing.RefundResult {
+	amount := r.Amount
+	if amount <= 0 {
+		amount = amountCents
 	}
 	return &billing.RefundResult{
-		ProviderRefundID: refund.ID,
+		ProviderRefundID: r.ID,
 		ChargeID:         chargeID,
-		AmountCents:      refund.Amount,
-		Currency:         refund.Currency,
-		Status:           refund.Status,
-	}, nil
+		AmountCents:      amount,
+		Currency:         r.Currency,
+		Status:           r.Status,
+	}
+}
+
+type refundListResponse struct {
+	Items      []refundListItem `json:"items"`
+	Pagination struct {
+		MaxPage int `json:"max_page"`
+	} `json:"pagination"`
+}
+
+type refundListItem struct {
+	refundResponse
+	Metadata map[string]any `json:"metadata"`
+}
+
+// findRefundByKey scans the order's refunds for one whose metadata carries
+// key. Returns nil, nil when none matches. Read-only; the GET is retried
+// by the transport like every other read.
+func (p *Provider) findRefundByKey(ctx context.Context, orderID, key string) (*refundResponse, error) {
+	for page := 1; page <= refundLookupMaxPages; page++ {
+		query := url.Values{}
+		query.Set("order_id", orderID)
+		query.Set("limit", "100")
+		query.Set("page", strconv.Itoa(page))
+		var list refundListResponse
+		if err := p.doJSON(ctx, http.MethodGet, "/v1/refunds?"+query.Encode(), nil, &list, ""); err != nil {
+			return nil, err
+		}
+		for i := range list.Items {
+			if stringValue(list.Items[i].Metadata[refundMetadataKey]) == key {
+				found := list.Items[i].refundResponse
+				return &found, nil
+			}
+		}
+		if page >= list.Pagination.MaxPage {
+			return nil, nil
+		}
+	}
+	return nil, nil
+}
+
+// ambiguousPolarFailure reports whether err leaves it unknown if Polar
+// committed the write: the request may have reached the API (transport
+// error after send, gateway timeout, rate limit, 5xx). A 4xx other than
+// 408/429 is a definite rejection. A cancelled context is not ambiguous
+// from the caller's point of view — the caller chose to stop.
+func ambiguousPolarFailure(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	var ae *APIError
+	if errors.As(err, &ae) {
+		return retryablePolarStatus(ae.Status)
+	}
+	return true
 }
 
 // RequestInvoicePDF starts Polar's asynchronous invoice generation. The
@@ -718,7 +825,32 @@ func (p *Provider) PaymentMethodSummary(context.Context, state.Account) (billing
 	return billing.PaymentMethod{}, nil
 }
 
+// doJSON performs one Polar API call with the transport retry policy that
+// is safe for every call site routed through it: reads retry freely, and
+// writes retry only where a duplicate is impossible or harmless by
+// construction — events/ingest dedupes on external_id, customers are
+// resolved by external_id before create, a duplicate checkout or portal
+// session is an unused link, subscription PATCHes are idempotent, and
+// invoice generation tolerates 409. Money-moving writes without a
+// provider-side dedupe (refunds) go through doJSONOnce instead.
+//
+// The Idempotency-Key header is still sent as a forward-compatible hint,
+// but Polar does not honour it today, so nothing here relies on it.
 func (p *Provider) doJSON(ctx context.Context, method, path string, in, out any, idem string) error {
+	retry := idem != "" || method == http.MethodGet || method == http.MethodHead
+	return p.request(ctx, method, path, in, out, idem, retry)
+}
+
+// doJSONOnce is doJSON with the transport retry disabled: exactly one
+// attempt, whatever the outcome, and no Idempotency-Key header (see
+// request for why the header itself would trigger a stdlib replay).
+// Used for writes whose duplicate would move money twice (refunds); the
+// caller resolves ambiguity by reading the provider state back.
+func (p *Provider) doJSONOnce(ctx context.Context, method, path string, in, out any, idem string) error {
+	return p.request(ctx, method, path, in, out, idem, false)
+}
+
+func (p *Provider) request(ctx context.Context, method, path string, in, out any, idem string, retryable bool) error {
 	if p == nil {
 		return errors.New("polar: provider is nil")
 	}
@@ -738,10 +870,6 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, in, out any,
 	if client == nil {
 		client = http.DefaultClient
 	}
-	// Only replay writes that carry an idempotency key. Customer-session
-	// creation intentionally has no key in Polar's API and must not be
-	// duplicated by a transport retry; GET/HEAD are safe without one.
-	retryable := idem != "" || method == http.MethodGet || method == http.MethodHead
 	for attempt := 1; attempt <= maxRequestAttempts; attempt++ {
 		var body io.Reader
 		if encoded != nil {
@@ -756,7 +884,13 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, in, out any,
 		if in != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		if idem != "" {
+		// Only attach the key on calls that are safe to replay anyway:
+		// besides Polar ignoring it, Go's http.Transport treats any
+		// request carrying Idempotency-Key as replayable and re-sends it
+		// by itself after an early connection failure
+		// (net/http Request.isReplayable). On a single-attempt
+		// money-moving write that would be a hidden second POST.
+		if idem != "" && retryable {
 			req.Header.Set("Idempotency-Key", idem)
 		}
 		resp, err := client.Do(req)

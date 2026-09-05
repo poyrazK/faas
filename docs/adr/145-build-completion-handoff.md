@@ -1,4 +1,4 @@
-# ADR-144: Fence build completion and recover the image handoff
+# ADR-145: Fence build completion and recover the image handoff
 
 Status: Proposed
 Date: 2026-09-05
