@@ -253,7 +253,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned node %q, want %q", out.NodeID, nodeID)
 	}
 	e.transitionWithKind(ctx, instanceID, "", state.StateRunning, "job_boot_completed", "job_vmmd_boot_completed")
-	e.startJobExitWatch(JobExitSpec{
+	e.startJobExitWatch(ctx, JobExitSpec{
 		AccountID: accountID, RunID: runID, TaskIndex: taskIndex,
 		InstanceID: instanceID, NodeID: out.NodeID, LeaseToken: string(tok),
 		Deadline: fcvm.EffectiveDestroyWait(taskTimeoutSec),
@@ -689,13 +689,9 @@ func (e *Engine) WithJobExitWaiter(w JobExitWaiter) *Engine {
 	return e
 }
 
-func (e *Engine) startJobExitWatch(spec JobExitSpec) {
+func (e *Engine) startJobExitWatch(ctx context.Context, spec JobExitSpec) {
 	if e.jobExitWaiter == nil {
 		return
-	}
-	ctx := e.jobContext
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	go func() {
 		waitCtx := ctx
