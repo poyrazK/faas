@@ -307,7 +307,11 @@ func applyOverridesToDeployment(dep *state.Deployment, o *api.CreateDeploymentOv
 //
 // Extracted from createDeployment (handlers.go) so the handler stays
 // under the CLAUDE.md 50-line cap.
-func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, overrides *api.CreateDeploymentOverrides, limits api.Limits) (state.Deployment, *api.Problem) {
+func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, overrides *api.CreateDeploymentOverrides, limits api.Limits, planOpt ...api.Plan) (state.Deployment, *api.Problem) {
+	plan := api.PlanFree
+	if len(planOpt) > 0 {
+		plan = planOpt[0]
+	}
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 	}
@@ -422,6 +426,17 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	}
 	if req.PRNumber != nil {
 		dep.PRNumber = *req.PRNumber
+	}
+	// Full-rootfs fallback defaults to enabled on paid plans and disabled on
+	// Free. The pointer preserves an explicit request value while keeping the
+	// existing helper call shape compatible with older in-process callers.
+	if req.FullRootfsAllowAuto != nil {
+		dep.FullRootfsAllowAuto = *req.FullRootfsAllowAuto
+	} else if planDefault, ok := api.FullRootfsAllowAutoDefault[plan]; ok {
+		dep.FullRootfsAllowAuto = planDefault
+	}
+	if req.FullRootfsOverride != nil {
+		dep.FullRootfsOverride = req.FullRootfsOverride
 	}
 	if overrides != nil {
 		applyOverridesToDeployment(&dep, overrides)

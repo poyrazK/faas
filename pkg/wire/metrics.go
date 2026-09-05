@@ -1400,6 +1400,10 @@ type OpsMetrics struct {
 	// increments via the public accessors in cmd/imaged/main.go.
 	ownershipClamp    *prometheus.CounterVec
 	layerEntrySkipped prometheus.Counter
+	// passwdEntries counts merged /etc/passwd records emitted by the
+	// full-rootfs builder. It is imaged-only and intentionally bounded
+	// to the closed outcome set {ok, over_cap}.
+	passwdEntries *prometheus.CounterVec
 	// egressSourceErrors: counter of per-instance sysfs read
 	// failures from cmd/vmmd/network_poller.go (ADR-046, step
 	// 7). The loop polls /sys/class/net/<vethHost>/statistics/
@@ -3086,6 +3090,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Write, mirroring OCIEgressDeny).
 	var ownershipClamp *prometheus.CounterVec
 	var layerEntrySkipped prometheus.Counter
+	var passwdEntries *prometheus.CounterVec
 	// Issue #517 / PR-C / ADR-064 — wake-phase collector pair.
 	// Counter gauges per-phase emit counts; histogram buckets
 	// the per-phase duration. Both labelled by the same closed
@@ -3238,6 +3243,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			Help: "Layer entries dropped by applyEntry (char/block/fifo). A non-zero rate is a tripwire for hostile or misbuilt layers that ship device entries.",
 		})
 		commonCollectors = append(commonCollectors, layerEntrySkipped)
+		passwdEntries = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_passwd_entries_total",
+			Help: "Merged image passwd entries emitted by the full-rootfs builder, labelled by outcome.",
+		}, []string{"outcome"})
+		commonCollectors = append(commonCollectors, passwdEntries)
 	}
 	// issue #299: Grype scan findings, per (image, severity). The
 	// `image` label is the OCI ref of the staged base ext4; the
@@ -4371,6 +4381,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		ociEgressDeny:                                         ociEgressDeny,
 		ownershipClamp:                                        ownershipClamp,
 		layerEntrySkipped:                                     layerEntrySkipped,
+		passwdEntries:                                          passwdEntries,
 		provenanceWrites:                                      provenanceWrites,
 		imageScanVulns:                                        imageScanVulns,
 		deployScanDuration:                                    deployScanDuration,
@@ -6162,6 +6173,15 @@ func (m *OpsMetrics) LayerEntrySkipped() prometheus.Counter {
 		return nil
 	}
 	return m.layerEntrySkipped
+}
+
+// PasswdEntries returns the per-outcome counter for merged image passwd
+// records emitted by the full-rootfs builder. Nil-safe on non-imaged metrics.
+func (m *OpsMetrics) PasswdEntries(outcome string) prometheus.Counter {
+	if m == nil || m.passwdEntries == nil {
+		return nil
+	}
+	return m.passwdEntries.WithLabelValues(outcome)
 }
 
 // EgressSourceErrors returns the bare Counter that records per-

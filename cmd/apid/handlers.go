@@ -507,7 +507,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// we read prev BEFORE the call so the supersede-notify can carry
 	// its id (LatestDeployment returns the post-supersede row).
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
-	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits)
+	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
 		return

@@ -982,6 +982,14 @@ type CreateDeploymentRequest struct {
 	// (mirrors the TrafficPercent gate at line 922-923). nil on
 	// the wire → 'none' with zero ladder.
 	Canary *CanaryPresetSpec `json:"canary,omitempty"`
+	// FullRootfsAllowAuto controls fallback to a self-contained OCI rootfs
+	// when the image does not descend from a Gregale runtime base. Nil uses
+	// the plan default; an explicit value is persisted per deployment.
+	FullRootfsAllowAuto *bool `json:"full_rootfs_allow_auto,omitempty"`
+	// FullRootfsOverride is the tri-state override: nil honors the plan and
+	// allow-auto setting, true forces full-rootfs, and false forces the
+	// legacy shared-base path.
+	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
 }
 
 // CanaryPresetSpec is the canary ladder a customer asks for on a

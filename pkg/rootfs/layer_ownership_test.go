@@ -33,7 +33,7 @@ import (
 // applyEntry with a freshly-buffered reader.
 func applyEntryPublic(t *testing.T, dst string, hdr *tar.Header) error {
 	t.Helper()
-	return applyEntry(dst, filepath.Join(dst, hdr.Name), hdr, bytes.NewReader(nil))
+	return applyEntry(dst, filepath.Join(dst, hdr.Name), hdr, bytes.NewReader(nil), nil)
 }
 
 // writeTarLayer assembles a tarball with one entry of the given
@@ -122,7 +122,7 @@ func TestPreserveOwnership_IntegerInRange(t *testing.T) {
 		Uname:    "app", // intentionally non-numeric — must be ignored
 		Gname:    "app",
 	}
-	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("hello"))); err != nil {
+	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("hello")), nil); err != nil {
 		t.Fatalf("applyEntry: %v", err)
 	}
 	info, err := os.Stat(filepath.Join(tmp, "owned-by-1001"))
@@ -153,7 +153,7 @@ func TestPreserveOwnership_IntegerOutOfRangeClamped(t *testing.T) {
 		Uid:      99999,
 		Gid:      99999,
 	}
-	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("x"))); err != nil {
+	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("x")), nil); err != nil {
 		t.Fatalf("applyEntry: %v", err)
 	}
 	after := readCounter(t, "out_of_range")
@@ -189,7 +189,7 @@ func TestPreserveOwnership_NamedUserTrips(t *testing.T) {
 		Uname:    "node",
 		Gname:    "nogroup",
 	}
-	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("x"))); err != nil {
+	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("x")), nil); err != nil {
 		t.Fatalf("applyEntry: %v", err)
 	}
 	after := readCounter(t, "unparseable_uid")
@@ -215,7 +215,7 @@ func TestPreserveOwnership_EmptyStaysSilent(t *testing.T) {
 		Size:     1,
 		// Uid/Gid/Uname/Gname all zero/empty
 	}
-	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("x"))); err != nil {
+	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("x")), nil); err != nil {
 		t.Fatalf("applyEntry: %v", err)
 	}
 	afterOOR := readCounter(t, "out_of_range")
@@ -237,7 +237,7 @@ func TestPreserveOwnership_EmptyDoesNotChownToRoot(t *testing.T) {
 		Mode:     0o644,
 		Size:     1,
 	}
-	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("x"))); err != nil {
+	if err := applyEntry(tmp, filepath.Join(tmp, hdr.Name), hdr, bytes.NewReader([]byte("x")), nil); err != nil {
 		t.Fatalf("applyEntry: %v", err)
 	}
 	info, err := os.Stat(filepath.Join(tmp, "stays-daemon-owned"))

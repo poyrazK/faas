@@ -74,6 +74,17 @@ func recordLayerEntrySkipped() {
 // at mkfs time under root — tracked separately; the common add-only app never
 // hits it.
 func ApplyLayer(dst string, tr *tar.Reader) error {
+	return ApplyLayerWithResolver(dst, tr, nil)
+}
+
+// ApplyLayerWithResolver is the Resolver-aware sibling of ApplyLayer
+// (ADR-142 §Decision 1). Pass a non-nil Resolver to honor named
+// users (`Uname!=""`) at chown time; pass nil for today's behaviour
+// (the original ApplyLayer delegates here with nil). The Resolver
+// is consulted by preserveOwnership when hdr.Uid==0 && hdr.Uname!="";
+// out-of-range resolved uid/gid are clamped through the existing
+// inOwnershipRange gate (ADR-136).
+func ApplyLayerWithResolver(dst string, tr *tar.Reader, res Resolver) error {
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -122,7 +133,7 @@ func ApplyLayer(dst string, tr *tar.Reader) error {
 				continue
 			}
 
-			if err := applyEntry(dst, target, hdr, tr); err != nil {
+			if err := applyEntry(dst, target, hdr, tr, res); err != nil {
 				return err
 			}
 			continue
@@ -133,12 +144,19 @@ func ApplyLayer(dst string, tr *tar.Reader) error {
 
 // ApplyLayerGz applies a gzip-compressed layer.
 func ApplyLayerGz(dst string, r io.Reader) error {
+	return ApplyLayerGzWithResolver(dst, r, nil)
+}
+
+// ApplyLayerGzWithResolver is the Resolver-aware sibling of
+// ApplyLayerGz (ADR-142 §Decision 1). Delegates to
+// ApplyLayerWithResolver after gunzip.
+func ApplyLayerGzWithResolver(dst string, r io.Reader, res Resolver) error {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("rootfs: gzip: %w", err)
 	}
 	defer func() { _ = zr.Close() }()
-	return ApplyLayer(dst, tar.NewReader(zr))
+	return ApplyLayerWithResolver(dst, tar.NewReader(zr), res)
 }
 
 const (
@@ -146,13 +164,13 @@ const (
 	whiteoutOpaque = ".wh..wh..opq"
 )
 
-func applyEntry(base, target string, hdr *tar.Header, tr io.Reader) error {
+func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		if err := os.MkdirAll(target, os.FileMode(hdr.Mode)&os.ModePerm); err != nil {
 			return err
 		}
-		return preserveOwnership(target, hdr)
+		return preserveOwnershipWithResolver(target, hdr, res)
 	case tar.TypeReg:
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
@@ -183,7 +201,7 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader) error {
 		if err := f.Close(); err != nil {
 			return err
 		}
-		return preserveOwnership(target, hdr)
+		return preserveOwnershipWithResolver(target, hdr, res)
 	case tar.TypeSymlink:
 		// A symlink's Linkname is GUEST-side data, not a host path: the
 		// string is stored verbatim in the ext4 inode and is resolved by
@@ -211,7 +229,7 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader) error {
 		}
 		// os.Lchown on a symlink targets the link itself, not its target,
 		// which is what we want: ownership metadata travels with the link.
-		return preserveOwnership(target, hdr)
+		return preserveOwnershipWithResolver(target, hdr, res)
 	case tar.TypeLink:
 		// A hardlink's Linkname IS resolved host-side (os.Link needs a
 		// real path), and per tar semantics it is relative to the
@@ -224,7 +242,7 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader) error {
 		if err := os.Link(source, target); err != nil {
 			return err
 		}
-		return preserveOwnership(target, hdr)
+		return preserveOwnershipWithResolver(target, hdr, res)
 	case tar.TypeChar, tar.TypeBlock:
 		// Char/block devices are not expected in app layers and have no
 		// safe representation inside a Firecracker guest's rootfs.
@@ -253,7 +271,18 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader) error {
 // itself, not its resolution. For directories and regular files
 // os.Lchown behaves identically to os.Chown.
 func preserveOwnership(target string, hdr *tar.Header) error {
-	uid, gid, ok := parseOwnership(hdr)
+	return preserveOwnershipWithResolver(target, hdr, nil)
+}
+
+// preserveOwnershipWithResolver is the Resolver-aware sibling of
+// preserveOwnership (ADR-142 §Decision 1). A non-nil Resolver lets
+// preserveOwnership honor named users (hdr.Uname!="" with hdr.Uid==0)
+// by consulting the merged image /etc/passwd table. The Resolver's
+// returned uid/gid are still passed through inOwnershipRange; out-
+// of-range values trip recordOwnershipClamp + the fall-through path
+// (the same gate as the numeric branch).
+func preserveOwnershipWithResolver(target string, hdr *tar.Header, res Resolver) error {
+	uid, gid, ok := parseOwnershipWithResolver(hdr, res)
 	if !ok {
 		// parseOwnership already incremented under the right reason.
 		return nil
@@ -266,6 +295,40 @@ func preserveOwnership(target string, hdr *tar.Header) error {
 	// customer-declared uid.
 	_ = os.Lchown(target, uid, gid)
 	return nil
+}
+
+// parseOwnershipWithResolver is the Resolver-aware sibling of
+// parseOwnership (ADR-142 §Decision 1). When hdr.Uid==0 and
+// hdr.Uname!="" (the named-user shape — distroless, alpine, scratch
+// with a custom USER), the Resolver is consulted; on hit the
+// returned uid/gid replace the zero; on miss today's fall-through
+// applies (counter + daemon uid).
+//
+// ADR-142 §Decision 5: the resolver is consulted only for the UID
+// half; GID falls through to parseOwnershipInt so an image that
+// declares Gname!="node" with Gid=0 still hits today's counter
+// (a hostile layer is not granted a free pass by declaring only
+// half the tuple).
+func parseOwnershipWithResolver(hdr *tar.Header, res Resolver) (int, int, bool) {
+	if hdr.Uid == 0 && hdr.Uname != "" && res != nil {
+		if u, _, ok := res.Resolve(hdr.Uname); ok {
+			if !inOwnershipRange(u) {
+				recordOwnershipClamp(ownershipClampOutOfRange)
+				return 0, 0, false
+			}
+			// Re-use the gid classifier for the gname branch so
+			// the named-gid shape still trips the counter. Today
+			// no production base image declares a named gid; if
+			// one does, we'd extend the resolver to also map
+			// gname. M-4 follow-up.
+			gid, ok := parseOwnershipInt(hdr.Gid, hdr.Gname, "gid")
+			if !ok {
+				return 0, 0, false
+			}
+			return u, gid, true
+		}
+	}
+	return parseOwnership(hdr)
 }
 
 // parseOwnership pulls uid/gid out of the tar header. The tar.Header
