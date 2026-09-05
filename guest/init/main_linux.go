@@ -651,16 +651,10 @@ func runBuild(m api.BuildManifest) error {
 		if err := flattenSingleSourceDir(m.Workdir); err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("normalize source root: %w", err), "")
 		}
-		_ = filepath.Walk(m.Workdir, func(p string, info os.FileInfo, err error) error {
-			if err == nil {
-				if info.IsDir() {
-					_ = os.Chmod(p, 0o777)
-				} else {
-					_ = os.Chmod(p, 0o666)
-				}
-			}
-			return nil
-		})
+		if err := prepareBuildSourceModes(m.Workdir); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("prepare source permissions: %w", err), "")
+		}
+
 	}
 
 	// 2. Start BuildKit inside the builder VM. Railpack is a BuildKit

@@ -6407,6 +6407,43 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 	return b, nil
 }
 
+func (m *MemStore) CreateBuildWithID(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.deployments[deploymentID]; !ok {
+		return Build{}, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
+	}
+	dep := m.deployments[deploymentID]
+	if dep.Status != DeployPending && dep.Status != DeployBuilding {
+		return Build{}, ErrNotFound
+	}
+	if _, exists := m.builds[id]; exists {
+		return Build{}, ErrConflict
+	}
+	b := Build{ID: id, DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
+	dep.Status = DeployBuilding
+	m.deployments[deploymentID] = dep
+	m.builds[b.ID] = b
+	return b, nil
+}
+
+func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok || (d.Status != DeployPending && d.Status != DeployBuilding) {
+		return nil
+	}
+	for _, b := range m.builds {
+		if b.DeploymentID == id {
+			return nil
+		}
+	}
+	d.Status, d.Error = DeployFailed, message
+	m.deployments[id] = d
+	return nil
+}
+
 func (m *MemStore) BuildByID(_ context.Context, id string) (Build, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -6487,6 +6524,9 @@ func (m *MemStore) CreateBuildProvenance(_ context.Context, prov BuildProvenance
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if prov.SBOMStorageKey == "" {
+		prov.SBOMStorageKey = m.buildProvenance[prov.BuildID].SBOMStorageKey
+	}
 	m.buildProvenance[prov.BuildID] = prov
 	return nil
 }

@@ -129,6 +129,15 @@ func (s *bridgeStubStore) CreateBuild(_ context.Context, deploymentID string, ki
 	return s.createdBuild, nil
 }
 
+func (s *bridgeStubStore) CreateBuildWithID(ctx context.Context, id, deploymentID string, kind state.DeploymentKind, sourceBytes int64, path string) (state.Build, error) {
+	s.updateStatusCalls = append(s.updateStatusCalls, state.DeployBuilding)
+	return s.CreateBuild(ctx, deploymentID, kind, sourceBytes, path)
+}
+
+func (s *bridgeStubStore) FailSourceDeployment(ctx context.Context, id, message string) error {
+	return s.UpdateDeploymentStatus(ctx, id, state.DeployFailed, message)
+}
+
 // bridgeStubNotifier satisfies githubdBridgeNotifier. Records every
 // Notify call by channel name.
 type bridgeStubNotifier struct {

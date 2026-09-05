@@ -3972,6 +3972,19 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // Manager — same idempotent-on-unknown contract as Destroy.
 func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
 	m.mu.Lock()
+	// Builder Destroy removes live before waiting. Keep its export registration
+	// until cleanup finishes, and interrupt without starting another teardown.
+	if m.exportDirs[instance] != "" {
+		m.mu.Unlock()
+		if interrupter, ok := m.vmm.(interface {
+			InterruptBuild(context.Context, string) (int32, error)
+		}); ok {
+			code, err := interrupter.InterruptBuild(ctx, instance)
+			return true, code, err
+		}
+		return false, 0, fmt.Errorf("vmm: builder interruption unsupported")
+	}
+
 	inst, ok := m.live[instance]
 	if ok {
 		delete(m.live, instance)

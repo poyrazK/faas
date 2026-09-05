@@ -909,7 +909,10 @@ func TestMarkSucceededAndFailed_NilOpsAreSafe(t *testing.T) {
 	// markSucceeded on a typed-nil *OpsMetrics: the ObserveBuildCount
 	// + ObserveBuildDuration guards swallow the nil receiver; the
 	// store mutation still flips BuildSucceeded.
-	b.markSucceeded(context.Background(), buildID, "ok", start)
+	if err := store.UpdateBuildStatus(context.Background(), buildID, state.BuildSucceeded, "", false, true); err != nil {
+		t.Fatal(err)
+	}
+	b.observeSucceeded(context.Background(), buildID, "ok", start)
 	got, err := store.BuildByID(context.Background(), buildID)
 	if err != nil {
 		t.Fatalf("BuildByID after markSucceeded: %v", err)
@@ -927,12 +930,13 @@ func TestMarkSucceededAndFailed_NilOpsAreSafe(t *testing.T) {
 	// the account email, dodging MemStore's duplicate-email guard).
 	srcTar2 := filepath.Join(t.TempDir(), "src2.tar.gz")
 	makeTarballWithName(t, srcTar2, []string{"package.json"})
-	buildID2, depID2, _ := seedDeploymentWithSlug(t, store, srcTar2, "nil-ops-fail")
+	buildID2, _, _ := seedDeploymentWithSlug(t, store, srcTar2, "nil-ops-fail")
 	// Same CAS guard: flip the second row to running first.
 	if err := store.UpdateBuildStatus(context.Background(), buildID2, state.BuildRunning, "", true, false); err != nil {
 		t.Fatalf("seed running #2: %v", err)
 	}
-	b.markFailed(context.Background(), depID2, buildID2, state.FailureInfra, "nil-ops regression: infra failure path", start)
+	claim2, _ := store.BuildByID(context.Background(), buildID2)
+	b.markFailed(context.Background(), claim2, state.FailureInfra, "nil-ops regression: infra failure path", start)
 	got2, err := store.BuildByID(context.Background(), buildID2)
 	if err != nil {
 		t.Fatalf("BuildByID after markFailed: %v", err)
@@ -1522,11 +1526,15 @@ func TestMarkSucceededAndFailed_EmitBuildEvents(t *testing.T) {
 	}
 
 	// Success path.
-	b.markSucceeded(context.Background(), buildID, "ok", time.Now().Add(-50*time.Millisecond))
+	if err := store.UpdateBuildStatus(context.Background(), buildID, state.BuildSucceeded, "", false, true); err != nil {
+		t.Fatal(err)
+	}
+	b.observeSucceeded(context.Background(), buildID, "ok", time.Now().Add(-50*time.Millisecond))
 	// Failure path — using FailureInfra (covers the most common
 	// non-user-error path; FailureUserError is a separate funnel
 	// in metrics but the typed event uses the same string).
-	b.markFailed(context.Background(), depID2, buildID2, state.FailureInfra, "synthetic infra", time.Now().Add(-30*time.Millisecond))
+	claim2, _ := store.BuildByID(context.Background(), buildID2)
+	b.markFailed(context.Background(), claim2, state.FailureInfra, "synthetic infra", time.Now().Add(-30*time.Millisecond))
 
 	// Read the events table back. Two rows expected:
 	// wake.build_succeeded (buildID) and wake.build_failed

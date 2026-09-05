@@ -15,16 +15,9 @@ import (
 type VM interface {
 	Spawn(ctx context.Context, req VMRequest) (BuildHandle, error)
 	WaitForCompletion(ctx context.Context, h BuildHandle) (BuildOutcome, error)
-	// Cancel performs a best-effort teardown of the VM backing
-	// buildID. Invoked by the cancel-LISTEN goroutine
-	// (cmd/builderd/main.go) when the apidsource fires
-	// db.NotifyBuildChanged. The cancel is fire-and-forget:
-	// the source-of-truth row flip already happened inside
-	// pgstore.CancelDeploymentTx; this method only needs to
-	// ask vmmd to drop the VM so its resources go away.
-	// Returning an error is non-fatal — the janitor sweep
-	// (pkg/builderd/reaper.go) is the safety net for builds
-	// that died between flip and signal.
+	// Cancel interrupts the VM without taking over export and cleanup from
+	// WaitForCompletion. Notifications trigger it promptly; the orchestrator
+	// also polls the durable claim while waiting and retries failed stops.
 	Cancel(ctx context.Context, buildID string) error
 }
 

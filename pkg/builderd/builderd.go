@@ -305,25 +305,19 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 	return b.processClaimedBuild(ctx, build)
 }
 
-// stopIfBuildCancelled re-reads the build row at the points where the
-// orchestrator could otherwise create a side effect after a user cancel.
-// The VM cancel notification normally tears the VM down, but the row is the
-// source of truth and a destroy/completion race can still return a successful
-// outcome. In that case do not publish the artifact, stamp the deployment, or
-// emit snapshot_boot for a deployment the user has already cancelled.
+// stopIfBuildCancelled rejects all terminal or unobservable claims. The final
+// CompleteBuild transaction also fences the claim's started_at, closing the
+// check-to-publication race with cancellation, reaping, and requeueing.
 func (b *Builderd) stopIfBuildCancelled(ctx context.Context, buildID string) bool {
 	current, err := b.store.BuildByID(ctx, buildID)
 	if err != nil {
-		// A transient lookup failure should not turn a running build into a
-		// false cancellation. The normal terminal CAS and reaper remain the
-		// fallback authorities if the database is unavailable.
-		b.log.Warn("builderd: cancellation check failed", "build", buildID, "err", err)
+		b.log.Warn("builderd: cannot verify running build", "build", buildID, "err", err)
+		return true
+	}
+	if current.Status == state.BuildRunning {
 		return false
 	}
-	if current.Status != state.BuildCancelled {
-		return false
-	}
-	b.emitBuildLog(ctx, buildID, "build cancelled — stopping\n")
+	b.emitBuildLog(ctx, buildID, "build no longer running — stopping\n")
 	return true
 }
 
@@ -428,7 +422,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 
 	fw, ver, err := b.detector.DetectWithVersion(dep.SourcePath)
 	if err != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, "framework detect: "+err.Error(), buildStart)
+		b.markFailed(ctx, build, state.FailureUserError, "framework detect: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	b.emitBuildLog(ctx, build.ID, "detected framework: "+string(fw)+"\n")
@@ -443,7 +437,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	runtimeName := app.Runtime
 	runtimeBaseRef, baseErr := resolveBuildRuntimeBaseRef(runtimeName, fw, os.Getenv)
 	if baseErr != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
+		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr
 	}
 
@@ -452,7 +446,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// spawn entirely (this is the ≥2× speedup gate, spec §14 M6).
 	srcHash, err := hashFile(dep.SourcePath)
 	if err != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "source hash: "+err.Error(), buildStart)
+		b.markFailed(ctx, build, state.FailureInfra, "source hash: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
@@ -471,30 +465,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		buildStart = time.Now()
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("cache hit (%s, %d bytes) — skipping vm spawn\n", cached.Path, cached.Bytes))
-		if err := b.store.SetDeploymentRootfs(ctx, dep.ID, cached.Path, sched.AppLayerKey(app.Slug, dep.ID), cached.Bytes); err != nil {
-			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error(), buildStart)
-			return BuildResult{}, err
-		}
-		// imaged handles the cache-hit tarball the same as a fresh build:
-		// it converts the OCI image into an app-layer ext4 and re-emits
-		// NotifySnapshotPrime for schedd. The split (snapshot_boot for
-		// imaged, snapshot_prime for schedd) avoids the race where schedd
-		// tries to mount a .tar as a virtio-blk drive.
-		if err := b.notif.Notify(ctx, db.NotifySnapshotBoot,
-			b.snapshotBootPayload(app.ID, dep.ID)); err != nil {
-			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error(), buildStart)
-			return BuildResult{}, err
-		}
-		// ADR-038: stamp provenance BEFORE markSucceeded so the
-		// build row + provenance row land within the same critical
-		// section from the customer's perspective. The populator
-		// reads build.StartedAt (set by ClaimQueuedBuild) and
-		// finishedAt = time.Now() (this markSucceeded hasn't
-		// stamped finished_at yet). Best-effort; failure logs at
-		// WARN inside recordProvenance.
-		b.recordProvenance(ctx, build, dep, app, acct, srcHash, true, ver)
-		b.markSucceeded(ctx, build.ID, "cache_hit", buildStart)
-		return BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, nil
+		return b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
+			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, buildStart)
+
 	}
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
@@ -531,7 +504,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	b.emitBuildLog(ctx, build.ID, "build started\n")
 
 	if b.vm == nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "vm driver not wired (metal only)", buildStart)
+		b.markFailed(ctx, build, state.FailureInfra, "vm driver not wired (metal only)", buildStart)
 		return BuildResult{}, ErrNotMetal
 	}
 
@@ -557,7 +530,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		if errors.Is(err, context.DeadlineExceeded) {
 			fc = state.FailureTimeout
 		}
-		b.markFailed(ctx, dep.ID, build.ID, fc, "vm spawn: "+err.Error(), buildStart)
+		b.markFailed(ctx, build, fc, "vm spawn: "+err.Error(), buildStart)
 		cancel()
 		return BuildResult{}, err
 	}
@@ -567,14 +540,40 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// tarball after the in-guest build reaches its own timeout.
 	cancel()
 
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			current, readErr := b.store.BuildByID(watchCtx, build.ID)
+			if readErr == nil && (current.Status != state.BuildRunning || !current.StartedAt.Equal(build.StartedAt)) {
+				cancelCtx, cancelVM := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+				err := b.vm.Cancel(cancelCtx, build.ID)
+				cancelVM()
+				if err == nil {
+					return
+				}
+				b.log.Warn("builderd: interrupt stale build", "build", build.ID, "err", err)
+			}
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	out, err := b.vm.WaitForCompletion(ctx, handle)
+	stopWatch()
+	<-watchDone
 	if err != nil {
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
 		if errors.Is(err, context.DeadlineExceeded) {
 			fc = state.FailureTimeout
 		}
-		b.markFailed(ctx, dep.ID, build.ID, fc, "vm wait: "+err.Error(), buildStart)
+		b.markFailed(ctx, build, fc, "vm wait: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
@@ -614,9 +613,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// emitted) — that's the path the `failure_class` UX copy
 		// already covers; markFailedEx is the typed-code addition.
 		if out.FailureCode != "" {
-			b.markFailedEx(ctx, dep.ID, build.ID, fc, out.FailureCode, out.FailurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+			b.markFailedEx(ctx, build, fc, out.FailureCode, out.FailurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
 		} else {
-			b.markFailed(ctx, dep.ID, build.ID, fc, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+			b.markFailed(ctx, build, fc, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
 		}
 		return BuildResult{}, fmt.Errorf("builderd: vm exit %d", out.ExitCode)
 	}
@@ -630,49 +629,35 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// in-VM build log tail).
 	st, statErr := os.Stat(out.OCIImage)
 	if statErr != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "stat produced layer: "+statErr.Error(), buildStart)
+		b.markFailed(ctx, build, state.FailureInfra, "stat produced layer: "+statErr.Error(), buildStart)
 		return BuildResult{}, statErr
 	}
 	artifactBytes := st.Size()
 	lim, known := api.LimitsFor(acct.Plan)
 	if !known {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "unknown plan: "+string(acct.Plan), buildStart)
+		b.markFailed(ctx, build, state.FailureInfra, "unknown plan: "+string(acct.Plan), buildStart)
 		return BuildResult{}, errors.New("builderd: unknown plan")
 	}
 	if sizeMB := (st.Size() + (1 << 20) - 1) >> 20; sizeMB > int64(lim.AppLayerMaxMB) {
 		msg := fmt.Sprintf("app layer %d MB exceeds plan cap %d MB", sizeMB, lim.AppLayerMaxMB)
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, msg, buildStart)
+		b.markFailed(ctx, build, state.FailureUserError, msg, buildStart)
 		return BuildResult{}, errors.New("builderd: " + msg)
 	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
 	}
 
-	// Stamp the cache so the next build of the same source is a hit.
+	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
+		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes}, buildStart)
+	if err != nil || result.BuildID == "" {
+		return result, err
+	}
+	// Only cache a successfully committed build, never a stale completion.
 	if err := b.cache.StoreWithBase(srcHash, fw, acct.Plan, runtimeBaseRef, out.OCIImage, artifactBytes); err != nil {
 		b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 	}
-	// Stamp the produced layer path onto the deployment row. imaged will
-	// receive a snapshot_boot notification, convert the OCI tarball into
-	// a per-app ext4 (drive1), and re-emit NotifySnapshotPrime for schedd
-	// to cold-boot + snapshot. Splitting the channel prevents schedd from
-	// trying to mount the OCI tarball as a virtio-blk drive (it would 400).
-	if err := b.store.SetDeploymentRootfs(ctx, dep.ID, out.OCIImage, sched.AppLayerKey(app.Slug, dep.ID), artifactBytes); err != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error(), buildStart)
-		return BuildResult{}, err
-	}
-	if err := b.notif.Notify(ctx, db.NotifySnapshotBoot,
-		b.snapshotBootPayload(app.ID, dep.ID)); err != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error(), buildStart)
-		return BuildResult{}, err
-	}
-	// ADR-038: stamp provenance BEFORE markSucceeded. Same shape as
-	// the cache-hit branch above; empty buildkit_version +
-	// railpack_version + base_digest + runner_digest + sbom_storage_key
-	// (Phase 3 populator fills them in).
-	b.recordProvenance(ctx, build, dep, app, acct, srcHash, false, ver)
-	b.markSucceeded(ctx, build.ID, "ok", buildStart)
-	return BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes}, nil
+	return result, nil
+
 }
 
 // snapshotBootPayload identifies the compute node that produced the local
@@ -692,35 +677,16 @@ func (b *Builderd) snapshotBootPayload(appID, deploymentID string) string {
 		appID, deploymentID, b.builderNodeID)
 }
 
-// markSucceeded updates the build row to BuildSucceeded, finished=true.
-// code is the ops_total{op="build"} label — "ok" for a fresh build or
-// "cache_hit" for the cache short-circuit (ADR-030). Also observes the
-// build_duration_seconds histogram with the matching `outcome` label,
-// using buildStart as the wall-clock anchor (taken at ProcessOne's
-// dequeue point).
-func (b *Builderd) markSucceeded(ctx context.Context, buildID, code string, buildStart time.Time) {
+// observeSucceeded records best-effort telemetry after CompleteBuild commits.
+func (b *Builderd) observeSucceeded(ctx context.Context, buildID, code string, buildStart time.Time) {
 	b.ops.ObserveBuildCount(code)
 	b.ops.ObserveBuildDuration(code, time.Since(buildStart))
-	if err := b.store.UpdateBuildStatus(ctx, buildID, state.BuildSucceeded, "", false, true); err != nil {
-		b.log.Warn("builderd: mark succeeded", "build", buildID, "err", err)
-	}
-	// ADR-048 §4: best-effort builder-time metering. The
-	// lookup can fail (DB outage, race with another writer) — a
-	// dropped row loses this build's telemetry but does NOT
-	// affect the build outcome (already stamped succeeded).
 	b.recordBuilderUsage(ctx, buildID, buildStart, string(state.BuildSucceeded))
-	// issue #517 / PR-C / ADR-064 — emit wake.build_succeeded
-	// on the events table. The build row + the deployment row
-	// are both already in scope (UpdateBuildStatus just
-	// succeeded; DeploymentByID reads through the same Store).
-	// Best-effort: a failure here is logged at Warn + counted on
-	// wake_phase_emitted_total{result="failed"}; it does NOT
-	// roll back the build row (the build is already terminal).
 	b.emitBuildSucceeded(ctx, buildID, time.Since(buildStart))
 }
 
 // emitBuildSucceeded writes the wake.build_succeeded row. Extracted
-// from markSucceeded so the lookup logic stays clear of the build
+// from observeSucceeded so the lookup logic stays clear of the build
 // row's UpdateBuildStatus / recordBuilderUsage bookkeeping. The
 // function is best-effort: every failure path is logged and
 // counter'd; we never panic and never roll back the build row.
@@ -752,24 +718,19 @@ func (b *Builderd) emitBuildSucceeded(ctx context.Context, buildID string, durat
 // reality (instead of leaving it stuck in DeployBuilding forever).
 // The empty-string fc guard in pkg/state means a non-empty fc must be passed.
 // Also observes build_duration_seconds with outcome="failed".
-func (b *Builderd) markFailed(ctx context.Context, depID, buildID string, fc state.FailureClass, msg string, buildStart time.Time) {
+func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.FailureClass, msg string, buildStart time.Time) bool {
+	depID, buildID := claim.DeploymentID, claim.ID
+	if err := b.store.FailBuild(ctx, claim, fc, msg); err != nil {
+		b.log.Warn("builderd: mark failed", "build", buildID, "err", err)
+		return false
+	}
+
 	// ops_total{op="build",code=<fc>} — the §12 build-success ratio counts
 	// everything except code="user_error" as a success (ADR-030).
 	b.ops.ObserveBuildCount(string(fc))
 	b.ops.ObserveBuildDuration("failed", time.Since(buildStart))
 	b.log.Warn("builderd: build failed", "build", buildID, "deployment", depID, "failure_class", fc, "msg", msg)
 	b.emitBuildLog(ctx, buildID, "FAILED: "+msg+"\n")
-	if err := b.store.UpdateBuildStatus(ctx, buildID, state.BuildFailed, fc, false, true); err != nil {
-		b.log.Warn("builderd: mark failed", "build", buildID, "err", err)
-	}
-	// Best-effort deployment status flip — mirrors imaged.transition
-	// (pkg/imaged/handler.go:516). If this fails the build row is still
-	// authoritative; the deployment row will be re-synced on the next
-	// build attempt over the same row, or surfaced via the §17 G6
-	// account-DR sweep.
-	if err := b.store.UpdateDeploymentStatus(ctx, depID, state.DeployFailed, msg); err != nil {
-		b.log.Warn("builderd: mark deployment failed", "deployment", depID, "build", buildID, "err", err)
-	}
 	// ADR-117 §3: stamp the active stage as failed so the SSE
 	// `event: stage` consumer on /v1/deployments/{id}/logs emits
 	// `status:"failed"` for the row that was in flight when the
@@ -797,6 +758,7 @@ func (b *Builderd) markFailed(ctx context.Context, depID, buildID string, fc sta
 	// alongside the legacy audit row. Best-effort: failures
 	// are logged + counter'd, never rolled back.
 	b.emitBuildFailed(ctx, buildID, string(fc), msg)
+	return true
 }
 
 // markFailedEx is the error-explanations cluster (spec §6.4 amendment 1)
@@ -819,11 +781,14 @@ func (b *Builderd) markFailed(ctx context.Context, depID, buildID string, fc sta
 // (the only cluster code that has one); empty for all other codes.
 // It flows through as the whycopy.Observed argument so the catalog
 // can render "npm install failed" vs "pip install failed" copy.
-func (b *Builderd) markFailedEx(ctx context.Context, depID, buildID string, fc state.FailureClass, code, pkg, msg string, buildStart time.Time) {
+func (b *Builderd) markFailedEx(ctx context.Context, claim state.Build, fc state.FailureClass, code, pkg, msg string, buildStart time.Time) {
+	depID, buildID := claim.DeploymentID, claim.ID
 	// 1. Run the legacy build-row / counters / metering path unchanged
 	// so all downstream observers (metrics, dashboard, build row
 	// table) see the same shape as a non-typed-code failure.
-	b.markFailed(ctx, depID, buildID, fc, msg, buildStart)
+	if !b.markFailed(ctx, claim, fc, msg, buildStart) {
+		return
+	}
 	// 2. Lift the customer-facing prose from the whycopy catalog.
 	// Decorate is a no-op when the catalog has no row for the code —
 	// the legacy deployment row stays with the bare error text flip.
@@ -911,66 +876,33 @@ func (b *Builderd) recordBuilderUsage(ctx context.Context, buildID string, build
 	}
 }
 
-// recordProvenance is the ADR-038 populator. Called from the two
-// markSucceeded sites in processClaimedBuild (cache-hit path + fresh-
-// build path). Stamps build_provenance with the "what ran?" record:
-// source SHA, account plan, deployment URL/commit, builder node ID,
-// and the build's started_at / finished_at timestamps. Empty fields
-// (buildkit_version, railpack_version, base_digest, runner_digest,
-// sbom_storage_key) are populated by Phase 3 (cosign sign + syft
-// SBOM); the columns exist today so Phase 3 is a zero-cost schema
-// change.
-//
-// Best-effort: a failed INSERT logs at WARN. The build itself still
-// succeeds — the builds row is the authoritative customer-visible
-// success/fail transition; provenance is observational metadata.
-// The reader (apid GET /v1/builds/{id}/provenance) renders 404
-// when this INSERT didn't land, surfacing the failure as a
-// missing-provenance 404 rather than a build-succeeded-with-
-// no-evidence.
-//
-// finishedAt may be zero in the cache-hit path because the row's
-// finished_at is stamped inside UpdateBuildStatus, which runs in
-// markSucceeded AFTER this call returns. We use time.Now() in that
-// case so the record lands with a non-zero finished_at; the next
-// call (none expected — this is a one-shot per build) would
-// overwrite.
-func (b *Builderd) recordProvenance(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA string, isCacheHit bool, frameworkVer string) {
-	finishedAt := build.FinishedAt
-	if finishedAt.IsZero() {
-		finishedAt = time.Now()
-	}
+// completeBuild commits the claim, artifact and provenance before publishing
+// any success signal. imaged polls the committed records if NOTIFY is lost.
+func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA, frameworkVer string, result BuildResult, buildStart time.Time) (BuildResult, error) {
 	prov := state.BuildProvenance{
-		BuildID:        build.ID,
-		BuildkitVer:    "",
-		RailpackVer:    "",
-		BaseDigest:     "",
-		SourceSHA256:   srcSHA,
-		SourceURL:      dep.SourceURL,
-		CommitSHA:      dep.CommitSHA,
-		Plan:           string(acct.Plan),
-		RunnerDigest:   "",
-		BuilderNodeID:  b.builderNodeID,
-		StartedAt:      build.StartedAt,
-		FinishedAt:     finishedAt,
-		SBOMStorageKey: "",
-		FrameworkVer:   frameworkVer,
+		BuildID: build.ID, SourceSHA256: srcSHA, SourceURL: dep.SourceURL,
+		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,
+		StartedAt: build.StartedAt, FinishedAt: time.Now(), FrameworkVer: frameworkVer,
 	}
-	if isCacheHit {
-		// Cache-hit builds have empty started_at on the row in the rare
-		// path where ClaimQueuedBuild set started_at=now BUT the
-		// caller's UpdateBuildStatus(stamp_finished=true) under markSucceeded
-		// hasn't run yet. We keep the read of build.StartedAt so a
-		// redelivered path sees the value post-claim; the only
-		// fallback needed is for finished_at, not started_at.
-		_ = isCacheHit // field documented in ADR-038 §provenance row contents
-	}
-	if err := b.store.CreateBuildProvenance(ctx, prov); err != nil {
+	if err := b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return BuildResult{}, nil
+		}
 		b.ops.ObserveProvenanceWrite("error")
-		b.log.Warn("builderd: record provenance failed (build still succeeded)", "build", build.ID, "err", err)
-		return
+		return BuildResult{}, fmt.Errorf("builderd: commit build completion: %w", err)
 	}
 	b.ops.ObserveProvenanceWrite("ok")
+	code := "ok"
+	if result.CacheHit {
+		code = "cache_hit"
+	}
+	b.observeSucceeded(ctx, build.ID, code, buildStart)
+	if b.notif != nil {
+		if err := b.notif.Notify(ctx, db.NotifySnapshotBoot, b.snapshotBootPayload(app.ID, dep.ID)); err != nil {
+			b.log.Warn("builderd: image notification failed; durable imaged poll will recover", "build", build.ID, "err", err)
+		}
+	}
+	return result, nil
 }
 
 // emitBuildLog appends a line to the build log file (lazily opened) and fans
