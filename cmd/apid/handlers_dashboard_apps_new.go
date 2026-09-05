@@ -118,7 +118,11 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 	// Repos — githubd is the source of truth for what's installed
 	// under this account. Best-effort: a 502 from githubd renders
 	// the retry banner rather than 500ing the page.
-	installs, err := s.githubd.ListInstallableRepos(ctx, acct.ID)
+	selectedInstallationID := int64(0)
+	if prefilledInstall != "" {
+		selectedInstallationID, _ = strconv.ParseInt(prefilledInstall, 10, 64)
+	}
+	installs, err := s.githubd.ListInstallableRepos(ctx, acct.ID, selectedInstallationID)
 	if err != nil {
 		// Same degradation path as listInstallableRepos: distinguish
 		// the not-ready stub from the unreachable GitHub case so the

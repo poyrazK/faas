@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/session"
@@ -60,6 +62,7 @@ func newOAuthTestServer(t *testing.T, gh GithubdClient) (http.Handler, *http.Coo
 // minted by a different manager won't Verify.
 func newOAuthTestServerWithLogin(t *testing.T, gh GithubdClient, login string) (http.Handler, *http.Cookie, *session.Manager) {
 	t.Helper()
+	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "test-client")
 	store := state.NewMemStore()
 	email := "alice@example.com"
 	if login != "" {
@@ -107,13 +110,9 @@ func wrapWithGithubLogin(t *testing.T, h http.Handler, c *http.Cookie, login str
 	return h, &http.Cookie{Name: sessionCookie, Value: cookie}
 }
 
-// TestOAuthCallback_VerifiedRedirectsToBindPicker is the happy path:
-// real install + matching account_login → /dashboard/apps/new?install=N&default_branch=B.
-//
-// PR-B: the session cookie carries github_login (set by SealGithubLogin
-// after /v1/auth/github). The handler pulls that login out of the
-// envelope and passes it as expectedLogin to githubd.Verified = true
-// requires account_login == expected_login (asserted via the fake).
+// TestOAuthCallback_VerifiedRedirectsToBindPicker is the happy setup path:
+// a real App installation redirects through user OAuth with the selected
+// installation bound into the verified state.
 func TestOAuthCallback_VerifiedRedirectsToBindPicker(t *testing.T) {
 	const installID = 4242
 	gh := &fakeGithubdClient{verified: true, accountLogin: "alice", defaultBranch: "main"}
@@ -129,17 +128,21 @@ func TestOAuthCallback_VerifiedRedirectsToBindPicker(t *testing.T) {
 		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
 	}
 	loc := rec.Header().Get("Location")
-	// url.Values.Encode sorts keys alphabetically, so default_branch
-	// appears before install in the canonical form.
-	want := "/dashboard/apps/new?default_branch=main&install=4242"
-	if loc != want {
-		t.Errorf("redirect = %q, want %q", loc, want)
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse redirect: %v", err)
+	}
+	if u.Scheme != "https" || u.Host != "github.com" || u.Path != "/login/oauth/authorize" {
+		t.Errorf("redirect = %q, want GitHub user OAuth", loc)
+	}
+	if u.Query().Get("client_id") != "test-client" || !strings.HasSuffix(u.Query().Get("state"), ".4242") {
+		t.Errorf("OAuth query did not bind client and installation: %q", u.RawQuery)
 	}
 	if gh.gotInstallID != installID {
 		t.Errorf("verify install_id = %d, want %d", gh.gotInstallID, installID)
 	}
-	if gh.gotExpectedLogin != "alice" {
-		t.Errorf("verify expected_login = %q, want %q", gh.gotExpectedLogin, "alice")
+	if gh.gotExpectedLogin != "" {
+		t.Errorf("verify expected_login = %q, want empty for organization-compatible lookup", gh.gotExpectedLogin)
 	}
 }
 
@@ -307,16 +310,14 @@ func TestOAuthCallback_RejectsForeignInstall(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
 		t.Errorf("content-type = %q, want application/problem+json", ct)
 	}
-	if gh.gotExpectedLogin != "alice" {
-		t.Errorf("verify expected_login = %q, want alice", gh.gotExpectedLogin)
+	if gh.gotExpectedLogin != "" {
+		t.Errorf("verify expected_login = %q, want empty for organization-compatible lookup", gh.gotExpectedLogin)
 	}
 }
 
-// TestOAuthCallback_AcceptsOwnInstall is the §11 positive path: the
-// install's account.login matches the session's github_login, so
-// the handler falls through to the bind picker redirect. Without
-// this, a regression in handlers_oauth.go that always returns 403
-// would pass the foreign-install test but block legitimate flows.
+// TestOAuthCallback_AcceptsOwnInstall is the positive App-install path. The
+// callback confirms the installation belongs to this App, then user OAuth
+// proves access to personal or organization installations before persistence.
 func TestOAuthCallback_AcceptsOwnInstall(t *testing.T) {
 	gh := &fakeGithubdClient{verified: true, accountLogin: "alice", defaultBranch: "main"}
 	srv, cookie, mgr := newOAuthTestServerWithLogin(t, gh, "alice")
@@ -331,9 +332,12 @@ func TestOAuthCallback_AcceptsOwnInstall(t *testing.T) {
 		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
 	}
 	loc := rec.Header().Get("Location")
-	want := "/dashboard/apps/new?default_branch=main&install=42"
-	if loc != want {
-		t.Errorf("redirect = %q, want %q", loc, want)
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse redirect: %v", err)
+	}
+	if u.Host != "github.com" || !strings.HasSuffix(u.Query().Get("state"), ".42") {
+		t.Errorf("redirect = %q, want GitHub OAuth state bound to installation 42", loc)
 	}
 }
 

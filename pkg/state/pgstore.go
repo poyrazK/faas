@@ -328,7 +328,30 @@ func (s *PgStore) AccountByOIDCSubject(ctx context.Context, issuerURL, subject s
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Account{}, ErrNotFound
+			repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
+			if !ok {
+				return Account{}, ErrNotFound
+			}
+			// First secretless deploy: resolve exactly one account through an
+			// existing repo binding whose installation was proven by user OAuth.
+			var accountID string
+			bootstrapErr := s.pool.QueryRow(ctx, `
+				select min(a.github_install_account_id::text)
+				from apps a
+				join github_installations gi
+				  on gi.account_id = a.github_install_account_id
+				 and gi.installation_id = a.github_install_id
+				where lower(a.github_repo_full_name) = lower($1)
+				  and a.github_install_account_id = a.account_id
+				  and a.deleted_at is null
+				having count(distinct a.github_install_account_id) = 1`, repo).Scan(&accountID)
+			if errors.Is(bootstrapErr, pgx.ErrNoRows) {
+				return Account{}, ErrNotFound
+			}
+			if bootstrapErr != nil {
+				return Account{}, bootstrapErr
+			}
+			return s.AccountByID(ctx, accountID)
 		}
 		return Account{}, err
 	}
@@ -4100,11 +4123,11 @@ func (s *PgStore) GitHubBindingForApp(ctx context.Context, appID string) (GitHub
 func (s *PgStore) InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error) {
 	var installID int64
 	err := s.pool.QueryRow(ctx,
-		`select github_install_id
+		`select min(github_install_id)
 		 from apps
 		 where github_repo_full_name = $1
 		   and github_install_id is not null
-		 limit 1`, repoFullName,
+		 having count(distinct github_install_id) = 1`, repoFullName,
 	).Scan(&installID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -4139,7 +4162,7 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 	if b.LinkedAt.IsZero() {
 		b.LinkedAt = time.Now()
 	}
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`update apps
 		 set github_install_id = $2,
 		     github_repo_full_name = $3,
@@ -4147,10 +4170,13 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 		     github_install_binding_id = $5,
 		     github_install_account_id = $6,
 		     github_install_linked_at = $7
-		 where id = $1`,
+		 where id = $1 and account_id = $6`,
 		b.AppID, b.InstallID, nullString(b.RepoFullName), nullString(b.ProductionBranch),
 		b.BindingID, b.AccountID, b.LinkedAt,
 	)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
 	return err
 }
 
@@ -4186,7 +4212,7 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 
 // UpsertGitHubInstall persists the durable OAuth handshake state
 // for one account's GitHub App install (PR-C, audit-gap closure).
-// Idempotent on (AccountID) via ON CONFLICT (account_id) DO UPDATE
+// Idempotent on (AccountID, InstallationID) via the composite conflict key
 // so the OAuth flow can retry without crashing on the PK. The FK
 // to accounts(id) ON DELETE CASCADE makes this the §17 G2 GDPR
 // path — deleting an account removes its install row in the same
@@ -4214,8 +4240,7 @@ func (s *PgStore) UpsertGitHubInstall(ctx context.Context, inst GitHubInstall) e
 		      sealed_install_token, token_expires_at, sealed_at,
 		      audit_github_login)
 		 values ($1::uuid, $2, $3, $4, $5, $6, $7)
-		 on conflict (account_id) do update set
-		     installation_id       = excluded.installation_id,
+		 on conflict (account_id, installation_id) do update set
 		     default_branch        = excluded.default_branch,
 		     sealed_install_token  = excluded.sealed_install_token,
 		     token_expires_at      = excluded.token_expires_at,
@@ -4244,8 +4269,40 @@ func (s *PgStore) GitHubInstallForAccount(ctx context.Context, accountID string)
 		        sealed_install_token, token_expires_at, sealed_at,
 		        audit_github_login
 		   from github_installations
-		  where account_id = $1::uuid`,
+		  where account_id = $1::uuid
+		  order by sealed_at desc, installation_id desc
+		  limit 1`,
 		accountID,
+	).Scan(
+		&inst.InstallationID, &inst.DefaultBranch,
+		&inst.SealedToken, &inst.TokenExpiresAt, &inst.SealedAt,
+		&inst.AuditGithubLogin,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return GitHubInstall{}, ErrNotFound
+		}
+		return GitHubInstall{}, err
+	}
+	inst.AccountID = accountID
+	return inst, nil
+}
+
+// GitHubInstallForAccountInstallation returns the exact account/install row.
+// It is the authorization lookup for multi-install list, bind, source-fetch,
+// and webhook paths; a mismatch fails closed as ErrNotFound.
+func (s *PgStore) GitHubInstallForAccountInstallation(ctx context.Context, accountID string, installationID int64) (GitHubInstall, error) {
+	if accountID == "" || installationID <= 0 {
+		return GitHubInstall{}, ErrNotFound
+	}
+	var inst GitHubInstall
+	err := s.pool.QueryRow(ctx,
+		`select installation_id, default_branch,
+		        sealed_install_token, token_expires_at, sealed_at,
+		        audit_github_login
+		   from github_installations
+		  where account_id = $1::uuid and installation_id = $2`,
+		accountID, installationID,
 	).Scan(
 		&inst.InstallationID, &inst.DefaultBranch,
 		&inst.SealedToken, &inst.TokenExpiresAt, &inst.SealedAt,
@@ -4311,6 +4368,17 @@ func (s *PgStore) GetGithubInstallBindingForApp(ctx context.Context, appID, acco
 // apps_github_install_repo_branch_idx partial index from migration
 // 00047. Returns ErrNotFound when no app is bound to that pair.
 func (s *PgStore) GithubInstallBindingForRepoBranch(ctx context.Context, repoFullName, productionBranch string) (GitHubBinding, error) {
+	return s.githubInstallBindingForRepoBranch(ctx, repoFullName, productionBranch, 0)
+}
+
+func (s *PgStore) GithubInstallBindingForRepoBranchInstallation(ctx context.Context, repoFullName, productionBranch string, installationID int64) (GitHubBinding, error) {
+	if installationID <= 0 {
+		return GitHubBinding{}, ErrNotFound
+	}
+	return s.githubInstallBindingForRepoBranch(ctx, repoFullName, productionBranch, installationID)
+}
+
+func (s *PgStore) githubInstallBindingForRepoBranch(ctx context.Context, repoFullName, productionBranch string, installationID int64) (GitHubBinding, error) {
 	if repoFullName == "" {
 		return GitHubBinding{}, ErrNotFound
 	}
@@ -4330,7 +4398,9 @@ func (s *PgStore) GithubInstallBindingForRepoBranch(ctx context.Context, repoFul
 		 where github_repo_full_name = $1
 		   and github_production_branch = $2
 		   and github_install_id is not null
-		 limit 1`, repoFullName, productionBranch,
+		   and ($3::bigint = 0 or github_install_id = $3)
+		 order by id
+		 limit 1`, repoFullName, productionBranch, installationID,
 	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &branch)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -138,11 +138,14 @@ action additionally:
   `cli-version` to `$GITHUB_OUTPUT` so downstream steps can
   chain off them.
 
-### What's NOT in the first action
+### Authentication
 
-- **OIDC / keyless deployment.** The first action uses the
-  existing bearer-token contract. A follow-up proposal will
-  add `permissions: id-token: write` + a token-exchange step.
+The Action uses GitHub OIDC by default. Grant `permissions: id-token: write`;
+the job JWT is exchanged through `/v1/auth/oidc/exchange` for a five-minute
+deploy bearer. The optional `api-key` input remains available for installations
+that have not configured an OIDC subject binding yet.
+
+### What's not automated by the Action
 - **PR-preview environments.** Each deploy is a fresh
   deployment id; the action does not create or tear down
   preview URLs.
@@ -156,23 +159,16 @@ non-goals.
 
 ## Webhook secrets (push-to-deploy)
 
-The push-to-deploy loop is wired end-to-end (issue #739
-PR-A + PR-B + PR-D). The webhook verifier at
-`pkg/githubd/webhook.go::VerifyPushSignature` reads the secret
-from `github_webhook_secrets` keyed by `installation_id` (PR-D
-/ ADR-012 §7), falling back to the platform-wide
-`FAAS_GITHUB_WEBHOOK_SECRET` for installs that haven't been
-migrated. Per-tenant rotation:
+The push-to-deploy loop is wired end-to-end. GitHub App webhook
+deliveries are signed with the App's single webhook secret, so both
+`gatewayd-internal` and `githubd` must receive the same
+`FAAS_GITHUB_WEBHOOK_SECRET`. `githubd` verifies the signature before
+persisting the delivery to its durable inbox and acknowledging GitHub;
+the worker then routes `push` and `pull_request` events asynchronously.
 
-```sh
-gregale github-webhook-secret set \
-    --installation-id <id> \
-    --secret <hex>   # or --from-stdin
-```
-
-Admin-scoped API key required. The Prometheus counter
-`githubd_webhook_secret_total{status="set"}` is emitted on every
-rotation so a dashboard alert can flag unexpected cadence.
+The older installation-scoped secret API remains only as a compatibility
+fallback for non-GitHub senders that provide an explicit installation
+header. It is not the normal GitHub App delivery path.
 
 ## See also
 

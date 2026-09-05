@@ -17,34 +17,18 @@
 // The handler does the work in five steps:
 //
 //  1. Decode + validate the request body.
-//  2. Parse the JWT envelope (no signature check yet) and resolve
-//     the iss claim. Verify the JWT against a permissive default
-//     (proves the signature + checks iss; skips aud/sub_pattern).
-//  3. Resolve the OIDC subject to a platform account.
-//  4. Look up the (account_id, issuer_url) trust policy. On miss,
-//     auto-create a permissive default and emit
-//     oidc.trust_policy.created.
+//  2. Parse the unverified iss/sub only to route a read-only account
+//     lookup.
+//  3. Resolve the account through an existing trust policy or an
+//     OAuth-proven GitHub repository binding.
+//  4. Verify against that account's policy. On first GitHub use,
+//     verify with and then persist an exact subject/audience policy.
 //  5. Mint the short-lived bearer, persist the ExchangedToken row,
 //     emit auth.token.exchanged, return the bearer in the response.
 //
-// First-use auto-create: when Get returns ErrTrustPolicyNotFound
-// (the customer has bound the issuer but never refined the policy),
-// the handler Upserts a permissive default (sub_pattern=empty,
-// algs=[RS256], RequiredClaims={}, audit_login='auto') and emits
-// oidc.trust_policy.created. PR-C adds the dashboard refine UI for
-// narrowing subject_pattern + RequiredClaims.
-//
-// AccountByOIDCSubject must succeed before the policy lookup — the
-// (account_id, issuer_url) trust policy is the binding between the
-// OIDC issuer and the platform account. PR-A scope: customers
-// pre-bind the issuer via the dashboard before their first CI
-// deploy (PR-C makes that step self-service). The handler does NOT
-// auto-create the account binding; only the policy row that lives
-// underneath it.
-//
-// The handler is < 50 lines per cmd/apid convention; the helpers
-// (peekIssuer / permissiveDefaultPolicy / permissiveDefaultPolicyFor)
-// are extracted into the same file.
+// No authorization decision is made from unverified claims. First-use policy
+// creation happens only after signature, issuer, audience and exact subject
+// verification succeeds, and the minted bearer is capped by the JWT expiry.
 package oidc
 
 import (
@@ -52,7 +36,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -94,9 +80,9 @@ type AuditEmitter interface {
 	Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
 }
 
-// defaultAlgorithms is the closed alg set used by the auto-created
-// permissive policy. Customers can refine (PR-C) to add ES* / PS*
-// if their IdP issues them.
+// defaultAlgorithms is the closed alg set for first-use GitHub Actions policy
+// creation. Existing customer policies may use the verifier's wider supported
+// set when explicitly configured.
 var defaultAlgorithms = []string{"RS256"}
 
 // ServeHTTP is the http.HandlerFunc shape. The cmd-side wraps it
@@ -128,37 +114,17 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 1: parse the JWS envelope (no signature check yet) so we
-	// can read the iss claim to resolve the trust policy. The
-	// signature check happens at Step 2.
-	issuerURL, err := peekIssuer(req.Token)
+	// Read only the routing identity before verification. It is used for a
+	// read-only account lookup; no policy or bearer is written until the token
+	// passes that account's policy below.
+	issuerURL, subject, err := peekOIDCIdentity(req.Token)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid token", "could not parse JWT envelope: "+err.Error()))
 		return
 	}
 
-	// Step 2: verify the JWT against a permissive default. We
-	// don't know the (account_id, issuer_url) policy yet because
-	// we haven't resolved the OIDC subject to an account — the
-	// chicken-and-egg is broken at Step 2 (verify), Step 3
-	// (account lookup), Step 4 (policy lookup + auto-create).
-	//
-	// Using the permissive default here means: first-use runs the
-	// JWT through the JWKS verifier (proves the signature), checks
-	// iss (must match the issuer we peeked), and skips aud/sub
-	// gates. The real policy — which carries the customer's pinned
-	// audience and any required-claim patterns — is enforced on
-	// subsequent exchanges via the persisted policy row.
-	claims, err := deps.Verifier.Verify(r.Context(), req.Token, permissiveDefaultPolicy(issuerURL))
-	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Invalid token", err.Error()))
-		return
-	}
-
-	// Step 3: resolve the OIDC subject to a platform account.
-	acct, err := deps.Lookups.AccountByOIDCSubject(r.Context(), issuerURL, claims.Subject)
+	acct, err := deps.Lookups.AccountByOIDCSubject(r.Context(), issuerURL, subject)
 	if err != nil {
 		// 401 (not 404): the customer controls whether a subject
 		// is bound, and the same shape covers "no policy exists
@@ -167,25 +133,35 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// failure mode). The detail message carries enough
 		// context for the customer's deploy logs.
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"OIDC subject not bound", "no account bound to ("+issuerURL+", "+claims.Subject+")"))
+			"OIDC subject not bound", "no account bound to ("+issuerURL+", "+subject+")"))
 		return
 	}
 
-	// Step 4: look up the (account_id, issuer_url) policy. On
-	// miss, auto-create a permissive default (sub_pattern="",
-	// algs=[RS256], empty RequiredClaims) and emit
-	// oidc.trust_policy.created.
-	if _, err := deps.Policies.Get(r.Context(), acct.ID, issuerURL); err != nil {
+	// Resolve the real account policy before signature verification. First-use
+	// GitHub Actions requests arrive through an OAuth-proven repository binding;
+	// pin their exact subject and requested audience rather than creating a
+	// permissive account-wide policy.
+	policy, err := deps.Policies.Get(r.Context(), acct.ID, issuerURL)
+	createPolicy := false
+	if err != nil {
 		if !errors.Is(err, ErrTrustPolicyNotFound) {
 			api.WriteProblem(w, api.ErrCapacity("trust policy lookup failed"))
 			return
 		}
-		// Auto-create path: the (account, issuer) binding is
-		// already in place (Step 3 resolved the account); we just
-		// need to persist a default policy row so subsequent
-		// exchanges can enforce it. The audit row carries the
-		// upserted policy's jwks_url + audience + 'auto' marker.
-		policy := permissiveDefaultPolicyFor(acct.ID, issuerURL)
+		policy = defaultPolicyFor(acct.ID, issuerURL, req.Audience, subject)
+		createPolicy = true
+	}
+	claims, err := deps.Verifier.Verify(r.Context(), req.Token, policy)
+	if err != nil || claims.Subject != subject || !containsAudience(claims.Aud, req.Audience) {
+		detail := "token does not satisfy the account trust policy"
+		if err != nil {
+			detail = err.Error()
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+			"Invalid token", detail))
+		return
+	}
+	if createPolicy {
 		policy, err = deps.Policies.Upsert(r.Context(), policy)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("trust policy upsert failed"))
@@ -203,17 +179,21 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Step 5: mint the short-lived bearer + persist + audit.
+	// Mint a bearer that never outlives the upstream assertion.
 	plaintext, hash, err := api.GenerateOIDCKey()
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not mint bearer"))
 		return
 	}
 	now := h.now()
+	expiresAt := now.Add(OIDCBearerTTL)
+	if !claims.Exp.IsZero() && claims.Exp.Before(expiresAt) {
+		expiresAt = claims.Exp
+	}
 	row := &ExchangedToken{
 		AccountID: acct.ID,
 		TokenHash: hash,
-		ExpiresAt: now.Add(OIDCBearerTTL),
+		ExpiresAt: expiresAt,
 		IssuerURL: issuerURL,
 		Subject:   claims.Subject,
 		Audience:  claims.Aud,
@@ -233,6 +213,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		acctID := acct.ID
 		deps.Audit.Emit(r.Context(), KindAuthTokenExchanged, &acctID, map[string]any{
 			"account_id":  acct.ID,
+			"app":         req.App,
 			"token_id":    tokenID,
 			"issuer_url":  issuerURL,
 			"audience":    req.Audience,
@@ -243,7 +224,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, ExchangeResponse{
 		Bearer:    plaintext,
-		ExpiresIn: int(OIDCBearerTTL.Seconds()),
+		ExpiresIn: int(math.Ceil(expiresAt.Sub(now).Seconds())),
 		TokenID:   tokenID,
 	})
 }
@@ -272,56 +253,53 @@ func NewHandler(deps HandlerDeps) *Handler {
 // without reaching into the unexported field.
 func (h *Handler) now() time.Time { return h.clock() }
 
-// peekIssuer parses the JWS envelope (no signature check) to read
-// the `iss` claim. Used to resolve the trust policy BEFORE the JWKS
+// peekOIDCIdentity parses the JWS envelope (no signature check) to read
+// the `iss` and `sub` claims. Used to route a read-only lookup BEFORE the JWKS
 // fetch — the policy's jwks_url is what we register. jose.ParseSigned
 // validates the alg header against the closed set RS256/RS384/
 // RS512/ES256/ES384/ES512; an unknown alg short-circuits here as
 // "could not parse JWT envelope" (400, not 401).
-func peekIssuer(rawToken string) (string, error) {
+func peekOIDCIdentity(rawToken string) (string, string, error) {
 	closed := []jose.SignatureAlgorithm{
 		jose.RS256, jose.RS384, jose.RS512,
 		jose.ES256, jose.ES384, jose.ES512,
 	}
 	jws, err := jose.ParseSigned(rawToken, closed)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var std jwt.Claims
 	if err := json.Unmarshal(jws.UnsafePayloadWithoutVerification(), &std); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if std.Issuer == "" {
-		return "", errors.New("iss claim missing")
+		return "", "", errors.New("iss claim missing")
 	}
-	return std.Issuer, nil
+	if std.Subject == "" {
+		return "", "", errors.New("sub claim missing")
+	}
+	return std.Issuer, std.Subject, nil
 }
 
-// permissiveDefaultPolicy is the verify-only stub used when the real
-// policy is missing on first-use. Has the issuer URL (so aud/iss
-// checks work) and RS256 (the GitHub Actions default); the real
-// policy is upserted after account resolution.
-func permissiveDefaultPolicy(issuerURL string) *OIDCTrustPolicy {
+func defaultPolicyFor(accountID, issuerURL, audience, subject string) *OIDCTrustPolicy {
 	return &OIDCTrustPolicy{
-		IssuerURL:  issuerURL,
-		Audience:   []string{}, // empty = skip aud check (verify-only; real policy carries the customer's pinned aud)
-		Algorithms: defaultAlgorithms,
+		AccountID:      accountID,
+		IssuerURL:      issuerURL,
+		JWKSURL:        strings.TrimRight(issuerURL, "/") + "/.well-known/jwks",
+		Audience:       []string{audience},
+		SubjectPattern: "^" + regexp.QuoteMeta(subject) + "$",
+		Algorithms:     defaultAlgorithms,
+		AuditLogin:     "auto",
 	}
 }
 
-// permissiveDefaultPolicyFor builds the real default policy row
-// upserted on first-use auto-create. The customer can refine
-// (PR-C) via the dashboard. Permissive = empty sub_pattern, empty
-// RequiredClaims — every CI job for this account under this issuer
-// is admitted until the customer narrows it.
-func permissiveDefaultPolicyFor(accountID, issuerURL string) *OIDCTrustPolicy {
-	return &OIDCTrustPolicy{
-		AccountID:  accountID,
-		IssuerURL:  issuerURL,
-		Audience:   []string{}, // refine in dashboard
-		Algorithms: defaultAlgorithms,
-		AuditLogin: "auto",
+func containsAudience(audiences []string, want string) bool {
+	for _, audience := range audiences {
+		if audience == want {
+			return true
+		}
 	}
+	return false
 }
 
 // writeJSON is the standard cmd/apid response shape — same envelope

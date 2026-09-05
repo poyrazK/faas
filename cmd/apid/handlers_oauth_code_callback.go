@@ -127,11 +127,18 @@ func isGithubAppNotInstalled(err error) bool {
 // (not math/rand) — the state is the only thing standing between
 // an attacker and a forged user-to-server token exchange.
 func (s *server) issueOAuthCodeState(w http.ResponseWriter, r *http.Request) (string, error) {
+	return s.issueOAuthCodeStateForInstallation(w, r, 0)
+}
+
+func (s *server) issueOAuthCodeStateForInstallation(w http.ResponseWriter, r *http.Request, installationID int64) (string, error) {
 	tokenBytes := make([]byte, 16)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", err
 	}
 	stateToken := hex.EncodeToString(tokenBytes)
+	if installationID > 0 {
+		stateToken += "." + strconv.FormatInt(installationID, 10)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     oauthCodeStateCookie,
 		Value:    stateToken,
@@ -142,6 +149,38 @@ func (s *server) issueOAuthCodeState(w http.ResponseWriter, r *http.Request) (st
 		MaxAge:   int(oauthCodeStateTTL.Seconds()),
 	})
 	return stateToken, nil
+}
+
+// redirectToGitHubAuthorization obtains the user-to-server proof that the
+// signed-in GitHub user can access the selected personal or organization App
+// installation. The selected ID is bound into the CSRF state cookie.
+func (s *server) redirectToGitHubAuthorization(w http.ResponseWriter, r *http.Request, installationID int64) bool {
+	clientID := os.Getenv("FAAS_GITHUB_APP_CLIENT_ID")
+	if clientID == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "github_oauth_misconfigured",
+			"OAuth Misconfigured", "FAAS_GITHUB_APP_CLIENT_ID environment variable is required"))
+		return false
+	}
+	stateToken, err := s.issueOAuthCodeStateForInstallation(w, r, installationID)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+			"Internal Error", "failed to generate CSRF state"))
+		return false
+	}
+	redirectURI := os.Getenv("FAAS_GITHUB_APP_REDIRECT_URI")
+	if redirectURI == "" {
+		host := r.Host
+		scheme := schemeHTTP
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+			scheme = schemeHTTPS
+		}
+		redirectURI = scheme + "://" + host + oauthCodeCallbackPath
+	}
+	u := "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(clientID) +
+		"&redirect_uri=" + url.QueryEscape(redirectURI) +
+		"&state=" + url.QueryEscape(stateToken) + "&scope="
+	http.Redirect(w, r, u, http.StatusFound)
+	return true
 }
 
 // renderOAuthCodeCallback is the GET /oauth/code-callback handler.
@@ -351,31 +390,9 @@ func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stateToken, err := s.issueOAuthCodeState(w, r)
-	if err != nil {
-		log.Error("issue oauth code state", "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"Internal Error", "failed to generate CSRF state"))
-		return
+	if !s.redirectToGitHubAuthorization(w, r, 0) {
+		log.Error("redirect to GitHub authorization failed")
 	}
-
-	redirectURI := os.Getenv("FAAS_GITHUB_APP_REDIRECT_URI")
-	if redirectURI == "" {
-		host := r.Host
-		scheme := schemeHTTP
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
-			scheme = schemeHTTPS
-		}
-		redirectURI = scheme + "://" + host + oauthCodeCallbackPath
-	}
-
-	// GitHub App OAuth authorize URL.
-	// https://docs.github.com/en/apps/building-github-apps/identifying-users-for-github-apps
-	u := "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(clientID) +
-		"&redirect_uri=" + url.QueryEscape(redirectURI) +
-		"&state=" + url.QueryEscape(stateToken) +
-		"&scope=" // Empty scope: the user authorizes the App's own resources.
-	http.Redirect(w, r, u, http.StatusFound)
 }
 
 // stripLogCRLF / stripLogInt64 are defined in handlers_install_github.go

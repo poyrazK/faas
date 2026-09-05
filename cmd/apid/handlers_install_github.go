@@ -136,7 +136,7 @@ func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 		return // sessionGithubLogin already wrote the 403.
 	}
 
-	verified, accountLogin, _, err := s.githubd.VerifyInstallation(r.Context(), req.InstallationID, expectedLogin)
+	verified, accountLogin, _, err := s.githubd.VerifyInstallation(r.Context(), req.InstallationID, "")
 	if err != nil {
 		s.log.Warn("listInstallableRepos: verify installation failed",
 			"op", op, "account_id", acct.ID,
@@ -169,7 +169,7 @@ func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repos, err := s.githubd.ListInstallableRepos(r.Context(), acct.ID)
+	repos, err := s.githubd.ListInstallableRepos(r.Context(), acct.ID, req.InstallationID)
 	if err != nil {
 		// Stub returns errGithubdNotReady; live returns wrapped gRPC
 		// errors. Distinguish them so the dashboard renders the
@@ -242,7 +242,7 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 		return // sessionGithubLogin already wrote the 403.
 	}
 
-	verified, accountLogin, defaultBranch, err := s.githubd.VerifyInstallation(r.Context(), req.InstallationID, expectedLogin)
+	verified, accountLogin, defaultBranch, err := s.githubd.VerifyInstallation(r.Context(), req.InstallationID, "")
 	if err != nil {
 		s.log.Warn("bindAppToRepo: verify installation failed",
 			"op", op, "account_id", acct.ID,
@@ -290,7 +290,7 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 		branch = defaultBranch
 	}
 
-	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, req.RepoFullName, branch)
+	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, req.InstallationID, req.RepoFullName, branch)
 	if err != nil {
 		var problem *api.Problem
 		if errors.As(err, &problem) {
@@ -311,6 +311,7 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 		"install_id":        req.InstallationID,
 		"app_id":            app.ID,
 		"github_login":      expectedLogin,
+		"install_owner":     accountLogin,
 		"repo_full_name":    req.RepoFullName,
 		"production_branch": branch,
 		"binding_id":        bindingID,

@@ -1893,8 +1893,11 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@v1") {
 		t.Errorf("snippet missing the action reference; got:\n%s", out)
 	}
-	if !strings.Contains(out, "${{ secrets.GREGALE_API_KEY }}") {
-		t.Errorf("snippet missing the secret reference; got:\n%s", out)
+	if !strings.Contains(out, "id-token: write") {
+		t.Errorf("snippet missing the GitHub OIDC permission; got:\n%s", out)
+	}
+	if strings.Contains(out, "${{ secrets.GREGALE_API_KEY }}") || strings.Contains(out, "api-key:") {
+		t.Errorf("snippet should not require a long-lived deploy secret; got:\n%s", out)
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("snippet path should not write to stderr; got %q", stderr.String())

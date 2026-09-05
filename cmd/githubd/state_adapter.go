@@ -104,6 +104,10 @@ func (a *stateBindingsAdapter) GetAppBinding(ctx context.Context, repoFullName, 
 	return a.FindForRepoBranch(ctx, repoFullName, branch)
 }
 
+func (a *stateBindingsAdapter) GetAppBindingForInstallation(ctx context.Context, repoFullName, branch string, installationID int64) (state.GitHubBinding, error) {
+	return a.store.GithubInstallBindingForRepoBranchInstallation(ctx, repoFullName, branch, installationID)
+}
+
 // InstallationIDForRepo is the legacy ChecksAPI seam. Maps
 // state.ErrNotFound to githubd.ErrNoBinding (the pre-PR-B
 // sentinel) so the cmd-side swap is invisible to ChecksAPI.
@@ -145,4 +149,8 @@ func (a *stateInstallsAdapter) Upsert(ctx context.Context, inst state.GitHubInst
 // pre-PR-B "no installation for account" error.
 func (a *stateInstallsAdapter) ForAccount(ctx context.Context, accountID string) (state.GitHubInstall, error) {
 	return a.store.GitHubInstallForAccount(ctx, accountID)
+}
+
+func (a *stateInstallsAdapter) ForAccountInstallation(ctx context.Context, accountID string, installationID int64) (state.GitHubInstall, error) {
+	return a.store.GitHubInstallForAccountInstallation(ctx, accountID, installationID)
 }

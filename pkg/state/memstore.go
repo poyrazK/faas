@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -119,9 +120,8 @@ type MemStore struct {
 	// handler writes after verifying the install against api.github.com
 	// (review findings #1 + #2 closure, ADR-012).
 	githubBindings map[string]GitHubBinding
-	// githubInstalls is the durable OAuth handshake state per
-	// account (PR-C). Keyed by accountID so the cold-start rehydrate
-	// path in pkg/githubd/realservice.go can look up by account.
+	// githubInstalls is keyed by accountID + NUL + installationID so an
+	// account can retain personal and organization installations.
 	githubInstalls map[string]GitHubInstall
 	// githubWebhookSecrets is the per-tenant webhook secret
 	// store (PR-D / ADR-012 §7 amendment). Keyed by
@@ -1144,7 +1144,27 @@ func (m *MemStore) AccountByOIDCSubject(_ context.Context, issuerURL, subject st
 		matches = append(matches, policy)
 	}
 	if len(matches) == 0 {
-		return Account{}, ErrNotFound
+		repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
+		if !ok {
+			return Account{}, ErrNotFound
+		}
+		accountIDs := map[string]struct{}{}
+		for appID, binding := range m.githubBindings {
+			app, appOK := m.apps[appID]
+			_, accountOK := m.accounts[binding.AccountID]
+			installKey := binding.AccountID + "\x00" + strconv.FormatInt(binding.InstallID, 10)
+			_, installOK := m.githubInstalls[installKey]
+			if strings.EqualFold(binding.RepoFullName, repo) && appOK && accountOK && installOK &&
+				app.AccountID == binding.AccountID {
+				accountIDs[binding.AccountID] = struct{}{}
+			}
+		}
+		if len(accountIDs) != 1 {
+			return Account{}, ErrNotFound
+		}
+		for accountID := range accountIDs {
+			return m.accounts[accountID], nil
+		}
 	}
 	sort.Slice(matches, func(i, j int) bool {
 		iSpecific := matches[i].SubjectPattern != ""
@@ -4090,10 +4110,17 @@ func (m *MemStore) InstallationIDForRepo(_ context.Context, repoFullName string)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	installID := int64(0)
 	for _, b := range m.githubBindings {
 		if b.RepoFullName == repoFullName && b.InstallID != 0 {
-			return b.InstallID, nil
+			if installID != 0 && installID != b.InstallID {
+				return 0, ErrNotFound
+			}
+			installID = b.InstallID
 		}
+	}
+	if installID != 0 {
+		return installID, nil
 	}
 	return 0, ErrNotFound
 }
@@ -4116,7 +4143,8 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.apps[b.AppID]; !ok {
+	app, ok := m.apps[b.AppID]
+	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
 	m.githubBindings[b.AppID] = b
@@ -4143,6 +4171,17 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
 // lookup. Mirrors PgStore. Returns ErrNotFound when no app is bound.
 func (m *MemStore) GithubInstallBindingForRepoBranch(_ context.Context, repoFullName, productionBranch string) (GitHubBinding, error) {
+	return m.githubInstallBindingForRepoBranch(repoFullName, productionBranch, 0)
+}
+
+func (m *MemStore) GithubInstallBindingForRepoBranchInstallation(_ context.Context, repoFullName, productionBranch string, installationID int64) (GitHubBinding, error) {
+	if installationID <= 0 {
+		return GitHubBinding{}, ErrNotFound
+	}
+	return m.githubInstallBindingForRepoBranch(repoFullName, productionBranch, installationID)
+}
+
+func (m *MemStore) githubInstallBindingForRepoBranch(repoFullName, productionBranch string, installationID int64) (GitHubBinding, error) {
 	if repoFullName == "" {
 		return GitHubBinding{}, ErrNotFound
 	}
@@ -4152,7 +4191,7 @@ func (m *MemStore) GithubInstallBindingForRepoBranch(_ context.Context, repoFull
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, b := range m.githubBindings {
-		if b.RepoFullName == repoFullName && b.ProductionBranch == productionBranch && b.InstallID != 0 {
+		if b.RepoFullName == repoFullName && b.ProductionBranch == productionBranch && b.InstallID != 0 && (installationID == 0 || b.InstallID == installationID) {
 			return b, nil
 		}
 	}
@@ -4177,7 +4216,7 @@ func (m *MemStore) ListGithubInstallBindingsForAccount(_ context.Context, accoun
 }
 
 // UpsertGitHubInstall persists the durable OAuth handshake state
-// (PR-C). Idempotent on (AccountID) by map insert; the AccountID
+// (PR-C). Idempotent on (AccountID, InstallationID) by map insert; the AccountID
 // FK isn't enforced in MemStore (in-memory), but the upsert still
 // rejects empty AccountID / AuditGithubLogin so test parity with
 // PgStore holds.
@@ -4193,7 +4232,7 @@ func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.githubInstalls[inst.AccountID] = inst
+	m.githubInstalls[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
 }
 
@@ -4206,7 +4245,27 @@ func (m *MemStore) GitHubInstallForAccount(_ context.Context, accountID string) 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	inst, ok := m.githubInstalls[accountID]
+	var inst GitHubInstall
+	found := false
+	for _, candidate := range m.githubInstalls {
+		if candidate.AccountID == accountID && (!found || candidate.SealedAt.After(inst.SealedAt)) {
+			inst = candidate
+			found = true
+		}
+	}
+	if !found {
+		return GitHubInstall{}, ErrNotFound
+	}
+	return inst, nil
+}
+
+func (m *MemStore) GitHubInstallForAccountInstallation(_ context.Context, accountID string, installationID int64) (GitHubInstall, error) {
+	if accountID == "" || installationID <= 0 {
+		return GitHubInstall{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.githubInstalls[accountID+"\x00"+strconv.FormatInt(installationID, 10)]
 	if !ok {
 		return GitHubInstall{}, ErrNotFound
 	}

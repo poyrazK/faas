@@ -218,6 +218,7 @@ func TestScopeSurfaceConstants(t *testing.T) {
 	}
 	mustContain("ScopesAdminOnly", ScopesAdminOnly, ScopeAdmin)
 	mustContain("ScopesReadSurface", ScopesReadSurface, ScopeAdmin, ScopeAppsRead)
+	mustContain("ScopesDeploymentReadSurface", ScopesDeploymentReadSurface, ScopeAdmin, ScopeAppsRead, ScopeDeployWrite)
 	mustContain("ScopesUsageReadSurface", ScopesUsageReadSurface, ScopeAdmin, ScopeUsageRead)
 	mustContain("ScopesSecretsWriteSurface", ScopesSecretsWriteSurface, ScopeAdmin, ScopeSecretsWrite)
 	mustContain("ScopesDeployWriteSurface", ScopesDeployWriteSurface, ScopeAdmin, ScopeDeployWrite)

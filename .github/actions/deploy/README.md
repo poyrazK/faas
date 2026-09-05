@@ -13,11 +13,10 @@ jobs:
     environment: production
     permissions:
       contents: read
-      id-token: none
+      id-token: write
     steps:
       - uses: poyrazK/faas/.github/actions/deploy@v1
         with:
-          api-key: ${{ secrets.GREGALE_API_KEY }}
           api-base: https://api.gregale.dev
           app: my-app
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
@@ -38,7 +37,8 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 
 | Input | Description | Required | Default |
 |---|---|---|---|
-| `api-key` | Gregale API bearer token. Use `${{ secrets.GREGALE_API_KEY }}`. | yes | — |
+| `api-key` | Optional Gregale bearer. Omit to exchange GitHub OIDC for a five-minute token. | no | — |
+| `oidc-audience` | Audience requested from GitHub and sent to the Gregale exchange. | no | `gregale` |
 | `api-base` | Gregale API base URL. | no | `https://api.gregale.dev` |
 | `app` | App slug to deploy. | yes | — |
 | `repo` | OWNER/NAME of the source GitHub repo. | no | `${{ github.repository }}` |
@@ -53,7 +53,7 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 |---|---|
 | `deployment-id` | The new deployment id (32-char hex). |
 | `app-slug` | Echo of the input `app` slug. |
-| `status` | Final deployment status: `ready` \| `failed` \| `cancelled` \| `timeout`. |
+| `status` | Observed status: `live` when waiting succeeds, `queued` when waiting is disabled, or the terminal failure/timeout status. |
 | `url` | URL of the deployment record on the control-plane API (`{api-base}/v1/apps/{slug}/deployments/{id}`). |
 | `cli-version` | Bundled `gregale` CLI version (verifies the vendored binary). |
 
@@ -69,7 +69,10 @@ The bundled `cli-version` output lets you lint for drift in enterprise monorepos
 
 ## Security
 
-- The bearer token is set via the `FAAS_TOKEN` env var inside the run step. It is masked by GitHub Actions automatically and never appears in `$GITHUB_OUTPUT` or `::error` annotations.
+- GitHub OIDC is the default: grant `id-token: write` and the Action exchanges the job JWT for a five-minute Gregale bearer. A long-lived `api-key` remains an optional fallback.
+- Long waits renew that short-lived identity between polling windows; the bearer is never written to an Action output.
+- Connect the GitHub App and bind the repository to the Gregale app once. The first Action run then verifies GitHub's JWT and creates a trust policy pinned to that exact repository subject and audience.
+- The bearer token is set via the `FAAS_TOKEN` env var inside the run step and never appears in `$GITHUB_OUTPUT` or `::error` annotations.
 - The `src/annotate.sh` step regex-redacts any `gh*_`, `Bearer …`, or `FAAS_TOKEN=…` substring from error annotations as a defence-in-depth against server regressions.
 - No PAT, GitHub App token, or install token is required at the customer side. The Gregale control plane resolves the install token server-side from the account's `github_installations` row (`ADR-012`, `ADR-020`).
 

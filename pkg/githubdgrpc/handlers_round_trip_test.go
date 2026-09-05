@@ -35,8 +35,8 @@ type stubSvc struct {
 
 	getInstallState   func(string) (githubdgrpc.InstallState, string, string, error)
 	exchangeOAuthCode func(string, string, string) (string, string, error)
-	listInstallable   func(string) ([]githubdgrpc.Repo, error)
-	bindAppRepo       func(string, string, string, string) (string, error)
+	listInstallable   func(string, int64) ([]githubdgrpc.Repo, error)
+	bindAppRepo       func(string, string, int64, string, string) (string, error)
 	unbindAppRepo     func(string, string) error
 	getAppBinding     func(string, string) (githubdgrpc.AppBinding, error)
 	createDeployment  func(string, string, string, string) (string, string, error)
@@ -49,8 +49,10 @@ type stubSvc struct {
 	gotExchangeCode        string
 	gotExchangeState       string
 	gotListAccountID       string
+	gotListInstallID       int64
 	gotBindAppID           string
 	gotBindAcct            string
+	gotBindInstallID       int64
 	gotBindRepo            string
 	gotBindBranch          string
 	gotUnbindAppID         string
@@ -90,23 +92,25 @@ func (s *stubSvc) ExchangeOAuthCode(accountID, code, state string) (string, stri
 	return s.UnimplementedService.ExchangeOAuthCode(accountID, code, state)
 }
 
-func (s *stubSvc) ListInstallableRepos(accountID string) ([]githubdgrpc.Repo, error) {
+func (s *stubSvc) ListInstallableRepos(accountID string, installationID int64) ([]githubdgrpc.Repo, error) {
 	s.gotListAccountID = accountID
+	s.gotListInstallID = installationID
 	if s.listInstallable != nil {
-		return s.listInstallable(accountID)
+		return s.listInstallable(accountID, installationID)
 	}
-	return s.UnimplementedService.ListInstallableRepos(accountID)
+	return s.UnimplementedService.ListInstallableRepos(accountID, installationID)
 }
 
-func (s *stubSvc) BindAppRepo(appID, accountID, repoFullName, productionBranch string) (string, error) {
+func (s *stubSvc) BindAppRepo(appID, accountID string, installationID int64, repoFullName, productionBranch string) (string, error) {
 	s.gotBindAppID = appID
 	s.gotBindAcct = accountID
+	s.gotBindInstallID = installationID
 	s.gotBindRepo = repoFullName
 	s.gotBindBranch = productionBranch
 	if s.bindAppRepo != nil {
-		return s.bindAppRepo(appID, accountID, repoFullName, productionBranch)
+		return s.bindAppRepo(appID, accountID, installationID, repoFullName, productionBranch)
 	}
-	return s.UnimplementedService.BindAppRepo(appID, accountID, repoFullName, productionBranch)
+	return s.UnimplementedService.BindAppRepo(appID, accountID, installationID, repoFullName, productionBranch)
 }
 
 func (s *stubSvc) UnbindAppRepo(appID, accountID string) error {
@@ -242,7 +246,7 @@ func TestExchangeOAuthCode_HappyPath(t *testing.T) {
 
 func TestListInstallableRepos_HappyPath(t *testing.T) {
 	stub := &stubSvc{
-		listInstallable: func(string) ([]githubdgrpc.Repo, error) {
+		listInstallable: func(string, int64) ([]githubdgrpc.Repo, error) {
 			return []githubdgrpc.Repo{
 				{FullName: "acme/api", DefaultBranch: "main", Private: false},
 				{FullName: "acme/secret", DefaultBranch: "trunk", Private: true},
@@ -274,7 +278,7 @@ func TestListInstallableRepos_HappyPath(t *testing.T) {
 
 func TestListInstallableRepos_EmptyCatalog(t *testing.T) {
 	stub := &stubSvc{
-		listInstallable: func(string) ([]githubdgrpc.Repo, error) {
+		listInstallable: func(string, int64) ([]githubdgrpc.Repo, error) {
 			return nil, nil
 		},
 	}
@@ -290,7 +294,7 @@ func TestListInstallableRepos_EmptyCatalog(t *testing.T) {
 
 func TestBindAppRepo_HappyPath(t *testing.T) {
 	stub := &stubSvc{
-		bindAppRepo: func(_, _, _, _ string) (string, error) {
+		bindAppRepo: func(_, _ string, _ int64, _, _ string) (string, error) {
 			return "binding-77", nil
 		},
 	}
@@ -475,7 +479,7 @@ func TestClient_ExchangeOAuthCode_RoundTrip(t *testing.T) {
 
 func TestClient_ListInstallableRepos_RoundTrip(t *testing.T) {
 	stub := &stubSvc{
-		listInstallable: func(string) ([]githubdgrpc.Repo, error) {
+		listInstallable: func(string, int64) ([]githubdgrpc.Repo, error) {
 			return []githubdgrpc.Repo{{FullName: "x/y", DefaultBranch: "main", Private: false}}, nil
 		},
 	}
@@ -483,7 +487,7 @@ func TestClient_ListInstallableRepos_RoundTrip(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 	c := githubdgrpc.NewClient(conn)
 
-	repos, err := c.ListInstallableRepos(context.Background(), "acct-x")
+	repos, err := c.ListInstallableRepos(context.Background(), "acct-x", 42)
 	if err != nil {
 		t.Fatalf("list via client: %v", err)
 	}
@@ -494,7 +498,7 @@ func TestClient_ListInstallableRepos_RoundTrip(t *testing.T) {
 
 func TestClient_BindAppRepo_RoundTrip(t *testing.T) {
 	stub := &stubSvc{
-		bindAppRepo: func(string, string, string, string) (string, error) {
+		bindAppRepo: func(string, string, int64, string, string) (string, error) {
 			return "binding-c", nil
 		},
 	}
@@ -502,7 +506,7 @@ func TestClient_BindAppRepo_RoundTrip(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 	c := githubdgrpc.NewClient(conn)
 
-	id, err := c.BindAppRepo(context.Background(), "app-c", "acct-c", "x/y", "main")
+	id, err := c.BindAppRepo(context.Background(), "app-c", "acct-c", 42, "x/y", "main")
 	if err != nil {
 		t.Fatalf("bind via client: %v", err)
 	}

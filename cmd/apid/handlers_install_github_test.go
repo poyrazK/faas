@@ -55,7 +55,7 @@ func (f *bindPickerFake) VerifyInstallation(_ context.Context, installID int64, 
 	return f.verified, f.accountLogin, f.defaultBranch, f.verifyErr
 }
 
-func (f *bindPickerFake) BindAppRepo(_ context.Context, _, _ string, _, _ string) (string, error) {
+func (f *bindPickerFake) BindAppRepo(_ context.Context, _, _ string, _ int64, _, _ string) (string, error) {
 	f.bindCalls++
 	if f.bindErr != nil {
 		return "", f.bindErr
@@ -75,7 +75,7 @@ func (f *bindPickerFake) GetInstallState(context.Context, string) (InstallState,
 func (f *bindPickerFake) ExchangeOAuthCode(context.Context, string, string, string) (string, string, error) {
 	return "", "", errGithubdNotReady
 }
-func (f *bindPickerFake) ListInstallableRepos(context.Context, string) ([]Repo, error) {
+func (f *bindPickerFake) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
 	return nil, errGithubdNotReady
 }
 func (f *bindPickerFake) UnbindAppRepo(context.Context, string, string) error {
@@ -181,11 +181,9 @@ func TestListInstallableRepos_UnauthenticatedRefused(t *testing.T) {
 	}
 }
 
-// TestListInstallableRepos_ForeignInstallRefused is the §11
-// ownership proof: the install's account_login differs from the
-// session's github_login → 403 forged. Without this, a logged-in
-// FaaS account who learned the install_id of someone else's
-// installation could enumerate their private repos.
+// TestListInstallableRepos_ForeignInstallRefused pins the fail-closed path.
+// The direct App lookup only proves the ID belongs to this App; durable
+// account+installation association from user OAuth is the ownership proof.
 func TestListInstallableRepos_ForeignInstallRefused(t *testing.T) {
 	gh := &bindPickerFake{verified: false, accountLogin: "bob"}
 	srv, mgr, _, cookie := newBindPickerTestServer(t, gh)
@@ -206,8 +204,8 @@ func TestListInstallableRepos_ForeignInstallRefused(t *testing.T) {
 	if p["code"] != "forged" {
 		t.Errorf("problem.code = %q, want forged", p["code"])
 	}
-	if gh.gotExpectedLogin != "alice" {
-		t.Errorf("verify expected_login = %q, want alice", gh.gotExpectedLogin)
+	if gh.gotExpectedLogin != "" {
+		t.Errorf("verify expected_login = %q, want empty for organization-compatible lookup", gh.gotExpectedLogin)
 	}
 }
 
@@ -232,8 +230,8 @@ func TestBindAppToRepo_RejectsForeignInstall(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("code = %d, want 403\nbody = %s", rec.Code, rec.Body.String())
 	}
-	if gh.gotExpectedLogin != "alice" {
-		t.Errorf("verify expected_login = %q, want alice", gh.gotExpectedLogin)
+	if gh.gotExpectedLogin != "" {
+		t.Errorf("verify expected_login = %q, want empty for organization-compatible lookup", gh.gotExpectedLogin)
 	}
 	// BindAppRepo must NOT be called on a forged install — the
 	// handler returns 403 before reaching BindAppRepo.
