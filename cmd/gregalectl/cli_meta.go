@@ -70,6 +70,7 @@ type cliFlag struct {
 //   - deploy          (join-node | add-node)
 //   - obs             (health)
 //   - debug           (otel-smoke; ADR-127 PR-D)
+//   - github          (status | retry-delivery | retry-check)
 //   - trusted-publishers (add | remove | list) — see ADR-058 deviation note in main.go:15
 //   - version         (internal)
 //   - completion      (bash | zsh | fish | powershell) (internal)
@@ -81,6 +82,38 @@ type cliFlag struct {
 // boundary — adding a customer command to gregalectl or an operator
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
+	{
+		Name:    dispatchGithub,
+		DocSlug: "github-recovery",
+		Short:   "Inspect and retry durable GitHub delivery and Check Run work",
+		Subcommands: []cliSub{
+			{
+				Name:  "status",
+				Short: "List webhook deliveries and Check Run updates by status",
+				Flags: []cliFlag{
+					{Name: "status", Short: "pending|processing|succeeded|dead (default dead)"},
+					{Name: "limit", Short: "maximum rows per queue (1..500)"},
+					{Name: "json", Short: "emit structured JSON"},
+				},
+			},
+			{
+				Name:  "retry-delivery",
+				Short: "Move one dead webhook delivery back to pending",
+				Flags: []cliFlag{
+					{Name: "delivery-id", Short: "X-GitHub-Delivery id", Req: true},
+					{Name: "yes", Short: "acknowledge retrying customer deployment work", Req: true},
+				},
+			},
+			{
+				Name:  "retry-check",
+				Short: "Move one dead Check Run update back to pending",
+				Flags: []cliFlag{
+					{Name: "deployment-id", Short: "deployment id", Req: true},
+					{Name: "yes", Short: "acknowledge retrying the GitHub Check Run write", Req: true},
+				},
+			},
+		},
+	},
 	{
 		Name:    dispatchArtifact,
 		DocSlug: "artifact",
