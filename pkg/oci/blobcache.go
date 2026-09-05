@@ -262,7 +262,8 @@ func (c *DiskBlobCache) materialize(ctx context.Context, digest, path string, sr
 	}
 	keep = true
 	_ = os.Chmod(path, 0o664)
-	evicted, err := c.enforceBudgetLocked()
+	c.touchLocked(path)
+	evicted, err := c.enforceBudgetLocked(path)
 	c.mu.Unlock()
 	if err != nil {
 		// Eviction is a cache-maintenance concern. The verified blob remains
@@ -306,7 +307,7 @@ type blobCacheEntry struct {
 	modTime int64
 }
 
-func (c *DiskBlobCache) enforceBudgetLocked() (int, error) {
+func (c *DiskBlobCache) enforceBudgetLocked(installedPath string) (int, error) {
 	entries := make([]blobCacheEntry, 0)
 	var total int64
 	err := filepath.WalkDir(c.root, func(path string, d os.DirEntry, walkErr error) error {
@@ -327,6 +328,13 @@ func (c *DiskBlobCache) enforceBudgetLocked() (int, error) {
 			return nil
 		}
 		total += info.Size()
+		// Admission is the newest access, regardless of filesystem timestamp
+		// resolution or clock skew. Count this blob toward the budget, but
+		// do not evict it during its own admission sweep. materialize rejects
+		// oversized blobs, so evicting older entries can still meet the limit.
+		if path == installedPath {
+			return nil
+		}
 		entries = append(entries, blobCacheEntry{path: path, size: info.Size(), modTime: info.ModTime().UnixNano()})
 		return nil
 	})

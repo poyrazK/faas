@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestDiskBlobCacheHitAndDigestVerification(t *testing.T) {
@@ -129,6 +130,19 @@ func TestDiskBlobCacheCoalescesConcurrentMisses(t *testing.T) {
 }
 
 func TestDiskBlobCacheEvictsOldestEntries(t *testing.T) {
+	for _, skewed := range []bool{false, true} {
+		name := "normal timestamps"
+		if skewed {
+			name = "existing entry has newer timestamp"
+		}
+		t.Run(name, func(t *testing.T) {
+			testDiskBlobCacheEviction(t, skewed)
+		})
+	}
+}
+
+func testDiskBlobCacheEviction(t *testing.T, skewed bool) {
+	t.Helper()
 	root := t.TempDir()
 	cache, err := NewDiskBlobCache(root, 5)
 	if err != nil {
@@ -138,8 +152,11 @@ func TestDiskBlobCacheEvictsOldestEntries(t *testing.T) {
 	second := []byte("two")
 	firstDigest := testBlobDigest(first)
 	secondDigest := testBlobDigest(second)
+	var fetches atomic.Int32
 	open := func(digest string, body []byte) {
+		t.Helper()
 		r, err := cache.Open(context.Background(), digest, func(context.Context) (io.ReadCloser, error) {
+			fetches.Add(1)
 			return io.NopCloser(strings.NewReader(string(body))), nil
 		})
 		if err != nil {
@@ -149,10 +166,25 @@ func TestDiskBlobCacheEvictsOldestEntries(t *testing.T) {
 		_ = r.Close()
 	}
 	open(firstDigest, first)
+	if skewed {
+		// Model filesystem timestamp skew without relying on sleeps or the
+		// host filesystem's write timestamp resolution. The newly admitted
+		// blob must survive its own eviction sweep regardless of its mtime.
+		future := time.Now().Add(time.Hour)
+		if err := os.Chtimes(cache.blobPath(firstDigest), future, future); err != nil {
+			t.Fatal(err)
+		}
+	}
 	open(secondDigest, second)
-	hexDigest := strings.TrimPrefix(firstDigest, digestAlgo)
-	if _, err := os.Stat(filepath.Join(root, hexDigest[:2], hexDigest[2:])); err == nil {
-		t.Fatal("oldest blob still present after budget eviction")
+	if _, err := os.Stat(cache.blobPath(firstDigest)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oldest blob stat after budget eviction = %v, want not exist", err)
+	}
+	if _, err := os.Stat(cache.blobPath(secondDigest)); err != nil {
+		t.Fatalf("newly admitted blob missing: %v", err)
+	}
+	open(secondDigest, second)
+	if got := fetches.Load(); got != 2 {
+		t.Fatalf("fetches = %d, want 2 (new blob must remain cached)", got)
 	}
 }
 
