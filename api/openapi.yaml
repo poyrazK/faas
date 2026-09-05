@@ -314,7 +314,7 @@ paths:
               properties:
                 name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
                 scope: { type: string, default: default }
-                region: { type: string, description: Gregale region, not upstream signing region. Omit to use the configured default. }
+                region: { type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.' }
       responses:
         '201':
           description: Bucket created

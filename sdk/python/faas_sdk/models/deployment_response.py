@@ -96,6 +96,8 @@ class DeploymentResponse:
     error_relevant_logs: list[LogExcerpt] | Unset = UNSET
     """Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes
     by the CLI tripwire."""
+    source_root: str | Unset = UNSET
+    """Repository-relative build root used by a workspace context upload; omitted when the archive root is built."""
     has_overrides: bool | Unset = UNSET
     """True when this deployment carries a non-null override_* column set."""
     override_entrypoint: list[str] | Unset = UNSET
@@ -311,6 +313,8 @@ class DeploymentResponse:
             for error_relevant_logs_item_data in self.error_relevant_logs:
                 error_relevant_logs_item = error_relevant_logs_item_data.to_dict()
                 error_relevant_logs.append(error_relevant_logs_item)
+
+        source_root = self.source_root
 
         has_overrides = self.has_overrides
 
@@ -560,6 +564,8 @@ class DeploymentResponse:
             field_dict["error_fix"] = error_fix
         if error_relevant_logs is not UNSET:
             field_dict["error_relevant_logs"] = error_relevant_logs
+        if source_root is not UNSET:
+            field_dict["source_root"] = source_root
         if has_overrides is not UNSET:
             field_dict["has_overrides"] = has_overrides
         if override_entrypoint is not UNSET:
@@ -728,6 +734,8 @@ class DeploymentResponse:
                 error_relevant_logs_item = LogExcerpt.from_dict(error_relevant_logs_item_data)
 
                 error_relevant_logs.append(error_relevant_logs_item)
+
+        source_root = d.pop("source_root", UNSET)
 
         has_overrides = d.pop("has_overrides", UNSET)
 
@@ -1216,6 +1224,7 @@ class DeploymentResponse:
             error_why=error_why,
             error_fix=error_fix,
             error_relevant_logs=error_relevant_logs,
+            source_root=source_root,
             has_overrides=has_overrides,
             override_entrypoint=override_entrypoint,
             override_cmd=override_cmd,
