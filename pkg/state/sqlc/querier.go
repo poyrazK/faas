@@ -664,6 +664,22 @@ type Querier interface {
 	ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error)
 	ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucketsDueParams) ([]ObjectBucket, error)
+	ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32) ([]ObjectBucket, error)
+	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
+	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
+	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
+	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)
+	ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error
+	ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ObjectUsageBucketsRow, error)
+	ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error)
+	ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error
+	ObjectUsageGrantUpsert(ctx context.Context, db DBTX, arg ObjectUsageGrantUpsertParams) error
+	ObjectUsageLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	ObjectUsageReportGet(ctx context.Context, db DBTX, arg ObjectUsageReportGetParams) (ObjectStorageUsageReport, error)
+	ObjectUsageReportHead(ctx context.Context, db DBTX, arg ObjectUsageReportHeadParams) error
+	ObjectUsageReportInsert(ctx context.Context, db DBTX, arg ObjectUsageReportInsertParams) error
+	ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsageReportsParams) ([]ObjectStorageUsageReport, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)

@@ -23,6 +23,10 @@ Architecture and launch boundaries: [ADR-151](adr/151-provider-neutral-object-st
    and credentials still require a restart; the enable flag does not.
 5. Run the qualification checks below before admitting customers.
 
+New signed URLs also require an explicit `accounting` policy, a complete
+inventory baseline, and fresh authoritative provider reports. See below;
+loading the registry and enabling the flag alone is no longer sufficient.
+
 ## Hot enable / disable
 
 The single global runtime-config key `s3_enabled` defaults to **false**, even
@@ -97,6 +101,124 @@ this preview; the UI does not manage historical versions or retention locks.
 Bucket names in Gregale are logical and app/scope-local. Physical names are
 UUID-based to avoid leaking customer identifiers or colliding across providers.
 Only configured region defaults appear in the creation catalog.
+
+## Accounting and safety budgets
+
+The `accounting` object in the same provider-registry JSON sets uniform
+operator limits. It does not add an enable flag or account allowlist. Missing
+or null policy keeps metadata/cleanup usable but blocks new signed URLs.
+Policy changes require restarting API replicas with identical config.
+
+Example safety values **only**, not approved pricing or plan allowances:
+
+```json
+"accounting": {
+  "max_account_bytes": 10737418240,
+  "max_bucket_bytes": 5368709120,
+  "max_account_keys": 100000,
+  "max_monthly_cost_millicents": 500000,
+  "max_monthly_requests": 1000000,
+  "max_monthly_egress_bytes": 10737418240,
+  "max_monthly_authorizations": 100000,
+  "max_report_age_seconds": 3600
+}
+```
+
+Costs use EUR millicents: 1000 millicents = 1 cent. These are ceilings on
+reported upstream cost, not customer invoice rates. Every limit must be
+positive; zero is not an unlimited setting. Report freshness must be 60–86400
+seconds and the key ceiling at most one million.
+
+Before issuing PUT, an account-serialized transaction reserves the maximum
+authorized size for its bucket/key and one key slot. Reissuing the same size
+or a smaller size does not reserve bytes again. The reservation is committed
+before signing and is not refunded on signer errors or lost HTTP responses.
+GET and PUT both consume a separate monthly authorization count, used only
+for issuance abuse protection—not as a count of actual upstream requests.
+
+Capacity is **conservative**, not a bill: the first inventory baseline plus
+per-key grants, or the latest observed bytes/keys, whichever is larger. An
+overwrite of a pre-existing baseline key may reserve its size again. Deleting
+an object, letting a URL expire, or observing an empty bucket does not reclaim
+granted capacity: an accepted in-flight PUT may finish later. Confirmed bucket
+deletion releases capacity; empty/delete/recreate the bucket to reclaim it in
+this version. Do not manually edit counters. A non-destructive quiescence and
+capacity-rebase workflow remains deferred.
+
+Every apid runs a bounded inventory worker at startup and once a minute after
+the previous sweep. It claims up to ten ready buckets, with two-minute leases,
+a 45-second scan deadline and at most 1000 pages of 1000 keys. Buckets are due
+every five minutes. Only complete scans publish a durable observation/sample;
+failed/partial/cyclic scans preserve the last observation. Inventory older
+than 15 minutes blocks new URLs. Large inventories that cannot complete inside
+these bounds fail closed and need a qualified inventory adapter before launch.
+
+The S3 data protocol cannot provide portable request/egress billing. Configure
+each backend's optional `usage_reports_path` to an **absolute, operator-owned
+regular JSON file**, readable by apid but not writable by customer workloads.
+A provider-specific exporter must atomically replace this file with an array
+of `ObjectStorageUsageReport` records from actual provider data. Apid imports
+it each accounting sweep. Files are capped at 4 MiB / 10,000 reports. Keep
+exports limited to the latest cumulative report per account/month/backend.
+Publish the same feed to all API replicas, or configure a designated importer.
+
+Each record includes `account_id`, `backend_id`, `backend_fingerprint`, a stable
+`source`, UTC `period_start` (first of month), `observed_at` (provider coverage
+time, **not export time**), `stored_byte_hours`, actual `request_count`, actual
+`egress_bytes`, and `cost_millicents`. Attribute costs using the catalog's
+physical bucket/account mapping. The source must cover storage, requests,
+egress, and applicable provider charges in the declared EUR cost convention;
+do not import an account-total into each tenant or treat delayed/missing data
+as zero. Neither Gregale's compute MB-seconds nor inventory samples substitute
+for these billing quantities. **No OVH/AWS/R2 billing exporter is bundled yet**;
+the normalized import contract is provider-neutral, and a real exporter is
+still a deployment prerequisite.
+
+All fields are required, including explicit zero measurements. Reports must
+match catalogued backend placement. Identical repeats are harmless;
+conflicting duplicates, future observations, decreasing counters/costs, or
+changed source identity within a month are rejected. Older monthly evidence
+is retained. Corrections reducing totals need a future adjustment workflow.
+For manual import, `POST /v1/admin/object-storage/usage-reports` accepts one
+record using the existing operator session, recent step-up, allowlist and
+Idempotency-Key policy. Normal customer or operator bearer keys cannot import.
+
+`GET /v1/account/object-storage-usage` requires usage-read scope and returns
+observed bytes, reserved capacity, cumulative reported usage/cost, authorization
+count, policy, and `fresh`. It does not expose credentials or backend placement.
+Do not interpret zero counters with `fresh: false` as measured zero usage.
+At month rollover, a fresh new-month report is required rather than silently
+resetting to an unknown zero. Deleted buckets' monthly costs remain counted.
+
+New URLs return 503 `object_storage_usage_stale` when policy or observations
+are unavailable, 402 `object_storage_budget_reached` at cost/request/egress or
+authorization ceilings, and PUT returns 409 `object_storage_capacity_reserved`
+when a capacity reservation would exceed a limit. Limit errors include
+`limit`, `observed`, and a documentation link. Cleanup remains authorized and
+available when budgets or the global flag block new URLs.
+
+Monitor `faas_object_storage_inventory_scans_total{outcome="success|failed"}`,
+inventory-sweep/provider-import warnings, usage freshness and admission errors.
+Logs omit provider error strings, credentials, signed URLs and object keys.
+
+**These are delayed cutoffs, not a hard money cap.** Report latency, sweep
+cadence, up to 15 minutes of URL validity, and already-started transfers permit
+overshoot; there is no bounded monetary overshoot. Stored data continues to
+accrue cost, and permitted cleanup can incur requests after cutoff. Configure
+provider budgets/alerts as an additional layer; do not promise that disabling
+signing stops the provider bill.
+
+Rollout: keep `s3_enabled=false`, apply migrations, deploy every API replica,
+and ensure no old unaccounted URLs or in-flight writes remain before building
+the initial baseline. Disabling alone does not end an in-flight transfer;
+use the qualified provider's quiescence procedure. Configure/verify the real
+usage exporter and explicit limits, confirm fresh observations, then enable.
+Rollback must disable signing first; old binaries bypass these guards.
+Do not drop accounting tables while serving customer storage.
+
+No customer prices, included allowances or invoice lines are introduced.
+Compute billing is unchanged. This accounting milestone is not paid-launch
+approval; see [ADR-153](adr/153-object-storage-accounting.md).
 
 ## Provider configuration
 
@@ -187,14 +309,15 @@ tenant IAM adapter; never hand out the operator-wide credential.
 - Add a second backend and switch the default. Old/new buckets must use their
   respective backends; removing the old config must fail closed.
 - Keep operator monitoring/budgets in place. Defaults are 10 buckets/app and
-  100 MiB/upload, configurable up to 100 and 5 GiB. These do **not** cap total
-  bytes, request count, egress or customer spend. Presign counts cannot meter
-  actual usage. No object-storage prices, allowances or invoice lines ship here.
-- Before paid/general availability, implement durable usage reconciliation,
-  pricing/margin policy, spend/abuse controls, tenant S3 keys if needed, and a
+  100 MiB/upload, configurable up to 100 and 5 GiB. These alone do **not** cap
+  total bytes or costs; configure and qualify the accounting controls above.
+  Presign counts cannot meter actual usage. No object-storage prices,
+  allowances or invoice lines ship here.
+- Before paid/general availability, qualify the real provider usage exporter,
+  pricing/margin policy and budget cutoffs, tenant S3 keys if needed, and a
   coordinated account-deletion workflow. Active buckets block account
   hard-deletion; confirmed-deleted bucket metadata is purged with the account.
   Do not bypass these guards and orphan customer data.
 
 Deferred: native S3 credentials/endpoint, multipart uploads, public hosting,
-lifecycle/version management, bucket-wide byte quotas and automatic migrations.
+lifecycle/version management, non-destructive capacity reclamation and automatic migrations.

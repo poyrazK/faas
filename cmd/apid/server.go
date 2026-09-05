@@ -957,6 +957,8 @@ func (s *server) handler() http.Handler {
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).
 	mux.HandleFunc("GET /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.whoami))))
+	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getObjectStorageUsage))))
+	mux.HandleFunc("POST /v1/admin/object-storage/usage-reports", s.authLimited(s.requireAdminMutation(s.recordObjectStorageUsage)))
 	// IAM-6 (issue #190 / ADR-061, PR 4): active-org whoami. The
 	// route is undocumented in api/openapi.yaml for PR 4 — PR 5
 	// adds the spec coverage + the rest of the /v1/orgs/{slug}/...

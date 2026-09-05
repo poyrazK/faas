@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type fakeObjectProvider struct {
@@ -142,6 +143,7 @@ func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 	if len(a.created) != 2 || len(a.accessed) != 1 || a.accessed[0] != a.created[0] {
 		t.Fatal("failed bucket not cleaned up")
 	}
+	qualifyObjectAccounting(t, e, first.ID)
 	sign := path + "/" + first.ID + "/signed-url"
 	if r := e.do(t, "POST", sign, map[string]any{"method": "PUT", "key": "file", "size_bytes": 101}, nil); r.Code != 400 {
 		t.Fatal(r.Code)
@@ -178,5 +180,29 @@ func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 	}
 	if r := e.do(t, "DELETE", path+"/"+first.ID, nil, headers); r.Code != 403 {
 		t.Fatal("read key deleted", r.Code)
+	}
+}
+
+func qualifyObjectAccounting(t *testing.T, e testEnv, bucket string) {
+	t.Helper()
+	p := api.ObjectStoragePolicy{MaxAccountBytes: 1000, MaxBucketBytes: 500, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 1000, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 1000, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
+	e.s.objectStorage.Accounting = p
+	st := any(e.store).(state.ObjectStorageAccountingStore)
+	ctx := context.Background()
+	if err := st.ClaimObjectInventory(ctx, bucket, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishObjectInventory(ctx, bucket, "fixture", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := st.ObjectUsage(ctx, e.acct.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range snapshot.Buckets {
+		r := api.ObjectStorageUsageReport{AccountID: e.acct.ID, BackendID: b.Bucket.BackendID, BackendFingerprint: b.Bucket.BackendFingerprint, Source: "fixture", PeriodStart: state.ObjectStoragePeriod(time.Now()), ObservedAt: time.Now().Add(-time.Second)}
+		if err := st.RecordObjectUsageReport(ctx, r); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

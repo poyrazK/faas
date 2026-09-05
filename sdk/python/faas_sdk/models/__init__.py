@@ -464,6 +464,10 @@ from .object_sign_request_method import ObjectSignRequestMethod
 from .object_signed_request import ObjectSignedRequest
 from .object_signed_request_headers import ObjectSignedRequestHeaders
 from .object_signed_request_method import ObjectSignedRequestMethod
+from .object_storage_policy import ObjectStoragePolicy
+from .object_storage_usage import ObjectStorageUsage
+from .object_storage_usage_report import ObjectStorageUsageReport
+from .object_storage_usage_response import ObjectStorageUsageResponse
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
@@ -1184,6 +1188,10 @@ __all__ = (
     "ObjectSignedRequestMethod",
     "ObjectSignRequest",
     "ObjectSignRequestMethod",
+    "ObjectStoragePolicy",
+    "ObjectStorageUsage",
+    "ObjectStorageUsageReport",
+    "ObjectStorageUsageResponse",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",

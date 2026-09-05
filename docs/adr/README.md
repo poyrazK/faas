@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 153 | [Direct object storage accounting and safety budgets](153-object-storage-accounting.md) | accepted | S3 accounting milestone; live usage feed and paid pricing remain launch gates |
 | 151 | [Provider-neutral customer object storage](151-provider-neutral-object-storage.md): opt-in managed S3 buckets with durable placement and provider-neutral APIs | accepted for preview | S3 preview milestone; public launch pending billing and backend qualification |
 | 001–010 | Locked v1 decisions | accepted | spec §3 |
 | 011 | Thin dashboard at launch (was gap G3) | accepted | UX spec §11 — landed before M7.5 code |

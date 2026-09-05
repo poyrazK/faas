@@ -433,6 +433,47 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/account/object-storage-usage:
+    get:
+      operationId: getObjectStorageUsage
+      summary: Read object storage accounting and safety limits
+      description: Requires usage read scope. Reservations are capacity commitments, not billed usage. Fresh false blocks new signed URLs.
+      tags: [storage]
+      responses:
+        '200':
+          description: Current account usage; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectStorageUsageResponse' }
+        default:
+          description: Access denied or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/object-storage/usage-reports:
+    post:
+      operationId: recordObjectStorageUsage
+      summary: Import a cumulative provider object storage usage report
+      description: Operator session with recent step-up and Idempotency-Key required. Identical reports are idempotent; conflicting or regressing reports are rejected. Automated exporters use the operator-owned usage_reports_path backend setting.
+      tags: [operator]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Unique operation identifier.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectStorageUsageReport' }
+      responses:
+        '204': { description: Report persisted or identical report already present }
+        default:
+          description: Access denied, invalid or conflicting report, or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/admin/config:
     get:
       tags: [operator]
@@ -11486,6 +11527,56 @@ components:
         default_region: { type: string }
         max_upload_bytes: { type: integer, format: int64 }
         max_buckets_per_app: { type: integer }
+    ObjectStoragePolicy:
+      description: Operator safety limits; zero values mean unconfigured and block signing.
+      type: object
+      required: [max_account_bytes, max_bucket_bytes, max_account_keys, max_monthly_cost_millicents, max_monthly_requests, max_monthly_egress_bytes, max_monthly_authorizations, max_report_age_seconds]
+      properties:
+        max_account_bytes: { type: integer, format: int64, minimum: 0 }
+        max_bucket_bytes: { type: integer, format: int64, minimum: 0 }
+        max_account_keys: { type: integer, format: int64, minimum: 0 }
+        max_monthly_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        max_monthly_requests: { type: integer, format: int64, minimum: 0 }
+        max_monthly_egress_bytes: { type: integer, format: int64, minimum: 0 }
+        max_monthly_authorizations: { type: integer, format: int64, minimum: 0 }
+        max_report_age_seconds: { type: integer, format: int64, minimum: 0 }
+    ObjectStorageUsage:
+      description: Account-wide usage and reserved capacity. Costs are EUR millicents, not a customer invoice.
+      type: object
+      required: [observed_bytes, capacity_bytes, capacity_keys, stored_byte_hours, request_count, egress_bytes, cost_millicents, authorizations, fresh, period_start]
+      properties:
+        observed_bytes: { type: integer, format: int64, minimum: 0 }
+        capacity_bytes: { type: integer, format: int64, minimum: 0 }
+        capacity_keys: { type: integer, format: int64, minimum: 0 }
+        stored_byte_hours: { type: integer, format: int64, minimum: 0 }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        authorizations: { type: integer, format: int64, minimum: 0 }
+        fresh: { type: boolean }
+        period_start: { type: string, format: date-time }
+    ObjectStorageUsageResponse:
+      description: Current UTC-month accounting and operator safety policy.
+      type: object
+      required: [usage, policy]
+      properties:
+        usage: { $ref: '#/components/schemas/ObjectStorageUsage' }
+        policy: { $ref: '#/components/schemas/ObjectStoragePolicy' }
+    ObjectStorageUsageReport:
+      description: Authoritative cumulative provider usage for one account, backend and UTC month. Missing data is not zero; costs are EUR millicents.
+      type: object
+      required: [account_id, backend_id, backend_fingerprint, source, period_start, observed_at, stored_byte_hours, request_count, egress_bytes, cost_millicents]
+      properties:
+        account_id: { type: string, format: uuid }
+        backend_id: { type: string, minLength: 1, maxLength: 63 }
+        backend_fingerprint: { type: string, minLength: 64, maxLength: 64 }
+        source: { type: string, minLength: 1, maxLength: 128 }
+        period_start: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        stored_byte_hours: { type: integer, format: int64, minimum: 0 }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
     ObjectSignRequest:
       description: Exact object operation to authorize for a short time.
       type: object
