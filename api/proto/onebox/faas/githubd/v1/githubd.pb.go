@@ -598,10 +598,11 @@ func (x *Repo) GetPrivate() bool {
 }
 
 type ListInstallableReposRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AccountId      string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	InstallationId int64                  `protobuf:"varint,2,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ListInstallableReposRequest) Reset() {
@@ -639,6 +640,13 @@ func (x *ListInstallableReposRequest) GetAccountId() string {
 		return x.AccountId
 	}
 	return ""
+}
+
+func (x *ListInstallableReposRequest) GetInstallationId() int64 {
+	if x != nil {
+		return x.InstallationId
+	}
+	return 0
 }
 
 type ListInstallableReposResponse struct {
@@ -692,6 +700,7 @@ type BindAppRepoRequest struct {
 	// production_branch defaults to "main" if empty (UX spec §5.2).
 	ProductionBranch string `protobuf:"bytes,3,opt,name=production_branch,json=productionBranch,proto3" json:"production_branch,omitempty"`
 	AccountId        string `protobuf:"bytes,4,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	InstallationId   int64  `protobuf:"varint,5,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -752,6 +761,13 @@ func (x *BindAppRepoRequest) GetAccountId() string {
 		return x.AccountId
 	}
 	return ""
+}
+
+func (x *BindAppRepoRequest) GetInstallationId() int64 {
+	if x != nil {
+		return x.InstallationId
+	}
+	return 0
 }
 
 type BindAppRepoResponse struct {
@@ -1832,18 +1848,20 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x04Repo\x12\x1b\n" +
 	"\tfull_name\x18\x01 \x01(\tR\bfullName\x12%\n" +
 	"\x0edefault_branch\x18\x02 \x01(\tR\rdefaultBranch\x12\x18\n" +
-	"\aprivate\x18\x03 \x01(\bR\aprivate\"<\n" +
+	"\aprivate\x18\x03 \x01(\bR\aprivate\"e\n" +
 	"\x1bListInstallableReposRequest\x12\x1d\n" +
 	"\n" +
-	"account_id\x18\x01 \x01(\tR\taccountId\"R\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12'\n" +
+	"\x0finstallation_id\x18\x02 \x01(\x03R\x0einstallationId\"R\n" +
 	"\x1cListInstallableReposResponse\x122\n" +
-	"\x05repos\x18\x01 \x03(\v2\x1c.onebox.faas.githubd.v1.RepoR\x05repos\"\x9d\x01\n" +
+	"\x05repos\x18\x01 \x03(\v2\x1c.onebox.faas.githubd.v1.RepoR\x05repos\"\xc6\x01\n" +
 	"\x12BindAppRepoRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12$\n" +
 	"\x0erepo_full_name\x18\x02 \x01(\tR\frepoFullName\x12+\n" +
 	"\x11production_branch\x18\x03 \x01(\tR\x10productionBranch\x12\x1d\n" +
 	"\n" +
-	"account_id\x18\x04 \x01(\tR\taccountId\"4\n" +
+	"account_id\x18\x04 \x01(\tR\taccountId\x12'\n" +
+	"\x0finstallation_id\x18\x05 \x01(\x03R\x0einstallationId\"4\n" +
 	"\x13BindAppRepoResponse\x12\x1d\n" +
 	"\n" +
 	"binding_id\x18\x01 \x01(\tR\tbindingId\"L\n" +

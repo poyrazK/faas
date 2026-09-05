@@ -23,7 +23,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
 | [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
-| [`deployment`](#deployment) | Get one deployment (&lt;id&gt; \| set-min-instances &lt;id&gt; --min N) |
+| [`deployment`](#deployment) | Get or wait for one deployment (&lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete) |
 | [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
@@ -59,7 +59,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`rollouts`](#rollouts) | Operator manual rollout recovery (rollouts recover &lt;slug&gt; --action advance\|promote\|abort --reason &lt;text&gt;) |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|rotate) |
-| [`github-webhook-secret`](#github-webhook-secret) | Manage per-tenant GitHub App webhook secrets (admin) |
+| [`github-webhook-secret`](#github-webhook-secret) | Manage legacy installation-scoped webhook secrets (admin) |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]) |
 | [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
 | [`tail`](#tail) | Live tail of the unified event stream |
@@ -634,7 +634,7 @@ List deployments (--limit N | --before C | --all)
 
 ## deployment
 
-Get one deployment (&lt;id&gt; | set-min-instances &lt;id&gt; --min N)
+Get or wait for one deployment (&lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
 
 `gregale deployment [<subcommand>] <id> [--show-scan] [--min <N>]`
 
@@ -642,6 +642,14 @@ Get one deployment (&lt;id&gt; | set-min-instances &lt;id&gt; --min N)
 |---|---|---|
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
+
+### deployment wait
+
+Wait until a deployment is live
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <SECONDS>` | maximum seconds to wait |  |
 
 ### deployment set-min-instances
 
@@ -1318,7 +1326,7 @@ Re-seal one secret under the current host key
 
 ## github-webhook-secret
 
-Manage per-tenant GitHub App webhook secrets (admin)
+Manage legacy installation-scoped webhook secrets (admin)
 
 `gregale github-webhook-secret [<subcommand>]`
 

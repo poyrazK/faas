@@ -437,8 +437,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
-		Short:   "Get one deployment (<id> | set-min-instances <id> --min N)",
+		Short:   "Get or wait for one deployment (<id> | wait <id> | set-min-instances <id>)",
 		Subcommands: []cliSub{
+			{Name: "wait", Short: "Wait until a deployment is live", Flags: []cliFlag{
+				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
+			}},
 			{Name: "set-min-instances", Short: "Set the per-deployment cold-wake floor"},
 		},
 		Positionals: []string{"<id>"},
@@ -924,15 +927,12 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		// PR-D / ADR-012 §7 amendment. Per-tenant GitHub App
-		// webhook secret rotation (admin-scoped). Distinct from
-		// `secrets` because the trust boundary is the GitHub
-		// App install, not the Faas app — the resolver in
-		// pkg/githubd/webhook_secret.go reads this row first
-		// before falling back to the platform secret.
+		// Compatibility surface for installation-scoped secrets used by
+		// legacy non-GitHub senders. Standard GitHub App webhooks use the
+		// single platform App secret documented in ADR-012 §8.
 		Name:    "github-webhook-secret",
 		DocSlug: "github-webhook-secret",
-		Short:   "Manage per-tenant GitHub App webhook secrets (admin)",
+		Short:   "Manage legacy installation-scoped webhook secrets (admin)",
 		Subcommands: []cliSub{
 			{Name: "set", Short: "Rotate the secret for one installation_id"},
 		},

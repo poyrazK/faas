@@ -32,7 +32,7 @@ type appsNewFake struct {
 	listErr error
 }
 
-func (f *appsNewFake) ListInstallableRepos(_ context.Context, _ string) ([]Repo, error) {
+func (f *appsNewFake) ListInstallableRepos(_ context.Context, _ string, _ int64) ([]Repo, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}

@@ -394,6 +394,33 @@ func TestGithubdProxy_FirstDelivery_RecordsRow(t *testing.T) {
 	}
 }
 
+func TestGithubdProxy_Non2xxReleasesReplayClaim(t *testing.T) {
+	webhookdedupe.ResetForTest()
+	secret := []byte("test-webhook-secret")
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		http.Error(w, "rotating secret", http.StatusUnauthorized)
+	}))
+	t.Cleanup(upstream.Close)
+	proxy := newGithubdProxy(upstream.URL, secret, http.NewServeMux(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	body := []byte(`{"ref":"refs/heads/main"}`)
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, githubWebhookPath, bytes.NewReader(body))
+		req.Header.Set("X-Hub-Signature-256", sign(body, secret))
+		req.Header.Set("X-GitHub-Delivery", "delivery-retryable")
+		rr := httptest.NewRecorder()
+		proxy.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d, want 401", i+1, rr.Code)
+		}
+	}
+	if got := hits.Load(); got != 2 {
+		t.Fatalf("upstream hits = %d, want 2 after released claim", got)
+	}
+}
+
 // TestGithubdProxy_RejectsReplay is issue #294 acceptance
 // criterion 4: POST the same X-GitHub-Delivery twice; the second
 // is rejected with 200 (idempotent — GitHub interprets as success)

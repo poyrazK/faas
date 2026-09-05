@@ -133,7 +133,10 @@ jobs:
           # tag in refs/tags/vN to point at this commit, so
           # `uses: .../deploy@v1` resolves to the vendored binary.
           MAJOR="$(echo "$TAG" | cut -d. -f1)"
-          git tag -f "$MAJOR" "$TAG^{commit}"
+          # This checkout is now the release branch HEAD containing the
+          # vendored binary. Point the moving major tag at that commit, not
+          # at the original source tag that triggered this workflow.
+          git tag -f "$MAJOR" HEAD
           git push origin "refs/tags/${MAJOR}" --force
 
       - name: Create GitHub Release
@@ -172,7 +175,6 @@ jobs:
             ```yaml
             - uses: poyrazK/faas/.github/actions/deploy@v1
               with:
-                api-key: ${{ secrets.GREGALE_API_KEY }}
                 app: my-app
             ```
 

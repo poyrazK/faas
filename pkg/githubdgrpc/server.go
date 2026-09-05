@@ -29,8 +29,8 @@ import (
 type Service interface {
 	GetInstallState(accountID string) (InstallState, string, string, error)
 	ExchangeOAuthCode(accountID, code, state string) (installationID, defaultBranch string, err error)
-	ListInstallableRepos(accountID string) ([]Repo, error)
-	BindAppRepo(appID, accountID, repoFullName, productionBranch string) (string, error)
+	ListInstallableRepos(accountID string, installationID int64) ([]Repo, error)
+	BindAppRepo(appID, accountID string, installationID int64, repoFullName, productionBranch string) (string, error)
 	UnbindAppRepo(appID, accountID string) error
 	GetAppBinding(appID, accountID string) (AppBinding, error)
 	CreateDeploymentFromPush(repoFullName, ref, commitSHA, pusher string) (string, string, error)
@@ -154,7 +154,7 @@ func (s *Server) ExchangeOAuthCode(ctx context.Context, req *githubdpb.ExchangeO
 func (s *Server) ListInstallableRepos(ctx context.Context, req *githubdpb.ListInstallableReposRequest) (*githubdpb.ListInstallableReposResponse, error) {
 	const op = "ListInstallableRepos"
 	start := time.Now()
-	repos, err := s.svc.ListInstallableRepos(req.GetAccountId())
+	repos, err := s.svc.ListInstallableRepos(req.GetAccountId(), req.GetInstallationId())
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, toStatusErr(err)
@@ -174,7 +174,7 @@ func (s *Server) ListInstallableRepos(ctx context.Context, req *githubdpb.ListIn
 func (s *Server) BindAppRepo(ctx context.Context, req *githubdpb.BindAppRepoRequest) (*githubdpb.BindAppRepoResponse, error) {
 	const op = "BindAppRepo"
 	start := time.Now()
-	bindingID, err := s.svc.BindAppRepo(req.GetAppId(), req.GetAccountId(), req.GetRepoFullName(), req.GetProductionBranch())
+	bindingID, err := s.svc.BindAppRepo(req.GetAppId(), req.GetAccountId(), req.GetInstallationId(), req.GetRepoFullName(), req.GetProductionBranch())
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, toStatusErr(err)
@@ -402,12 +402,12 @@ func (UnimplementedService) ExchangeOAuthCode(string, string, string) (string, s
 }
 
 // ListInstallableRepos returns Unimplemented. Slice 8 replaces this.
-func (UnimplementedService) ListInstallableRepos(string) ([]Repo, error) {
+func (UnimplementedService) ListInstallableRepos(string, int64) ([]Repo, error) {
 	return nil, status.Error(codes.Unimplemented, "githubd: ListInstallableRepos not yet wired (slice 8)")
 }
 
 // BindAppRepo returns Unimplemented. Slice 8 replaces this.
-func (UnimplementedService) BindAppRepo(string, string, string, string) (string, error) {
+func (UnimplementedService) BindAppRepo(string, string, int64, string, string) (string, error) {
 	return "", status.Error(codes.Unimplemented, "githubd: BindAppRepo not yet wired (slice 8)")
 }
 

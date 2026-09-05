@@ -2,8 +2,9 @@
 
 Drops the githubd systemd unit + example TOML + FAAS_NODE_NAME/
 FAAS_GITHUBD_ROLE drop-ins. Does NOT enable or start the daemon — the
-operator runs `systemctl enable --now faas-githubd` once the GitHub-app
-webhook secret is sealed at `/etc/faas/sealed.env` (gap G2).
+operator runs `systemctl enable --now faas-githubd` once the GitHub App
+credentials and `FAAS_GITHUB_WEBHOOK_SECRET` are provisioned in
+`/etc/faas/secrets/githubd/githubd.env`.
 
 ## Drop-ins
 

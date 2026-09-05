@@ -189,7 +189,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GITHUB_APP_INSTALL_URL", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_GITHUB_APP_KEY_PATH", Owners: []string{"githubd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_GITHUB_APP_REDIRECT_URI", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid)"},
-	{Name: "FAAS_GITHUB_WEBHOOK_SECRET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal)"},
+	{Name: "FAAS_GITHUB_WEBHOOK_SECRET", Owners: []string{"gatewayd-internal", "githubd"}, Source: EnvSourceSecretsEnv, Note: "the same GitHub App webhook secret is delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env"},
 	{Name: "FAAS_GRACE_INTERVAL", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GRYPE_BIN", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GUEST_INIT", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
@@ -372,7 +372,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMM_TLS_CA_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMM_TLS_CERT_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMM_TLS_KEY_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
-	{Name: "FAAS_WEBHOOK_SECRET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal)"},
+	{Name: "FAAS_WEBHOOK_SECRET", Owners: []string{"gatewayd-internal", "githubd"}, Source: EnvSourceSecretsEnv, Note: "deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env"},
 	{Name: "FAAS_WORKFLOWS_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceUnit, Note: "explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch"},
 }
 

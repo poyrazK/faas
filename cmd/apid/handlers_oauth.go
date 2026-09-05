@@ -43,7 +43,6 @@ package main
 import (
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -170,7 +169,11 @@ func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	verified, accountLogin, defaultBranch, err := s.githubd.VerifyInstallation(r.Context(), installationID, expectedLogin)
+	// Confirm that the ID belongs to this GitHub App, then obtain the actual
+	// user-to-installation ownership proof through /user/installations. A direct
+	// login comparison is valid for personal installs but rejects organizations
+	// because their account.login is the organization name.
+	verified, accountLogin, defaultBranch, err := s.githubd.VerifyInstallation(r.Context(), installationID, "")
 	if err != nil {
 		log.Warn("verify installation failed",
 			"account_id", acct.ID,
@@ -222,38 +225,23 @@ func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §11 ownership proof passed AND install exists on
-	// api.github.com. Emit the audit event so the dashboard
+	// The install exists for this App. Emit the audit event so the dashboard
 	// "GitHub linked" line in the security log mirrors the same
 	// trail the Google handler (PR-A) established.
 	acctID := acct.ID
 	s.audit.Emit(r.Context(), "auth.install.verified", &acctID, map[string]any{
 		"install_id":     installationID,
 		"github_login":   expectedLogin,
+		"install_owner":  accountLogin,
 		"default_branch": defaultBranch,
 	})
 
-	// Successful verify — hand the user to the bind picker. We
-	// deliberately don't persist anything yet: the apps row gets
-	// the github_install_id write at the bind step (which also
-	// re-runs the verify-then-uniqueness check via the same Store
-	// method). That way a stale dashboard tab can't accidentally
-	// bind an install the user revoked between the callback and
-	// the bind click.
-	//
-	// Build the redirect target from the parsed int64
-	// (installationID), not the raw query string — that way a
-	// crafted URL like ?installation_id=1%26setup_action=… can't
-	// smuggle an extra query param into the redirect (gosec
-	// G710 open-redirect taint). The dashboard bind picker also
-	// re-validates installationID is a positive int before it
-	// persists anything, defense in depth.
-	q := url.Values{}
-	q.Set("install", strconv.FormatInt(installationID, 10))
-	if defaultBranch != "" {
-		q.Set("default_branch", defaultBranch)
+	// Bind the selected installation into a fresh OAuth state and prove that
+	// this signed-in GitHub user can see it. Only that flow persists the token
+	// and unlocks the repository picker.
+	if !s.redirectToGitHubAuthorization(w, r, installationID) {
+		return
 	}
-	http.Redirect(w, r, "/dashboard/apps/new?"+q.Encode(), http.StatusFound)
 }
 
 // _ keeps slog import live for future structured logging added

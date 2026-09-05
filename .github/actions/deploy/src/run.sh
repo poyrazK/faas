@@ -2,7 +2,7 @@
 # src/run.sh — Gregale deploy action runner (issue #270 / ADR-093).
 #
 # Two sub-commands:
-#   validate — checks that api-key is non-empty and app is non-empty.
+#   validate — checks authentication inputs, app, format, and bundled CLI.
 #   deploy   — invokes the vendored gregale binary, optionally waits
 #              for the deployment to settle, writes outputs to
 #              $GITHUB_OUTPUT.
@@ -37,11 +37,23 @@ cmd_validate() {
     if [ -z "${INPUT_APP:-}" ]; then
         die "missing required input: app"
     fi
-    # api-key is masked by Actions automatically; we just sanity-check
-    # that the env propagation worked.
+	if [[ ! "${INPUT_APP}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+		die "invalid app slug: use letters, numbers, dot, underscore, or hyphen"
+	fi
     if [ -z "${FAAS_TOKEN:-}" ]; then
-        die "missing required input: api-key (FAAS_TOKEN is unset)"
+		if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+			die "authentication unavailable: pass api-key or grant permissions: id-token: write"
+		fi
     fi
+    if [ "${INPUT_FORMAT:-tarball}" != "tarball" ]; then
+        die "unsupported input format: ${INPUT_FORMAT} (only tarball is currently supported)"
+    fi
+	if [ "${INPUT_WAIT:-true}" != "true" ] && [ "${INPUT_WAIT:-true}" != "false" ]; then
+		die "wait must be true or false"
+	fi
+	if [[ ! "${INPUT_WAIT_TIMEOUT:-600}" =~ ^[0-9]+$ ]] || [ "${INPUT_WAIT_TIMEOUT:-600}" -le 0 ]; then
+		die "wait-timeout must be a positive integer"
+	fi
     if [ ! -x "$BIN" ]; then
         die "vendored binary not found at $BIN (action must be released as a tagged version)"
     fi
@@ -56,8 +68,48 @@ cmd_validate() {
     echo "gregale CLI version: $cli_version"
 }
 
+exchange_oidc() {
+	local refresh="${1:-}"
+	if [ "$refresh" != "refresh" ] && [ -n "${FAAS_TOKEN:-}" ]; then
+		return
+	fi
+	if [ "$refresh" = "refresh" ]; then
+		unset FAAS_TOKEN
+	fi
+	local audience="${INPUT_OIDC_AUDIENCE:-gregale}"
+	if [[ ! "$audience" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
+		die "oidc-audience contains unsupported characters"
+	fi
+	local github_response github_jwt exchange_response bearer api_base
+	if ! github_response="$(curl --fail --silent --show-error --get \
+		-H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+		--data-urlencode "audience=${audience}" \
+		"${ACTIONS_ID_TOKEN_REQUEST_URL}")"; then
+		die "could not obtain a GitHub Actions OIDC token"
+	fi
+	github_jwt="$(printf '%s' "$github_response" | grep -oE '"value"[[:space:]]*:[[:space:]]*"[A-Za-z0-9._-]+"' | head -1 | cut -d'"' -f4)"
+	if [ -z "$github_jwt" ]; then
+		die "GitHub OIDC response did not contain a token"
+	fi
+	api_base="${FAAS_API:-https://api.gregale.dev}"
+	api_base="${api_base%/}"
+	if ! exchange_response="$(curl --fail --silent --show-error \
+		-H "Content-Type: application/json" \
+		--data "{\"provider\":\"github\",\"token\":\"${github_jwt}\",\"aud\":\"${audience}\",\"app\":\"${INPUT_APP}\"}" \
+		"${api_base}/v1/auth/oidc/exchange")"; then
+		die "Gregale rejected the GitHub OIDC identity; verify the account trust policy"
+	fi
+	bearer="$(printf '%s' "$exchange_response" | grep -oE '"bearer"[[:space:]]*:[[:space:]]*"fp_oidc_[a-fA-F0-9]+"' | head -1 | cut -d'"' -f4)"
+	if [ -z "$bearer" ]; then
+		die "Gregale OIDC exchange did not return a bearer"
+	fi
+	export FAAS_TOKEN="$bearer"
+	USING_OIDC=true
+}
+
 cmd_deploy() {
     cmd_validate
+	exchange_oidc
 
     local cli_version
     cli_version="$(cat "$VERSION_FILE")"
@@ -101,6 +153,7 @@ cmd_deploy() {
     local dep_json
     if ! dep_json="$(
         "$BIN" deploy --json \
+            --name "$INPUT_APP" \
             --repo "$INPUT_REPO" \
             --ref "$INPUT_REF" \
             "${annotation_args[@]}" \
@@ -137,16 +190,51 @@ cmd_deploy() {
     #    failure path stays distinct (cancelled / timeout vs failed).
     if [ "${INPUT_WAIT:-true}" = "true" ]; then
         local timeout="${INPUT_WAIT_TIMEOUT:-600}"
-        if ! "$BIN" deployment "$dep_id" --wait --json --timeout "$timeout" 2>&1; then
-            # Annotate distinguishes cancelled/timeout from failed.
+        local wait_output="" started now remaining attempt_timeout wait_succeeded=false
+		started="$(date +%s)"
+		while true; do
+			now="$(date +%s)"
+			remaining=$((timeout - now + started))
+			if [ "$remaining" -le 0 ]; then
+				wait_output="Deployment wait timed out after ${timeout}s"
+				break
+			fi
+			attempt_timeout="$remaining"
+			# GitHub assertions and the derived bearer are intentionally short
+			# lived. Poll in bounded slices and renew between slices so a slow
+			# build can still use the customer-facing 10-minute default.
+			if [ "${USING_OIDC:-false}" = "true" ] && [ "$attempt_timeout" -gt 240 ]; then
+				attempt_timeout=240
+			fi
+			if wait_output="$("$BIN" --json deployment wait "$dep_id" --timeout "$attempt_timeout" 2>&1)"; then
+				wait_succeeded=true
+				break
+			fi
+			if ! printf '%s' "$wait_output" | grep -qi 'timed out'; then
+				break
+			fi
+			if [ "${USING_OIDC:-false}" != "true" ]; then
+				break
+			fi
+			exchange_oidc refresh
+		done
+		if [ "$wait_succeeded" != "true" ]; then
             local status="failed"
+			if printf '%s' "$wait_output" | grep -qE '"status"[[:space:]]*:[[:space:]]*"cancelled"'; then
+				status="cancelled"
+			elif printf '%s' "$wait_output" | grep -qE '"status"[[:space:]]*:[[:space:]]*"superseded"'; then
+				status="superseded"
+			elif printf '%s' "$wait_output" | grep -qi 'timed out'; then
+				status="timeout"
+			fi
             echo "status=$status" >> "$GITHUB_OUTPUT"
-            die "deployment $dep_id did not become ready within ${timeout}s"
+			echo "$wait_output" > "${RUNNER_TEMP:-/tmp}/gregale-deploy-action.stderr"
+			die "deployment $dep_id finished with status $status"
         fi
+		echo "status=live" >> "$GITHUB_OUTPUT"
+	else
+		echo "status=queued" >> "$GITHUB_OUTPUT"
     fi
-
-    # 5. Final state.
-    echo "status=ready" >> "$GITHUB_OUTPUT"
 }
 
 case "${1:-}" in

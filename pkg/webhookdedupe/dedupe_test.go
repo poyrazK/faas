@@ -75,8 +75,7 @@ func TestReleaseReplay_AllowsRetryAfterFailedApplication(t *testing.T) {
 }
 
 // TestCheckReplay_DeliveryAfterTTL_Fresh covers the TTL boundary:
-// a delivery whose stored expires_at is older than the cutoff
-// (computed as now-TTL inside CheckReplay) is treated as fresh.
+// a delivery whose stored expires_at is older than now is treated as fresh.
 // We pin the clock to seed an entry, advance, and re-check.
 func TestCheckReplay_DeliveryAfterTTL_Fresh(t *testing.T) {
 	resetStoreForTest(t)
@@ -86,7 +85,7 @@ func TestCheckReplay_DeliveryAfterTTL_Fresh(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	// Advance the clock past the TTL window so the entry is stale.
-	nowFunc = func() time.Time { return time.Now().Add(2 * TTL) }
+	nowFunc = func() time.Time { return time.Now().Add(TTL + time.Second) }
 	if err := CheckReplay(context.Background(), ProviderGitHub, "stale"); err != nil {
 		t.Fatalf("delivery after TTL should be fresh; err=%v", err)
 	}

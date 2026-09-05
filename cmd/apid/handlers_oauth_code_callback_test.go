@@ -69,10 +69,10 @@ func (f *oauthCodeCallbackFake) ExchangeOAuthCode(_ context.Context, accountID, 
 	f.gotCalls++
 	return f.installID, f.defaultBranch, f.exchangeErr
 }
-func (f *oauthCodeCallbackFake) ListInstallableRepos(context.Context, string) ([]Repo, error) {
+func (f *oauthCodeCallbackFake) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
 	return nil, errGithubdNotReady
 }
-func (f *oauthCodeCallbackFake) BindAppRepo(context.Context, string, string, string, string) (string, error) {
+func (f *oauthCodeCallbackFake) BindAppRepo(context.Context, string, string, int64, string, string) (string, error) {
 	return "", errGithubdNotReady
 }
 func (f *oauthCodeCallbackFake) UnbindAppRepo(context.Context, string, string) error {

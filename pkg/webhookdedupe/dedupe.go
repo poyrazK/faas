@@ -129,7 +129,6 @@ var nowFunc = time.Now
 // single daemon.
 func CheckReplay(_ context.Context, provider, deliveryID string) error {
 	now := nowFunc()
-	cutoff := now.Add(-TTL)
 	key := dedupeKey{provider: provider, deliveryID: deliveryID}
 	expiresAt := now.Add(TTL)
 	// LoadOrStore is the atomic check-then-set: the first writer
@@ -138,7 +137,7 @@ func CheckReplay(_ context.Context, provider, deliveryID string) error {
 	// must inspect the entry's expires_at to decide replay vs.
 	// expired-overwrite.
 	if actual, loaded := store.LoadOrStore(key, expiresAt); loaded {
-		if exp, ok := actual.(time.Time); ok && exp.After(cutoff) {
+		if exp, ok := actual.(time.Time); ok && exp.After(now) {
 			return &Replay{Provider: provider, DeliveryID: deliveryID}
 		}
 		// Loaded but expired — overwrite with the fresh

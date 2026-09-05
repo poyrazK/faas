@@ -160,6 +160,7 @@ func (g *githubdProxy) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	upstream.Path = r.URL.Path
 	req2, err := http.NewRequest(http.MethodPost, upstream.String(), bytes.NewReader(body))
 	if err != nil {
+		webhookdedupe.ReleaseReplay(r.Context(), webhookdedupe.ProviderGitHub, deliveryID)
 		g.log.Error("githubd proxy build upstream request", "err", err)
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
@@ -171,6 +172,7 @@ func (g *githubdProxy) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := g.transport.RoundTrip(req2)
 	if err != nil {
+		webhookdedupe.ReleaseReplay(r.Context(), webhookdedupe.ProviderGitHub, deliveryID)
 		g.log.Error("githubd proxy upstream error", "err", err)
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -178,6 +180,13 @@ func (g *githubdProxy) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		// The edge claim is only final after githubd durably accepts the
+		// delivery. Release every non-2xx response so a secret-rotation race or
+		// transient validation/storage failure does not turn GitHub's retry into
+		// a false replay acknowledgement.
+		webhookdedupe.ReleaseReplay(r.Context(), webhookdedupe.ProviderGitHub, deliveryID)
+	}
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)

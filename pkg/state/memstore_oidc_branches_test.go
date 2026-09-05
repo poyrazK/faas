@@ -426,3 +426,46 @@ func TestAccountByOIDCSubject_TrustPolicyMatch(t *testing.T) {
 		t.Errorf("AccountByOIDCSubject(dangling): err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestAccountByOIDCSubject_GitHubBindingBootstrap(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	seed := func(email, slug string, installID int64) Account {
+		acct, err := m.CreateAccount(ctx, email, api.PlanHobby)
+		if err != nil {
+			t.Fatalf("CreateAccount(%s): %v", email, err)
+		}
+		app, err := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: slug})
+		if err != nil {
+			t.Fatalf("CreateApp(%s): %v", slug, err)
+		}
+		if err := m.UpsertGitHubInstall(ctx, GitHubInstall{
+			AccountID: acct.ID, InstallationID: installID, AuditGithubLogin: "octocat",
+		}); err != nil {
+			t.Fatalf("UpsertGitHubInstall(%s): %v", slug, err)
+		}
+		if err := m.UpsertGithubInstallBinding(ctx, GitHubBinding{
+			AppID: app.ID, AccountID: acct.ID, BindingID: "bind-" + slug,
+			InstallID: installID, RepoFullName: "OctoCat/Hello", ProductionBranch: "main",
+		}); err != nil {
+			t.Fatalf("UpsertGithubInstallBinding(%s): %v", slug, err)
+		}
+		return acct
+	}
+
+	first := seed("oidc-github-a-"+uuid.NewString()+"@example.com", "oidc-gh-a-"+uuid.NewString(), 101)
+	resolved, err := m.AccountByOIDCSubject(ctx, githubActionsOIDCIssuer,
+		"repo:octocat/hello:environment:production")
+	if err != nil {
+		t.Fatalf("AccountByOIDCSubject(binding bootstrap): %v", err)
+	}
+	if resolved.ID != first.ID {
+		t.Fatalf("resolved account %q, want %q", resolved.ID, first.ID)
+	}
+
+	seed("oidc-github-b-"+uuid.NewString()+"@example.com", "oidc-gh-b-"+uuid.NewString(), 202)
+	if _, err := m.AccountByOIDCSubject(ctx, githubActionsOIDCIssuer,
+		"repo:octocat/hello:environment:production"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ambiguous binding: got %v, want ErrNotFound", err)
+	}
+}

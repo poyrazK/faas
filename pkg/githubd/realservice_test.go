@@ -83,7 +83,7 @@ func newTestRealService(t *testing.T, accountID string) *RealService {
 }
 
 // memStoreInstalls is the in-memory StoreInstalls test double.
-// Mirrors MemStore's behavior (map keyed by accountID) so unit
+// Mirrors MemStore's multi-install behavior so unit
 // tests don't need a Postgres round-trip. Used by
 // ensureInstallToken's rehydrate tests.
 type memStoreInstalls struct {
@@ -104,7 +104,8 @@ func (m *memStoreInstalls) Upsert(_ context.Context, inst state.GitHubInstall) e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.items[inst.AccountID] = inst
+	inst.SealedAt = time.Now()
+	m.items[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
 }
 
@@ -114,7 +115,22 @@ func (m *memStoreInstalls) ForAccount(_ context.Context, accountID string) (stat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	inst, ok := m.items[accountID]
+	var newest state.GitHubInstall
+	for _, inst := range m.items {
+		if inst.AccountID == accountID && (newest.AccountID == "" || inst.SealedAt.After(newest.SealedAt)) {
+			newest = inst
+		}
+	}
+	if newest.AccountID == "" {
+		return state.GitHubInstall{}, state.ErrNotFound
+	}
+	return newest, nil
+}
+
+func (m *memStoreInstalls) ForAccountInstallation(_ context.Context, accountID string, installationID int64) (state.GitHubInstall, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.items[accountID+"\x00"+strconv.FormatInt(installationID, 10)]
 	if !ok {
 		return state.GitHubInstall{}, state.ErrNotFound
 	}
@@ -125,7 +141,7 @@ func (m *memStoreInstalls) ForAccount(_ context.Context, accountID string) (stat
 
 func TestRealService_BindAndLookup(t *testing.T) {
 	svc := newTestRealService(t, "acct-1")
-	id, err := svc.BindAppRepo("app-1", "acct-1", "octo/api", "main")
+	id, err := svc.BindAppRepo("app-1", "acct-1", 1, "octo/api", "main")
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -149,7 +165,7 @@ func TestRealService_BindAndLookup(t *testing.T) {
 
 func TestRealService_BindDefaultsToMain(t *testing.T) {
 	svc := newTestRealService(t, "acct-1")
-	if _, err := svc.BindAppRepo("app-2", "acct-1", "octo/api", ""); err != nil {
+	if _, err := svc.BindAppRepo("app-2", "acct-1", 1, "octo/api", ""); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := svc.GetAppBinding("app-2", "acct-1")
@@ -160,7 +176,7 @@ func TestRealService_BindDefaultsToMain(t *testing.T) {
 
 func TestRealService_UnbindRemovesBinding(t *testing.T) {
 	svc := newTestRealService(t, "acct-1")
-	if _, err := svc.BindAppRepo("app-3", "acct-1", "octo/api", "main"); err != nil {
+	if _, err := svc.BindAppRepo("app-3", "acct-1", 1, "octo/api", "main"); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.UnbindAppRepo("app-3", "acct-1"); err != nil {
@@ -330,8 +346,8 @@ func TestRealService_ExchangeOAuthCode_TransitFailureReturnsErr(t *testing.T) {
 }
 
 // TestRealService_ExchangeOAuthCode_AlreadyInstalledUpserts pins
-// the ON CONFLICT DO UPDATE path: a second call with a different
-// installation_id overwrites the first row.
+// the multi-install path: a second call with a different selected
+// installation_id preserves both rows and makes the newer one current.
 func TestRealService_ExchangeOAuthCode_AlreadyInstalledUpserts(t *testing.T) {
 	ident, recipient := newTestAgeKeypair(t)
 	var hitCount atomic.Int64
@@ -375,10 +391,10 @@ func TestRealService_ExchangeOAuthCode_AlreadyInstalledUpserts(t *testing.T) {
 	istore := newMemStoreInstalls()
 	svc := NewRealService(auth, NewTokenCache(auth, 5*time.Minute), nil, newMemBindingsStore(), istore, recipient, ident, nil)
 
-	if _, _, err := svc.ExchangeOAuthCode("acct-1", "code-1", "state-1"); err != nil {
+	if _, _, err := svc.ExchangeOAuthCode("acct-1", "code-1", "state.1"); err != nil {
 		t.Fatalf("first exchange: %v", err)
 	}
-	if _, _, err := svc.ExchangeOAuthCode("acct-1", "code-2", "state-2"); err != nil {
+	if _, _, err := svc.ExchangeOAuthCode("acct-1", "code-2", "state.2"); err != nil {
 		t.Fatalf("second exchange: %v", err)
 	}
 	got, err := istore.ForAccount(context.Background(), "acct-1")
@@ -386,7 +402,10 @@ func TestRealService_ExchangeOAuthCode_AlreadyInstalledUpserts(t *testing.T) {
 		t.Fatalf("store read: %v", err)
 	}
 	if got.InstallationID != 2 {
-		t.Errorf("installation_id = %d, want 2 (upsert overwrote)", got.InstallationID)
+		t.Errorf("installation_id = %d, want 2 (newest install)", got.InstallationID)
+	}
+	if _, err := istore.ForAccountInstallation(context.Background(), "acct-1", 1); err != nil {
+		t.Errorf("first installation was not preserved: %v", err)
 	}
 }
 
@@ -582,7 +601,7 @@ func TestRealService_BindAppRepo_ColdStart(t *testing.T) {
 	auth := newTestAppAuth(t, "100", "http://unused")
 	svc := NewRealService(auth, NewTokenCache(auth, 5*time.Minute), nil, newMemBindingsStore(), istore, recipient, ident, nil)
 
-	bid, err := svc.BindAppRepo("app-1", "acct-1", "octo/api", "main")
+	bid, err := svc.BindAppRepo("app-1", "acct-1", 7777, "octo/api", "main")
 	if err != nil {
 		t.Fatalf("BindAppRepo cold-start: %v", err)
 	}
@@ -614,7 +633,7 @@ func TestRealService_WriteCheckRequiresConfig(t *testing.T) {
 
 func TestRealService_ListInstallableReposRequiresAuth(t *testing.T) {
 	svc := newTestRealService(t, "")
-	_, err := svc.ListInstallableRepos("acct-1")
+	_, err := svc.ListInstallableRepos("acct-1", 42)
 	if err == nil {
 		t.Error("nil Auth should error")
 	}

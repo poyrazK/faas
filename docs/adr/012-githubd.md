@@ -69,3 +69,14 @@
     doesn't support per-webhook secrets — the secret is the App
     setting, not the event. The rotation posture is operator-driven,
     not rolling.
+
+## §8 App-level webhook secret correction (2026-09-05)
+
+GitHub App webhook deliveries do not carry a custom installation-secret
+selector and GitHub configures one webhook secret for the App. Section 7's
+per-installation design therefore cannot authenticate normal GitHub traffic.
+The load-bearing path now uses the same `FAAS_GITHUB_WEBHOOK_SECRET` in
+`gatewayd-internal` and `githubd`; the installation-scoped resolver and admin
+command remain compatibility-only for non-GitHub senders that supply an
+explicit installation header. See the rotation runbook for the coordinated
+App-secret procedure.

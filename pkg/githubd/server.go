@@ -30,6 +30,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -75,14 +76,21 @@ type Server struct {
 	// Log receives structured events from both listeners.
 	Log *slog.Logger
 
-	// SecretResolver is the per-tenant webhook secret resolver
-	// (PR-D / ADR-012 §7 amendment). When non-nil, the
-	// WebhookLoopbackHandler uses it to look up the secret by
-	// X-GitHub-Installation-id header. When nil, the daemon
-	// falls back to the platform-wide FAAS_GITHUB_WEBHOOK_SECRET
-	// env, mirroring the gatewayd-internal proxy's behaviour.
-	// Resolved once at boot via NewPGWebhookSecretResolver.
+	// SecretResolver supports legacy private senders that attach an
+	// X-GitHub-Installation-id header. Normal GitHub App deliveries use the
+	// App-level WebhookSecret below because GitHub cannot select a secret by
+	// installation before signing the request.
 	SecretResolver WebhookSecretResolver
+
+	// WebhookSecret is the GitHub App-level webhook secret. GitHub signs every
+	// installation delivery with this one secret and does not send an
+	// installation-id header. SecretResolver remains as a compatibility
+	// fallback for older private senders.
+	WebhookSecret []byte
+
+	// Deliveries is the durable delivery inbox. When wired, the HTTP handler
+	// acknowledges after Enqueue and the worker performs fetch/scan/build work.
+	Deliveries WebhookDeliveryStore
 
 	// ReadyFunc + ReasonFunc are the /readyz hooks (issue #571
 	// PR-A2). Wired by cmd/githubd/main.go to
@@ -230,6 +238,9 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 			errc <- fmt.Errorf("githubd HTTP serve: %w", err)
 		}
 	}()
+	if s.Deliveries != nil {
+		go RunWebhookDeliveryWorker(ctx, s.Deliveries, s.Service, s.Log)
+	}
 	//nolint:gosec // shutdown ctx must outlive caller ctx (net/http Shutdown contract).
 	go func() {
 		<-ctx.Done()
@@ -313,19 +324,73 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 		observe(err)
 		return
 	}
-	// Re-verify the HMAC. The gatewayd-internal proxy already did this,
-	// but a misconfigured proxy (no secret) must NOT bypass the
-	// daemon-side check. The per-tenant secret comes from
-	// s.SecretResolver (PR-D / ADR-012 §7), which is wired at
-	// boot via cmd/githubd/main.go.
+	// Re-verify the HMAC. The gateway proxy already did this, but a
+	// misconfigured proxy must not bypass the daemon-side check. Standard
+	// GitHub App deliveries use one App-level secret; the scoped resolver is
+	// retained only for legacy private senders.
 	sig := r.Header.Get("X-Hub-Signature-256")
-	secret := webhookSecretFromHeader(r.Context(), r, s.SecretResolver)
+	secret := s.WebhookSecret
+	if len(secret) == 0 {
+		secret = webhookSecretFromHeader(r.Context(), r, s.SecretResolver)
+	}
 	if secret == nil || !verifyOrLog(s, body, sig, secret) {
 		http.Error(w, "signature verification failed", http.StatusUnauthorized)
 		observe(errors.New("githubd: webhook signature invalid"))
 		return
 	}
+	eventType := r.Header.Get("X-GitHub-Event")
+	if eventType == "ping" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		observe(nil)
+		return
+	}
+	if eventType != "" && eventType != "push" && eventType != "pull_request" {
+		http.Error(w, "unsupported event", http.StatusBadRequest)
+		observe(errors.New("githubd: unsupported webhook event"))
+		return
+	}
+	if s.Deliveries != nil {
+		deliveryID := r.Header.Get("X-GitHub-Delivery")
+		if eventType == "" || deliveryID == "" {
+			http.Error(w, "missing GitHub event or delivery id", http.StatusBadRequest)
+			observe(errors.New("githubd: missing webhook metadata"))
+			return
+		}
+		inserted, enqueueErr := s.Deliveries.Enqueue(r.Context(), WebhookDelivery{
+			DeliveryID: deliveryID,
+			EventType:  eventType,
+			Payload:    body,
+		})
+		if enqueueErr != nil {
+			s.Log.Error("githubd webhook enqueue", "err", enqueueErr)
+			http.Error(w, "internal", http.StatusInternalServerError)
+			observe(enqueueErr)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		if inserted {
+			_, _ = w.Write([]byte(`{"status":"accepted"}`))
+		} else {
+			_, _ = w.Write([]byte(`{"status":"duplicate"}`))
+		}
+		observe(nil)
+		return
+	}
+	// Compatibility path for unit tests and deliberately store-less
+	// embeddings. Production always wires Deliveries.
+	if eventType == "pull_request" {
+		result, err := s.Service.handlePullRequest(r.Context(), body)
+		s.writeWebhookResult(w, result, err, observe)
+		return
+	}
 	result, err := s.Service.HandlePushRequest(r.Context(), body)
+	s.writeWebhookResult(w, result, err, observe)
+}
+
+func (s *Server) writeWebhookResult(w http.ResponseWriter, result reconcile.Result, err error, observe func(error)) {
 	if err != nil {
 		if IsNoBinding(err) {
 			// 200 + ignored payload — the push doesn't apply to
@@ -427,8 +492,8 @@ func bufErrTooLarge(err error) bool {
 	return err != nil && (err.Error() == "http: request body too large")
 }
 
-// webhookSecretFromHeader is the load-bearing per-tenant secret
-// seam (PR-D / ADR-012 §7 amendment). Looks up the bytea secret
+// webhookSecretFromHeader is the legacy installation-scoped secret
+// seam. Looks up the bytea secret
 // for the given installation via the configured WebhookSecretResolver
 // (production: PGWebhookSecretResolver). When the resolver is nil,
 // returns nil — the verify step short-circuits, the webhook is
@@ -439,10 +504,8 @@ func bufErrTooLarge(err error) bool {
 // Returns nil (fail-closed) when:
 //   - The X-GitHub-Installation-id header is missing or zero.
 //   - The resolver returns errSecretNotFound (no row for this install).
-//     The caller may fall back to the platform-wide
-//     FAAS_GITHUB_WEBHOOK_SECRET env; PR-D's default is to fall back
-//     but the runbook at docs/runbooks/GithubWebhookSecretRotation.md
-//     walks the per-tenant rotation.
+//     Normal GitHub App traffic is authenticated by WebhookSecret before this
+//     compatibility path is considered.
 //   - The resolver returns any other error (DB outage). The on-call
 //     sees `githubd_webhook_secret_total{status="db_error"}` spike.
 func webhookSecretFromHeader(ctx context.Context, r *http.Request, resolver WebhookSecretResolver) []byte {
