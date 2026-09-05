@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -58,13 +59,11 @@ func newMetricsDiscoveryMetrics(registry *prometheus.Registry, prefix string) *m
 		}, []string{"job"}),
 	}
 
-	registry.MustRegister(
-		m.requests,
-		m.registryNodes,
-		m.targets,
-		m.invalidTargets,
-		m.lastSuccess,
-	)
+	m.requests = registerMetricsDiscoveryCounterVec(registry, m.requests)
+	m.registryNodes = registerMetricsDiscoveryGaugeVec(registry, m.registryNodes)
+	m.targets = registerMetricsDiscoveryGaugeVec(registry, m.targets)
+	m.invalidTargets = registerMetricsDiscoveryGaugeVec(registry, m.invalidTargets)
+	m.lastSuccess = registerMetricsDiscoveryGaugeVec(registry, m.lastSuccess)
 	for _, job := range metricsDiscoveryJobs {
 		for _, outcome := range metricsDiscoveryOutcomes {
 			m.requests.WithLabelValues(job, outcome)
@@ -75,6 +74,34 @@ func newMetricsDiscoveryMetrics(registry *prometheus.Registry, prefix string) *m
 		m.lastSuccess.WithLabelValues(job)
 	}
 	return m
+}
+
+func registerMetricsDiscoveryCounterVec(registry *prometheus.Registry, candidate *prometheus.CounterVec) *prometheus.CounterVec {
+	if err := registry.Register(candidate); err == nil {
+		return candidate
+	} else {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if errors.As(err, &alreadyRegistered) {
+			if existing, ok := alreadyRegistered.ExistingCollector.(*prometheus.CounterVec); ok {
+				return existing
+			}
+		}
+		panic(err)
+	}
+}
+
+func registerMetricsDiscoveryGaugeVec(registry *prometheus.Registry, candidate *prometheus.GaugeVec) *prometheus.GaugeVec {
+	if err := registry.Register(candidate); err == nil {
+		return candidate
+	} else {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if errors.As(err, &alreadyRegistered) {
+			if existing, ok := alreadyRegistered.ExistingCollector.(*prometheus.GaugeVec); ok {
+				return existing
+			}
+		}
+		panic(err)
+	}
 }
 
 func (m *metricsDiscoveryMetrics) request(job, outcome string) {
