@@ -11,6 +11,7 @@ export type OperatorRuntimeConfigRevision = {
   scope: 'global' | 'control_plane' | 'daemon' | 'node';
   scope_id: string;
   version: number;
+  rollout_percent: number;
   old_value: any;
   new_value: any;
   actor_id?: string;

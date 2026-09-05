@@ -19,13 +19,29 @@ export class OperatorService {
    * @returns any Runtime configuration catalog
    * @throws ApiError
    */
-  public static listOperatorRuntimeConfig(): CancelablePromise<{
+  public static listOperatorRuntimeConfig({
+    scope = 'global',
+    scopeId,
+  }: {
+    /**
+     * Scope to inspect; defaults to the global control-plane value.
+     */
+    scope?: 'global' | 'control_plane' | 'daemon' | 'node',
+    /**
+     * Target identifier for the selected control-plane, daemon, or node scope.
+     */
+    scopeId?: string,
+  }): CancelablePromise<{
     items: Array<OperatorRuntimeConfig>;
     generated_at: string;
   }> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/admin/config',
+      query: {
+        'scope': scope,
+        'scope_id': scopeId,
+      },
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
@@ -57,6 +73,9 @@ export class OperatorService {
       value: any;
       reason: string;
       expected_version?: number;
+      scope?: 'global' | 'control_plane' | 'daemon' | 'node';
+      scope_id?: string;
+      rollout_percent?: number;
     },
   }): CancelablePromise<OperatorRuntimeConfig | OperatorRuntimeConfigOperation> {
     return __request(OpenAPI, {
@@ -151,6 +170,8 @@ export class OperatorService {
   public static listOperatorRuntimeConfigRevisions({
     key,
     limit = 50,
+    scope = 'global',
+    scopeId,
   }: {
     /**
      * Catalog key whose history should be returned.
@@ -160,6 +181,14 @@ export class OperatorService {
      * Maximum number of revisions to return.
      */
     limit?: number,
+    /**
+     * Scope whose history should be returned.
+     */
+    scope?: 'global' | 'control_plane' | 'daemon' | 'node',
+    /**
+     * Target identifier for the selected revision scope.
+     */
+    scopeId?: string,
   }): CancelablePromise<{
     items: Array<OperatorRuntimeConfigRevision>;
   }> {
@@ -171,6 +200,8 @@ export class OperatorService {
       },
       query: {
         'limit': limit,
+        'scope': scope,
+        'scope_id': scopeId,
       },
       errors: {
         401: `code: unauthorized`,

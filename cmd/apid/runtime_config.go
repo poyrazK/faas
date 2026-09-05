@@ -82,6 +82,12 @@ type runtimeConfigManager struct {
 	versions map[string]int64
 	defs     map[string]runtimeConfigDefinition
 	getenv   func(string) string
+	consumer string
+	// Scoped rows have independent version sequences. Keep a source watermark
+	// so switching from a newer global row to an older, higher-precedence
+	// control-plane row is still applied.
+	targetVersions map[string]int64
+	selectedTarget map[string]string
 }
 
 func newRuntimeConfigManager(getenv func(string) string) *runtimeConfigManager {
@@ -89,10 +95,13 @@ func newRuntimeConfigManager(getenv func(string) string) *runtimeConfigManager {
 		getenv = os.Getenv
 	}
 	m := &runtimeConfigManager{
-		values:   make(map[string]json.RawMessage),
-		versions: make(map[string]int64),
-		defs:     make(map[string]runtimeConfigDefinition),
-		getenv:   getenv,
+		values:         make(map[string]json.RawMessage),
+		versions:       make(map[string]int64),
+		defs:           make(map[string]runtimeConfigDefinition),
+		getenv:         getenv,
+		consumer:       "apid",
+		targetVersions: make(map[string]int64),
+		selectedTarget: make(map[string]string),
 	}
 	for _, def := range runtimeConfigCatalog {
 		m.defs[def.Key] = def
@@ -255,20 +264,79 @@ func (m *runtimeConfigManager) applyVersion(key string, value json.RawMessage, v
 	return true, nil
 }
 
+func (m *runtimeConfigManager) applyScopedVersion(row state.RuntimeConfig) (bool, error) {
+	def, ok := m.Definition(row.Key)
+	if !ok {
+		return false, fmt.Errorf("unknown runtime config key %q", row.Key)
+	}
+	if err := validateRuntimeConfigValue(def, row.DesiredValue); err != nil {
+		return false, err
+	}
+	targetKey := row.Key + "\x00" + string(row.Scope) + "\x00" + row.ScopeID
+	m.mu.Lock()
+	if m.targetVersions == nil {
+		m.targetVersions = make(map[string]int64)
+	}
+	if m.selectedTarget == nil {
+		m.selectedTarget = make(map[string]string)
+	}
+	if m.selectedTarget[row.Key] == targetKey && row.Version <= m.targetVersions[targetKey] {
+		m.mu.Unlock()
+		return false, nil
+	}
+	m.values[row.Key] = append(json.RawMessage(nil), row.DesiredValue...)
+	if row.Version > m.versions[row.Key] {
+		m.versions[row.Key] = row.Version
+	}
+	m.targetVersions[targetKey] = row.Version
+	m.selectedTarget[row.Key] = targetKey
+	if row.Key == runtimeConfigHSTS {
+		var enabled bool
+		if err := json.Unmarshal(row.DesiredValue, &enabled); err == nil {
+			httpsec.SetHSTSEnabled(enabled)
+		}
+	}
+	m.mu.Unlock()
+	return true, nil
+}
+
 func (m *runtimeConfigManager) reconcile(ctx context.Context, store state.Store) error {
-	rows, err := store.ListRuntimeConfigs(ctx, state.RuntimeConfigScopeGlobal, "")
+	rows, err := store.ListRuntimeConfigs(ctx, "", "")
 	if err != nil {
 		return err
 	}
-	var firstStoreErr error
+	selected := make(map[string]state.RuntimeConfig)
+	selectedRank := make(map[string]int)
 	for _, row := range rows {
+		if (row.ApplyMode != state.RuntimeConfigApplyHot && row.Status != state.RuntimeConfigApplied) || row.RolloutPercent < 100 {
+			// apid is the control-plane singleton in this rollout slice. A
+			// percentage canary is intentionally reserved for daemon-scoped
+			// rows so the control plane never advertises a partially applied
+			// value to the fleet.
+			continue
+		}
+		if row.Scope != state.RuntimeConfigScopeGlobal &&
+			(row.Scope != state.RuntimeConfigScopeControlPlane || row.ScopeID != m.consumer) {
+			continue
+		}
+		rank := 1
+		if row.Scope == state.RuntimeConfigScopeControlPlane {
+			rank = 2
+		}
+		if rank > selectedRank[row.Key] {
+			selected[row.Key] = row
+			selectedRank[row.Key] = rank
+		}
+	}
+	var firstStoreErr error
+	for _, row := range selected {
 		// A non-hot row is only effective after its durable apply
 		// operation reaches a terminal success. Pending/failed/blocked
 		// desired values must not become live merely because apid restarted.
 		if row.ApplyMode != state.RuntimeConfigApplyHot && row.Status != state.RuntimeConfigApplied {
 			continue
 		}
-		applied, applyErr := m.applyVersion(row.Key, row.DesiredValue, row.Version)
+		applied, applyErr := m.applyScopedVersion(row)
 		if applyErr != nil {
 			// Invalid durable data must become visible as a failed setting,
 			// not disappear into a retry loop. The process keeps serving on

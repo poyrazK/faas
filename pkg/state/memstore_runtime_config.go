@@ -56,6 +56,13 @@ func (m *MemStore) UpsertRuntimeConfig(_ context.Context, update RuntimeConfigUp
 	if update.ApplyMode == "" {
 		update.ApplyMode = RuntimeConfigApplyHot
 	}
+	rolloutPercent := 100
+	if update.RolloutPercent != nil {
+		rolloutPercent = *update.RolloutPercent
+	}
+	if rolloutPercent < 0 || rolloutPercent > 100 {
+		return RuntimeConfig{}, fmt.Errorf("state: runtime config rollout percent must be between 0 and 100")
+	}
 	if update.DesiredValue == nil || !json.Valid(update.DesiredValue) {
 		return RuntimeConfig{}, fmt.Errorf("state: runtime config value is invalid json")
 	}
@@ -84,6 +91,7 @@ func (m *MemStore) UpsertRuntimeConfig(_ context.Context, update RuntimeConfigUp
 	}
 	row.DesiredValue = append(json.RawMessage(nil), update.DesiredValue...)
 	row.EffectiveValue = nil
+	row.RolloutPercent = rolloutPercent
 	row.ApplyMode = update.ApplyMode
 	row.Status = RuntimeConfigPending
 	row.LastError = ""
@@ -95,9 +103,10 @@ func (m *MemStore) UpsertRuntimeConfig(_ context.Context, update RuntimeConfigUp
 	m.runtimeConfigRevisions = append(m.runtimeConfigRevisions, RuntimeConfigRevision{
 		ID: int64(len(m.runtimeConfigRevisions) + 1), Key: row.Key, Scope: row.Scope,
 		ScopeID: row.ScopeID, Version: row.Version,
-		OldValue: append(json.RawMessage(nil), oldValue...),
-		NewValue: append(json.RawMessage(nil), row.DesiredValue...),
-		ActorID:  row.ActorID, Reason: row.Reason, CreatedAt: row.UpdatedAt,
+		RolloutPercent: row.RolloutPercent,
+		OldValue:       append(json.RawMessage(nil), oldValue...),
+		NewValue:       append(json.RawMessage(nil), row.DesiredValue...),
+		ActorID:        row.ActorID, Reason: row.Reason, CreatedAt: row.UpdatedAt,
 	})
 	return cloneRuntimeConfig(row), nil
 }

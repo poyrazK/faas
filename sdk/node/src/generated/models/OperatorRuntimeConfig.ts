@@ -15,6 +15,9 @@ export type OperatorRuntimeConfig = {
   default_value: any;
   desired_value: any;
   effective_value: any;
+  scope: 'global' | 'control_plane' | 'daemon' | 'node';
+  scope_id?: string;
+  rollout_percent: number;
   source: 'default_or_environment' | 'operator';
   apply_mode: 'hot' | 'graceful' | 'rolling' | 'break_glass';
   controller_enabled: boolean;

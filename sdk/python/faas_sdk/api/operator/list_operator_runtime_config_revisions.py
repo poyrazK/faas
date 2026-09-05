@@ -7,6 +7,9 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
+from ...models.list_operator_runtime_config_revisions_scope import (
+    ListOperatorRuntimeConfigRevisionsScope,
+)
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -15,11 +18,21 @@ def _get_kwargs(
     key: str,
     *,
     limit: int | Unset = 50,
+    scope: ListOperatorRuntimeConfigRevisionsScope | Unset = "global",
+    scope_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["limit"] = limit
+
+    json_scope: str | Unset = UNSET
+    if not isinstance(scope, Unset):
+        json_scope = scope
+
+    params["scope"] = json_scope
+
+    params["scope_id"] = scope_id
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -79,6 +92,8 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
+    scope: ListOperatorRuntimeConfigRevisionsScope | Unset = "global",
+    scope_id: str | Unset = UNSET,
 ) -> Response[ListOperatorRuntimeConfigRevisionsResponse200 | Problem]:
     """List runtime configuration revisions
 
@@ -87,6 +102,8 @@ def sync_detailed(
     Args:
         key (str):
         limit (int | Unset):  Default: 50.
+        scope (ListOperatorRuntimeConfigRevisionsScope | Unset):  Default: 'global'.
+        scope_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,6 +116,8 @@ def sync_detailed(
     kwargs = _get_kwargs(
         key=key,
         limit=limit,
+        scope=scope,
+        scope_id=scope_id,
     )
 
     response = client.get_httpx_client().request(
@@ -113,6 +132,8 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
+    scope: ListOperatorRuntimeConfigRevisionsScope | Unset = "global",
+    scope_id: str | Unset = UNSET,
 ) -> ListOperatorRuntimeConfigRevisionsResponse200 | Problem | None:
     """List runtime configuration revisions
 
@@ -121,6 +142,8 @@ def sync(
     Args:
         key (str):
         limit (int | Unset):  Default: 50.
+        scope (ListOperatorRuntimeConfigRevisionsScope | Unset):  Default: 'global'.
+        scope_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,6 +157,8 @@ def sync(
         key=key,
         client=client,
         limit=limit,
+        scope=scope,
+        scope_id=scope_id,
     ).parsed
 
 
@@ -142,6 +167,8 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
+    scope: ListOperatorRuntimeConfigRevisionsScope | Unset = "global",
+    scope_id: str | Unset = UNSET,
 ) -> Response[ListOperatorRuntimeConfigRevisionsResponse200 | Problem]:
     """List runtime configuration revisions
 
@@ -150,6 +177,8 @@ async def asyncio_detailed(
     Args:
         key (str):
         limit (int | Unset):  Default: 50.
+        scope (ListOperatorRuntimeConfigRevisionsScope | Unset):  Default: 'global'.
+        scope_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,6 +191,8 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         key=key,
         limit=limit,
+        scope=scope,
+        scope_id=scope_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -174,6 +205,8 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
+    scope: ListOperatorRuntimeConfigRevisionsScope | Unset = "global",
+    scope_id: str | Unset = UNSET,
 ) -> ListOperatorRuntimeConfigRevisionsResponse200 | Problem | None:
     """List runtime configuration revisions
 
@@ -182,6 +215,8 @@ async def asyncio(
     Args:
         key (str):
         limit (int | Unset):  Default: 50.
+        scope (ListOperatorRuntimeConfigRevisionsScope | Unset):  Default: 'global'.
+        scope_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,5 +231,7 @@ async def asyncio(
             key=key,
             client=client,
             limit=limit,
+            scope=scope,
+            scope_id=scope_id,
         )
     ).parsed

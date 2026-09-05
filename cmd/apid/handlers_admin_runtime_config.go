@@ -24,6 +24,9 @@ type runtimeConfigEntryResponse struct {
 	DefaultValue      json.RawMessage            `json:"default_value"`
 	DesiredValue      json.RawMessage            `json:"desired_value"`
 	EffectiveValue    json.RawMessage            `json:"effective_value"`
+	Scope             string                     `json:"scope"`
+	ScopeID           string                     `json:"scope_id,omitempty"`
+	RolloutPercent    int                        `json:"rollout_percent"`
 	Source            string                     `json:"source"`
 	ApplyMode         string                     `json:"apply_mode"`
 	ControllerEnabled bool                       `json:"controller_enabled"`
@@ -57,12 +60,55 @@ type runtimeConfigPatchRequest struct {
 	Value           json.RawMessage `json:"value"`
 	Reason          string          `json:"reason"`
 	ExpectedVersion *int64          `json:"expected_version"`
+	Scope           string          `json:"scope"`
+	ScopeID         string          `json:"scope_id"`
+	RolloutPercent  *int            `json:"rollout_percent"`
 }
 
 type runtimeConfigRollbackRequest struct {
 	Version         int64  `json:"version"`
 	Reason          string `json:"reason"`
 	ExpectedVersion *int64 `json:"expected_version"`
+	Scope           string `json:"scope"`
+	ScopeID         string `json:"scope_id"`
+}
+
+func parseRuntimeConfigTarget(scopeText, scopeID string) (state.RuntimeConfigScope, string, error) {
+	scopeText = strings.TrimSpace(scopeText)
+	scopeID = strings.TrimSpace(scopeID)
+	if scopeText == "" {
+		scopeText = string(state.RuntimeConfigScopeGlobal)
+	}
+	scope := state.RuntimeConfigScope(scopeText)
+	switch scope {
+	case state.RuntimeConfigScopeGlobal:
+		if scopeID != "" {
+			return "", "", fmt.Errorf("scope_id must be empty for global configuration")
+		}
+	case state.RuntimeConfigScopeControlPlane, state.RuntimeConfigScopeDaemon, state.RuntimeConfigScopeNode:
+		if scopeID == "" {
+			return "", "", fmt.Errorf("scope_id is required for %s configuration", scope)
+		}
+		if len(scopeID) > 128 {
+			return "", "", fmt.Errorf("scope_id must be at most 128 characters")
+		}
+		if scope == state.RuntimeConfigScopeControlPlane && scopeID != "apid" {
+			return "", "", fmt.Errorf("control_plane scope_id must be apid")
+		}
+	default:
+		return "", "", fmt.Errorf("scope must be one of global, control_plane, daemon, or node")
+	}
+	return scope, scopeID, nil
+}
+
+func rolloutPercent(value *int) (int, error) {
+	if value == nil {
+		return 100, nil
+	}
+	if *value < 0 || *value > 100 {
+		return 0, fmt.Errorf("rollout_percent must be between 0 and 100")
+	}
+	return *value, nil
 }
 
 func runtimeConfigOperationResponse(operation state.RuntimeConfigOperation) api.OperatorRuntimeConfigOperation {
@@ -104,7 +150,12 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, prob)
 		return
 	}
-	rows, err := s.store.ListRuntimeConfigs(r.Context(), state.RuntimeConfigScopeGlobal, "")
+	scope, scopeID, err := parseRuntimeConfigTarget(r.URL.Query().Get("scope"), r.URL.Query().Get("scope_id"))
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration target", err.Error()))
+		return
+	}
+	rows, err := s.store.ListRuntimeConfigs(r.Context(), scope, scopeID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list runtime configuration"))
 		return
@@ -117,7 +168,7 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 	if ackStore, ok := s.store.(interface {
 		ListRuntimeConfigAcks(context.Context, string, state.RuntimeConfigScope, string) ([]state.RuntimeConfigAck, error)
 	}); ok {
-		acks, ackErr := ackStore.ListRuntimeConfigAcks(r.Context(), "", state.RuntimeConfigScopeGlobal, "")
+		acks, ackErr := ackStore.ListRuntimeConfigAcks(r.Context(), "", scope, scopeID)
 		if ackErr != nil {
 			if s.log != nil {
 				s.log.Warn("could not list runtime configuration acknowledgements", "err", ackErr)
@@ -149,6 +200,9 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 			DefaultValue:      append(json.RawMessage(nil), def.Default...),
 			DesiredValue:      s.runtimeConfig.Value(def.Key),
 			EffectiveValue:    s.runtimeConfig.Value(def.Key),
+			Scope:             string(scope),
+			ScopeID:           scopeID,
+			RolloutPercent:    100,
 			Source:            "default_or_environment",
 			ApplyMode:         string(def.ApplyMode),
 			ControllerEnabled: def.ControllerEnabled,
@@ -165,6 +219,7 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 			item.Status = string(row.Status)
 			item.LastError = row.LastError
 			item.Version = row.Version
+			item.RolloutPercent = row.RolloutPercent
 			item.UpdatedAt = row.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
 			if row.AppliedAt != nil {
 				item.AppliedAt = row.AppliedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
@@ -212,6 +267,24 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", "value must be valid JSON matching the catalog type"))
 		return
 	}
+	scope, scopeID, err := parseRuntimeConfigTarget(req.Scope, req.ScopeID)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration target", err.Error()))
+		return
+	}
+	percent, err := rolloutPercent(req.RolloutPercent)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid rollout percentage", err.Error()))
+		return
+	}
+	if percent < 100 && scope != state.RuntimeConfigScopeDaemon {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid rollout target", "percentage rollout is supported only for daemon-scoped settings; use a node scope for an exact target"))
+		return
+	}
+	if (scope == state.RuntimeConfigScopeDaemon || scope == state.RuntimeConfigScopeNode) && def.ApplyMode != state.RuntimeConfigApplyHot {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid scoped setting", "daemon and node targets require a hot setting with a live runtime watcher"))
+		return
+	}
 	if err := validateRuntimeConfigValue(def, req.Value); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", err.Error()))
 		return
@@ -222,8 +295,10 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 	}
 	row, err := s.store.UpsertRuntimeConfig(r.Context(), state.RuntimeConfigUpdate{
 		Key:             key,
-		Scope:           state.RuntimeConfigScopeGlobal,
+		Scope:           scope,
+		ScopeID:         scopeID,
 		DesiredValue:    req.Value,
+		RolloutPercent:  &percent,
 		ApplyMode:       def.ApplyMode,
 		ActorID:         acct.ID,
 		Reason:          req.Reason,
@@ -247,6 +322,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 			s.audit.Emit(r.Context(), "operator.runtime_config_apply_requested", nil, map[string]any{
 				"key": key, "version": row.Version, "apply_mode": def.ApplyMode,
 				"operation_id": operation.ID, "reason": req.Reason, "actor": acct.ID,
+				"scope": scope, "scope_id": scopeID, "rollout_percent": percent,
 			})
 		}
 		if !def.ControllerEnabled {
@@ -263,6 +339,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 				s.audit.Emit(r.Context(), "operator.runtime_config_apply_blocked", nil, map[string]any{
 					"key": key, "version": row.Version, "apply_mode": def.ApplyMode,
 					"operation_id": operation.ID, "reason": reason, "actor": acct.ID,
+					"scope": scope, "scope_id": scopeID, "rollout_percent": percent,
 				})
 			}
 			operation, err = s.store.GetRuntimeConfigOperation(r.Context(), operation.ID)
@@ -276,8 +353,17 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusAccepted, runtimeConfigOperationResponse(operation))
 		return
 	}
-	if err := s.applyHotRuntimeConfig(r.Context(), row); err != nil {
-		if errors.Is(err, state.ErrRuntimeConfigConflict) {
+	var applyErr error
+	if scope == state.RuntimeConfigScopeDaemon || scope == state.RuntimeConfigScopeNode {
+		// The edge watcher owns the process-local apply for scoped rows. Mark
+		// the durable target effective now so matching daemons can consume it;
+		// non-matching daemons retain the lower-precedence value.
+		applyErr = s.store.MarkRuntimeConfigApplied(r.Context(), row.Key, row.Scope, row.ScopeID, row.Version, row.DesiredValue, "")
+	} else {
+		applyErr = s.applyHotRuntimeConfig(r.Context(), row)
+	}
+	if applyErr != nil {
+		if errors.Is(applyErr, state.ErrRuntimeConfigConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Configuration changed concurrently", "refresh the configuration page and retry with the latest version"))
 			return
 		}
@@ -288,6 +374,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		s.audit.Emit(r.Context(), "operator.runtime_config_changed", nil, map[string]any{
 			"key": key, "version": row.Version, "value": req.Value,
 			"apply_mode": def.ApplyMode, "reason": req.Reason, "actor": acct.ID,
+			"scope": scope, "scope_id": scopeID, "rollout_percent": percent,
 		})
 	}
 	// The trigger is the production notification path. The explicit call is
@@ -305,6 +392,9 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		DefaultValue:      append(json.RawMessage(nil), def.Default...),
 		DesiredValue:      append(json.RawMessage(nil), req.Value...),
 		EffectiveValue:    append(json.RawMessage(nil), req.Value...),
+		Scope:             string(scope),
+		ScopeID:           scopeID,
+		RolloutPercent:    percent,
 		Source:            "operator",
 		ApplyMode:         string(def.ApplyMode),
 		ControllerEnabled: def.ControllerEnabled,
@@ -324,7 +414,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 // database error leaves the new value live and the subscriber repairs the
 // acknowledgement later, so a database hiccup never requires an apid restart.
 func (s *server) applyHotRuntimeConfig(ctx context.Context, row state.RuntimeConfig) error {
-	applied, err := s.runtimeConfig.applyVersion(row.Key, row.DesiredValue, row.Version)
+	applied, err := s.runtimeConfig.applyScopedVersion(row)
 	if err != nil {
 		_ = s.store.MarkRuntimeConfigApplied(ctx, row.Key, row.Scope, row.ScopeID, row.Version, nil, err.Error())
 		return err
@@ -369,7 +459,16 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid change reason", "reason must be 3..500 characters"))
 		return
 	}
-	current, err := s.store.GetRuntimeConfig(r.Context(), key, state.RuntimeConfigScopeGlobal, "")
+	scope, scopeID, err := parseRuntimeConfigTarget(req.Scope, req.ScopeID)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration target", err.Error()))
+		return
+	}
+	if (scope == state.RuntimeConfigScopeDaemon || scope == state.RuntimeConfigScopeNode) && def.ApplyMode != state.RuntimeConfigApplyHot {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid scoped setting", "daemon and node targets require a hot setting with a live runtime watcher"))
+		return
+	}
+	current, err := s.store.GetRuntimeConfig(r.Context(), key, scope, scopeID)
 	if err != nil {
 		if errors.Is(err, state.ErrRuntimeConfigNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Configuration has no revisions", "apply a setting once before rolling it back"))
@@ -386,7 +485,7 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Configuration changed concurrently", "refresh the configuration page and retry with the latest version"))
 		return
 	}
-	revision, err := s.store.GetRuntimeConfigRevision(r.Context(), key, state.RuntimeConfigScopeGlobal, "", req.Version)
+	revision, err := s.store.GetRuntimeConfigRevision(r.Context(), key, scope, scopeID, req.Version)
 	if err != nil {
 		if errors.Is(err, state.ErrRuntimeConfigNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Configuration revision not found", "the requested revision is not available for this setting"))
@@ -406,8 +505,10 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 	}
 	row, err := s.store.UpsertRuntimeConfig(r.Context(), state.RuntimeConfigUpdate{
 		Key:             key,
-		Scope:           state.RuntimeConfigScopeGlobal,
+		Scope:           scope,
+		ScopeID:         scopeID,
 		DesiredValue:    revision.NewValue,
+		RolloutPercent:  &revision.RolloutPercent,
 		ApplyMode:       state.RuntimeConfigApplyHot,
 		ActorID:         acct.ID,
 		Reason:          reason,
@@ -421,8 +522,14 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrCapacity("could not save runtime configuration rollback"))
 		return
 	}
-	if err := s.applyHotRuntimeConfig(r.Context(), row); err != nil {
-		if errors.Is(err, state.ErrRuntimeConfigConflict) {
+	var applyErr error
+	if scope == state.RuntimeConfigScopeDaemon || scope == state.RuntimeConfigScopeNode {
+		applyErr = s.store.MarkRuntimeConfigApplied(r.Context(), row.Key, row.Scope, row.ScopeID, row.Version, row.DesiredValue, "")
+	} else {
+		applyErr = s.applyHotRuntimeConfig(r.Context(), row)
+	}
+	if applyErr != nil {
+		if errors.Is(applyErr, state.ErrRuntimeConfigConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Configuration changed concurrently", "refresh the configuration page and retry with the latest version"))
 			return
 		}
@@ -433,6 +540,7 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		s.audit.Emit(r.Context(), "operator.runtime_config_rollback", nil, map[string]any{
 			"key": key, "version": row.Version, "rollback_target_version": req.Version,
 			"value": revision.NewValue, "reason": req.Reason, "actor": acct.ID,
+			"scope": scope, "scope_id": scopeID, "rollout_percent": revision.RolloutPercent,
 		})
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyRuntimeConfigChanged, key)
@@ -444,7 +552,8 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		DefaultValue:   append(json.RawMessage(nil), def.Default...),
 		DesiredValue:   append(json.RawMessage(nil), row.DesiredValue...),
 		EffectiveValue: append(json.RawMessage(nil), row.EffectiveValue...),
-		Source:         "operator", ApplyMode: string(def.ApplyMode), Mutable: def.Mutable,
+		Scope:          string(scope), ScopeID: scopeID, RolloutPercent: revision.RolloutPercent,
+		Source: "operator", ApplyMode: string(def.ApplyMode), Mutable: def.Mutable,
 		ControllerEnabled: def.ControllerEnabled,
 		Sensitive:         def.Sensitive, Status: string(state.RuntimeConfigApplied),
 		Version: row.Version, UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339), AppliedAt: nowUTCString(),
@@ -482,8 +591,13 @@ func (s *server) adminRuntimeConfigRevisions(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Unknown configuration key", "the key is not in the operator configuration catalog"))
 		return
 	}
+	scope, scopeID, err := parseRuntimeConfigTarget(r.URL.Query().Get("scope"), r.URL.Query().Get("scope_id"))
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration target", err.Error()))
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	revisions, err := s.store.ListRuntimeConfigRevisions(r.Context(), key, state.RuntimeConfigScopeGlobal, "", limit)
+	revisions, err := s.store.ListRuntimeConfigRevisions(r.Context(), key, scope, scopeID, limit)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list configuration revisions"))
 		return
@@ -498,7 +612,7 @@ func (s *server) adminRuntimeConfigRevisions(w http.ResponseWriter, r *http.Requ
 		}
 		items = append(items, api.OperatorRuntimeConfigRevision{
 			ID: revision.ID, Key: revision.Key, Scope: string(revision.Scope), ScopeID: revision.ScopeID,
-			Version: revision.Version, OldValue: oldValue, NewValue: newValue,
+			Version: revision.Version, RolloutPercent: revision.RolloutPercent, OldValue: oldValue, NewValue: newValue,
 			ActorID: revision.ActorID, Reason: revision.Reason,
 			CreatedAt: revision.CreatedAt.UTC().Format(time.RFC3339),
 		})

@@ -419,6 +419,8 @@ from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
 from .list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
+from .list_operator_runtime_config_revisions_scope import ListOperatorRuntimeConfigRevisionsScope
+from .list_operator_runtime_config_scope import ListOperatorRuntimeConfigScope
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
 from .list_tenant_surfaces_response import ListTenantSurfacesResponse
@@ -467,6 +469,7 @@ from .operator_runtime_config_operation_scope import OperatorRuntimeConfigOperat
 from .operator_runtime_config_operation_status import OperatorRuntimeConfigOperationStatus
 from .operator_runtime_config_revision import OperatorRuntimeConfigRevision
 from .operator_runtime_config_revision_scope import OperatorRuntimeConfigRevisionScope
+from .operator_runtime_config_scope import OperatorRuntimeConfigScope
 from .operator_runtime_config_source import OperatorRuntimeConfigSource
 from .operator_runtime_config_status import OperatorRuntimeConfigStatus
 from .org_invitation_response import OrgInvitationResponse
@@ -552,6 +555,7 @@ from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
+from .rollback_operator_runtime_config_request_scope import RollbackOperatorRuntimeConfigRequestScope
 from .rollback_request import RollbackRequest
 from .rollout_transition_response import RolloutTransitionResponse
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
@@ -669,6 +673,7 @@ from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
+from .update_operator_runtime_config_body_scope import UpdateOperatorRuntimeConfigBodyScope
 from .update_trigger_request import UpdateTriggerRequest
 from .update_trigger_request_broker_poison_strategy_type_1 import UpdateTriggerRequestBrokerPoisonStrategyType1
 from .update_trigger_request_broker_poison_strategy_type_2_type_1 import (
@@ -1110,6 +1115,8 @@ __all__ = (
     "ListJobTasksResponse",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",
+    "ListOperatorRuntimeConfigRevisionsScope",
+    "ListOperatorRuntimeConfigScope",
     "ListOrgAPIKeysResponse",
     "ListSecretsForAccountResponse",
     "ListTenantSurfacesResponse",
@@ -1156,6 +1163,7 @@ __all__ = (
     "OperatorRuntimeConfigOperationStatus",
     "OperatorRuntimeConfigRevision",
     "OperatorRuntimeConfigRevisionScope",
+    "OperatorRuntimeConfigScope",
     "OperatorRuntimeConfigSource",
     "OperatorRuntimeConfigStatus",
     "OrgInvitationResponse",
@@ -1241,6 +1249,7 @@ __all__ = (
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",
     "RollbackOperatorRuntimeConfigRequest",
+    "RollbackOperatorRuntimeConfigRequestScope",
     "RollbackRequest",
     "RolloutTransitionResponse",
     "RotateAlertRuleSecretResponse",
@@ -1356,6 +1365,7 @@ __all__ = (
     "UpdateJobRequestStatus",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
+    "UpdateOperatorRuntimeConfigBodyScope",
     "UpdateTriggerRequest",
     "UpdateTriggerRequestBrokerPoisonStrategyType1",
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",

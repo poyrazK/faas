@@ -32,19 +32,33 @@ class OperatorRuntimeConfigAck:
 
     def to_dict(self) -> dict[str, Any]:
         consumer = self.consumer
+
         version = self.version
+
         status: str = self.status
+
         updated_at = self.updated_at.isoformat()
+
         node_id = self.node_id
+
         effective_value = self.effective_value
+
         error = self.error
+
         applied_at: str | Unset = UNSET
         if not isinstance(self.applied_at, Unset):
             applied_at = self.applied_at.isoformat()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({"consumer": consumer, "version": version, "status": status, "updated_at": updated_at})
+        field_dict.update(
+            {
+                "consumer": consumer,
+                "version": version,
+                "status": status,
+                "updated_at": updated_at,
+            }
+        )
         if node_id is not UNSET:
             field_dict["node_id"] = node_id
         if effective_value is not UNSET:
@@ -53,25 +67,34 @@ class OperatorRuntimeConfigAck:
             field_dict["error"] = error
         if applied_at is not UNSET:
             field_dict["applied_at"] = applied_at
+
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         consumer = d.pop("consumer")
+
         version = d.pop("version")
+
         status = check_operator_runtime_config_ack_status(d.pop("status"))
+
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
         node_id = d.pop("node_id", UNSET)
+
         effective_value = d.pop("effective_value", UNSET)
+
         error = d.pop("error", UNSET)
+
         _applied_at = d.pop("applied_at", UNSET)
         applied_at: datetime.datetime | Unset
         if isinstance(_applied_at, Unset):
             applied_at = UNSET
         else:
             applied_at = datetime.datetime.fromisoformat(_applied_at)
-        result = cls(
+
+        operator_runtime_config_ack = cls(
             consumer=consumer,
             version=version,
             status=status,
@@ -81,8 +104,9 @@ class OperatorRuntimeConfigAck:
             error=error,
             applied_at=applied_at,
         )
-        result.additional_properties = d
-        return result
+
+        operator_runtime_config_ack.additional_properties = d
+        return operator_runtime_config_ack
 
     @property
     def additional_keys(self) -> list[str]:

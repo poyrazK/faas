@@ -25,6 +25,7 @@ class OperatorRuntimeConfigRevision:
     scope: OperatorRuntimeConfigRevisionScope
     scope_id: str
     version: int
+    rollout_percent: int
     old_value: Any
     new_value: Any
     reason: str
@@ -42,6 +43,8 @@ class OperatorRuntimeConfigRevision:
         scope_id = self.scope_id
 
         version = self.version
+
+        rollout_percent = self.rollout_percent
 
         old_value = self.old_value
 
@@ -62,6 +65,7 @@ class OperatorRuntimeConfigRevision:
                 "scope": scope,
                 "scope_id": scope_id,
                 "version": version,
+                "rollout_percent": rollout_percent,
                 "old_value": old_value,
                 "new_value": new_value,
                 "reason": reason,
@@ -86,6 +90,8 @@ class OperatorRuntimeConfigRevision:
 
         version = d.pop("version")
 
+        rollout_percent = d.pop("rollout_percent")
+
         old_value = d.pop("old_value")
 
         new_value = d.pop("new_value")
@@ -102,6 +108,7 @@ class OperatorRuntimeConfigRevision:
             scope=scope,
             scope_id=scope_id,
             version=version,
+            rollout_percent=rollout_percent,
             old_value=old_value,
             new_value=new_value,
             reason=reason,

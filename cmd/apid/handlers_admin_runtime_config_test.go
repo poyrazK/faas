@@ -126,3 +126,70 @@ func TestRuntimeConfigListIncludesDaemonAcknowledgements(t *testing.T) {
 	}
 	t.Fatalf("runtime config list did not include %q", runtimeConfigGatewayStreaming)
 }
+
+func TestRuntimeConfigPatchSupportsScopedCanary(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	rec := e.do(t, http.MethodPatch, "/v1/admin/config/gateway_streaming_enabled", map[string]any{
+		"value":           true,
+		"reason":          "canary streaming on gateway daemons",
+		"scope":           "daemon",
+		"scope_id":        "gatewayd-internal",
+		"rollout_percent": 25,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scoped config update status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var response runtimeConfigEntryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode scoped config response: %v", err)
+	}
+	if response.Scope != string(state.RuntimeConfigScopeDaemon) || response.ScopeID != "gatewayd-internal" || response.RolloutPercent != 25 || response.Status != string(state.RuntimeConfigApplied) {
+		t.Fatalf("scoped config response = %#v", response)
+	}
+	row, err := e.store.GetRuntimeConfig(t.Context(), runtimeConfigGatewayStreaming, state.RuntimeConfigScopeDaemon, "gatewayd-internal")
+	if err != nil {
+		t.Fatalf("get scoped runtime config: %v", err)
+	}
+	if row.RolloutPercent != 25 || row.Status != state.RuntimeConfigApplied {
+		t.Fatalf("stored scoped runtime config = %#v", row)
+	}
+
+	list := e.do(t, http.MethodGet, "/v1/admin/config?scope=daemon&scope_id=gatewayd-internal", nil, nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("scoped config list status = %d, want 200: %s", list.Code, list.Body.String())
+	}
+	var listed runtimeConfigListResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode scoped config list: %v", err)
+	}
+	for _, item := range listed.Items {
+		if item.Key == runtimeConfigGatewayStreaming {
+			if item.Scope != string(state.RuntimeConfigScopeDaemon) || item.ScopeID != "gatewayd-internal" || item.RolloutPercent != 25 {
+				t.Fatalf("listed scoped config = %#v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("scoped runtime config list did not include %q", runtimeConfigGatewayStreaming)
+}
+
+func TestRuntimeConfigPatchRejectsInvalidCanaryTarget(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	cases := []map[string]any{
+		{"value": true, "reason": "missing daemon target", "scope": "daemon"},
+		{"value": true, "reason": "canary must target daemon", "scope": "node", "scope_id": "node-a", "rollout_percent": 10},
+		{"value": true, "reason": "percent out of range", "scope": "daemon", "scope_id": "gatewayd-internal", "rollout_percent": 101},
+	}
+	for _, body := range cases {
+		rec := e.do(t, http.MethodPatch, "/v1/admin/config/gateway_streaming_enabled", body, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid scoped config body %#v status = %d, want 400: %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.do(t, http.MethodPatch, "/v1/admin/config/app_errors_enabled", map[string]any{
+		"value": true, "reason": "graceful setting cannot be canaried", "scope": "daemon", "scope_id": "gatewayd-internal",
+	}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("non-hot scoped config status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
