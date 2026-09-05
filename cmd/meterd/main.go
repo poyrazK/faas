@@ -1458,7 +1458,7 @@ func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsM
 	// webhook fan-out regardless, and the rollout's state
 	// machine still walks via the orchestrator's pkg/state
 	// writes.
-	actionDispatcher := safedeploy.NewActionDispatcher(apidClient, log, actorSentinel)
+	actionDispatcher := safedeploy.NewActionDispatcher(apidClient, log, actorSentinel).WithTargetResolver(store)
 	if evaluator != nil {
 		evaluator.SetActionExec(actionDispatcher)
 	}

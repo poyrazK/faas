@@ -47,18 +47,34 @@ import (
 
 // APIDClient is the slice of pkg/api.Client the ActionDispatcher
 // needs. Declared locally so pkg/safedeploy can be unit-tested with
-// a recording fake (cmd/apid is the production implementation;
-// tests pass a closure that captures the (id, percent) tuple).
+// a recording fake (cmd/apid is the production implementation).
 type APIDClient interface {
 	RollbackTo(ctx context.Context, slug, targetDeploymentID string) (api.DeploymentResponse, error)
 	RollbackToWithRule(ctx context.Context, slug, targetDeploymentID, alertRuleID string) (api.DeploymentResponse, error)
 	PatchDeploymentsIdTraffic(ctx context.Context, id string, percent int) (api.DeploymentResponse, error)
 }
 
+type rolloutRecoveryClient interface {
+	RecoverRollout(ctx context.Context, slug, action, reason string) (api.RolloutTransitionResponse, error)
+}
+
+type keyedSafeDeployClient interface {
+	RollbackToWithRuleAndIdempotencyKey(ctx context.Context, slug, targetDeploymentID, alertRuleID, idempotencyKey string) (api.DeploymentResponse, error)
+	RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, action, reason, idempotencyKey string) (api.RolloutTransitionResponse, error)
+}
+
+// RolloutTargetResolver resolves an alert rule's app UUID to the one active
+// canary rollout that an automated action is allowed to mutate.
+type RolloutTargetResolver interface {
+	AppByID(context.Context, string) (state.App, error)
+	ListCanaryInFlight(context.Context) ([]state.Deployment, error)
+}
+
 // ActionDispatcher is the production impl of pkg/alerts.ActionExecutor
 // (the interface lives in pkg/alerts so the evaluator has zero
 // dependency on pkg/safedeploy). It maps rule.Action ∈
-// {rollback, demote, promote} to a single apid HTTP call.
+// {rollback, demote, promote} to a single apid HTTP call. Demote maps to
+// atomic rollout abort so the canary is removed from traffic and progression.
 //
 // "webhook" and the empty-string default are intentionally not
 // routed here — the legacy Dispatcher in pkg/alerts owns the
@@ -68,10 +84,11 @@ type APIDClient interface {
 // double-count a "the rule was wired but the action was bad"
 // condition as a transport-level failure).
 type ActionDispatcher struct {
-	APID  APIDClient
-	Log   *slog.Logger
-	Now   func() time.Time
-	Actor string // service-account sentinel stamped into deployment_audit
+	APID    APIDClient
+	Targets RolloutTargetResolver
+	Log     *slog.Logger
+	Now     func() time.Time
+	Actor   string // service-account sentinel stamped into deployment_audit
 }
 
 // NewActionDispatcher builds a dispatcher with nil-coerced
@@ -89,12 +106,26 @@ func NewActionDispatcher(apid APIDClient, log *slog.Logger, actor string) *Actio
 	}
 }
 
+func (a *ActionDispatcher) WithTargetResolver(targets RolloutTargetResolver) *ActionDispatcher {
+	a.Targets = targets
+	return a
+}
+
+type rolloutActionTarget struct {
+	App        state.App
+	Deployment state.Deployment
+}
+
 // ErrActionDispatcherNoAPID is returned when the dispatcher is
 // invoked with a nil APID client. This is a configuration error
 // (cmd/meterd should never have wired the dispatcher without a
 // token + base URL); surfacing it lets the evaluator's Stats
 // counter distinguish "config bug" from "transport hiccup".
 var ErrActionDispatcherNoAPID = errors.New("safedeploy: ActionDispatcher invoked with nil APID client")
+
+var ErrActionTargetUnavailable = errors.New("safedeploy: automated action target is unavailable")
+
+var ErrActionTargetAmbiguous = errors.New("safedeploy: automated action target is ambiguous")
 
 // Execute implements pkg/alerts.ActionExecutor. The interface
 // deliberately returns a single error so the evaluator's
@@ -104,20 +135,12 @@ var ErrActionDispatcherNoAPID = errors.New("safedeploy: ActionDispatcher invoked
 // transport-level apid 5xx is treated as a transient failure
 // (return the error so Stats.ActionFailed bumps).
 //
-// Pre-flight: a rule with no AppID is a config bug (the
-// canary/rollback path requires an app to act on). Returns nil
-// to keep the webhook fan-out path unaffected.
+// Pre-flight: every non-webhook action must resolve exactly one active
+// canary. Account-wide rules and stale/ambiguous rollout targets fail closed
+// so the evaluator records an action failure instead of reporting success.
 func (a *ActionDispatcher) Execute(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error {
 	if a == nil || a.APID == nil {
 		return ErrActionDispatcherNoAPID
-	}
-	if rule.AppID == "" {
-		// Account-wide rules (no AppID) cannot be rolled back —
-		// there's no single deployment to flip. Treat as a
-		// config-time skip rather than a transport failure.
-		a.Log.Warn("safedeploy: action on account-wide rule skipped (no AppID)",
-			"rule", rule.ID, "name", rule.Name, "action", string(rule.Action))
-		return nil
 	}
 	switch rule.Action {
 	case state.AlertActionWebhook, "":
@@ -146,17 +169,18 @@ func (a *ActionDispatcher) Execute(ctx context.Context, rule state.AlertRule, ob
 
 // doRollback flips the rule's app back to the previous live
 // deployment via the legacy rollback endpoint (apid-authoritative;
-// pkg/state stays out of the write path per CLAUDE.md ownership).
-// "Previous live" means: the rule's AppID has a 'live' deployment
-// row whose traffic_percent < 100 (the in-flight canary), and the
-// rollback target is the row with traffic_percent=100. We don't
-// re-resolve the target here — apid's POST /v1/apps/{slug}/rollback
-// handler picks the most-recent superseded live row. Empty
+// pkg/state stays out of the write path per CLAUDE.md ownership). The
+// resolver first proves that the rule's app has exactly one active canary;
+// apid then selects the most-recent superseded rollback target. Empty
 // targetDeploymentID matches Client.RollbackTo's "any" path.
 func (a *ActionDispatcher) doRollback(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error {
-	slug := rule.AppID
+	target, err := a.resolveTarget(ctx, rule)
+	if err != nil {
+		return err
+	}
 	a.Log.Info("safedeploy: rollback triggered",
-		"rule", rule.ID, "name", rule.Name, "slug", slug,
+		"rule", rule.ID, "name", rule.Name, "slug", target.App.Slug,
+		"deployment_id", target.Deployment.ID,
 		"observed", observed, "fired_at", at.UTC().Format(time.RFC3339Nano))
 	// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): use
 	// RollbackToWithRule so the resulting deployment_audit row
@@ -164,80 +188,115 @@ func (a *ActionDispatcher) doRollback(ctx context.Context, rule state.AlertRule,
 	// renders the rule as a clickable chip → /dashboard/alerts/{id}.
 	// Passing rule.ID.String() (never empty) so the apid handler
 	// stamps the column; empty would fall back to the legacy path.
-	if _, err := a.APID.RollbackToWithRule(ctx, slug, "", rule.ID); err != nil {
-		return fmt.Errorf("safedeploy: rollback %s: %w", slug, err)
+	key := safeDeployActionKey(target.Deployment, string(rule.Action))
+	if keyed, ok := a.APID.(keyedSafeDeployClient); ok {
+		_, err = keyed.RollbackToWithRuleAndIdempotencyKey(ctx, target.App.Slug, "", rule.ID, key)
+	} else {
+		_, err = a.APID.RollbackToWithRule(ctx, target.App.Slug, "", rule.ID)
+	}
+	if err != nil {
+		return fmt.Errorf("safedeploy: rollback %s: %w", target.App.Slug, err)
 	}
 	return nil
 }
 
-// doDemote pins the in-flight canary deployment at 0% traffic.
-// Pulls the latest 'live' deployment row for the rule's app and
-// PATCHes its traffic_percent to 0; the apid handler does the
-// Σ=100 redistribution (largest-remainder via pkg/state.RedistributeTraffic).
-//
-// Note: we don't know the deployment_id from the rule alone (the
-// rule only carries AppID). The orchestrator's pkg/safedeploy
-// passes the deployment_id into the alert context via a separate
-// field on a future iteration; today this dispatches against
-// the in-flight deployment the orchestrator is currently walking.
-// To keep the ActionDispatcher surface narrow and the evaluator
-// decoupled, this implementation talks to apid's PATCH endpoint
-// with the deployment_id pulled from the rule's Metadata
-// ("deployment_id") when present; otherwise it falls back to a
-// no-op + warn log. The orchestrator's pkg/safedeploy ORchestrator
-// owns the metadata stamping.
+// doDemote aborts the active canary through the same atomic recovery
+// transaction as manual rollout recovery. Aborting is the durable demotion
+// state: it removes the canary from future progression and redistributes its
+// traffic to the remaining live revisions.
 func (a *ActionDispatcher) doDemote(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error {
-	depID := ruleDeploymentID(rule)
-	if depID == "" {
-		a.Log.Warn("safedeploy: demote requires deployment_id on rule metadata; no-op",
-			"rule", rule.ID, "name", rule.Name)
-		return nil
+	target, err := a.resolveTarget(ctx, rule)
+	if err != nil {
+		return err
 	}
-	a.Log.Info("safedeploy: demote triggered",
-		"rule", rule.ID, "name", rule.Name, "deployment_id", depID,
-		"observed", observed, "fired_at", at.UTC().Format(time.RFC3339Nano))
-	if _, err := a.APID.PatchDeploymentsIdTraffic(ctx, depID, 0); err != nil {
-		return fmt.Errorf("safedeploy: demote %s: %w", depID, err)
+	recovery, ok := a.APID.(rolloutRecoveryClient)
+	if !ok {
+		return fmt.Errorf("%w: APID client has no atomic rollout recovery", ErrActionTargetUnavailable)
+	}
+	reason := safeDeployActionReason(rule, observed)
+	if keyed, ok := a.APID.(keyedSafeDeployClient); ok {
+		_, err = keyed.RecoverRolloutAndIdempotencyKey(ctx, target.App.Slug, "abort", reason, safeDeployActionKey(target.Deployment, string(rule.Action)))
+	} else {
+		_, err = recovery.RecoverRollout(ctx, target.App.Slug, "abort", reason)
+	}
+	if err != nil {
+		return fmt.Errorf("safedeploy: demote %s: %w", target.App.Slug, err)
 	}
 	return nil
 }
 
-// doPromote short-circuits the canary ladder to 100% traffic.
-// Same depID resolution caveat as doDemote; the orchestrator
-// stamps the deployment_id into the rule's metadata when the
-// alert rule fires against a known canary step.
+// doPromote short-circuits the canary ladder through apid's atomic recovery
+// endpoint, which updates traffic, rollout state, and audit together.
 func (a *ActionDispatcher) doPromote(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error {
-	depID := ruleDeploymentID(rule)
-	if depID == "" {
-		a.Log.Warn("safedeploy: promote requires deployment_id on rule metadata; no-op",
-			"rule", rule.ID, "name", rule.Name)
-		return nil
+	target, err := a.resolveTarget(ctx, rule)
+	if err != nil {
+		return err
 	}
 	a.Log.Info("safedeploy: promote triggered",
-		"rule", rule.ID, "name", rule.Name, "deployment_id", depID,
+		"rule", rule.ID, "name", rule.Name, "slug", target.App.Slug,
+		"deployment_id", target.Deployment.ID,
 		"observed", observed, "fired_at", at.UTC().Format(time.RFC3339Nano))
-	if _, err := a.APID.PatchDeploymentsIdTraffic(ctx, depID, 100); err != nil {
-		return fmt.Errorf("safedeploy: promote %s: %w", depID, err)
+	recovery, ok := a.APID.(rolloutRecoveryClient)
+	if !ok {
+		return fmt.Errorf("%w: APID client has no atomic rollout recovery", ErrActionTargetUnavailable)
+	}
+	reason := safeDeployActionReason(rule, observed)
+	if keyed, ok := a.APID.(keyedSafeDeployClient); ok {
+		_, err = keyed.RecoverRolloutAndIdempotencyKey(ctx, target.App.Slug, "promote", reason, safeDeployActionKey(target.Deployment, string(rule.Action)))
+	} else {
+		_, err = recovery.RecoverRollout(ctx, target.App.Slug, "promote", reason)
+	}
+	if err != nil {
+		return fmt.Errorf("safedeploy: promote %s: %w", target.App.Slug, err)
 	}
 	return nil
 }
 
-// ruleDeploymentID extracts the deployment_id from the rule's
-// metadata field. The AlertRule struct doesn't carry a typed
-// Metadata field today — the orchestrator writes JSON into a
-// custom column on alert_rules via the rule-creation handler
-// (commit 2). For now this helper is a placeholder that returns
-// ""; once the metadata column lands, this becomes a typed read
-// from the metadata JSON.
-//
-// Why placeholder: the ActionDispatcher is designed for forward-
-// compat with the metadata column. Today's evaluator-driven
-// actions are limited to "rollback" (which only needs the slug,
-// already on rule.AppID). Demote/promote actions against a
-// specific in-flight canary deployment land in a follow-up
-// PR-D2 — they require the rule to be scoped to the canary
-// deployment, which is a richer alert-rule schema than what
-// ships in Commit 2.
-func ruleDeploymentID(rule state.AlertRule) string {
-	return ""
+func (a *ActionDispatcher) resolveTarget(ctx context.Context, rule state.AlertRule) (rolloutActionTarget, error) {
+	if rule.AppID == "" {
+		return rolloutActionTarget{}, fmt.Errorf("%w: rule %q is account-wide", ErrActionTargetUnavailable, rule.ID)
+	}
+	if a.Targets == nil {
+		return rolloutActionTarget{}, fmt.Errorf("%w: no rollout target resolver is configured", ErrActionTargetUnavailable)
+	}
+	app, err := a.Targets.AppByID(ctx, rule.AppID)
+	if err != nil {
+		return rolloutActionTarget{}, fmt.Errorf("%w: resolve app %q: %w", ErrActionTargetUnavailable, rule.AppID, err)
+	}
+	if app.ID != rule.AppID || app.Slug == "" {
+		return rolloutActionTarget{}, fmt.Errorf("%w: app %q has no usable slug", ErrActionTargetUnavailable, rule.AppID)
+	}
+	deployments, err := a.Targets.ListCanaryInFlight(ctx)
+	if err != nil {
+		return rolloutActionTarget{}, fmt.Errorf("%w: list active canaries: %w", ErrActionTargetUnavailable, err)
+	}
+	var target state.Deployment
+	for _, deployment := range deployments {
+		if deployment.AppID != rule.AppID || !isActiveCanary(deployment) {
+			continue
+		}
+		if target.ID != "" {
+			return rolloutActionTarget{}, fmt.Errorf("%w: app %q has multiple active canaries", ErrActionTargetAmbiguous, rule.AppID)
+		}
+		target = deployment
+	}
+	if target.ID == "" {
+		return rolloutActionTarget{}, fmt.Errorf("%w: app %q has no active canary", ErrActionTargetUnavailable, rule.AppID)
+	}
+	return rolloutActionTarget{App: app, Deployment: target}, nil
+}
+
+func isActiveCanary(deployment state.Deployment) bool {
+	if deployment.Status != state.DeployLive || deployment.CanaryTotalSteps <= 0 || deployment.CanaryStep >= deployment.CanaryTotalSteps {
+		return false
+	}
+	return deployment.RolloutState == "pending" || deployment.RolloutState == "rolling_out"
+}
+
+func safeDeployActionReason(rule state.AlertRule, observed float64) string {
+	return fmt.Sprintf("alert %q fired for %s (observed %.6g)", rule.Name, rule.Metric, observed)
+}
+
+func safeDeployActionKey(deployment state.Deployment, action string) string {
+	return fmt.Sprintf("safedeploy/%s/%s", deployment.ID, action)
 }

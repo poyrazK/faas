@@ -4790,9 +4790,27 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 
 	case "abort":
 		target.RolloutState = "aborted"
+		target.TrafficPercent = 0
 		t := now
 		target.RolloutAbortedAt = &t
 		target.RolloutAbortedReason = reason
+		// Keep the in-memory implementation aligned with Postgres: an
+		// aborted canary is removed from traffic and its siblings are
+		// rebalanced while the store lock is held.
+		siblings := []siblingRow{}
+		for otherID, other := range m.deployments {
+			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+				continue
+			}
+			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
+		}
+		sort.SliceStable(siblings, func(a, b int) bool { return siblings[a].ID < siblings[b].ID })
+		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100)
+		for i, sibling := range siblings {
+			other := m.deployments[sibling.ID]
+			other.TrafficPercent = newWeights[i]
+			m.deployments[sibling.ID] = other
+		}
 		m.deployments[target.ID] = *target
 
 		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{

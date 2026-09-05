@@ -182,6 +182,13 @@ func (c *Client) uploadHTTP() *http.Client {
 // when body != nil, decodes non-2xx as Problem, and unmarshals a
 // successful response into out when out != nil.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	return c.doWithIdempotencyKey(ctx, method, path, body, out, "")
+}
+
+// doWithIdempotencyKey is the same request path as do, with an optional
+// caller-supplied key. Safe-release actions use a rollout-scoped key so two
+// alert rules cannot repeat the same mutation after a meterd race.
+func (c *Client) doWithIdempotencyKey(ctx context.Context, method, path string, body, out any, idempotencyKey string) error {
 	// Cookie-only-route guard — reject paths the bearer-key CLI cannot
 	// reach before allocating anything. The regex matches the closed
 	// set /v1/auth/sessions and /v1/auth/capabilities (with optional
@@ -219,8 +226,11 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	// so a retried deploy/park/wake/rollback/etc. never double-charges
 	// or double-creates. We never override an explicit key the caller
 	// already set.
-	if method != http.MethodGet && method != http.MethodHead && req.Header.Get("Idempotency-Key") == "" {
-		req.Header.Set("Idempotency-Key", newUUIDv4())
+	if method != http.MethodGet && method != http.MethodHead {
+		if idempotencyKey == "" {
+			idempotencyKey = newUUIDv4()
+		}
+		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -1164,12 +1174,19 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 // NULL (fail-soft; an invalid rule id should not block the
 // rollback itself).
 func (c *Client) RollbackToWithRule(ctx context.Context, slug, targetDeploymentID, alertRuleID string) (DeploymentResponse, error) {
+	return c.RollbackToWithRuleAndIdempotencyKey(ctx, slug, targetDeploymentID, alertRuleID, "")
+}
+
+// RollbackToWithRuleAndIdempotencyKey is the safe-release internal variant
+// that lets meterd derive one stable mutation key per rollout. An empty key
+// preserves the normal SDK auto-mint behavior.
+func (c *Client) RollbackToWithRuleAndIdempotencyKey(ctx context.Context, slug, targetDeploymentID, alertRuleID, idempotencyKey string) (DeploymentResponse, error) {
 	var out DeploymentResponse
 	body := RollbackRequest{TargetDeploymentID: &targetDeploymentID}
 	if alertRuleID != "" {
 		body.AlertRuleID = &alertRuleID
 	}
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollback", body, &out)
+	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/apps/"+slug+"/rollback", body, &out, idempotencyKey)
 }
 
 // ListDeploymentAudit returns the deployment_audit timeline for
@@ -1231,9 +1248,16 @@ func (c *Client) AdvanceCanary(ctx context.Context, id string, expectedStep int)
 // the post-transition Deployment + the audit row id so the
 // operator's terminal can echo the chip.
 func (c *Client) RecoverRollout(ctx context.Context, slug, action, reason string) (RolloutTransitionResponse, error) {
+	return c.RecoverRolloutAndIdempotencyKey(ctx, slug, action, reason, "")
+}
+
+// RecoverRolloutAndIdempotencyKey is the safe-release internal variant that
+// lets meterd share a rollout-scoped idempotency key across alert rules.
+// An empty key preserves the normal SDK auto-mint behavior.
+func (c *Client) RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, action, reason, idempotencyKey string) (RolloutTransitionResponse, error) {
 	var out RolloutTransitionResponse
 	body := RecoverRolloutRequest{Action: action, Reason: reason}
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollouts/recover", body, &out)
+	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/apps/"+slug+"/rollouts/recover", body, &out, idempotencyKey)
 }
 
 // Park and Wake toggle the app between cold-parked and live.
