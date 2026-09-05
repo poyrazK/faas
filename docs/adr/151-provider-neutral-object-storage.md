@@ -51,6 +51,10 @@ S3 protocol endpoint or a native S3 access-key service.
 
 ## Financial and launch boundaries
 
+Extended by [ADR-156](156-object-storage-accounting.md): durable capacity
+reservations, provider usage ingestion and fail-closed budget checks now protect
+URL issuance. These are not customer prices or invoice integration.
+
 The global, hot-applied `s3_enabled` runtime-config flag defaults off, independently
 of the bootstrap provider registry. Off blocks provisioning and new signed URLs,
 but preserves metadata, authorized cleanup, and recovery of deletion intents.
@@ -58,8 +62,9 @@ Already-issued URLs expire normally; in-flight operations may finish.
 Enabling it is an operator opt-in to an unmetered
 preview, not an entitlement included in existing plans. Existing runtime
 storage rollups are not object-storage usage. Per-app bucket and per-upload
-limits are configurable safety controls, not a total byte quota, request budget
-or spend cap. Direct traffic cannot be billed from signed-URL counts.
+limits alone are not a total quota or spending control; ADR-156 adds explicit
+capacity and reported-budget admission checks. Direct traffic cannot be billed
+from signed-URL counts, and reported costs are not customer invoice prices.
 
 Before public launch: approve reseller/subprocessor terms and regional promises;
 qualify a backend against the runbook; integrate inventory/usage and request/

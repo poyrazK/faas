@@ -414,6 +414,8 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/upstreams/{id}":            "DeleteAppDataUpstream",
 	"GET /v1/keys":                                     "ListKeys",
 	"GET /v1/apps/{slug}/buckets":                      "ListObjectBuckets",
+	"GET /v1/account/object-storage-usage":             "GetObjectStorageUsage",
+	"POST /v1/admin/object-storage/usage-reports":      "RecordObjectStorageUsage",
 	"POST /v1/apps/{slug}/buckets":                     "CreateObjectBucket",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}":          "DeleteObjectBucket",
 	"GET /v1/apps/{slug}/buckets/{bucket}/objects":     "ListBucketObjects",

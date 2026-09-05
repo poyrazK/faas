@@ -1138,6 +1138,60 @@ type ObjectBucket struct {
 	LastErrorCode      string
 }
 
+type ObjectStorageAuthorization struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	Count       int64
+}
+
+type ObjectStorageBucketUsage struct {
+	BucketID      pgtype.UUID
+	BaselineBytes int64
+	BaselineKeys  int64
+	GrantedBytes  int64
+	GrantedKeys   int64
+	ObservedBytes int64
+	ObservedKeys  int64
+	ObservedAt    pgtype.Timestamptz
+	AttemptAt     pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	Token         string
+}
+
+type ObjectStorageInventorySample struct {
+	Token      string
+	BucketID   pgtype.UUID
+	ObservedAt pgtype.Timestamptz
+	Bytes      int64
+	Objects    int64
+}
+
+type ObjectStorageKeyGrant struct {
+	BucketID pgtype.UUID
+	KeyHash  string
+	MaxBytes int64
+}
+
+type ObjectStorageUsageHead struct {
+	AccountID   pgtype.UUID
+	BackendID   string
+	PeriodStart pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+}
+
+type ObjectStorageUsageReport struct {
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Source             string
+	PeriodStart        pgtype.Timestamptz
+	ObservedAt         pgtype.Timestamptz
+	StoredByteHours    int64
+	RequestCount       int64
+	EgressBytes        int64
+	CostMillicents     int64
+}
+
 type OidcExchangedToken struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

@@ -22,10 +22,16 @@ import (
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
-	DefaultObjectBucketsPerApp       = 10
-	MaxObjectBucketsPerApp           = 100
-	DefaultObjectUploadBytes   int64 = 100 << 20
-	MaxObjectUploadBytes       int64 = 5 << 30
+	// Bounds for operator-specified object-storage safety policies; no customer
+	// allowance or price is inferred when the policy is missing.
+	MaxObjectStoragePolicyValue         int64 = 1 << 60
+	MaxObjectStorageReportAgeSeconds    int64 = 86400
+	ObjectStorageInventoryMaxAgeSeconds int64 = 900
+	ObjectStorageInventoryMaxPages            = 1000
+	DefaultObjectBucketsPerApp                = 10
+	MaxObjectBucketsPerApp                    = 100
+	DefaultObjectUploadBytes            int64 = 100 << 20
+	MaxObjectUploadBytes                int64 = 5 << 30
 	// SourceArchiveMaxEntries is shared by ordinary source validation and
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.

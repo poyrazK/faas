@@ -8,6 +8,19 @@ import (
 	"time"
 )
 
+// GetObjectStorageUsage reports actual observations separately from reserved capacity.
+func (c *Client) GetObjectStorageUsage(ctx context.Context) (ObjectStorageUsageResponse, error) {
+	var out ObjectStorageUsageResponse
+	err := c.do(ctx, http.MethodGet, "/v1/account/object-storage-usage", nil, &out)
+	return out, err
+}
+
+// RecordObjectStorageUsage requires an authenticated operator session with
+// recent step-up; ordinary bearer API keys cannot import provider accounting.
+func (c *Client) RecordObjectStorageUsage(ctx context.Context, report ObjectStorageUsageReport) error {
+	return c.do(ctx, http.MethodPost, "/v1/admin/object-storage/usage-reports", report, nil)
+}
+
 // CreateObjectBucketRequest describes logical placement. Empty scope/region
 // select the server defaults; retries use the same app, scope and name.
 type CreateObjectBucketRequest struct {

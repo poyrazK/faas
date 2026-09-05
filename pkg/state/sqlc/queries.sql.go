@@ -5495,6 +5495,431 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 	return items, nil
 }
 
+const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
+AND (u.lease_until IS NULL OR u.lease_until < now())
+ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1
+`
+
+func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectInventoriesDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectInventoryClaim = `-- name: ObjectInventoryClaim :execrows
+INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
+SELECT id, now(), now()+interval '2 minutes', $2::text FROM object_buckets WHERE id=$1 AND state='ready'
+ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=now(),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
+WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now()
+`
+
+type ObjectInventoryClaimParams struct {
+	ID    pgtype.UUID
+	Token string
+}
+
+func (q *Queries) ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, objectInventoryClaim, arg.ID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectInventoryFinish = `-- name: ObjectInventoryFinish :execrows
+UPDATE object_storage_bucket_usage SET baseline_bytes = CASE WHEN observed_at IS NULL THEN $3::bigint ELSE baseline_bytes END,
+baseline_keys = CASE WHEN observed_at IS NULL THEN $4::bigint ELSE baseline_keys END,
+observed_bytes=$3,observed_keys=$4,observed_at=attempt_at,lease_until=NULL,token=''
+WHERE bucket_id=$1 AND token=$2 AND lease_until > now()
+AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+`
+
+type ObjectInventoryFinishParams struct {
+	BucketID pgtype.UUID
+	Token    string
+	Bytes    int64
+	Objects  int64
+}
+
+func (q *Queries) ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, objectInventoryFinish,
+		arg.BucketID,
+		arg.Token,
+		arg.Bytes,
+		arg.Objects,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectInventorySample = `-- name: ObjectInventorySample :exec
+INSERT INTO object_storage_inventory_samples (token,bucket_id,observed_at,bytes,objects)
+SELECT $2,u.bucket_id,u.observed_at,u.observed_bytes,u.observed_keys FROM object_storage_bucket_usage u WHERE u.bucket_id=$1
+`
+
+type ObjectInventorySampleParams struct {
+	BucketID pgtype.UUID
+	Token    string
+}
+
+func (q *Queries) ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error {
+	_, err := db.Exec(ctx, objectInventorySample, arg.BucketID, arg.Token)
+	return err
+}
+
+const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
+SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
+`
+
+type ObjectUsageAuthorizationCountParams struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error) {
+	row := db.QueryRow(ctx, objectUsageAuthorizationCount, arg.AccountID, arg.PeriodStart)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectUsageAuthorize = `-- name: ObjectUsageAuthorize :exec
+INSERT INTO object_storage_authorizations (account_id, period_start, count) VALUES ($1,$2,1)
+ON CONFLICT (account_id,period_start) DO UPDATE SET count = object_storage_authorizations.count + 1
+`
+
+type ObjectUsageAuthorizeParams struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error {
+	_, err := db.Exec(ctx, objectUsageAuthorize, arg.AccountID, arg.PeriodStart)
+	return err
+}
+
+const objectUsageBucketAccount = `-- name: ObjectUsageBucketAccount :one
+SELECT account_id FROM object_buckets WHERE id=$1
+`
+
+func (q *Queries) ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectUsageBucketAccount, id)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
+const objectUsageBuckets = `-- name: ObjectUsageBuckets :many
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
+u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
+WHERE b.account_id = $1
+`
+
+type ObjectUsageBucketsRow struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	Name                string
+	Scope               string
+	Region              string
+	BackendID           string
+	BackendFingerprint  string
+	PhysicalName        string
+	State               string
+	LeaseToken          pgtype.Text
+	LeaseUntil          pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	AttemptCount        int32
+	RetryAt             pgtype.Timestamptz
+	LastErrorCode       string
+	BaselineBytes       pgtype.Int8
+	BaselineKeys        pgtype.Int8
+	GrantedBytes        pgtype.Int8
+	GrantedKeys         pgtype.Int8
+	ObservedBytes       pgtype.Int8
+	ObservedKeys        pgtype.Int8
+	ObservedAt          pgtype.Timestamptz
+	AttemptAt           pgtype.Timestamptz
+	InventoryLeaseUntil pgtype.Timestamptz
+	Token               pgtype.Text
+}
+
+func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ObjectUsageBucketsRow, error) {
+	rows, err := db.Query(ctx, objectUsageBuckets, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUsageBucketsRow{}
+	for rows.Next() {
+		var i ObjectUsageBucketsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.BaselineBytes,
+			&i.BaselineKeys,
+			&i.GrantedBytes,
+			&i.GrantedKeys,
+			&i.ObservedBytes,
+			&i.ObservedKeys,
+			&i.ObservedAt,
+			&i.AttemptAt,
+			&i.InventoryLeaseUntil,
+			&i.Token,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectUsageGrant = `-- name: ObjectUsageGrant :one
+SELECT max_bytes FROM object_storage_key_grants WHERE bucket_id = $1 AND key_hash = $2
+`
+
+type ObjectUsageGrantParams struct {
+	BucketID pgtype.UUID
+	KeyHash  string
+}
+
+func (q *Queries) ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error) {
+	row := db.QueryRow(ctx, objectUsageGrant, arg.BucketID, arg.KeyHash)
+	var max_bytes int64
+	err := row.Scan(&max_bytes)
+	return max_bytes, err
+}
+
+const objectUsageGrantIncrement = `-- name: ObjectUsageGrantIncrement :exec
+UPDATE object_storage_bucket_usage SET granted_bytes = granted_bytes + $2, granted_keys = granted_keys + $3 WHERE bucket_id = $1
+`
+
+type ObjectUsageGrantIncrementParams struct {
+	BucketID     pgtype.UUID
+	GrantedBytes int64
+	GrantedKeys  int64
+}
+
+func (q *Queries) ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error {
+	_, err := db.Exec(ctx, objectUsageGrantIncrement, arg.BucketID, arg.GrantedBytes, arg.GrantedKeys)
+	return err
+}
+
+const objectUsageGrantUpsert = `-- name: ObjectUsageGrantUpsert :exec
+INSERT INTO object_storage_key_grants (bucket_id, key_hash, max_bytes) VALUES ($1,$2,$3)
+ON CONFLICT (bucket_id,key_hash) DO UPDATE SET max_bytes = greatest(object_storage_key_grants.max_bytes, EXCLUDED.max_bytes)
+`
+
+type ObjectUsageGrantUpsertParams struct {
+	BucketID pgtype.UUID
+	KeyHash  string
+	MaxBytes int64
+}
+
+func (q *Queries) ObjectUsageGrantUpsert(ctx context.Context, db DBTX, arg ObjectUsageGrantUpsertParams) error {
+	_, err := db.Exec(ctx, objectUsageGrantUpsert, arg.BucketID, arg.KeyHash, arg.MaxBytes)
+	return err
+}
+
+const objectUsageLockAccount = `-- name: ObjectUsageLockAccount :one
+SELECT id FROM accounts WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) ObjectUsageLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectUsageLockAccount, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const objectUsageReportGet = `-- name: ObjectUsageReportGet :one
+SELECT account_id, backend_id, backend_fingerprint, source, period_start, observed_at, stored_byte_hours, request_count, egress_bytes, cost_millicents FROM object_storage_usage_reports WHERE account_id=$1 AND backend_id=$2 AND period_start=$3 AND observed_at=$4
+`
+
+type ObjectUsageReportGetParams struct {
+	AccountID   pgtype.UUID
+	BackendID   string
+	PeriodStart pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectUsageReportGet(ctx context.Context, db DBTX, arg ObjectUsageReportGetParams) (ObjectStorageUsageReport, error) {
+	row := db.QueryRow(ctx, objectUsageReportGet,
+		arg.AccountID,
+		arg.BackendID,
+		arg.PeriodStart,
+		arg.ObservedAt,
+	)
+	var i ObjectStorageUsageReport
+	err := row.Scan(
+		&i.AccountID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.Source,
+		&i.PeriodStart,
+		&i.ObservedAt,
+		&i.StoredByteHours,
+		&i.RequestCount,
+		&i.EgressBytes,
+		&i.CostMillicents,
+	)
+	return i, err
+}
+
+const objectUsageReportHead = `-- name: ObjectUsageReportHead :exec
+INSERT INTO object_storage_usage_heads (account_id,backend_id,period_start,observed_at) VALUES ($1,$2,$3,$4)
+ON CONFLICT (account_id,period_start,backend_id) DO UPDATE SET observed_at=EXCLUDED.observed_at
+`
+
+type ObjectUsageReportHeadParams struct {
+	AccountID   pgtype.UUID
+	BackendID   string
+	PeriodStart pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectUsageReportHead(ctx context.Context, db DBTX, arg ObjectUsageReportHeadParams) error {
+	_, err := db.Exec(ctx, objectUsageReportHead,
+		arg.AccountID,
+		arg.BackendID,
+		arg.PeriodStart,
+		arg.ObservedAt,
+	)
+	return err
+}
+
+const objectUsageReportInsert = `-- name: ObjectUsageReportInsert :exec
+INSERT INTO object_storage_usage_reports (account_id,backend_id,backend_fingerprint,source,period_start,observed_at,stored_byte_hours,request_count,egress_bytes,cost_millicents)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+`
+
+type ObjectUsageReportInsertParams struct {
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Source             string
+	PeriodStart        pgtype.Timestamptz
+	ObservedAt         pgtype.Timestamptz
+	StoredByteHours    int64
+	RequestCount       int64
+	EgressBytes        int64
+	CostMillicents     int64
+}
+
+func (q *Queries) ObjectUsageReportInsert(ctx context.Context, db DBTX, arg ObjectUsageReportInsertParams) error {
+	_, err := db.Exec(ctx, objectUsageReportInsert,
+		arg.AccountID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.Source,
+		arg.PeriodStart,
+		arg.ObservedAt,
+		arg.StoredByteHours,
+		arg.RequestCount,
+		arg.EgressBytes,
+		arg.CostMillicents,
+	)
+	return err
+}
+
+const objectUsageReports = `-- name: ObjectUsageReports :many
+SELECT r.account_id, r.backend_id, r.backend_fingerprint, r.source, r.period_start, r.observed_at, r.stored_byte_hours, r.request_count, r.egress_bytes, r.cost_millicents FROM object_storage_usage_heads h JOIN object_storage_usage_reports r
+USING (account_id,backend_id,period_start,observed_at)
+WHERE h.account_id=$1 AND h.period_start=$2 ORDER BY h.backend_id
+`
+
+type ObjectUsageReportsParams struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsageReportsParams) ([]ObjectStorageUsageReport, error) {
+	rows, err := db.Query(ctx, objectUsageReports, arg.AccountID, arg.PeriodStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageUsageReport{}
+	for rows.Next() {
+		var i ObjectStorageUsageReport
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.Source,
+			&i.PeriodStart,
+			&i.ObservedAt,
+			&i.StoredByteHours,
+			&i.RequestCount,
+			&i.EgressBytes,
+			&i.CostMillicents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const orgByID = `-- name: OrgByID :one
 select
     id, slug, name, personal_org,

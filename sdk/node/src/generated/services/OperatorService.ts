@@ -2,14 +2,42 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObjectStorageUsageReport } from '../models/ObjectStorageUsageReport.js';
 import type { OperatorRuntimeConfig } from '../models/OperatorRuntimeConfig.js';
 import type { OperatorRuntimeConfigOperation } from '../models/OperatorRuntimeConfigOperation.js';
 import type { OperatorRuntimeConfigRevision } from '../models/OperatorRuntimeConfigRevision.js';
+import type { Problem } from '../models/Problem.js';
 import type { RollbackOperatorRuntimeConfigRequest } from '../models/RollbackOperatorRuntimeConfigRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OperatorService {
+  /**
+   * Import a cumulative provider object storage usage report
+   * Operator session with recent step-up and Idempotency-Key required. Identical reports are idempotent; conflicting or regressing reports are rejected. Automated exporters use the operator-owned usage_reports_path backend setting.
+   * @returns Problem Access denied, invalid or conflicting report, or accounting unavailable
+   * @throws ApiError
+   */
+  public static recordObjectStorageUsage({
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Unique operation identifier.
+     */
+    idempotencyKey: string,
+    requestBody: ObjectStorageUsageReport,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/object-storage/usage-reports',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
   /**
    * List operator runtime configuration
    * Returns the closed configuration catalog together with desired and
