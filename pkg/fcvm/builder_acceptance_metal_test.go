@@ -40,8 +40,9 @@ import (
 // TestMetalBuilderAcceptance drives the real builderd gRPC driver, jailed
 // Firecracker, guest-init, BuildKit/Railpack, export, imaged conversion and a
 // cold boot of the resulting app. Store and notification transport are in
-// memory; PostgreSQL, scanner admission and scheduler snapshotting are separate
-// gates. No fake VM or prebuilt customer output is used here.
+// memory; PostgreSQL and scheduler snapshotting are separate gates. Every
+// successful output must pass the fixed-vulnerability policy used by image CI.
+// No fake VM or prebuilt customer output is used here.
 func TestMetalBuilderAcceptance(t *testing.T) {
 	if os.Getenv("FAAS_METAL_BUILD_ACCEPTANCE") != "1" {
 		t.Skip("run make test-metal-builder on the native KVM acceptance host")
@@ -185,7 +186,7 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 					if result.ExitCode != 0 || done.ExitCode != 0 {
 						t.Fatalf("build failed: %+v", result)
 					}
-					acceptanceImageBoot(t, ctx, m, tmp, result.OCIImage)
+					acceptanceImageBoot(t, ctx, m, tmp, result.OCIImage, tc.name)
 				}
 			}
 			if m.LiveCount() != 0 || m.LeasedCount() != 0 {
@@ -215,7 +216,7 @@ func (n *acceptanceNotifier) Notify(_ context.Context, channel, _ string) error 
 	return nil
 }
 
-func acceptanceImageBoot(t *testing.T, ctx context.Context, m *fcvm.Manager, tmp, archive string) {
+func acceptanceImageBoot(t *testing.T, ctx context.Context, m *fcvm.Manager, tmp, archive, fixture string) {
 	t.Helper()
 	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "metal@example.com", api.PlanPro)
@@ -235,6 +236,30 @@ func acceptanceImageBoot(t *testing.T, ctx context.Context, m *fcvm.Manager, tmp
 	handler.HandleNotification(ctx, db.Notification{Channel: db.NotifySnapshotBoot, Payload: string(payload)})
 	dep, err = store.DeploymentByID(ctx, dep.ID)
 	mustAcceptance(t, err)
+	if dep.ScanStatus != "complete" {
+		t.Fatalf("%s vulnerability scan status=%q result=%s", fixture, dep.ScanStatus, dep.ScanResult)
+	}
+	var scan imaged.ScanResult
+	mustAcceptance(t, json.Unmarshal(dep.ScanResult, &scan))
+	policy, err := acceptanceScanPolicyFromEnv()
+	mustAcceptance(t, err)
+	t.Logf("%s vulnerability scan: critical=%d high=%d medium=%d low=%d unknown=%d policy=%s only_fixed=%t",
+		fixture, scan.Critical, scan.High, scan.Medium, scan.Low, scan.Unknown, policy.FailOn, policy.OnlyFixed)
+	for _, vulnerability := range scan.Vulnerabilities {
+		if severityRank(vulnerability.Severity) >= severityRank(imaged.SeverityHigh) {
+			t.Logf("%s vulnerability: id=%s severity=%s package=%s version=%s fixed_in=%s paths=%v",
+				fixture, vulnerability.ID, vulnerability.Severity, vulnerability.Package,
+				vulnerability.Version, vulnerability.FixedIn, vulnerability.Paths)
+		}
+	}
+	if violations := policy.violations(scan); len(violations) != 0 {
+		for _, vulnerability := range violations {
+			t.Errorf("%s blocks %s %s in %s@%s (fixed in %s)", fixture,
+				policy.FailOn, vulnerability.ID, vulnerability.Package,
+				vulnerability.Version, vulnerability.FixedIn)
+		}
+		t.FailNow()
+	}
 	if dep.Status != state.DeploySnapshotting || !notifier.primed {
 		t.Fatalf("imaged did not publish a bootable layer: status=%s error=%s", dep.Status, dep.Error)
 	}

@@ -34,6 +34,13 @@ services, runs the full Dockerfile and Railpack suite, restores the previous
 service state, removes staging, and performs another leak check. The production
 builder at `/srv/fc/base/runner-builder-amd64.ext4` is never replaced.
 
+Each successful fixture is converted to its deployable ext4 form and scanned
+before its cold boot. Scanner errors fail acceptance. The admission threshold
+matches image publishing: a CRITICAL or HIGH finding with an available fix
+fails the workflow. Unfixed findings remain visible in the uploaded acceptance
+log. This is a release-fixture policy; customer deployment scans remain the
+informational contract described in ADR-075.
+
 Inspect the cloud-side trust and host designation with:
 
 ```sh

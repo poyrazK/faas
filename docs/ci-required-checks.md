@@ -64,6 +64,9 @@ commit to the designated amd64 KVM host, and tests the matching
 `builder-base:sha-<commit>` image. It is a post-merge release signal rather than
 a pull-request status check because this public repository must not execute
 untrusted pull-request code with root access to a persistent compute node.
+Every successful Dockerfile and Railpack fixture must also complete its Grype
+scan without a fixable CRITICAL or HIGH finding, matching the image-publishing
+policy in `scripts/ci/scan-oci-image.sh`.
 
 ## How to update this table
 
