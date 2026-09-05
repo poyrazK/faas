@@ -759,12 +759,13 @@ Show a domain&#39;s cert details
 
 Sync the dirty working tree to a stable remote developer environment
 
-`gregale dev [--path <DIR>] [--name <PROJECT>] [--once] [--stop] [--no-logs]`
+`gregale dev [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--once] [--stop] [--no-logs]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <DIR>` | source directory |  |
 | `--name <PROJECT>` | developer-session project name |  |
+| `--env-file <PATH>` | sync KEY=VALUE entries as developer secrets |  |
 | `--once` | deploy once and exit |  |
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
