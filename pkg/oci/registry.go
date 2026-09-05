@@ -293,7 +293,8 @@ func (c *RegistryClient) PullImageConfigWithAuth(ctx context.Context, ref string
 //
 // Layer blobs are streamed, not buffered — large app layers never fit in
 // memory, and the build pipeline applies each layer directly into a staging
-// tree as it arrives.
+// tree as it arrives. Every returned layer reader verifies its bytes against
+// the manifest descriptor digest when it reaches EOF.
 //
 // Note: imaged calls PullImageConfig first (cheap, fail-fast validation
 // before any layer blob fetches), then PullLayers. The result.Config is the
@@ -537,7 +538,11 @@ func (c *RegistryClient) fetchBlobStreamWithAuth(ctx context.Context, r Referenc
 // forwarded to the realm endpoint on a 401 challenge (issue #461).
 func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) (string, io.ReadCloser, error) {
 	if c.blobCache == nil {
-		return c.openBlobNetworkWithAuth(ctx, r, digest, auth)
+		contentType, body, err := c.openBlobNetworkWithAuth(ctx, r, digest, auth)
+		if err != nil {
+			return "", nil, err
+		}
+		return contentType, newVerifyingBlob(body, digest), nil
 	}
 	rc, err := c.blobCache.Open(ctx, digest, func(fetchCtx context.Context) (io.ReadCloser, error) {
 		_, body, err := c.openBlobNetworkWithAuth(fetchCtx, r, digest, auth)
@@ -548,7 +553,7 @@ func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, dige
 	}
 	// The content type is advisory and no caller consumes it. Returning an
 	// empty value for cached readers keeps the cache seam independent of HTTP.
-	return "", rc, nil
+	return "", newVerifyingBlob(rc, digest), nil
 }
 
 func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) (string, io.ReadCloser, error) {
