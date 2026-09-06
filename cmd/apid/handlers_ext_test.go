@@ -1199,6 +1199,9 @@ func TestAppEffectiveLimits_UsesScalingPolicyCeiling(t *testing.T) {
 	if got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != 512 {
 		t.Fatalf("memory limits = %d/%d, want 384/512", got.MemoryLimitMB, got.PlanMemoryMaxMB)
 	}
+	if got.EphemeralDiskMaxMB != api.MustLimitsFor(api.PlanPro).AppLayerMaxMB {
+		t.Fatalf("ephemeral disk limit = %d, want %d", got.EphemeralDiskMaxMB, api.MustLimitsFor(api.PlanPro).AppLayerMaxMB)
+	}
 	if got.CPULimitMillicores != api.DefaultAppCPUMillicores || got.PlanCPUMaxMillicores != api.DefaultAppCPUMillicores {
 		t.Fatalf("CPU limits = %d/%d, want %d/%d", got.CPULimitMillicores, got.PlanCPUMaxMillicores, api.DefaultAppCPUMillicores, api.DefaultAppCPUMillicores)
 	}

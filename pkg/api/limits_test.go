@@ -5,6 +5,22 @@ import (
 	"time"
 )
 
+func TestLimitsEphemeralDiskMaxAliasesAppLayerCap(t *testing.T) {
+	for _, plan := range Plans {
+		limits := MustLimitsFor(plan)
+		if got := limits.EphemeralDiskMaxMB(); got != limits.AppLayerMaxMB {
+			t.Errorf("%s ephemeral disk cap = %d MB, want app-layer cap %d MB", plan, got, limits.AppLayerMaxMB)
+		}
+		wantBytes := int64(limits.AppLayerMaxMB) * 1024 * 1024
+		if got := limits.EphemeralDiskMaxBytes(); got != wantBytes {
+			t.Errorf("%s ephemeral disk cap = %d bytes, want %d", plan, got, wantBytes)
+		}
+	}
+	if got := (Limits{}).EphemeralDiskMaxBytes(); got != 0 {
+		t.Fatalf("unset ephemeral disk cap = %d bytes, want 0", got)
+	}
+}
+
 // TestPlanLimitsMatchSpec pins every value in the table to the financial-model /
 // spec §1 numbers. If the spreadsheet moves, this test must be updated in the
 // same PR — that is the point.

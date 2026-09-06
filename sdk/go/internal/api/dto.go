@@ -157,6 +157,7 @@ type RenameAppRequest struct {
 type AppEffectiveLimits struct {
 	MemoryLimitMB          int   `json:"memory_limit_mb"`
 	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
+	EphemeralDiskMaxMB     int   `json:"ephemeral_disk_max_mb"`
 	GuestVCPUs             int   `json:"guest_vcpus"`
 	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
 	PlanCPUMaxMillicores   int   `json:"plan_cpu_max_millicores"`
@@ -360,12 +361,13 @@ type AccountResponse struct {
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan            string `json:"plan"`
-	RAMMB           int    `json:"ram_mb"`
-	MaxConcurrency  int    `json:"max_concurrency"`
-	DeployedApps    int    `json:"deployed_apps"`
-	IncludedGBHours int64  `json:"included_gb_hours"`
-	AppLayerMaxMB   int    `json:"app_layer_max_mb"`
+	Plan               string `json:"plan"`
+	RAMMB              int    `json:"ram_mb"`
+	MaxConcurrency     int    `json:"max_concurrency"`
+	DeployedApps       int    `json:"deployed_apps"`
+	IncludedGBHours    int64  `json:"included_gb_hours"`
+	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
+	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext

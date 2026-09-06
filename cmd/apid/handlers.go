@@ -793,7 +793,8 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
 	return api.AppEffectiveLimits{
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
-		GuestVCPUs: limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
+		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
+		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
 		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
@@ -894,12 +895,13 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		Plan:          string(acct.Plan),
 		Status:        string(acct.Status),
 		Limits: api.AccountLimits{
-			Plan:            string(acct.Plan),
-			RAMMB:           l.RAMMB,
-			MaxConcurrency:  l.MaxConcurrency,
-			DeployedApps:    l.DeployedApps,
-			IncludedGBHours: int64(l.IncludedGBHours),
-			AppLayerMaxMB:   l.AppLayerMaxMB,
+			Plan:               string(acct.Plan),
+			RAMMB:              l.RAMMB,
+			MaxConcurrency:     l.MaxConcurrency,
+			DeployedApps:       l.DeployedApps,
+			IncludedGBHours:    int64(l.IncludedGBHours),
+			AppLayerMaxMB:      l.AppLayerMaxMB,
+			EphemeralDiskMaxMB: l.EphemeralDiskMaxMB(),
 		},
 	}
 	if !acct.EmailVerified() {

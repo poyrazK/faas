@@ -14,7 +14,7 @@ T = TypeVar("T", bound="AccountLimits")
 @_attrs_define
 class AccountLimits:
     """Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and
-    max app-layer bytes per build.
+    writable ephemeral app-disk capacity.
 
     """
 
@@ -24,6 +24,9 @@ class AccountLimits:
     deployed_apps: int
     included_gb_hours: int
     app_layer_max_mb: int
+    ephemeral_disk_max_mb: int
+    """Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap
+    historically named app_layer_max_mb."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +42,8 @@ class AccountLimits:
 
         app_layer_max_mb = self.app_layer_max_mb
 
+        ephemeral_disk_max_mb = self.ephemeral_disk_max_mb
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -49,6 +54,7 @@ class AccountLimits:
                 "deployed_apps": deployed_apps,
                 "included_gb_hours": included_gb_hours,
                 "app_layer_max_mb": app_layer_max_mb,
+                "ephemeral_disk_max_mb": ephemeral_disk_max_mb,
             }
         )
 
@@ -69,6 +75,8 @@ class AccountLimits:
 
         app_layer_max_mb = d.pop("app_layer_max_mb")
 
+        ephemeral_disk_max_mb = d.pop("ephemeral_disk_max_mb")
+
         account_limits = cls(
             plan=plan,
             ram_mb=ram_mb,
@@ -76,6 +84,7 @@ class AccountLimits:
             deployed_apps=deployed_apps,
             included_gb_hours=included_gb_hours,
             app_layer_max_mb=app_layer_max_mb,
+            ephemeral_disk_max_mb=ephemeral_disk_max_mb,
         )
 
         account_limits.additional_properties = d
