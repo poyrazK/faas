@@ -1379,6 +1379,15 @@ type AuthCapabilitiesView struct {
 	GitHubEnabled bool
 }
 
+// AdminData is the operator-only dashboard payload. It currently carries the
+// durable TLS cutover state so an operator can see that a rollback was tested
+// without losing the context when the edge returns to its normal state.
+type AdminData struct {
+	TLSCutover          TLSCutoverState
+	TLSCutoverStateFile string
+	TLSCutoverPresent   bool
+}
+
 // Render writes the page to w. It parses the templates on first use
 // and caches the parsed tree in a sync.Once — the hot path is a
 // single Execute call.

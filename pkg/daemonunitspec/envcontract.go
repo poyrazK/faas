@@ -343,6 +343,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TEST_DEPLOY_BASE_REF", Owners: []string{"imaged", "shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_TEST_KERNEL", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_TLS_CONTACT_EMAIL", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_TLS_CUTOVER_STATE_FILE", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "optional operator override for the durable issue #252 TLS cutover state path"},
 	{Name: "FAAS_TLS_DIR", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TLS_DNS_PROVIDER", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TLS_DNS_TOKEN", Owners: []string{"gatewayd-internal"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal)"},
