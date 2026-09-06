@@ -66,10 +66,26 @@ The gateway's no-rule baseline is type-aware. Request-mode Apps (`apps.type = ap
 
 - **`WakeGate` leader** (`pkg/gateway/gate.go:156-168`) keeps `context.Background()` + `g.ttl=30s` for the leader. The single-flight coalescing invariant (spec §4.1) requires that the wake outlive the triggering request — a client disconnect after triggering a wake must not abort the wake for everyone else. Followers piggyback on the leader's stream and honor the budget implicitly via `r.Context()`.
 - **JWT verify** (`verifyJWTWithDeadline`, `pkg/gateway/handler.go:1392`) keeps its 5s fresh cap (`EdgeRuleJWTVerifyTimeoutDefault`). The budget becomes the *minimum* of (parent budget, 5s).
-- **`fwdStream`** keeps 910s; **`rawStream`** keeps 24h. Both are absolute ceilings; the budget only tightens them.
-- **`setupStreamingWriter`** (`pkg/gateway/handler.go:2258`) keeps its sliding per-flush deadline. The budget bounds the *total* wall-clock the writer stays open (cooperation, not conflict — flushInterval × N ≤ budget).
+- **Long-lived responses** keep the 910s `fwdStream` and 24h `rawStream` ceilings, but only until their response headers are committed. At that first-byte boundary the ordinary request budget detaches; client cancellation, the hop ceiling, and the independent stream-idle timeout remain active.
+- **`setupStreamingWriter`** (`pkg/gateway/handler.go:2258`) keeps its sliding per-flush deadline. The request budget bounds admission and first-byte latency; after the stream detaches, the per-flush deadline and stream-idle timeout provide the lifetime safety bounds.
 - **`vmmdgrpc/forward.go:464` HTTP/1.1 hop** doesn't propagate ctx today — known follow-up, out of scope for this ADR.
 - **stdlib `http.Server.WriteTimeout`** (300s on public, per-plan on internal) stays as the outermost structural safety net (anti-slowloris / hung-handler safety, not business latency).
+
+## Amendment (2026-09-06): active streams outlive the request budget
+
+The request budget is a first-byte/admission budget, not a lifetime cap for
+an already-started stream. `fwdStream`, raw Upgrade/WebSocket sessions, and
+the public reverse proxy now use a detachable stream context. Before response
+headers are committed, the normal request budget still cancels a slow wake or
+handshake. After headers are committed, the context drops only that budget and
+retains the original client/server cancellation root.
+
+Every detached stream also has a 60-minute quiet-period timeout. Traffic in
+either direction resets the timer, so an active SSE, chunked response, or
+WebSocket session can continue beyond the 3/30-second request budget while a
+silent session cannot pin gateway resources indefinitely. The existing 910s
+plain-stream, 24h raw-session, and stdlib server safety ceilings remain in
+force.
 
 ### Observability
 
