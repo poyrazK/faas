@@ -32,6 +32,12 @@ fi
 # Go toolchain on PATH.
 export PATH="/usr/local/go/bin:${PATH}"
 go version | grep -q "go${GO_VERSION}" || { echo "compile-daemons: Go version mismatch" >&2; exit 1; }
+# Keep packer-built development images aligned with the signed release
+# bundle. The production release path already uses these settings through
+# Makefile; this script is still used for local image baking and must not
+# reintroduce host paths, VCS dirt, or dynamically linked daemons.
+export CGO_ENABLED=0
+GO_BUILD_FLAGS=(-trimpath -buildvcs=false)
 
 cd "${SRC_ROOT}"
 
@@ -42,21 +48,21 @@ LDFLAGS="-X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION} -s -w"
 
 for d in "${DAEMONS[@]}"; do
     echo "compile-daemons: building ${d}"
-    go build -trimpath -ldflags "${LDFLAGS}" \
+    go build "${GO_BUILD_FLAGS[@]}" -ldflags "${LDFLAGS}" \
         -o "/opt/faas/current/bin/${d}" \
         "./cmd/${d}"
 done
 
 for c in "${CLIS[@]}"; do
     echo "compile-daemons: building CLI ${c}"
-    go build -trimpath -ldflags "${LDFLAGS}" \
+    go build "${GO_BUILD_FLAGS[@]}" -ldflags "${LDFLAGS}" \
         -o "/opt/faas/current/bin/${c}" \
         "./cmd/${c}"
 done
 
 for t in "${TOOLS[@]}"; do
     echo "compile-daemons: building ${t}"
-    go build -trimpath -ldflags "${LDFLAGS}" \
+    go build "${GO_BUILD_FLAGS[@]}" -ldflags "${LDFLAGS}" \
         -o "/opt/faas/current/bin/${t}" \
         "./cmd/${t}"
 done
