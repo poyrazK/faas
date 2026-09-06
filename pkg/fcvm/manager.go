@@ -550,6 +550,26 @@ type Instance struct {
 	tailSecondsAccum int64
 }
 
+// LiveEgressInstance is the minimal live-instance view needed by vmmd's
+// per-namespace egress counter poller. Keeping this separate from Instance
+// prevents the telemetry loop from depending on mutable runtime state.
+type LiveEgressInstance struct {
+	AppID string
+	Netns string
+}
+
+// SnapshotLiveEgress returns a point-in-time instance → app/netns map. The
+// copy lets callers perform namespace I/O without holding Manager.mu.
+func (m *Manager) SnapshotLiveEgress() map[string]LiveEgressInstance {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]LiveEgressInstance, len(m.live))
+	for instance, live := range m.live {
+		out[instance] = LiveEgressInstance{AppID: live.AppID, Netns: live.Net.Netns}
+	}
+	return out
+}
+
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {

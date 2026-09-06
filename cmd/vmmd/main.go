@@ -301,6 +301,9 @@ type runDeps struct {
 	// Tests inject a stub map-returning func to drive runEgressPoll
 	// without shelling out to nft.
 	popCounters popCountersFunc
+	// popInstanceCounters: C1 per-netns egress-denied poll seam.
+	// nil selects netns.PopCountersInNetns.
+	popInstanceCounters popInstanceCountersFunc
 	// egressPollInterval: PR-E override for runEgressPoll's cadence.
 	// nil → EgressPollInterval (15s). Tests inject a 1ms cadence so the
 	// loop ticks fast enough to be observable in a unit test.
@@ -367,21 +370,22 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath:         envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
-		detectFC:           fcvm.DetectFirecrackerVersion,
-		listen:             wire.ListenAs,
-		openDB:             db.Open,
-		openStore:          state.NewPgStore,
-		detectOverlayIP:    nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
-		loadHostKey:        secretbox.LoadHostKey,
-		loadHostKeys:       secretbox.LoadHostKeys,
-		genAndSaveKey:      secretbox.GenerateAndSaveHostKey,
-		writeRecipient:     secretbox.WriteRecipientFile,
-		popCounters:        netns.PopCounters,
-		egressPollInterval: durationPtr(EgressPollInterval),
-		startEgressPoll:    nil, // defaultDeps() leaves nil so the runtime branch can detect "use production"
-		scheddTarget:       envOr("FAAS_VMMD_SCHEDD_TARGET", "unix:///run/faas/schedd.sock"),
-		capacityInterval:   durationPtr(CapacityInterval),
+		configPath:          envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
+		detectFC:            fcvm.DetectFirecrackerVersion,
+		listen:              wire.ListenAs,
+		openDB:              db.Open,
+		openStore:           state.NewPgStore,
+		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
+		loadHostKey:         secretbox.LoadHostKey,
+		loadHostKeys:        secretbox.LoadHostKeys,
+		genAndSaveKey:       secretbox.GenerateAndSaveHostKey,
+		writeRecipient:      secretbox.WriteRecipientFile,
+		popCounters:         netns.PopCounters,
+		popInstanceCounters: netns.PopCountersInNetns,
+		egressPollInterval:  durationPtr(EgressPollInterval),
+		startEgressPoll:     nil, // defaultDeps() leaves nil so the runtime branch can detect "use production"
+		scheddTarget:        envOr("FAAS_VMMD_SCHEDD_TARGET", "unix:///run/faas/schedd.sock"),
+		capacityInterval:    durationPtr(CapacityInterval),
 		// residentFn left nil; runWithDeps fills it with
 		// leakcheck.ResidentBytes once the resolver runs.
 		// startCapacityPublish left nil; the runtime branch
@@ -1273,6 +1277,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		go runEgressPoll(ctx, ops, pop, interval, log)
 	}
+	// C1: the global poll above preserves the existing per-CIDR series;
+	// this companion loop reads each live namespace so those same counters
+	// can be attributed to an app and rolled up by deny class.
+	popInstance := deps.popInstanceCounters
+	if popInstance == nil {
+		popInstance = netns.PopCountersInNetns
+	}
+	go runEgressDeniedPoll(ctx, mgr, ops, popInstance, interval, log)
 
 	// CPU sample loop (issue #279 / PR-B): drives the cpustats
 	// cache at 250 ms cadence — half the schedd poller's

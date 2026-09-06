@@ -1392,6 +1392,9 @@ type OpsMetrics struct {
 	// pre-instantiated from netns.NewDefaultDenySet() at boot so the
 	// panels surface even on an idle box.
 	egressDeny *prometheus.CounterVec
+	// egressDenied is the C1 per-app roll-up of the per-namespace nft
+	// counters. Class is closed to smtp, rfc1918, metadata, allowlist.
+	egressDenied *prometheus.CounterVec
 	// ociEgressDeny: PR-E sister collector to egressDeny for the
 	// user-space OCI dialer. Registered ONLY on the imaged OpsMetrics
 	// (prefix = "imaged") so the metric surfaces as
@@ -2993,6 +2996,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_egress_deny_total",
 		Help: "Per-CIDR drop counter for the nftables egress denylist (PR-E, spec §11 + §12). The cidr label is the DenyEntry.CounterName (e.g. \"drop_v4_10_0_0_0_8\") and the family label is the nft family keyword (\"ip\" / \"ip6\"). The vmmd scrape adapter (cmd/vmmd/poller.go) reads `nft list counters` every 15s and emits the per-counter delta so the Prometheus series sees the rate of drops per CIDR. The imaged-side mirror is oci_egress_deny_total on cmd/imaged's registry because the OCI dialer is user-space — nftables counters do not see it.",
 	}, []string{"cidr", "family"})
+	egressDenied := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_egress_denied_total",
+		Help: "Per-app tenant egress drops rolled up from per-instance nftables counters (C1). class is one of smtp, rfc1918, metadata, or allowlist; app is the app id.",
+	}, []string{"app", "class"})
 	// Issue #300: per-tenant RPS gauge. Sampled 5s by the daemon's
 	// topNSampler goroutine (cmd/apid/topn.go). Bounded at
 	// topAccountSetCap (1000) + "other" via topAccountSet — see
@@ -3211,7 +3218,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
 		scaleUpDecisions, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
-		egressDeny,
+		egressDeny, egressDenied,
 		failedLoginTotal, failedLoginDropped,
 		failedLoginAuditWriteFailures,
 		auditEventsDeletedTotal,
@@ -4244,6 +4251,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, e := range netns.NewDefaultDenySet().Entries {
 		egressDeny.WithLabelValues(e.CounterName, e.Family.String())
 	}
+	for _, class := range []string{"smtp", "rfc1918", "metadata", "allowlist"} {
+		egressDenied.WithLabelValues("", class)
+	}
 	// PR-E: pre-instantiate the imaged-side mirror counter
 	// (oci_egress_deny_total) with the catalog entries. The OCI-only
 	// extras (loopback / 0.0.0.0/8 / IETF-assigned / benchmarking /
@@ -4499,6 +4509,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		scaleUpAdmitRPS:                                       scaleUpAdmitRPS,
 		sseClients:                                            sseClients,
 		egressDeny:                                            egressDeny,
+		egressDenied:                                          egressDenied,
 		ociEgressDeny:                                         ociEgressDeny,
 		ownershipClamp:                                        ownershipClamp,
 		layerEntrySkipped:                                     layerEntrySkipped,
@@ -6264,6 +6275,23 @@ func (m *OpsMetrics) EgressDeny(cidr, family string) prometheus.Counter {
 // EgressDeny is the canonical call site for increment.
 func (m *OpsMetrics) EgressDenySeries() *prometheus.CounterVec {
 	return m.egressDeny
+}
+
+// EgressDenied returns the C1 per-app aggregate counter. Class is a closed
+// label vocabulary supplied by pkg/netns.EgressDenyClass.
+func (m *OpsMetrics) EgressDenied(app, class string) prometheus.Counter {
+	if m == nil || m.egressDenied == nil {
+		return nil
+	}
+	return m.egressDenied.WithLabelValues(app, class)
+}
+
+// EgressDeniedSeries returns the aggregate C1 series for diagnostics.
+func (m *OpsMetrics) EgressDeniedSeries() *prometheus.CounterVec {
+	if m == nil {
+		return nil
+	}
+	return m.egressDenied
 }
 
 // OCIEgressDeny returns the per-(cidr, family) counter for the

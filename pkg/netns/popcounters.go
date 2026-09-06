@@ -26,3 +26,11 @@ func PopCounters(ctx context.Context) (map[string]uint64, error) {
 	_ = ctx
 	return map[string]uint64{}, nil
 }
+
+// PopCountersInNetns is the non-metal counterpart used by the per-instance
+// C1 poller. There are no nftables counters outside the metal path.
+func PopCountersInNetns(ctx context.Context, netnsName string) (map[string]uint64, error) {
+	_ = ctx
+	_ = netnsName
+	return map[string]uint64{}, nil
+}

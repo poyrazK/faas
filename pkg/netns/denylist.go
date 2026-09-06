@@ -52,6 +52,22 @@ func (f Family) String() string {
 	}
 }
 
+// EgressDenyClass is the bounded operator-facing vocabulary for blocked
+// tenant egress. Keep this closed: it is used as a Prometheus label.
+type EgressDenyClass string
+
+const (
+	EgressDenyClassSMTP      EgressDenyClass = "smtp"
+	EgressDenyClassRFC1918   EgressDenyClass = "rfc1918"
+	EgressDenyClassMetadata  EgressDenyClass = "metadata"
+	EgressDenyClassAllowlist EgressDenyClass = "allowlist"
+
+	// Named counters used by the aggregate rules. Per-CIDR counters keep
+	// their existing drop_* names and are rolled up by Class.
+	EgressDenyCounterSMTP      = "deny_smtp"
+	EgressDenyCounterAllowlist = "deny_allowlist"
+)
+
 // DenyEntry is a single CIDR entry on the denylist. SourceADR +
 // Comment make the provenance machine-readable so a future "list
 // every deny line" operator tool can render the table from
@@ -78,6 +94,16 @@ type DenyEntry struct {
 	// entry's deny rule. Set by NewDefaultDenySet via DropCounterName;
 	// tests / callers must not hand-set it.
 	CounterName string
+}
+
+// Class returns the aggregate C1 class for this deny entry. The metadata
+// range is kept distinct from the broader private/link-local catalog because
+// an IMDS hit is an actionable control-plane signal.
+func (e DenyEntry) Class() EgressDenyClass {
+	if e.Prefix == netip.MustParsePrefix("169.254.0.0/16") {
+		return EgressDenyClassMetadata
+	}
+	return EgressDenyClassRFC1918
 }
 
 // DropCounterName returns the nftables named counter for an entry

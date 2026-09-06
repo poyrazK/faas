@@ -294,6 +294,13 @@ func (c Config) NftCommands() [][]string {
 	if c.ConntrackCap > 0 {
 		add("add", "counter", "ip", "faas", "faas_cap", "{}")
 	}
+	// C1 aggregate counters. SMTP is one aggregate rule (rather than one
+	// rule per port), while allowlist is the explicit terminal drop used when
+	// an app has a non-empty egress allowlist.
+	add("add", "counter", "ip", "faas", EgressDenyCounterSMTP, "{}")
+	if len(c.EgressAllowlist) > 0 {
+		add("add", "counter", "ip", "faas", EgressDenyCounterAllowlist, "{}")
+	}
 	// PR-E: counter objects for the per-CIDR lateral-movement deny
 	// rules (one per DenySet entry). Each named counter is referenced
 	// by name in the rule below so the vmmd scrape adapter can read
@@ -358,6 +365,10 @@ func (c Config) NftCommands() [][]string {
 	if rule := c.forwardConnlimitRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
+	// Keep the historical terminal drop rule byte-compatible for the
+	// renderer contract, and put the named counter in a preceding
+	// non-terminal rule so it observes the same packets.
+	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "counter", "name", EgressDenyCounterSMTP)
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
 	// Lateral-movement deny (spec §11 + ADR-023 + ADR-034) — the v4
 	// half of the shared DenySet. ADR-031 reorders this list so
@@ -393,6 +404,10 @@ func (c Config) NftCommands() [][]string {
 	if rule := c.ForwardAllowlistRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
+	if len(c.EgressAllowlist) > 0 {
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+			"counter", "name", EgressDenyCounterAllowlist, "drop")
+	}
 	// The per-netns table is `ip faas` (not `inet faas` — nft requires an
 	// ip6-family table for `ip6 daddr` rules; mixing `ip` and `ip6` matches
 	// in one table is rejected). We keep the host-level table as `inet faas`
@@ -404,6 +419,9 @@ func (c Config) NftCommands() [][]string {
 	// so ip faas.faas_cap and ip6 faas.faas_cap are independent (ADR-023).
 	if c.ConntrackCap > 0 {
 		add("add", "counter", "ip6", "faas", "faas_cap", "{}")
+	}
+	if len(c.EgressAllowlist) > 0 {
+		add("add", "counter", "ip6", "faas", EgressDenyCounterAllowlist, "{}")
 	}
 	// PR-E: pre-declare the v6 per-CIDR drop counters on the v6 chain
 	// (mirror of the v4 loop above). Same dropped-counter-no-attach
@@ -449,6 +467,10 @@ func (c Config) NftCommands() [][]string {
 	// single field is non-empty), with no per-chain accept rule.
 	if rule := c.ForwardAllowlistRule6(nft); rule != nil {
 		cmds = append(cmds, rule)
+	}
+	if len(c.EgressAllowlist) > 0 {
+		add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap,
+			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
 	return cmds
 }
