@@ -46,9 +46,9 @@ inputs:
     required: false
     default: "tarball"
   wait:
-    description: "If true, block until the deployment is ready (or fails)"
+    description: "If true, block until the deployment is ready (or fails); false queues it and returns immediately"
     required: false
-    default: "true"
+    default: "false"
   wait-timeout:
     description: "Maximum seconds to wait for the deployment to settle (only used when wait=true)"
     required: false
@@ -85,6 +85,8 @@ outputs:
     description: "Observed deployment status: live | queued | failed | cancelled | superseded | timeout"
   url:
     description: "URL of the new deployment record on the control-plane API (https://{api-base}/v1/apps/{slug}/deployments/{id})"
+  check-run-id:
+    description: "GitHub Check Run id created for the deployment (empty when checks: write is unavailable)"
   cli-version:
     description: "Bundled gregale CLI version (verifies the vendored binary)"
 
@@ -121,6 +123,10 @@ runs:
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
         INPUT_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
+        # Check Run publication is best-effort. Callers that want the
+        # GitHub-native status record must grant `checks: write`; the deploy
+        # itself remains compatible with the existing contents-only scope.
+        GITHUB_TOKEN: ${{ github.token }}
         # Issue #977 / ADR-116: forward the annotation surface to
         # src/run.sh which appends the corresponding gregale
         # deploy flags. Default values resolve at action-time

@@ -44,7 +44,9 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"app: my-app",
 				"uses: poyrazK/faas/.github/actions/deploy@v1",
 				"id-token: write",
+				"checks: write",
 				"https://api.gregale.dev",
+				"wait: \"false\"",
 			},
 			mustNotLn: []string{
 				"# pin this Action", // no SHA provided → no pin comment

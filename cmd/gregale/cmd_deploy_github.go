@@ -160,6 +160,7 @@ jobs:
     environment: production             # opt-in; remove if not using GitHub Environments
     permissions:
       contents: read
+      checks: write                    # publish the deployment link in GitHub Checks
       id-token: write                   # short-lived Gregale deploy bearer
     steps:
       - uses: %s
@@ -167,7 +168,9 @@ jobs:
           api-base: %s
           app: %s
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
-          wait: "true"
+          # Queue the deployment and continue; set wait: "true" when this job
+          # must block until the app is live.
+          wait: "false"
 `,
 		app, repoExpr, refExpr,
 		githubActionRepo, githubActionVersion,

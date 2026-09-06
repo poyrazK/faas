@@ -10,6 +10,7 @@ jobs:
     environment: production             # opt-in; remove if not using GitHub Environments
     permissions:
       contents: read
+      checks: write                    # publish the deployment link in GitHub Checks
       id-token: write                   # Gregale exchanges the job JWT for a 5-minute bearer
     steps:
       - uses: poyrazK/faas/.github/actions/deploy@v1
@@ -17,4 +18,5 @@ jobs:
           api-base: https://api.gregale.dev
           app: my-app
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
-          wait: "true"
+          # Queue the deployment and continue; set wait: "true" to block until live.
+          wait: "false"
