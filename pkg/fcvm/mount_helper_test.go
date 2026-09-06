@@ -4,7 +4,38 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestPrepareJailHelperStagesSharedCopyBeforeFirstWake(t *testing.T) {
+	base := t.TempDir()
+	v := NewJailerVMM(base, time.Second)
+	if err := v.PrepareJailHelper(); err != nil {
+		t.Fatalf("prepare jail helper: %v", err)
+	}
+	sharedInfo, err := os.Stat(v.mountHelperPath)
+	if err != nil {
+		t.Fatalf("stat prepared helper: %v", err)
+	}
+	if !sharedInfo.Mode().IsRegular() || sharedInfo.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("prepared helper mode = %v, want executable regular file", sharedInfo.Mode())
+	}
+
+	root := filepath.Join(base, "instance")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.stageMountHelper(root); err != nil {
+		t.Fatalf("stage prepared helper: %v", err)
+	}
+	stagedInfo, err := os.Stat(filepath.Join(root, "faas-mount-helper"))
+	if err != nil {
+		t.Fatalf("stat staged helper: %v", err)
+	}
+	if !os.SameFile(sharedInfo, stagedInfo) {
+		t.Fatal("first wake did not hardlink the helper prepared at startup")
+	}
+}
 
 func TestResolveMountHelperReleaseCompatibility(t *testing.T) {
 	for _, tc := range []struct {

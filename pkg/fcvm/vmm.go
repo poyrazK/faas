@@ -308,6 +308,16 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 	}
 }
 
+// PrepareJailHelper stages the release-matched helper in the chroot base before
+// vmmd starts serving wake requests. Keeping this work on the daemon startup
+// path prevents the first Boot or Restore after a restart from paying for the
+// helper copy. It also surfaces a missing or unusable helper before vmmd
+// advertises capacity.
+func (v *JailerVMM) PrepareJailHelper() error {
+	_, err := v.ensureMountHelper()
+	return err
+}
+
 // WithStorage wires the artifact backend the VMM uses for snapshot blob
 // (de)serialization. Issue #96 / ADR-025 axis 2 — when Restore carries a
 // StorageKey, the VMM streams the bytes through Storage.Get into a tmp
