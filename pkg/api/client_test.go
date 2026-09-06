@@ -618,6 +618,64 @@ func TestDeployMultipart_FieldsAndIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestProjectMultipartRequestsTerminateAtCleanEOF(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		call func(context.Context, *Client) error
+	}{
+		{
+			name: "scan",
+			path: "/v1/projects/scan",
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.ScanProject(ctx, bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false)
+				return err
+			},
+		},
+		{
+			name: "apply",
+			path: "/v1/projects",
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.ApplyProjectPlan(ctx, "", bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false)
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != test.path {
+					http.Error(w, "wrong path", http.StatusNotFound)
+					return
+				}
+				reader, err := r.MultipartReader()
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				for {
+					part, err := reader.NextPart()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					_, _ = io.Copy(io.Discard, part)
+					_ = part.Close()
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+			if err := test.call(context.Background(), NewClient(srv.URL, "fp_test")); err != nil {
+				t.Fatalf("project multipart request: %v", err)
+			}
+		})
+	}
+}
+
 func TestDeployMultipartWithSourceRoot_EmitsSourceRoot(t *testing.T) {
 	var gotRoot string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
