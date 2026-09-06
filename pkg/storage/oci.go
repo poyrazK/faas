@@ -1674,6 +1674,7 @@ func (o *OCIRegistryStorageBackend) invalidateToken(scope string) {
 // copyContext so cancellation responsiveness is consistent across the
 // two drivers.
 func copyContextHash(ctx context.Context, dst io.Writer, src io.Reader, h io.Writer) (int64, error) {
+	dst = boundedFileWrites(dst)
 	const copyQuantum = 256 * 1024
 	buf := make([]byte, copyQuantum)
 	var written int64
