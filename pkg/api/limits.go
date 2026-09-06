@@ -3305,9 +3305,16 @@ const (
 	// PR-A #??? / kind=maintenance) is the platform default
 	// Retry-After for both the kind=maintenance edge rule and the
 	// apps.maintenance_mode coarse gate. Override via
-	// FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS env var (parsed
-	// at boot — see pkg/api/env.go for the env-loading helpers;
-	// the constant here is the default when the env var is unset).
+	// FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS, parsed at
+	// gatewayd-internal boot (cmd/gatewayd-internal/run.go::
+	// parseMaintenanceRetryAfter, fail-loud on a malformed value)
+	// and threaded to the two gates via
+	// gateway.Handler.WithMaintenanceRetryAfter +
+	// compileMaintenanceRules — same daemon-owns-the-override
+	// convention as FAAS_REBALANCE_COOLDOWN_SECONDS et al. This
+	// constant is the default when the env var is unset (issue #899
+	// finding 3 — before that fix the override was documented here
+	// but never implemented).
 	// Applied in pkg/gateway.(*Handler).applyEdgeRuleMaintenance and
 	// pkg/gateway.(*Handler).applyAppsMaintenanceMode via
 	// api.WriteProblem + WithHeader, mirroring the existing

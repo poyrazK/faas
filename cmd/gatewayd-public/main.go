@@ -716,13 +716,37 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	case err := <-errc:
 		return err
 	}
-	// Issue #587 / PR-A: wait for the per-request drain tracker
-	// to flush BEFORE Shutdown closes the listeners. Done first
-	// so we never race a Begin against srv.Shutdown's refusal to
-	// accept new connections. Shutdown itself has a 5s grace
-	// (next block) which is bounded by drain.DrainGrace
-	// below — the two together stay inside systemd's
-	// TimeoutStopSec=30s with 5s of headroom for the kernel.
+	// Shutdown both servers gracefully. 5 s grace.
+	// context.WithoutCancel detaches from the parent's cancellation
+	// so a SIGTERM-driven parent cancel can't short-circuit the
+	// grace period before in-flight requests finish (golangci-lint
+	// v8 contextcheck: `Background` would lose any deadline set by
+	// the wire.Daemon harness; WithoutCancel keeps the deadline
+	// without inheriting the parent cancel).
+	//
+	// Issue #899 finding 2: Shutdown runs BEFORE the drain wait,
+	// matching pkg/gateway/drain's documented contract ("cmd calls
+	// Drain AFTER it has stopped accepting new connections") and
+	// gatewayd-internal's ordering (cmd/gatewayd-internal/run.go:
+	// servers Shutdown → deps.drain.Drain). The pre-#899 order
+	// drained first, so every Upgrade hijack accepted during the
+	// SIGHUP grace window kept arriving after the tracker had
+	// already reported "clean" — the drain bounded a moving
+	// target. It also returned early on a non-clean drain, which
+	// skipped Shutdown entirely and dropped in-flight requests on
+	// the floor.
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := publicSrv.Shutdown(sctx); err != nil {
+		log.Warn("gatewayd-public: public Shutdown", "err", err)
+	}
+	if err := controlSrv.Shutdown(sctx); err != nil {
+		log.Warn("gatewayd-public: control Shutdown", "err", err)
+	}
+	// Issue #587 / PR-A: wait for the per-request drain tracker to
+	// flush now that the listeners have stopped accepting. Any
+	// straggler Begin after this point is a no-op closure (the
+	// tracker's internal `draining` flag — see pkg/gateway/drain).
 	//
 	// Exit-code discipline (systemd Restart=on-failure contract,
 	// pkg/deploycontroller/controller.go:43-115):
@@ -731,6 +755,12 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	//     so systemd restarts the daemon
 	// Pre-PR-A this path returned nil unconditionally, which hid
 	// second-SIGTERM force-exit bugs from operators.
+	//
+	// The result is held in drainRC rather than returned inline so
+	// the trace flush below still runs on a non-clean drain — a
+	// forced exit is exactly when the operator most wants the
+	// spans (issue #899).
+	var drainRC error
 	if drainTracker != nil {
 		drainStart := time.Now()
 		drainCtxInner, cancelDrainInner := context.WithTimeout(context.WithoutCancel(ctx), drain.DrainGrace)
@@ -741,34 +771,19 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		// histogram on every shutdown so the operator
 		// dashboard can spot a pattern of forced exits.
 		gMetrics.ObserveDrainWait("gatewayd-public", string(outcome), drainElapsed)
-		if drainErr != nil {
+		switch {
+		case drainErr != nil:
 			log.Warn("gatewayd-public: drain exited non-clean",
 				"outcome", string(outcome),
 				"max_inflight", drainTracker.MaxInflight(),
 				"err", drainErr)
-			return drainErr
-		}
-		if outcome != drain.OutcomeClean {
+			drainRC = drainErr
+		case outcome != drain.OutcomeClean:
 			log.Warn("gatewayd-public: drain exited non-clean",
 				"outcome", string(outcome),
 				"max_inflight", drainTracker.MaxInflight())
-			return ctx.Err()
+			drainRC = ctx.Err()
 		}
-	}
-	// Shutdown both servers gracefully. 5 s grace.
-	// context.WithoutCancel detaches from the parent's cancellation
-	// so a SIGTERM-driven parent cancel can't short-circuit the
-	// grace period before in-flight requests finish (golangci-lint
-	// v8 contextcheck: `Background` would lose any deadline set by
-	// the wire.Daemon harness; WithoutCancel keeps the deadline
-	// without inheriting the parent cancel).
-	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	if err := publicSrv.Shutdown(sctx); err != nil {
-		log.Warn("gatewayd-public: public Shutdown", "err", err)
-	}
-	if err := controlSrv.Shutdown(sctx); err != nil {
-		log.Warn("gatewayd-public: control Shutdown", "err", err)
 	}
 	// Flush any in-flight spans from the BatchSpanProcessor.
 	// WithoutCancel detaches from the daemon's cancelled ctx so the
@@ -784,7 +799,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		}
 		cancel()
 	}
-	return nil
+	return drainRC
 }
 
 // envOr is the canonical env-override helper (per cmd/gatewayd/main.go).

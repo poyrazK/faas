@@ -648,6 +648,15 @@ type Handler struct {
 	// Recording happens in observe() after the proxy returns —
 	// see the proxyByNode call site in ServeHTTP.
 	egressSink *egresssink.EgressSink
+	// maintenanceRetryAfter is the Retry-After (seconds) stamped on
+	// the coarse apps.maintenance_mode 503. Set via
+	// WithMaintenanceRetryAfter from cmd/gatewayd-internal, which
+	// owns the FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS
+	// override (issue #899 finding 3). Zero means "unset" and falls
+	// back to api.EdgeRuleMaintenanceRetryAfterSeconds, so the unit
+	// tests and any pre-#899 wiring keep the 60 s platform default
+	// without installing anything.
+	maintenanceRetryAfter int
 	// proxyFor builds the reverse proxy for an upstream address; overridable in
 	// tests. The cap parameter is the plan-derived response body cap
 	// (Plan.MaxResponseBodyBytes()); the factory installs an
@@ -2544,7 +2553,16 @@ func (h *Handler) applyAppsMaintenanceMode(w http.ResponseWriter, r *http.Reques
 	if !app.MaintenanceMode {
 		return false
 	}
-	api.WriteProblem(w, api.ErrAppMaintenanceMode(api.EdgeRuleMaintenanceRetryAfterSeconds, app.Slug))
+	// Issue #899 finding 3: the wired value, not the raw constant —
+	// cmd/gatewayd-internal parses the
+	// FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS override this
+	// docstring has always promised and installs it via
+	// WithMaintenanceRetryAfter. Unset (zero) keeps the 60 s default.
+	retryAfter := h.maintenanceRetryAfter
+	if retryAfter <= 0 {
+		retryAfter = api.EdgeRuleMaintenanceRetryAfterSeconds
+	}
+	api.WriteProblem(w, api.ErrAppMaintenanceMode(retryAfter, app.Slug))
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "app.maintenance_mode_match", nil, map[string]any{
 			"app_id":      app.ID,
@@ -2552,7 +2570,7 @@ func (h *Handler) applyAppsMaintenanceMode(w http.ResponseWriter, r *http.Reques
 			"from_host":   r.Host,
 			"method":      r.Method,
 			"path":        r.URL.Path,
-			"retry_after": api.EdgeRuleMaintenanceRetryAfterSeconds,
+			"retry_after": retryAfter,
 		})
 	}
 	if h.metrics != nil {
@@ -4563,6 +4581,26 @@ func (c *capWriter) Flush() {
 // value (statement-form `h.WithEgressSink(...)`) is correct.
 func (h *Handler) WithEgressSink(sink *egresssink.EgressSink) *Handler {
 	h.egressSink = sink
+	return h
+}
+
+// WithMaintenanceRetryAfter installs the Retry-After (seconds) the
+// coarse apps.maintenance_mode gate stamps on its 503 (issue #899
+// finding 3). cmd/gatewayd-internal parses
+// FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS at boot — failing
+// loud on a malformed value, per the operator-override convention
+// cmd/schedd/main.go set for the rebalancer tunables — and calls
+// this once at wire-time. The limit itself stays a constant in
+// pkg/api/limits.go; only the override lives in the daemon.
+//
+// seconds <= 0 clears the override, so the gate falls back to
+// api.EdgeRuleMaintenanceRetryAfterSeconds (60 s). Unit tests that
+// never call this get the platform default for free.
+//
+// Mutates the receiver in place; the returned *Handler is the same
+// pointer, provided for fluent chaining.
+func (h *Handler) WithMaintenanceRetryAfter(seconds int) *Handler {
+	h.maintenanceRetryAfter = seconds
 	return h
 }
 

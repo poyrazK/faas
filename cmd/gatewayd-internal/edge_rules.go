@@ -75,6 +75,24 @@ type gatewaydEdgeRules struct {
 	log      *slog.Logger
 	validate validateCompiler
 	metrics  *gateway.Metrics
+	// maintenanceRetryAfter (issue #899 finding 3) is the
+	// Retry-After a kind=maintenance rule inherits when it carries
+	// no per-rule value. run.go installs the
+	// FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS override via
+	// withMaintenanceRetryAfter; zero means unset and the compile
+	// falls back to api.EdgeRuleMaintenanceRetryAfterSeconds, which
+	// is what every unit-test construction gets.
+	maintenanceRetryAfter int
+}
+
+// withMaintenanceRetryAfter installs the operator-tuned default
+// Retry-After for kind=maintenance rules. Kept a setter rather than
+// a newGatewaydEdgeRules parameter so the unit-test corpus (which
+// wants the 60 s platform default) is unchanged. seconds <= 0
+// clears the override.
+func (g *gatewaydEdgeRules) withMaintenanceRetryAfter(seconds int) *gatewaydEdgeRules {
+	g.maintenanceRetryAfter = seconds
+	return g
 }
 
 // validateCompiler is the surface compileValidateRules needs from
@@ -138,7 +156,7 @@ func (g *gatewaydEdgeRules) loadHost(ctx context.Context, host string) (*gateway
 	ip, ipErrs := compileIPRules(storeRules)
 	validate, validateErrs := g.compileValidateRules(storeRules)
 	limit, limitErrs := compileLimitRules(storeRules)
-	maintenance, maintenanceErrs := compileMaintenanceRules(storeRules)
+	maintenance, maintenanceErrs := compileMaintenanceRules(storeRules, g.maintenanceRetryAfter)
 	geo, geoErrs := compileGeoRules(storeRules)
 	throttle, throttleErrs := compileThrottleRules(storeRules)
 	budget, budgetErrs := compileBudgetRules(storeRules)
@@ -1257,7 +1275,10 @@ func compileLimitRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleLimitReso
 // and a slog.Warn from the caller notes the rule ID; the customer
 // never sees the warning (their rule still fires, just at the
 // platform default).
-func compileMaintenanceRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleMaintenanceResolved, []gateway.PathGlobError) {
+func compileMaintenanceRules(storeRules []state.EdgeRule, defaultRetry int) ([]gateway.EdgeRuleMaintenanceResolved, []gateway.PathGlobError) {
+	if defaultRetry <= 0 {
+		defaultRetry = api.EdgeRuleMaintenanceRetryAfterSeconds
+	}
 	if len(storeRules) == 0 {
 		return nil, nil
 	}
@@ -1288,7 +1309,14 @@ func compileMaintenanceRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleMai
 		// cap.
 		retry := r.Action.Maintenance.RetryAfterSeconds
 		if retry <= 0 {
-			retry = api.EdgeRuleMaintenanceRetryAfterSeconds
+			// Issue #899 finding 3: defaultRetry is the
+			// operator-tuned platform default
+			// (FAAS_EDGE_RULE_MAINTENANCE_RETRY_AFTER_SECONDS,
+			// parsed at boot in run.go) and already resolves to
+			// api.EdgeRuleMaintenanceRetryAfterSeconds when the
+			// override is unset, so pre-#899 behaviour is
+			// unchanged.
+			retry = defaultRetry
 		}
 		if retry > api.MaxEdgeRuleMaintenanceRetryAfterSeconds {
 			retry = api.MaxEdgeRuleMaintenanceRetryAfterSeconds
