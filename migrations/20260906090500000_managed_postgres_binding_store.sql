@@ -14,9 +14,20 @@ ALTER TABLE managed_postgres_bindings
     ADD COLUMN IF NOT EXISTS lease_until timestamptz,
     ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0
         CHECK (attempt_count BETWEEN 0 AND 30),
-    ADD COLUMN IF NOT EXISTS retry_at timestamptz NOT NULL DEFAULT now(),
-    ADD CONSTRAINT managed_postgres_bindings_lease_pair_chk
-        CHECK ((lease_token IS NULL) = (lease_until IS NULL));
+    ADD COLUMN IF NOT EXISTS retry_at timestamptz NOT NULL DEFAULT now();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint
+        WHERE conname = 'managed_postgres_bindings_lease_pair_chk'
+          AND conrelid = 'managed_postgres_bindings'::regclass
+    ) THEN
+        ALTER TABLE managed_postgres_bindings
+            ADD CONSTRAINT managed_postgres_bindings_lease_pair_chk
+                CHECK ((lease_token IS NULL) = (lease_until IS NULL));
+    END IF;
+END$$;
 
 -- A runtime environment key belongs to one active binding, irrespective of
 -- which database it targets. The former index included database_id and could
@@ -26,7 +37,7 @@ CREATE UNIQUE INDEX managed_postgres_bindings_target_idx
     ON managed_postgres_bindings(app_id, scope, environment_key)
     WHERE state <> 'deleted';
 
-CREATE INDEX managed_postgres_bindings_reconcile_idx
+CREATE INDEX IF NOT EXISTS managed_postgres_bindings_reconcile_idx
     ON managed_postgres_bindings(retry_at, id)
     WHERE state IN ('provisioning', 'failed', 'deleting');
 
@@ -37,21 +48,32 @@ ALTER TABLE app_secrets
     ADD COLUMN IF NOT EXISTS managed_postgres_binding_id uuid
         REFERENCES managed_postgres_bindings(id) ON DELETE RESTRICT,
     ADD COLUMN IF NOT EXISTS managed_credential_ref text,
-    ADD COLUMN IF NOT EXISTS managed_credential_generation bigint,
-    ADD CONSTRAINT app_secrets_managed_postgres_owner_chk CHECK (
-        (managed_postgres_binding_id IS NULL
-            AND managed_credential_ref IS NULL
-            AND managed_credential_generation IS NULL)
-        OR
-        (managed_postgres_binding_id IS NOT NULL
-            AND managed_credential_ref IS NOT NULL
-            AND managed_credential_generation >= 1)
-    );
+    ADD COLUMN IF NOT EXISTS managed_credential_generation bigint;
 
-CREATE UNIQUE INDEX app_secrets_managed_postgres_binding_idx
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint
+        WHERE conname = 'app_secrets_managed_postgres_owner_chk'
+          AND conrelid = 'app_secrets'::regclass
+    ) THEN
+        ALTER TABLE app_secrets
+            ADD CONSTRAINT app_secrets_managed_postgres_owner_chk CHECK (
+                (managed_postgres_binding_id IS NULL
+                    AND managed_credential_ref IS NULL
+                    AND managed_credential_generation IS NULL)
+                OR
+                (managed_postgres_binding_id IS NOT NULL
+                    AND managed_credential_ref IS NOT NULL
+                    AND managed_credential_generation >= 1)
+            );
+    END IF;
+END$$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS app_secrets_managed_postgres_binding_idx
     ON app_secrets(managed_postgres_binding_id)
     WHERE managed_postgres_binding_id IS NOT NULL;
-CREATE UNIQUE INDEX app_secrets_managed_credential_ref_idx
+CREATE UNIQUE INDEX IF NOT EXISTS app_secrets_managed_credential_ref_idx
     ON app_secrets(managed_credential_ref)
     WHERE managed_credential_ref IS NOT NULL;
 
