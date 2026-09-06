@@ -234,6 +234,38 @@ func TestResponseCache_InvalidateByApp_DropsOnlyMatching(t *testing.T) {
 	}
 }
 
+func TestResponseCache_InvalidateByAppPath(t *testing.T) {
+	c := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, time.Now)
+	now := time.Now()
+	ruleAct := &state.EdgeRuleCacheAction{MaxAgeSeconds: 60}
+	keys := []CacheKey{
+		{AppID: "app-1", Method: "GET", NormalizedPath: "/products/1"},
+		{AppID: "app-1", Method: "GET", NormalizedPath: "/users/1"},
+		{AppID: "app-2", Method: "GET", NormalizedPath: "/products/1"},
+	}
+	for i := range keys {
+		keys[i].RuleID = fmt.Sprintf("rule-%d", i)
+		if !c.Put(keys[i], 200, nil, []byte("body"), now.Add(time.Minute), now.Add(2*time.Minute), ruleAct) {
+			t.Fatalf("Put(%d) failed", i)
+		}
+	}
+	if err := c.InvalidateByAppPath("app-1", "/products/*"); err != nil {
+		t.Fatalf("InvalidateByAppPath: %v", err)
+	}
+	if state, _ := c.Get(keys[0]); state != "" {
+		t.Errorf("matching app path state = %q, want miss", state)
+	}
+	if state, _ := c.Get(keys[1]); state != "fresh" {
+		t.Errorf("non-matching app path state = %q, want fresh", state)
+	}
+	if state, _ := c.Get(keys[2]); state != "fresh" {
+		t.Errorf("other app path state = %q, want fresh", state)
+	}
+	if err := c.InvalidateByAppPath("app-1", "["); err == nil {
+		t.Fatal("invalid glob returned nil error")
+	}
+}
+
 // TestResponseCache_PutOverwrite_SameKey pins the
 // double-insert race: if two threads call Put for the same
 // key (e.g. two cold-boot threads serving the same path),

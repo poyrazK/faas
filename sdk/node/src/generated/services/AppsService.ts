@@ -1135,6 +1135,49 @@ export class AppsService {
     });
   }
   /**
+   * Purge cached responses for an app.
+   * Requests an in-process response-cache purge on every gateway. The
+   * optional path glob limits the purge to matching normalized request
+   * paths; omit it to purge the complete app cache.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static purgeAppCache({
+    slug,
+    path,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional normalized request path glob (for example `/products*`).
+     */
+    path?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/cache',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'path': path,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Rename an app.
    * @returns AppResponse The renamed app.
    * @throws ApiError

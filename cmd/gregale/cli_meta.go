@@ -1093,6 +1093,17 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "cache",
+		DocSlug: "cache",
+		Short:   "Manage response cache (cache purge <slug> [--path GLOB])",
+		Subcommands: []cliSub{
+			{Name: "purge", Short: "Purge cached responses for an app", Flags: []cliFlag{
+				{Name: "path", Short: "optional normalized request path glob", Value: "GLOB"},
+			}},
+		},
+		Positionals: []string{"<slug>"},
+	},
+	{
 		Name:    "webhooks",
 		DocSlug: "webhooks",
 		Short:   "Manage outbound webhooks (webhooks list|add|info|update|rm|deliveries|retry|rotate-secret)",

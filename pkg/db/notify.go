@@ -413,6 +413,10 @@ const (
 	//   against notify loss. Consumed by cmd/gatewayd-internal/
 	//   backend.go (PR 8).
 	NotifyEdgeRuleChanged = "edge_rule_changed"
+	// NotifyCachePurge is emitted by the explicit per-app cache purge API.
+	// Payload: {"app_id":uuid,"path_glob":string}; an empty glob purges
+	// the app's complete response cache.
+	NotifyCachePurge = "cache_purge_requested"
 	// NotifyAppOpenAPIDocChanged (ADR-126 / issue #975 item #2)
 	// {"app_id":uuid, "op":"created|replaced|deleted"}.
 	//   apid is the only listener (cmd/apid/openapi_doc_subscriber.go
