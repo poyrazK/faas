@@ -53,8 +53,8 @@ fi
 
 # This is a real runtime start, not just a tar listing: the image boots a
 # container and executes a minimal program through its production interpreter
-# or compiled Go handler. Both Go images use the same static test binary but
-# are separate matrix entries, so libc compatibility is exercised independently.
+# or compiled Go handler. The shared static binary proves both Go runtime
+# variants can execute the default Railpack output.
 output=$(docker run --rm --platform "${expected_platform}" \
   --entrypoint "${runtime_command[0]}" \
   -e GO111MODULE=off -e GOCACHE=/tmp/gocache -e GOMODCACHE=/tmp/gomodcache \
@@ -63,6 +63,60 @@ output=$(docker run --rm --platform "${expected_platform}" \
 if [[ "${output}" != *runtime-smoke-ok* ]]; then
   echo "::error::${image_ref} runtime smoke returned unexpected output: ${output}" >&2
   exit 1
+fi
+
+# The default Go runtime promises glibc compatibility for customers that turn
+# CGO on. Build and execute a dynamically linked Go binary on the native CI
+# host so a base-image switch cannot silently preserve the static smoke while
+# breaking SQLite, DNS, or other CGO workloads. The runtime image is currently
+# linux/amd64-only; non-native developer machines keep the portable checks
+# above and CI supplies this architecture-specific proof.
+if [[ "${runtime_image}" == runner-go124 ]]; then
+  host_platform="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"
+  if [[ "${host_platform}" == "${expected_platform}" ]]; then
+    if ! command -v gcc >/dev/null 2>&1; then
+      echo "::error::gcc is required for the runner-go124 CGO smoke" >&2
+      exit 1
+    fi
+    cgo_dir="${fixture_dir}/cgo"
+    mkdir -p "${cgo_dir}"
+    cat >"${cgo_dir}/main.go" <<'EOF'
+package main
+
+/*
+#include <stdlib.h>
+*/
+import "C"
+
+import (
+	"fmt"
+	"unsafe"
+)
+
+func main() {
+	value := C.CString("runtime-cgo-ok")
+	defer C.free(unsafe.Pointer(value))
+	fmt.Println(C.GoString(value))
+}
+EOF
+    GO111MODULE=off CGO_ENABLED=1 \
+      go build -trimpath -o "${cgo_dir}/handler" "${cgo_dir}/main.go"
+    if command -v file >/dev/null 2>&1 && \
+        ! file "${cgo_dir}/handler" | grep -q 'dynamically linked'; then
+      echo "::error::runner-go124 CGO fixture is not dynamically linked" >&2
+      exit 1
+    fi
+    cgo_output=$(docker run --rm --platform "${expected_platform}" \
+      --entrypoint /tmp/gregale-runtime-smoke/cgo/handler \
+      -v "${fixture_dir}:/tmp/gregale-runtime-smoke:ro" \
+      "${image_ref}")
+    if [[ "${cgo_output}" != *runtime-cgo-ok* ]]; then
+      echo "::error::${image_ref} CGO smoke returned unexpected output: ${cgo_output}" >&2
+      exit 1
+    fi
+  else
+    echo "SKIP: runner-go124 CGO smoke needs native ${expected_platform}; host is ${host_platform}"
+  fi
 fi
 
 # Runtime OCI images intentionally do not bake in the release-specific
@@ -80,7 +134,11 @@ docker create --platform "${expected_platform}" --entrypoint /bin/sh "${image_re
 container_id=$(<"${fixture_dir}/container-id")
 trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true; cleanup' EXIT
 docker export "${container_id}" -o "${rootfs_tar}"
-tar -xf "${rootfs_tar}" -C "${rootfs_dir}"
+# Some apko-built images carry placeholder character devices in their OCI
+# rootfs. The guest mounts devtmpfs over /dev at boot, so those archive entries
+# are neither used nor safe for an unprivileged CI tar process to materialise.
+# Keep the directory and omit its contents from the staged-rootfs fixture.
+tar --exclude='./dev/*' --exclude='dev/*' -xf "${rootfs_tar}" -C "${rootfs_dir}"
 # Debian-derived images commonly expose /sbin as a merged-/usr symlink. The
 # production injector replaces that link so /sbin/init is a real boot inode;
 # mirror that behavior before assembling the test ext4.

@@ -2228,7 +2228,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		}
 	}
 	if runtime == RuntimeGo124Alpine {
-		// Same argv as go124 (bookworm): the runner shim is identical
+		// Same argv as go124 (glibc): the runner shim is identical
 		// (guest/runners/go124/main.go), only the base image's libc
 		// differs (musl vs glibc). CGO_ENABLED=0 (Railpack's default)
 		// produces a fully-static binary that runs on both bases.
