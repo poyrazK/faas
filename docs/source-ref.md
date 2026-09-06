@@ -124,6 +124,12 @@ across repos.
   string the customer is expected to edit.
 - `app: my-app` — the slug from `gregale connect`. The snippet
   generator picks the slug from `--name` / cwd.
+- `wait: "false"` — the generated workflow queues the deployment and
+  continues, so a slow build does not hold the GitHub runner. Set it to
+  `"true"` when the job must block until the app is live.
+- `checks: write` — lets the Action publish a **Gregale deployment** Check
+  Run linking to the control-plane record. The deployment still works without
+  this permission; the link remains available through the Action output.
 
 ### Failure modes (Action-specific)
 
@@ -135,8 +141,14 @@ action additionally:
 - Surfaces the RFC 7807 `Code` + `Detail` as a single
   `::error file=action.yml,line=1::code=<code> — <detail>` line.
 - Writes the new `deployment_id`, `status`, `url`, and
-  `cli-version` to `$GITHUB_OUTPUT` so downstream steps can
+  `check-run-id`, and `cli-version` to `$GITHUB_OUTPUT` so downstream steps can
   chain off them.
+- Appends a GitHub Step Summary with the queued/live status and deployment
+  link. The default is asynchronous (`status=queued`); `wait: "true"`
+  changes the terminal status to `live` or a failure state.
+- The asynchronous Check Run is neutral (request accepted, deployment still
+  running) rather than an indefinitely pending check; synchronous runs update
+  it to the final result.
 
 ### Authentication
 
