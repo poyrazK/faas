@@ -289,6 +289,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TEST_DEPLOY_BASE_REF` | imaged, shared | `dev-only` | must never be set on a production host |
 | `FAAS_TEST_KERNEL` | shared | `dev-only` | must never be set on a production host |
 | `FAAS_TLS_CONTACT_EMAIL` | shared | `default` |  |
+| `FAAS_TLS_CUTOVER_STATE_FILE` | apid, shared | `default` | optional operator override for the durable issue #252 TLS cutover state path |
 | `FAAS_TLS_DIR` | vmmd | `default` |  |
 | `FAAS_TLS_DNS_PROVIDER` | shared | `default` |  |
 | `FAAS_TLS_DNS_TOKEN` | gatewayd-internal | `secrets-env` | delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal) |
