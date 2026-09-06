@@ -181,6 +181,11 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.ResourceExhausted,
 			"EnqueueBuild: source_bytes=%d exceeds the 2 GB ceiling", req.SourceBytes)
 	}
+	if req.DeploymentScope != "" {
+		if prob := api.ValidateScope(req.DeploymentScope); prob != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: invalid deployment_scope %q", req.DeploymentScope)
+		}
+	}
 
 	// Look up the app. The app_id MUST exist (githubd resolves it
 	// from the binding rows + repo scan; a missing app is a stale
@@ -321,6 +326,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		SourceBytes: req.SourceBytes,
 		SourceURL:   req.SourceUrl,
 		CommitSHA:   req.CommitSha,
+		Scope:       req.DeploymentScope,
 		LogSpool:    g.spool,
 		Log:         g.log,
 		// Issue #606 / SAFE-RELEASES-E.1: bridge-side actor

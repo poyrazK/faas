@@ -12321,6 +12321,13 @@ components:
         installation_id: { type: integer, format: int64, minimum: 1 }
         repo_full_name: { type: string, pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' }
         production_branch: { type: string, maxLength: 256 }
+        deploy_branches:
+          type: object
+          maxProperties: 32
+          additionalProperties:
+            type: string
+            pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          description: GitHub branch names mapped to deployment environment scopes. An empty object clears existing rules.
 
     InstallBindResponse:
       description: "Successful bind. `binding_id` is the deterministic `bind-<appID>-<repo>` form used in audit log entries."
@@ -12330,6 +12337,9 @@ components:
         binding_id: { type: string }
         repo_full_name: { type: string }
         production_branch: { type: string }
+        deploy_branches:
+          type: object
+          additionalProperties: { type: string }
 
     RepoResponse:
       description: |

@@ -145,6 +145,7 @@ type EnqueueParams struct {
 	SourceRoot  string
 	SourceURL   string
 	CommitSHA   string
+	Scope       string
 	Handler     string
 	Source      string
 	LogSpool    string
@@ -279,7 +280,14 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 
 	// Step 1: read prior deployment so the supersede notify can
 	// carry the right deployment_id.
-	prev, _ := store.LatestDeployment(ctx, p.AppID)
+	prev := state.Deployment{}
+	if scoped, ok := store.(interface {
+		LatestDeploymentForScope(context.Context, string, string) (state.Deployment, error)
+	}); ok {
+		prev, _ = scoped.LatestDeploymentForScope(ctx, p.AppID, p.Scope)
+	} else {
+		prev, _ = store.LatestDeployment(ctx, p.AppID)
+	}
 
 	// Step 2: create the deployment row. SourceURL + CommitSHA are
 	// provenance-only on the apid tarball path; the bridge sets them.
@@ -297,6 +305,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		SourceRoot:  p.SourceRoot,
 		SourceURL:   p.SourceURL,
 		CommitSHA:   p.CommitSHA,
+		Scope:       p.Scope,
 		Handler:     p.Handler,
 		Status:      state.DeployPending,
 		// Issue #606 / SAFE-RELEASES-E.1: actor columns propagated

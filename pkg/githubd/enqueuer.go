@@ -72,10 +72,13 @@ type BuildSpec struct {
 	RepoFullName string
 	Ref          string
 	Branch       string
-	Pusher       string
-	SourcePath   string
-	SourceURL    string
-	SourceBytes  int64
+	// Scope is the deployment environment selected by the project's
+	// GitHub branch routing rules. Empty keeps the legacy default scope.
+	Scope       string
+	Pusher      string
+	SourcePath  string
+	SourceURL   string
+	SourceBytes int64
 	// Issue #977 / ADR-116: the proto3 EnqueueBuildRequest grew
 	// two new fields (pull_request_number + sender_login) on the
 	// wire; the bridge uses them to stamp the annotation surface

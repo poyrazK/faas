@@ -4528,6 +4528,7 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // to supply a deterministic UUID; all other callers keep the database-generated
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	d.Scope = normalizedDeploymentScope(d.Scope)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin tx: %w", err)
@@ -4604,7 +4605,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	//
 	//    Callers that need the just-superseded row (apid's
 	//    NotifyDeploymentChanged fan-out) read it BEFORE the call via
-	//    LatestDeployment(ctx, appID) — by the time this tx commits,
+	//    LatestDeploymentForScope(ctx, appID, scope) — by the time this tx commits,
 	//    that row is already visible as 'superseded' to the next read.
 	//    The 2-return shape keeps the signature backward-compatible
 	//    with pre-PR-B call sites (the slice-3 cascade test on main
@@ -4617,11 +4618,12 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	if err := tx.QueryRow(ctx,
 		`select id from deployments
 		  where app_id = $1
+		    and scope = $2
 		    and status in ('pending','live')
 		  order by created_at desc
 		  limit 1
 		  for update`,
-		d.AppID).Scan(&priorID); err != nil {
+		d.AppID, normalizedDeploymentScope(d.Scope)).Scan(&priorID); err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
 		}
@@ -4651,8 +4653,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		if _, err := tx.Exec(ctx,
 			`update deployments
 			    set status = 'superseded', traffic_percent = 0
-			  where app_id = $1 and status = 'live'`,
-			d.AppID); err != nil {
+			  where app_id = $1 and scope = $2 and status = 'live'`,
+			d.AppID, normalizedDeploymentScope(d.Scope)); err != nil {
 			return Deployment{}, fmt.Errorf("state: supersede live canary siblings: %w", err)
 		}
 	}

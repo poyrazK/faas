@@ -17,10 +17,10 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if deploymentID == "" {
 		return fmt.Errorf("githubd: deployment check: empty deployment id")
 	}
-	var commitSHA, kind, status, failure, repo, appSlug, previewOf string
+	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope string
 	var installationID int64
 	err := pool.QueryRow(ctx, `
-		select coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''),
+		select coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''), coalesce(d.scope, 'default'),
 		       coalesce(parent.github_repo_full_name, a.github_repo_full_name, p.repo_full_name, ''),
 		       a.slug, coalesce(a.preview_of_slug, ''),
 		       coalesce(parent.github_install_id, a.github_install_id, 0)
@@ -32,7 +32,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		 and parent.slug = a.preview_of_slug
 		 and parent.deleted_at is null
 		where d.id = $1`, deploymentID).Scan(
-		&commitSHA, &kind, &status, &failure, &repo, &appSlug, &previewOf, &installationID)
+		&commitSHA, &kind, &status, &failure, &scope, &repo, &appSlug, &previewOf, &installationID)
 	if err != nil {
 		return fmt.Errorf("githubd: deployment check lookup %s: %w", deploymentID, err)
 	}
@@ -54,7 +54,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return checks.WritePreviewCheckForInstallation(ctx, installationID, repo, commitSHA, phase,
 			"https://"+appSlug+".gregale.dev", summary)
 	}
-	return checks.WriteAppCheck(ctx, installationID, repo, commitSHA, appSlug, phase, "", summary)
+	return checks.WriteScopedAppCheck(ctx, installationID, repo, commitSHA, appSlug, scope, phase, "", summary)
 }
 
 func checkPhaseForDeploymentStatus(status string) (githubdgrpc.CheckPhase, bool) {
