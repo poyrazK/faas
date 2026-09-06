@@ -63,6 +63,17 @@ func (m *MemStore) EnqueueSnapshotReplicasForNode(_ context.Context, nodeID stri
 		if snap.Stale || snap.StorageKey == "" {
 			continue
 		}
+		deployment, ok := m.deployments[snap.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := m.apps[deployment.AppID]
+		if !ok || app.Status == AppDeleted {
+			continue
+		}
+		if _, serviceable := snapshotReplicaDeploymentPriority(deployment.Status); !serviceable {
+			continue
+		}
 		if origin, exists := m.snapshotOrigins[snap.ID]; exists {
 			if origin.nodeID == nodeID || (origin.region != "" && origin.region != nodeRegion(node)) {
 				continue
@@ -88,9 +99,22 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 	var chosen *Snapshot
 	var chosenKey snapshotReplicaKey
 	var chosenRow snapshotReplicaRow
+	chosenPriority := 0
 	for i := range m.snapshots {
 		snap := &m.snapshots[i]
 		if snap.Stale || snap.StorageKey == "" {
+			continue
+		}
+		deployment, ok := m.deployments[snap.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := m.apps[deployment.AppID]
+		if !ok || app.Status == AppDeleted {
+			continue
+		}
+		priority, serviceable := snapshotReplicaDeploymentPriority(deployment.Status)
+		if !serviceable {
 			continue
 		}
 		key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: nodeID}
@@ -102,8 +126,11 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 		if row.state != SnapshotReplicaPending && row.state != SnapshotReplicaFailed && !reclaim {
 			continue
 		}
-		chosen, chosenKey, chosenRow = snap, key, row
-		break
+		if chosen == nil || priority < chosenPriority ||
+			(priority == chosenPriority && snap.CreatedAt.After(chosen.CreatedAt)) ||
+			(priority == chosenPriority && snap.CreatedAt.Equal(chosen.CreatedAt) && snap.ID < chosen.ID) {
+			chosen, chosenKey, chosenRow, chosenPriority = snap, key, row, priority
+		}
 	}
 	if chosen == nil {
 		return SnapshotReplicaJob{}, ErrNotFound

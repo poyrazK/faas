@@ -11,7 +11,28 @@ import (
 
 func TestMemSnapshotLocalityKeepsOriginSeparate(t *testing.T) {
 	s := state.NewMemStore()
-	checkSnapshotLocality(t, s, "locality-deployment")
+	ctx := context.Background()
+	acct, err := s.CreateAccount(ctx, "locality@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "locality-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := s.CreateDeployment(ctx, state.Deployment{
+		ID: "locality-deployment", AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:locality", Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	checkSnapshotLocality(t, s, dep.ID)
 }
 
 func TestPgSnapshotLocalityKeepsOriginSeparate(t *testing.T) {

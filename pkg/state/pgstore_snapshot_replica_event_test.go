@@ -153,3 +153,154 @@ func TestPgSnapshotReplicaEventCursorAndOriginFiltering(t *testing.T) {
 		t.Fatalf("MarkSnapshotReplicaFailed permanent: %v", err)
 	}
 }
+
+func TestPgSnapshotReplicaClaimPrioritizesCustomerWakes(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	seed := func(suffix, slug string, status state.DeploymentStatus) state.Snapshot {
+		t.Helper()
+		_, _, deploymentID := seedLiveDeploy(t, s, ctx, suffix, slug)
+		if err := s.UpdateDeploymentStatus(ctx, deploymentID, status, ""); err != nil {
+			t.Fatalf("UpdateDeploymentStatus(%s): %v", status, err)
+		}
+		snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: deploymentID,
+			FCVersion:    "fc-priority",
+			MemBytes:     1024,
+			DiskBytes:    2048,
+			StorageKey:   state.SnapMemKey(deploymentID),
+		})
+		if err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", status, err)
+		}
+		return snap
+	}
+
+	// Insert rollback history first to prove queue age no longer outranks a
+	// deployment that is about to serve or is already serving requests.
+	rollback := seed("-replica-rollback", "replica-rollback", state.DeploySuperseded)
+	live := seed("-replica-live", "replica-live", state.DeployLive)
+	snapshotting := seed("-replica-snapshotting", "replica-snapshotting", state.DeploySnapshotting)
+
+	added, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 3 {
+		t.Fatalf("enqueued = %d, want 3", added)
+	}
+	for _, want := range []state.Snapshot{live, snapshotting, rollback} {
+		job, err := s.ClaimSnapshotReplica(ctx, nodeID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.SnapshotID != want.ID {
+			t.Fatalf("claimed %s, want %s", job.SnapshotID, want.ID)
+		}
+		if err := s.MarkSnapshotReplicaReady(ctx, job.SnapshotID, nodeID); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPgSnapshotReplicaLifecycleRetiresDeadSnapshots(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	assertRetired := func(snapshotID, deploymentID string) {
+		t.Helper()
+		var stale bool
+		if err := pool.QueryRow(ctx, `select stale from snapshots where id = $1`, snapshotID).Scan(&stale); err != nil {
+			t.Fatal(err)
+		}
+		if !stale {
+			t.Fatalf("snapshot %s remained fresh", snapshotID)
+		}
+		var replicas int
+		if err := pool.QueryRow(ctx, `select count(*) from snapshot_replicas where snapshot_id = $1`, snapshotID).Scan(&replicas); err != nil {
+			t.Fatal(err)
+		}
+		if replicas != 0 {
+			t.Fatalf("snapshot %s retained %d replica rows", snapshotID, replicas)
+		}
+		if _, err := s.LatestSnapshot(ctx, deploymentID); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("LatestSnapshot(%s) = %v, want ErrNotFound", deploymentID, err)
+		}
+	}
+
+	_, _, failedDeploymentID := seedLiveDeploy(t, s, ctx, "-replica-failed", "replica-failed")
+	failedSnapshot, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: failedDeploymentID, FCVersion: "fc-retire", MemBytes: 1024,
+		DiskBytes: 2048, StorageKey: state.SnapMemKey(failedDeploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateDeploymentStatus(ctx, failedDeploymentID, state.DeployFailed, "failed after snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	assertRetired(failedSnapshot.ID, failedDeploymentID)
+
+	_, deletedAppID, deletedDeploymentID := seedLiveDeploy(t, s, ctx, "-replica-deleted", "replica-deleted")
+	deletedSnapshot, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: deletedDeploymentID, FCVersion: "fc-retire", MemBytes: 1024,
+		DiskBytes: 2048, StorageKey: state.SnapMemKey(deletedDeploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SoftDeleteAppCascade(ctx, deletedAppID); err != nil {
+		t.Fatal(err)
+	}
+	assertRetired(deletedSnapshot.ID, deletedDeploymentID)
+}
+
+func TestPgRAMChangeRetiresIncompatibleSnapshots(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	_, appID, deploymentID := seedLiveDeploy(t, s, ctx, "-snapshot-ram", "snapshot-ram")
+
+	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: deploymentID, FCVersion: "fc-ram", MemBytes: 512 << 20,
+		StorageKey: state.SnapMemKey(deploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	sameRAM := 512
+	if _, err := s.UpdateApp(ctx, appID, state.UpdateAppParams{RAMMB: &sameRAM}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LatestSnapshot(ctx, deploymentID); err != nil {
+		t.Fatalf("no-op RAM update invalidated snapshot: %v", err)
+	}
+
+	newRAM := 256
+	if _, err := s.UpdateApp(ctx, appID, state.UpdateAppParams{RAMMB: &newRAM}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LatestSnapshot(ctx, deploymentID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("snapshot remained usable after RAM change: %v", err)
+	}
+	var stale bool
+	var replicas int
+	if err := pool.QueryRow(ctx, `select stale from snapshots where id = $1`, snap.ID).Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from snapshot_replicas where snapshot_id = $1`, snap.ID).Scan(&replicas); err != nil {
+		t.Fatal(err)
+	}
+	if !stale || replicas != 0 {
+		t.Fatalf("RAM-incompatible snapshot stale=%t replicas=%d, want true/0", stale, replicas)
+	}
+}

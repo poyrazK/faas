@@ -3797,6 +3797,7 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 			}
 		}
 	}
+	ramChanged := p.RAMMB != nil && *p.RAMMB != a.RAMMB
 	if p.RAMMB != nil {
 		a.RAMMB = *p.RAMMB
 	}
@@ -4044,6 +4045,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 		}
 	}
 	m.apps[id] = a
+	if ramChanged {
+		m.markAppSnapshotsStaleLocked(id)
+	}
 	return a, nil
 }
 
@@ -4136,6 +4140,13 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if ok && deployment.AppID == id {
+			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+		}
+	}
 	return a, nil
 }
 
@@ -5274,7 +5285,39 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	d.Status = status
 	d.Error = errMsg
 	m.deployments[id] = d
+	if status == DeployFailed || status == DeployCancelled {
+		m.markDeploymentSnapshotsStaleLocked(id)
+	}
 	return nil
+}
+
+func (m *MemStore) markDeploymentSnapshotsStaleLocked(deploymentID string) {
+	for i := range m.snapshots {
+		if m.snapshots[i].DeploymentID != deploymentID {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
+}
+
+func (m *MemStore) markAppSnapshotsStaleLocked(appID string) {
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if !ok || deployment.AppID != appID {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
+}
+
+func (m *MemStore) deleteSnapshotReplicasLocked(snapshotID string) {
+	for key := range m.snapshotReplicas {
+		if key.snapshotID == snapshotID {
+			delete(m.snapshotReplicas, key)
+		}
+	}
 }
 
 func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) error {
@@ -6419,6 +6462,7 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	d.Error = message
 	d.ErrorCode = code
 	m.deployments[id] = d
+	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
 
@@ -6466,6 +6510,7 @@ func (m *MemStore) SetDeploymentFailedEx(
 	d.ErrorFix = fix
 	d.ErrorRelevantLogs = logs
 	m.deployments[id] = d
+	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
 
@@ -9451,6 +9496,7 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 	for i := range m.snapshots {
 		if m.snapshots[i].ID == snapshotID {
 			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(snapshotID)
 			return nil
 		}
 	}
@@ -9560,6 +9606,7 @@ func (m *MemStore) MarkAllSnapshotsStaleByFCVersion(_ context.Context, currentVe
 	for i := range m.snapshots {
 		if !m.snapshots[i].Stale && m.snapshots[i].FCVersion != currentVersion {
 			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}
 	}
@@ -9598,6 +9645,7 @@ func (m *MemStore) MarkAllSnapshotsStaleByAppProtocol(_ context.Context, appProt
 		}
 		if _, match := allowed[app.AppProtocol]; match {
 			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}
 	}
@@ -9654,6 +9702,7 @@ func (m *MemStore) MarkSnapshotStaleByAppProtocol(_ context.Context, snapshotID 
 			return nil
 		}
 		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(snapshotID)
 		return nil
 	}
 	return ErrNotFound
@@ -9675,6 +9724,7 @@ func (m *MemStore) MarkOldSnapshotsStale(_ context.Context, beforeSnapshotIDs []
 	for i := range m.snapshots {
 		if _, ok := idSet[m.snapshots[i].ID]; ok {
 			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}
 	}

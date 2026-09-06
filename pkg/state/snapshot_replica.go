@@ -20,6 +20,24 @@ const (
 
 const snapshotReplicaMaxAttempts = 8
 
+// snapshotReplicaDeploymentPriority ranks snapshots by how soon a customer
+// can need them. A live deployment serves the next wake, a deployment that is
+// still snapshotting is about to become live, and a superseded deployment is
+// retained for rollback. Terminal and pre-snapshot pipeline states are not
+// valid replica candidates.
+func snapshotReplicaDeploymentPriority(status DeploymentStatus) (int, bool) {
+	switch status {
+	case DeployLive:
+		return 0, true
+	case DeploySnapshotting:
+		return 1, true
+	case DeploySuperseded:
+		return 2, true
+	default:
+		return 0, false
+	}
+}
+
 // permanentSnapshotReplicaError marks a failure that cannot heal by retrying
 // the same immutable key (for example a canonical storage object that does not
 // exist). The durable queue records the diagnostic once and stops claiming it.
