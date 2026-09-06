@@ -798,7 +798,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
 		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
-		RequestBudgetMS:       limits.RequestBudget().Milliseconds(),
+		RequestBudgetMS:       limits.RequestBudgetForType(string(a.Type)).Milliseconds(),
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 	}

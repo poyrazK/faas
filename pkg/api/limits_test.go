@@ -21,6 +21,59 @@ func TestLimitsEphemeralDiskMaxAliasesAppLayerCap(t *testing.T) {
 	}
 }
 
+func TestRequestBudgetForTypeDefaultsAndOverrides(t *testing.T) {
+	cases := []struct {
+		name string
+		plan Plan
+	}{
+		{name: "free", plan: PlanFree},
+		{name: "hobby", plan: PlanHobby},
+		{name: "pro", plan: PlanPro},
+		{name: "scale", plan: PlanScale},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			limits := MustLimitsFor(tc.plan)
+			if got := limits.RequestBudgetForType("function"); got != RequestBudgetDefault {
+				t.Fatalf("function budget = %s, want %s", got, RequestBudgetDefault)
+			}
+			if got := limits.RequestBudgetForType("app"); got != RequestBudgetAppDefault {
+				t.Fatalf("app budget = %s, want %s", got, RequestBudgetAppDefault)
+			}
+			if got := limits.RequestBudgetForType(""); got != RequestBudgetDefault {
+				t.Fatalf("legacy budget = %s, want %s", got, RequestBudgetDefault)
+			}
+
+			limits.RequestBudgetMs = 7_500
+			if got := limits.RequestBudgetForType("function"); got != 7_500*time.Millisecond {
+				t.Fatalf("function override = %s, want 7.5s", got)
+			}
+			if got := limits.RequestBudgetForType("app"); got != 7_500*time.Millisecond {
+				t.Fatalf("app override = %s, want 7.5s", got)
+			}
+
+			limits.RequestBudgetMaxMs = 10_000
+			if got := limits.RequestBudgetMaxDuration(); got != 10*time.Second {
+				t.Fatalf("request budget ceiling = %s, want 10s", got)
+			}
+		})
+	}
+}
+
+func TestRequestBudgetForTypeClampsToEffectiveCeiling(t *testing.T) {
+	limits := Limits{RequestBudgetMaxMs: 10_000}
+	if got, want := limits.RequestBudgetForType("app"), 10*time.Second; got != want {
+		t.Fatalf("app budget = %s, want %s", got, want)
+	}
+
+	// RequestBudgetMaxDuration preserves the established invariant that an
+	// invalid ceiling cannot undercut the legacy Function baseline.
+	limits.RequestBudgetMaxMs = 1_000
+	if got, want := limits.RequestBudgetForType("function"), RequestBudgetDefault; got != want {
+		t.Fatalf("function budget = %s, want %s", got, want)
+	}
+}
+
 // TestPlanLimitsMatchSpec pins every value in the table to the financial-model /
 // spec §1 numbers. If the spreadsheet moves, this test must be updated in the
 // same PR — that is the point.

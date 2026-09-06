@@ -50,11 +50,39 @@ import (
 // enumeration oracle on the loopback surface).
 type ResolveSlugFn func(slug string) (appID string, ok bool)
 
+// AppType distinguishes a request-mode App from a Function at the gateway
+// boundary. The values mirror state.AppType without importing pkg/state into
+// this package.
+type AppType string
+
+const (
+	AppTypeApp      AppType = "app"
+	AppTypeFunction AppType = "function"
+)
+
+// wakeResponseValue maps the routing outcome to the public wake-tier header.
+// A request that reused an existing target is hot even when WakeMethod is the
+// zero value; a newly admitted request is restored or cold according to the
+// scheduler result. Unknown admitted methods fail closed to the conservative
+// cold label rather than claiming a warm response.
+func wakeResponseValue(cold bool, method WakeMethod) string {
+	if !cold {
+		return wire.HotWakeValue
+	}
+	if method == WakeMethodSnapshotRestore {
+		return wire.RestoredWakeValue
+	}
+	return wire.ColdWakeValue
+}
+
 // App is the routing target for a hostname.
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
-	Plan      api.Plan
+	// Type is populated from apps.type. Empty is treated as the legacy
+	// Function/default budget posture by limits.RequestBudgetForType.
+	Type AppType
+	Plan api.Plan
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
 	// Slug is the customer-facing app slug (lowercased at apid
@@ -4790,6 +4818,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	// Wake-tier transparency is useful on every response, including auth,
+	// rate-limit, redirect, and cached responses that return before the wake
+	// gate. The later wake path replaces this hot default after admission.
+	w.Header().Set(wire.WakeHeader, wire.HotWakeValue)
 	// ADR-127: stamp account_id + app_id onto the request context
 	// so the recorder can build a row at Handler.observe without
 	// observe's signature changing. nil-safe on accountID (the
@@ -5268,6 +5300,7 @@ haveApp:
 				// still alive. Record the visit and let the page's fetch/meta
 				// retry land on the app without a manual reload.
 				h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
+				w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
 				writeWakePage(w, r.Header.Get("x-faas-wake-id"))
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
@@ -5351,6 +5384,9 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// The wake admission result is now known. Replace the hot default before
+	// any response body is committed by the proxy.
+	w.Header().Set(wire.WakeHeader, wakeResponseValue(cold, wakeMethod))
 	target := pick.Target
 	// A coalesced wake can return several VMs. Correlate this newly woken
 	// request with the selected VM, while keeping ordinary warm responses
@@ -5431,10 +5467,6 @@ haveApp:
 	//nolint:contextcheck // WithFirstByteRecorder wraps context.WithValue on r.Context(); lint can't trace through the function call.
 	r = r.WithContext(WithFirstByteRecorder(r.Context(), firstByteRec))
 
-	if cold {
-		// Cold-wake transparency (UX spec §6): let developers see the penalty.
-		w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
-	}
 	if wakeID != "" {
 		// Per-wake correlation handle (gaps analysis 2026-07-23). Sits
 		// next to x-faas-wake so the two are co-located on every

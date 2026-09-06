@@ -42,7 +42,8 @@ func cancelStampedRequestBudget(ctx context.Context) {
 //
 //  1. nil-safe: h.edgeRules nil → fall through, plan default applies
 //     downstream via the BudgetMiddleware. Returns false.
-//  2. Match miss → plan-level default budget (limitsFor(app.Plan).RequestBudget()),
+//  2. Match miss → type-aware plan-level default budget
+//     (limitsFor(app.Plan).RequestBudgetForType(app.Type)),
 //     clamped to per-plan max. Stamp via WithRemaining, return false.
 //  3. Match hit, same account → rule.BudgetMs. If the rule specifies
 //     AllowOverrideHeader and the inbound request carries that
@@ -76,7 +77,7 @@ func (h *Handler) applyEdgeRuleBudget(w http.ResponseWriter, r *http.Request, ap
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("budget", "miss")
 		}
-		h.stampRequestBudget(w, r, app, limits.RequestBudget(), "plan_default")
+		h.stampRequestBudget(w, r, app, limits.RequestBudgetForType(string(app.Type)), "plan_default")
 		return false
 	}
 	if rule.AccountID != app.AccountID {
@@ -96,7 +97,7 @@ func (h *Handler) applyEdgeRuleBudget(w http.ResponseWriter, r *http.Request, ap
 		// to the plan default rather than honouring a rule that
 		// belongs to a different account. Mirrors applyEdgeRuleIP /
 		// applyEdgeRuleValidate / applyEdgeRuleLimit.
-		h.stampRequestBudget(w, r, app, limits.RequestBudget(), "plan_default")
+		h.stampRequestBudget(w, r, app, limits.RequestBudgetForType(string(app.Type)), "plan_default")
 		return false
 	}
 	// Resolve the budget value: rule.BudgetMs, optionally overridden

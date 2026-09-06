@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -355,14 +356,30 @@ func TestHotPathDoesNotWakeOrTagCold(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if rec.Header().Get(wire.WakeHeader) != "" {
-		t.Error("warm request must not carry the cold header")
+	if got := rec.Header().Get(wire.WakeHeader); got != wire.HotWakeValue {
+		t.Errorf("warm request wake tier = %q, want %q", got, wire.HotWakeValue)
 	}
 	if got := rec.Header().Get("x-faas-wake-id"); got != "" {
 		t.Errorf("warm request must not carry x-faas-wake-id, got %q", got)
 	}
 	if atomic.LoadInt32(b.Admits()) != 0 {
 		t.Errorf("hot path must not trigger an admit, got %d", atomic.LoadInt32(b.Admits()))
+	}
+}
+
+func TestSnapshotRestoreWakeCarriesRestoredHeader(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.wakeMethodOut = WakeMethodSnapshotRestore
+
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get(wire.WakeHeader); got != wire.RestoredWakeValue {
+		t.Fatalf("wake tier = %q, want %q", got, wire.RestoredWakeValue)
 	}
 }
 
@@ -3792,6 +3809,36 @@ func TestStampRequestBudget_DoesNotCancelImmediately(t *testing.T) {
 	cancelStampedRequestBudget(req.Context())
 	if err := req.Context().Err(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelStampedRequestBudget error = %v, want context.Canceled", err)
+	}
+}
+
+func TestApplyEdgeRuleBudget_UsesAppTypeDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		typ  AppType
+		want time.Duration
+	}{
+		{name: "request-mode app", typ: AppTypeApp, want: api.RequestBudgetAppDefault},
+		{name: "function", typ: AppTypeFunction, want: api.RequestBudgetDefault},
+		{name: "legacy empty type", typ: "", want: api.RequestBudgetDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := (&Handler{metrics: NewMetrics()}).WithEdgeRules(stubEdgeRuleMatcher{}, nil, nil)
+			app := App{ID: "app-1", AccountID: "acct-1", Type: tc.typ, Plan: api.PlanPro}
+			req := httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil)
+			rec := httptest.NewRecorder()
+
+			if blocked := h.applyEdgeRuleBudget(rec, req, app); blocked {
+				t.Fatal("budget applier unexpectedly blocked request")
+			}
+			budget, ok := reqbudget.FromContext(req.Context())
+			if !ok {
+				t.Fatal("budget was not attached to request context")
+			}
+			if budget.Total != tc.want {
+				t.Fatalf("budget total = %s, want %s", budget.Total, tc.want)
+			}
+		})
 	}
 }
 

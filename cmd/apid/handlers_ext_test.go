@@ -1176,13 +1176,28 @@ func TestGetApp_SurfacesEffectiveLimits(t *testing.T) {
 			if got.AppRequestRateRPS != limits.RateLimitRPS || got.AppRequestBurst != limits.RateLimitBurst || got.AccountRequestRateRPM != limits.RateLimitPerAccountRPM {
 				t.Errorf("request rates = %d/%d/%d, want %d/%d/%d", got.AppRequestRateRPS, got.AppRequestBurst, got.AccountRequestRateRPM, limits.RateLimitRPS, limits.RateLimitBurst, limits.RateLimitPerAccountRPM)
 			}
-			if got.RequestBudgetMS != limits.RequestBudget().Milliseconds() || got.RequestBudgetMaxMS != limits.RequestBudgetMaxDuration().Milliseconds() {
-				t.Errorf("request budgets = %d/%d, want %d/%d", got.RequestBudgetMS, got.RequestBudgetMaxMS, limits.RequestBudget().Milliseconds(), limits.RequestBudgetMaxDuration().Milliseconds())
+			if got.RequestBudgetMS != limits.RequestBudgetForType(out.Type).Milliseconds() || got.RequestBudgetMaxMS != limits.RequestBudgetMaxDuration().Milliseconds() {
+				t.Errorf("request budgets = %d/%d, want %d/%d", got.RequestBudgetMS, got.RequestBudgetMaxMS, limits.RequestBudgetForType(out.Type).Milliseconds(), limits.RequestBudgetMaxDuration().Milliseconds())
 			}
 			if !bytes.Contains(rec.Body.Bytes(), []byte(`"effective_limits":`)) {
 				t.Errorf("raw JSON missing effective_limits key:\n%s", rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestAppEffectiveLimits_RequestBudgetDependsOnType(t *testing.T) {
+	plan := api.PlanPro
+	app := state.App{Type: state.AppTypeApp}
+	fn := state.App{Type: state.AppTypeFunction}
+
+	appLimits := appEffectiveLimits(app, plan)
+	fnLimits := appEffectiveLimits(fn, plan)
+	if appLimits.RequestBudgetMS != api.RequestBudgetAppDefault.Milliseconds() {
+		t.Fatalf("app request budget = %dms, want %dms", appLimits.RequestBudgetMS, api.RequestBudgetAppDefault.Milliseconds())
+	}
+	if fnLimits.RequestBudgetMS != api.RequestBudgetDefault.Milliseconds() {
+		t.Fatalf("function request budget = %dms, want %dms", fnLimits.RequestBudgetMS, api.RequestBudgetDefault.Milliseconds())
 	}
 }
 

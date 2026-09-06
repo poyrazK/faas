@@ -10,11 +10,14 @@ trade-off is that the **first request to a parked app pays the
 wake cost**. Subsequent requests hit the warm instance at normal
 latency.
 
-You can detect a cold wake in two ways:
+You can detect the wake tier on every routed response:
 
-- The response header `x-faas-wake: cold` on the first request.
-  Absent on subsequent requests. Useful for retries / client-side
-  banners.
+- `x-faas-wake: hot` means an already-running instance served the request.
+- `x-faas-wake: restored` means the request admitted an instance from a
+  usable snapshot.
+- `x-faas-wake: cold` means the request admitted a fresh cold boot. The
+  value is retained for CLI compatibility and is useful for retries /
+  client-side banners.
 - The dashboard's per-app state badge: `◌ sleeping` before
   traffic, `⟳ waking` while the instance restores,
   `● running` once it's serving. The page refreshes every 10 s.
