@@ -53,6 +53,64 @@ func cacheRuleFromContext(ctx context.Context) *cacheRuleSnapshot {
 	return v
 }
 
+// tryServeStaleWhileWaking serves an eligible stale response to a request
+// that arrives while another request is already driving the app's wake gate.
+// The wake leader continues to the newly ready instance and its cache writer
+// refreshes this route; followers get a bounded stale response instead of
+// waiting behind the restore.
+func (h *Handler) tryServeStaleWhileWaking(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (bool, string) {
+	if h == nil || h.responseCache == nil {
+		return false, ""
+	}
+	snap := cacheRuleFromContext(r.Context())
+	if snap == nil || snap.Rule == nil || snap.Rule.StaleIfErrorSeconds <= 0 {
+		return false, ""
+	}
+	if h.gate == nil || !h.gate.Inflight(snap.AppID) {
+		return false, ""
+	}
+	if r.Header.Get("Authorization") != "" || hasSessionCookie(r) {
+		return false, ""
+	}
+	if r.Method != "GET" && r.Method != "HEAD" {
+		return false, ""
+	}
+	key := CacheKey{
+		AppID:          snap.AppID,
+		DeploymentID:   "",
+		RuleID:         snap.Rule.ID,
+		Method:         snap.Method,
+		NormalizedPath: snap.Path,
+		Query:          snap.Query,
+		VaryHash:       snap.VaryHash,
+	}
+	outcome, entry := h.responseCache.Get(key)
+	if outcome != "stale_if_error_eligible" {
+		return false, ""
+	}
+	for k, vs := range entry.header {
+		if isHopByHopHeader(k) {
+			continue
+		}
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.Header().Set("x-faas-cache", "stale-while-waking")
+	w.Header().Add("Warning", `110 - "Response is Stale"`)
+	w.Header().Set("X-From-Cache", "stale")
+	w.Header().Set("Content-Length", strconvItoa(len(entry.body)))
+	w.WriteHeader(entry.statusCode)
+	_, _ = w.Write(entry.body)
+	rec.status = entry.statusCode
+	rec.Bytes = int64(len(entry.body))
+	if h.metrics != nil {
+		h.metrics.cacheStaleWhileWaking.WithLabelValues(app.ID).Inc()
+	}
+	h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
+	return true, "stale_while_waking"
+}
+
 // tryServeStaleOnWakeError (ADR-122 §Decision, kind=cache
 // stale-on-error path) is called from ServeHTTP's wake-failure
 // branch (handler.go:4531) BEFORE writeWakeError. Returns true

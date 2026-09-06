@@ -254,6 +254,11 @@ type Metrics struct {
 	// (the honesty property behind the saved-cost figure). Per-
 	// app label (closed by appID cardinality).
 	responseCacheWakesAvoided *prometheus.CounterVec
+	// cacheStaleWhileWaking counts stale kind=cache responses served while
+	// another request is already waiting on the app's wake gate. The app label
+	// keeps the customer-visible impact attributable without changing the
+	// existing response-cache outcome vocabulary.
+	cacheStaleWhileWaking *prometheus.CounterVec
 	// responseCacheBytes (ADR-122 §Decision) is the in-process
 	// store occupancy gauge; entryBytes is the per-entry
 	// distribution (avg over recent entries). Both surface on
@@ -710,6 +715,10 @@ func NewMetrics() *Metrics {
 		responseCacheWakesAvoided: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_response_cache_wakes_avoided_total",
 			Help: "Cache hits that genuinely displaced a cold boot (HealthyCount == 0 at hit time). Per-app; saved-cost surface. ADR-122.",
+		}, []string{"app"}),
+		cacheStaleWhileWaking: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_cache_stale_while_waking_total",
+			Help: "Stale kind=cache responses served while an app wake is in progress, labelled by app.",
 		}, []string{"app"}),
 		responseCacheBytes: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_response_cache_bytes",
@@ -1386,7 +1395,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
