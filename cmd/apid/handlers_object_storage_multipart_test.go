@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -67,10 +68,21 @@ func TestObjectMultipartUploadLifecycle(t *testing.T) {
 	if got := e.do(t, "GET", base+"/"+upload.ID, nil, nil); got.Code != 200 {
 		t.Fatal(got.Code, got.Body.String())
 	}
+	listed := e.do(t, "GET", base+"?limit=1", nil, nil)
+	var uploadList api.ObjectMultipartUploadList
+	if listed.Code != 200 || json.Unmarshal(listed.Body.Bytes(), &uploadList) != nil || len(uploadList.Items) != 1 || uploadList.Items[0].ID != upload.ID {
+		t.Fatal("session list", listed.Code, listed.Body.String())
+	}
 	partResponse := e.do(t, "POST", base+"/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)
 	var signed api.ObjectSignedRequest
 	if partResponse.Code != 200 || json.Unmarshal(partResponse.Body.Bytes(), &signed) != nil || signed.Headers["Content-Length"] != strconv.FormatInt(upload.SizeBytes, 10) {
 		t.Fatal(partResponse.Code, partResponse.Body.String())
+	}
+	provider.multipartParts = objectstorage.MultipartPartsPage{Items: []objectstorage.MultipartPart{{PartNumber: 1, ETag: `"etag"`, SizeBytes: upload.SizeBytes, LastModified: time.Now().UTC()}}}
+	partsResponse := e.do(t, "GET", base+"/"+upload.ID+"/parts?limit=1", nil, nil)
+	var partsList api.ObjectMultipartPartList
+	if partsResponse.Code != 200 || json.Unmarshal(partsResponse.Body.Bytes(), &partsList) != nil || len(partsList.Items) != 1 || partsList.Items[0].ETag != `"etag"` {
+		t.Fatal("provider part list", partsResponse.Code, partsResponse.Body.String())
 	}
 	if invalid := e.do(t, "POST", base+"/"+upload.ID+"/parts/2/signed-url", api.ObjectMultipartPartSignRequest{}, nil); invalid.Code != 400 {
 		t.Fatal("invalid part accepted", invalid.Code, invalid.Body.String())

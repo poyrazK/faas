@@ -103,6 +103,39 @@ func (s *PgStore) GetObjectMultipartUpload(ctx context.Context, account, app, bu
 	return objectMultipartFromSQL(row)
 }
 
+func (s *PgStore) ListObjectMultipartUploads(ctx context.Context, account, app, bucket string, limit int32, cursor string) ([]ObjectMultipartUpload, string, error) {
+	if limit < 1 || limit > 100 {
+		return nil, "", ErrConflict
+	}
+	cursorID := pgtype.UUID{Valid: true}
+	if cursor != "" {
+		cursorID = mustPgUUID(cursor)
+		if !cursorID.Valid {
+			return nil, "", ErrConflict
+		}
+	}
+	rows, err := sqlc.New().ObjectMultipartList(ctx, s.pool, sqlc.ObjectMultipartListParams{
+		AccountID: mustPgUUID(account), AppID: mustPgUUID(app), BucketID: mustPgUUID(bucket), ID: cursorID, PageLimit: limit + 1,
+	})
+	if err != nil {
+		return nil, "", mapErr(err)
+	}
+	next := ""
+	if len(rows) > int(limit) {
+		rows = rows[:limit]
+		next = pgUUIDString(rows[len(rows)-1].ID)
+	}
+	out := make([]ObjectMultipartUpload, 0, len(rows))
+	for _, row := range rows {
+		upload, convertErr := objectMultipartFromSQL(row)
+		if convertErr != nil {
+			return nil, "", convertErr
+		}
+		out = append(out, upload)
+	}
+	return out, next, nil
+}
+
 func (s *PgStore) ClaimObjectMultipartUpload(ctx context.Context, account, app, bucket, id, token, operation string, parts []api.ObjectMultipartCompletedPart, recovery bool) (ObjectMultipartUpload, error) {
 	if token == "" || !validObjectMultipartOperation(operation) {
 		return ObjectMultipartUpload{}, ErrConflict

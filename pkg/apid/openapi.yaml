@@ -510,6 +510,25 @@ paths:
     parameters:
       - { name: slug, description: App containing the multipart upload target., in: path, required: true, schema: { type: string } }
       - { name: bucket, description: Identifier of the bucket receiving the multipart object., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectMultipartUploads
+      summary: List durable resumable upload sessions
+      description: Requires storage:write or admin and a matching bucket grant. The provider upload ID is never returned. Use cursor to recover sessions after a client loses its local session identifier.
+      tags: [storage]
+      parameters:
+        - { name: limit, description: Maximum number of sessions to return., in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
+        - { name: cursor, description: UUID cursor returned by the previous page., in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Durable upload sessions; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUploadList' }
+        default:
+          description: Invalid cursor, access denial, or backend placement unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
     post:
       operationId: createObjectMultipartUpload
       summary: Start or recover a resumable multipart upload
@@ -538,6 +557,31 @@ paths:
               schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
         default:
           description: Invalid request, stale accounting, capacity limit, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts:
+    parameters:
+      - { name: slug, description: App authorizing multipart recovery., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket containing the provider-confirmed parts., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale session whose provider parts are being recovered., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectMultipartParts
+      summary: List parts confirmed by the storage provider
+      description: Requires storage:write or admin and a matching bucket grant. Returns provider-confirmed ETags so an interrupted client can resume completion without exposing provider credentials or upload IDs.
+      tags: [storage]
+      parameters:
+        - { name: part_number_marker, description: Return parts after this part number., in: query, required: false, schema: { type: integer, minimum: 0, maximum: 10000, default: 0 } }
+        - { name: limit, description: Maximum number of provider parts to return., in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 } }
+      responses:
+        '200':
+          description: Provider-confirmed uploaded parts; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartPartList' }
+        default:
+          description: Session missing, not recoverable, access denial, or provider failure
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -12142,6 +12186,15 @@ components:
         state: { type: string, enum: [initiating, active, completing, aborting, completed, aborted] }
         expires_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
+    ObjectMultipartUploadList:
+      description: A page of durable provider-neutral resumable upload sessions.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        next_cursor: { type: string, format: uuid }
     CreateObjectMultipartUploadRequest:
       description: Final object identity and total size for a resumable upload.
       type: object
@@ -12165,6 +12218,25 @@ components:
       properties:
         part_number: { type: integer, minimum: 1, maximum: 10000 }
         etag: { type: string, minLength: 1, maxLength: 256 }
+    ObjectMultipartPart:
+      description: A part confirmed by the upstream object storage provider.
+      type: object
+      additionalProperties: false
+      required: [part_number, etag, size_bytes, last_modified]
+      properties:
+        part_number: { type: integer, minimum: 1, maximum: 10000 }
+        etag: { type: string, minLength: 1, maxLength: 256 }
+        size_bytes: { type: integer, format: int64, minimum: 1 }
+        last_modified: { type: string, format: date-time }
+    ObjectMultipartPartList:
+      description: A page of provider-confirmed parts for an active upload.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectMultipartPart' }
+        next_part_number_marker: { type: integer, minimum: 1, maximum: 10000 }
     CompleteObjectMultipartUploadRequest:
       description: Complete ordered ETag manifest for every part in the session.
       type: object

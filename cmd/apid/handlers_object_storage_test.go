@@ -19,6 +19,7 @@ type fakeObjectProvider struct {
 	accessed             []string
 	createErr, deleteErr error
 	multipartErr         error
+	multipartParts       objectstorage.MultipartPartsPage
 	multipartCompleted   []string
 	multipartAborted     []string
 }
@@ -56,6 +57,13 @@ func (p *fakeObjectProvider) PresignMultipartPart(_ context.Context, b string, r
 		return objectstorage.SignedRequest{}, p.multipartErr
 	}
 	return objectstorage.SignedRequest{URL: "https://storage.example.test/part", Method: "PUT", Headers: map[string]string{"Content-Length": strconv.FormatInt(r.SizeBytes, 10)}, ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+func (p *fakeObjectProvider) ListMultipartParts(_ context.Context, b string, _ objectstorage.MultipartListPartsRequest) (objectstorage.MultipartPartsPage, error) {
+	p.accessed = append(p.accessed, b)
+	if p.multipartErr != nil {
+		return objectstorage.MultipartPartsPage{}, p.multipartErr
+	}
+	return p.multipartParts, nil
 }
 func (p *fakeObjectProvider) CompleteMultipartUpload(_ context.Context, b string, r objectstorage.MultipartCompleteRequest) error {
 	p.accessed = append(p.accessed, b)

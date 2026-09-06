@@ -177,12 +177,91 @@ func (s *server) createObjectMultipartUpload(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, viewMultipartUpload(upload))
 }
 
+func (s *server) listObjectMultipartUploads(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	bucket, store, _, ok := s.multipartUploadStore(w, r, acct)
+	if !ok {
+		return
+	}
+	limit := int64(100)
+	var err error
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.ParseInt(raw, 10, 32)
+	}
+	cursor := r.URL.Query().Get("cursor")
+	if cursor != "" {
+		if _, err = uuid.Parse(cursor); err != nil {
+			bucketProblem(w, objectstorage.ErrInvalid)
+			return
+		}
+	}
+	if err != nil || limit < 1 || limit > 100 || len(cursor) > 64 {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	rows, next, err := store.ListObjectMultipartUploads(r.Context(), acct.ID, bucket.AppID, bucket.ID, int32(limit), cursor)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	out := api.ObjectMultipartUploadList{Items: make([]api.ObjectMultipartUpload, 0, len(rows)), NextCursor: next}
+	for _, row := range rows {
+		out.Items = append(out.Items, viewMultipartUpload(row))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *server) getObjectMultipartUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, upload, _, _, ok := s.loadMultipartUpload(w, r, acct)
 	if ok {
 		writeJSON(w, http.StatusOK, viewMultipartUpload(upload))
 	}
+}
+
+func (s *server) listObjectMultipartParts(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	bucket, upload, _, provider, ok := s.loadMultipartUpload(w, r, acct)
+	if !ok {
+		return
+	}
+	if upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartCompleting && upload.State != state.ObjectMultipartAborting {
+		bucketProblem(w, state.ErrConflict)
+		return
+	}
+	marker := int64(0)
+	limit := int64(1000)
+	var err error
+	if raw := r.URL.Query().Get("part_number_marker"); raw != "" {
+		marker, err = strconv.ParseInt(raw, 10, 32)
+		if err != nil {
+			bucketProblem(w, objectstorage.ErrInvalid)
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.ParseInt(raw, 10, 32)
+		if err != nil {
+			bucketProblem(w, objectstorage.ErrInvalid)
+			return
+		}
+	}
+	if marker < 0 || marker > 10000 || limit < 1 || limit > 1000 {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	page, err := provider.ListMultipartParts(r.Context(), bucket.PhysicalName, objectstorage.MultipartListPartsRequest{
+		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumberMarker: int32(marker), Limit: int32(limit),
+	})
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	out := api.ObjectMultipartPartList{Items: make([]api.ObjectMultipartPart, 0, len(page.Items)), NextPartNumberMarker: page.NextPartNumberMarker}
+	for _, part := range page.Items {
+		out.Items = append(out.Items, api.ObjectMultipartPart{PartNumber: part.PartNumber, ETag: part.ETag, SizeBytes: part.SizeBytes, LastModified: part.LastModified})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *server) signObjectMultipartPart(w http.ResponseWriter, r *http.Request, acct state.Account) {

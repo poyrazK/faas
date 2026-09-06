@@ -36,6 +36,7 @@ type Provider interface {
 	Presign(context.Context, string, SignRequest) (SignedRequest, error)
 	EnsureMultipartUpload(context.Context, string, MultipartCreateRequest) (string, error)
 	PresignMultipartPart(context.Context, string, MultipartPartRequest) (SignedRequest, error)
+	ListMultipartParts(context.Context, string, MultipartListPartsRequest) (MultipartPartsPage, error)
 	CompleteMultipartUpload(context.Context, string, MultipartCompleteRequest) error
 	AbortMultipartUpload(context.Context, string, MultipartAbortRequest) error
 }
@@ -97,6 +98,28 @@ type MultipartPartRequest struct {
 	PartNumber       int32
 	SizeBytes        int64
 	ExpiresIn        int64
+}
+
+// MultipartListPartsRequest asks a provider for the parts that have actually
+// reached the upstream upload. PartNumberMarker is zero for the first page;
+// providers must not expose their native upload identity in the response.
+type MultipartListPartsRequest struct {
+	Key              string
+	ProviderUploadID string
+	PartNumberMarker int32
+	Limit            int32
+}
+
+type MultipartPart struct {
+	PartNumber   int32
+	ETag         string
+	SizeBytes    int64
+	LastModified time.Time
+}
+
+type MultipartPartsPage struct {
+	Items                []MultipartPart
+	NextPartNumberMarker int32
 }
 
 type CompletedPart struct {

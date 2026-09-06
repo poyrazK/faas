@@ -49,6 +49,29 @@ func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload Object
 	return upload, nil
 }
 
+func (m *MemStore) ListObjectMultipartUploads(_ context.Context, account, app, bucket string, limit int32, cursor string) ([]ObjectMultipartUpload, string, error) {
+	if limit < 1 || limit > 100 {
+		return nil, "", ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := make([]ObjectMultipartUpload, 0)
+	for _, upload := range m.objectMultipartUploads {
+		if upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket || cursor != "" && upload.ID <= cursor {
+			continue
+		}
+		upload.Parts = cloneMultipartParts(upload.Parts)
+		rows = append(rows, upload)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	next := ""
+	if len(rows) > int(limit) {
+		rows = rows[:limit]
+		next = rows[len(rows)-1].ID
+	}
+	return rows, next, nil
+}
+
 func (m *MemStore) GetObjectMultipartUpload(_ context.Context, account, app, bucket, id string) (ObjectMultipartUpload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
