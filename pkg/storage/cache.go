@@ -200,7 +200,9 @@ type LocalCacheBackend struct {
 //
 // root is created with mode 0o770 if missing. The imaged and builderd
 // services share the cache through their common faas group, so both the root
-// and its fan-out buckets must be group-writable; cache blobs contain no
+// and its fan-out buckets must be group-writable and setgid. Setgid keeps
+// VMMD-created buckets in the provisioned shared group instead of root:root.
+// Cache blobs contain no
 // secrets and are not intended for arbitrary users.
 func NewLocalCacheBackend(parent StorageBackend, root string, maxBytes int64) (*LocalCacheBackend, error) {
 	if parent == nil {
@@ -215,7 +217,7 @@ func NewLocalCacheBackend(parent StorageBackend, root string, maxBytes int64) (*
 	if err := os.MkdirAll(root, 0o770); err != nil {
 		return nil, fmt.Errorf("storage: cache: mkdir %q: %w", root, err)
 	}
-	_ = os.Chmod(root, 0o770)
+	_ = os.Chmod(root, 0o770|os.ModeSetgid)
 	return &LocalCacheBackend{
 		parent:   parent,
 		root:     root,
@@ -394,7 +396,7 @@ func (c *LocalCacheBackend) spoolFile(dir string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0o770); err != nil {
 		return nil, fmt.Errorf("storage: cache: mkdir %q: %w", dir, err)
 	}
-	_ = os.Chmod(dir, 0o770)
+	_ = os.Chmod(dir, 0o770|os.ModeSetgid)
 	return os.CreateTemp(dir, ".faas-cache-put-*")
 }
 
@@ -619,7 +621,7 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 	if err := os.MkdirAll(filepath.Dir(path), 0o770); err != nil {
 		return nil, fmt.Errorf("cache mkdir %q: %w", filepath.Dir(path), err)
 	}
-	_ = os.Chmod(filepath.Dir(path), 0o770)
+	_ = os.Chmod(filepath.Dir(path), 0o770|os.ModeSetgid)
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".faas-cache-*")
 	if err != nil {
 		return nil, fmt.Errorf("cache temp %q: %w", filepath.Dir(path), err)

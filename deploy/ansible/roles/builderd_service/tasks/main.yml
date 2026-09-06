@@ -170,7 +170,7 @@
     state: directory
     owner: faas-builderd
     group: faas
-    mode: "0770"
+    mode: "2770"
 
 # builderd's content-addressed build cache defaults to /var/cache/faas/builds
 # (cmd/builderd/config.go). ProtectSystem=strict requires this host-local
