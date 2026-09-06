@@ -347,10 +347,16 @@ type Binding struct {
 	AppID                string
 	Scope                string
 	EnvironmentKey       string
+	Access               CredentialAccess
 	ProviderIdentityID   string
 	CredentialRef        string
 	CredentialGeneration int64
 	State                BindingState
+	LastErrorCode        string
+	LeaseToken           string
+	LeaseUntil           time.Time
+	AttemptCount         int32
+	RetryAt              time.Time
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	DeletedAt            *time.Time
@@ -377,12 +383,54 @@ type Store interface {
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
 }
 
+// BindingStore persists the saga that connects one ready database to one app
+// secret target. The lease token fences stale reconcilers; credential material
+// itself never crosses this interface.
+type BindingStore interface {
+	ReserveBinding(context.Context, Binding) (Binding, bool, error)
+	GetBinding(context.Context, string, string) (Binding, error)
+	ListBindings(context.Context, string, string) ([]Binding, error)
+	DueBindings(context.Context, bool, int, time.Time) ([]Binding, error)
+	ClaimBinding(context.Context, string, string, string, BindingState, time.Time, time.Time) (Binding, error)
+	FinishBindingProvision(context.Context, string, string, string, string, time.Time) (Binding, error)
+	ReleaseBinding(context.Context, string, string, BindingState, string, time.Time, time.Time) error
+	FinishBindingDelete(context.Context, string, string, time.Time) (Binding, error)
+}
+
 func ValidName(name string) bool {
 	if !utf8.ValidString(name) {
 		return false
 	}
 	validName := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	return validName.MatchString(name)
+}
+
+func validBindingScope(scope string) bool {
+	if !utf8.ValidString(scope) {
+		return false
+	}
+	validScope := regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+	return validScope.MatchString(scope)
+}
+
+func validEnvironmentKey(key string) bool {
+	if !utf8.ValidString(key) {
+		return false
+	}
+	validKey := regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,126}$`)
+	return validKey.MatchString(key)
+}
+
+func validOpaqueID(value string) bool {
+	if value == "" || len(value) > 255 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func validErrorCode(code string) bool {

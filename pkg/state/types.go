@@ -4580,8 +4580,14 @@ type AppSecret struct {
 	// probabilistically non-deterministic, so a
 	// ciphertext-derived hash would diverge for every row).
 	ValueHash string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// ManagedPostgresBindingID and its opaque credential fields are populated
+	// only by the managed PostgreSQL credential sink. Customer writes cannot
+	// replace or delete an owned row while its binding is active.
+	ManagedPostgresBindingID    string
+	ManagedCredentialRef        string
+	ManagedCredentialGeneration int64
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 // AccountAppSecret is the per-row shape returned by

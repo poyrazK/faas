@@ -7,6 +7,14 @@ environment. The lifecycle service and background discovery both fail closed
 while it is false. Deletion intents are still reconciled, so disabling rollout
 cannot strand known paid resources.
 
+The binding catalog and encrypted-secret ownership boundary are already
+durable. Reserving a binding claims one `(app, scope, environment key)` target
+globally, so two databases cannot both own `DATABASE_URL`. A customer secret
+write racing that reservation is serialized in PostgreSQL; exactly one wins.
+Once claimed, customer PUT, rotate, and DELETE operations return a conflict
+until the binding reaches its deleted tombstone. Host-key maintenance can still
+re-seal the ciphertext without changing the managed owner.
+
 ## Neon backend configuration
 
 Copy `deploy/managed-postgres.example.json` to an operator-owned path, set
@@ -54,6 +62,12 @@ issuance retrieves the stored role password rather than resetting it. Revoking
 a binding deletes that role. The adapter returns credential material only in
 memory and provider errors never include response bodies, connection strings,
 endpoint hosts, or API keys.
+
+Binding reconciliation is not enabled yet. Its persisted lease, retry,
+credential-generation, access, and tombstone fields are provider-neutral. A
+future worker must write the sealed app-secret row before marking a binding
+ready, and must remove that owned row before completing deletion; the
+PostgreSQL store fences both transitions.
 
 Neon's consumption-history API currently maps cleanly to Gregale's
 `compute_unit_seconds` and `egress_bytes` meters. Storage is intentionally not

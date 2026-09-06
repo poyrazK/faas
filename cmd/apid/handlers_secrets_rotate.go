@@ -212,6 +212,9 @@ func (s *server) sealAndPersistWithKid(c stdctx, acct state.Account, app state.A
 		return api.ErrCapacity("could not seal secret")
 	}
 	if err := s.store.UpsertAppSecretWithKidAndValueHashInScope(c, acct.ID, app.ID, scope, key, kid, valueHash, ciphertext); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			return api.ErrManagedSecretConflict()
+		}
 		return api.ErrCapacity("could not persist secret")
 	}
 	return nil

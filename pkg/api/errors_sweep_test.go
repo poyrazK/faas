@@ -277,6 +277,19 @@ func TestSweep_ErrSecretNotFound(t *testing.T) {
 	}
 }
 
+func TestSweep_ErrManagedSecretConflict(t *testing.T) {
+	p := ErrManagedSecretConflict()
+	if p.Status != http.StatusConflict {
+		t.Errorf("status = %d", p.Status)
+	}
+	if p.Code != CodeConflict {
+		t.Errorf("code = %q", p.Code)
+	}
+	if p.DocsURL == "" {
+		t.Error("docs URL is empty")
+	}
+}
+
 func TestSweep_ErrPlanLimitEnvVars(t *testing.T) {
 	p := ErrPlanLimitEnvVars(Limits{Plan: PlanFree, EnvVarsMax: 25}, 50)
 	if p.Status != http.StatusForbidden {

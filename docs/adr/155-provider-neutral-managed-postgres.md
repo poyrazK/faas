@@ -138,6 +138,36 @@ The lifecycle service enforces the same switch, preventing a future direct API
 call from bypassing the reconciler gate. There is still no customer route or
 plan entitlement in this follow-up.
 
+## Durable binding-store follow-up
+
+Bindings now use the same persisted lease, retry, attempt, and tombstone model
+as databases. `access` remains a Gregale `read_write` or `read_only` promise;
+provider role names do not enter the catalog. A binding reservation is valid
+only for a ready database and a live app owned by the same account.
+
+One active binding exclusively claims `(app_id, scope, environment_key)`. The
+partial unique index intentionally omits `database_id`: permitting two
+databases to target the same `DATABASE_URL` would make runtime behavior depend
+on last-writer order. Binding reservations and customer app-secret mutations
+also take the same transaction-scoped advisory lock. This closes the
+cross-table race in which both transactions could inspect an empty opposite
+table before committing.
+
+Managed credentials remain encrypted `app_secrets` rows so the existing wake
+path can inject them without a scheduler or guest protocol change. The row
+records its binding ID, opaque credential reference, and generation; a trigger
+checks that its account, app, scope, key, and generation match the active
+binding. Customer secret mutations cannot replace or delete an owned row. The
+host-key replayer has a distinct maintenance update that changes only the
+sealed envelope metadata and preserves managed ownership.
+
+The production store will not mark provisioning complete until the matching
+owned secret exists, and will not tombstone a binding while that secret
+remains. This makes the future provider-call → sealed-secret-write → catalog
+transition a recoverable saga rather than pretending the external provider and
+Gregale PostgreSQL share a transaction. This follow-up still makes no provider
+credential call and exposes no customer route.
+
 ## Consequences
 
 Gregale can add Neon, Xata, Prisma Postgres, a traditional managed PostgreSQL

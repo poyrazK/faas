@@ -12908,6 +12908,9 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
+	}
 	existing.Ciphertext = ciphertext
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
@@ -12933,6 +12936,9 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	}
 	if existing.AccountID != accountID {
 		return ErrNotFound
+	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -12965,11 +12971,79 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
+	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
 	existing.ValueHash = valueHash
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
+	return nil
+}
+
+// ResealAppSecretWithKidAndValueHashInScope is the maintenance-only update
+// used by the host-key replayer. Unlike a customer upsert, it may replace the
+// encrypted envelope of a managed row and always preserves ownership fields.
+func (m *MemStore) ResealAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: appID, Scope: scope, Key: key}
+	existing, ok := m.secrets[k]
+	if !ok || existing.AccountID != accountID {
+		return ErrNotFound
+	}
+	existing.Ciphertext = ciphertext
+	existing.Kid = kid
+	existing.ValueHash = valueHash
+	existing.UpdatedAt = time.Now()
+	m.secrets[k] = existing
+	return nil
+}
+
+func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret) error {
+	if secret.AccountID == "" || secret.AppID == "" || secret.Scope == "" || secret.Key == "" ||
+		len(secret.Ciphertext) == 0 || secret.ManagedPostgresBindingID == "" ||
+		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
+	existing, ok := m.secrets[k]
+	if ok && (existing.ManagedPostgresBindingID != secret.ManagedPostgresBindingID ||
+		existing.ManagedCredentialGeneration > secret.ManagedCredentialGeneration ||
+		(existing.ManagedCredentialGeneration == secret.ManagedCredentialGeneration && existing.ManagedCredentialRef != secret.ManagedCredentialRef)) {
+		return ErrConflict
+	}
+	for existingKey, candidate := range m.secrets {
+		if existingKey != k && candidate.ManagedCredentialRef == secret.ManagedCredentialRef {
+			return ErrConflict
+		}
+	}
+	now := time.Now()
+	if ok {
+		secret.CreatedAt = existing.CreatedAt
+	} else {
+		secret.CreatedAt = now
+	}
+	secret.UpdatedAt = now
+	m.secrets[k] = secret
+	return nil
+}
+
+func (m *MemStore) DeleteManagedPostgresSecret(_ context.Context, credentialRef string) error {
+	if credentialRef == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, secret := range m.secrets {
+		if secret.ManagedCredentialRef == credentialRef {
+			delete(m.secrets, key)
+			return nil
+		}
+	}
 	return nil
 }
 
@@ -13016,6 +13090,9 @@ func (m *MemStore) DeleteAppSecretInScope(_ context.Context, accountID, appID, s
 	row, ok := m.secrets[k]
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
+	}
+	if row.ManagedPostgresBindingID != "" {
+		return ErrConflict
 	}
 	delete(m.secrets, k)
 	return nil
