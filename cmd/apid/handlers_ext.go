@@ -3956,6 +3956,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		d.OverridePort != 0 ||
 		len(d.OverrideHealthcheck) > 0
 	resp := api.DeploymentResponse{
+		StageState:        append(json.RawMessage(nil), d.StageState...),
 		ID:                d.ID,
 		AppID:             d.AppID,
 		BuildID:           d.BuildID,

@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
+    from ..models.deployment_response_stage_state import DeploymentResponseStageState
     from ..models.log_excerpt import LogExcerpt
     from ..models.scan_result import ScanResult
     from ..models.secret_scan_result import SecretScanResult
@@ -84,6 +85,9 @@ class DeploymentResponse:
     kind: str
     status: str
     created_at: datetime.datetime
+    stage_state: DeploymentResponseStageState | Unset = UNSET
+    """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
+    rebuilt."""
     build_id: None | str | Unset = UNSET
     error: None | str | Unset = UNSET
     error_code: None | str | Unset = UNSET
@@ -270,6 +274,10 @@ class DeploymentResponse:
         status = self.status
 
         created_at = self.created_at.isoformat()
+
+        stage_state: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.stage_state, Unset):
+            stage_state = self.stage_state.to_dict()
 
         build_id: None | str | Unset
         if isinstance(self.build_id, Unset):
@@ -550,6 +558,8 @@ class DeploymentResponse:
                 "created_at": created_at,
             }
         )
+        if stage_state is not UNSET:
+            field_dict["stage_state"] = stage_state
         if build_id is not UNSET:
             field_dict["build_id"] = build_id
         if error is not UNSET:
@@ -655,6 +665,7 @@ class DeploymentResponse:
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
+        from ..models.deployment_response_stage_state import DeploymentResponseStageState
         from ..models.log_excerpt import LogExcerpt
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
@@ -671,6 +682,13 @@ class DeploymentResponse:
         status = d.pop("status")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _stage_state = d.pop("stage_state", UNSET)
+        stage_state: DeploymentResponseStageState | Unset
+        if isinstance(_stage_state, Unset):
+            stage_state = UNSET
+        else:
+            stage_state = DeploymentResponseStageState.from_dict(_stage_state)
 
         def _parse_build_id(data: object) -> None | str | Unset:
             if data is None:
@@ -1217,6 +1235,7 @@ class DeploymentResponse:
             kind=kind,
             status=status,
             created_at=created_at,
+            stage_state=stage_state,
             build_id=build_id,
             error=error,
             error_code=error_code,

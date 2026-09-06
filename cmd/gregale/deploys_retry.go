@@ -14,8 +14,8 @@
 // asks the SDK for the typed view, decodes the jsonb, and
 // surfaces `state.Current` for the row's last-known failing
 // stage). A from_stage=source_download re-runs the entire
-// pipeline (intentional — that's how a user "retry from the
-// top" works).
+// pipeline. ADR-162 reports an earlier actual starting point when retained
+// stage checkpoints are unavailable; the CLI displays that server decision.
 package main
 
 import (
@@ -142,10 +142,22 @@ func cmdDeploysRetry(args []string) int {
 
 	_, _ = fmt.Fprintf(osStdout, "Retry queued.\n")
 	_, _ = fmt.Fprintf(osStdout, "  new deployment id: %s\n", resp.ID)
-	_, _ = fmt.Fprintf(osStdout, "  starting from:     %s\n", fromStage)
+	start, reason := retryStartingStage(resp.StageState, fromStage)
+	_, _ = fmt.Fprintf(osStdout, "  starting from:     %s\n", start)
+	if reason != "" {
+		_, _ = fmt.Fprintf(osStdout, "  %s\n", reason)
+	}
 	_, _ = fmt.Fprintf(osStdout, "  status:            %s\n", resp.Status)
 	_, _ = fmt.Fprintf(osStdout, "\nFollow progress:\n  gregale deploys status %s\n", resp.ID)
 	return 0
+}
+
+func retryStartingStage(raw json.RawMessage, requested string) (string, string) {
+	var ss state.StageState
+	if json.Unmarshal(raw, &ss) != nil || ss.Current == "" {
+		return requested, ""
+	}
+	return string(ss.Current), ss.RetryRestartReason
 }
 
 // stageNamesForCLI returns the closed-6 vocabulary formatted for

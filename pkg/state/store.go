@@ -4520,32 +4520,13 @@ type Store interface {
 	// when state.Current is the zero value.
 	CloseDeploymentStage(ctx context.Context, id string, name StageName, at time.Time) (Deployment, error)
 
-	// RetryDeploymentFromStage (ADR-117 §Production-ready follow-on,
-	// C2) inserts a fresh `deployments` row copying every input
-	// primitive from `failedID` (image / source_url / commit_sha /
-	// overrides / sidecars / scope / traffic_percent) and seeds the
-	// new row's `stage_state` to `{current: fromStage,
-	// current_started_at: NULL, history: []}`. The original row is
-	// NOT mutated; the new row carries a new ID so SSE consumers
-	// (the dashboard stages-partial handler in commit 4) can detect
-	// the retry via the row-creation event.
-	//
-	// `fromStage` MUST be one of AllStageNames — implementations
-	// validate against the closed-6 vocabulary before insert (a
-	// caller-supplied unknown stage returns ErrInvalidArgument).
-	// The caller (apid handlers_retry.go) maps a wire-level 400 on
-	// unknown stage to a structured RFC 7807 problem.
-	//
-	// The new row's status starts at DeployPending so imaged's
-	// transition chokepoint picks it up the same way as a CLI-driven
-	// `gregale deploy`. The `failedID` row's status remains at its
-	// terminal value (DeployFailed / DeployLive) — the retry is a
-	// new row, not a status flip on the old one.
-	//
-	// Implementation note: reuses the existing CreateDeployment
-	// supersede step at pgstore.go:4187-4244 (which handles the
-	// pending-vs-parked row dance on the same app). The retry path
-	// doesn't supersede anything — the new row just inserts.
+	// RetryDeploymentFromStage creates a new pending attempt while preserving
+	// the original row and its input settings. The app must still be active.
+	// ADR-162: RetryStageState records the requested stage and the actual
+	// restart at source_download because reusable checkpoints are not retained.
+	// This primitive does not enqueue work; APID must publish the retained source
+	// and create a durable build (or notify imaged for an image retry) before
+	// returning success. Invalid stage names return ErrInvalidArgument.
 	RetryDeploymentFromStage(ctx context.Context, failedID string, fromStage StageName) (Deployment, error)
 
 	// ListAuditLog (issue #755 / PR-6) is the dashboard read path

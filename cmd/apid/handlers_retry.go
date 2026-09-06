@@ -108,23 +108,23 @@ func (s *server) retryDeployment(w http.ResponseWriter, r *http.Request, acct st
 	//    ErrInvalidArgument for a closed-vocab slip; we map that
 	//    to 400 even though the storage-layer call already passed
 	//    the IsStageName check — belt-and-suspenders.
-	newDep, err := s.store.RetryDeploymentFromStage(r.Context(), id, state.StageName(req.FromStage))
+	newDep, err := s.enqueueRetry(r.Context(), app, dep, state.StageName(req.FromStage))
 	if err != nil {
+		var problem *api.Problem
+		if errors.As(err, &problem) {
+			api.WriteProblem(w, problem)
+			return
+		}
 		if errors.Is(err, state.ErrInvalidArgument) {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid from_stage",
 				"from_stage is not in the closed-6 stage vocabulary"))
 			return
 		}
-		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("retry deployment: %v", err)))
+		s.log.Warn("retry deployment enqueue failed", "deployment", id, "err", err)
+		api.WriteProblem(w, api.ErrInternal("Could not enqueue the deployment retry."))
 		return
 	}
-	// 6. Emit the new row through deploymentResponse so the CLI's
-	//    `gregale deploys retry <id>` shows the same shape as
-	//    `gregale deploy`. 202 Accepted signals "row written,
-	//    imaged's transition chokepoint will pick it up"; the SSE
-	//    /v1/deployments/{new-id}/logs stream is the customer's
-	//    progress surface.
+	// Source retries have a durable build; image retries have notified imaged.
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(newDep, app))
 }

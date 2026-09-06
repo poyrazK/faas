@@ -5699,22 +5699,36 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	// the input primitives are what the retry path must copy.
 	sidecarsJSON := json.RawMessage(`[{"name":"redis","image":"redis:7"}]`)
 	overrideEnv := json.RawMessage(`{"LOG_LEVEL":"debug"}`)
+	customStages := json.RawMessage(`[{"percent":5,"duration":"1m"},{"percent":50,"duration":"1m"},{"percent":100,"duration":"0s"}]`)
+	oldStepStarted := time.Now().UTC().Add(-time.Hour)
 	failed, err := s.CreateDeployment(ctx, Deployment{
-		ID:                 "d-failed-retry",
-		AppID:              app.ID,
-		Status:             DeployFailed,
-		ImageDigest:        "sha256:orig",
-		Kind:               DeploymentKindTarball,
-		SourceRoot:         "apps/api",
-		SourceURL:          "https://github.com/example/repo",
-		CommitSHA:          "abc1234",
-		Sidecars:           sidecarsJSON,
-		OverrideEnv:        overrideEnv,
-		OverridePort:       9090,
-		TrafficPercent:     50,
-		MinInstances:       1,
-		Scope:              "staging",
-		OverrideEntrypoint: []string{"node", "server.js"},
+		ID:                  "d-failed-retry",
+		AppID:               app.ID,
+		Status:              DeployFailed,
+		ImageDigest:         "sha256:orig",
+		Kind:                DeploymentKindTarball,
+		SourceRoot:          "apps/api",
+		SourceURL:           "https://github.com/example/repo",
+		CommitSHA:           "abc1234",
+		Sidecars:            sidecarsJSON,
+		OverrideEnv:         overrideEnv,
+		OverridePort:        9090,
+		TrafficPercent:      50,
+		MinInstances:        1,
+		Priority:            7,
+		Scope:               "staging",
+		OverrideEntrypoint:  []string{"node", "server.js"},
+		RollbackOn5xx:       true,
+		Reason:              "retry after dependency recovery",
+		Tag:                 "hotfix",
+		DeployedBy:          "Release Operator",
+		PRNumber:            1419,
+		CanaryPreset:        "custom",
+		CanaryStep:          2,
+		CanaryTotalSteps:    3,
+		CanaryStepStartedAt: &oldStepStarted,
+		CanaryStages:        customStages,
+		RolloutState:        "rolling_out",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -5755,8 +5769,8 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	if got.OverridePort != failed.OverridePort {
 		t.Errorf("OverridePort not copied: got %d, want %d", got.OverridePort, failed.OverridePort)
 	}
-	if got.TrafficPercent != failed.TrafficPercent {
-		t.Errorf("TrafficPercent not copied: got %d, want %d", got.TrafficPercent, failed.TrafficPercent)
+	if got.TrafficPercent != 5 {
+		t.Errorf("TrafficPercent = %d, want first custom canary stage 5", got.TrafficPercent)
 	}
 	if got.MinInstances != failed.MinInstances {
 		t.Errorf("MinInstances not copied: got %d, want %d", got.MinInstances, failed.MinInstances)
@@ -5770,13 +5784,25 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	if got.Status != DeployPending {
 		t.Errorf("Status = %q, want %q (reset for imaged pickup)", got.Status, DeployPending)
 	}
+	if !got.RollbackOn5xx || got.Reason != failed.Reason || got.Tag != failed.Tag || got.DeployedBy != failed.DeployedBy || got.PRNumber != failed.PRNumber || got.Priority != failed.Priority {
+		t.Errorf("retry lost policy or annotation metadata: got=%+v", got)
+	}
+	if got.CanaryPreset != "custom" || got.CanaryStep != 0 || got.CanaryTotalSteps != 3 || string(got.CanaryStages) != string(customStages) {
+		t.Errorf("retry canary state = preset=%q step=%d total=%d stages=%s", got.CanaryPreset, got.CanaryStep, got.CanaryTotalSteps, got.CanaryStages)
+	}
+	if got.CanaryStepStartedAt == nil || !got.CanaryStepStartedAt.After(oldStepStarted) {
+		t.Errorf("retry canary timer = %v, want fresh timestamp after %v", got.CanaryStepStartedAt, oldStepStarted)
+	}
+	if got.RolloutState != "pending" || got.RolloutStartedAt != nil || got.RolloutCompletedAt != nil || got.RolloutAbortedAt != nil {
+		t.Errorf("retry rollout execution state not reset: %+v", got)
+	}
 	// Stage-state seed.
 	var state StageState
 	if err := json.Unmarshal(got.StageState, &state); err != nil {
 		t.Fatalf("decode new stage_state: %v", err)
 	}
-	if state.Current != StageSnapshotPrepare {
-		t.Errorf("new stage_state.Current = %q, want %q", state.Current, StageSnapshotPrepare)
+	if state.Current != StageSourceDownload || state.RetryRequestedStage != StageSnapshotPrepare {
+		t.Errorf("retry stage state = %+v; want actual source_download, requested snapshot_prepare", state)
 	}
 	if state.CurrentStartedAt != nil {
 		t.Errorf("new stage_state.CurrentStartedAt = %v, want nil", state.CurrentStartedAt)
@@ -5791,6 +5817,9 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	}
 	if original.Status != DeployFailed {
 		t.Errorf("original.Status flipped: got %q, want %q", original.Status, DeployFailed)
+	}
+	if _, err := s.RetryDeploymentFromStage(ctx, got.ID, StageSourceDownload); !errors.Is(err, ErrConflict) {
+		t.Errorf("nonfailed deployment retry: got %v, want ErrConflict", err)
 	}
 
 	// Closed-vocab guard: unknown fromStage → ErrInvalidArgument.

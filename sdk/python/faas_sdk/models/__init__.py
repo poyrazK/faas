@@ -272,6 +272,7 @@ from .deployment_response_parked_reason_type_1 import DeploymentResponseParkedRe
 from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseParkedReasonType2Type1
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
+from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .dev_session_response import DevSessionResponse
 from .diff_app_config_patch import DiffAppConfigPatch
@@ -1037,6 +1038,7 @@ __all__ = (
     "DeploymentResponseParkedReasonType2Type1",
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
+    "DeploymentResponseStageState",
     "DeploymentResponseTag",
     "DevSessionResponse",
     "DiffAppConfigPatch",

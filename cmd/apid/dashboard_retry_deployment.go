@@ -164,7 +164,7 @@ func (s *server) dashboardRetryDeployment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	newDep, err := s.store.RetryDeploymentFromStage(ctx, id, state.StageName(fromStage))
+	newDep, err := s.enqueueRetry(ctx, app, dep, state.StageName(fromStage))
 	if err != nil {
 		if errors.Is(err, state.ErrInvalidArgument) {
 			http.Redirect(w, r, fmt.Sprintf("/dashboard/apps/%s/deployments/%s?retried=bad", slug, id), http.StatusFound)
