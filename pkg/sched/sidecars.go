@@ -73,16 +73,17 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 			return nil, fmt.Errorf("sidecar %q env: %w", sc.Name, err)
 		}
 		out = append(out, fcvm.WorkloadSpec{
-			Name:       sc.Name,
-			Type:       string(sc.Type),
-			Image:      sc.Image,
-			StorageKey: layer.StorageKey,
-			DriveID:    fmt.Sprintf("%s%d", fcvm.DriveSidecarPrefix, i),
-			RamMB:      sc.RamMB,
-			Port:       sc.Port,
-			Essential:  essential,
-			SealedEnv:  sealedEnv,
-			DependsOn:  append([]api.WorkloadDependency(nil), sc.DependsOn...),
+			Name:          sc.Name,
+			Type:          string(sc.Type),
+			Image:         sc.Image,
+			StorageKey:    layer.StorageKey,
+			DriveID:       fmt.Sprintf("%s%d", fcvm.DriveSidecarPrefix, i),
+			RamMB:         sc.RamMB,
+			CPUMillicores: sc.CPUMillicores,
+			Port:          sc.Port,
+			Essential:     essential,
+			SealedEnv:     sealedEnv,
+			DependsOn:     append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			// Cmd is retained as a legacy fallback for guest-init
 			// versions that predate baked sidecar manifests. Current
 			// guest-init prefers the immutable per-sidecar manifest,

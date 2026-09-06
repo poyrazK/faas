@@ -1036,16 +1036,17 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			})
 		}
 		sidecars = append(sidecars, &vmmdpb.SidecarSpec{
-			Name:       sc.Name,
-			Type:       sc.Type,
-			Image:      sc.Image,
-			RamMb:      int32(sc.RamMB),
-			Port:       uint32(sc.Port),
-			Essential:  sc.Essential,
-			StorageKey: sc.StorageKey,
-			DriveSlot:  sc.DriveID,
-			SealedEnv:  sealedSidecarEnv,
-			DependsOn:  dependsOn,
+			Name:          sc.Name,
+			Type:          sc.Type,
+			Image:         sc.Image,
+			RamMb:         int32(sc.RamMB),
+			CpuMillicores: int32(sc.CPUMillicores),
+			Port:          uint32(sc.Port),
+			Essential:     sc.Essential,
+			StorageKey:    sc.StorageKey,
+			DriveSlot:     sc.DriveID,
+			SealedEnv:     sealedSidecarEnv,
+			DependsOn:     dependsOn,
 		})
 	}
 	return &vmmdpb.AppSpec{

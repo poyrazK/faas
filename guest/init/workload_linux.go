@@ -95,14 +95,15 @@ import (
 // pkg/fcvm/vmm.go::workloadManifest for the rationale and the
 // round-trip test that pins the parsed-equivalence contract.
 type workloadSpec struct {
-	Cmd        []string                 `json:"cmd,omitempty"`
-	DependsOn  []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint []string                 `json:"entrypoint,omitempty"`
-	Essential  bool                     `json:"essential"`
-	Name       string                   `json:"name"`
-	Port       int                      `json:"port"`
-	RamMB      int                      `json:"ram_mb"`
-	Type       string                   `json:"type"` // "main" | "init" | "sidecar"
+	Cmd           []string                 `json:"cmd,omitempty"`
+	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
+	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint    []string                 `json:"entrypoint,omitempty"`
+	Essential     bool                     `json:"essential"`
+	Name          string                   `json:"name"`
+	Port          int                      `json:"port"`
+	RamMB         int                      `json:"ram_mb"`
+	Type          string                   `json:"type"` // "main" | "init" | "sidecar"
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -423,7 +424,7 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, apiEnv map[string]string, log *slog.Logger) *Supervisor {
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
 	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
-	supRef.Start = func() error { return runAppWithRAM(manifest, secrets, apiEnv, supRef, spec.RamMB) }
+	supRef.Start = func() error { return runAppWithRAM(manifest, secrets, apiEnv, supRef, spec.RamMB, spec.CPUMillicores) }
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: main restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
@@ -583,7 +584,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 	// invalid safe name or failed write aborts the
 	// workload before exec; otherwise it could run
 	// without its per-workload cap.
-	leaf, cgroupErr := prepareWorkloadCgroup(spec.Type, spec.Name, spec.RamMB, slog.Default())
+	leaf, cgroupErr := prepareWorkloadCgroup(spec.Type, spec.Name, spec.RamMB, slog.Default(), spec.CPUMillicores)
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare sidecar workload cgroup %q: %w", spec.Name, cgroupErr)
 	}

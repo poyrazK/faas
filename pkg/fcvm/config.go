@@ -577,7 +577,7 @@ func JailerCommand(s JailerSpec) []string {
 // workload is Workloads[0]; sidecars are Workloads[1..N]. Each
 // entry carries the StorageBackend key for the drive's ext4 + the
 // FC Drive.DriveID vmmd mounts inside the jail chroot + the
-// workload's cgroup RAM ceiling.
+// workload's cgroup RAM and CPU ceilings.
 //
 // Name is the customer-chosen sidecar name (lowercase alpha-num
 // plus dash, max 63 chars) — main is the literal "main".
@@ -591,6 +591,9 @@ func JailerCommand(s JailerSpec) []string {
 //
 // RamMB is the per-workload cgroup memory.max. 0 = "absent /
 // inherit the plan RAM" (the common case for the main workload).
+// CPUMillicores is the per-workload cgroup cpu.max allowance. 0
+// inherits the parent app quota; non-zero values are one of 250,
+// 500, or 1000 millicores.
 //
 // Cmd and Entrypoint (PR-C §6) are the customer-image override
 // surface. Empty (the default) means "use the baked image
@@ -602,16 +605,17 @@ func JailerCommand(s JailerSpec) []string {
 // single canonical way to override the entrypoint without stamping
 // a new base layer.
 type WorkloadSpec struct {
-	Name       string // "main" for the main workload; sidecar name for the rest
-	Type       string // "main", "init", "sidecar"
-	Image      string // digest-pinned sidecar image, retained for wire/audit parity
-	StorageKey string // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
-	DriveID    string // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
-	RamMB      int    // 0 = inherit plan RAM
-	Port       int    // 0 = inherit main port (8080)
-	Essential  bool   // type=="init" + essential=true → fail deploy on non-zero exit
-	Cmd        []string
-	Entrypoint []string
+	Name          string // "main" for the main workload; sidecar name for the rest
+	Type          string // "main", "init", "sidecar"
+	Image         string // digest-pinned sidecar image, retained for wire/audit parity
+	StorageKey    string // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
+	DriveID       string // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
+	RamMB         int    // 0 = inherit plan RAM
+	CPUMillicores int    // 0 = inherit app CPU quota
+	Port          int    // 0 = inherit main port (8080)
+	Essential     bool   // type=="init" + essential=true → fail deploy on non-zero exit
+	Cmd           []string
+	Entrypoint    []string
 	// DependsOn is the guest-init startup gate list. Conditions are
 	// started, healthy, or completed_successfully; an empty condition
 	// defaults to started.

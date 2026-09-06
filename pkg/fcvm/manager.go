@@ -3325,11 +3325,12 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	if len(req.Sidecars) > 0 && !m.preparesWakeStateBeforeBoot() {
 		// Main workload manifest on drive1.
 		if err := m.vmm.StageWorkloadManifest(req.Instance, -1, WorkloadSpec{
-			Name:      WorkloadNameMain,
-			Type:      WorkloadNameMain,
-			RamMB:     req.MemSizeMiB,
-			Port:      req.Port,
-			Essential: true,
+			Name:          WorkloadNameMain,
+			Type:          WorkloadNameMain,
+			RamMB:         req.MemSizeMiB,
+			CPUMillicores: req.CPUMillicores,
+			Port:          req.Port,
+			Essential:     true,
 		}); err != nil {
 			return nil, fmt.Errorf("wake %s: stage main workload manifest: %w", req.Instance, err)
 		}
@@ -3351,7 +3352,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		// with a roster pointing at non-existent drives.
 		mainSpec := WorkloadSpec{
 			Name: WorkloadNameMain, Type: WorkloadNameMain,
-			RamMB: req.MemSizeMiB, Port: req.Port,
+			RamMB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores, Port: req.Port,
 			Essential: true,
 		}
 		if err := m.vmm.StageWorkloadRoster(req.Instance, mainSpec, req.Sidecars); err != nil {
@@ -3416,7 +3417,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 			// customer pays for the plan RAM, not the +8 MB overhead).
 			// The +8 MB lives on the parent scope and is shared across
 			// all workload children.
-			if wErr := writeWorkloadCgroup(parentScope, WorkloadNameMain, req.MemSizeMiB); wErr != nil {
+			if wErr := writeWorkloadCgroup(parentScope, WorkloadNameMain, req.MemSizeMiB, req.CPUMillicores); wErr != nil {
 				m.log.Warn("cgroup fence: writeWorkloadCgroup main failed, continuing",
 					"instance", req.Instance, "err", wErr)
 				// Issue #1059 / ADR-127: hardcoded reason="cgroup_fail"
@@ -3430,10 +3431,10 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 				}
 			}
 			for _, sc := range req.Sidecars {
-				if sc.RamMB == 0 {
+				if sc.RamMB == 0 && sc.CPUMillicores == 0 {
 					continue
 				}
-				if wErr := writeWorkloadCgroup(parentScope, sc.Name, sc.RamMB); wErr != nil {
+				if wErr := writeWorkloadCgroup(parentScope, sc.Name, sc.RamMB, sc.CPUMillicores); wErr != nil {
 					m.log.Warn("cgroup fence: writeWorkloadCgroup sidecar failed, continuing",
 						"instance", req.Instance, "sidecar", sc.Name, "err", wErr)
 					if m.wakeFailureMetrics != nil {
@@ -5272,13 +5273,14 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 	out := make([]WorkloadSpec, 0, 1+len(req.Sidecars))
 	// Workloads[0] is always the main workload.
 	out = append(out, WorkloadSpec{
-		Name:       WorkloadNameMain,
-		Type:       WorkloadNameMain,
-		StorageKey: req.LayerKey,
-		DriveID:    DriveLayerMain,
-		RamMB:      req.MemSizeMiB,
-		Port:       req.Port,
-		Essential:  true,
+		Name:          WorkloadNameMain,
+		Type:          WorkloadNameMain,
+		StorageKey:    req.LayerKey,
+		DriveID:       DriveLayerMain,
+		RamMB:         req.MemSizeMiB,
+		CPUMillicores: req.CPUMillicores,
+		Port:          req.Port,
+		Essential:     true,
 	})
 	for _, sc := range req.Sidecars {
 		if sc.Name == WorkloadNameMain {
@@ -5291,6 +5293,7 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			StorageKey:      sc.StorageKey,
 			DriveID:         sc.DriveID, // imaged populated this on the wire
 			RamMB:           sc.RamMB,
+			CPUMillicores:   sc.CPUMillicores,
 			Port:            sc.Port,
 			Essential:       sc.Essential,
 			Cmd:             append([]string(nil), sc.Cmd...),

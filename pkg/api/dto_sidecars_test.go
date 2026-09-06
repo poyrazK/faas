@@ -34,14 +34,15 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 		{
 			name: "init-only",
 			s: Sidecar{
-				Name:      "migrator",
-				Image:     "ghcr.io/me/migrator@sha256:0000000000000000000000000000000000000000000000000000000000000001",
-				Type:      SidecarTypeInit,
-				Cmd:       []string{"--to", "head"},
-				Env:       map[string]string{"DB_URL": "postgres://x"},
-				Port:      0,
-				RamMB:     64,
-				Essential: &essTrue,
+				Name:          "migrator",
+				Image:         "ghcr.io/me/migrator@sha256:0000000000000000000000000000000000000000000000000000000000000001",
+				Type:          SidecarTypeInit,
+				Cmd:           []string{"--to", "head"},
+				Env:           map[string]string{"DB_URL": "postgres://x"},
+				Port:          0,
+				RamMB:         64,
+				CPUMillicores: 250,
+				Essential:     &essTrue,
 			},
 		},
 		{
@@ -226,6 +227,11 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			name:    "ram-above-ceiling",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, RamMB: 1024},
 			wantSub: "sidecar ram_mb",
+		},
+		{
+			name:    "cpu-invalid",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, CPUMillicores: 750},
+			wantSub: "sidecar cpu_millicores",
 		},
 		// Stateful image rejection (issue #463 / ADR-068 §Decision 4).
 		// The shared pkg/statefuldenylist matcher strips the digest
@@ -422,14 +428,15 @@ func TestSidecar_JSONRoundTrip(t *testing.T) {
 		{
 			name: "essential-true-all-fields-set",
 			original: Sidecar{
-				Name:      "migrator",
-				Image:     image,
-				Type:      SidecarTypeInit,
-				Cmd:       []string{"--to", "head"},
-				Env:       map[string]string{"DB_URL": "postgres://x"},
-				Port:      9090,
-				RamMB:     64,
-				Essential: &essTrue,
+				Name:          "migrator",
+				Image:         image,
+				Type:          SidecarTypeInit,
+				Cmd:           []string{"--to", "head"},
+				Env:           map[string]string{"DB_URL": "postgres://x"},
+				Port:          9090,
+				RamMB:         64,
+				CPUMillicores: 500,
+				Essential:     &essTrue,
 			},
 		},
 		{

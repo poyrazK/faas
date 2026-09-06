@@ -4764,6 +4764,10 @@ var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?
 // plan RAM" (the common case). 32..512 enforced at the API
 // layer; the "+8 MB" baseline (PerVMOverheadMB) is added once
 // per instance in PR-B's admission, not per sidecar.
+//
+// CPUMillicores is this sidecar's sustained host/container CPU
+// quota in millicores. 0 preserves the app-level CPU plan cap;
+// non-zero values must be one of 250, 500, or 1000.
 type Sidecar struct {
 	// Name matches the RFC 1123 label grammar. Unique within a
 	// single request. Required.
@@ -4792,6 +4796,10 @@ type Sidecar struct {
 	// means "absent / inherit the plan RAM" (the common case).
 	// 32..512 enforced at the API layer.
 	RamMB int `json:"ram_mb,omitempty"`
+	// CPUMillicores is the per-sidecar sustained CPU ceiling.
+	// 0 preserves the plan CPU quota, non-zero values are one of
+	// 250, 500, or 1000.
+	CPUMillicores int `json:"cpu_millicores,omitempty"`
 	// Essential defaults to true. If true and the workload exits
 	// non-zero: the dependency set fails (`failure_class=user_error`)
 	// and essential long-running sidecars restart-loop. If false,
@@ -4872,6 +4880,9 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	}
 	if s.RamMB != 0 && (s.RamMB < 32 || s.RamMB > 512) {
 		return ErrSidecarInvalidRamMB(s.RamMB)
+	}
+	if s.CPUMillicores != 0 && !ValidAppCPUMillicores(s.CPUMillicores) {
+		return ErrSidecarInvalidCPUMillicores(s.CPUMillicores)
 	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
 		return NewProblem(http.StatusBadRequest, CodeValidation,

@@ -931,14 +931,15 @@ const (
 	// per-plan tier-ups (PR-A does NOT apply the plan gate; the
 	// code is reserved so a follow-up PR doesn't have to invent
 	// a new one).
-	CodeSidecarCapExceeded      = "sidecar_cap_exceeded"
-	CodeSidecarInvalidType      = "sidecar_invalid_type"
-	CodeSidecarInvalidImage     = "sidecar_invalid_image"
-	CodeSidecarStatefulDenied   = "sidecar_stateful_denied"
-	CodeSidecarInvalidName      = "sidecar_invalid_name"
-	CodeSidecarInvalidPort      = "sidecar_invalid_port"
-	CodeSidecarInvalidRamMB     = "sidecar_invalid_ram_mb"
-	CodeSidecarNotAllowedOnPlan = "sidecar_not_allowed_on_plan"
+	CodeSidecarCapExceeded          = "sidecar_cap_exceeded"
+	CodeSidecarInvalidType          = "sidecar_invalid_type"
+	CodeSidecarInvalidImage         = "sidecar_invalid_image"
+	CodeSidecarStatefulDenied       = "sidecar_stateful_denied"
+	CodeSidecarInvalidName          = "sidecar_invalid_name"
+	CodeSidecarInvalidPort          = "sidecar_invalid_port"
+	CodeSidecarInvalidRamMB         = "sidecar_invalid_ram_mb"
+	CodeSidecarInvalidCPUMillicores = "sidecar_invalid_cpu_millicores"
+	CodeSidecarNotAllowedOnPlan     = "sidecar_not_allowed_on_plan"
 
 	// CodeInitSidecarFailed (issue #463 / ADR-069 / PR-B AC #1) is
 	// the RFC 7807 stable code vmmd stamps onto a deployments row
@@ -4212,6 +4213,14 @@ func ErrSidecarInvalidRamMB(ramMB int) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSidecarInvalidRamMB,
 		"Invalid sidecar ram_mb",
 		fmt.Sprintf("sidecar ram_mb %d must be 0 (inherit plan RAM) or in [32, 512].", ramMB))
+}
+
+// ErrSidecarInvalidCPUMillicores is returned when the sidecar
+// cpu_millicores is out of the accepted set.
+func ErrSidecarInvalidCPUMillicores(cpuMillicores int) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeSidecarInvalidCPUMillicores,
+		"Invalid sidecar cpu_millicores",
+		fmt.Sprintf("sidecar cpu_millicores %d must be 0 (inherit app cpu) or one of 250, 500, 1000.", cpuMillicores))
 }
 
 // ErrSidecarNotAllowedOnPlan is reserved for a future per-plan
