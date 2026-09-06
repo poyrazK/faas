@@ -15,8 +15,8 @@
 //	$ gregale inspect myapp --upstreams
 //	myapp: 3/8 upstreams
 //	  KIND        SCOPE            HOST_LAST4  PORT  SOURCE     LAST_RTT_MS  LAST_PROBED_AT
-//	  postgres    primary          a1b2        5432  inferred   12           2026-08-18T12:34:56Z
-//	  redis       cache            c3d4        6379  explicit   —            —
+//	  postgres    primary          a1b2c3d4    5432  inferred   12           2026-08-18T12:34:56Z
+//	  redis       cache            c3d4e5f6    6379  explicit   —            —
 //
 //	$ gregale inspect myapp --upstreams --scope=primary --json
 //	{"upstreams":[...],"count":3,"quota_max":8,"scope":"primary"}
@@ -75,7 +75,8 @@ func cmdInspectUpstreams(slug, scope string) int {
 // then a one-line header + one row per upstream. LAST_RTT_MS +
 // LAST_PRObed_AT fall back to GlyphEmDash (output.go:104) when
 // the field is unset. Column widths fit an 80-col terminal;
-// longer host_last4 values truncate visually without breaking
+// host_last4 is an eight-character hash fragment; longer values
+// truncate visually without breaking
 // the human reader's eye (the row is space-delimited; --json
 // is the parseable path).
 func renderUpstreamsList(w io.Writer, slug string, rows []api.DataUpstreamResponse, count, quota int) {

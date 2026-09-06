@@ -193,16 +193,17 @@ func TestDefaultPortForKindClosure_FullMatrix(t *testing.T) {
 // --- hostLast4FromHash direct coverage ---------------------------------
 
 func TestHostLast4FromHash_BoundaryAndShape(t *testing.T) {
-	// hostLast4FromHash returns a fixed-length hash suffix;
-	// the function lives at infer.go:235. The exact length is
-	// 8 hex chars (4 bytes); verify the shape rather than the
-	// specific length.
-	v := hostLast4FromHash("example.com")
-	if len(v) == 0 {
-		t.Errorf("hostLast4FromHash returned empty string")
+	// hostLast4FromHash returns the canonical first 8 hex chars
+	// of the redacted hash; verify the shape and short-input rule.
+	v := hostLast4FromHash("0123456789abcdef")
+	if len(v) != 8 {
+		t.Errorf("hostLast4FromHash length = %d, want 8", len(v))
+	}
+	if v != "01234567" {
+		t.Errorf("hostLast4FromHash = %q, want first 8 chars", v)
 	}
 	// Stable across calls.
-	v2 := hostLast4FromHash("example.com")
+	v2 := hostLast4FromHash("0123456789abcdef")
 	if v != v2 {
 		t.Errorf("hostLast4FromHash not stable: %q vs %q", v, v2)
 	}
