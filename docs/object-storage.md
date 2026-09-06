@@ -24,6 +24,29 @@ Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
    and credentials still require a restart; the enable flag does not.
 5. Run the qualification checks below before admitting customers.
 
+### Run the live provider qualification
+
+The repository includes an opt-in qualification test that exercises the
+provider-neutral contract against the registry's configured default backend:
+bucket creation/deletion, signed single-object PUT/GET, object listing,
+multipart initiation and recovery, paginated part listing, completion, and
+idempotent abort. It performs real upstream writes and deletes, so use a
+dedicated provider project/account and a temporary configuration whose
+`defaults` points at the backend being qualified.
+
+```sh
+FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage-qualification.json \
+FAAS_OBJECT_STORAGE_LIVE_TEST=1 \
+make object-storage-qualify
+```
+
+Set `FAAS_OBJECT_STORAGE_TEST_REGION` when qualifying a non-default configured
+region. Credentials remain in the environment variables named by the config;
+they are never written to the test command, JSON, logs, or test output. A
+successful run is evidence that the selected provider meets Gregale's data
+contract, not evidence of billing, residency, lifecycle, or account-isolation
+behavior. Those launch gates still require their own provider-specific checks.
+
 New signed URLs also require an explicit `accounting` policy, a complete
 inventory baseline, and fresh authoritative provider reports. See below;
 loading the registry and enabling the flag alone is no longer sufficient.
