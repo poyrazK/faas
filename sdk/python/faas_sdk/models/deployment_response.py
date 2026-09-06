@@ -52,6 +52,7 @@ from ..models.deployment_response_rollout_state import (
     DeploymentResponseRolloutState,
     check_deployment_response_rollout_state,
 )
+from ..models.deployment_response_status import DeploymentResponseStatus, check_deployment_response_status
 from ..models.deployment_response_tag import DeploymentResponseTag, check_deployment_response_tag
 from ..types import UNSET, Unset
 
@@ -82,7 +83,13 @@ class DeploymentResponse:
     app_id: str
     image_digest: str
     kind: str
-    status: str
+    status: DeploymentResponseStatus
+    """Deployment lifecycle status. `pending`, `building`, `imaging` and
+    `snapshotting` are in flight; `live` is serving traffic;
+    `superseded` shipped and was replaced by a newer deployment;
+    `failed` and `cancelled` are terminal exits (cancel is the
+    user-driven retract of a non-live row, ADR-124).
+    """
     created_at: datetime.datetime
     build_id: None | str | Unset = UNSET
     error: None | str | Unset = UNSET
@@ -267,7 +274,7 @@ class DeploymentResponse:
 
         kind = self.kind
 
-        status = self.status
+        status: str = self.status
 
         created_at = self.created_at.isoformat()
 
@@ -668,7 +675,7 @@ class DeploymentResponse:
 
         kind = d.pop("kind")
 
-        status = d.pop("status")
+        status = check_deployment_response_status(d.pop("status"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
