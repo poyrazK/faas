@@ -158,6 +158,90 @@ func TestMemStoreSnapshotReplicaPermanentFailureStopsRetry(t *testing.T) {
 	}
 }
 
+func TestMemStoreSnapshotReplicaTransientFailureKeepsRetryingAtCap(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	region := DefaultLocalityLabel
+	node := ComputeNode{
+		ID: "node-transient", Name: "compute-transient", TargetURL: "unix:///run/faas/compute-transient.sock",
+		AdmissionCeilingMB: 4096, VCPUBudget: 16, Active: true, Region: &region,
+	}
+	if _, err := m.CreateComputeNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	_, dep := seedMemReplicaDeployment(t, m, "dep-transient", "replica-transient")
+	snap, err := m.CreateSnapshot(ctx, Snapshot{
+		ID: "snap-transient", DeploymentID: dep.ID, FCVersion: "fc-1", StorageKey: SnapMemKey(dep.ID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.EnqueueSnapshotReplicasForNode(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: node.ID}
+	for attempt := 1; attempt <= snapshotReplicaMaxAttempts+2; attempt++ {
+		job, err := m.ClaimSnapshotReplica(ctx, node.ID)
+		if err != nil {
+			t.Fatalf("claim attempt %d: %v", attempt, err)
+		}
+		if err := m.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, node.ID, errors.New("registry unavailable")); err != nil {
+			t.Fatal(err)
+		}
+		row := m.snapshotReplicas[key]
+		if row.nextAttemptAt.IsZero() {
+			t.Fatalf("attempt %d became terminal", attempt)
+		}
+		row.nextAttemptAt = time.Now().Add(-time.Second)
+		m.snapshotReplicas[key] = row
+	}
+	if got := m.snapshotReplicas[key].attempts; got != snapshotReplicaMaxAttempts {
+		t.Fatalf("attempt counter = %d, want capped %d", got, snapshotReplicaMaxAttempts)
+	}
+}
+
+func TestMemStoreSnapshotReplicaReadyRowsAreRevalidated(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	region := DefaultLocalityLabel
+	node := ComputeNode{
+		ID: "node-revalidate", Name: "compute-revalidate", TargetURL: "unix:///run/faas/compute-revalidate.sock",
+		AdmissionCeilingMB: 4096, VCPUBudget: 16, Active: true, Region: &region,
+	}
+	if _, err := m.CreateComputeNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	_, dep := seedMemReplicaDeployment(t, m, "dep-revalidate", "replica-revalidate")
+	snap, err := m.CreateSnapshot(ctx, Snapshot{
+		ID: "snap-revalidate", DeploymentID: dep.ID, FCVersion: "fc-1", StorageKey: SnapMemKey(dep.ID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.EnqueueSnapshotReplicasForNode(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := m.ClaimSnapshotReplica(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkSnapshotReplicaReady(ctx, job.SnapshotID, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: node.ID}
+	row := m.snapshotReplicas[key]
+	row.readyAt = time.Now().Add(-snapshotReplicaRevalidateAfter - time.Second)
+	m.snapshotReplicas[key] = row
+	if refreshed, err := m.EnqueueSnapshotReplicasForNode(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	} else if refreshed != 1 {
+		t.Fatalf("revalidated = %d, want 1", refreshed)
+	}
+	if _, err := m.ClaimSnapshotReplica(ctx, node.ID); err != nil {
+		t.Fatalf("claim revalidation: %v", err)
+	}
+}
+
 func TestMemStoreSnapshotReplicaPrioritizesCustomerWakes(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemStore()

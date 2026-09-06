@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestMemSnapshotLocalityKeepsOriginSeparate(t *testing.T) {
+func TestMemSnapshotLocalityTracksOriginResidency(t *testing.T) {
 	s := state.NewMemStore()
 	ctx := context.Background()
 	acct, err := s.CreateAccount(ctx, "locality@example.com", "pro")
@@ -35,7 +35,7 @@ func TestMemSnapshotLocalityKeepsOriginSeparate(t *testing.T) {
 	checkSnapshotLocality(t, s, dep.ID)
 }
 
-func TestPgSnapshotLocalityKeepsOriginSeparate(t *testing.T) {
+func TestPgSnapshotLocalityTracksOriginResidency(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, _, dep := seedLiveDeploy(t, s, ctx, "locality")
 	checkSnapshotLocality(t, s, dep)
@@ -80,12 +80,24 @@ func checkSnapshotLocality(t *testing.T, s localityTestStore, dep string) {
 		}
 	}
 	assertLocality(nil)
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, origin.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertLocality(nil) // Origin is not advertised until its cache is checked.
+	if err := s.MarkSnapshotReplicaReady(ctx, snap.ID, origin.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertLocality([]string{origin.ID})
 	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, replica.ID); err != nil {
 		t.Fatal(err)
 	}
-	assertLocality(nil) // Pending is not a verified local copy.
+	assertLocality([]string{origin.ID}) // Pending is not a verified local copy.
 	if err := s.MarkSnapshotReplicaReady(ctx, snap.ID, replica.ID); err != nil {
 		t.Fatal(err)
 	}
-	assertLocality([]string{replica.ID})
+	ready := []string{origin.ID, replica.ID}
+	if ready[1] < ready[0] {
+		ready[0], ready[1] = ready[1], ready[0]
+	}
+	assertLocality(ready)
 }

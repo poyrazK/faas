@@ -75,12 +75,20 @@ func (m *MemStore) EnqueueSnapshotReplicasForNode(_ context.Context, nodeID stri
 			continue
 		}
 		if origin, exists := m.snapshotOrigins[snap.ID]; exists {
-			if origin.nodeID == nodeID || (origin.region != "" && origin.region != nodeRegion(node)) {
+			if origin.region != "" && origin.region != nodeRegion(node) {
 				continue
 			}
 		}
 		key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: nodeID}
-		if _, exists := m.snapshotReplicas[key]; exists {
+		row, exists := m.snapshotReplicas[key]
+		if exists {
+			if row.state == SnapshotReplicaReady && !row.readyAt.IsZero() && time.Since(row.readyAt) >= snapshotReplicaRevalidateAfter {
+				row.state = SnapshotReplicaPending
+				row.readyAt = time.Time{}
+				row.updatedAt = time.Now()
+				m.snapshotReplicas[key] = row
+				created++
+			}
 			continue
 		}
 		m.snapshotReplicas[key] = snapshotReplicaRow{
@@ -119,11 +127,12 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 		}
 		key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: nodeID}
 		row, ok := m.snapshotReplicas[key]
-		if !ok || row.attempts >= snapshotReplicaMaxAttempts || row.nextAttemptAt.After(now) {
+		if !ok || row.nextAttemptAt.After(now) {
 			continue
 		}
 		reclaim := row.state == SnapshotReplicaSyncing && now.Sub(row.updatedAt) >= 5*time.Minute
-		if row.state != SnapshotReplicaPending && row.state != SnapshotReplicaFailed && !reclaim {
+		retryableFailure := row.state == SnapshotReplicaFailed && !row.nextAttemptAt.IsZero()
+		if row.state != SnapshotReplicaPending && !retryableFailure && !reclaim {
 			continue
 		}
 		if chosen == nil || priority < chosenPriority ||
@@ -136,7 +145,7 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 		return SnapshotReplicaJob{}, ErrNotFound
 	}
 	chosenRow.state = SnapshotReplicaSyncing
-	chosenRow.attempts++
+	chosenRow.attempts = min(chosenRow.attempts+1, snapshotReplicaMaxAttempts)
 	chosenRow.updatedAt = now
 	chosenRow.nextAttemptAt = time.Time{}
 	chosenRow.lastError = ""
@@ -205,8 +214,6 @@ func (m *MemStore) MarkSnapshotReplicaFailed(_ context.Context, snapshotID, node
 	row.updatedAt = time.Now()
 	if isPermanentSnapshotReplicaError(cause) {
 		row.attempts = snapshotReplicaMaxAttempts
-		row.nextAttemptAt = time.Time{}
-	} else if row.attempts >= snapshotReplicaMaxAttempts {
 		row.nextAttemptAt = time.Time{}
 	} else {
 		row.nextAttemptAt = row.updatedAt.Add(snapshotReplicaRetryDelay(row.attempts))

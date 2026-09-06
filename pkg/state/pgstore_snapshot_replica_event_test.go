@@ -54,16 +54,17 @@ func TestPgSnapshotReplicaEventCursorAndOriginFiltering(t *testing.T) {
 		t.Fatalf("RecordSnapshotOrigin: %v", err)
 	}
 
-	var replicaCount int
-	var replicaNodeID string
+	var replicaCount, originCount, peerCount int
 	if err := pool.QueryRow(ctx, `
-		select count(*), coalesce(min(node_id::text), '')
+		select count(*),
+		       count(*) filter (where node_id = $2),
+		       count(*) filter (where node_id = $3)
 		  from snapshot_replicas
-		 where snapshot_id = $1`, first.ID).Scan(&replicaCount, &replicaNodeID); err != nil {
+		 where snapshot_id = $1`, first.ID, nodeA.ID, nodeB.ID).Scan(&replicaCount, &originCount, &peerCount); err != nil {
 		t.Fatalf("read first snapshot replicas: %v", err)
 	}
-	if replicaCount != 1 || replicaNodeID != nodeB.ID {
-		t.Fatalf("first snapshot replicas = count %d node %q, want peer %q only", replicaCount, replicaNodeID, nodeB.ID)
+	if replicaCount != 2 || originCount != 1 || peerCount != 1 {
+		t.Fatalf("first snapshot replicas = count %d origin %d peer %d, want one row per in-region node", replicaCount, originCount, peerCount)
 	}
 
 	// The origin trigger has already materialized the first event's eligible
@@ -201,6 +202,67 @@ func TestPgSnapshotReplicaClaimPrioritizesCustomerWakes(t *testing.T) {
 		if err := s.MarkSnapshotReplicaReady(ctx, job.SnapshotID, nodeID); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestPgSnapshotReplicaTransientRetryAndReadyRevalidation(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	_, _, deploymentID := seedLiveDeploy(t, s, ctx, "replica-retry-revalidate")
+	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: deploymentID, FCVersion: "fc-retry", MemBytes: 1024, DiskBytes: 2048,
+		StorageKey: state.SnapMemKey(deploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		update snapshot_replicas
+		   set state = 'failed', attempts = 8, next_attempt_at = now() - interval '1 second'
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.ClaimSnapshotReplica(ctx, nodeID)
+	if err != nil {
+		t.Fatalf("claim capped transient failure: %v", err)
+	}
+	if job.Attempts != 8 {
+		t.Fatalf("capped attempts = %d, want 8", job.Attempts)
+	}
+	if err := s.MarkSnapshotReplicaFailed(ctx, snap.ID, nodeID, errors.New("registry unavailable")); err != nil {
+		t.Fatal(err)
+	}
+	var nextAttemptPresent bool
+	if err := pool.QueryRow(ctx, `
+		select next_attempt_at is not null
+		  from snapshot_replicas
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID).Scan(&nextAttemptPresent); err != nil {
+		t.Fatal(err)
+	}
+	if !nextAttemptPresent {
+		t.Fatal("transient failure became terminal at the attempt cap")
+	}
+
+	if err := s.MarkSnapshotReplicaReady(ctx, snap.ID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		update snapshot_replicas
+		   set ready_at = now() - interval '6 minutes'
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	} else if refreshed != 1 {
+		t.Fatalf("revalidated = %d, want 1", refreshed)
+	}
+	if _, err := s.ClaimSnapshotReplica(ctx, nodeID); err != nil {
+		t.Fatalf("claim revalidation: %v", err)
 	}
 }
 
