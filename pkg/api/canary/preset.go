@@ -31,8 +31,9 @@ import (
 // the terminal stage (no further advance; rollout_state flips to
 // `complete` on entry).
 type Stage struct {
-	Percent  int
-	Duration time.Duration
+	Percent     int
+	Duration    time.Duration
+	MirrorClean *MirrorCleanCondition
 }
 
 // Preset is a named ordered list of Stages. The catalog names map
@@ -213,6 +214,14 @@ func (p Preset) Validate() error {
 		if s.Duration < 0 {
 			return fmt.Errorf("canary preset %q stage %d: duration %v is negative", p.Name, i, s.Duration)
 		}
+		if s.MirrorClean != nil {
+			if s.MirrorClean.MinInvocations <= 0 {
+				return fmt.Errorf("canary preset %q stage %d: mirror_clean.min_invocations must be positive", p.Name, i)
+			}
+			if s.MirrorClean.WindowSeconds <= 0 {
+				return fmt.Errorf("canary preset %q stage %d: mirror_clean.window_s must be positive", p.Name, i)
+			}
+		}
 	}
 	// The terminal stage must reach 100% (rollback safety: if the
 	// ladder caps below 100 the deployment is stuck at less than
@@ -248,7 +257,12 @@ func LookupCustomPreset(stages []CustomStage) (Preset, error) {
 		if err != nil {
 			return Preset{}, fmt.Errorf("canary: custom stage %d: duration %q: %w", i, s.Duration, err)
 		}
-		parsed = append(parsed, Stage{Percent: s.Percent, Duration: d})
+		var mirrorClean *MirrorCleanCondition
+		if s.MirrorClean != nil {
+			condition := *s.MirrorClean
+			mirrorClean = &condition
+		}
+		parsed = append(parsed, Stage{Percent: s.Percent, Duration: d, MirrorClean: mirrorClean})
 	}
 	p := Preset{Name: "custom", Stages: parsed}
 	if err := p.Validate(); err != nil {

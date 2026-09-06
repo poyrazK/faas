@@ -73,6 +73,18 @@ type cacheWriter struct {
 	ruleAction *state.EdgeRuleCacheAction
 }
 
+// ProblemHTMLRequest preserves browser error negotiation through the cache
+// tee. Wake/admission failures can occur after this wrapper is installed.
+func (c *cacheWriter) ProblemHTMLRequest() *http.Request {
+	if c == nil {
+		return nil
+	}
+	if provider, ok := c.ResponseWriter.(interface{ ProblemHTMLRequest() *http.Request }); ok {
+		return provider.ProblemHTMLRequest()
+	}
+	return nil
+}
+
 // newCacheWriter installs a tee around w. The rec parameter is
 // the statusRecorder already in the chain (the writer chain is
 // w → cacheWriter → rec → ... → capWriter → real socket), and

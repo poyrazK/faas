@@ -55,6 +55,19 @@ artifacts; Dockerfile source text is not treated as an image scan.
 `metal (KVM + root, manual)` is intentionally **not** a required
 check — it is manual-only via `workflow_dispatch`.
 
+`builder native (Firecracker amd64)` runs in `builder-native.yml` after a
+successful `images` workflow on `main` that published `builder-base`, once per
+night, and by manual dispatch from `main`. Non-publishing image runs are skipped;
+scheduled and manual runs select the most recent successful publish. It
+authenticates to GCP with workflow-bound GitHub OIDC, transfers the exact source
+commit to the designated amd64 KVM host, and tests the matching
+`builder-base:sha-<commit>` image. It is a post-merge release signal rather than
+a pull-request status check because this public repository must not execute
+untrusted pull-request code with root access to a persistent compute node.
+Every successful Dockerfile and Railpack fixture must also complete its Grype
+scan without a fixable CRITICAL or HIGH finding, matching the image-publishing
+policy in `scripts/ci/scan-oci-image.sh`.
+
 ## How to update this table
 
 1. Rename the job in `.github/workflows/ci.yml`.

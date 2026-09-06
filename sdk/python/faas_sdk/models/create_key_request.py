@@ -22,9 +22,8 @@ class CreateKeyRequest:
 
     label: str | Unset = UNSET
     scopes: list[CreateKeyRequestScopesItem] | Unset = UNSET
-    """Requested permission set. Server validates each entry against the closed vocabulary and rejects unknown
-    scopes at mint time. `admin` is the legacy full-access scope; the other five cover narrower surfaces (see
-    APIKeyResponse.scopes). See IAM-1, ADR-034 rev2."""
+    """Requested permission set. The server rejects unknown scopes. Object-storage read/write scopes do not expose
+    data until a storage manager grants the key access to a logical bucket."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

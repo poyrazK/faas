@@ -25,10 +25,8 @@ class CreateOrgAPIKeyRequest:
 
     label: str | Unset = UNSET
     scopes: list[CreateOrgAPIKeyRequestScopesItem] | Unset = UNSET
-    """Requested permission set for the org-scoped key. Server validates each entry against the closed vocabulary
-    and rejects unknown scopes at mint time. `admin` is the legacy full-access scope; the other five cover narrower
-    surfaces (see APIKeyResponse.scopes). See IAM-1, ADR-034 rev2. PR 6 keeps the legacy and org-scoped shapes in
-    lockstep so SDK callers can swap one request body for the other."""
+    """Requested permission set for the org-scoped key. Unknown scopes are rejected; object-storage data scopes
+    also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

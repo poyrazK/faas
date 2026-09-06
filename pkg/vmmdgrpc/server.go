@@ -1011,24 +1011,11 @@ func buildInstanceStatsRow(
 	}
 	if netCache != nil {
 		if nReading, nok := netCache.Lookup(instance); nok && nReading.Valid {
-			row.NetTxBytes = wrapperspb.Int64(int64(nReading.DeltaBytes))
-			// ADR-048: mirror of NetTxBytes on the ingress
-			// direction. Same Valid gate as the egress
-			// wrapper — the cache reports BOTH rx and tx
-			// deltas together on the same Lookup, so a
-			// regression on either side zeroes both
-			// wrappers. The wire field awaits `make proto`
-			// regen (PR-A commit #2 follow-up); today the
-			// row.NetRxBytes assignment is commented out
-			// to avoid a regen-required field number on
-			// the proto side. The poller-side code path
-			// (pkg/sched/instancestats/poller.go) already
-			// checks `in.NetRxBytes != nil` and stamps
-			// RX=Unknown when absent — safe under
-			// additive-merge for usage_minutes.net_rx_bytes.
-			//
-			// Once regen lands:
-			//   row.NetRxBytes = wrapperspb.Int64(int64(nReading.IngressDeltaBytes))
+			// Send cumulative counters. meterd samples far less often
+			// than vmmd's network poller, so sending only the latest
+			// 250 ms delta silently discarded almost all traffic.
+			row.NetTxBytes = wrapperspb.Int64(int64(nReading.CumulativeBytes))
+			row.NetRxBytes = wrapperspb.Int64(int64(nReading.IngressCumulativeBytes))
 		}
 	}
 	// PR-B (issue #462): in-flight ForwardHTTP request

@@ -135,7 +135,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GITHUB_APP_INSTALL_URL` | apid | `secrets-env` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
 | `FAAS_GITHUB_APP_KEY_PATH` | githubd, shared | `unit` |  |
 | `FAAS_GITHUB_APP_REDIRECT_URI` | apid | `secrets-env` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
-| `FAAS_GITHUB_WEBHOOK_SECRET` | gatewayd-internal | `secrets-env` | delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal) |
+| `FAAS_GITHUB_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` | the same GitHub App webhook secret is delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
 | `FAAS_GRACE_INTERVAL` | apid | `default` |  |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |
@@ -178,6 +178,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MAIL_RESEND_API_KEY` | shared | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_RESEND_WEBHOOK_SECRET` | apid | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_TRANSPORT` | apid, meterd, shared | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_MANAGED_POSTGRES_CONFIG` | shared | `default` | optional provider-registry JSON path; apid loads the dark-wired Neon adapter and reconciler, while the file's provisioning_enabled flag defaults false (ADR-155) |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |
 | `FAAS_MFA_RECOVERY_HMAC_KEY` | apid | `secrets-env` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
@@ -188,6 +189,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |
+| `FAAS_OBJECT_STORAGE_CONFIG` | apid, shared | `default` | optional provider-registry JSON path; s3_enabled runtime config separately defaults off (docs/object-storage.md); no production activation is promised |
+| `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
+| `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |
 | `FAAS_OCI_INSECURE` | imaged | `dev-only` | must never be set on a production host |
 | `FAAS_OCI_PASSWORD` | shared | `envfile` |  |
 | `FAAS_OCI_PULL_TIMEOUT_SECONDS` | imaged | `default` |  |
@@ -266,7 +270,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STATIC_EGRESS_IP_ENABLED` | shared | `default` |  |
 | `FAAS_STATUSPAGE_PATH` | apid, shared | `unit` |  |
 | `FAAS_STORAGE_BACKEND` | builderd, imaged, vmmd, shared | `envfile` |  |
-| `FAAS_STORAGE_CACHE_DIR` | shared | `envfile` |  |
+| `FAAS_STORAGE_CACHE_DIR` | imaged, shared | `envfile` |  |
 | `FAAS_STORAGE_CACHE_MAX_BYTES` | shared | `envfile` |  |
 | `FAAS_STORAGE_CACHE_REFRESH` | shared | `default` |  |
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |
@@ -314,5 +318,5 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMM_TLS_CA_PATH` | imaged | `dropin` |  |
 | `FAAS_VMM_TLS_CERT_PATH` | imaged | `dropin` |  |
 | `FAAS_VMM_TLS_KEY_PATH` | imaged | `dropin` |  |
-| `FAAS_WEBHOOK_SECRET` | gatewayd-internal | `secrets-env` | delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal) |
+| `FAAS_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` | deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
 | `FAAS_WORKFLOWS_ENABLED` | schedd | `unit` | explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch |

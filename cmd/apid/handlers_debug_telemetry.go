@@ -7,18 +7,20 @@ package main
 // the existing app_errors_recorder-style rows once a row source is
 // configured.
 //
-// One handler: GET /v1/apps/{slug}/debug/requests?since=<dur>&limit=N
+// Handlers: list recent requests and retrieve one request by id.
 // The regression / compare / replay endpoints are PR-B / PR-C.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -83,27 +85,103 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// debugTelemetryGetHandler — GET /v1/apps/{slug}/debug/requests/{req_id}
+//
+// Direct lookup for a single request. Unlike the list endpoint, this
+// does not depend on the request still being inside the first page of
+// recent telemetry, which makes it usable for incident links and CLI
+// drill-downs on busy apps. loadApp + app_id in the query keep it
+// IDOR-safe.
+func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if !limits.DebugTelemetryEnabled {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
+		return
+	}
+	reqID, err := uuid.Parse(r.PathValue("req_id"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("req_id must be a UUID"))
+		return
+	}
+	now := time.Now().UTC()
+	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	row, err := s.store.GetRequestTelemetryByAppAndID(r.Context(), sqlc.GetRequestTelemetryByAppAndIDParams{
+		AppID:        stringToPgUUID(app.ID),
+		ID:           pgtype.UUID{Bytes: reqID, Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
+		return
+	}
+	writeJSON(w, http.StatusOK, debugTelemetryGetRowToItem(row))
+}
+
 // debugTelemetryRowToItem maps a sqlc-generated row to the wire
 // DTO. Lives in cmd/apid/ because pkg/api cannot import pkg/state
 // (import cycle). The mapping handles pgtype.UUID → string
 // (hyphenated hex), pgtype.Timestamptz → RFC3339Nano, and
 // pgtype.Text (nullable trace_id) → *string.
 func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTelemetryRequestItem {
+	return debugTelemetryItemFromFields(
+		row.ID,
+		row.DeploymentID,
+		row.Route,
+		row.Method,
+		row.Status,
+		row.LatencyMs,
+		row.ColdBoot,
+		row.TraceID,
+		row.ReceivedAt,
+	)
+}
+
+func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIDRow) api.DebugTelemetryRequestItem {
+	return debugTelemetryItemFromFields(
+		row.ID,
+		row.DeploymentID,
+		row.Route,
+		row.Method,
+		row.Status,
+		row.LatencyMs,
+		row.ColdBoot,
+		row.TraceID,
+		row.ReceivedAt,
+	)
+}
+
+func debugTelemetryItemFromFields(
+	id, deploymentID pgtype.UUID,
+	route, method string,
+	status, latencyMS int32,
+	coldBoot bool,
+	traceID pgtype.Text,
+	receivedAt pgtype.Timestamptz,
+) api.DebugTelemetryRequestItem {
 	item := api.DebugTelemetryRequestItem{
 		// pgtype.UUID -> hyphenated hex string. Falls back to "" when
 		// Valid=false so the JSON renders "" rather than the driver's
 		// base64 zero-bytes shape.
-		ID:           uuidFromPg(row.ID),
-		DeploymentID: uuidFromPg(row.DeploymentID),
-		Route:        row.Route,
-		Method:       row.Method,
-		Status:       int(row.Status),
-		LatencyMS:    int(row.LatencyMs),
-		ColdBoot:     row.ColdBoot,
-		ReceivedAt:   timeFromPg(row.ReceivedAt),
+		ID:           uuidFromPg(id),
+		DeploymentID: uuidFromPg(deploymentID),
+		Route:        route,
+		Method:       method,
+		Status:       int(status),
+		LatencyMS:    int(latencyMS),
+		ColdBoot:     coldBoot,
+		ReceivedAt:   timeFromPg(receivedAt),
 	}
-	if row.TraceID.Valid {
-		s := row.TraceID.String
+	if traceID.Valid {
+		s := traceID.String
 		item.TraceID = &s
 	}
 	return item

@@ -625,24 +625,23 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 		}
 		return nil
 	}
-	if err := writePlanCgroup(l.Instance, l.Plan, l.MemoryMaxMiB); err != nil {
+	if err := writeAppCgroup(l.Instance, l.Plan, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
 		return err
 	}
 	if len(workloads) <= 1 {
 		return nil
 	}
 	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
-	if err := writeWorkloadCgroup(parentScope, WorkloadNameMain, l.MemoryMaxMiB); err != nil {
+	if err := writeWorkloadCgroup(parentScope, WorkloadNameMain, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
 		return err
 	}
 	for _, workload := range workloads[1:] {
-		// RamMB=0 means inherit the parent plan cap; no child leaf is
-		// needed and treating zero as 1 MiB would make the workload
-		// unusable.
-		if workload.RamMB == 0 {
+		// Zero values inherit the parent limits; no child leaf is
+		// needed when neither resource has an override.
+		if workload.RamMB == 0 && workload.CPUMillicores == 0 {
 			continue
 		}
-		if err := writeWorkloadCgroup(parentScope, workload.Name, workload.RamMB); err != nil {
+		if err := writeWorkloadCgroup(parentScope, workload.Name, workload.RamMB, workload.CPUMillicores); err != nil {
 			return err
 		}
 	}
@@ -1280,6 +1279,11 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 // for the vmmd side, distinct from the engine's Destroy-the-VM
 // failure handler in pkg/sched.engine.captureWarmSnapshotLocked).
 func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec SnapshotSpec) (info SnapshotInfo, retErr error) {
+	defer func() {
+		if retErr != nil {
+			v.cleanupFailedSnapshotCapture(ctx, spec)
+		}
+	}()
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
@@ -1705,10 +1709,9 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 // only if exportDir != "" loopback-mounts the chroot-local drive1 to copy out
 // /etc/faas/build-done.json and /build/out/* before removing the chroot.
 //
-// exportDir="" means "app VM", and the method becomes Kill-equivalent: wait
-// for the child, drop the chroot, return (0, nil). Existing app-VM callers
-// (Manager.Destroy) keep their contract — only builderd opts in via the
-// BuildSpec.ExportDir field.
+// Ordinary app VMs with exportDir="" are killed immediately, matching
+// Manager.Destroy's contract. Builder records wait for completion even when
+// a caller suppresses export; cancellation interrupts them via InterruptBuild.
 func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir string) (int, error) {
 	v.mu.Lock()
 	rec, ok := v.recs[l.Instance]
@@ -1718,6 +1721,13 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 		v.closeClient(l.Instance)
 		_ = os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance))
 		return 0, nil
+	}
+
+	// App VMs run until explicitly stopped; waiting for natural exit here
+	// holds their network and lease for the builder timeout. Only builders
+	// need to finish and flush artifacts before teardown.
+	if exportDir == "" && !rec.isBuilder {
+		return 0, v.Kill(ctx, l)
 	}
 
 	// 1. Wait for the firecracker child to exit. The watchdog goroutine started
@@ -2005,6 +2015,34 @@ const secretsEnvPath = "upper/etc/faas/secrets.env"
 // manifest_env > os.environ".
 const apiEnvPath = "upper/etc/faas/env.json"
 
+// stagedDrivePath selects the on-disk contract location for drive1. The
+// optimized two-drive artifact stores mutable runtime files below /upper;
+// full-rootfs artifacts are already mounted as the guest's root and therefore
+// receive the same files directly under /. The marker is written only by the
+// platform builder, so a malformed value fails closed instead of silently
+// writing state to a path guest-init will never read.
+func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
+	marker := filepath.Join(mountRoot, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
+	info, err := os.Lstat(marker)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return filepath.Join(mountRoot, optimizedPath), nil
+		}
+		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("full-rootfs marker is not a regular file")
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return "", fmt.Errorf("read full-rootfs marker: %w", err)
+	}
+	if string(data) != api.FullRootfsMarkerValue {
+		return "", fmt.Errorf("invalid full-rootfs marker payload")
+	}
+	return filepath.Join(mountRoot, strings.TrimPrefix(optimizedPath, "upper/")), nil
+}
+
 // StageSecretsEnv loopback-mounts drive1 (the per-app layer, the only fs
 // the VM can write at runtime), writes /etc/faas/secrets.env with mode
 // 0400, and umounts. The plaintext is read off the chroot-local image
@@ -2037,7 +2075,10 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, secretsEnvPath)
+	target, err := stagedDrivePath(mp, secretsEnvPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2078,7 +2119,10 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, apiEnvPath)
+	target, err := stagedDrivePath(mp, apiEnvPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2118,7 +2162,11 @@ func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []b
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
-	target := filepath.Join(mp, workloadEnvPath, workloadName, "env.json")
+	base, err := stagedDrivePath(mp, workloadEnvPath)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(base, workloadName, "env.json")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir workload env: %w", err)
 	}
@@ -2210,13 +2258,15 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	// need that contract here (guest-init parses each file once
 	// at boot) but the determinism is free.
 	manifest := workloadManifest{
-		Name:       w.Name,
-		Type:       w.Type,
-		RamMB:      w.RamMB,
-		Port:       w.Port,
-		Essential:  w.Essential,
-		Cmd:        w.Cmd,
-		Entrypoint: w.Entrypoint,
+		Name:          w.Name,
+		Type:          w.Type,
+		RamMB:         w.RamMB,
+		CPUMillicores: w.CPUMillicores,
+		Port:          w.Port,
+		Essential:     w.Essential,
+		Cmd:           w.Cmd,
+		Entrypoint:    w.Entrypoint,
+		DependsOn:     w.DependsOn,
 		// StorageKey is omitted: the guest doesn't need to know
 		// the host-side path; it just reads the workload spec
 		// from the manifest and ignores the storage key. ADR-069
@@ -2226,7 +2276,10 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	if err != nil {
 		return fmt.Errorf("marshal workload manifest: %w", err)
 	}
-	target := filepath.Join(mp, workloadManifestPath)
+	target, err := stagedDrivePath(mp, workloadManifestPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}
@@ -2250,8 +2303,8 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 //
 // Layout:
 //
-//	{"essential":BOOL,"name":"...","port":INT,"ram_mb":INT,"type":"...",
-//	 "cmd":[...],"entrypoint":[...]}
+//	{"cpu_millicores":INT,"essential":BOOL,"name":"...","port":INT,"ram_mb":INT,"type":"...",
+//	 "cmd":[...],"entrypoint":[...],"depends_on":[...]}
 //
 // Braces, colons, commas, and quoted keys/values dominate the
 // fixed overhead; Name + Cmd + Entrypoint contribute variable bytes.
@@ -2278,14 +2331,18 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	for _, e := range w.Entrypoint {
 		entrypointBytes += int64(len(e)) * 2
 	}
-	// Two int fields (port, ram_mb) and a bool + 2 array
+	dependencyBytes := int64(0)
+	for _, dep := range w.DependsOn {
+		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
+	}
+	// Three int fields (port, ram_mb, cpu_millicores) and a bool + 2 array
 	// fields. 11 bytes per int is the worst case for a 32-bit
 	// value; 5 bytes for "false". The 5 quoted keys + 2 numeric
 	// values + 1 bool + 2 array brackets contribute a fixed
 	// overhead; we over-estimate at 128 to absorb the new
 	// cmd/entrypoint keys.
 	const fixedOverhead = 128
-	return nameBytes + cmdBytes + entrypointBytes + fixedOverhead
+	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + fixedOverhead
 }
 
 // projectedWorkloadRosterBytes (issue #463 / ADR-069 / PR-B
@@ -2319,7 +2376,8 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // partition (PR-B's primary OOM isolation), Port for the port-normalization
 // wiring (ADR-053), and Essential for the restart policy. Cmd/Entrypoint
 // override the per-workload image's baked entrypoint (the sidecar
-// image's /usr/local/bin/start.sh, the main workload's app.json).
+// image's /usr/local/bin/start.sh, the main workload's app.json), and
+// DependsOn for dependency-aware startup.
 //
 // Both fields are omitempty so the legacy PR-B path (no customer
 // override) writes the same byte shape as before — dashboards
@@ -2339,13 +2397,15 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // must be a single PR that updates both sides + the projection
 // helper.
 type workloadManifest struct {
-	Cmd        []string `json:"cmd,omitempty"`
-	Entrypoint []string `json:"entrypoint,omitempty"`
-	Essential  bool     `json:"essential"`
-	Name       string   `json:"name"`
-	Port       int      `json:"port"`
-	RamMB      int      `json:"ram_mb"`
-	Type       string   `json:"type"`
+	Cmd           []string                 `json:"cmd,omitempty"`
+	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
+	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint    []string                 `json:"entrypoint,omitempty"`
+	Essential     bool                     `json:"essential"`
+	Name          string                   `json:"name"`
+	Port          int                      `json:"port"`
+	RamMB         int                      `json:"ram_mb"`
+	Type          string                   `json:"type"`
 }
 
 // workloadRosterPath is the in-guest location guest-init reads
@@ -2410,29 +2470,36 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 
 	roster := workloadRoster{
 		Main: workloadManifest{
-			Name:      main.Name,
-			Type:      main.Type,
-			RamMB:     main.RamMB,
-			Port:      main.Port,
-			Essential: main.Essential,
+			Name:          main.Name,
+			Type:          main.Type,
+			RamMB:         main.RamMB,
+			CPUMillicores: main.CPUMillicores,
+			Port:          main.Port,
+			Essential:     main.Essential,
+			DependsOn:     main.DependsOn,
 		},
 	}
 	for _, sc := range sidecars {
 		roster.Sidecars = append(roster.Sidecars, workloadManifest{
-			Name:       sc.Name,
-			Type:       sc.Type,
-			RamMB:      sc.RamMB,
-			Port:       sc.Port,
-			Essential:  sc.Essential,
-			Cmd:        sc.Cmd,
-			Entrypoint: sc.Entrypoint,
+			Name:          sc.Name,
+			Type:          sc.Type,
+			RamMB:         sc.RamMB,
+			CPUMillicores: sc.CPUMillicores,
+			Port:          sc.Port,
+			Essential:     sc.Essential,
+			Cmd:           sc.Cmd,
+			Entrypoint:    sc.Entrypoint,
+			DependsOn:     sc.DependsOn,
 		})
 	}
 	blob, err := json.Marshal(roster)
 	if err != nil {
 		return fmt.Errorf("marshal workload roster: %w", err)
 	}
-	target := filepath.Join(mp, workloadRosterPath)
+	target, err := stagedDrivePath(mp, workloadRosterPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir etc/faas: %w", err)
 	}

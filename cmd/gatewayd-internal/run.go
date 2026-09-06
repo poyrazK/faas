@@ -917,7 +917,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return gateway.App{}, false, err
 			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, Plan: acct.Plan, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1721,6 +1721,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// nil. Production wires both unconditionally after
 	// deps.authMw is built in run().
 	handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	// E2 / issue #1397: browser wake pages use the same gatewayd audit
+	// writer as the auth gates so wake.page_served joins the eventual
+	// scheduler wake by its real wake_id.
+	handler.WithWakePageAudit(deps.requireAuthnAudit)
 	// ADR-089 / issue #561 PR 3: arm the per-host edge-rule
 	// matcher so ServeHTTP consults it BEFORE Backend.Lookup
 	// (handler.go:1599-1618). The resolve closure wraps
@@ -1780,6 +1784,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return gateway.App{
 			ID:               app.ID,
 			AccountID:        app.AccountID,
+			MaxConcurrency:   app.MaxConcurrency,
 			Slug:             app.Slug,
 			RequireAuthn:     app.RequireAuthn,
 			PublicAuth:       gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist},

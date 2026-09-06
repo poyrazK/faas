@@ -471,6 +471,13 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 }
 
+func TestBuildCreateRequestResourceProfile(t *testing.T) {
+	got := buildCreateRequest("slug", shapeApp, "", nil, nil, "small")
+	if got.ResourceProfile != "small" {
+		t.Fatalf("ResourceProfile = %q, want small", got.ResourceProfile)
+	}
+}
+
 // TestResolveDeployShape_NestedMarkerHint pins the customer-visible
 // behaviour of issue #744 / ADR-086: a cwd whose only deployable source
 // is a marker buried at depth 1 (the common monorepo layout

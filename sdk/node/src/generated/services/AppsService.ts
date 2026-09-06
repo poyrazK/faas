@@ -19,7 +19,10 @@ import type { DebugCompareResponse } from '../models/DebugCompareResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
+import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
+import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
+import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -75,7 +78,7 @@ export class AppsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied | email_verification_required`,
         409: `code: conflict`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
@@ -366,6 +369,135 @@ export class AppsService {
         BEFORE \`loadApp\` so a Free customer probing a slug
         never gets a 404 (slug-leak guard).
         `,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Aggregated historical request analytics.
+   * Returns an aggregate request overview for one app: total requests,
+   * errors, cold boots, weighted p50/p95/p99 latency, and the top
+   * route/method combinations. This is the customer analytics surface;
+   * request identifiers and trace payloads remain on the debugger routes.
+   *
+   * `since` accepts a duration such as `24h` or `7d` and defaults to
+   * `24h`. The effective window is clamped to the plan's
+   * `DebugTelemetryRetentionDays` (Hobby 3d, Pro 7d, Scale 14d).
+   * `window_clamped` tells callers when the requested lookback was wider
+   * than the retained telemetry. The response contains at most 50 route
+   * rows; `routes_truncated` indicates that more routes matched.
+   *
+   * Counts and percentiles include the recorder's collapsed row `count`,
+   * so the result represents original requests rather than stored rows.
+   * The endpoint is read-only, IDOR-safe, and plan-gated by
+   * `DebugTelemetryEnabled`.
+   *
+   * @returns RequestAnalyticsResponse Aggregated request analytics.
+   * @throws ApiError
+   */
+  public static getAppRequestAnalytics({
+    slug,
+    since = '24h',
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lookback duration (`24h`, `3d`, `7d`) or RFC3339 start timestamp. Defaults to `24h` and is retention-clamped.
+     */
+    since?: string,
+    /**
+     * Optional RFC3339 upper-bound timestamp for the historical window.
+     */
+    until?: string,
+  }): CancelablePromise<RequestAnalyticsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/analytics',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Request analytics time series by hour.
+   * Returns zero-filled UTC hourly buckets for customer request analytics.
+   * Each bucket contains request and error counts, error rate, cold boots,
+   * and weighted p50/p95/p99 latency. The window is half-open [since, until)
+   * and is clamped to the plan's DebugTelemetryRetentionDays.
+   *
+   * `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+   * timestamp. `until` is an optional RFC3339 exclusive upper bound and
+   * defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+   * by `DebugTelemetryEnabled`.
+   *
+   * @returns RequestAnalyticsTimeseriesResponse Zero-filled hourly request analytics buckets.
+   * @throws ApiError
+   */
+  public static getAppRequestAnalyticsTimeseries({
+    slug,
+    since = '24h',
+    until,
+    route,
+    method,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lookback duration or RFC3339 start timestamp. Defaults to `24h`.
+     */
+    since?: string,
+    /**
+     * Exclusive end timestamp; omitted means current server time.
+     */
+    until?: string,
+    /**
+     * Exact bounded route label to drill into (for example `GET /users/{id}`). Must be provided together with `method`; omitted means all routes.
+     */
+    route?: string,
+    /**
+     * Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods.
+     */
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+  }): CancelablePromise<RequestAnalyticsTimeseriesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/analytics/timeseries',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'route': route,
+        'method': method,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
@@ -771,6 +903,49 @@ export class AppsService {
     });
   }
   /**
+   * Get one request telemetry record (ADR-127).
+   * Returns one request telemetry row by id for the app. The
+   * lookup is scoped to the app resolved from `slug`, so a request
+   * id belonging to another app is returned as not found. This
+   * direct lookup is not limited to the first page of recent
+   * requests. Plan-gated by `DebugTelemetryEnabled`.
+   *
+   * @returns DebugTelemetryRequestItem Request telemetry record.
+   * @throws ApiError
+   */
+  public static getAppDebugRequest({
+    slug,
+    reqId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Telemetry record UUID to retrieve.
+     */
+    reqId: string,
+  }): CancelablePromise<DebugTelemetryRequestItem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/requests/{req_id}',
+      path: {
+        'slug': slug,
+        'req_id': reqId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Active regression observations (ADR-127 / PR-B).
    * Returns regression observations written by the
    * debug_regression_observations table — surfaces per-route
@@ -956,6 +1131,49 @@ export class AppsService {
         404: `code: not_found`,
         429: `code: plan_limit_concurrency`,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Purge cached responses for an app.
+   * Requests an in-process response-cache purge on every gateway. The
+   * optional path glob limits the purge to matching normalized request
+   * paths; omit it to purge the complete app cache.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static purgeAppCache({
+    slug,
+    path,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional normalized request path glob (for example `/products*`).
+     */
+    path?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/cache',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'path': path,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
       },
     });
   }

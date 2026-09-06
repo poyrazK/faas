@@ -27,6 +27,8 @@
     .badge.sleeping { background: #e5e7eb; color: #374151; }
     .badge.waking   { background: #dbeafe; color: #1e40af; }
     .badge.dim      { background: #f3f4f6; color: #6b7280; }
+    .badge.cert-failed { background: #fee2e2; color: #991b1b; }
+    .badge.cert-renewing { background: #dbeafe; color: #1e40af; }
     /* Severity color chips — palette is mirrored verbatim from
        pkg/dashboard/templates/deployment_detail.html so the
        list view (app_detail.html) and the detail view
@@ -174,7 +176,8 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired" hx-get="/dashboard/apps/{{.Data.App.Slug}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+    {{template "email-verification-banner" .}}
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
          with ?fired=1 (success) or ?fired=error (failure); the
@@ -182,6 +185,7 @@
          "did the click do anything?" operator loop without a
          full page reload. */}}
     {{if .Data.FiredFlash}}{{if eq .Data.FiredFlash "ok"}}<div class="cron-flash-ok" role="status">Fire-now enqueued. The run will appear below within a few seconds.</div>{{else}}<div class="cron-flash-error" role="alert">Fire-now failed. Check the cron's path and try again, or use <code>gregale crons info &lt;id&gt;</code> for diagnostics.</div>{{end}}{{end}}
+    {{if .Data.RollbackFlash}}{{if eq .Data.RollbackFlash "ok"}}<div class="cron-flash-ok" role="status">Rollback completed. The selected deployment is live.</div>{{else}}<div class="cron-flash-error" role="alert">Rollback failed. Refresh the page and choose a superseded deployment.</div>{{end}}{{end}}
     {{if .Data}}
       <h1>App: <code>{{.Data.App.Slug}}</code></h1>
       <p>
@@ -204,6 +208,39 @@
           {{range $k, $v := .Data.Manifest.Env}}<code>{{$k}}={{$v}}</code> {{end}}
         </td></tr>
       </table>
+
+      {{if .Data.EffectiveLimits.MemoryLimitMB}}
+      <h2>Effective limits</h2>
+      <table>
+        <tr><th>Configured shape</th><td>{{.Data.ConfiguredResources.MemoryMB}} MB · {{.Data.ConfiguredResources.CPUMillicores}}m CPU</td></tr>
+        <tr><th>Memory</th><td>{{.Data.EffectiveLimits.MemoryLimitMB}} MB (plan ceiling {{.Data.EffectiveLimits.PlanMemoryMaxMB}} MB)</td></tr>
+        <tr><th>CPU</th><td>{{.Data.EffectiveLimits.GuestVCPUs}} guest vCPU · {{.Data.EffectiveLimits.CPULimitMillicores}}m sustained limit (plan ceiling {{.Data.EffectiveLimits.PlanCPUMaxMillicores}}m) · scheduling weight {{.Data.EffectiveLimits.CPUWeight}}</td></tr>
+        <tr><th>Scaling</th><td>up to {{.Data.EffectiveLimits.MaxInstances}} instances · {{.Data.EffectiveLimits.ConcurrencyPerInstance}} concurrent requests per instance</td></tr>
+        <tr><th>App request rate</th><td>{{.Data.EffectiveLimits.AppRequestRateRPS}} requests/s · burst {{.Data.EffectiveLimits.AppRequestBurst}}</td></tr>
+        <tr><th>Account request rate</th><td>{{.Data.EffectiveLimits.AccountRequestRateRPM}} requests/min across apps</td></tr>
+        <tr><th>Request budget</th><td>{{.Data.EffectiveLimits.RequestBudgetMS}} ms default · {{.Data.EffectiveLimits.RequestBudgetMaxMS}} ms maximum</td></tr>
+        <tr><th>Response write timeout</th><td>{{.Data.EffectiveLimits.ResponseWriteTimeoutS}} s</td></tr>
+      </table>
+      {{end}}
+
+      {{/* F1 / issue #1397: durable custom-domain certificate state. */}}
+      {{if .Data.Domains}}
+        <h2>Custom domains</h2>
+        <table aria-label="Custom domain certificate status">
+          <thead><tr><th>Domain</th><th>Verification</th><th>Certificate</th><th>Expires</th><th>Last error</th></tr></thead>
+          <tbody>
+            {{range .Data.Domains}}
+              <tr>
+                <td><code>{{.Domain}}</code></td>
+                <td>{{if .Verified}}<span class="badge running">verified</span>{{else}}<span class="badge dim">pending</span>{{end}}</td>
+                <td>{{if eq .CertStatus "issued"}}<span class="badge running">issued</span>{{else if eq .CertStatus "renewing"}}<span class="badge cert-renewing">renewing</span>{{else if eq .CertStatus "failed"}}<span class="badge cert-failed">failed</span>{{else}}<span class="badge dim">{{if .CertStatus}}{{.CertStatus}}{{else}}pending{{end}}</span>{{end}}</td>
+                <td>{{if .CertExpiresAt}}{{.CertExpiresAt}}{{else}}—{{end}}</td>
+                <td>{{if .CertLastError}}<code>{{.CertLastError}}</code>{{else}}—{{end}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{end}}
 
       <h2>Recent deployments</h2>
       {{if .Data.Deployments}}
@@ -253,10 +290,13 @@
                 </td>
                 <td><code>{{.Error}}</code></td>
                 <td>
-                  <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/rollback" style="display:inline">
-                    <input type="hidden" name="deployment_id" value="{{.ID}}">
-                    <button type="submit">Rollback</button>
-                  </form>
+                  {{if eq .Status "superseded"}}
+                    <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/rollback" style="display:inline">
+                      <input type="hidden" name="csrf_token" value="{{$.Data.RollbackConfirmToken}}">
+                      <input type="hidden" name="deployment_id" value="{{.ID}}" required>
+                      <button type="submit">Rollback</button>
+                    </form>
+                  {{end}}
                 </td>
               </tr>
             {{end}}
@@ -451,6 +491,72 @@
         </section>
       {{end}}
 
+      {{/* Customer request analytics is the durable, weighted rollup
+           behind GET /v1/apps/{slug}/analytics. It complements the live
+           Prometheus snapshot above with a retention-window view and a
+           deterministic top-route table. */}}
+      {{if .Data.RequestAnalytics}}
+        <section aria-label="Request analytics">
+          <h2>Request analytics
+            <small style="font-weight:normal;color:#888">(last {{.Data.RequestAnalytics.Since}})</small>
+            · <a href="/v1/apps/{{.Data.App.Slug}}/analytics?since={{.Data.RequestAnalytics.Since}}">JSON</a>
+            · <a href="{{.Data.RequestAnalytics.TimeseriesURL}}">Hourly JSON</a>
+          </h2>
+          {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          {{if .Data.RequestAnalytics.LatencySparklineHTML}}
+            <h3>Hourly trend{{if .Data.RequestAnalytics.SelectedRoute}} · <code>{{.Data.RequestAnalytics.SelectedMethod}} {{.Data.RequestAnalytics.SelectedRoute}}</code> · <a href="/dashboard/apps/{{.Data.App.Slug}}">all traffic</a>{{end}} <small style="font-weight:normal;color:#888">({{.Data.RequestAnalytics.Bucket}} buckets · {{.Data.RequestAnalytics.From}} to {{.Data.RequestAnalytics.Until}})</small></h3>
+            <table aria-label="Hourly request analytics trends">
+              <tbody>
+                <tr>
+                  <td>Latency p50 / p95 / p99</td>
+                  <td>{{.Data.RequestAnalytics.LatencySparklineHTML}}</td>
+                </tr>
+                <tr>
+                  <td>Error rate</td>
+                  <td>{{.Data.RequestAnalytics.ErrorSparklineHTML}}</td>
+                </tr>
+                <tr>
+                  <td>Cold-boot rate</td>
+                  <td>{{.Data.RequestAnalytics.ColdBootSparklineHTML}}</td>
+                </tr>
+              </tbody>
+            </table>
+          {{end}}
+          {{if eq .Data.RequestAnalytics.Requests 0}}
+            <p>No requests in the last {{.Data.RequestAnalytics.Since}}.</p>
+          {{else}}
+            <dl>
+              <dt>Requests</dt><dd>{{.Data.RequestAnalytics.Requests}}</dd>
+              <dt>Errors</dt><dd>{{.Data.RequestAnalytics.ErrorRequests}} ({{printf "%.2f" .Data.RequestAnalytics.ErrorRatePct}}%)</dd>
+              <dt>Cold boots</dt><dd>{{.Data.RequestAnalytics.ColdBoots}}</dd>
+              <dt>Latency p50 / p95 / p99</dt><dd>{{.Data.RequestAnalytics.P50MS}} / {{.Data.RequestAnalytics.P95MS}} / {{.Data.RequestAnalytics.P99MS}} ms</dd>
+            </dl>
+            {{if .Data.RequestAnalytics.Routes}}
+              <h3>Top routes</h3>
+              <table>
+                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Trend</th></tr></thead>
+                <tbody>
+                  {{range .Data.RequestAnalytics.Routes}}
+                    <tr>
+                      <td><code>{{.Route}}</code></td>
+                      <td>{{.Method}}</td>
+                      <td>{{.Requests}}</td>
+                      <td>{{.ErrorRequests}} ({{printf "%.2f" .ErrorRatePct}}%)</td>
+                      <td>{{.P50MS}} ms</td>
+                      <td>{{.P95MS}} ms</td>
+                      <td>{{.P99MS}} ms</td>
+                      <td><a href="{{.TrendURL}}">View</a></td>
+                    </tr>
+                  {{end}}
+                </tbody>
+              </table>
+              {{if .Data.RequestAnalytics.RoutesTruncated}}<p class="muted">Showing the top {{.Data.RequestAnalytics.RoutesLimit}} route/method combinations. Use the JSON endpoint for the same bounded result.</p>{{end}}
+            {{end}}
+          {{end}}
+          <small class="muted">Updated {{.Data.RequestAnalytics.AsOf}} · latency percentiles include collapsed request counts.</small>
+        </section>
+      {{end}}
+
       {{/* Issue #272 / ADR-095 PR-C — preview environments panel.
            Suppressed for a preview row itself (a preview cannot have
            previews — the per-deployment scope gates dispatch) so the
@@ -463,9 +569,9 @@
         <h2>Preview environments</h2>
         {{if .Data.Previews}}
           {{range .Data.Previews}}
-            <section class="preview-section" id="preview-{{.Slug}}" aria-label="preview PR #{{.PrNumber}}">
+            <section class="preview-section" id="preview-{{.Slug}}" aria-label="{{if .IsDev}}developer preview{{else}}preview PR #{{.PrNumber}}{{end}}">
               <header>
-                PR #{{.PrNumber}}
+                {{if .IsDev}}Developer{{else}}PR #{{.PrNumber}}{{end}}
                 · <code>{{.Slug}}</code>
                 · <span class="preview-state-{{.PrState}}">{{.StateLabel}}</span>
                 {{if .ExpiresAt}}· expires {{.ExpiresAt}}{{end}}

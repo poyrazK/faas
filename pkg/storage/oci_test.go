@@ -247,7 +247,11 @@ func (f *fakeRegistry) handleV2(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			f.mu.Lock()
-			delete(f.manifests[repo], ref)
+			for tag, body := range f.manifests[repo] {
+				if tag == ref || digestOf(body) == ref {
+					delete(f.manifests[repo], tag)
+				}
+			}
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusAccepted)
 		default:

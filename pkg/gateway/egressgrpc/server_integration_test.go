@@ -105,6 +105,7 @@ func TestServer_StreamBytes_EmitsRecordedBytes(t *testing.T) {
 	// tick has something to drain.
 	sink.RecordResponseBytes("inst-1", 1024)
 	sink.RecordResponseBytes("inst-2", 2048)
+	sink.RecordRequest("inst-1", true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -127,6 +128,9 @@ func TestServer_StreamBytes_EmitsRecordedBytes(t *testing.T) {
 		}
 		if got := frame.Minute.AsTime().Truncate(time.Minute); !got.Equal(frame.Minute.AsTime()) {
 			t.Fatalf("minute not truncated: %v", frame.Minute.AsTime())
+		}
+		if frame.InstanceId == "inst-1" && (frame.Requests != 1 || frame.ColdBoots != 1) {
+			t.Fatalf("inst-1 activity = requests:%d cold_boots:%d, want 1/1", frame.Requests, frame.ColdBoots)
 		}
 		seen[frame.InstanceId] = frame.Bytes
 	}

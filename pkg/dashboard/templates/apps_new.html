@@ -38,6 +38,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
     <section class="card">
       <p>Walk through GitHub authorization, pick a repository, and pick a starting template. The dashboard handles the OAuth handshake server-side; the <code>install</code> and <code>production_branch</code> come back pre-filled from the GitHub App callback.</p>

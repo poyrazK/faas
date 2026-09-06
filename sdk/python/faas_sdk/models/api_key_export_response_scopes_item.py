@@ -1,7 +1,20 @@
 from typing import Literal
 
 APIKeyExportResponseScopesItem = Literal[
-    "admin", "apps:read", "deploy:write", "env:read", "env:write", "secrets:read", "secrets:write", "usage:read"
+    "admin",
+    "apps:read",
+    "deploy:write",
+    "env:read",
+    "env:write",
+    "registry_credentials:read",
+    "registry_credentials:write",
+    "secrets:read",
+    "secrets:write",
+    "storage:manage",
+    "storage:read",
+    "storage:write",
+    "upstreams:write",
+    "usage:read",
 ]
 
 API_KEY_EXPORT_RESPONSE_SCOPES_ITEM_VALUES: set[APIKeyExportResponseScopesItem] = {
@@ -10,8 +23,14 @@ API_KEY_EXPORT_RESPONSE_SCOPES_ITEM_VALUES: set[APIKeyExportResponseScopesItem] 
     "deploy:write",
     "env:read",
     "env:write",
+    "registry_credentials:read",
+    "registry_credentials:write",
     "secrets:read",
     "secrets:write",
+    "storage:manage",
+    "storage:read",
+    "storage:write",
+    "upstreams:write",
     "usage:read",
 }
 

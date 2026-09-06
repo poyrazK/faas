@@ -1,0 +1,90 @@
+# Synthetic coverage for the Prometheus → Alertmanager control-plane alerts.
+# The self-scrape target makes these standard Prometheus and Alertmanager
+# metrics available to the local rule engine; this fixture keeps the alert
+# thresholds executable without requiring live notification integrations.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "rule evaluation and notification path failures page"
+    input_series:
+      - series: 'prometheus_rule_evaluation_failures_total{rule_group="faas_slo"}'
+        values: '0+1x30'
+      - series: 'prometheus_notifications_dropped_total'
+        values: '0+1x30'
+      - series: 'alertmanager_notifications_failed_total{integration="email",reason="error"}'
+        values: '0+1x30'
+      - series: 'alertmanager_config_last_reload_successful'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasPrometheusRuleEvaluationFailed
+        exp_alerts:
+          - exp_labels:
+              rule_group: faas_slo
+              severity: page
+              component: prometheus
+              family: prometheus_health
+            exp_annotations:
+              summary: "Prometheus rule evaluation failures detected"
+              description: "Prometheus has recorded one or more rule evaluation failures during the last 10m. Alert and recording rules may be stale; inspect the failed rule group in the Prometheus logs and /rules endpoint before relying on dashboards or pages."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"
+      - eval_time: 10m
+        alertname: FaasPrometheusNotificationsDropped
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: prometheus
+              family: prometheus_health
+            exp_annotations:
+              summary: "Prometheus dropped alerts before Alertmanager delivery"
+              description: "Prometheus has dropped one or more notifications during the last 10m. The page path is losing alerts before Alertmanager receives them; check Alertmanager reachability, the notifier queue, and Prometheus logs immediately."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"
+      - eval_time: 10m
+        alertname: FaasAlertmanagerNotificationsFailed
+        exp_alerts:
+          - exp_labels:
+              integration: email
+              reason: error
+              severity: page
+              component: alertmanager
+              family: alertmanager_health
+            exp_annotations:
+              summary: "Alertmanager notification delivery is failing"
+              description: "Alertmanager has recorded failed notifications during the last 10m. One or more configured page or ticket integrations may be unreachable; inspect the integration label, receiver configuration, and provider response before assuming pages are delivered."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+      - eval_time: 10m
+        alertname: FaasAlertmanagerConfigReloadFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: alertmanager
+              family: alertmanager_health
+            exp_annotations:
+              summary: "Alertmanager configuration reload failed"
+              description: "Alertmanager's most recent configuration reload was unsuccessful for 5m. The previous configuration may still be active, so verify routing and receiver changes before treating the notification path as healthy."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+
+  - interval: 30s
+    name: "notification queue above 80 percent pages"
+    input_series:
+      - series: 'prometheus_notifications_queue_length'
+        values: '90+0x30'
+      - series: 'prometheus_notifications_queue_capacity'
+        values: '100+0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasPrometheusNotificationQueueBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: prometheus
+              family: prometheus_health
+            exp_annotations:
+              summary: "Prometheus notification queue is above 80% capacity"
+              description: "Prometheus has held more than 80% of its notification queue for 10m. Alert delivery is falling behind; check Alertmanager readiness and receiver failures before the queue fills and drops pages."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"

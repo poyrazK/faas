@@ -331,11 +331,12 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
-	BaseKey    string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey   string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount  int32  // 2, or 4 for Scale
-	MemSizeMiB int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	EgressMbit int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount     int32  // 2, or 4 for Scale
+	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
+	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -988,6 +989,10 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		b := v.GetValue()
 		row.NetTxBytes = &b
 	}
+	if v := in.GetNetRxBytes(); v != nil {
+		b := v.GetValue()
+		row.NetRxBytes = &b
+	}
 	if v := in.GetRequestCountTotal(); v != nil {
 		c := v.GetValue()
 		row.RequestCountTotal = &c
@@ -1023,16 +1028,25 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 				Ciphertext: entry.Ciphertext,
 			})
 		}
+		dependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(sc.DependsOn))
+		for _, dep := range sc.DependsOn {
+			dependsOn = append(dependsOn, &vmmdpb.WorkloadDependency{
+				Name:      dep.Name,
+				Condition: string(dep.Condition),
+			})
+		}
 		sidecars = append(sidecars, &vmmdpb.SidecarSpec{
-			Name:       sc.Name,
-			Type:       sc.Type,
-			Image:      sc.Image,
-			RamMb:      int32(sc.RamMB),
-			Port:       uint32(sc.Port),
-			Essential:  sc.Essential,
-			StorageKey: sc.StorageKey,
-			DriveSlot:  sc.DriveID,
-			SealedEnv:  sealedSidecarEnv,
+			Name:          sc.Name,
+			Type:          sc.Type,
+			Image:         sc.Image,
+			RamMb:         int32(sc.RamMB),
+			CpuMillicores: int32(sc.CPUMillicores),
+			Port:          uint32(sc.Port),
+			Essential:     sc.Essential,
+			StorageKey:    sc.StorageKey,
+			DriveSlot:     sc.DriveID,
+			SealedEnv:     sealedSidecarEnv,
+			DependsOn:     dependsOn,
 		})
 	}
 	return &vmmdpb.AppSpec{
@@ -1040,6 +1054,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		LayerKey:        a.LayerKey,
 		VcpuCount:       a.VCPUCount,
 		MemSizeMib:      a.MemSizeMiB,
+		CpuMillicores:   a.CPUMillicores,
 		EgressMbit:      a.EgressMbit,
 		AppId:           a.AppID,
 		SealedEnv:       sealed,

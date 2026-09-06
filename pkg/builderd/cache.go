@@ -13,14 +13,16 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/buildcache"
 )
 
-// CacheEntry points to a cached OCI tarball and its size. The cache can be
-// wiped without data loss; deployment state remains in SQL (ADR-005).
+// CacheEntry points to a cached OCI tarball and its size. Build handoffs use a
+// hard-link lease so canonical entries can be evicted without data loss.
 type CacheEntry struct {
 	Path  string
 	Bytes int64
@@ -35,7 +37,9 @@ type CacheEntry struct {
 // Framework and plan remain visible partitions. Corrupt or missing entries
 // produce cache misses; GC sweeps both old and versioned entries.
 type Cache struct {
-	root string
+	root            string
+	mu              sync.RWMutex
+	leaseReferenced func(context.Context, string, string) (bool, error)
 }
 
 // cacheArtifactMode is the shared publication mode for cache artifacts.
@@ -47,6 +51,15 @@ const cacheArtifactMode os.FileMode = 0o640
 
 // NewCache wires a Cache rooted at dir. The dir is created lazily.
 func NewCache(dir string) *Cache { return &Cache{root: dir} }
+
+// WithLeaseReferenceChecker lets the maintenance loop reclaim crash-leftover
+// leases once their deployment no longer points at the leased path.
+func (c *Cache) WithLeaseReferenceChecker(check func(context.Context, string, string) (bool, error)) *Cache {
+	if c != nil {
+		c.leaseReferenced = check
+	}
+	return c
+}
 
 // Lookup returns the cached layer for (sourceHash, fw, plan) if one exists
 // and looks intact. (false, nil) is a cache miss, not an error.
@@ -62,13 +75,16 @@ func NewCache(dir string) *Cache { return &Cache{root: dir} }
 // artifact.sha256 additionally records the output SHA-256. A missing digest
 // (including pre-upgrade entries) or a byte mismatch is a cache miss.
 func (c *Cache) Lookup(sourceHash string, fw Framework, plan api.Plan) (CacheEntry, bool) {
-	return c.lookupKey(sourceHash, fw, plan)
-}
-
-// LookupWithBase looks up an archive-root build in the versioned recipe
-// namespace. Call LookupBuild when selecting a workspace member.
-func (c *Cache) LookupWithBase(sourceHash string, fw Framework, plan api.Plan, runtimeBaseRef string) (CacheEntry, bool) {
-	return c.LookupBuild(BuildCacheRecipe{SourceSHA256: sourceHash, Framework: fw, Plan: plan, RuntimeBaseRef: runtimeBaseRef})
+	if c == nil {
+		return CacheEntry{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.lookupKey(sourceHash, fw, plan)
+	if ok {
+		c.touchEntry(entry.Path)
+	}
+	return entry, ok
 }
 
 func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (CacheEntry, bool) {
@@ -155,13 +171,12 @@ func (c *Cache) checksumPath(sourceHash string, fw Framework, plan api.Plan) str
 //     nil without rewriting. Content-addressed storage means later
 //     writers should produce identical bytes; the existing copy is fine.
 func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {
+	if c == nil {
+		return errors.New("cache: not configured")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.storeKey(sourceHash, fw, plan, layerPath, bytes)
-}
-
-// StoreWithBase publishes an archive-root build in the versioned recipe
-// namespace. Call StoreBuild when selecting a workspace member.
-func (c *Cache) StoreWithBase(sourceHash string, fw Framework, plan api.Plan, runtimeBaseRef, layerPath string, bytes int64) error {
-	return c.StoreBuild(BuildCacheRecipe{SourceSHA256: sourceHash, Framework: fw, Plan: plan, RuntimeBaseRef: runtimeBaseRef}, layerPath, bytes)
 }
 
 func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {
@@ -342,6 +357,7 @@ func CacheGCSweepLoop(ctx context.Context, c *Cache, interval time.Duration, max
 			continue
 		}
 		_ = n // swept count is logged inside Sweep when > 0
+		c.reapLeases(ctx, log)
 	}
 }
 
@@ -362,10 +378,9 @@ func CacheGCSweepLoop(ctx context.Context, c *Cache, interval time.Duration, max
 // or empty cache root returns (0, nil) without error — the GC is a
 // no-op when there's nothing to do.
 //
-// Concurrency: a concurrent Cache.Store for a NEW (sourceHash, fw)
-// key racing with Sweep may see its destination directory deleted
-// mid-rename. Store returns an error and the next build retries —
-// acceptable, the next tick will re-create the entry.
+// Concurrency: Sweep and Store take the cache's exclusive lock. Lookups and
+// lease publication hold a shared lock, so cache hits can run concurrently
+// while GC or a cache publication cannot replace the bytes they validated.
 //
 // This is B2.1 (issue #196). The defaults in cmd/builderd/config.go
 // are 30-day TTL + 50 GB size cap; both configurable via TOML.
@@ -376,6 +391,8 @@ func (c *Cache) Sweep(maxBytes int64, maxAge time.Duration, now time.Time, log *
 	if log == nil {
 		log = slog.Default()
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// Stat the root; a missing or non-directory cache root is a no-op
 	// (the operator hasn't created the cache yet, or wiped it).
@@ -474,8 +491,9 @@ type cacheEntry struct {
 
 // collectEntries walks c.root one level deep (each child is an entry
 // directory named <sha256>.<fw>). The mod time is the entry dir's
-// own ModTime — fresh writes touch the dir, so the dir mtime reflects
-// the most recent Store for that key. Size is recursive (layer + sidecar).
+// own ModTime — fresh writes and validated hits touch the dir, so the mtime
+// reflects the most recent access for that key. Size is recursive (layer +
+// sidecars).
 func (c *Cache) collectEntries(cutoff time.Time) ([]cacheEntry, error) {
 	dirs, err := os.ReadDir(c.root)
 	if err != nil {
@@ -483,7 +501,7 @@ func (c *Cache) collectEntries(cutoff time.Time) ([]cacheEntry, error) {
 	}
 	var out []cacheEntry
 	for _, d := range dirs {
-		if !d.IsDir() {
+		if !d.IsDir() || d.Name() == buildcache.LeaseDir {
 			continue
 		}
 		full := filepath.Join(c.root, d.Name())
@@ -505,6 +523,143 @@ func (c *Cache) collectEntries(cutoff time.Time) ([]cacheEntry, error) {
 		})
 	}
 	return out, nil
+}
+
+func (c *Cache) touchEntry(layerPath string) {
+	now := time.Now()
+	_ = os.Chtimes(filepath.Dir(layerPath), now, now)
+}
+
+// LeaseBuild validates a recipe hit, refreshes its LRU age, and publishes a
+// deployment-specific hard link while holding the same lock as Sweep. The
+// link keeps the artifact alive even if the canonical cache entry is evicted
+// before imaged consumes the handoff.
+func (c *Cache) LeaseBuild(recipe BuildCacheRecipe, deploymentID string) (CacheEntry, bool, error) {
+	if c == nil || c.root == "" {
+		return CacheEntry{}, false, nil
+	}
+	key, err := recipe.key()
+	if err != nil {
+		return CacheEntry{}, false, nil
+	}
+	leasePath, err := buildcache.LeasePath(c.root, deploymentID)
+	if err != nil {
+		return CacheEntry{}, false, err
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.lookupKey(key, recipe.Framework, recipe.Plan)
+	if !ok {
+		return CacheEntry{}, false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(leasePath), 0o770); err != nil {
+		return CacheEntry{}, false, fmt.Errorf("cache: create lease directory: %w", err)
+	}
+	if err := os.Chmod(filepath.Dir(leasePath), 0o770); err != nil {
+		return CacheEntry{}, false, fmt.Errorf("cache: chmod lease directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(leasePath), ".lease-*")
+	if err != nil {
+		return CacheEntry{}, false, fmt.Errorf("cache: reserve lease: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return CacheEntry{}, false, fmt.Errorf("cache: close lease reservation: %w", err)
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		return CacheEntry{}, false, fmt.Errorf("cache: remove lease reservation: %w", err)
+	}
+	if err := os.Link(entry.Path, tmpPath); err != nil {
+		return CacheEntry{}, false, fmt.Errorf("cache: link lease: %w", err)
+	}
+	if err := os.Rename(tmpPath, leasePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return CacheEntry{}, false, fmt.Errorf("cache: publish lease: %w", err)
+	}
+	if err := syncCacheDirectory(filepath.Dir(leasePath)); err != nil {
+		_ = os.Remove(leasePath)
+		return CacheEntry{}, false, fmt.Errorf("cache: persist lease: %w", err)
+	}
+	c.touchEntry(entry.Path)
+	entry.Path = leasePath
+	return entry, true, nil
+}
+
+// syncCacheDirectory persists a lease rename before CompleteBuild commits its
+// path to Postgres. Without the directory fsync, a host crash can retain the
+// database commit while losing the hard link from the filesystem journal.
+func syncCacheDirectory(path string) error {
+	//nolint:forbidigo // path is the internal cache lease directory derived
+	// from Config.CacheDir; no customer-controlled path reaches this open.
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return err
+	}
+	return dir.Close()
+}
+
+// ReleaseLease removes a deployment handoff after a failed completion commit.
+func (c *Cache) ReleaseLease(path string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_ = buildcache.Release(path)
+}
+
+// reapLeases removes only leases whose deployment no longer references their
+// exact path. Database errors preserve the lease for the next maintenance run.
+func (c *Cache) reapLeases(ctx context.Context, log *slog.Logger) {
+	if c == nil || c.root == "" || c.leaseReferenced == nil {
+		return
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	dir := filepath.Join(c.root, buildcache.LeaseDir)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		log.Warn("cache: read leases", "err", err)
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if strings.HasPrefix(entry.Name(), ".lease-") {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Warn("cache: reap abandoned lease temp", "path", path, "err", err)
+			}
+			continue
+		}
+		deploymentID, ok := buildcache.ParseLeasePath(path)
+		if !ok {
+			continue
+		}
+		referenced, checkErr := c.leaseReferenced(ctx, deploymentID, path)
+		if checkErr != nil {
+			log.Warn("cache: check lease reference", "deployment", deploymentID, "err", checkErr)
+			continue
+		}
+		if referenced {
+			continue
+		}
+		if err := buildcache.Release(path); err != nil {
+			log.Warn("cache: reap lease", "deployment", deploymentID, "err", err)
+		}
+	}
 }
 
 // dirSize returns the total byte size of all files under root,

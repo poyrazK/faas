@@ -386,9 +386,11 @@ spinner) and PR #51 (the closeout batch):
   [M8 — alert pipeline](#m8--alert-pipeline--this-pr) below.
 - **§14 restore drill wired** —
   `deploy/scripts/faas-m8-restore-drill.sh` plus WAL-archiving
-  knobs in the postgres ansible role. A timed reference-node run (PG + one
-  app back serving < 30 min) is the next action; the dated record
-  file `docs/drills/2026-07-20-restore-drill.md` is the template.
+  knobs in the postgres ansible role. The drill now extracts the tar-format
+  basebackup and `pg_wal`, verifies promotion, schema readiness, exact
+  accounts/apps/healthy-instance row counts, and app wake recovery. It emits a
+  dated record on pass or failure; an EX44 run is still required before the
+  M8 sign-off claim.
 - **`leakcheck.sh` glob fix** matches the v1.7 jailer `--id`
   constraint.
 - **CPU-hour visibility shipped (issue #279 / PR #346 / ADR-039)** —
@@ -989,8 +991,10 @@ explicitly open issues that the doc otherwise implies are closed.
   `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
   serving on a clean VM < 30 min, recorded as executed. Run
-  `deploy/scripts/faas-m8-restore-drill.sh` on a reference node and fill
-  in `docs/drills/2026-07-20-restore-drill.md` (template present).
+  `sudo make backup-restore-drill` on EX44; it writes
+  `docs/drills/<UTC-date>-<HHMMSS>-restore-drill.md`. Apply the `m8-done`
+  label only after that PASS artifact is committed; CI rejects missing,
+  placeholder, or older-than-30-day evidence.
 - **Status page + SLO dashboard** — public SLOs from spec §12
   (API 99.5 % monthly, wake p95 < 1 s, build success ≥ 99 %).
   Pipeline (Prometheus scrape + Grafana JSON + `apid /status` +

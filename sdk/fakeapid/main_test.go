@@ -73,7 +73,7 @@ func TestAccount_OK(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	for _, k := range []string{"id", "email", "plan", "status", "limits", "usage_gb_hours", "app_count"} {
+	for _, k := range []string{"id", "email", "email_verified", "plan", "status", "limits", "usage_gb_hours", "app_count"} {
 		if _, ok := body[k]; !ok {
 			t.Errorf("missing required AccountResponse field %q in body: %+v", k, body)
 		}
@@ -82,7 +82,7 @@ func TestAccount_OK(t *testing.T) {
 	if !ok {
 		t.Fatalf("limits not an object: %+v", body["limits"])
 	}
-	for _, k := range []string{"plan", "ram_mb", "max_concurrency", "deployed_apps", "included_gb_hours", "app_layer_max_mb"} {
+	for _, k := range []string{"plan", "ram_mb", "max_concurrency", "deployed_apps", "included_gb_hours", "app_layer_max_mb", "ephemeral_disk_max_mb"} {
 		if _, ok := limits[k]; !ok {
 			t.Errorf("missing required AccountLimits field %q in limits: %+v", k, limits)
 		}
@@ -197,8 +197,8 @@ func TestListApps_OK(t *testing.T) {
 	}
 	app := body[0]
 	for _, k := range []string{
-		"id", "slug", "type", "ram_mb", "max_concurrency", "concurrency_per_vm",
-		"min_instances", "status", "url", "manifest",
+		"id", "slug", "type", "ram_mb", "cpu_millicores", "configured_resources", "max_concurrency", "concurrency_per_vm",
+		"effective_limits", "min_instances", "status", "url", "manifest",
 		"autoscale_target_rps", "autoscale_target_cpu_pct",
 		"require_authn",
 	} {
@@ -235,8 +235,8 @@ func TestCreateApp_OK(t *testing.T) {
 		t.Errorf("slug: got %v, want hello", got["slug"])
 	}
 	for _, k := range []string{
-		"id", "type", "ram_mb", "max_concurrency", "concurrency_per_vm",
-		"min_instances", "status", "url", "manifest", "egress_allowlist",
+		"id", "type", "ram_mb", "cpu_millicores", "configured_resources", "max_concurrency", "concurrency_per_vm",
+		"effective_limits", "min_instances", "status", "url", "manifest", "egress_allowlist",
 		"autoscale_target_rps", "autoscale_target_cpu_pct",
 		"require_authn",
 	} {

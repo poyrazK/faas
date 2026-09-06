@@ -27,6 +27,12 @@ func NewVMMDriverContext(_ context.Context, _ string, _ *tls.Config, _, _, _ str
 // Close is a no-op on the stub.
 func (s *VMMDriver) Close() error { return nil }
 
+// BuildEnvironment keeps non-metal binaries from reading or writing cache
+// entries they cannot prove were produced by the active builder toolchain.
+func (s *VMMDriver) BuildEnvironment() (BuildEnvironment, error) {
+	return BuildEnvironment{}, ErrNotMetal
+}
+
 // Spawn is the non-metal implementation of the VM interface. It always
 // returns ErrNotMetal — the spawn path is metal-only.
 func (s *VMMDriver) Spawn(_ context.Context, _ VMRequest) (BuildHandle, error) {

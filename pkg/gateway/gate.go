@@ -345,6 +345,28 @@ func (g *WakeGate) InflightWaiters(appID string) int {
 	return 0
 }
 
+// WakeInProgress reports whether a wake generation still exists for appID.
+// A generation can have zero waiters after the triggering browser has received
+// its wake page while the detached leader continues booting, so this is
+// intentionally distinct from InflightWaiters.
+func (g *WakeGate) WakeInProgress(appID string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	call, ok := g.inflight[appID]
+	return ok && !call.completed
+}
+
+// Inflight reports whether appID currently has a wake coordinated by this
+// gate. Unlike InflightWaiters, this remains true while a detached wake is
+// finishing after its last request has gone away, which lets cache-aware
+// callers distinguish an active wake from an ordinary cold miss.
+func (g *WakeGate) Inflight(appID string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.inflight[appID]
+	return ok
+}
+
 // InflightFollowers returns the count of *followers* (waiters minus
 // the leader's own registration) for appID. The leader is created
 // with waiters=1, so this returns 0 when only the leader is alive —

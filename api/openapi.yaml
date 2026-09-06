@@ -36,6 +36,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: storage
+    description: Private customer object-storage preview, separate from runtime snapshots and image layers.
   - name: account
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
@@ -60,6 +62,8 @@ tags:
       surface is under `deployments` (preview kind deployments).
       Cross-tagged with `apps` so a tag filter of `apps` surfaces
       preview-destroy alongside the parent-app lifecycle.
+  - name: dev
+    description: Stable, expiring remote developer environments used by `gregale dev`.
   - name: deploydiff
     description: Read-only pre-deploy preview (PR-1 of the deploy-diff cluster).
   - name: edge_rules
@@ -284,6 +288,399 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/apps/{slug}/buckets:
+    parameters:
+      - { name: slug, description: App whose bucket catalog is being managed., in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listObjectBuckets
+      summary: List private object buckets and configured creation capabilities
+      description: storage:manage lists every bucket. storage:read/storage:write keys see only buckets with an explicit grant. Admin and dashboard sessions list every bucket.
+      tags: [storage]
+      responses:
+        '200':
+          description: Buckets across this app's environment scopes; backend credentials are never exposed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketList' }
+        default:
+          description: Authentication, authorization, or storage error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createObjectBucket
+      summary: Create a private bucket on the region's current default backend
+      description: |
+        Requires storage:manage or admin. Idempotent by app, scope and name, not
+        by Idempotency-Key. Retry provisioning by submitting the same name and
+        scope. Existing buckets retain their backend when the default changes.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+                scope: { type: string, default: default }
+                region: { type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.' }
+      responses:
+        '201':
+          description: Bucket created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucket' }
+        '200':
+          description: Existing ready bucket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucket' }
+        default:
+          description: Invalid request, access denied, bucket limit/conflict, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}:
+    parameters:
+      - { name: slug, description: App that owns the bucket to remove., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the empty bucket to delete., in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      operationId: deleteObjectBucket
+      summary: Delete an empty bucket
+      description: Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat after successful deletion returns 404.
+      tags: [storage]
+      responses:
+        '204': { description: Bucket deleted }
+        default:
+          description: Access denied, bucket missing/nonempty/busy, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/access-grants:
+    parameters:
+      - { name: slug, description: App containing the bucket access binding., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket whose API-key grants are being managed., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectBucketAccessGrants
+      summary: List API-key access grants for a bucket
+      description: Requires storage:manage or admin. Revoked keys remain visible until their key row is deleted.
+      tags: [storage]
+      responses:
+        '200':
+          description: Logical grants; provider credentials are never exposed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketAccessGrantList' }
+        default:
+          description: Access denied or bucket unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}:
+    parameters:
+      - { name: slug, description: App that owns the logical bucket., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket whose API-key grant is being managed., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: key, description: Account API-key identifier., in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      operationId: setObjectBucketAccessGrant
+      summary: Create or replace an API-key grant for a bucket
+      description: Requires storage:manage or admin. The target key must be active or in grace and carry the storage scopes needed by the requested permission. Admin keys do not need and cannot receive grants.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetObjectBucketAccessGrantRequest' }
+      responses:
+        '200':
+          description: Grant created or replaced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketAccessGrant' }
+        default:
+          description: Invalid request, missing key/bucket, scope mismatch, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteObjectBucketAccessGrant
+      summary: Revoke an API-key grant for a bucket
+      description: Requires storage:manage or admin. Revocation takes effect before this response returns; already-signed provider URLs remain valid until their short expiry.
+      tags: [storage]
+      responses:
+        '204': { description: Grant deleted }
+        default:
+          description: Grant or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/objects:
+    parameters:
+      - { name: slug, description: App containing the objects being managed., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the bucket whose objects are being managed., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listBucketObjects
+      summary: List objects with opaque cursor pagination
+      description: Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket.
+      tags: [storage]
+      parameters:
+        - { name: prefix, description: Only return keys starting with this prefix., in: query, schema: { type: string, maxLength: 1024 } }
+        - { name: cursor, description: Opaque next_cursor from the preceding page., in: query, schema: { type: string, maxLength: 8192 } }
+        - { name: limit, description: Maximum objects in this page., in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 100 } }
+      responses:
+        '200':
+          description: One page, not a bucket-wide usage or billing total
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, size_bytes, last_modified]
+                      properties:
+                        key: { type: string }
+                        size_bytes: { type: integer, format: int64 }
+                        last_modified: { type: string, format: date-time }
+                  next_cursor: { type: string }
+        default:
+          description: Invalid request, access denied, bucket unavailable, or provider error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteBucketObject
+      summary: Delete one object by exact key
+      description: Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this bucket. With provider-side versioning this may create a delete marker; version management is not part of this preview.
+      tags: [storage]
+      parameters:
+        - { name: key, description: Exact object key to delete; URL-encode it., in: query, required: true, schema: { type: string, minLength: 1, maxLength: 1024 } }
+      responses:
+        '204': { description: Object deleted }
+        default:
+          description: Invalid request, access denied, or provider error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/signed-url:
+    parameters:
+      - { name: slug, description: App authorizing the requested object capability., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the bucket containing the authorized object., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: signBucketObject
+      summary: Issue a short-lived direct upload or download URL
+      description: |
+        GET requires storage:read or admin; PUT requires storage:write or admin.
+        Non-admin keys also require a matching per-bucket grant.
+        PUT must declare size_bytes, enforced by signed length (or an empty-body
+        digest for zero bytes). These reusable bearer URLs expire within 15
+        minutes and are not retained by the API idempotency cache. Send only
+        returned headers to the URL, never Gregale credentials. In browsers,
+        Content-Length is set by fetch from the File body, not manually.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectSignRequest' }
+      responses:
+        '200':
+          description: Temporary capability; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectSignedRequest' }
+        default:
+          description: Invalid request, access denied, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads:
+    parameters:
+      - { name: slug, description: App containing the multipart upload target., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the bucket receiving the multipart object., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: createObjectMultipartUpload
+      summary: Start or recover a resumable multipart upload
+      description: |
+        Requires storage:write or admin and a matching bucket grant. Gregale
+        reserves the complete declared size before creating billable provider
+        parts. A retry with the same live bucket/key, size, and content type
+        returns the existing session; conflicting parameters return 409. The
+        provider upload ID remains private. Sessions expire after 24 hours.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateObjectMultipartUploadRequest' }
+      responses:
+        '201':
+          description: Multipart upload initiated; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        '200':
+          description: Existing compatible live session returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Invalid request, stale accounting, capacity limit, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}:
+    parameters:
+      - { name: slug, description: App containing the durable upload session., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket containing the multipart session., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier; this is not the provider upload ID., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectMultipartUpload
+      summary: Read resumable upload state and part layout
+      description: Requires storage:write or admin and a matching bucket grant. Provider credentials and upload IDs are never returned.
+      tags: [storage]
+      responses:
+        '200':
+          description: Durable session state; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Session missing, access denied, or backend placement unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: abortObjectMultipartUpload
+      summary: Abort a multipart upload and release provider-side parts
+      description: Requires storage:write or admin and a matching bucket grant. Repeating an already-finished abort is safe. Failed aborts are retried by the recovery worker.
+      tags: [storage]
+      responses:
+        '204': { description: Upload aborted or was already aborted }
+        default:
+          description: Session busy/completed, access denied, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url:
+    parameters:
+      - { name: slug, description: App authorizing the multipart part capability., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket receiving this upload part., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: part, description: One-based part number from the session layout., in: path, required: true, schema: { type: integer, minimum: 1, maximum: 10000 } }
+    post:
+      operationId: signObjectMultipartPart
+      summary: Issue an exact-length direct upload URL for one part
+      description: |
+        Requires storage:write or admin and a matching bucket grant. The URL
+        binds the server-calculated byte length for this part and expires within
+        15 minutes. Upload it without Gregale credentials and retain the ETag
+        response header for completion. Every issued part URL consumes the
+        authorization safety budget.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectMultipartPartSignRequest' }
+      responses:
+        '200':
+          description: Temporary provider capability; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectSignedRequest' }
+        default:
+          description: Invalid part, expired session, stale accounting, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete:
+    parameters:
+      - { name: slug, description: App finalizing the multipart upload., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket receiving the completed object., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier to complete., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: completeObjectMultipartUpload
+      summary: Assemble all uploaded parts into the final object
+      description: |
+        Requires storage:write or admin and a matching bucket grant. Supply one
+        ETag for every part in ascending order. Completion intent is persisted
+        before contacting the provider and recovered after crashes. An identical
+        retry after completion returns the completed session without repeating
+        the provider operation.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteObjectMultipartUploadRequest' }
+      responses:
+        '200':
+          description: Object completed; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Invalid/missing parts, expired or conflicting session, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/account/object-storage-usage:
+    get:
+      operationId: getObjectStorageUsage
+      summary: Read object storage accounting and safety limits
+      description: Requires usage read scope. Reservations are capacity commitments, not billed usage. Fresh false blocks new signed URLs.
+      tags: [storage]
+      responses:
+        '200':
+          description: Current account usage; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectStorageUsageResponse' }
+        default:
+          description: Access denied or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/object-storage/usage-reports:
+    post:
+      operationId: recordObjectStorageUsage
+      summary: Import a cumulative provider object storage usage report
+      description: Operator session with recent step-up and Idempotency-Key required. Identical reports are idempotent; conflicting or regressing reports are rejected. Automated exporters use the operator-owned usage_reports_path backend setting.
+      tags: [operator]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Unique operation identifier.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectStorageUsageReport' }
+      responses:
+        '204': { description: Report persisted or identical report already present }
+        default:
+          description: Access denied, invalid or conflicting report, or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/admin/config:
     get:
       tags: [operator]
@@ -466,7 +863,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -517,7 +914,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
         '202':
           description: The provider accepted a deferred plan change; the current local entitlement remains active until the provider webhook confirms it.
           content:
@@ -527,6 +924,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -1024,6 +1422,31 @@ paths:
                 properties:
                   status: { type: string, enum: [ok] }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/auth/verify-email:
+    get:
+      tags: [auth]
+      operationId: verifyEmail
+      summary: Verify a password-signup email address.
+      description: |
+        Consumes a 24-hour, single-use verification token and marks the
+        account email verified. This endpoint does not create a session;
+        the returned HTML page prompts the customer to sign in again.
+      parameters:
+        - in: query
+          name: token
+          required: true
+          description: The raw 24-hour verification token delivered by email.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Email verified; HTML sign-in prompt.
+          content:
+            text/html:
+              schema: { type: string }
+        '410':
+          description: Verification link expired, invalid, or already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/reset:
@@ -1699,7 +2122,7 @@ paths:
                 example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"concurrency_per_vm":5,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z","require_authn":false}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/PlanLimit' }
+        '403': { $ref: '#/components/responses/AppCreateForbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -1783,6 +2206,56 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
                 example: {"type":"https://docs.gregale.dev/errors/preview-not-found","code":"preview_not_found","title":"Preview not found","detail":"the slug does not identify a preview app; use DELETE /v1/apps/{slug} to destroy a production app","status":404}
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/dev/sessions/{project}:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        description: Stable local project label used to derive the developer URL.
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+    put:
+      tags: [dev]
+      operationId: upsertDevSession
+      summary: Create or refresh a remote developer environment.
+      description: Creates one stable preview app per account, project, and developer workspace, or renews its 24-hour lease. Omitting workspace_id retains the legacy account-and-project identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertDevSessionRequest' }
+      responses:
+        '200':
+          description: Existing developer environment refreshed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSessionResponse' }
+        '201':
+          description: Developer environment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSessionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [dev]
+      operationId: destroyDevSession
+      summary: Tear down a remote developer environment.
+      parameters:
+        - name: workspace_id
+          in: query
+          required: false
+          description: Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        '204': { description: Developer environment removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/metrics:
@@ -2040,6 +2513,133 @@ paths:
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
                 docs_url: "https://docs.gregale.dev/plans#usage-summary"
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/analytics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRequestAnalytics
+      summary: Aggregated historical request analytics.
+      description: |
+        Returns an aggregate request overview for one app: total requests,
+        errors, cold boots, weighted p50/p95/p99 latency, and the top
+        route/method combinations. This is the customer analytics surface;
+        request identifiers and trace payloads remain on the debugger routes.
+
+        `since` accepts a duration such as `24h` or `7d` and defaults to
+        `24h`. The effective window is clamped to the plan's
+        `DebugTelemetryRetentionDays` (Hobby 3d, Pro 7d, Scale 14d).
+        `window_clamped` tells callers when the requested lookback was wider
+        than the retained telemetry. The response contains at most 50 route
+        rows; `routes_truncated` indicates that more routes matched.
+
+        Counts and percentiles include the recorder's collapsed row `count`,
+        so the result represents original requests rather than stored rows.
+        The endpoint is read-only, IDOR-safe, and plan-gated by
+        `DebugTelemetryEnabled`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Lookback duration (`24h`, `3d`, `7d`) or RFC3339 start timestamp. Defaults to `24h` and is retention-clamped."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Optional RFC3339 upper-bound timestamp for the historical window."
+      x-since: 2026-09
+      responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '200':
+          description: Aggregated request analytics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestAnalyticsResponse'
+              example:
+                slug: my-api
+                since: 24h
+                from: "2026-09-04T13:00:00.123456Z"
+                until: "2026-09-05T13:00:00.123456Z"
+                window_clamped: false
+                requests: 8421
+                error_requests: 37
+                error_rate_pct: 0.4394
+                cold_boots: 14
+                p50_ms: 12
+                p95_ms: 87
+                p99_ms: 412
+                routes:
+                  - route: /users
+                    method: GET
+                    requests: 4200
+                    error_requests: 12
+                    error_rate_pct: 0.2857
+                    cold_boots: 5
+                    p50_ms: 9
+                    p95_ms: 54
+                    p99_ms: 180
+                routes_limit: 50
+                routes_truncated: false
+                as_of: "2026-09-05T13:00:00.123456Z"
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/analytics/timeseries:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRequestAnalyticsTimeseries
+      summary: Request analytics time series by hour.
+      description: |
+        Returns zero-filled UTC hourly buckets for customer request analytics.
+        Each bucket contains request and error counts, error rate, cold boots,
+        and weighted p50/p95/p99 latency. The window is half-open [since, until)
+        and is clamped to the plan's DebugTelemetryRetentionDays.
+
+        `since` accepts a duration such as `24h` or `7d`, or an RFC3339 start
+        timestamp. `until` is an optional RFC3339 exclusive upper bound and
+        defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
+        by `DebugTelemetryEnabled`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Lookback duration or RFC3339 start timestamp. Defaults to `24h`."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive end timestamp; omitted means current server time."
+        - name: route
+          in: query
+          required: false
+          schema: { type: string, maxLength: 256 }
+          description: "Exact bounded route label to drill into (for example `GET /users/{id}`). Must be provided together with `method`; omitted means all routes."
+        - name: method
+          in: query
+          required: false
+          schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+          description: "Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods."
+      x-since: 2026-09
+      responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '200':
+          description: Zero-filled hourly request analytics buckets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestAnalyticsTimeseriesResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -2392,6 +2992,37 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/requests/{req_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: req_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: "Telemetry record UUID to retrieve."
+    get:
+      tags: [apps]
+      operationId: getAppDebugRequest
+      summary: Get one request telemetry record (ADR-127).
+      description: |
+        Returns one request telemetry row by id for the app. The
+        lookup is scoped to the app resolved from `slug`, so a request
+        id belonging to another app is returned as not found. This
+        direct lookup is not limited to the first page of recent
+        requests. Plan-gated by `DebugTelemetryEnabled`.
+      responses:
+        '200':
+          description: Request telemetry record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugTelemetryRequestItem'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/regressions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -2578,7 +3209,85 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
-        '403': { $ref: '#/components/responses/SourceEgressDenied' }
+        '403': { $ref: '#/components/responses/DeploymentForbidden' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '422': { $ref: '#/components/responses/DeployFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deployments/dev-source:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [deployments]
+      operationId: deployDevSource
+      summary: Create a developer deployment from a complete source snapshot or delta.
+      description: |
+        Transport used only for ad-hoc developer environments created by
+        `gregale dev`. With an empty `dev_source_base`, `source` is a complete
+        source archive. With a base revision, `source` contains changed entries
+        and `dev_source_deleted` removes paths from the cached base.
+
+        The cache is account/app scoped, node-local, and disposable. apid
+        reconstructs and verifies a complete archive before applying the same
+        source-root, stateful-shape, secret-scan, Dockerfile, function, and
+        enqueue gates as an ordinary source deployment. A missing base returns
+        409 `dev_source_base_missing`; clients retry the target as a complete
+        snapshot. Older servers safely return 404 on this distinct route.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [source, dev_source_target]
+              properties:
+                source:
+                  type: string
+                  format: binary
+                  description: "Complete tar.gz when dev_source_base is absent; otherwise a tar.gz of changed entries."
+                dev_source_base:
+                  type: string
+                  pattern: '^[a-f0-9]{64}$'
+                  description: "Canonical cached source revision. Omit for a complete snapshot."
+                dev_source_target:
+                  type: string
+                  pattern: '^[a-f0-9]{64}$'
+                  description: "Canonical revision of the complete source tree after reconstruction."
+                dev_source_deleted:
+                  type: string
+                  description: "JSON string array of canonical archive paths removed since dev_source_base."
+                dockerfile:
+                  type: boolean
+                runtime:
+                  type: string
+                  enum: [node22, python312, go124, go124-alpine, node24, python313]
+                handler:
+                  type: string
+                source_root:
+                  type: string
+                  maxLength: 256
+                  pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
+                workflows:
+                  type: string
+                  description: "Optional JSON workflow-definition array attached to this developer deployment."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: The reconstructed developer deployment whose build has been accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "code: dev_source_base_missing. Retry with a complete source snapshot."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -2630,6 +3339,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '404':
           description: |
             No durable GitHub install bound to the caller's account
@@ -2651,11 +3361,16 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
     post:
+      deprecated: true
       tags: [deployments]
       operationId: createDeploymentFromSourceTarball
       summary: Create a deployment from a CLI-uploaded local tarball (zero-config).
       description: |
         Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+        This multipart endpoint is deprecated for new clients. Use the
+        resumable upload session endpoints under `/v1/uploads` for progress,
+        retry-safe chunking, and commit deduplication; this route remains
+        available during the migration window.
         The CLI uploads a gzipped tar via the `tarball` form field and
         an optional informational `{repo, ref}` JSON sidecar. The CLI
         binary is the trust root: apid does NOT consult
@@ -2721,6 +3436,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '404':
           description: |
             code: not_found. The slug does not exist OR belongs to
@@ -3334,6 +4050,31 @@ paths:
         # so scripts can compute "how much to raise" without
         # parsing prose.
         '402': { $ref: '#/components/responses/AdmissionRefused' }
+
+  /v1/apps/{slug}/cache:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    delete:
+      tags: [apps]
+      operationId: purgeAppCache
+      summary: Purge cached responses for an app.
+      description: |
+        Requests an in-process response-cache purge on every gateway. The
+        optional path glob limits the purge to matching normalized request
+        paths; omit it to purge the complete app cache.
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema: { type: string }
+          description: Optional normalized request path glob (for example `/products/*`).
+      responses:
+        '204': { description: Purge requested. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account/overage-cap:
     post:
@@ -9528,6 +10269,7 @@ paths:
                   exp_month: 12
                   exp_year: 2027
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ─── Billing retry (issue #242) ────────────────────────────────────────
@@ -9568,6 +10310,7 @@ paths:
                 status: "pending_provider_confirmation"
                 next_billing_at: null
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '404':
           description: No open charge to retry — the account is in good standing, or the operator has not configured a billing provider.
           content:
@@ -9630,6 +10373,7 @@ paths:
                 cancel_scheduled: true
                 effective_at: "2026-09-08T00:00:00Z"
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '409':
           description: Already cancelled. CLI renders a friendly hint.
           content:
@@ -11267,6 +12011,171 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    ObjectBucket:
+      description: Private logical bucket metadata without upstream credentials or placement details.
+      type: object
+      required: [id, name, scope, region, state, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        scope: { type: string }
+        region: { type: string }
+        state: { type: string, enum: [provisioning, ready, deleting] }
+        created_at: { type: string, format: date-time }
+    ObjectBucketList:
+      description: App bucket catalog and operator-configured preview capabilities.
+      type: object
+      required: [items, enabled, regions, default_region, max_upload_bytes, max_buckets_per_app]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectBucket' } }
+        enabled: { type: boolean }
+        regions: { type: array, items: { type: string } }
+        default_region: { type: string }
+        max_upload_bytes: { type: integer, format: int64 }
+        max_buckets_per_app: { type: integer }
+    ObjectBucketAccessGrant:
+      description: Provider-independent access binding between one Gregale API key and one logical bucket.
+      type: object
+      required: [key_id, key_label, key_status, permission, created_at, updated_at]
+      properties:
+        key_id: { type: string, format: uuid }
+        key_label: { type: string }
+        key_status: { type: string, enum: [active, grace, revoked] }
+        permission: { type: string, enum: [read, write, read_write] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ObjectBucketAccessGrantList:
+      description: Access grants for one logical bucket.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectBucketAccessGrant' } }
+    SetObjectBucketAccessGrantRequest:
+      description: Desired data-plane permission for the target API key.
+      type: object
+      additionalProperties: false
+      required: [permission]
+      properties:
+        permission: { type: string, enum: [read, write, read_write] }
+    ObjectStoragePolicy:
+      description: Operator safety limits; zero values mean unconfigured and block signing.
+      type: object
+      required: [max_account_bytes, max_bucket_bytes, max_account_keys, max_monthly_cost_millicents, max_monthly_requests, max_monthly_egress_bytes, max_monthly_authorizations, max_report_age_seconds]
+      properties:
+        max_account_bytes: { type: integer, format: int64, minimum: 0 }
+        max_bucket_bytes: { type: integer, format: int64, minimum: 0 }
+        max_account_keys: { type: integer, format: int64, minimum: 0 }
+        max_monthly_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        max_monthly_requests: { type: integer, format: int64, minimum: 0 }
+        max_monthly_egress_bytes: { type: integer, format: int64, minimum: 0 }
+        max_monthly_authorizations: { type: integer, format: int64, minimum: 0 }
+        max_report_age_seconds: { type: integer, format: int64, minimum: 0 }
+    ObjectStorageUsage:
+      description: Account-wide usage and reserved capacity. Costs are EUR millicents, not a customer invoice.
+      type: object
+      required: [observed_bytes, capacity_bytes, capacity_keys, stored_byte_hours, request_count, egress_bytes, cost_millicents, authorizations, fresh, period_start]
+      properties:
+        observed_bytes: { type: integer, format: int64, minimum: 0 }
+        capacity_bytes: { type: integer, format: int64, minimum: 0 }
+        capacity_keys: { type: integer, format: int64, minimum: 0 }
+        stored_byte_hours: { type: integer, format: int64, minimum: 0 }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        authorizations: { type: integer, format: int64, minimum: 0 }
+        fresh: { type: boolean }
+        period_start: { type: string, format: date-time }
+    ObjectStorageUsageResponse:
+      description: Current UTC-month accounting and operator safety policy.
+      type: object
+      required: [usage, policy]
+      properties:
+        usage: { $ref: '#/components/schemas/ObjectStorageUsage' }
+        policy: { $ref: '#/components/schemas/ObjectStoragePolicy' }
+    ObjectStorageUsageReport:
+      description: Authoritative cumulative provider usage for one account, backend and UTC month. Missing data is not zero; costs are EUR millicents.
+      type: object
+      required: [account_id, backend_id, backend_fingerprint, source, period_start, observed_at, stored_byte_hours, request_count, egress_bytes, cost_millicents]
+      properties:
+        account_id: { type: string, format: uuid }
+        backend_id: { type: string, minLength: 1, maxLength: 63 }
+        backend_fingerprint: { type: string, minLength: 64, maxLength: 64 }
+        source: { type: string, minLength: 1, maxLength: 128 }
+        period_start: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        stored_byte_hours: { type: integer, format: int64, minimum: 0 }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+    ObjectSignRequest:
+      description: Exact object operation to authorize for a short time.
+      type: object
+      additionalProperties: false
+      required: [method, key]
+      properties:
+        method: { type: string, enum: [GET, PUT] }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
+        size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
+        content_type: { type: string, maxLength: 255, description: PUT only. }
+    ObjectSignedRequest:
+      description: Temporary bearer capability for a direct provider request. Do not log or persist it.
+      type: object
+      required: [url, method, headers, expires_at]
+      properties:
+        url: { type: string, format: uri }
+        method: { type: string, enum: [GET, PUT] }
+        headers: { type: object, additionalProperties: { type: string } }
+        expires_at: { type: string, format: date-time }
+
+    ObjectMultipartUpload:
+      description: Durable provider-neutral resumable upload session. The provider upload ID is private.
+      type: object
+      required: [id, key, size_bytes, part_size_bytes, part_count, content_type, state, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
+        part_size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5368709120 }
+        part_count: { type: integer, minimum: 1, maximum: 10000 }
+        content_type: { type: string, maxLength: 255 }
+        state: { type: string, enum: [initiating, active, completing, aborting, completed, aborted] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    CreateObjectMultipartUploadRequest:
+      description: Final object identity and total size for a resumable upload.
+      type: object
+      additionalProperties: false
+      required: [key, size_bytes]
+      properties:
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
+        content_type: { type: string, maxLength: 255 }
+    ObjectMultipartPartSignRequest:
+      description: Requested lifetime for one exact-length part capability.
+      type: object
+      additionalProperties: false
+      properties:
+        expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
+    ObjectMultipartCompletedPart:
+      description: Provider ETag returned after uploading one numbered part.
+      type: object
+      additionalProperties: false
+      required: [part_number, etag]
+      properties:
+        part_number: { type: integer, minimum: 1, maximum: 10000 }
+        etag: { type: string, minLength: 1, maxLength: 256 }
+    CompleteObjectMultipartUploadRequest:
+      description: Complete ordered ETag manifest for every part in the session.
+      type: object
+      additionalProperties: false
+      required: [parts]
+      properties:
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items: { $ref: '#/components/schemas/ObjectMultipartCompletedPart' }
 
     OperatorRuntimeConfig:
       description: "One entry from the closed operator runtime-configuration catalog."
@@ -11549,12 +12458,17 @@ components:
     # ─── Account ──────────────────────────────────────────────────────────
 
     AccountResponse:
-      description: "Account profile: id, email, plan, status, limits snapshot, current-month usage, and total app count."
+      description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, and total app count."
       type: object
-      required: [id, email, plan, status, limits, usage_gb_hours, app_count]
+      required: [id, email, email_verified, plan, status, limits, usage_gb_hours, app_count]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         email: { type: string, format: email }
+        email_verified: { type: boolean }
+        email_verification_grace_ends_at:
+          type: string
+          format: date-time
+          description: "30-day verification deadline; present only while email_verified is false."
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         status: { type: string, enum: [active, past_due, suspended, deleted_pending] , example: "active"}
         limits: { $ref: '#/components/schemas/AccountLimits' }
@@ -11566,9 +12480,9 @@ components:
         effective_at: { type: string, format: date-time }
 
     AccountLimits:
-      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and max app-layer bytes per build."
+      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and writable ephemeral app-disk capacity."
       type: object
-      required: [plan, ram_mb, max_concurrency, deployed_apps, included_gb_hours, app_layer_max_mb]
+      required: [plan, ram_mb, max_concurrency, deployed_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
@@ -11576,6 +12490,7 @@ components:
         deployed_apps: { type: integer }
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
+        ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
 
     ChangePlanRequest:
       description: "Target plan for the change."
@@ -12078,8 +12993,8 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, deploy:write, secrets:read, secrets:write, usage:read, apps:read, env:read, env:write] }
-          description: "Permission set attached to the key. Closed vocabulary (IAM-1, ADR-034 rev2): `admin` is the legacy full-access scope; `apps:read` covers GETs across the apps/deployments/audit/secrets-list surface; `deploy:write` covers POST/PUT/PATCH/DELETE on apps+queues; `secrets:write` covers PUT/DELETE on /apps/{slug}/secrets/{key}; `usage:read` covers GET /v1/usage*."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          description: "Permission set attached to the exported key. Object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
@@ -12120,16 +13035,55 @@ components:
 
     # ─── Apps ─────────────────────────────────────────────────────────────
 
+    AppEffectiveLimits:
+      description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
+      type: object
+      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
+      properties:
+        memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
+        plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
+        ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity for this app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
+        guest_vcpus: { type: integer, description: "Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit." }
+        cpu_limit_millicores: { type: integer, description: "Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores." }
+        plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
+        cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
+        max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
+        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
+        app_request_rate_rps: { type: integer, description: "Per-app edge token-bucket refill rate, in requests per second." }
+        app_request_burst: { type: integer, description: "Per-app edge token-bucket burst capacity." }
+        account_request_rate_rpm: { type: integer, description: "Account-wide edge token-bucket refill rate across all apps, in requests per minute." }
+        request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
+        request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
+        response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
+
+    AppConfiguredResources:
+      description: "The memory and sustained CPU shape selected for each instance of this app."
+      type: object
+      required: [memory_mb, cpu_millicores]
+      properties:
+        memory_mb: { type: integer, minimum: 1, description: "Configured instance memory in MB." }
+        cpu_millicores: { type: integer, enum: [250, 500, 1000], description: "Configured sustained CPU allowance in millicores." }
+
+    ResourceProfile:
+      description: "Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup and placement controls."
+      type: string
+      enum: [micro, small, medium, large, xlarge]
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
-      required: [id, slug, type, ram_mb, max_concurrency, concurrency_per_vm, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
+      required: [id, slug, type, ram_mb, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer , example: 256}
+        cpu_millicores: { type: integer, enum: [250, 500, 1000], example: 500 }
+        resource_profile:
+          $ref: '#/components/schemas/ResourceProfile'
+          description: "Named profile when the configured memory and CPU exactly match one of the platform profiles; omitted for custom shapes."
+        configured_resources: { $ref: '#/components/schemas/AppConfiguredResources' }
         max_concurrency: { type: integer }
         # Issue #559: platform-advertised per-VM concurrency cap for
         # the customer's plan. Distinct from max_concurrency (the
@@ -12143,6 +13097,7 @@ components:
         # event loop, Python asyncio, Go net/http — yes; sync
         # subprocess-per-request handlers — no).
         concurrency_per_vm: { type: integer, example: 80 }
+        effective_limits: { $ref: '#/components/schemas/AppEffectiveLimits' }
         idle_timeout_s: { type: [integer, "null"] }
         min_instances: { type: integer }
         status: { type: string , example: "active"}
@@ -12410,6 +13365,14 @@ components:
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
         ram_mb: { type: integer , example: 256}
+        cpu_millicores:
+          type: integer
+          enum: [250, 500, 1000]
+          default: 1000
+          description: "Sustained CPU allowance per instance. Omit for 1000 millicores."
+        resource_profile:
+          $ref: '#/components/schemas/ResourceProfile'
+          description: "Named memory/CPU profile. When set, ram_mb and cpu_millicores are filled from the profile; explicit values must agree with it."
         max_concurrency: { type: integer }
         idle_timeout_s: { type: integer }
         # Service/lifecycle settings are persisted on the app and merged into
@@ -12490,6 +13453,7 @@ components:
           description: "Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted at create-time → apid applies the plan default. Free/Hobby PATCH-true is rejected."
           type: boolean
           example: true
+
         warm_snapshot_min_requests:
           description: "Optional create-time override for the warm-tier request-count threshold (issue #470 / ADR-055). Range [1, 100]. Omitted → apid applies the plan default."
           type: integer
@@ -12535,11 +13499,39 @@ components:
           type: boolean
           example: false
 
+    UpsertDevSessionRequest:
+      description: Application shape and opaque local identity for a CLI-managed developer environment.
+      type: object
+      properties:
+        type: { type: string, enum: [app, function], default: app }
+        runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
+        workspace_id:
+          type: string
+          pattern: '^[a-f0-9]{32}$'
+          description: Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
+
+    DevSessionResponse:
+      description: Stable remote developer workspace and its renewable lease.
+      type: object
+      required: [app, expires_at]
+      properties:
+        app: { $ref: '#/components/schemas/AppResponse' }
+        expires_at: { type: string, format: date-time }
+
     UpdateAppRequest:
       description: "Partial update — every field is optional; omitted fields are unchanged."
       type: object
       properties:
         ram_mb: { type: [integer, "null"] , example: 256}
+        cpu_millicores:
+          type: [integer, "null"]
+          enum: [250, 500, 1000, null]
+          description: "Sustained CPU allowance per instance. Omit for no change."
+        resource_profile:
+          oneOf:
+            - $ref: '#/components/schemas/ResourceProfile'
+            - type: "null"
+          description: "Named memory/CPU profile. Omit for no change; explicit ram_mb or cpu_millicores must agree with the selected profile."
         idle_timeout_s: { type: [integer, "null"] }
         max_concurrency: { type: [integer, "null"] }
         # Lifecycle settings are partial updates. Setting execution_mode away
@@ -14265,6 +15257,12 @@ components:
             - $ref: '#/components/schemas/CanaryPresetSpec'
             - type: 'null'
           description: "Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder."
+        full_rootfs_allow_auto:
+          type: [boolean, 'null']
+          description: "Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses the plan default."
+        full_rootfs_override:
+          type: [boolean, 'null']
+          description: "Tri-state full-rootfs override: null uses the plan default, true forces full-rootfs, false forces the shared-base path."
 
     CreateDeploymentOverrides:
       description: |
@@ -14374,6 +15372,27 @@ components:
           type: string
           description: "Wall-clock dwell at this stage, in time.ParseDuration form (e.g. '30s', '2m'). '0s' for the terminal hop."
           example: "2m"
+        mirror_clean:
+          oneOf:
+            - $ref: '#/components/schemas/MirrorCleanCondition'
+            - type: 'null'
+          description: "Require a clean traffic-mirror window before advancing out of this stage. Any status, schema, body, or crash diff aborts the rollout."
+
+    MirrorCleanCondition:
+      description: "Mirror quality gate for a canary stage (issue #1395 B1)."
+      type: object
+      required: [min_invocations, window_s]
+      properties:
+        min_invocations:
+          type: integer
+          minimum: 1
+          description: "Minimum completed mirror comparisons required in the window."
+          example: 100
+        window_s:
+          type: integer
+          minimum: 1
+          description: "Trailing mirror-summary window in seconds."
+          example: 300
 
     CanaryPresetSpec:
       description: |
@@ -14614,6 +15633,20 @@ components:
             renders "—" on null.
           items: { type: string }
 
+    WorkloadDependency:
+      description: "Dependency on another workload in the same deployment."
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Workload name: main or another sidecar name."
+        condition:
+          type: string
+          enum: [started, healthy, completed_successfully]
+          default: started
+          description: "Lifecycle condition required before the dependent workload starts."
+
     Sidecar:
       description: |
         One entry in the deploy request's `sidecars` array
@@ -14645,10 +15678,17 @@ components:
           any log, audit, or error.
         - `port` ∈ {0, 1..65535}. 0 = absent.
         - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
-        - `essential` defaults to true. If true and the sidecar
-          exits non-zero: type=init → fail the deploy
-          (`failure_class=user_error`); type=sidecar → restart-
-          loop. If false: warn + restart-cap (PR-B's runtime).
+        - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
+        - `essential` defaults to true. If true and the workload
+          exits non-zero, the dependency set fails
+          (`failure_class=user_error`) and essential long-running
+          sidecars restart-loop. If false, the failure is logged
+          and the other workloads continue.
+        - `depends_on` optionally gates this workload on `main` or
+          another sidecar. Conditions are `started`, `healthy`, and
+          `completed_successfully`; omitted condition means `started`.
+          Init workloads are implicit prerequisites of main and long-running
+          sidecars. Cycles and unknown workload names are rejected.
       type: object
       required: [name, image, type]
       properties:
@@ -14684,9 +15724,20 @@ components:
           minimum: 0
           maximum: 512
           description: "Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API."
+        cpu_millicores:
+          type: integer
+          enum: [0, 250, 500, 1000]
+          default: 0
+          description: "Sustained cgroup CPU allowance in millicores. 0 = inherit app CPU quota."
         essential:
           type: boolean
-          description: "Defaults to true. type=init non-zero exit → fail deploy; type=sidecar non-zero exit → restart-loop. PR-B's runtime."
+          description: "Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."
+        depends_on:
+          type: array
+          maxItems: 3
+          description: "Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running sidecars."
+          items:
+            $ref: '#/components/schemas/WorkloadDependency'
 
     # ─── Deployments (PR-E1 / SAFE-RELEASES-C.2) ──────────────────────────
 
@@ -14786,7 +15837,10 @@ components:
         default: { type: boolean, description: "True when this domain is the app's default (issue #961 / Mega-A PR-3). Set via `gregale domains set-default`." }
         cert_not_after: { type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field." }
         cert_sans: { type: array, items: { type: string }, description: "Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME points at a CDN, the SANs reveal which CDN." }
-        cert_status: { type: [string, "null"], description: "One of `issued` | `pending` | `dial_failed:<reason>`. The show endpoint surfaces this verbatim so the customer can distinguish DNS-not-propagated from cert-not-yet-issued from TLS-handshake-refused. Issue #961 / Mega-A PR-3 code-review round (MED-4)." }
+        cert_status: { type: [string, "null"], description: "Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, or failed; issue #1397 / F1). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge." }
+        cert_expires_at: { type: [string, "null"], format: date-time, description: "Durable certificate expiry timestamp recorded by the cert observer." }
+        cert_last_error: { type: [string, "null"], description: "Most recent certificate issuance/renewal error, when cert_status is failed." }
+        dns_last_checked_at: { type: [string, "null"], format: date-time, description: "Timestamp of the most recent DNS verification/doctor probe." }
 
     CreateCustomDomainRequest:
       description: "Bind a custom domain to an app."
@@ -15784,6 +16838,7 @@ components:
       type: object
       properties:
         ram_mb: { type: integer, minimum: 128, maximum: 10240 }
+        cpu_millicores: { type: integer, enum: [250, 500, 1000] }
         idle_timeout_s: { type: integer, minimum: 30, maximum: 600 }
         max_concurrency: { type: integer, minimum: 1, maximum: 200 }
         min_instances: { type: integer, minimum: 0, maximum: 10 }
@@ -17599,8 +18654,8 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, deploy:write, secrets:read, secrets:write, usage:read, apps:read, env:read, env:write] }
-          description: "Permission set attached to the key. Closed vocabulary (IAM-1, ADR-034 rev2): admin is the legacy full-access scope; apps:read covers GETs across the apps/deployments/audit/secrets-list surface; deploy:write covers POST/PUT/PATCH/DELETE on apps+queues; secrets:write covers PUT/DELETE on /apps/{slug}/secrets/{key}; usage:read covers GET /v1/usage*."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          description: "Closed permission set attached to the key. storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time, example: "2026-07-25T13:25:00Z" }
@@ -17625,8 +18680,8 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, deploy:write, secrets:read, secrets:write, usage:read, apps:read, env:read, env:write] }
-          description: "Requested permission set. Server validates each entry against the closed vocabulary and rejects unknown scopes at mint time. `admin` is the legacy full-access scope; the other five cover narrower surfaces (see APIKeyResponse.scopes). See IAM-1, ADR-034 rev2."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          description: "Requested permission set. The server rejects unknown scopes. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
     RotateKeyResponse:
@@ -17652,8 +18707,8 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, deploy:write, secrets:read, secrets:write, usage:read, apps:read, env:read, env:write] }
-          description: "Requested permission set for the org-scoped key. Server validates each entry against the closed vocabulary and rejects unknown scopes at mint time. `admin` is the legacy full-access scope; the other five cover narrower surfaces (see APIKeyResponse.scopes). See IAM-1, ADR-034 rev2. PR 6 keeps the legacy and org-scoped shapes in lockstep so SDK callers can swap one request body for the other."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 
     ListOrgAPIKeysResponse:
@@ -19479,6 +20534,83 @@ components:
           format: date-time
           description: "RFC3339Nano UTC stamping the envelope's authoritative 'as of' instant."
 
+    RequestAnalyticsRoute:
+      type: object
+      description: "Aggregated request analytics for one route and HTTP method. Counts include collapsed telemetry row weights."
+      required: [route, method, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
+      properties:
+        route: { type: string, description: "Route template, not an expanded URL." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+
+    RequestAnalyticsResponse:
+      type: object
+      description: |
+        Bounded historical request analytics for
+        `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
+        `[from, until)`, and the route list is capped at 50 rows.
+      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, routes, routes_limit, routes_truncated, as_of]
+      properties:
+        slug: { type: string }
+        since: { type: string, description: "Effective lookback duration after retention clamping." }
+        from: { type: string, format: date-time, description: "Inclusive lower bound of the analytics window." }
+        until: { type: string, format: date-time, description: "Exclusive upper bound of the analytics window." }
+        window_clamped: { type: boolean, description: "True when the requested lookback exceeded plan retention." }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsRoute' }
+        routes_limit: { type: integer, minimum: 1, description: "Maximum number of route rows returned." }
+        routes_truncated: { type: boolean, description: "True when more route rows matched than routes_limit." }
+        as_of: { type: string, format: date-time, description: "RFC3339Nano UTC assembly timestamp." }
+
+    RequestAnalyticsTimeseriesPoint:
+      type: object
+      description: "One UTC-aligned hourly request analytics bucket."
+      required: [start, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
+      properties:
+        start: { type: string, format: date-time, description: "Inclusive UTC start of the one-hour bucket." }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+
+    RequestAnalyticsTimeseriesResponse:
+      type: object
+      description: |
+        Zero-filled UTC hourly request analytics for
+        `GET /v1/apps/{slug}/analytics/timeseries`. The effective window is
+        half-open [from, until) and bounded by plan retention.
+      required: [slug, since, from, until, window_clamped, bucket, points, as_of]
+      properties:
+        slug: { type: string }
+        route: { type: string, maxLength: 256, description: "Exact bounded route-label filter when a route-level series was requested." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "Exact method filter when a route-level series was requested." }
+        since: { type: string, description: "Effective series lookback after retention clamping." }
+        from: { type: string, format: date-time, description: "First instant represented by the hourly series." }
+        until: { type: string, format: date-time, description: "Exclusive end instant represented by the hourly series." }
+        window_clamped: { type: boolean, description: "Indicates the series start was limited by plan retention." }
+        bucket: { type: string, enum: [1h], description: "UTC bucket size." }
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
+        as_of: { type: string, format: date-time, description: "UTC time when the series response was assembled." }
+
     AppSLOResponse:
       description: |
         Per-app SLO panel returned by `GET /v1/apps/{slug}/slo?window=`
@@ -19669,8 +20801,29 @@ components:
       x-since: "2026-08"
       x-issue: "696"
 
+    DailyUsagePoint:
+      description: "One day in the account's trailing 30 UTC calendar day usage trend (issue #308)."
+      type: object
+      required: [date, gb_hours]
+      properties:
+        date:
+          type: string
+          format: date
+          description: "UTC calendar day."
+        gb_hours:
+          type: number
+          description: "Account-wide GB-hours consumed on this day. Informational; uses the usage summary conversion."
+        top_app_slug:
+          type: string
+          description: "Slug of the app contributing the most GB-hours on this day."
+        top_app_gb_hours:
+          type: number
+          description: "GB-hours consumed by top_app_slug on this day."
+      x-since: "2026-09"
+      x-issue: "308"
+
     UsageSummaryResponse:
-      description: "Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, and informational used_cpu_hours (issue #279 / PR-B). The CPU dimension is observable but not yet billed; the GB-hours fields drive the overage math."
+      description: "Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage dimensions, and a trailing 30-day daily trend (issue #308). The GB-hours fields drive the overage math; the other dimensions are informational."
       type: object
       required: [month, used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents]
       properties:
@@ -19700,6 +20853,13 @@ components:
           description: 'Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not billed). ADR-048.'
           x-since: "2026-08"
           x-issue: "436"
+        daily:
+          type: array
+          description: 'Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows exist. issue #308.'
+          items:
+            $ref: '#/components/schemas/DailyUsagePoint'
+          x-since: "2026-09"
+          x-issue: "308"
 
     # ─── Event-driven surface (Move 2) ───────────────────────────────────
 
@@ -21182,6 +22342,24 @@ components:
 
     PaymentRequired:
       description: 'code: billing_past_due — account is suspended; pay invoice to resume.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    EmailVerificationRequired:
+      description: 'code: email_verification_required — verify the account email before deploying code or changing billing settings.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    AppCreateForbidden:
+      description: 'code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied | email_verification_required'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    DeploymentForbidden:
+      description: 'code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

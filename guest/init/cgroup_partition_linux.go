@@ -10,10 +10,10 @@
 // in the guest kernel's memcg tree, and the host's cgroup
 // hierarchy is not visible (the guest cgroup namespace is
 // isolated by guest-init's CLONE_NEWCGROUP step in main_linux.go).
-// A workload that exceeds its plan RAM triggers the host's
-// per-VM scope, but inside the guest we want a per-workload
-// OOM kill — the sidecar OOM must not OOM-kill the main
-// workload (and vice versa).
+// A workload that exceeds its plan RAM or CPU triggers the
+// host's per-VM scope, but inside the guest we want per-workload
+// memory and CPU limits — a sidecar OOM or throttle must not
+// affect the main workload (and vice versa).
 //
 // The contract:
 //
@@ -24,9 +24,9 @@
 //
 //   2. Before each configured workload's exec.Command.Start, mkdir
 //      the per-workload leaf at /sys/fs/cgroup/<safe-name>, write
-//      memory.max = spec.RamMB << 20, and after Start write the
-//      child PID into cgroup.procs. Legacy workloads without a
-//      per-workload RAM value remain under the parent scope.
+//      any configured memory.max and cpu.max values, and after
+//      Start write the child PID into cgroup.procs. Workloads
+//      without either override remain under the parent scope.
 //
 //   3. Sidecar OOM stays scoped to that leaf (cgroup v2
 //      memory controller kills only the offending leaf's
@@ -50,6 +50,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"golang.org/x/sys/unix"
 )
 
@@ -63,14 +64,22 @@ import (
 // into a workload-controlled path.
 var cgroupRoot = "/sys/fs/cgroup"
 
-// prepareWorkloadCgroup creates the in-guest memory leaf for a workload and
-// returns its path for the subsequent cgroup.procs placement. A zero RAM value
-// means the workload has no per-workload override (the legacy single-workload
-// path); it must not be converted into the 1 MiB defensive floor used by the
-// low-level partitionInto helper. Configured workloads fail closed when the
-// leaf cannot be created or written.
-func prepareWorkloadCgroup(typ, name string, ramMB int, log *slog.Logger) (string, error) {
-	if ramMB < 1 {
+// prepareWorkloadCgroup creates the in-guest resource leaf for a workload and
+// returns its path for the subsequent cgroup.procs placement. A zero RAM or
+// CPU value inherits the parent limit; when both are zero the legacy path is
+// preserved and no child leaf is created.
+func prepareWorkloadCgroup(typ, name string, ramMB int, log *slog.Logger, cpuMillicoresOpt ...int) (string, error) {
+	if ramMB < 0 {
+		return "", fmt.Errorf("invalid workload cgroup ram_mb %d", ramMB)
+	}
+	cpuMillicores := 0
+	if len(cpuMillicoresOpt) > 0 {
+		cpuMillicores = cpuMillicoresOpt[0]
+	}
+	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
+		return "", fmt.Errorf("invalid workload cgroup cpu_millicores %d", cpuMillicores)
+	}
+	if ramMB == 0 && cpuMillicores == 0 {
 		return "", nil
 	}
 	leaf := leafDir(typ, name)
@@ -80,7 +89,7 @@ func prepareWorkloadCgroup(typ, name string, ramMB int, log *slog.Logger) (strin
 	if log == nil {
 		log = slog.Default()
 	}
-	if err := partitionInto(leaf, ramMB); err != nil {
+	if err := partitionInto(leaf, ramMB, cpuMillicores); err != nil {
 		log.Warn("cgroup partition into leaf failed",
 			"leaf", leaf, "name", name, "err", err)
 		return "", err
@@ -145,42 +154,53 @@ func leafDir(typ, name string) string {
 // exec'd:
 //
 //  1. mkdir <leaf>
-//  2. write memory.max = ramMB << 20 (bytes)
+//  2. write memory.max = ramMB << 20 (bytes), when configured
+//  3. write cpu.max = quota period, when configured
 //
 // Errors are logged + returned (the caller decides whether
-// to fail the deploy). memory.max = 0 is forbidden — the
-// kernel treats it as "unlimited", which defeats the
-// partition. We floor at max(1, ramMB) << 20 (a 1 MB
-// minimum leaf) so a workload that boots with a missing
-// ram_mb (RamMB = 0 on the wire, legacy single-workload
-// path) still gets a non-zero cap. Defence-in-depth: the
-// customer-facing API gate already floors Sidecar.RamMB at
-// 16 MB; this is a backstop.
+// to fail the deploy). A zero override is omitted so the
+// workload inherits the parent cgroup's corresponding limit;
+// cpu.max uses a 100ms period and converts millicores into a
+// quota against that period.
 //
 // cgroup v2 must be mounted at cgroupRoot for the writes
 // to land. mountCgroup2 (main_linux.go) is called between
 // pivotInto and the supervisor's first workload, so by the
 // time partitionInto runs the leaf path is reachable.
-func partitionInto(leaf string, ramMB int) error {
+func partitionInto(leaf string, ramMB int, cpuMillicoresOpt ...int) error {
 	if leaf == "" {
 		return errors.New("cgroup partition: empty leaf")
 	}
 	if err := os.MkdirAll(leaf, 0o755); err != nil {
 		return fmt.Errorf("cgroup partition: mkdir %s: %w", leaf, err)
 	}
-	bytes := int64(ramMB) << 20
-	if bytes <= 0 {
-		// Floor: a zero memory.max = "unlimited"
-		// (kernel semantics), which defeats the
-		// partition. Defensive floor at 1 MiB.
-		bytes = 1 << 20
+	cpuMillicores := 0
+	if len(cpuMillicoresOpt) > 0 {
+		cpuMillicores = cpuMillicoresOpt[0]
 	}
-	if err := os.WriteFile(
-		filepath.Join(leaf, "memory.max"),
-		[]byte(strconv.FormatInt(bytes, 10)+"\n"),
-		0o644,
-	); err != nil {
-		return fmt.Errorf("cgroup partition: write memory.max for %s: %w", leaf, err)
+	if ramMB < 0 || cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
+		return fmt.Errorf("cgroup partition: invalid limits ram_mb=%d cpu_millicores=%d", ramMB, cpuMillicores)
+	}
+	if ramMB > 0 {
+		bytes := int64(ramMB) << 20
+		if err := os.WriteFile(
+			filepath.Join(leaf, "memory.max"),
+			[]byte(strconv.FormatInt(bytes, 10)+"\n"),
+			0o644,
+		); err != nil {
+			return fmt.Errorf("cgroup partition: write memory.max for %s: %w", leaf, err)
+		}
+	}
+	if cpuMillicores > 0 {
+		const periodUS = 100_000
+		quotaUS := cpuMillicores * periodUS / 1000
+		if err := os.WriteFile(
+			filepath.Join(leaf, "cpu.max"),
+			[]byte(fmt.Sprintf("%d %d\n", quotaUS, periodUS)),
+			0o644,
+		); err != nil {
+			return fmt.Errorf("cgroup partition: write cpu.max for %s: %w", leaf, err)
+		}
 	}
 	return nil
 }
@@ -240,6 +260,56 @@ func mountCgroup2() error {
 	}
 	if err := syscall.Mount("cgroup2", cgroupRoot, "cgroup2", 0, ""); err != nil {
 		return fmt.Errorf("cgroup2 mount %s: %w", cgroupRoot, err)
+	}
+	if err := enableWorkloadControllers(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// enableWorkloadControllers delegates the controllers needed by workload
+// leaves to the private cgroup namespace's root. A cgroup v2 child exposes
+// cpu.max and memory.max only after the corresponding controller is enabled in
+// its parent. Kernels that do not provide either controller remain usable for
+// the legacy host-side fence; the caller receives no error when neither is
+// available.
+func enableWorkloadControllers() error {
+	availableRaw, err := os.ReadFile(filepath.Join(cgroupRoot, "cgroup.controllers"))
+	if err != nil {
+		return fmt.Errorf("cgroup2 controllers: %w", err)
+	}
+	available := strings.Fields(string(availableRaw))
+	wanted := make([]string, 0, 2)
+	for _, controller := range []string{"memory", "cpu"} {
+		for _, candidate := range available {
+			if candidate == controller {
+				wanted = append(wanted, controller)
+				break
+			}
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+	currentRaw, err := os.ReadFile(filepath.Join(cgroupRoot, "cgroup.subtree_control"))
+	if err != nil {
+		return fmt.Errorf("cgroup2 subtree_control: %w", err)
+	}
+	current := make(map[string]bool, len(strings.Fields(string(currentRaw))))
+	for _, controller := range strings.Fields(string(currentRaw)) {
+		current[controller] = true
+	}
+	missing := make([]string, 0, len(wanted))
+	for _, controller := range wanted {
+		if !current[controller] {
+			missing = append(missing, "+"+controller)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(cgroupRoot, "cgroup.subtree_control"), []byte(strings.Join(missing, " ")+"\n"), 0o644); err != nil {
+		return fmt.Errorf("cgroup2 enable controllers %s: %w", strings.Join(wanted, ","), err)
 	}
 	return nil
 }

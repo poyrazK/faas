@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/presetwhy"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -69,10 +70,12 @@ type Page struct {
 // AccountView is the dashboard-facing slice of state.Account. Never
 // log secrets here. Source data is pkg/state.Account; slices 3+4 expand.
 type AccountView struct {
-	ID       string
-	Email    string
-	Plan     string
-	AppCount int
+	ID                         string
+	Email                      string
+	Plan                       string
+	AppCount                   int
+	EmailVerified              bool
+	EmailVerificationGraceEnds string
 }
 
 // DPAView is the page-specific payload for the dashboard DPA route
@@ -148,6 +151,7 @@ type PreviewListItem struct {
 	Slug          string
 	ParentSlug    string
 	PRNumber      int
+	IsDev         bool
 	PRState       string
 	ExpiresAt     *time.Time
 	CreatedAt     time.Time
@@ -275,11 +279,24 @@ type PreviewItem struct {
 	Slug       string // preview app slug (e.g. "demo-pr-42")
 	URL        string // full preview URL (e.g. "https://pr-42-demo.gregale.dev")
 	PrNumber   int
+	IsDev      bool
 	PrState    string // closed vocab: open / closed / stale / torn_down
 	CreatedAt  string // RFC 3339 UTC
 	ExpiresAt  string // RFC 3339 UTC; empty when no TTL
 	StateLabel string // pre-formatted chip label ("open", "closed", etc.)
 	StateClass string // CSS class matching PrState for the chip
+}
+
+// DomainItem is the compact durable custom-domain projection rendered on an
+// app detail page. The cert fields come from custom_domains, so a dashboard
+// refresh does not block on a live TLS handshake.
+type DomainItem struct {
+	Domain           string
+	Verified         bool
+	CertStatus       string
+	CertExpiresAt    string
+	CertLastError    string
+	DNSLastCheckedAt string
 }
 
 // CronItem is one row on the app detail page's crons tab
@@ -329,10 +346,14 @@ type CronRunRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
-	App         AppListItem
-	Manifest    ManifestView
-	Deployments []DeploymentItem
-	Crons       []CronItem
+	App      AppListItem
+	Manifest ManifestView
+	// EffectiveLimits is the customer-visible resource and request
+	// envelope derived from the app plus its current plan.
+	EffectiveLimits     api.AppEffectiveLimits
+	ConfiguredResources api.AppConfiguredResources
+	Deployments         []DeploymentItem
+	Crons               []CronItem
 	// Workflows is the bounded recent-run view for the app detail page.
 	// It intentionally carries step status and operator-facing errors, but
 	// never the workflow input/output payloads.
@@ -346,6 +367,9 @@ type AppDetailData struct {
 	// surfaces its previews) so a preview-of-preview loop can't
 	// occur.
 	Previews []PreviewItem
+	// Domains carries the app's legacy custom-domain bindings and their
+	// durable certificate lifecycle (issue #1397 / F1).
+	Domains []DomainItem
 	// FiredFlash is the post-redirect banner surfaced after a
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1
@@ -354,6 +378,12 @@ type AppDetailData struct {
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
 	FiredFlash string
+	// RollbackConfirmToken is the named CSRF token shared by the
+	// deployment rollback forms on the app detail page.
+	RollbackConfirmToken string
+	// RollbackFlash is the post-redirect banner for the app rollback form.
+	// Values are "ok", "error", or empty.
+	RollbackFlash string
 	// RecentInstances is the most recent N wake rows for this app
 	// (parked → waking → running → …). Each carries its WakeID so
 	// operators can paste the ID from a gateway response header
@@ -385,6 +415,10 @@ type AppDetailData struct {
 	// pre-formatted at the handler edge so the template stays
 	// a pure renderer.
 	SLODuration views.SLOStamp
+	// RequestAnalytics is the durable request_telemetry rollup shown below
+	// the live Prometheus panels. nil means the plan does not include the
+	// telemetry retention feature or the best-effort read failed.
+	RequestAnalytics *RequestAnalyticsView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -903,6 +937,51 @@ type AppMetricsView struct {
 	WakeP95MS    float64
 }
 
+// RequestAnalyticsView is the dashboard-facing projection of the customer
+// request analytics API. It deliberately mirrors only aggregate fields;
+// request IDs and trace data belong to the debugger surface.
+type RequestAnalyticsView struct {
+	Since                 string
+	From                  string
+	Until                 string
+	WindowClamped         bool
+	Requests              int64
+	ErrorRequests         int64
+	ErrorRatePct          float64
+	ColdBoots             int64
+	P50MS                 int
+	P95MS                 int
+	P99MS                 int
+	Routes                []RequestAnalyticsRouteView
+	RoutesLimit           int
+	RoutesTruncated       bool
+	AsOf                  string
+	Bucket                string
+	SelectedRoute         string
+	SelectedMethod        string
+	SelectedQuery         string
+	TimeseriesURL         string
+	LatencySparkline      views.LatencySparklineView
+	LatencySparklineHTML  template.HTML
+	ErrorSparkline        []appmetrics.SparklinePoint
+	ErrorSparklineHTML    template.HTML
+	ColdBootSparkline     []appmetrics.SparklinePoint
+	ColdBootSparklineHTML template.HTML
+}
+
+type RequestAnalyticsRouteView struct {
+	Route         string
+	Method        string
+	Requests      int64
+	ErrorRequests int64
+	ErrorRatePct  float64
+	ColdBoots     int64
+	P50MS         int
+	P95MS         int
+	P99MS         int
+	TrendURL      string
+}
+
 // RecentInstanceItem is one row of the Recent Wakes table on the
 // dashboard app-detail page.
 //
@@ -976,6 +1055,29 @@ type WakeTimelinePageData struct {
 	RenderTable          template.HTML // pre-rendered at the handler
 }
 
+// UsageAppData is the customer-facing monthly usage projection for one app.
+// The handler resolves the app slug and computes display units so the
+// template remains a pure renderer.
+type UsageAppData struct {
+	Slug        string
+	Linkable    bool
+	UsedGBHours float64
+	SharePct    float64
+	Requests    int64
+	CPUHours    float64
+	EgressGB    float64
+	IngressGB   float64
+	ColdBoots   int64
+}
+
+// UsageDailyPoint is one row in the account's trailing daily usage trend.
+type UsageDailyPoint struct {
+	Date          string
+	GBHours       float64
+	TopAppSlug    string
+	TopAppGBHours float64
+}
+
 // UsageData is the /dashboard/usage page payload.
 type UsageData struct {
 	Month           string
@@ -983,6 +1085,7 @@ type UsageData struct {
 	IncludedGBHours int64
 	OverageGBHours  float64
 	UsedPct         float64 // 0..100+
+	Requests        int64
 	// UsedEgressGB (ADR-046, step 10) is the per-month
 	// informational egress roll-up (Σ tx_bytes +
 	// net_tx_bytes across all apps). Not billed; the
@@ -990,7 +1093,13 @@ type UsageData struct {
 	// "this much egress" line. The gateway-side tx_bytes
 	// producer lands in PR-2; until then the value is
 	// 0 because NetTxBytes is the only source populated.
-	UsedEgressGB float64
+	UsedEgressGB       float64
+	UsedIngressGB      float64
+	UsedCPUHours       float64
+	ColdBoots          int64
+	PerApp             []UsageAppData
+	Daily              []UsageDailyPoint
+	DailySparklineHTML template.HTML
 }
 
 // BillingData is the /dashboard/billing page payload (issue #253).
@@ -1195,11 +1304,17 @@ type APIKeyItem struct {
 	Scopes     []string
 	CreatedAt  string
 	LastUsedAt string // empty until first use
+	CanRevoke  bool
 }
 
 // AccountData is the /dashboard/account page payload.
 type AccountData struct {
 	Keys []APIKeyItem
+	// KeyDeleteConfirmToken is shared by the account page's key-revoke
+	// forms. Its sidecar uses a dedicated cookie name so it can coexist
+	// with the account-delete and GitHub-connect CSRF tokens rendered on
+	// the same page.
+	KeyDeleteConfirmToken string
 	// ShowDelete + DeleteConfirmToken drive the "Danger zone" partial
 	// in templates/account.html. The token is a sealed envelope bound
 	// to (action="delete", account_id) that the POST handler verifies
@@ -1220,6 +1335,10 @@ type AccountData struct {
 	// faas_csrf sidecar cookie. Same envelope shape as the delete /
 	// restore tokens above — sealed by (action, account_id).
 	ConnectGithubConfirmToken string
+	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
+	// a dedicated cookie name because the account page renders several
+	// independently action-bound forms at once.
+	PlanConfirmToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a

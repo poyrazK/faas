@@ -80,8 +80,10 @@ type NodeTelemetry struct {
 	CPUSeconds          *float64
 	CPUThrottledSeconds *float64
 	InflightRequests    int64
+	RequestCountTotal   *int64
 	LastRequestAt       time.Time
 	NetTxBytes          *int64
+	NetRxBytes          *int64
 	OpenConns           int64
 }
 

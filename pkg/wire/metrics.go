@@ -1188,6 +1188,13 @@ type OpsMetrics struct {
 	// (60 s); the 5 s control-plane bucket is wrong for the multi-second
 	// blob downloads.
 	imagedOCIPull *prometheus.HistogramVec
+	// imagedOCIBlobCache* count the node-local immutable OCI blob cache
+	// lifecycle. They are registered on every daemon registry for stable
+	// exposition, but imaged is the only writer. Plain counters avoid
+	// unbounded labels for repositories or digests.
+	imagedOCIBlobCacheHits      prometheus.Counter
+	imagedOCIBlobCacheMisses    prometheus.Counter
+	imagedOCIBlobCacheEvictions prometheus.Counter
 	// issue #170 / PR-A: per-{app,node} instance-stats gauges. The
 	// (app, node) label tuple is unbounded because it grows with the
 	// customer count, so it cannot be pre-instantiated at boot.
@@ -1400,6 +1407,10 @@ type OpsMetrics struct {
 	// increments via the public accessors in cmd/imaged/main.go.
 	ownershipClamp    *prometheus.CounterVec
 	layerEntrySkipped prometheus.Counter
+	// passwdEntries counts merged /etc/passwd records emitted by the
+	// full-rootfs builder. It is imaged-only and intentionally bounded
+	// to the closed outcome set {ok, over_cap}.
+	passwdEntries *prometheus.CounterVec
 	// egressSourceErrors: counter of per-instance sysfs read
 	// failures from cmd/vmmd/network_poller.go (ADR-046, step
 	// 7). The loop polls /sys/class/net/<vethHost>/statistics/
@@ -1648,6 +1659,10 @@ type OpsMetrics struct {
 	// breakerFailureThreshold consecutive failures, then auto-
 	// resets after breakerCooldown).
 	githubdPathFilterTotal *prometheus.CounterVec
+	// githubdPushSkippedTotal counts customer-requested deployment skips,
+	// labelled by a closed reason set so commit text never becomes a metric
+	// label. Only githubd increments this single-registry counter.
+	githubdPushSkippedTotal *prometheus.CounterVec
 	// registryCredentialMarkUsedFailures: ADR-062 / issue #461.
 	// Counts every failure of imaged's
 	// store.MarkAppRegistryCredentialUsed call after a successful
@@ -2764,6 +2779,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// multi-second for big layers; 60 s ceiling = OCIPullTimeoutSeconds.
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"op", "result"})
+	imagedOCIBlobCacheHits := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_oci_blob_cache_hits_total",
+		Help: "Count of OCI registry blob cache hits on the local compute node.",
+	})
+	imagedOCIBlobCacheMisses := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_oci_blob_cache_misses_total",
+		Help: "Count of OCI registry blob cache misses that required a registry fetch.",
+	})
+	imagedOCIBlobCacheEvictions := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_oci_blob_cache_evictions_total",
+		Help: "Count of OCI registry blob cache entries evicted by the byte budget.",
+	})
 	// issue #170 / PR-A: per-{app,node} instance-stats gauges. Sized
 	// for the poller’s 200 ms cadence — the per-tick histogram tops
 	// out at the 200 ms interval so a regression that doubles the
@@ -3085,6 +3112,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_path_filter_total",
 		Help: "Path-filter mode counter for githubd push dispatch (issue #432 phase 5, ADR-050 §109). mode ∈ {paths, full_fallback, truncated, error, breaker_open}. One increment per inbound webhook after lookupChangedFiles picks a mode. mode=paths is the optimistic path; the others collapse into the rebuild-all fallback for that push. The single-registry pattern demands the field is present on every daemon's OpsMetrics — only githubd increments via ObserveGithubdPathFilter.",
 	}, []string{"mode"})
+	githubdPushSkippedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_push_skipped_total",
+		Help: "Customer-requested deployment skips in githubd push dispatch. reason is a closed policy label.",
+	}, []string{"reason"})
 	// PR-E sister collector for the user-space OCI dialer. Only
 	// registered when prefix == "imaged" — on every other daemon the
 	// field stays nil and the imaged-side hook in cmd/imaged/main.go
@@ -3100,17 +3131,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Write, mirroring OCIEgressDeny).
 	var ownershipClamp *prometheus.CounterVec
 	var layerEntrySkipped prometheus.Counter
+	var passwdEntries *prometheus.CounterVec
 	// Issue #517 / PR-C / ADR-064 — wake-phase collector pair.
 	// Counter gauges per-phase emit counts; histogram buckets
 	// the per-phase duration. Both labelled by the same closed
-	// (phase, result) tuple; the closed 13-phase set is
+	// (phase, result) tuple; the closed 14-phase set is
 	// pre-instantiated below so the §12 wake-latency panel exists
 	// from boot. The histogram buckets are sized for the wake
 	// envelope: queue→admit <100ms; boot <30s; readiness <60s;
 	// proxy <5s; the 60s tail catches pathological stalls.
 	wakePhaseEmitted := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_phase_emitted_total",
-		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 13-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
+		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 14-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
 	}, []string{"phase", "result"})
 	// vmmd already exports execution timings under wake_phase_duration_seconds.
 	// Event-store latency is a different family (and has different labels).
@@ -3160,7 +3192,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditOrgEvent, authzDenied, authzAllowed,
 		wakeIDV4Fallback,
 		snapshotDiskDrift,
-		imagedOCIPull, instanceCPUPct, instanceRSSMB, instanceInflightReqs,
+		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
+		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
@@ -3196,6 +3229,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidStatelessAdvisoryEventsTotal,
 		apidGithubdBridgeEnqueuedTotal,
 		githubdPathFilterTotal,
+		githubdPushSkippedTotal,
 		throttleSecondsTotal, throttleRatio,
 		egressSourceErrors,
 		wakePhaseEmitted, wakePhaseDur, recoveryEventEmitted,
@@ -3258,6 +3292,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			Help: "Layer entries dropped by applyEntry (char/block/fifo). A non-zero rate is a tripwire for hostile or misbuilt layers that ship device entries.",
 		})
 		commonCollectors = append(commonCollectors, layerEntrySkipped)
+		passwdEntries = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_passwd_entries_total",
+			Help: "Merged image passwd entries emitted by the full-rootfs builder, labelled by outcome.",
+		}, []string{"outcome"})
+		commonCollectors = append(commonCollectors, passwdEntries)
 	}
 	// issue #299: Grype scan findings, per (image, severity). The
 	// `image` label is the OCI ref of the staged base ext4; the
@@ -3967,6 +4006,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, mode := range []string{PathFilterModePaths, PathFilterModeFullFallback, PathFilterModeTruncated, PathFilterModeError, PathFilterModeBreakerOpen} {
 		githubdPathFilterTotal.WithLabelValues(mode)
 	}
+	for _, reason := range []string{PushSkippedReasonMarker} {
+		githubdPushSkippedTotal.WithLabelValues(reason)
+	}
 	// issue #299: pre-instantiate the closed `severity` label set
 	// for imageScanVulns so the rows surface in /metrics from boot
 	// — same precedent as every other CounterVec on this struct.
@@ -4048,7 +4090,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		snapshotBackoffStamp.WithLabelValues(outcome)
 	}
 	// Issue #517 / PR-C / ADR-064: pre-instantiate the closed
-	// 15-phase × 2-result label set for wakePhaseEmitted and
+	// 17-phase × 2-result label set for wakePhaseEmitted and
 	// wakePhaseDur so the §12 wake-latency panel surfaces zero
 	// on an idle daemon (mirrors the buildDuration / stripePush
 	// pre-instantiation precedents above). The phase list mirrors
@@ -4057,7 +4099,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// lock-step. result ∈ {ok, failed}.
 	for _, phase := range []string{
 		"queue_accepted", "admitted", "boot_started", "boot_completed",
-		"boot_failed", "readiness_200", "proxy_first_byte",
+		"boot_failed", "readiness_200", "proxy_first_byte", "page_served",
 		"park_started", "park_completed", "stalled",
 		"build_succeeded", "build_failed", "deploy_failed",
 		// ADR-098 C11: vmmd-side phase-decomposed wake timings
@@ -4424,6 +4466,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		snapshotDiskDrift:                                     snapshotDiskDrift,
 		capacitySignatureRejected:                             capacitySignatureRejected,
 		imagedOCIPull:                                         imagedOCIPull,
+		imagedOCIBlobCacheHits:                                imagedOCIBlobCacheHits,
+		imagedOCIBlobCacheMisses:                              imagedOCIBlobCacheMisses,
+		imagedOCIBlobCacheEvictions:                           imagedOCIBlobCacheEvictions,
 		instanceCPUPct:                                        instanceCPUPct,
 		instanceRSSMB:                                         instanceRSSMB,
 		instanceInflightReqs:                                  instanceInflightReqs,
@@ -4443,6 +4488,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		ociEgressDeny:                                         ociEgressDeny,
 		ownershipClamp:                                        ownershipClamp,
 		layerEntrySkipped:                                     layerEntrySkipped,
+		passwdEntries:                                         passwdEntries,
 		provenanceWrites:                                      provenanceWrites,
 		imageScanVulns:                                        imageScanVulns,
 		deployScanDuration:                                    deployScanDuration,
@@ -4472,6 +4518,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidStatelessAdvisoryEventsTotal:                      apidStatelessAdvisoryEventsTotal,
 		apidGithubdBridgeEnqueuedTotal:                        apidGithubdBridgeEnqueuedTotal,
 		githubdPathFilterTotal:                                githubdPathFilterTotal,
+		githubdPushSkippedTotal:                               githubdPushSkippedTotal,
 		wakePhaseEmitted:                                      wakePhaseEmitted,
 		wakePhaseDur:                                          wakePhaseDur,
 		recoveryEventEmitted:                                  recoveryEventEmitted,
@@ -6241,6 +6288,15 @@ func (m *OpsMetrics) LayerEntrySkipped() prometheus.Counter {
 	return m.layerEntrySkipped
 }
 
+// PasswdEntries returns the per-outcome counter for merged image passwd
+// records emitted by the full-rootfs builder. Nil-safe on non-imaged metrics.
+func (m *OpsMetrics) PasswdEntries(outcome string) prometheus.Counter {
+	if m == nil || m.passwdEntries == nil {
+		return nil
+	}
+	return m.passwdEntries.WithLabelValues(outcome)
+}
+
 // EgressSourceErrors returns the bare Counter that records per-
 // instance sysfs read failures from the vmmd network poll adapter
 // (ADR-046, step 7). Safe on a nil receiver so call sites can be
@@ -6654,6 +6710,32 @@ func (m *OpsMetrics) ObserveImagedOCIPull(op, result string, dur time.Duration) 
 		return
 	}
 	m.imagedOCIPull.WithLabelValues(op, result).Observe(dur.Seconds())
+}
+
+// ImagedOCIBlobCacheHit records a node-local OCI blob cache hit. Safe on a
+// nil receiver so tests and non-imaged callers can share the observer seam.
+func (m *OpsMetrics) ImagedOCIBlobCacheHit() {
+	if m == nil {
+		return
+	}
+	m.imagedOCIBlobCacheHits.Inc()
+}
+
+// ImagedOCIBlobCacheMiss records a cache miss that required a registry fetch.
+func (m *OpsMetrics) ImagedOCIBlobCacheMiss() {
+	if m == nil {
+		return
+	}
+	m.imagedOCIBlobCacheMisses.Inc()
+}
+
+// ImagedOCIBlobCacheEviction records one entry removed by the local cache
+// byte budget.
+func (m *OpsMetrics) ImagedOCIBlobCacheEviction() {
+	if m == nil {
+		return
+	}
+	m.imagedOCIBlobCacheEvictions.Inc()
 }
 
 // SetResidentGBPerCustomer writes one sample to the
@@ -7583,7 +7665,28 @@ const (
 	PathFilterModeTruncated    = "truncated"
 	PathFilterModeError        = "error"
 	PathFilterModeBreakerOpen  = "breaker_open"
+	PushSkippedReasonMarker    = "marker"
 )
+
+// ObserveGithubdPushSkipped increments githubd_push_skipped_total{reason}.
+// The reason vocabulary is deliberately closed so commit messages cannot
+// create unbounded Prometheus series.
+func (m *OpsMetrics) ObserveGithubdPushSkipped(reason string) {
+	if m == nil || m.githubdPushSkippedTotal == nil {
+		return
+	}
+	if reason == PushSkippedReasonMarker {
+		m.githubdPushSkippedTotal.WithLabelValues(reason).Inc()
+	}
+}
+
+// GithubdPushSkippedTotal returns the metric series for service-level tests.
+func (m *OpsMetrics) GithubdPushSkippedTotal(reason string) prometheus.Counter {
+	if m == nil || m.githubdPushSkippedTotal == nil || reason != PushSkippedReasonMarker {
+		return nil
+	}
+	return m.githubdPushSkippedTotal.WithLabelValues(reason)
+}
 
 // ObserveAdvisoryBatchResult increments
 // stateless_advisory_batches_emitted_total{result} (Mega-PR B).

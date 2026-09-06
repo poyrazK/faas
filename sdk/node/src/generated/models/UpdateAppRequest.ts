@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
+import type { ResourceProfile } from './ResourceProfile.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 /**
@@ -10,6 +11,14 @@ import type { ServiceReplicas } from './ServiceReplicas.js';
  */
 export type UpdateAppRequest = {
   ram_mb?: number | null;
+  /**
+   * Sustained CPU allowance per instance. Omit for no change.
+   */
+  cpu_millicores?: 250 | 500 | 1000;
+  /**
+   * Named memory/CPU profile. Omit for no change; explicit ram_mb or cpu_millicores must agree with the selected profile.
+   */
+  resource_profile?: (ResourceProfile | null);
   idle_timeout_s?: number | null;
   max_concurrency?: number | null;
   /**

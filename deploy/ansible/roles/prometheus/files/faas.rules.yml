@@ -264,6 +264,84 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
   # ────────────────────────────────────────────────────────────────────
+  # Prometheus and Alertmanager control-plane health.
+  #
+  # Prometheus self-scrapes on loopback so these metrics are available to
+  # the same rule engine that owns the alerting path. These alerts catch
+  # partial failures (rule evaluation, queueing, delivery, or config
+  # reload) before they become an unexplained absence of pages. A complete
+  # Prometheus process failure still requires an external monitor because
+  # a stopped evaluator cannot page about itself.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_observability_control_plane
+    interval: 30s
+    rules:
+      - alert: FaasPrometheusRuleEvaluationFailed
+        expr: increase(prometheus_rule_evaluation_failures_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: page
+          component: prometheus
+          family: prometheus_health
+        annotations:
+          summary: "Prometheus rule evaluation failures detected"
+          description: "Prometheus has recorded one or more rule evaluation failures during the last 10m. Alert and recording rules may be stale; inspect the failed rule group in the Prometheus logs and /rules endpoint before relying on dashboards or pages."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"
+
+      - alert: FaasPrometheusNotificationsDropped
+        expr: increase(prometheus_notifications_dropped_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: page
+          component: prometheus
+          family: prometheus_health
+        annotations:
+          summary: "Prometheus dropped alerts before Alertmanager delivery"
+          description: "Prometheus has dropped one or more notifications during the last 10m. The page path is losing alerts before Alertmanager receives them; check Alertmanager reachability, the notifier queue, and Prometheus logs immediately."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"
+
+      - alert: FaasPrometheusNotificationQueueBacklog
+        expr: |
+          prometheus_notifications_queue_capacity > 0
+          and (
+            prometheus_notifications_queue_length
+            / prometheus_notifications_queue_capacity
+          ) > 0.8
+        for: 10m
+        labels:
+          severity: page
+          component: prometheus
+          family: prometheus_health
+        annotations:
+          summary: "Prometheus notification queue is above 80% capacity"
+          description: "Prometheus has held more than 80% of its notification queue for 10m. Alert delivery is falling behind; check Alertmanager readiness and receiver failures before the queue fills and drops pages."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"
+
+      - alert: FaasAlertmanagerNotificationsFailed
+        expr: increase(alertmanager_notifications_failed_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: page
+          component: alertmanager
+          family: alertmanager_health
+        annotations:
+          summary: "Alertmanager notification delivery is failing"
+          description: "Alertmanager has recorded failed notifications during the last 10m. One or more configured page or ticket integrations may be unreachable; inspect the integration label, receiver configuration, and provider response before assuming pages are delivered."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+
+      - alert: FaasAlertmanagerConfigReloadFailed
+        expr: alertmanager_config_last_reload_successful == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: alertmanager
+          family: alertmanager_health
+        annotations:
+          summary: "Alertmanager configuration reload failed"
+          description: "Alertmanager's most recent configuration reload was unsuccessful for 5m. The previous configuration may still be active, so verify routing and receiver changes before treating the notification path as healthy."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
   # Traffic anomaly recording rules (issue #303, ADR-039).
   # 3-day rolling baseline vs current 5m window. Series:
   #   faas_apid_request_rate_5m:by_route            current rate (reqps)
@@ -821,7 +899,7 @@ groups:
       # a dead alertmanager means alerts evaluate but never page anyone.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasDaemonDown
-        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|vmmd|imaged|builderd|meterd|githubd|alertmanager"} == 0
+        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|vmmd|imaged|builderd|meterd|githubd|prometheus|alertmanager"} == 0
         for: 2m
         labels:
           severity: page
@@ -1403,6 +1481,54 @@ groups:
           description: "githubd_path_filter_total{mode=error|breaker_open} has been ticking for 5m. The page-tier alert (FaasGithubdPathFilterDegraded) fires at 10m; this warn-tier gives you a head start. Run the verify steps in the runbook before the page lands."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubdPathFilterDegraded.md"
 
+      - alert: FaasGithubWebhookDeliveryDead
+        expr: githubd_recovery_queue_items{queue="webhook_delivery",status="dead"} > 0
+        for: 5m
+        labels:
+          severity: page
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd has dead webhook deliveries"
+          description: "At least one authenticated GitHub delivery exhausted its retry budget, so customer deployment work may be missing. Inspect and retry with gregalectl github status / retry-delivery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
+      - alert: FaasGithubCheckUpdateDead
+        expr: githubd_recovery_queue_items{queue="check_update",status="dead"} > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd has dead Check Run updates"
+          description: "At least one GitHub Check Run projection exhausted its retry budget. Deployments continue, but customer GitHub status may be stale. Inspect and retry with gregalectl github status / retry-check."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
+      - alert: FaasGithubRecoveryQueueStalled
+        expr: githubd_recovery_oldest_actionable_seconds{status=~"pending|processing"} > 900
+        for: 5m
+        labels:
+          severity: page
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd {{ $labels.queue }} queue has stalled"
+          description: "The oldest {{ $labels.status }} item has been actionable for more than 15 minutes. Check githubd/apid reachability and GitHub API health before manually retrying dead work."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
+      - alert: FaasGithubRecoveryMetricsFailed
+        expr: githubd_recovery_collect_error == 1
+        for: 5m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd cannot inspect its durable recovery queues"
+          description: "The recovery collector cannot query Postgres, so dead or stalled GitHub work may be hidden. Check database reachability and confirm the github_check_updates migration is applied."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
   # Billing drift detector (ADR-049 §B.1). The reconciler
   # (pkg/billing/reconciler) computes abs(local-pushed) / max(local,
   # pushed) over a rolling window per (account, provider) and
@@ -1433,6 +1559,7 @@ groups:
         annotations:
           summary: "Account {{ $labels.account_id }} drift > 5% for 15m"
           description: "Single-account drift exceeds 5% for 15m (ADR-049 §B.1). The 1h provider-aggregate BillingDrift alert may not fire for a single account if other accounts are quiet. Inspect the meterd_billing_drift_mb_seconds{account_id=…} gauge and Stripe's UsageRecordSummaries API for the affected subscription_item to confirm the gap."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
       - alert: BillingReconcileFailures
         expr: sum by (provider) (rate(meterd_billing_drift_reconcile_failures_total[10m])) > 0
         for: 10m

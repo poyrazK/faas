@@ -20,12 +20,15 @@ import (
 	"encoding/pem"
 	"errors"
 	"io/fs"
+	"math"
 	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // TestRefreshCertExpiryOnce_FindsSoonest sets up three certs in the
@@ -62,7 +65,7 @@ func TestRefreshCertExpiryOnce_FindsSoonest(t *testing.T) {
 
 // TestRefreshCertExpiryOnce_EmptyDir — a fresh daemon's storage dir is
 // empty (no certs minted yet). refreshCertExpiryOnce must leave the
-// gauge unset (Prometheus reports no series for an untouched gauge),
+// gauge unknown (NaN),
 // so the alert's < expression doesn't fire.
 func TestRefreshCertExpiryOnce_EmptyDir(t *testing.T) {
 	ctx := context.Background()
@@ -72,12 +75,8 @@ func TestRefreshCertExpiryOnce_EmptyDir(t *testing.T) {
 	if err := refreshCertExpiryOnce(ctx, root, "", m, nil); err != nil {
 		t.Fatalf("refreshCertExpiryOnce: %v", err)
 	}
-	if got := gaugeDuration(t, m); got != 0 {
-		// prometheus.NewGauge() defaults to 0 and the registry has no
-		// series; gaugeDuration returns 0 for either. The contract the
-		// alert cares about is "no cert → no series", which is what we
-		// assert. PR #345 review tightened this — see issue A.
-		t.Fatalf("empty dir should leave gauge unset (0), got %s", got)
+	if got := testutil.ToFloat64(m.tlsCertExpiry); !math.IsNaN(got) {
+		t.Fatalf("empty dir should leave expiry unknown (NaN), got %v", got)
 	}
 }
 

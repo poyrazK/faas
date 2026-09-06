@@ -12,17 +12,15 @@
 //      Main is the main workload's spec and Sidecars is the
 //      per-sidecar array (or empty when there are no sidecars).
 //
-//   2. Run init sidecars sequentially. type=="init" workloads run
-//      before main; non-zero exit fails the deploy with
-//      failure_class: user_error (AC #1). The supervisor's Max=0
-//      policy (no restarts for init — a failed init is a hard fail)
-//      is enforced by newSupervisorFor's Max=0 branch.
+//   2. Resolve the dependency graph and start each workload once its
+//      dependencies reach started, healthy, or completed_successfully.
+//      Init workloads are implicit completed_successfully prerequisites
+//      of main and long-running sidecars, preserving the original order.
 //
-//   3. Run main + long-running sidecars in parallel. type=="main"
-//      and type=="sidecar" workloads run concurrently, each under
-//      its own Supervisor. A non-essential sidecar crash does NOT
-//      fail the deploy; an essential sidecar or main workload crash
-//      restarts per the supervisor's Max policy (MaxRestarts).
+//   3. Each workload runs under its own Supervisor. A non-essential
+//      sidecar crash does NOT fail the deploy; an essential sidecar or
+//      main workload crash stops the workload set after its restart policy
+//      is exhausted.
 //
 //   4. Characterize the main workload only. The bind-detection
 //      probe (characterize_linux.go) reads AppPID() from the MAIN
@@ -58,6 +56,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,13 +95,15 @@ import (
 // pkg/fcvm/vmm.go::workloadManifest for the rationale and the
 // round-trip test that pins the parsed-equivalence contract.
 type workloadSpec struct {
-	Cmd        []string `json:"cmd,omitempty"`
-	Entrypoint []string `json:"entrypoint,omitempty"`
-	Essential  bool     `json:"essential"`
-	Name       string   `json:"name"`
-	Port       int      `json:"port"`
-	RamMB      int      `json:"ram_mb"`
-	Type       string   `json:"type"` // "main" | "init" | "sidecar"
+	Cmd           []string                 `json:"cmd,omitempty"`
+	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
+	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint    []string                 `json:"entrypoint,omitempty"`
+	Essential     bool                     `json:"essential"`
+	Name          string                   `json:"name"`
+	Port          int                      `json:"port"`
+	RamMB         int                      `json:"ram_mb"`
+	Type          string                   `json:"type"` // "main" | "init" | "sidecar"
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -157,15 +158,64 @@ func discoverRoster(fsys fs.FS) (workloadRoster, error) {
 // working directory, and user. Validate the name before joining it into the
 // overlay path so a malformed roster cannot escape the sidecar directory.
 func loadSidecarManifest(name string) (api.AppManifest, error) {
+	return loadSidecarManifestAt("/", name)
+}
+
+// loadSidecarManifestAt reads a sidecar's immutable image contract from the
+// supplied root. The normal overlay path uses "/"; a full-rootfs deployment
+// keeps the sidecar artifact outside the main pivot root, so runSidecar reads
+// the same contract from that sidecar's own mounted /upper tree.
+func loadSidecarManifestAt(root, name string) (api.AppManifest, error) {
 	if !validSidecarWorkloadName(name) {
 		return api.AppManifest{}, fmt.Errorf("sidecar workload: invalid name %q", name)
 	}
-	path := filepath.Join(api.SidecarWorkloadManifestPath, name, "workload.json")
+	if root == "" {
+		root = "/"
+	}
+	path, err := safeRootPath(root, filepath.Join(strings.TrimPrefix(api.SidecarWorkloadManifestPath, "/"), name, "workload.json"))
+	if err != nil {
+		return api.AppManifest{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return api.AppManifest{}, err
 	}
 	return api.ReadManifest(bytes.NewReader(data))
+}
+
+// safeRootPath resolves an image-relative path while proving the result stays
+// beneath root. Direct-root sidecars are inspected before the child chroots;
+// following an image-provided absolute symlink with os.ReadFile directly would
+// otherwise resolve against the guest-init process root.
+func safeRootPath(root, rel string) (string, error) {
+	if root == "" {
+		root = "/"
+	}
+	if rel == "" || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("root path must be relative")
+	}
+	clean := filepath.Clean(rel)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("root path escapes image root")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(root, clean)
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	relResolved, err := filepath.Rel(resolvedRoot, resolved)
+	if err != nil || relResolved == ".." || strings.HasPrefix(relResolved, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("root path escapes image root")
+	}
+	return resolved, nil
 }
 
 // loadSidecarEnv reads the deployment-specific env overrides staged by vmmd
@@ -238,149 +288,128 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	if log == nil {
 		log = slog.Default()
 	}
-
-	// Defensive cap-2 enforcement (issue #463 / ADR-069 / PR-B
-	// review finding #2). The migrations 00118 + 00119 cap the
-	// per-deployment sidecar count at 2 server-side; guest-init
-	// re-asserts the same limit so a malformed /etc/faas/
-	// workloads.json (e.g. one stamped by an older vmmd, or a
-	// hand-crafted fixture in a metal test) can't trick the
-	// orchestrator into supervising more than 2 sidecars.
-	// Matches SidecarCapMax in pkg/api/limits.go — if the cap
-	// is ever raised, raise both constants together and update
-	// the unit test guest/init/workload_linux_test.go.
 	if len(roster.Sidecars) > 2 {
 		return fmt.Errorf("workload roster: deployment has %d sidecars; cap is 2 (ADR-069 §Decision 1)", len(roster.Sidecars))
 	}
-
-	// Step 1: run init sidecars sequentially (AC #1).
-	for i := range roster.Sidecars {
-		sc := roster.Sidecars[i]
-		if sc.Type != "init" {
-			continue
-		}
-		log.Info("runWorkloads: init sidecar starting",
-			"name", sc.Name, "essential", sc.Essential)
-		// Issue #463 / ADR-069 / ADR-071 / PR-C §3: stamp the
-		// wall-clock start so the sidecar_init_exit envelope
-		// (init_ok / init_failed) carries a meaningful
-		// duration_ms. The start is captured INSIDE the loop
-		// (not above it) so each init sidecar's duration is
-		// per-sidecar, not cumulative across the roster.
-		startedAt := time.Now()
-		sup := newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy)
-		runErr := sup.Run()
-		elapsedMs := time.Since(startedAt).Milliseconds()
-		// Translate the supervisor's terminal error into the
-		// status the audit needs. The supervisor's Run returns
-		// nil on a clean exit; a non-nil error wraps the
-		// sidecar's exit or restart-budget exhaustion (AC #1's
-		// hard fail). We attempt to surface the underlying
-		// exec.ExitError code for the audit so operators see
-		// the real shell exit rather than the supervisor's
-		// "crash-looped after N restart(s)" wrapper. A non
-		//-ExitError (e.g. supervisor-internal panic-recovered)
-		// falls back to -1 and gets recorded as such.
-		exitCode := 0
-		status := "init_ok"
-		if runErr != nil {
-			status = "init_failed"
-			var ee *exec.ExitError
-			if errors.As(runErr, &ee) {
-				exitCode = ee.ExitCode()
-			} else {
-				exitCode = -1
-			}
-		}
-		// Send the sidecar_init_exit envelope AFTER the
-		// supervisor returns, so the audit captures the
-		// terminal state. A send error is logged + ignored
-		// (the supervisor's terminal state remains the
-		// source of truth for "did the deploy succeed"); we
-		// never silently fail a deploy because the audit
-		// signal didn't make it home.
-		if sendErr := sidecarProxy.SendInitExit(sc.Name, status, exitCode, elapsedMs); sendErr != nil {
-			log.Warn("runWorkloads: sidecar init_exit send failed",
-				"name", sc.Name, "status", status, "err", sendErr)
-		}
-		if runErr != nil {
-			// AC #1: init non-zero exit → user_error.
-			log.Error("runWorkloads: init sidecar failed",
-				"name", sc.Name, "essential", sc.Essential,
-				"exit_code", exitCode, "duration_ms", elapsedMs, "err", runErr)
-			return fmt.Errorf("init sidecar %q failed: %w", sc.Name, runErr)
-		}
-		log.Info("runWorkloads: init sidecar ok",
-			"name", sc.Name, "duration_ms", elapsedMs)
+	deps, err := normalizeWorkloadDependencies(roster)
+	if err != nil {
+		return err
 	}
 
-	// Step 2: spawn main + type="sidecar" workloads in parallel.
+	type workloadRuntime struct {
+		spec  workloadSpec
+		sup   *Supervisor
+		state *workloadDependencyState
+	}
+	runtimes := make(map[string]*workloadRuntime, 1+len(roster.Sidecars))
 	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log)
-	supervisors := []*Supervisor{mainSup}
-	for i := range roster.Sidecars {
-		sc := roster.Sidecars[i]
-		if sc.Type != "sidecar" {
-			continue
-		}
-		supervisors = append(supervisors, newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy))
+	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
+	for _, sc := range roster.Sidecars {
+		runtimes[sc.Name] = &workloadRuntime{spec: sc, sup: newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy), state: newWorkloadDependencyState()}
+	}
+	orderedNames, err := workloadStartOrder(roster, deps)
+	if err != nil {
+		return err
+	}
+	for _, rt := range runtimes {
+		rt := rt
+		rt.sup.onStart = func() { close(rt.state.started) }
+		rt.sup.onHealthy = func() { close(rt.state.healthy) }
 	}
 
-	// ADR-051 Phase 4 (Slice A PR-B / issue #463 / ADR-069):
-	// characterize the main workload only. A sidecar's TCP listener
-	// would mis-classify the boot class (e.g. an init sidecar that
-	// binds :8080 would be observed as the main app's listener). The
-	// probe (characterize_linux.go) reads AppPID() / WaitForExit /
-	// RingBufferTail from the main supervisor; sidecar supervisors
-	// carry their own atomic state but the characterize probe never
-	// reads them. The probe goroutine races the supervisor goroutines
-	// so the bind-walk finds the customer's listener without blocking
-	// the boot.
+	// The characterization probe observes only the main workload's PID.
 	go runCharacterizationForSup(mainSup, mainManifest)
 
-	// Step 3: run every long-running supervisor in its own
-	// goroutine and wait for all of them to exit. A
-	// non-essential sidecar crash is contained by its
-	// supervisor (Max=0 policy); an essential sidecar or
-	// main workload crash triggers the supervisor's restart
-	// policy and eventually a non-zero Run() return.
-	//
-	// Panic-safety (PR-B review finding #4): `defer wg.Done()`
-	// is the FIRST defer so it runs even if a later recover()
-	// re-panics. A bare recover turns a supervisor-panic into
-	// a non-fatal log line so one bad sidecar doesn't take
-	// down WaitGroup.Wait() — the rest of the workloads keep
-	// running. mainSup is intentionally NOT recovered: a
-	// panic in the main supervisor is the deploy's terminal
-	// failure and must propagate to the orchestrator's
-	// return value.
+	coordCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var wg sync.WaitGroup
-	wg.Add(len(supervisors))
-	for i, sup := range supervisors {
-		sup := sup
-		isMain := i == 0 // supervisors[0] is mainSup (see Step 2)
+	var resultMu sync.Mutex
+	var mainErr error
+	stopAll := func() {
+		for _, rt := range runtimes {
+			rt.sup.RequestStop()
+			if err := rt.sup.ForwardSignal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				log.Debug("runWorkloads: stop signal forwarding failed", "name", rt.spec.Name, "err", err)
+			}
+		}
+	}
+	for _, name := range orderedNames {
+		rt := runtimes[name]
+		name, rt := name, rt
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if isMain {
-				_ = sup.Run()
-				return
-			}
-			defer func() {
-				if r := recover(); r != nil {
-					log.Error("runWorkloads: sidecar supervisor panicked",
-						"index", i, "recover", fmt.Sprintf("%v", r))
+			for _, dep := range deps[name] {
+				if depErr := waitForWorkloadDependency(coordCtx, dep, runtimes[dep.Name].state); depErr != nil {
+					rt.state.setResult(fmt.Errorf("workload %q cannot start: %w", name, depErr))
+					if name == "main" || rt.spec.Essential {
+						resultMu.Lock()
+						if mainErr == nil {
+							mainErr = rt.state.result()
+						}
+						resultMu.Unlock()
+						cancel()
+						stopAll()
+					}
+					return
 				}
-			}()
-			_ = sup.Run()
+			}
+			select {
+			case <-coordCtx.Done():
+				rt.state.setResult(coordCtx.Err())
+				return
+			default:
+			}
+			startedAt := time.Now()
+			log.Info("runWorkloads: workload starting", "name", name, "type", rt.spec.Type, "essential", rt.spec.Essential)
+			var runErr error
+			if name == "main" {
+				runErr = rt.sup.Run()
+			} else {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							runErr = fmt.Errorf("workload supervisor panicked: %v", r)
+							log.Error("runWorkloads: sidecar supervisor panicked", "name", name, "recover", fmt.Sprintf("%v", r))
+						}
+					}()
+					runErr = rt.sup.Run()
+				}()
+			}
+			rt.state.setResult(runErr)
+			if rt.spec.Type == "init" {
+				status, exitCode := "init_ok", 0
+				if runErr != nil {
+					status, exitCode = "init_failed", -1
+					var ee *exec.ExitError
+					if errors.As(runErr, &ee) {
+						exitCode = ee.ExitCode()
+					}
+				}
+				if sidecarProxy != nil {
+					if sendErr := sidecarProxy.SendInitExit(name, status, exitCode, time.Since(startedAt).Milliseconds()); sendErr != nil {
+						log.Warn("runWorkloads: sidecar init_exit send failed", "name", name, "status", status, "err", sendErr)
+					}
+				}
+			}
+			if runErr != nil {
+				critical := name == "main" || rt.spec.Essential
+				log.Error("runWorkloads: workload exited with error", "name", name, "essential", rt.spec.Essential, "err", runErr)
+				if critical {
+					resultMu.Lock()
+					if mainErr == nil {
+						mainErr = runErr
+					}
+					resultMu.Unlock()
+					cancel()
+					stopAll()
+				}
+			}
 		}()
 	}
 	wg.Wait()
-
-	// The main workload's exit code is the deploy's exit
-	// code; non-essential sidecar exits are logged but
-	// ignored. The supervisor's lastErr() surfaces the
-	// terminal error from Run().
-	if lastErr := mainSup.lastErr(); lastErr != nil {
-		return lastErr
+	if mainErr != nil {
+		return mainErr
 	}
 	return nil
 }
@@ -395,7 +424,7 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, apiEnv map[string]string, log *slog.Logger) *Supervisor {
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
 	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
-	supRef.Start = func() error { return runAppWithRAM(manifest, secrets, apiEnv, supRef, spec.RamMB) }
+	supRef.Start = func() error { return runAppWithRAM(manifest, secrets, apiEnv, supRef, spec.RamMB, spec.CPUMillicores) }
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: main restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
@@ -406,9 +435,9 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 // (issue #463 / ADR-069 / PR-B + PR-C §4). New sidecar layers
 // carry the image's effective command in a name-scoped manifest;
 // older layers fall back to the image's /usr/local/bin/start.sh
-// convention or the roster command. The essential flag drives
-// the restart policy: non-essential = Max=0 (no restart,
-// log-and-continue); essential = Max=MaxRestarts (restart
+// convention or the roster command. Init workloads run once;
+// non-essential sidecars use Max=0 (log-and-continue), and
+// essential long-running sidecars use Max=MaxRestarts (restart
 // per the platform contract). PR-C §4 wires the supervisor's
 // OnCrash hook to call SendRestart on the proxy so vmmd
 // can increment vmmd_sidecar_restart_total{app, sidecar}.
@@ -416,8 +445,8 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 // keeps the OnCrash hook log-only.
 func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy) *Supervisor {
 	maxRestarts := MaxRestarts
-	if !spec.Essential {
-		maxRestarts = 0 // non-essential sidecar: log crash, do not restart
+	if spec.Type == "init" || !spec.Essential {
+		maxRestarts = 0 // init and non-essential sidecars do not restart
 	}
 	supRef := &Supervisor{Max: maxRestarts, Policy: api.RestartPolicyOnFailure}
 	supRef.Start = func() error { return runSidecar(spec, secrets, apiEnv, supRef) }
@@ -451,12 +480,25 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 // The effective command and image defaults are baked into the sidecar layer;
 // the roster command fields are retained for legacy layers.
 func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Supervisor) error {
+	directRoot, rootErr := fullRootfsSidecarRoot(spec.Name)
+	if rootErr != nil {
+		return fmt.Errorf("run sidecar %s: resolve direct root: %w", spec.Name, rootErr)
+	}
 	// New sidecar layers carry an immutable AppManifest under a name-scoped
 	// path. It is the only source that can preserve the image's Entrypoint,
 	// Cmd, default env, working directory, and user without exposing those values on
 	// the wake wire. Older layers fall back to the roster fields so existing
 	// snapshots remain bootable during rollout.
-	baked, manifestErr := loadSidecarManifest(spec.Name)
+	var baked api.AppManifest
+	var manifestErr error
+	if directRoot != "" {
+		baked, manifestErr = loadSidecarManifestAt(directRoot, spec.Name)
+	} else {
+		baked, manifestErr = loadSidecarManifest(spec.Name)
+	}
+	if directRoot != "" && isNotExist(manifestErr) {
+		return fmt.Errorf("run sidecar %s: direct-root image is missing workload manifest", spec.Name)
+	}
 	var (
 		argv0 string
 		argv  []string
@@ -504,15 +546,35 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 	if port > 0 {
 		env = StampOverridePortEnv(env, port)
 	}
+	if directRoot != "" {
+		// exec.Command resolves bare names against the guest-init process's
+		// host PATH before the child chroots. Resolve them against the image
+		// PATH instead, and pass the resulting image-absolute path to execve.
+		argv0 = resolveSidecarCommandPath(directRoot, argv0, env)
+	}
 	cmd := exec.Command(argv0, argv...)
 	cmd.Env = env
+	var procAttr syscall.SysProcAttr
+	if directRoot != "" {
+		// A full-rootfs sidecar is a real OCI root, not a lower layer in
+		// the main overlay. Give it a private mount namespace before
+		// chrooting so a root user inside the image cannot alter mounts
+		// visible to the main workload or its sibling sidecars.
+		procAttr.Unshareflags = syscall.CLONE_NEWNS
+		procAttr.Chroot = directRoot
+	}
 	if manifestErr == nil {
 		cmd.Dir = baked.EffectiveWorkingDir()
-		if uid := lookupUID(baked.EffectiveUser()); uid > 0 {
-			cmd.SysProcAttr = &syscall.SysProcAttr{
-				Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
-			}
+		uid := lookupUID(baked.EffectiveUser())
+		if directRoot != "" {
+			uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
 		}
+		if uid > 0 {
+			procAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
+		}
+	}
+	if directRoot != "" || procAttr.Credential != nil {
+		cmd.SysProcAttr = &procAttr
 	}
 	// Issue #463 / ADR-069 / PR-B AC #4: per-workload
 	// in-guest cgroup v2 partition. mkdir + write
@@ -522,7 +584,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 	// invalid safe name or failed write aborts the
 	// workload before exec; otherwise it could run
 	// without its per-workload cap.
-	leaf, cgroupErr := prepareWorkloadCgroup(spec.Type, spec.Name, spec.RamMB, slog.Default())
+	leaf, cgroupErr := prepareWorkloadCgroup(spec.Type, spec.Name, spec.RamMB, slog.Default(), spec.CPUMillicores)
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare sidecar workload cgroup %q: %w", spec.Name, cgroupErr)
 	}
@@ -548,6 +610,21 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
+	if sup != nil {
+		sup.markStarted()
+		if sup.onHealthy != nil && manifestErr == nil {
+			uid := lookupUID(baked.EffectiveUser())
+			if directRoot != "" {
+				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+			}
+			if err := runStartupHealthcheck(baked, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
+			}
+		}
+		sup.markHealthy()
+	}
 	// Issue #463 / ADR-069 / PR-B AC #4: place the
 	// forked child into the cgroup leaf so the OOM
 	// killer scopes to the leaf (not the workload's
@@ -560,6 +637,113 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
 	return nil
+}
+
+// fullRootfsSidecarRoot returns the mounted root for a sidecar when the main
+// guest boot selected the full-rootfs path. An absent mount is the optimized
+// shared-base path and returns an empty string so existing overlay behavior is
+// unchanged.
+func fullRootfsSidecarRoot(name string) (string, error) {
+	return fullRootfsSidecarRootAt("/", name)
+}
+
+func fullRootfsMarkerPresent(root string) (bool, error) {
+	if root == "" {
+		root = "/"
+	}
+	marker := filepath.Join(root, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
+	info, err := os.Lstat(marker)
+	if err != nil {
+		if isNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("full-rootfs marker is not a regular file")
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return false, err
+	}
+	if string(data) != api.FullRootfsMarkerValue {
+		return false, fmt.Errorf("invalid full-rootfs marker payload")
+	}
+	return true, nil
+}
+
+func fullRootfsSidecarRootAt(root, name string) (string, error) {
+	if !validSidecarWorkloadName(name) {
+		return "", fmt.Errorf("invalid workload name %q", name)
+	}
+	if root == "" {
+		root = "/"
+	}
+	fullRootfs, err := fullRootfsMarkerPresent(root)
+	if err != nil {
+		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
+	}
+	if !fullRootfs {
+		return "", nil
+	}
+	path := filepath.Join(root, strings.TrimPrefix(api.FullRootfsSidecarMountPath, "/"), name, "upper")
+	info, err := os.Lstat(path)
+	if err != nil {
+		if isNotExist(err) {
+			return "", fmt.Errorf("full-rootfs sidecar root %s is missing", path)
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("mounted root %s is a symlink", path)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("mounted root %s is not a directory", path)
+	}
+	return path, nil
+}
+
+const defaultSidecarPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// resolveSidecarCommandPath resolves a bare OCI command name inside a direct
+// sidecar root. exec.Command's normal LookPath runs before Chroot and would
+// therefore consult the guest-init binary's PATH. Returning an image-absolute
+// candidate also makes a missing command fail inside the chroot rather than
+// accidentally selecting a host executable.
+func resolveSidecarCommandPath(root, command string, env []string) string {
+	if root == "" || strings.Contains(command, "/") {
+		return command
+	}
+	pathValue := ""
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			pathValue = strings.TrimPrefix(kv, "PATH=")
+			break
+		}
+	}
+	if pathValue == "" {
+		pathValue = defaultSidecarPath
+	}
+	var firstCandidate string
+	for _, dir := range strings.Split(pathValue, ":") {
+		if dir == "" || !filepath.IsAbs(dir) {
+			continue
+		}
+		dir = filepath.Clean(dir)
+		candidate := filepath.Join(dir, command)
+		if firstCandidate == "" {
+			firstCandidate = candidate
+		}
+		imagePath := filepath.Join(root, strings.TrimLeft(dir, "/"), command)
+		info, err := os.Stat(imagePath)
+		if err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate
+		}
+	}
+	if firstCandidate != "" {
+		return firstCandidate
+	}
+	return "/" + command
 }
 
 // resolveSidecarCommand (PR-C §6) is the pure-argv derivation

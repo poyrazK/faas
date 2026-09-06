@@ -21,10 +21,14 @@ T = TypeVar("T", bound="AccountResponse")
 
 @_attrs_define
 class AccountResponse:
-    """Account profile: id, email, plan, status, limits snapshot, current-month usage, and total app count."""
+    """Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, and total app
+    count.
+
+    """
 
     id: str
     email: str
+    email_verified: bool
     plan: AccountResponsePlan
     status: AccountResponseStatus
     limits: AccountLimits
@@ -32,6 +36,8 @@ class AccountResponse:
     hours, and max app-layer bytes per build."""
     usage_gb_hours: float
     app_count: int
+    email_verification_grace_ends_at: datetime.datetime | Unset = UNSET
+    """30-day verification deadline; present only while email_verified is false."""
     github_install_id: None | str | Unset = UNSET
     plan_change_status: str | Unset = UNSET
     requested_plan: AccountResponseRequestedPlan | Unset = UNSET
@@ -43,6 +49,8 @@ class AccountResponse:
 
         email = self.email
 
+        email_verified = self.email_verified
+
         plan: str = self.plan
 
         status: str = self.status
@@ -52,6 +60,10 @@ class AccountResponse:
         usage_gb_hours = self.usage_gb_hours
 
         app_count = self.app_count
+
+        email_verification_grace_ends_at: str | Unset = UNSET
+        if not isinstance(self.email_verification_grace_ends_at, Unset):
+            email_verification_grace_ends_at = self.email_verification_grace_ends_at.isoformat()
 
         github_install_id: None | str | Unset
         if isinstance(self.github_install_id, Unset):
@@ -75,6 +87,7 @@ class AccountResponse:
             {
                 "id": id,
                 "email": email,
+                "email_verified": email_verified,
                 "plan": plan,
                 "status": status,
                 "limits": limits,
@@ -82,6 +95,8 @@ class AccountResponse:
                 "app_count": app_count,
             }
         )
+        if email_verification_grace_ends_at is not UNSET:
+            field_dict["email_verification_grace_ends_at"] = email_verification_grace_ends_at
         if github_install_id is not UNSET:
             field_dict["github_install_id"] = github_install_id
         if plan_change_status is not UNSET:
@@ -102,6 +117,8 @@ class AccountResponse:
 
         email = d.pop("email")
 
+        email_verified = d.pop("email_verified")
+
         plan = check_account_response_plan(d.pop("plan"))
 
         status = check_account_response_status(d.pop("status"))
@@ -111,6 +128,13 @@ class AccountResponse:
         usage_gb_hours = d.pop("usage_gb_hours")
 
         app_count = d.pop("app_count")
+
+        _email_verification_grace_ends_at = d.pop("email_verification_grace_ends_at", UNSET)
+        email_verification_grace_ends_at: datetime.datetime | Unset
+        if isinstance(_email_verification_grace_ends_at, Unset):
+            email_verification_grace_ends_at = UNSET
+        else:
+            email_verification_grace_ends_at = datetime.datetime.fromisoformat(_email_verification_grace_ends_at)
 
         def _parse_github_install_id(data: object) -> None | str | Unset:
             if data is None:
@@ -140,11 +164,13 @@ class AccountResponse:
         account_response = cls(
             id=id,
             email=email,
+            email_verified=email_verified,
             plan=plan,
             status=status,
             limits=limits,
             usage_gb_hours=usage_gb_hours,
             app_count=app_count,
+            email_verification_grace_ends_at=email_verification_grace_ends_at,
             github_install_id=github_install_id,
             plan_change_status=plan_change_status,
             requested_plan=requested_plan,

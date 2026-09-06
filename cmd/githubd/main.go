@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"filippo.io/age"
@@ -184,8 +185,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	installsAdapter := newStateInstallsAdapter(pool)
 	storeAdapter := newStateBindingsAdapter(pool)
 	source := newInstallationSourceFetcher(installsAdapter, gitFetcher, identity, log)
+	webhookSecret := loadGithubWebhookSecret(os.Getenv)
+	deliveryStore := githubd.NewPGWebhookDeliveryStore(pool)
+	ops.Registry().MustRegister(githubd.NewRecoveryCollector(pool))
 
-	// PR-D / ADR-012 §7 — per-tenant webhook secret resolver. The
+	// Legacy installation-scoped webhook secret resolver. The
 	// pool is the same one state.Store wires through; the adapter
 	// exposes the bytea Get/Upsert query shape pkg/githubd
 	// expects. 60s TTL is the load-bearing default — short enough
@@ -286,6 +290,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// above (PR-H hoisted them so the webhook dispatch path can
 	// reach them even when OAuth + Checks are disabled).
 	var realSvc *githubd.RealService
+	var checks *githubd.ChecksAPI
+	var checksErr error
 	if appID := deps.readAppID(); appID != "" {
 		keyPEM, kerr := deps.readKeyPEM()
 		if kerr != nil {
@@ -307,10 +313,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("githubd: GitHub App credentials not provisioned; wiring unavailable ChangedFiles stub (path-filter falls back to full rebuild with error-mode metric)")
 			} else {
 				tokens := githubd.NewTokenCache(auth, 5*time.Minute)
-				checks, cerr := githubd.NewChecksAPI(tokens, deps.httpClient(), storeAdapter)
-				if cerr != nil {
-					return fmt.Errorf("githubd: new checks api: %w", cerr)
+				source.WithTokenProvider(tokens)
+				checks, checksErr = githubd.NewChecksAPI(tokens, deps.httpClient(), storeAdapter)
+				if checksErr != nil {
+					return fmt.Errorf("githubd: new checks api: %w", checksErr)
 				}
+				checks.WithCheckRunStore(deliveryStore)
 				// PR-C: load the host age keypair so the install
 				// token can be sealed at rest (SealOne at mint)
 				// and unsealed at cold-start rehydrate (Open).
@@ -379,6 +387,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				webhookSvc.WriteCheck = func(ctx context.Context, repoFullName, commitSHA string, phase githubdgrpc.CheckPhase) error {
 					return githubd.WriteCheckCoalesced(ctx, checks, repoFullName, commitSHA, phase, "", "")
 				}
+				webhookSvc.WriteAppCheck = func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, summary string) error {
+					return checks.WriteAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, phase, "", summary)
+				}
+				webhookSvc.WriteSkippedCheckForInstallation = checks.WriteSkippedCheckForInstallation
 				// PR-A's preview Check Run seams were
 				// declared on Service but never wired to the
 				// live ChecksAPI — every preview event
@@ -387,8 +399,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// PR-1 leaf 3 closes the gap (and adds the
 				// new destroy-comment seam alongside).
 				webhookSvc.WritePreviewCheck = checks.WritePreviewCheck
+				webhookSvc.WritePreviewCheckForInstallation = checks.WritePreviewCheckForInstallation
 				webhookSvc.WritePreviewCheckForkRefused = checks.WritePreviewCheckForkRefused
-				webhookSvc.WritePreviewDestroyComment = checks.WritePreviewDestroyComment
+				webhookSvc.WritePreviewCheckForkRefusedForInstallation = checks.WritePreviewCheckForkRefusedForInstallation
 				log.Info("githubd: OAuth + Checks wired", "app_id", appID)
 			}
 		}
@@ -401,6 +414,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// a static configuration error).
 		webhookSvc.ChangedFiles = githubd.NewBreakerChangedFiles(githubd.NewUnavailableChangedFiles(), deps.now)
 		log.Warn("githubd: GitHub App credentials not provisioned; wiring unavailable ChangedFiles stub (path-filter falls back to full rebuild with error-mode metric)")
+	}
+
+	if checks != nil {
+		checkUpdates := githubd.NewPGCheckUpdateStore(pool)
+		go githubd.RunCheckUpdateWorker(ctx, checkUpdates, func(workerCtx context.Context, deploymentID string) error {
+			return syncDeploymentCheck(workerCtx, pool, checks, deploymentID)
+		}, log)
 	}
 
 	// The gRPC server hands out the RealService (full slice 8
@@ -416,17 +436,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// audit + reconcile + sync.Mutex-free observer paths).
 	//
 	// Issue #571 / PR-A2: githubd /readyz probe. Three signals —
-	// PG ping (binding store / secret resolver both round-trip
+	// PG ping (binding store / delivery inbox both round-trip
 	// the pool on every push), GitHub App credentials loaded
 	// (realSvc != nil; nil means OAuth + Checks are unavailable
 	// and the dispatcher falls back to full fan-out with the
-	// breaker_open metric label), and the webhook secret
-	// resolver wired (always set in production; nil = deploy
-	// misconfig where the per-tenant path fell back to the
-	// platform-wide env).
+	// breaker_open metric label), and the GitHub App-level webhook secret
+	// loaded. The scoped resolver is compatibility-only and does not make a
+	// standard GitHub delivery ready.
 	githubdProbe := githubd.BuildReadinessProbe(ctx, pool,
 		func() bool { return realSvc != nil },
-		func() bool { return secretResolver != nil },
+		func() bool { return len(webhookSecret) != 0 },
 	)
 	githubdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("githubd", ready, reason)
@@ -444,6 +463,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		TLSKeyPath:     cfg.TLSKeyPath,
 		TLSCAPath:      cfg.TLSCAPath,
 		SecretResolver: secretResolver,
+		WebhookSecret:  webhookSecret,
+		Deliveries:     deliveryStore,
 		ReadyFunc:      githubdProbe.ReadyFunc(),
 		ReasonFunc:     githubdProbe.ReasonFunc(),
 	}
@@ -471,6 +492,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("githubd stopping")
 		return nil
 	}
+}
+
+func loadGithubWebhookSecret(getenv func(string) string) []byte {
+	raw := strings.TrimSpace(getenv("FAAS_GITHUB_WEBHOOK_SECRET"))
+	if raw == "" {
+		raw = strings.TrimSpace(getenv("FAAS_WEBHOOK_SECRET"))
+	}
+	if raw == "" {
+		return nil
+	}
+	return []byte(raw)
 }
 
 // buildGithubdReconcileService constructs the githubd-side

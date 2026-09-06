@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -569,6 +570,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runObjectStorageRecovery(ctx)
+		go srv.runObjectStorageAccounting(ctx)
+		go srv.runManagedPostgresReconciler(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -1214,6 +1218,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv))
+	objectRegistry, err := objectstorage.Load(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid object storage configuration: %w", err)
+	}
+	srv.WithObjectStorage(objectRegistry)
+	managedPostgresService, managedPostgresReconciler, err := loadManagedPostgres(deps.pool, deps.getenv, log)
+	if err != nil {
+		return fmt.Errorf("apid managed postgres configuration: %w", err)
+	}
+	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler)
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the

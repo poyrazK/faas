@@ -146,6 +146,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		LayerKey:         app.GetLayerKey(),
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
+		CPUMillicores:    int(app.GetCpuMillicores()),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: plaintext api_env channel. apid
@@ -299,6 +300,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		LayerKey:         app.GetLayerKey(),
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
+		CPUMillicores:    int(app.GetCpuMillicores()),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: see toWakeRequest's APIEnvEntries
@@ -435,15 +437,34 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 	for _, p := range pbs {
 		sealedEnv := sealedFromProto(p.GetSealedEnv())
 		out = append(out, fcvm.WorkloadSpec{
-			Name:       p.GetName(),
-			Type:       p.GetType(),
-			Image:      p.GetImage(),
-			StorageKey: p.GetStorageKey(),
-			DriveID:    p.GetDriveSlot(),
-			RamMB:      int(p.GetRamMb()),
-			Port:       int(p.GetPort()),
-			Essential:  p.GetEssential(),
-			SealedEnv:  sealedEnv,
+			Name:          p.GetName(),
+			Type:          p.GetType(),
+			Image:         p.GetImage(),
+			StorageKey:    p.GetStorageKey(),
+			DriveID:       p.GetDriveSlot(),
+			RamMB:         int(p.GetRamMb()),
+			CPUMillicores: int(p.GetCpuMillicores()),
+			Port:          int(p.GetPort()),
+			Essential:     p.GetEssential(),
+			SealedEnv:     sealedEnv,
+			DependsOn:     workloadDependenciesFromProto(p.GetDependsOn()),
+		})
+	}
+	return out
+}
+
+func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.WorkloadDependency {
+	if len(pbs) == 0 {
+		return nil
+	}
+	out := make([]api.WorkloadDependency, 0, len(pbs))
+	for _, p := range pbs {
+		if p == nil {
+			continue
+		}
+		out = append(out, api.WorkloadDependency{
+			Name:      p.GetName(),
+			Condition: api.WorkloadDependencyCondition(p.GetCondition()),
 		})
 	}
 	return out

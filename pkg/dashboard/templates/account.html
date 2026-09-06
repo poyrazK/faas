@@ -33,6 +33,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     <h1>Account</h1>
     <p>Signed in as <code>{{.Account.Email}}</code> on the <strong>{{.Account.Plan}}</strong> plan.</p>
 
@@ -61,9 +62,18 @@
                 <td>{{.CreatedAt}}</td>
                 <td>{{.LastUsedAt}}</td>
                 <td>
-                  <form class="inline" method="POST" action="/dashboard/account/keys/{{.ID}}/delete">
-                    <button type="submit">Delete</button>
-                  </form>
+                  {{if .CanRevoke}}
+                    <form method="POST" action="/dashboard/account/keys/{{.ID}}/delete">
+                      <input type="hidden" name="csrf_token" value="{{$d.KeyDeleteConfirmToken}}">
+                      <label>
+                        Type <code>{{.Prefix}}</code> to confirm:
+                        <input type="text" name="confirmation" required autocomplete="off" aria-label="Type {{.Prefix}} to confirm API key deletion">
+                      </label>
+                      <button type="submit">Delete</button>
+                    </form>
+                  {{else}}
+                    Revoked
+                  {{end}}
                 </td>
               </tr>
             {{end}}
@@ -75,9 +85,10 @@
 
       <h2>Plan</h2>
       <form method="POST" action="/dashboard/account/plan">
+        <input type="hidden" name="csrf_token" value="{{.Data.PlanConfirmToken}}">
         <label>
           Change plan:
-          <select name="plan">
+          <select name="plan" required>
             <option value="free" {{if eq .Account.Plan "free"}}selected{{end}}>Free</option>
             <option value="hobby" {{if eq .Account.Plan "hobby"}}selected{{end}}>Hobby</option>
             <option value="pro" {{if eq .Account.Plan "pro"}}selected{{end}}>Pro</option>

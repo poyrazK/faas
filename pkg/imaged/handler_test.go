@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -180,6 +181,22 @@ func (b *fakeBuilder) BuildBaseFromStaging(ctx context.Context, _ string, in roo
 	return rootfs.BaseBuildResult{}, nil
 }
 
+// BuildFullRootfs (M-3 commit 5+6) is part of the LayerBuilder
+// interface. The full-rootfs build path (ADR-141 §Decision 1)
+// bypasses the two-drive shared-base path; the fake streams a
+// small placeholder via Storage.Put so dispatchFullRootfs /
+// buildFullRootfsLayer tests stay KVM-free.
+func (b *fakeBuilder) BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error) {
+	b.calls = append(b.calls, rootfs.BuildInput{Plan: in.Plan})
+	if in.Storage != nil && in.StorageKey != "" {
+		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4 full-rootfs")); err != nil {
+			return rootfs.BuildResult{}, err
+		}
+		return rootfs.BuildResult{ImageKey: in.StorageKey, ContentBytes: b.bytesOut}, nil
+	}
+	return rootfs.BuildResult{ContentBytes: b.bytesOut}, nil
+}
+
 // fakeNotifier records every Notify so tests can assert fan-out.
 type fakeNotifier struct {
 	calls []notifyCall
@@ -239,6 +256,21 @@ func newTestHarness(t *testing.T, kind state.DeploymentKind, plan api.Plan,
 		store: s, notif: &fakeNotifier{}, bld: &fakeBuilder{},
 		app: app, dep: dep, acct: acct, appsR: appsR,
 	}
+}
+
+// createReplacementDeployment persists h.dep as a new row and makes it the
+// harness target. CreateDeployment is insert-only in production, so tests that
+// add overrides after constructing the harness must not re-use the original
+// deployment ID.
+func (h *testHarness) createReplacementDeployment(t *testing.T) {
+	t.Helper()
+	h.dep.ID = ""
+	h.dep.CreatedAt = time.Time{}
+	dep, err := h.store.CreateDeployment(context.Background(), h.dep)
+	if err != nil {
+		t.Fatalf("create replacement deployment: %v", err)
+	}
+	h.dep = dep
 }
 
 // TestHandleDeploymentPrimesNotLive walks an image-kind deployment up to the
@@ -842,9 +874,7 @@ func TestHandleDeployment_HandlerOverrideWinsOverImageCmd(t *testing.T) {
 func TestHandleDeployment_OverrideEntrypointWinsOverImageCmd(t *testing.T) {
 	h := newTestHarness(t, state.DeploymentKindImage, api.Plan("hobby"), "")
 	h.dep.OverrideEntrypoint = []string{"/usr/local/bin/custom-runner"}
-	if _, err := h.store.CreateDeployment(context.Background(), h.dep); err != nil {
-		t.Fatalf("re-seed deployment with override: %v", err)
-	}
+	h.createReplacementDeployment(t)
 	puller := fakePuller{
 		digest: "sha256:abc",
 		cfg:    oci.ImageConfig{Cmd: []string{"node", "server.js"}},
@@ -874,9 +904,7 @@ func TestHandleDeployment_OverrideEnvMergesWithImageEnv(t *testing.T) {
 	override := map[string]string{"LOG_LEVEL": "debug", "IMAGE_VER": "9.9.9"}
 	overrideRaw, _ := json.Marshal(override)
 	h.dep.OverrideEnv = overrideRaw
-	if _, err := h.store.CreateDeployment(context.Background(), h.dep); err != nil {
-		t.Fatalf("re-seed deployment: %v", err)
-	}
+	h.createReplacementDeployment(t)
 	puller := fakePuller{
 		digest: "sha256:abc",
 		cfg: oci.ImageConfig{
@@ -913,9 +941,7 @@ func TestHandleDeployment_OverrideEnvMergesWithImageEnv(t *testing.T) {
 func TestHandleDeployment_OverridePortStampsManifest(t *testing.T) {
 	h := newTestHarness(t, state.DeploymentKindImage, api.Plan("hobby"), "")
 	h.dep.OverridePort = 9090
-	if _, err := h.store.CreateDeployment(context.Background(), h.dep); err != nil {
-		t.Fatalf("re-seed deployment: %v", err)
-	}
+	h.createReplacementDeployment(t)
 	puller := fakePuller{digest: "sha256:abc", cfg: oci.ImageConfig{Cmd: []string{"node"}}}
 	handler := New(h.store, h.notif, puller, h.bld, "./init", h.appsR, silentLogger())
 
@@ -939,9 +965,7 @@ func TestHandleDeployment_OverridePortStampsManifest(t *testing.T) {
 func TestBuildFunctionLayer_OverrideEntrypointWinsOverRuntimeDefault(t *testing.T) {
 	h := newFunctionTestHarness(t, api.PlanHobby, RuntimeNode22)
 	h.dep.OverrideEntrypoint = []string{"/usr/local/bin/custom", "--port", "9090"}
-	if _, err := h.store.CreateDeployment(context.Background(), h.dep); err != nil {
-		t.Fatalf("re-seed deployment: %v", err)
-	}
+	h.createReplacementDeployment(t)
 	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 	handler.WithFunctionRunnerNode22("/runners/node22")
 
@@ -1067,6 +1091,10 @@ func (panicBuilder) BuildBase(_ context.Context, _ rootfs.BaseBuildInput) (rootf
 }
 
 func (panicBuilder) BuildBaseFromStaging(_ context.Context, _ string, _ rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
+	panic("boom")
+}
+
+func (panicBuilder) BuildFullRootfs(_ context.Context, _ rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error) {
 	panic("boom")
 }
 

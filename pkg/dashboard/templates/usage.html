@@ -16,6 +16,16 @@
     .meter > div { background: #4f46e5; height: 100%; }
     .meter.over > div { background: #dc2626; }
     .kv { font-family: ui-monospace, Menlo, monospace; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin: 1rem 0 1.5rem; }
+    .summary article { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; }
+    .summary small { color: #888; display: block; }
+    table { border-collapse: collapse; width: 100%; margin: 0.75rem 0 1.5rem; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.55rem 0.4rem; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    .trend { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; overflow-x: auto; }
+    .trend svg { display: block; max-width: 100%; height: auto; }
+    .muted { color: #888; }
+    @media (max-width: 700px) { table { font-size: 0.85rem; } th, td { padding: 0.45rem 0.2rem; } }
   </style>
 </head>
 <body>
@@ -32,6 +42,7 @@
     </nav>
   </header>
   <main>
+    {{template "email-verification-banner" .}}
     <h1>Usage · {{.Data.Month}}</h1>
     {{if .Data}}
       {{$d := .Data}}
@@ -45,6 +56,47 @@
       {{if gt $d.OverageGBHours 0.0}}
         <p>Overage: <strong class="kv">{{printf "%.3f" $d.OverageGBHours}}</strong> GB-hours at €0.01/GB-h.</p>
       {{end}}
+
+      <section class="summary" aria-label="Usage summary">
+        <article><small>Requests</small><strong class="kv">{{$d.Requests}}</strong></article>
+        <article><small>CPU-hours</small><strong class="kv">{{printf "%.3f" $d.UsedCPUHours}}</strong></article>
+        <article><small>Egress</small><strong class="kv">{{printf "%.3f" $d.UsedEgressGB}} GB</strong></article>
+        <article><small>Ingress</small><strong class="kv">{{printf "%.3f" $d.UsedIngressGB}} GB</strong></article>
+        <article><small>Cold boots</small><strong class="kv">{{$d.ColdBoots}}</strong></article>
+      </section>
+
+      <section aria-labelledby="daily-heading">
+        <h2 id="daily-heading">Daily trend <small class="muted">(last 30 UTC days)</small></h2>
+        {{if $d.DailySparklineHTML}}
+          <div class="trend">{{$d.DailySparklineHTML}}</div>
+          <table aria-label="Daily usage trend">
+            <thead><tr><th>Date</th><th>GB-hours</th><th>Top app</th><th>Top app GB-hours</th></tr></thead>
+            <tbody>
+              {{range $d.Daily}}
+                <tr><td><time datetime="{{.Date}}">{{.Date}}</time></td><td class="kv">{{printf "%.3f" .GBHours}}</td><td>{{if .TopAppSlug}}{{.TopAppSlug}}{{else}}—{{end}}</td><td class="kv">{{printf "%.3f" .TopAppGBHours}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        {{else}}
+          <p class="muted">No daily usage data is available yet.</p>
+        {{end}}
+      </section>
+
+      <section aria-labelledby="apps-heading">
+        <h2 id="apps-heading">Usage by app <small class="muted">({{len $d.PerApp}} apps this month)</small></h2>
+        {{if $d.PerApp}}
+          <table aria-label="Monthly usage by app">
+            <thead><tr><th>App</th><th>GB-hours</th><th>Share</th><th>Requests</th><th>CPU-hours</th><th>Egress GB</th><th>Ingress GB</th><th>Cold boots</th></tr></thead>
+            <tbody>
+              {{range $d.PerApp}}
+                <tr><th scope="row">{{if .Linkable}}<a href="/dashboard/apps/{{.Slug}}">{{.Slug}}</a>{{else}}{{.Slug}}{{end}}</th><td class="kv">{{printf "%.3f" .UsedGBHours}}</td><td class="kv">{{printf "%.1f" .SharePct}}%</td><td class="kv">{{.Requests}}</td><td class="kv">{{printf "%.3f" .CPUHours}}</td><td class="kv">{{printf "%.3f" .EgressGB}}</td><td class="kv">{{printf "%.3f" .IngressGB}}</td><td class="kv">{{.ColdBoots}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        {{else}}
+          <p class="muted">No app usage has been recorded for this month.</p>
+        {{end}}
+      </section>
     {{end}}
   </main>
   <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>

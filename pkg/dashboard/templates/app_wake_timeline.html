@@ -9,6 +9,7 @@
 <body class="dashboard">
   {{template "nav" .}}
   <main class="app-wake-timeline">
+    {{template "email-verification-banner" .}}
     <header class="page-header">
       <h1>{{.Data.App.Slug}} — wake timeline</h1>
       <p class="page-subtitle">

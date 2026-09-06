@@ -18,9 +18,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -250,6 +253,214 @@ func TestRunWorkloads_PanicInSidecarIsRecovered(t *testing.T) {
 	}
 	if recovered != "synthetic sidecar panic" {
 		t.Errorf("sidecar panic: recovered = %v, want \"synthetic sidecar panic\"", recovered)
+	}
+}
+
+func TestLoadSidecarManifestAt_DirectRoot(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "etc", "faas", "workloads", "metrics", "workload.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := api.AppManifest{Entrypoint: []string{"/bin/metrics"}, WorkingDir: "/srv/metrics", User: "1001"}
+	var buf bytes.Buffer
+	if err := api.WriteManifest(&buf, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadSidecarManifestAt(root, "metrics")
+	if err != nil {
+		t.Fatalf("loadSidecarManifestAt: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifest = %#v, want %#v", got, want)
+	}
+}
+
+func TestLoadSidecarManifestAt_RejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	path := filepath.Join(outside, "faas", "workloads", "metrics", "workload.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := api.WriteManifest(&buf, api.AppManifest{Entrypoint: []string{"/bin/metrics"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSidecarManifestAt(root, "metrics"); err == nil {
+		t.Fatal("loadSidecarManifestAt accepted a manifest symlink escape")
+	}
+}
+
+func TestLoadSidecarManifestAt_AllowsRootSymlinkWithinTree(t *testing.T) {
+	realRoot := t.TempDir()
+	rootAliasParent := t.TempDir()
+	rootAlias := filepath.Join(rootAliasParent, "root")
+	if err := os.Symlink(realRoot, rootAlias); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(realRoot, "etc", "faas", "workloads", "metrics", "workload.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := api.WriteManifest(&buf, api.AppManifest{Entrypoint: []string{"/bin/metrics"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSidecarManifestAt(rootAlias, "metrics"); err != nil {
+		t.Fatalf("loadSidecarManifestAt(root symlink): %v", err)
+	}
+}
+
+func TestFullRootfsSidecarRoot(t *testing.T) {
+	root := t.TempDir()
+	upper := filepath.Join(root, "run", "faas", "sidecars", "metrics", "upper")
+	if err := os.MkdirAll(upper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A path-shaped directory in an optimized root must not opt itself into
+	// direct-root execution; only the builder-owned marker enables it.
+	if got, err := fullRootfsSidecarRootAt(root, "metrics"); err != nil || got != "" {
+		t.Fatalf("unmarked direct root = %q, err %v; want empty root", got, err)
+	}
+	marker := filepath.Join(root, "etc", "faas", ".full-rootfs")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte(api.FullRootfsMarkerValue), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "run", "faas", "sidecars", "metrics", "upper")
+	if got, err := fullRootfsSidecarRootAt(root, "metrics"); err != nil || got != want {
+		t.Fatalf("marked direct root = %q, err %v; want %q", got, err, want)
+	}
+	if _, err := fullRootfsSidecarRootAt(root, "../escape"); err == nil {
+		t.Fatal("fullRootfsSidecarRoot accepted path traversal")
+	}
+}
+
+func TestFullRootfsSidecarRootRejectsMarkerSymlink(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "etc", "faas", ".full-rootfs")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "marker")
+	if err := os.WriteFile(target, []byte(api.FullRootfsMarkerValue), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, marker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fullRootfsSidecarRootAt(root, "metrics"); err == nil {
+		t.Fatal("fullRootfsSidecarRoot accepted a marker symlink")
+	}
+}
+
+func TestResolveSidecarCommandPath(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "usr", "bin", "node")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveSidecarCommandPath(root, "node", []string{"PATH=/usr/bin:/bin"}); got != "/usr/bin/node" {
+		t.Errorf("resolved command = %q, want /usr/bin/node", got)
+	}
+	if got := resolveSidecarCommandPath(root, "/bin/sh", nil); got != "/bin/sh" {
+		t.Errorf("absolute command = %q, want /bin/sh", got)
+	}
+	if got := resolveSidecarCommandPath(root, "missing", []string{"PATH=/usr/bin:/bin"}); got != "/usr/bin/missing" {
+		t.Errorf("missing command = %q, want first image path", got)
+	}
+}
+
+func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "etc", "faas", "workloads.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	roster := workloadRoster{
+		Main: workloadSpec{Name: "main", Type: "main"},
+		Sidecars: []workloadSpec{
+			{Name: "metrics", Type: "sidecar"},
+			{Name: "migrator", Type: "init"},
+		},
+	}
+	data, err := json.Marshal(roster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	got, err := discoverSidecarDevices(root)
+	if err != nil {
+		t.Fatalf("discoverSidecarDevices: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("devices = %d, want 2", len(got))
+	}
+	if got[0].workloadName != "metrics" || got[1].workloadName != "migrator" {
+		t.Fatalf("workload names = %q, %q", got[0].workloadName, got[1].workloadName)
+	}
+}
+
+func TestDiscoverSidecarDevicesRejectsDuplicateNames(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "etc", "faas", "workloads.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	roster := workloadRoster{
+		Sidecars: []workloadSpec{
+			{Name: "metrics", Type: "sidecar"},
+			{Name: "metrics", Type: "init"},
+		},
+	}
+	data, err := json.Marshal(roster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverSidecarDevices(root); err == nil {
+		t.Fatal("discoverSidecarDevices accepted duplicate sidecar names")
+	}
+}
+
+func TestDiscoverSidecarDevicesRejectsInvalidRoster(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "etc", "faas", "workloads.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	roster := workloadRoster{Sidecars: []workloadSpec{{Name: "../escape", Type: "sidecar"}}}
+	data, err := json.Marshal(roster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverSidecarDevices(root); err == nil {
+		t.Fatal("discoverSidecarDevices accepted invalid sidecar name")
 	}
 }
 

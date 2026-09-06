@@ -219,15 +219,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    appSlugFallback,
 		DocSlug: "apps",
-		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|--ram N|…])",
+		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|--profile NAME|--ram N|…])",
 		Subcommands: []cliSub{
-			{Name: "scale", Short: "Set max_concurrency / ram_mb"},
+			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
 			{Name: "security", Short: "Toggle require_signed on deploys"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
 		},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
+			{Name: "profile", Short: "set a named RAM/CPU profile", Value: "micro|small|medium|large|xlarge"},
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
 			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
@@ -437,8 +438,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
-		Short:   "Get one deployment (<id> | set-min-instances <id> --min N)",
+		Short:   "Get or wait for one deployment (<id> | wait <id> | set-min-instances <id>)",
 		Subcommands: []cliSub{
+			{Name: "wait", Short: "Wait until a deployment is live", Flags: []cliFlag{
+				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
+			}},
 			{Name: "set-min-instances", Short: "Set the per-deployment cold-wake floor"},
 		},
 		Positionals: []string{"<id>"},
@@ -494,6 +498,7 @@ var cliCommands = []cliCommand{
 			{Name: "runtime", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313"}},
 			{Name: "handler", Short: "function handler", Value: "HANDLER"},
 			{Name: "name", Short: "app name (default: selected source directory, or current directory)", Value: "SLUG"},
+			{Name: "profile", Short: "named app resource profile", Value: "PROFILE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
@@ -566,7 +571,21 @@ var cliCommands = []cliCommand{
 			{Name: subRm, Short: "Remove a custom domain binding"},
 			{Name: subDomainsVerify, Short: "Re-verify DNS + cert for a domain"},
 			{Name: subDomainsShow, Short: "Show a domain's cert details"},
+			{Name: subDomainsStatus, Short: "Show durable TLS status for all domains"},
 			{Name: subDomainsDoctor, Short: "5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)"},
+		},
+	},
+	{
+		Name:    "dev",
+		DocSlug: "dev",
+		Short:   "Sync the dirty working tree to a stable remote developer environment",
+		Flags: []cliFlag{
+			{Name: "path", Short: "source directory", Value: "DIR"},
+			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
+			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets", Value: "PATH"},
+			{Name: "once", Short: "deploy once and exit"},
+			{Name: "stop", Short: "tear down the developer environment"},
+			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
 		},
 	},
 	{
@@ -912,15 +931,12 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		// PR-D / ADR-012 §7 amendment. Per-tenant GitHub App
-		// webhook secret rotation (admin-scoped). Distinct from
-		// `secrets` because the trust boundary is the GitHub
-		// App install, not the Faas app — the resolver in
-		// pkg/githubd/webhook_secret.go reads this row first
-		// before falling back to the platform secret.
+		// Compatibility surface for installation-scoped secrets used by
+		// legacy non-GitHub senders. Standard GitHub App webhooks use the
+		// single platform App secret documented in ADR-012 §8.
 		Name:    "github-webhook-secret",
 		DocSlug: "github-webhook-secret",
-		Short:   "Manage per-tenant GitHub App webhook secrets (admin)",
+		Short:   "Manage legacy installation-scoped webhook secrets (admin)",
 		Subcommands: []cliSub{
 			{Name: "set", Short: "Rotate the secret for one installation_id"},
 		},
@@ -1076,6 +1092,17 @@ var cliCommands = []cliCommand{
 				{Name: "window", Short: "summary window: 1h | 24h | 7d (default 1h)", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
 		},
+	},
+	{
+		Name:    "cache",
+		DocSlug: "cache",
+		Short:   "Manage response cache (cache purge <slug> [--path GLOB])",
+		Subcommands: []cliSub{
+			{Name: "purge", Short: "Purge cached responses for an app", Flags: []cliFlag{
+				{Name: "path", Short: "optional normalized request path glob", Value: "GLOB"},
+			}},
+		},
+		Positionals: []string{"<slug>"},
 	},
 	{
 		Name:    "webhooks",

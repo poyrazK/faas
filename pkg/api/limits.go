@@ -19,6 +19,52 @@ import (
 	"time"
 )
 
+// Operator-configurable object-storage preview safeguards, not plan allowances
+// or billable storage entitlements. Metering/pricing need a separate decision.
+const (
+	// Bounds for operator-specified object-storage safety policies; no customer
+	// allowance or price is inferred when the policy is missing.
+	MaxObjectStoragePolicyValue         int64 = 1 << 60
+	MaxObjectStorageReportAgeSeconds    int64 = 86400
+	ObjectStorageInventoryMaxAgeSeconds int64 = 900
+	ObjectStorageInventoryMaxPages            = 1000
+	DefaultObjectBucketsPerApp                = 10
+	MaxObjectBucketsPerApp                    = 100
+	DefaultObjectUploadBytes            int64 = 100 << 20
+	MaxObjectSinglePutBytes             int64 = 5 << 30
+	MaxObjectUploadBytes                int64 = 5 << 40
+	DefaultMultipartPartBytes           int64 = 64 << 20
+	MinMultipartPartBytes               int64 = 5 << 20
+	MaxMultipartParts                         = 10000
+	MaxActiveMultipartUploadsPerBucket        = 100
+	ObjectMultipartUploadTTL                  = 24 * time.Hour
+	// SourceArchiveMaxEntries is shared by ordinary source validation and
+	// developer delta reconstruction so the optimization cannot accept an
+	// archive the canonical deployment path would reject.
+	SourceArchiveMaxEntries = 10_000
+	// DevSourceMetadataMaxBytes bounds base/target revision and deletion-list
+	// fields around the plan-capped source payload.
+	DevSourceMetadataMaxBytes int64 = 4 << 20
+	// DevSourceCacheTTL keeps the node-local reconstruction base disposable.
+	// Cache absence is a normal condition and makes the CLI resend a full tree.
+	DevSourceCacheTTL = 24 * time.Hour
+	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
+	// source bases are evicted first; eviction is always recoverable by resend.
+	DevSourceCacheMaxBytes int64 = 4 << 30
+)
+
+// App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
+// Keep the first release deliberately small: it lets customers right-size
+// CPU-bound behavior without changing plan capacity or billing semantics.
+const DefaultAppCPUMillicores = 1000
+
+// ValidAppCPUMillicores reports whether v is one of the supported app CPU
+// shapes. The closed set keeps API validation, persistence, and cgroup quota
+// arithmetic aligned.
+func ValidAppCPUMillicores(v int) bool {
+	return v == 250 || v == 500 || v == DefaultAppCPUMillicores
+}
+
 // Plan is a customer subscription tier. The zero value is intentionally invalid
 // so an unset plan never silently reads as Free.
 type Plan string
@@ -74,6 +120,81 @@ func PlanMeetsMinimumPlan(customer, minimumPlan Plan) bool {
 		return false
 	}
 	return cRank >= mRank
+}
+
+// FullRootfsAllowedPlans (M-3 / ADR-141 §Decision 2) is the closed
+// set of plans whose customers may auto-dispatch to the
+// full-rootfs build path on the typed `oci.ErrLayersNotAboveBase`
+// signal. PlanFree is intentionally absent — Free customers
+// must explicitly opt in via `deployment.FullRootfsOverride=&true`.
+// Order matters for PlanMeetsFullRootfs's rank comparison.
+var FullRootfsAllowedPlans = []Plan{PlanHobby, PlanPro, PlanScale}
+
+// PlanMeetsFullRootfs returns true iff the customer's plan is in
+// FullRootfsAllowedPlans. Mirrors PlanMeetsMinimumPlan's closed-set
+// posture: unknown plans return false so a future plan addition
+// surfaces as a clean failure rather than a silent false-positive
+// "you meet the full-rootfs gate".
+//
+// imaged.buildImageLayer consults this on the typed
+// `ErrLayersNotAboveBase` dispatch (commit 6) to decide whether
+// to auto-dispatch. Free-plan customers must pass
+// `FullRootfsOverride=&true` to opt in; the dispatch table
+// honours override-first so an explicit override wins over the
+// auto gate.
+func PlanMeetsFullRootfs(p Plan) bool {
+	for _, allowed := range FullRootfsAllowedPlans {
+		if p == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// UserUIDOverrideMax (M-3 / ADR-142 §Decision 4) is the per-plan
+// cap on the number of /etc/passwd entries BuildFullRootfs merges
+// into /etc/faas/app_passwd. Hobby 16 / Pro 64 / Scale 256 — the
+// scale cap matches the on-disk binary table ceiling
+// (defaultPasswdTableMaxEntries in pkg/rootfs). PlanFree is 0
+// because Free does not auto-dispatch to full-rootfs.
+//
+// Excess entries are silently dropped at table-write time; the
+// metric counter imaged_passwd_entries_total{outcome="over_cap"}
+// fires so the dashboard tripwires on misbuilt images without
+// polluting the success series. Lookup is O(1) per call.
+var UserUIDOverrideMax = map[Plan]int{
+	PlanFree:  0,
+	PlanHobby: 16,
+	PlanPro:   64,
+	PlanScale: 256,
+}
+
+// MaxFullRootfsLayerBytes (M-3 / ADR-141 §Decision 5) is the
+// per-plan ceiling on the unpacked full-rootfs staging tree size.
+// Hobby 256 MB / Pro 1 GB / Scale 4 GB. PlanFree absent because
+// Free cannot auto-dispatch; an explicit Free + override deploy
+// is gated at admission time on PlanMeetsFullRootfs.
+//
+// pkg/rootfs.CheckCapForStaging consults this in addition to the
+// two-drive AppLayerMaxMB ceiling so a Hobby customer cannot ship
+// a 4 GB full-rootfs image that would push them onto the
+// Scale-plan billing rate.
+var MaxFullRootfsLayerBytes = map[Plan]int64{
+	PlanHobby: 256 << 20, // 256 MB
+	PlanPro:   1 << 30,   // 1 GB
+	PlanScale: 4 << 30,   // 4 GB
+}
+
+// FullRootfsAllowAutoDefault (M-3 / ADR-141 §Decision 2) is the
+// per-plan default for state.Deployment.FullRootfsAllowAuto. Free
+// customers default to false (no auto-dispatch); paid plans default
+// to true. The customer can override per-deployment via
+// FullRootfsOverride (commit 6's tri-state).
+var FullRootfsAllowAutoDefault = map[Plan]bool{
+	PlanFree:  false,
+	PlanHobby: true,
+	PlanPro:   true,
+	PlanScale: true,
 }
 
 // GDPR self-service export rate limit (issue #755 / PR-5.1). Single
@@ -1382,6 +1503,25 @@ type Limits struct {
 	WorkflowStepMaxTimeout time.Duration
 	// WorkflowMaxWaitDays is the maximum wait_for_event timeout.
 	WorkflowMaxWaitDays int
+}
+
+// EphemeralDiskMaxMB returns the maximum writable runtime disk capacity
+// represented by the per-app drive1 ext4 image. The storage contract has
+// historically exposed this boundary as AppLayerMaxMB because the same cap
+// is checked while building the image. Keep one source of truth while giving
+// runtime and API callers the storage-specific name.
+func (l Limits) EphemeralDiskMaxMB() int {
+	return l.AppLayerMaxMB
+}
+
+// EphemeralDiskMaxBytes returns EphemeralDiskMaxMB in bytes. A zero result
+// means the limits value is unset or invalid; callers should fail closed
+// rather than treating it as unlimited.
+func (l Limits) EphemeralDiskMaxBytes() int64 {
+	if l.EphemeralDiskMaxMB() <= 0 {
+		return 0
+	}
+	return int64(l.EphemeralDiskMaxMB()) * 1024 * 1024
 }
 
 // UpstreamProbeMaxConcurrent (ADR-098 §D2) is the global worker-pool
@@ -3007,7 +3147,11 @@ const (
 
 	// Edge request caps (spec §4.1).
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
-	WakeQueueCap        = 512              // per-app wake queue
+	// WakePageAfterMs is the browser-only grace period before the gateway
+	// returns its 200 "Waking up" page. API clients keep the normal wake
+	// wait/error contract; the page is an edge UX affordance only.
+	WakePageAfterMs     = 1500
+	WakeQueueCap        = 512 // per-app wake queue
 	WakeQueueTTLSeconds = 30
 
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
@@ -3230,6 +3374,11 @@ const (
 	// PR can grow this to a per-plan matrix if telemetry shows
 	// demand — the constant is the single source of truth.
 	SidecarCapMax = 2
+	// WorkloadDependencyCapMax bounds the dependency list for one workload.
+	// With one main workload and at most two sidecars, three unique targets
+	// are the complete set; keeping the cap explicit limits malformed roster
+	// growth before graph validation.
+	WorkloadDependencyCapMax = SidecarCapMax + 1
 
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps
 	// the wall-clock spent inside pkg/gateway.(*Handler).applyEdgeRuleJWT
@@ -3765,7 +3914,9 @@ const (
 	GatewayDrainGraceSeconds        = 25
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000
-	CertSyncIntervalSeconds         = 30
+	// WarmHintHeartbeatInterval keeps idle hint streams observable without tenant traffic.
+	WarmHintHeartbeatInterval = 30 * time.Second
+	CertSyncIntervalSeconds   = 30
 
 	// Tenant-surface cert engine constants (ADR-100 amendment,
 	// PR-D cert-engine-real-mint). The cap + renew-window + tick live
@@ -6134,3 +6285,11 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 	}
 	return d
 }
+
+// FunctionInterpreterMaxWorkers bounds active generated-adapter processes in
+// one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
+const FunctionInterpreterMaxWorkers = 4
+
+// Startup attestation runs before the scheduler opens its readiness boundary.
+const StartupAttestationWorkers = 2
+const StartupAttestationLayerTimeout = 15 * time.Second

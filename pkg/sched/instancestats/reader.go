@@ -129,7 +129,7 @@ type InstanceStat struct {
 	// across ticks (e.g. cumulative hour rollup) should
 	// store their own baseline.
 	CPUHour float64
-	// TXBytes (ADR-046, step 7) is the per-tick byte delta
+	// TXBytes (ADR-046) is the cumulative byte counter
 	// on root-side vethHost.rx_bytes for this instance,
 	// surfaced via the vmmd `net_tx_bytes` wire field.
 	// Unit is interface bytes (includes Ethernet framing);
@@ -148,14 +148,12 @@ type InstanceStat struct {
 	// per-minute accumulator does not double-count a
 	// baseline row.
 	TX Validity
-	// RXBytes (ADR-048) is the per-tick byte delta on
+	// RXBytes (ADR-048) is the cumulative byte counter on
 	// root-side vethHost.tx_bytes for this instance (root →
 	// guest = ingress), surfaced via the vmmd `net_rx_bytes`
 	// wire field. Unit is interface bytes; same kernel
 	// counter family as TXBytes. Valid only when RX ==
 	// Valid; 0 with RX=Unknown is the sentinel shape. Wire
-	// field awaits make proto regen (PR-A commit #2
-	// follow-up); today the field stays 0 end-to-end. The
 	// mirror field on scheddgrpc.InstanceStatsRow is
 	// NetRxBytes; the schedd poller populates it from the
 	// vmmd wire row once regen lands.
@@ -204,6 +202,7 @@ type Reader struct {
 type requestRateSample struct {
 	count   uint64
 	sampled time.Time
+	rate    requestRate
 }
 
 type requestRate struct {
@@ -264,15 +263,19 @@ func (r *Reader) updateRequestRates(rows []InstanceStat) {
 		}
 		current := requestRateSample{count: row.RequestCountTotal, sampled: row.SampledAt}
 		previous, ok := r.previousRate[row.InstanceID]
-		if ok && current.sampled.After(previous.sampled) && current.count >= previous.count {
+		if ok && current.sampled.Equal(previous.sampled) && current.count == previous.count {
+			// The 200 ms projection can read the same one-second node frame
+			// repeatedly. Keep its derived rate until a new frame or eviction.
+			current.rate = previous.rate
+		} else if ok && current.sampled.After(previous.sampled) && current.count >= previous.count {
 			elapsed := current.sampled.Sub(previous.sampled).Seconds()
-			if elapsed > 0 {
-				rate := float64(current.count-previous.count) / elapsed
-				value := nextRates[row.AppID]
-				value.rps += rate
-				value.valid = true
-				nextRates[row.AppID] = value
-			}
+			current.rate = requestRate{rps: float64(current.count-previous.count) / elapsed, valid: true}
+		}
+		if current.rate.valid {
+			value := nextRates[row.AppID]
+			value.rps += current.rate.rps
+			value.valid = true
+			nextRates[row.AppID] = value
 		}
 		r.previousRate[row.InstanceID] = current
 	}

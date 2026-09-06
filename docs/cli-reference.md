@@ -9,7 +9,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`apps`](#apps) | List your apps |
-| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|--ram N\|…]) |
+| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|--profile NAME\|--ram N\|…]) |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Build provenance + sbom (build provenance &lt;id&gt;\|build sbom &lt;id&gt;) |
@@ -23,10 +23,11 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
 | [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
-| [`deployment`](#deployment) | Get one deployment (&lt;id&gt; \| set-min-instances &lt;id&gt; --min N) |
+| [`deployment`](#deployment) | Get or wait for one deployment (&lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete) |
 | [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
+| [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`tenant-surfaces`](#tenant-surfaces) | Manage tenant surfaces (multi-hostname SAN bundle per app) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|delete --app &lt;slug&gt;) |
@@ -58,7 +59,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`rollouts`](#rollouts) | Operator manual rollout recovery (rollouts recover &lt;slug&gt; --action advance\|promote\|abort --reason &lt;text&gt;) |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|rotate) |
-| [`github-webhook-secret`](#github-webhook-secret) | Manage per-tenant GitHub App webhook secrets (admin) |
+| [`github-webhook-secret`](#github-webhook-secret) | Manage legacy installation-scoped webhook secrets (admin) |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]) |
 | [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
 | [`tail`](#tail) | Live tail of the unified event stream |
@@ -71,6 +72,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
 | [`mirror`](#mirror) | Manage traffic mirroring (mirror list\|create\|info\|update\|rm\|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only) |
+| [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
@@ -227,19 +229,20 @@ Delete one app (positional: &lt;slug&gt;)
 
 ## app
 
-Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|--ram N|…])
+Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|--profile NAME|--ram N|…])
 
-`gregale app [<subcommand>] <slug> [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>]`
+`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--profile <micro|small|medium|large|xlarge>` | set a named RAM/CPU profile |  |
 | `--ram <MB>` | set RAM in MB |  |
 | `--max-concurrency <N>` | set max_concurrency |  |
 | `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
 
 ### app scale
 
-Set max_concurrency / ram_mb
+Set max_concurrency / resource profile / RAM / CPU
 
 ### app rename
 
@@ -633,7 +636,7 @@ List deployments (--limit N | --before C | --all)
 
 ## deployment
 
-Get one deployment (&lt;id&gt; | set-min-instances &lt;id&gt; --min N)
+Get or wait for one deployment (&lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
 
 `gregale deployment [<subcommand>] <id> [--show-scan] [--min <N>]`
 
@@ -641,6 +644,14 @@ Get one deployment (&lt;id&gt; | set-min-instances &lt;id&gt; --min N)
 |---|---|---|
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
+
+### deployment wait
+
+Wait until a deployment is live
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <SECONDS>` | maximum seconds to wait |  |
 
 ### deployment set-min-instances
 
@@ -670,7 +681,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--secret-scan <on|off>] [--diff] [--strict] [--lenient] [--server-diff] [--doctor-strict]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--secret-scan <on|off>] [--diff] [--strict] [--lenient] [--server-diff] [--doctor-strict]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -686,6 +697,7 @@ Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF 
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
 | `--name <SLUG>` | app name (default: selected source directory, or current directory) |  |
+| `--profile <PROFILE>` | named app resource profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--function` | deploy as a function; skip shape auto-detection |  |
 | `--app` | deploy as an app; skip shape auto-detection |  |
 | `--yes` | skip the apply confirmation prompt |  |
@@ -741,9 +753,29 @@ Re-verify DNS + cert for a domain
 
 Show a domain&#39;s cert details
 
+### domains status
+
+Show durable TLS status for all domains
+
 ### domains doctor
 
 5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)
+
+
+## dev
+
+Sync the dirty working tree to a stable remote developer environment
+
+`gregale dev [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--once] [--stop] [--no-logs]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | source directory |  |
+| `--name <PROJECT>` | developer-session project name |  |
+| `--env-file <PATH>` | sync KEY=VALUE entries as developer secrets |  |
+| `--once` | deploy once and exit |  |
+| `--stop` | tear down the developer environment |  |
+| `--no-logs` | do not attach the live runtime log stream |  |
 
 
 ## preview
@@ -1302,7 +1334,7 @@ Re-seal one secret under the current host key
 
 ## github-webhook-secret
 
-Manage per-tenant GitHub App webhook secrets (admin)
+Manage legacy installation-scoped webhook secrets (admin)
 
 `gregale github-webhook-secret [<subcommand>]`
 
@@ -1526,6 +1558,21 @@ Aggregate mirror drift counts over a window
 | `--app <slug>` | app slug | required |
 | `--id <ID>` | mirror rule id | required |
 | `--window <WINDOW>` | summary window: 1h \| 24h \| 7d (default 1h) | one of `1h` · `24h` · `7d` |
+
+
+## cache
+
+Manage response cache (cache purge &lt;slug&gt; [--path GLOB])
+
+`gregale cache [<subcommand>] <slug>`
+
+### cache purge
+
+Purge cached responses for an app
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <GLOB>` | optional normalized request path glob |  |
 
 
 ## webhooks

@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -60,7 +61,7 @@ func Zero() []error {
 	}
 
 	for _, dev := range listRootNetdevs() {
-		if strings.HasPrefix(dev, "tap-") || strings.HasPrefix(dev, "ve-") {
+		if isTenantNetdev(dev) {
 			errs = append(errs, fmt.Errorf("netdev %s", dev))
 		}
 	}
@@ -69,7 +70,7 @@ func Zero() []error {
 		errs = append(errs, fmt.Errorf("jail chroot %s", dir))
 	}
 
-	for _, scope := range listTenantScopes() {
+	for _, scope := range listVMScopes("/sys/fs/cgroup") {
 		errs = append(errs, fmt.Errorf("cgroup %s", scope))
 	}
 
@@ -114,22 +115,58 @@ func listRootNetdevs() []string {
 }
 
 // listJailChroots returns the jail chroot dirs jailer leaves behind
-// after a teardown. The dir is /srv/fc/jail/firecracker/<id>/root per
+// after a teardown. The dir is /srv/fc/jail/<firecracker-binary>/<id>/root per
 // pkg/fcvm/vmm.go (chrootRoot).
-func listJailChroots() []string {
-	root := "/srv/fc/jail/firecracker"
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil // dir missing == nothing to clean up
-	}
-	var dirs []string
-	for _, e := range entries {
-		if e.IsDir() {
-			dirs = append(dirs, filepath.Join(root, e.Name(), "root"))
+func listJailChroots() []string { return jailChrootsAt("/srv/fc/jail") }
+
+// Jailer uses the resolved Firecracker binary basename, which commonly includes
+// its version. Empty version parents are reusable infrastructure, not VM leaks.
+func jailChrootsAt(root string) []string {
+	dirs, _ := filepath.Glob(filepath.Join(root, "firecracker*", "*"))
+	var out []string
+	for _, dir := range dirs {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			out = append(out, dir)
 		}
 	}
-	return dirs
+	return out
 }
 
-// listTenantScopes lives in residentbytes.go so the non-metal build can
-// call ResidentBytes(). It's referenced here for the leak invariant.
+// Cover current plan slices and the dedicated builder slice, plus the legacy
+// tenant layout. Do not mistake empty plan parents for per-instance scopes.
+func listVMScopes(root string) []string {
+	patterns := []string{
+		"faas.slice/faas-tenant.slice/tenant-*/*",
+		"faas.slice/faas-cp.slice/faas-cp-build.slice/*",
+		"faas-tenant.slice/*",
+	}
+	var out []string
+	for _, pattern := range patterns {
+		paths, _ := filepath.Glob(filepath.Join(root, pattern))
+		for _, path := range paths {
+			if filepath.Dir(path) == filepath.Join(root, "faas-tenant.slice") {
+				switch filepath.Base(path) {
+				case "tenant-free", "tenant-hobby", "tenant-pro", "tenant-scale":
+					continue
+				}
+			}
+			if _, err := os.Stat(filepath.Join(path, "cgroup.procs")); err == nil {
+				out = append(out, path)
+			}
+		}
+	}
+	return out
+}
+
+// Current host-side veth names are vh<slot>; older fixtures used ve-*.
+func isTenantNetdev(name string) bool {
+	if strings.HasPrefix(name, "tap-") || strings.HasPrefix(name, "ve-") {
+		return true
+	}
+	name = strings.SplitN(name, "@", 2)[0]
+	if !strings.HasPrefix(name, "vh") {
+		return false
+	}
+	_, err := strconv.ParseUint(strings.TrimPrefix(name, "vh"), 10, 32)
+	return err == nil
+}

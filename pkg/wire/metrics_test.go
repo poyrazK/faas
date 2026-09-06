@@ -137,6 +137,9 @@ func TestOpsMetrics_ObserveImagedOCIPull(t *testing.T) {
 	m.ObserveImagedOCIPull("blob", "ok", 5*time.Second)
 	m.ObserveImagedOCIPull("blob", "err", 60*time.Second)
 	m.ObserveImagedOCIPull("above_base", "ok", 800*time.Millisecond)
+	m.ImagedOCIBlobCacheHit()
+	m.ImagedOCIBlobCacheMiss()
+	m.ImagedOCIBlobCacheEviction()
 
 	body := render(t, m)
 	for _, want := range []string{
@@ -148,6 +151,9 @@ func TestOpsMetrics_ObserveImagedOCIPull(t *testing.T) {
 		// Pre-instantiated tuples we never observed: still zero-valued.
 		`imaged_oci_pull_duration_seconds_count{op="config",result="ok"} 0`,
 		`imaged_oci_pull_duration_seconds_count{op="manifest",result="err"} 0`,
+		`imaged_oci_blob_cache_hits_total 1`,
+		`imaged_oci_blob_cache_misses_total 1`,
+		`imaged_oci_blob_cache_evictions_total 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing line %q in:\n%s", want, body)
@@ -160,6 +166,9 @@ func TestOpsMetrics_NewObserversNilSafe(t *testing.T) {
 	// the new observer must be a no-op on a nil receiver.
 	var m *wire.OpsMetrics
 	m.ObserveImagedOCIPull("blob", "ok", time.Second)
+	m.ImagedOCIBlobCacheHit()
+	m.ImagedOCIBlobCacheMiss()
+	m.ImagedOCIBlobCacheEviction()
 }
 
 // TestOpsMetrics_PgBackupLastPushed (issue #250) — the
@@ -881,7 +890,7 @@ func TestOpsMetrics_SnapshotDiskDriftNilSafe(t *testing.T) {
 // TestOpsMetrics_WakePhaseClosedSet (issue #517 / PR-C / ADR-064) —
 // the wake-phase collector pair is registered on every daemon
 // (single-registry pattern, memory wire-opsmetrics-single-registry)
-// and pre-instantiated with the closed 13-phase × 2-result label
+// and pre-instantiated with the closed 14-phase × 2-result label
 // set so the §12 wake-latency panel surfaces zero on an idle
 // daemon. The accessor must be nil-safe on a nil receiver so
 // engine unit tests without metrics keep working.

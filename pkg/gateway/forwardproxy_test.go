@@ -1224,3 +1224,28 @@ func (s *blockingRawBidiStream) Header() (metadata.MD, error) {
 	return nil, nil
 }
 func (s *blockingRawBidiStream) Trailer() metadata.MD { return nil }
+
+func TestForwardingWarmResponseSkipsWakeEventStore(t *testing.T) {
+	store := &rejectWarmEventStore{Store: state.NewMemStore(), t: t}
+	platform := events.NewPlatform("gatewayd-internal", store, slog.Default(), nil, nil)
+	stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+		{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{Status: 200}}},
+		{Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{BodyChunk: []byte("warm response")}},
+	}}
+	proxy := gateway.ForwardingReverseProxyWithEvents(&fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}, nil, platform)
+	rec := httptest.NewRecorder()
+	proxy(gateway.Target{NodeID: "node-1", InstanceID: "inst-warm"}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "warm response" {
+		t.Fatalf("response=%d %q", rec.Code, rec.Body.String())
+	}
+}
+
+type rejectWarmEventStore struct {
+	state.Store
+	t *testing.T
+}
+
+func (s *rejectWarmEventStore) AppendEvent(context.Context, string, string, *string, []byte) error {
+	s.t.Error("warm response attempted synchronous wake-event persistence")
+	return errors.New("wake store unavailable")
+}

@@ -2550,13 +2550,14 @@ type WakeRequest struct {
 	// 100). Empty = "anonymous" admission (matches the
 	// requestTotal overflow policy where missing account_id maps
 	// to "other" via pkg/wire/metrics.go's overflow label set).
-	AccountID  string
-	BaseKey    string // StorageBackend key for drive0 shared ro base rootfs for the app's runtime
-	LayerKey   string // StorageBackend key for drive1 per-app layer
-	VcpuCount  int
-	MemSizeMiB int
-	EgressMbit int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
-	Snapshot   *Snapshot // nil => cold boot
+	AccountID     string
+	BaseKey       string // StorageBackend key for drive0 shared ro base rootfs for the app's runtime
+	LayerKey      string // StorageBackend key for drive1 per-app layer
+	VcpuCount     int
+	MemSizeMiB    int
+	CPUMillicores int
+	EgressMbit    int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	Snapshot      *Snapshot // nil => cold boot
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Drives the parent-cgroup path (ParentCgroupFor) and the
 	// --cgroup cpu.weight=N jailer argv, plus the per-instance
@@ -2730,12 +2731,13 @@ type ColdBootRequest struct {
 	// AccountID is the apps row's owning account id (issue #301,
 	// ADR-044). Forwarded to WakeRequest.AccountID — see
 	// WakeRequest for the contract.
-	AccountID  string
-	BaseKey    string
-	LayerKey   string
-	VcpuCount  int
-	MemSizeMiB int
-	EgressMbit int // per-plan tc cap; 0 = no cap (legacy / disabled)
+	AccountID     string
+	BaseKey       string
+	LayerKey      string
+	VcpuCount     int
+	MemSizeMiB    int
+	CPUMillicores int
+	EgressMbit    int // per-plan tc cap; 0 = no cap (legacy / disabled)
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Forwarded to WakeRequest.Plan — see WakeRequest for the contract.
 	Plan api.Plan
@@ -2801,7 +2803,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 	return m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, AccountID: req.AccountID,
 		BaseKey: req.BaseKey, LayerKey: req.LayerKey,
-		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
+		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
 		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
 		APIEnvEntries:   req.APIEnvEntries,
@@ -3038,6 +3040,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
 	}
 	lease.MemoryMaxMiB = req.MemSizeMiB
+	lease.CPUMillicores = req.CPUMillicores
 	m.mu.Lock()
 	if m.waking == nil {
 		m.waking = make(map[string]struct{})
@@ -3322,11 +3325,12 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	if len(req.Sidecars) > 0 && !m.preparesWakeStateBeforeBoot() {
 		// Main workload manifest on drive1.
 		if err := m.vmm.StageWorkloadManifest(req.Instance, -1, WorkloadSpec{
-			Name:      WorkloadNameMain,
-			Type:      WorkloadNameMain,
-			RamMB:     req.MemSizeMiB,
-			Port:      req.Port,
-			Essential: true,
+			Name:          WorkloadNameMain,
+			Type:          WorkloadNameMain,
+			RamMB:         req.MemSizeMiB,
+			CPUMillicores: req.CPUMillicores,
+			Port:          req.Port,
+			Essential:     true,
 		}); err != nil {
 			return nil, fmt.Errorf("wake %s: stage main workload manifest: %w", req.Instance, err)
 		}
@@ -3348,7 +3352,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		// with a roster pointing at non-existent drives.
 		mainSpec := WorkloadSpec{
 			Name: WorkloadNameMain, Type: WorkloadNameMain,
-			RamMB: req.MemSizeMiB, Port: req.Port,
+			RamMB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores, Port: req.Port,
 			Essential: true,
 		}
 		if err := m.vmm.StageWorkloadRoster(req.Instance, mainSpec, req.Sidecars); err != nil {
@@ -3370,7 +3374,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		if lease.IsBuilder {
 			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
-			err = writePlanCgroup(req.Instance, req.Plan, req.MemSizeMiB)
+			err = writeAppCgroup(req.Instance, req.Plan, req.MemSizeMiB, req.CPUMillicores)
 		}
 		if err != nil {
 			// Cgroup setup is a mandatory isolation boundary. The VM is already
@@ -3413,7 +3417,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 			// customer pays for the plan RAM, not the +8 MB overhead).
 			// The +8 MB lives on the parent scope and is shared across
 			// all workload children.
-			if wErr := writeWorkloadCgroup(parentScope, WorkloadNameMain, req.MemSizeMiB); wErr != nil {
+			if wErr := writeWorkloadCgroup(parentScope, WorkloadNameMain, req.MemSizeMiB, req.CPUMillicores); wErr != nil {
 				m.log.Warn("cgroup fence: writeWorkloadCgroup main failed, continuing",
 					"instance", req.Instance, "err", wErr)
 				// Issue #1059 / ADR-127: hardcoded reason="cgroup_fail"
@@ -3427,10 +3431,10 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 				}
 			}
 			for _, sc := range req.Sidecars {
-				if sc.RamMB == 0 {
+				if sc.RamMB == 0 && sc.CPUMillicores == 0 {
 					continue
 				}
-				if wErr := writeWorkloadCgroup(parentScope, sc.Name, sc.RamMB); wErr != nil {
+				if wErr := writeWorkloadCgroup(parentScope, sc.Name, sc.RamMB, sc.CPUMillicores); wErr != nil {
 					m.log.Warn("cgroup fence: writeWorkloadCgroup sidecar failed, continuing",
 						"instance", req.Instance, "sidecar", sc.Name, "err", wErr)
 					if m.wakeFailureMetrics != nil {
@@ -5269,13 +5273,14 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 	out := make([]WorkloadSpec, 0, 1+len(req.Sidecars))
 	// Workloads[0] is always the main workload.
 	out = append(out, WorkloadSpec{
-		Name:       WorkloadNameMain,
-		Type:       WorkloadNameMain,
-		StorageKey: req.LayerKey,
-		DriveID:    DriveLayerMain,
-		RamMB:      req.MemSizeMiB,
-		Port:       req.Port,
-		Essential:  true,
+		Name:          WorkloadNameMain,
+		Type:          WorkloadNameMain,
+		StorageKey:    req.LayerKey,
+		DriveID:       DriveLayerMain,
+		RamMB:         req.MemSizeMiB,
+		CPUMillicores: req.CPUMillicores,
+		Port:          req.Port,
+		Essential:     true,
 	})
 	for _, sc := range req.Sidecars {
 		if sc.Name == WorkloadNameMain {
@@ -5288,10 +5293,12 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			StorageKey:      sc.StorageKey,
 			DriveID:         sc.DriveID, // imaged populated this on the wire
 			RamMB:           sc.RamMB,
+			CPUMillicores:   sc.CPUMillicores,
 			Port:            sc.Port,
 			Essential:       sc.Essential,
 			Cmd:             append([]string(nil), sc.Cmd...),
 			Entrypoint:      append([]string(nil), sc.Entrypoint...),
+			DependsOn:       append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			SealedEnv:       append([]SealedEnvEntry(nil), sc.SealedEnv...),
 			preparedEnvJSON: append([]byte(nil), sc.preparedEnvJSON...),
 		})

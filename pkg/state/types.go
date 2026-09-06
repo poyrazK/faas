@@ -432,6 +432,12 @@ type Account struct {
 	// subscribed yet never lands on the billing dashboard.
 	StripeSubscriptionItem string
 	CreatedAt              time.Time
+	// EmailVerifiedAt is the moment Gregale proved control of Email.
+	// Password signups leave it nil until a 24-hour verification token is
+	// consumed. OAuth accounts and existing accounts are verified at creation
+	// or migration time. Keeping this timestamp on the account makes the
+	// deploy and billing gates independent of the credential used on a request.
+	EmailVerifiedAt *time.Time
 	// DeletionRequestedAt is stamped when the customer schedules the
 	// account for deletion (G6, ADR-021). NULL on every row that has
 	// never been scheduled. pkg/grace uses it to decide whether the
@@ -504,6 +510,9 @@ type Account struct {
 
 // Active reports whether the account may deploy (not suspended/deleted).
 func (a Account) Active() bool { return a.Status == AccountActive || a.Status == AccountPastDue }
+
+// EmailVerified reports whether the account has proved control of its email.
+func (a Account) EmailVerified() bool { return a.EmailVerifiedAt != nil }
 
 // MFAEnrolled reports whether the customer has at least one
 // successful TOTP confirmation. An enrolled customer has opted in
@@ -653,6 +662,7 @@ type App struct {
 	Type           AppType
 	Runtime        string // node22|python312|go124|go124-alpine|node24|python313 for functions
 	RAMMB          int
+	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default
 	MaxConcurrency int
 	// MinInstances is the per-app floor the reaper honors when parking
@@ -1006,8 +1016,9 @@ type App struct {
 	PreviewOfSlug string
 	// PreviewPrNumber is the GitHub PR number this preview row
 	// tracks. Stable across synchronize/reopened events on the
-	// same PR; the slug is `pr-{N}-{parent_slug}`. Zero on
-	// production apps.
+	// same PR; the slug is `pr-{N}-{parent_slug}`. Zero identifies
+	// an ad-hoc developer preview (and is also the Go zero value on
+	// production apps, where PreviewOfSlug is empty).
 	PreviewPrNumber int
 	// PreviewPrState is the closed-set lifecycle label on a
 	// preview row. NULL on production apps. The
@@ -1327,9 +1338,9 @@ type GitHubBinding struct {
 // 502s the moment githubd restarted. PR-C moves the source of truth
 // to the github_installations table (migration 00059).
 //
-// AccountID is the PK (a uuid, references accounts(id) ON DELETE
-// CASCADE — GDPR §17 G2 path deletes the row when the owning account
-// goes away). InstallationID is GitHub's int64. DefaultBranch is
+// AccountID and InstallationID form the PK (the account UUID references
+// accounts(id) ON DELETE CASCADE — GDPR §17 G2 path deletes all rows when the
+// owning account goes away). InstallationID is GitHub's int64. DefaultBranch is
 // captured at the OAuth handshake so the bind picker doesn't need a
 // re-fetch. SealedToken holds the age-encrypted install token (the
 // "ghs_…" form, minted via AppAuth.ExchangeInstallationToken and
@@ -1504,6 +1515,15 @@ type Deployment struct {
 	// transiently at the pull path (mirrors app_env_secret
 	// unseal at the same seam).
 	Sidecars json.RawMessage `json:"sidecars,omitempty"`
+	// FullRootfsAllowAuto permits automatic fallback to the self-contained
+	// full-rootfs assembly path when an OCI image is not based on Gregale's
+	// shared runtime base. Paid plans may opt into this per deployment;
+	// Free remains opt-in through FullRootfsOverride.
+	FullRootfsAllowAuto bool `json:"full_rootfs_allow_auto,omitempty"`
+	// FullRootfsOverride is a nullable per-deployment override. nil honors
+	// the plan/auto policy, true forces full-rootfs assembly, and false
+	// preserves the strict shared-base behavior.
+	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
 	// Workflows is the validated ADR-081 workflow definition set attached
 	// to this deployment. Keeping it on the deployment row makes the live
 	// deployment the source of truth for new run snapshots.
@@ -1984,13 +2004,28 @@ type BuildProvenance struct {
 	FrameworkVer string
 }
 
+// CustomDomainCertStatus is the durable TLS lifecycle for a legacy custom
+// domain. The values intentionally match the API contract from issue #1397.
+type CustomDomainCertStatus string
+
+const (
+	CustomDomainCertPending  CustomDomainCertStatus = "pending"
+	CustomDomainCertIssued   CustomDomainCertStatus = "issued"
+	CustomDomainCertRenewing CustomDomainCertStatus = "renewing"
+	CustomDomainCertFailed   CustomDomainCertStatus = "failed"
+)
+
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
-	Domain         string
-	AppID          string
-	ChallengeToken string
-	VerifiedAt     time.Time // zero = unverified
+	Domain           string
+	AppID            string
+	ChallengeToken   string
+	VerifiedAt       time.Time // zero = unverified
+	CertStatus       CustomDomainCertStatus
+	CertExpiresAt    time.Time
+	CertLastError    string
+	DNSLastCheckedAt time.Time
 }
 
 // Verified reports whether the TXT challenge has been satisfied.
@@ -3841,10 +3876,9 @@ type Usage struct {
 	// Sampler.SampleAndRoll → AppendUsage. ADR-048.
 	// Informational — not billed. Unit = interface bytes.
 	NetRxBytes int64
-	// ColdBootCount is the per-month sum of WAKE_RESTORE→
-	// WAKE_COLD_BOOT transitions observed across this app's
-	// instances. Source: scheddgrpc.InstanceStatsRow.
-	// LastWakeMethod, sampled by meterd Sampler.
+	// ColdBootCount is the per-month sum of customer requests whose
+	// wake outcome was WAKE_COLD_BOOT across this app's instances.
+	// Source: gatewayd's minute-bucketed usage stream.
 	// ADR-048. Informational — not billed.
 	ColdBootCount int64
 }
@@ -3982,6 +4016,7 @@ type CreditLedgerEntry struct {
 // existing resource and scaling settings.
 type UpdateAppParams struct {
 	RAMMB          *int
+	CPUMillicores  *int
 	IdleTimeoutS   *int // explicit 0 clears to plan default
 	SetIdleTimeout bool // distinguishes nil from zero
 	MaxConcurrency *int
@@ -4387,6 +4422,16 @@ type LoginToken struct {
 	ConsumedAt *time.Time
 }
 
+// EmailVerificationToken is a one-shot proof-of-email token. It is separate
+// from LoginToken because consuming it verifies the account without creating
+// a session.
+type EmailVerificationToken struct {
+	TokenHash  []byte
+	AccountID  string
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+}
+
 // CliAuthCode is one row of the cli_auth_codes table (spec §2.2
 // device-code flow). AccountID is empty between mint and claim; the
 // claim statement fills it in atomically. The 4-byte entropy + 5-min
@@ -4550,8 +4595,14 @@ type AppSecret struct {
 	// probabilistically non-deterministic, so a
 	// ciphertext-derived hash would diverge for every row).
 	ValueHash string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// ManagedPostgresBindingID and its opaque credential fields are populated
+	// only by the managed PostgreSQL credential sink. Customer writes cannot
+	// replace or delete an owned row while its binding is active.
+	ManagedPostgresBindingID    string
+	ManagedCredentialRef        string
+	ManagedCredentialGeneration int64
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 // AccountAppSecret is the per-row shape returned by
@@ -4995,6 +5046,10 @@ func PersonalOrgSlug(accountID string) string {
 type CreateAccountWithPersonalOrgParams struct {
 	Email string
 	Plan  api.Plan
+	// RequireEmailVerification leaves email_verified_at NULL. The zero value
+	// preserves the historical trusted-creation behavior used by OAuth,
+	// operator, migration, and test call sites.
+	RequireEmailVerification bool
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted

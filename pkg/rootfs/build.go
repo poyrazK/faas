@@ -158,6 +158,14 @@ type BuildInput struct {
 	// validateOutputTarget's sibling check). When SBOMRun is nil,
 	// SBOMStorageKey is ignored.
 	SBOMStorageKey string
+	// FullRootfs, when true, routes the build through BuildFullRootfs
+	// instead of the two-drive path (ADR-141 §Decision 1). The
+	// caller supplies the deployment's `FullRootfsOverride` /
+	// `FullRootfsAllowAuto` decision (state.Deployment widens in
+	// commit 6); commit 5 lays the flag wiring only. Default
+	// false preserves today's two-drive behaviour for every
+	// existing caller.
+	FullRootfs bool
 }
 
 // BuildResult reports the produced layer.
@@ -180,6 +188,29 @@ type BuildResult struct {
 
 // Build runs the pipeline. It stages into a temp dir that is always removed.
 func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error) {
+	// ADR-141 §Decision 1: when FullRootfs is true, Build forwards
+	// to BuildFullRootfs. The two paths share Validate() +
+	// validateOutputTarget + the InjectManifest / InjectGuestInit /
+	// mkfs helpers; the only divergence is the layer-application
+	// loop (full-rootfs applies ALL layers, no LayersAboveBase) and
+	// the absence of the /upper staging step (full-rootfs images
+	// become drive0+vda in the guest, not drive1).
+	if in.FullRootfs {
+		return b.BuildFullRootfs(ctx, BuildFullRootfsInput{
+			Layers:              in.Layers,
+			Manifest:            in.Manifest,
+			GuestInitPath:       in.GuestInitPath,
+			Plan:                in.Plan,
+			Storage:             in.Storage,
+			StorageKey:          in.StorageKey,
+			OutImage:            in.OutImage,
+			TarballPath:         in.TarballPath,
+			FunctionHandlerPath: in.FunctionHandlerPath,
+			FunctionRunnerPath:  in.FunctionRunnerPath,
+			SBOMRun:             in.SBOMRun,
+			SBOMStorageKey:      in.SBOMStorageKey,
+		})
+	}
 	limits, ok := api.LimitsFor(in.Plan)
 	if !ok {
 		return BuildResult{}, fmt.Errorf("rootfs: unknown plan %q", in.Plan)
@@ -201,6 +232,13 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		if err := ApplyLayerGz(staging, layer); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
+	}
+	// A customer image must not be able to smuggle the full-rootfs marker
+	// into the optimized two-drive artifact and make guest-init bypass the
+	// shared base. Only BuildFullRootfs writes the marker after all layers
+	// have been applied.
+	if err := removeFullRootfsMarker(staging); err != nil {
+		return BuildResult{}, err
 	}
 	// Function-deploy path (spec §4.9, M7). When TarballPath is set the
 	// customer's source tarball is unpacked at /app; when
@@ -263,6 +301,13 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			return BuildResult{}, fmt.Errorf("rootfs: workload manifest: %w", err)
 		}
 		if err := InjectWorkloadManifest(staging, in.WorkloadName, *in.WorkloadManifest); err != nil {
+			return BuildResult{}, err
+		}
+		// Sidecar images are mounted as independent roots when their main
+		// deployment uses full-rootfs. Keep the standard container mount
+		// points in the immutable sidecar tree so guest-init can attach
+		// /proc, /sys, /dev, and /tmp after chrooting the workload.
+		if err := ensureWorkloadMountpoints(staging); err != nil {
 			return BuildResult{}, err
 		}
 	}
@@ -349,6 +394,58 @@ func stageAppUpper(staging string) error {
 		}
 	}
 	return nil
+}
+
+// ensureWorkloadMountpoints creates the mount targets needed by a sidecar
+// that runs from its own root. The directories are created before stageAppUpper
+// moves the assembled image below /upper, so the sidecar ext4 remains
+// read-only while guest-init attaches the shared guest pseudo-filesystems.
+func ensureWorkloadMountpoints(staging string) error {
+	for _, rel := range []string{"dev", "proc", "sys", "tmp"} {
+		if err := ensureRuntimeDirectory(staging, rel); err != nil {
+			return fmt.Errorf("rootfs: sidecar mountpoint %q: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+// ensureRuntimeDirectory creates a path beneath staging while resolving any
+// existing ancestor symlinks with the same containment rules as OCI layer
+// extraction. The final target must resolve to a directory; a customer image
+// cannot turn a platform mountpoint into a regular file or an escape path.
+func ensureRuntimeDirectory(staging, rel string) error {
+	joined, err := safeJoin(staging, rel)
+	if err != nil {
+		return err
+	}
+	// The final mountpoint must be a real directory. Check the lexical path
+	// before resolveWithin follows ancestor symlinks; otherwise a final image
+	// symlink (for example /tmp -> /var/tmp) would look like an ordinary target
+	// and could not be safely overmounted after the artifact is mounted.
+	if info, statErr := os.Lstat(joined); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path exists but is a symlink")
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("path exists but is not a directory")
+		}
+		return nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	path, err := resolveWithin(staging, rel)
+	if err != nil {
+		return err
+	}
+	if info, statErr := os.Lstat(path); statErr == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("path exists but is not a directory")
+		}
+		return nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	return os.MkdirAll(path, 0o755)
 }
 
 // publishExt4 mkfs-es the staging tree into a temp file (or directly into
@@ -703,7 +800,7 @@ func applyTarballWithCap(dst string, r io.Reader, capBytes int64, prefix string)
 			if err != nil {
 				return err
 			}
-			if err := applyEntry(dst, target, hdr, tr); err != nil {
+			if err := applyEntry(dst, target, hdr, tr, nil); err != nil {
 				return err
 			}
 			continue

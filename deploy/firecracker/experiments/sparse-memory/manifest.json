@@ -1,0 +1,34 @@
+{
+  "base_commit": "76542f598b7a7fd59559949070aa6b0c4e68523d",
+  "source_archive_sha256": "70850ecf389dadda4be418ccb389e83e98531e6621050eb32c96b35572908837",
+  "rust_version": "1.76.0",
+  "packages": [
+    {
+      "url": "https://static.rust-lang.org/dist/2024-02-08/rustc-1.76.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "9fadfcf71bc6a0ddfd026b9624163faf1c5689dd4a1f7cc1f857167ade4aa6eb"
+    },
+    {
+      "url": "https://static.rust-lang.org/dist/2024-02-08/cargo-1.76.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "30ec0ad9fca443ec12c544f9ce448dacdde411a45b9042961938b650e918ccfb"
+    },
+    {
+      "url": "https://static.rust-lang.org/dist/2024-02-08/rust-std-1.76.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "e41150b52d923a3bbe166c4ecc5719f56576274b0d034d764768aee279ae2063"
+    },
+    {
+      "url": "https://static.rust-lang.org/dist/2024-02-08/rust-std-1.76.0-x86_64-unknown-linux-musl.tar.xz",
+      "sha256": "995bda2aeff09ecbda9a1892a6c47beb087e99c9be924dc8fa6416f6813f4edc"
+    }
+  ],
+  "firecracker_sha256": "7e7d3a7f239ac91571fe1d1a4b4afb6268792a873f9c81ff9a004e5a8e317480",
+  "patches": {
+    "memory.patch": "f06020f1954c6801efaff2107597c745cd02ace3171416a898457ddd33d508ed",
+    "../../tsc-restore-order.patch": "c5402d36de7cfd6bc28d468da83ebc075a6f05a7dac8da80341fc1d9ac576118"
+  },
+  "seccomp": "unchanged",
+  "deployed": false,
+  "status": "guarded SSD candidate; rollout held after snapshot queue-state rejection in gateway soak",
+  "previous_unguarded_firecracker_sha256": "6c1dba40dded05b1919b6f72f92d559ef5bab62456f0c3d04db7abcee62810aa",
+  "vmmd_base_commit": "911efd866ddf96d4ca9883f4ec8b0d1db8de5fd6",
+  "vmmd_sha256": "a20363445b0b48237a094581fab10745c88689db53cae17da71d1f25a805d7ef"
+}

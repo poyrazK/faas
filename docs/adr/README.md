@@ -23,6 +23,18 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 158 | [Provider-neutral resumable multipart object uploads](158-provider-neutral-multipart-uploads.md) | accepted | Large-object and interrupted-upload hardening for S3 preview |
+| 158 | [Per-action CSRF cookies on multi-form dashboard pages](158-dashboard-multi-form-csrf.md): additive named-cookie issue/verify helpers; first consumer is typed-confirmed dashboard API-key revocation | accepted | issue #248 slice A; establishes the secure pattern for plan change and deployment rollback |
+| 159 | [Dockerfile developer cache parity](159-developer-dockerfile-cache.md): extend the disposable tenant/workspace-scoped BuildKit cache to `gregale dev` Dockerfile builds | accepted | `gregale dev` custom-build latency follow-up to ADR-153 |
+| 157 | [Named container resource profiles](157-container-resource-profiles.md): stable micro-to-xlarge RAM/CPU shapes mapped to existing cgroup enforcement | accepted | Container predictability milestone |
+| 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting milestone; live usage feed and paid pricing remain launch gates |
+| 157 | [Developer config parity](157-developer-config-parity.md): explicit `gregale dev --env-file` secret sync with key-only output and archive exclusion | accepted | `gregale dev` DX follow-up to ADR-156 |
+| 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting milestone; live usage feed and paid pricing remain launch gates |
+| 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |
+| 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
+| 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |
+| 152 | [Configurable sustained CPU per app](152-configurable-app-cpu.md): 250m, 500m, and 1000m cgroup quotas with configured/effective API visibility | accepted | Cloud Run gap analysis |
+| 151 | [Provider-neutral customer object storage](151-provider-neutral-object-storage.md): opt-in managed S3 buckets with durable placement and provider-neutral APIs | accepted for preview | S3 preview milestone; public launch pending billing and backend qualification |
 | 001–010 | Locked v1 decisions | accepted | spec §3 |
 | 011 | Thin dashboard at launch (was gap G3) | accepted | UX spec §11 — landed before M7.5 code |
 | 012 | `githubd` / GitHub App for push-to-deploy | accepted | UX spec §11 — landed before M7.5 code |
@@ -104,6 +116,9 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 141 | Durable imaged→apid audit-event delivery (`audit_event_outbox`; deployment-scoped dedupe; transactional `events` insert; 2s replay worker; capped retries + dead-letter; 90d queue metadata retention; legacy `pg_notify` fallback) | accepted | public-release backend hardening; migration 00590; issue #472 / ADR-058 |
 | 142 | Timestamp migration IDs + post-cutover out-of-order apply; freezes legacy 1–590 and retires slot reservations | accepted | migration concurrency; supersedes ADR-041 for new migrations |
 | 146 | [OCI platform selection](146-oci-platform-selection.md): shared Linux/amd64 resolution and immutable source/child references | accepted | container compatibility; index-aware image preflight and deployment |
+| 147 | Full-rootfs fallback for arbitrary OCI images: paid-plan all-layer ext4 assembly, marker-based direct pivot, bounded named-user lookup, and direct-root sidecars | accepted | container compatibility; migration `20260905110000000_deployment_full_rootfs_columns.sql` |
+| 157 | [Provider-neutral object-storage access grants](157-object-storage-access-control.md): separate storage manage/read/write scopes plus explicit per-bucket API-key grants; rotation inheritance; no provider-native credentials | accepted | object-storage application access; migration `20260905200000000_object_storage_access_control.sql`; extends ADR-151 and ADR-156 |
+| 158 | [Explicit ephemeral disk boundary](158-ephemeral-disk-boundary.md): expose the existing plan-capped writable `drive1` capacity as `ephemeral_disk_max_mb` while retaining `app_layer_max_mb` compatibility; no persistent volumes or second quota source | accepted | container runtime storage contract; no migration |
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work

@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.sidecar_cpu_millicores import SidecarCpuMillicores, check_sidecar_cpu_millicores
 from ..models.sidecar_type import SidecarType, check_sidecar_type
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.sidecar_env import SidecarEnv
+    from ..models.workload_dependency import WorkloadDependency
 
 
 T = TypeVar("T", bound="Sidecar")
@@ -47,10 +49,17 @@ class Sidecar:
       any log, audit, or error.
     - `port` ∈ {0, 1..65535}. 0 = absent.
     - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
-    - `essential` defaults to true. If true and the sidecar
-      exits non-zero: type=init → fail the deploy
-      (`failure_class=user_error`); type=sidecar → restart-
-      loop. If false: warn + restart-cap (PR-B's runtime).
+    - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
+    - `essential` defaults to true. If true and the workload
+      exits non-zero, the dependency set fails
+      (`failure_class=user_error`) and essential long-running
+      sidecars restart-loop. If false, the failure is logged
+      and the other workloads continue.
+    - `depends_on` optionally gates this workload on `main` or
+      another sidecar. Conditions are `started`, `healthy`, and
+      `completed_successfully`; omitted condition means `started`.
+      Init workloads are implicit prerequisites of main and long-running
+      sidecars. Cycles and unknown workload names are rejected.
 
     """
 
@@ -69,9 +78,13 @@ class Sidecar:
     """Listen port. 0 = absent / fall back to image default."""
     ram_mb: int | Unset = UNSET
     """Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API."""
+    cpu_millicores: SidecarCpuMillicores | Unset = 0
+    """Sustained cgroup CPU allowance in millicores. 0 = inherit app CPU quota."""
     essential: bool | Unset = UNSET
-    """Defaults to true. type=init non-zero exit → fail deploy; type=sidecar non-zero exit → restart-loop. PR-B's
-    runtime."""
+    """Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."""
+    depends_on: list[WorkloadDependency] | Unset = UNSET
+    """Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running
+    sidecars."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,7 +106,18 @@ class Sidecar:
 
         ram_mb = self.ram_mb
 
+        cpu_millicores: int | Unset = UNSET
+        if not isinstance(self.cpu_millicores, Unset):
+            cpu_millicores = self.cpu_millicores
+
         essential = self.essential
+
+        depends_on: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.depends_on, Unset):
+            depends_on = []
+            for depends_on_item_data in self.depends_on:
+                depends_on_item = depends_on_item_data.to_dict()
+                depends_on.append(depends_on_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -112,14 +136,19 @@ class Sidecar:
             field_dict["port"] = port
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
+        if cpu_millicores is not UNSET:
+            field_dict["cpu_millicores"] = cpu_millicores
         if essential is not UNSET:
             field_dict["essential"] = essential
+        if depends_on is not UNSET:
+            field_dict["depends_on"] = depends_on
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.sidecar_env import SidecarEnv
+        from ..models.workload_dependency import WorkloadDependency
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -141,7 +170,23 @@ class Sidecar:
 
         ram_mb = d.pop("ram_mb", UNSET)
 
+        _cpu_millicores = d.pop("cpu_millicores", UNSET)
+        cpu_millicores: SidecarCpuMillicores | Unset
+        if isinstance(_cpu_millicores, Unset):
+            cpu_millicores = UNSET
+        else:
+            cpu_millicores = check_sidecar_cpu_millicores(_cpu_millicores)
+
         essential = d.pop("essential", UNSET)
+
+        _depends_on = d.pop("depends_on", UNSET)
+        depends_on: list[WorkloadDependency] | Unset = UNSET
+        if _depends_on is not UNSET:
+            depends_on = []
+            for depends_on_item_data in _depends_on:
+                depends_on_item = WorkloadDependency.from_dict(depends_on_item_data)
+
+                depends_on.append(depends_on_item)
 
         sidecar = cls(
             name=name,
@@ -151,7 +196,9 @@ class Sidecar:
             env=env,
             port=port,
             ram_mb=ram_mb,
+            cpu_millicores=cpu_millicores,
             essential=essential,
+            depends_on=depends_on,
         )
 
         sidecar.additional_properties = d

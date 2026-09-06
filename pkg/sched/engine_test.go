@@ -3566,18 +3566,10 @@ func TestCaptureWarmSnapshot_HappyPath(t *testing.T) {
 	if warmSnap.Tier != state.SnapshotTierWarm {
 		t.Errorf("warm row tier = %q, want warm", warmSnap.Tier)
 	}
-	// mockImaged writes the engine's payload storage_key verbatim
-	// (vmstate_path = full host path that the VMM hands back).
-	// The /warm/ segment in that path is what proves the engine
-	// routed the warm capture through the right key namespace — a
-	// regression to init's path would land here with /mem instead of
-	// /warm/vmstate.
-	if !strings.Contains(warmSnap.StorageKey, "/warm/vmstate") {
-		t.Errorf("warm row storage_key = %q, want suffix /warm/vmstate (engine must route warm capture through /warm/ namespace)",
-			warmSnap.StorageKey)
-	}
-	if strings.Contains(warmSnap.StorageKey, "/snap/"+dep.ID+"/warm/mem") {
-		t.Errorf("warm row storage_key = %q must not be the init-tier mem key", warmSnap.StorageKey)
+	// Publication must name the warm memory generation, not an init key
+	// or a host path masquerading as a storage key.
+	if !strings.Contains(warmSnap.StorageKey, "/warm/captures/") || !strings.HasSuffix(warmSnap.StorageKey, "/mem") {
+		t.Fatalf("warm snapshot key = %q", warmSnap.StorageKey)
 	}
 	// 3) Snapshot_written emitted twice — warm first (RUNNING still),
 	// then init (PAUSED → PARKED).
@@ -3626,7 +3618,7 @@ func (m *mockImaged) handle(payload []byte) error {
 		tier = state.SnapshotTierInit
 	}
 	depID, _ := p["deployment_id"].(string)
-	storageKey, _ := p["vmstate_path"].(string)
+	storageKey, _ := p["storage_key"].(string)
 	memBytes, _ := p["mem_bytes"].(float64)
 	_, err := m.store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: depID,
@@ -4168,4 +4160,28 @@ type loseAlwaysCreateInstance struct {
 func (l *loseAlwaysCreateInstance) CreateInstance(ctx context.Context, appID, depID, initState string, ramMB int, nodeID, wakeID string) (state.Instance, error) {
 	l.calls++
 	return state.Instance{}, state.ErrConcurrentWake
+}
+
+func TestEngineWarmHintHeartbeatWithoutTenantTraffic(t *testing.T) {
+	e := newEngine(t, state.NewMemStore(), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ticks := make(chan time.Time, 1)
+	at := time.Now()
+	ticks <- at
+	done := make(chan error, 1)
+	got := make(chan WarmHintEvent, 1)
+	go func() { done <- e.streamWarmHints(ctx, func(ev WarmHintEvent) error { got <- ev; return nil }, ticks) }()
+	select {
+	case ev := <-got:
+		if ev.AppID != "" || ev.NodeID != "" || !ev.WrittenAt.Equal(at) {
+			t.Fatalf("invalid heartbeat: %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("idle stream sent no heartbeat")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }

@@ -1,0 +1,197 @@
+name: builder-native
+
+on:
+  workflow_run:
+    workflows: [images]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: builder-native-compute-node-2
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+env:
+  GO_VERSION: "1.25.13"
+  GCP_PROJECT: project-5ae37259-04cf-4070-bef
+  GCP_ZONE: europe-west3-c
+  GCP_INSTANCE: faas-compute-node-2
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/811654175645/locations/global/workloadIdentityPools/github-actions/providers/gregale-builder-native
+  GCP_SERVICE_ACCOUNT: gregale-builder-ci@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com
+  CRANE_VERSION: "0.21.1"
+  CRANE_SHA256_LINUX_AMD64: ffca5eafe0af8078f2c627fb852104f9d762fad1eb36c04e93ca14fce76d47d2
+
+jobs:
+  acceptance:
+    name: builder native (Firecracker amd64)
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Resolve published builder commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            source_sha="${WORKFLOW_RUN_SHA}"
+            builder_conclusion="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}/jobs?per_page=100" \
+                --jq '.jobs[] | select(.name == "builder-base (linux/amd64 + linux/arm64)") | .conclusion' |
+                tail -n 1
+            )"
+            case "$builder_conclusion" in
+              success)
+                ;;
+              skipped)
+                echo "The images workflow did not publish builder-base; skipping native acceptance."
+                echo "run=false" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              *)
+                echo "::error::could not confirm a successful builder-base publish (conclusion: ${builder_conclusion:-missing})" >&2
+                exit 1
+                ;;
+            esac
+          else
+            source_sha=""
+            while IFS=$'\t' read -r run_id candidate_sha; do
+              builder_conclusion="$(
+                gh api \
+                  "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+                  --jq '.jobs[] | select(.name == "builder-base (linux/amd64 + linux/arm64)") | .conclusion' |
+                  tail -n 1
+              )"
+              if [[ "$builder_conclusion" == "success" ]]; then
+                source_sha="$candidate_sha"
+                break
+              fi
+            done < <(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/images.yml/runs?branch=main&status=success&per_page=100" \
+                --jq '.workflow_runs[] | [.id, .head_sha] | @tsv'
+            )
+            [[ -n "$source_sha" ]] || {
+              echo "::error::no successful builder-base publish was found in the last 100 successful images runs" >&2
+              exit 1
+            }
+          fi
+          [[ "${source_sha}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::resolved source SHA is invalid" >&2
+            exit 1
+          }
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "sha=${source_sha}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        if: steps.source.outputs.run == 'true'
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v7
+        if: steps.source.outputs.run == 'true'
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Build transfer bundle
+        if: steps.source.outputs.run == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/native-builder-bundle"
+          mkdir -p "$bundle/source" "$bundle/tools"
+          git archive "$SOURCE_SHA" | tar -x -C "$bundle/source"
+          printf '%s\n' "$SOURCE_SHA" > "$bundle/source/.faas-acceptance-source-sha"
+
+          go_root="$(go env GOROOT)"
+          bash scripts/ci/package-go-toolchain.sh "$go_root" "$bundle/go.tar.gz"
+
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "$bundle/crane.tar.gz" \
+            "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "${CRANE_SHA256_LINUX_AMD64}  $bundle/crane.tar.gz" | sha256sum --check --strict
+          tar -xzf "$bundle/crane.tar.gz" -C "$bundle/tools" crane
+          chmod 0755 "$bundle/tools/crane"
+          rm "$bundle/crane.tar.gz"
+          tar -C "$bundle" -czf "$RUNNER_TEMP/native-builder-bundle.tar.gz" source tools go.tar.gz
+
+      - id: auth
+        name: Authenticate to GCP with GitHub OIDC
+        if: steps.source.outputs.run == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        if: steps.source.outputs.run == 'true'
+
+      - name: Run native builder acceptance on compute node 2
+        if: steps.source.outputs.run == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-builder-acceptance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-builder-acceptance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "mkdir -p '$remote_root'"
+          gcloud compute scp "$RUNNER_TEMP/native-builder-bundle.tar.gz" \
+            "$GCP_INSTANCE:$remote_root/bundle.tar.gz" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go' && sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=45m --property='StandardOutput=append:$remote_root/acceptance.log' --property='StandardError=append:$remote_root/acceptance.log' --working-directory='$remote_root/source' --setenv=FAAS_ACCEPTANCE_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_ACCEPTANCE_IMAGE='ghcr.io/poyrazk/builder-base:sha-$SOURCE_SHA' --setenv=FAAS_ACCEPTANCE_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_ACCEPTANCE_CRANE='$remote_root/tools/crane' --setenv=FAAS_ACCEPTANCE_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_ACCEPTANCE_TRANSFER_ROOT='$remote_root' --setenv=FAAS_METAL_SCAN_FAIL_ON='high' --setenv=FAAS_METAL_SCAN_ONLY_FIXED='true' /bin/bash scripts/ci/run-native-builder-acceptance.sh"
+
+      - name: Refresh GCP authentication for cleanup
+        if: always() && steps.source.outputs.run == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Remove remote transfer bundle
+        if: always() && steps.source.outputs.run == 'true'
+        run: |
+          remote_root="/var/tmp/faas-builder-acceptance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          log="$RUNNER_TEMP/native-builder-acceptance.log"
+          gcloud compute scp "$GCP_INSTANCE:$remote_root/acceptance.log" "$log" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
+          if [[ -f "$log" ]]; then
+            cat "$log"
+          fi
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo rm -rf '$remote_root'" || true
+
+      - name: Upload acceptance log
+        if: always() && steps.source.outputs.run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-builder-acceptance-${{ steps.source.outputs.sha }}
+          path: ${{ runner.temp }}/native-builder-acceptance.log
+          if-no-files-found: warn
+          retention-days: 14

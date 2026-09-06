@@ -25,6 +25,7 @@ FROM golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e37
 
 # Guest runtime user (uid 1000, spec §4.8).
 RUN apk upgrade --no-cache && \
+    apk add --no-cache bash && \
     rm -rf /usr/local/go && \
     (id app 2>/dev/null || adduser -u 1000 -D app)
 

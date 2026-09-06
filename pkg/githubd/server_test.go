@@ -14,6 +14,9 @@ package githubd
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -86,6 +89,85 @@ func newServerUnderTest(t *testing.T, svc *Service) *Server {
 		Service: svc,
 		Log:     svc.Log,
 		Ops:     wire.NewOpsMetrics("githubd_test"),
+	}
+}
+
+type recordingDeliveryStore struct {
+	deliveries []WebhookDelivery
+}
+
+func (s *recordingDeliveryStore) Enqueue(_ context.Context, delivery WebhookDelivery) (bool, error) {
+	for _, existing := range s.deliveries {
+		if existing.DeliveryID == delivery.DeliveryID {
+			return false, nil
+		}
+	}
+	s.deliveries = append(s.deliveries, delivery)
+	return true, nil
+}
+func (*recordingDeliveryStore) Claim(context.Context) (WebhookDelivery, error) {
+	return WebhookDelivery{}, ErrNoWebhookDelivery
+}
+func (*recordingDeliveryStore) Complete(context.Context, string) error { return nil }
+func (*recordingDeliveryStore) Fail(context.Context, string, string, time.Time, bool) error {
+	return nil
+}
+func (*recordingDeliveryStore) Prune(context.Context, time.Time) error { return nil }
+
+func webhookSignature(body, secret []byte) string {
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestServerWebhook_GlobalSecretDurablyAcceptsStandardGitHubHeaders(t *testing.T) {
+	svc := newRecording(t)
+	deliveries := &recordingDeliveryStore{}
+	secret := []byte("github-app-webhook-secret")
+	s := newServerUnderTest(t, svc)
+	s.WebhookSecret = secret
+	s.Deliveries = deliveries
+	body := []byte(`{"action":"opened"}`)
+
+	for attempt, wantBody := range []string{"accepted", "duplicate"} {
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+		req.Header.Set("X-Hub-Signature-256", webhookSignature(body, secret))
+		req.Header.Set("X-GitHub-Event", "pull_request")
+		req.Header.Set("X-GitHub-Delivery", "delivery-1")
+		rr := httptest.NewRecorder()
+		s.WebhookLoopbackHandler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), wantBody) {
+			t.Fatalf("attempt %d: status/body = %d %q, want 202 %q", attempt+1, rr.Code, rr.Body.String(), wantBody)
+		}
+	}
+	if len(deliveries.deliveries) != 1 || deliveries.deliveries[0].EventType != "pull_request" {
+		t.Fatalf("deliveries = %+v, want one pull_request", deliveries.deliveries)
+	}
+}
+
+func TestHandleWebhookEvent_PushRequiresInstallationID(t *testing.T) {
+	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	err := svc.HandleWebhookEvent(context.Background(), "push",
+		[]byte(`{"ref":"refs/heads/main","after":"abc","repository":{"full_name":"octo/api"}}`))
+	if err == nil || !strings.Contains(err.Error(), "installation.id") {
+		t.Fatalf("err = %v, want missing installation.id", err)
+	}
+}
+
+func TestHandleWebhookEvent_PullRequestRequiresInstallationID(t *testing.T) {
+	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(validPRBody), &payload); err != nil {
+		t.Fatal(err)
+	}
+	delete(payload, "installation")
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.HandleWebhookEvent(context.Background(), "pull_request", body)
+	if err == nil || !strings.Contains(err.Error(), "installation.id") {
+		t.Fatalf("err = %v, want missing installation.id", err)
 	}
 }
 
@@ -187,6 +269,49 @@ func TestServerWebhook_IgnoredResponseShape(t *testing.T) {
 		}
 	}
 	_ = strings.HasPrefix // keep imports stable for downstream slices
+}
+
+func TestServerWebhook_ReleaseTagRejectionResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tagErr error
+		reason string
+	}{
+		{name: "invalid", tagErr: releaseTagRejection{reason: releaseTagReasonInvalid, tag: "latest"}, reason: releaseTagReasonInvalid},
+		{name: "moved", tagErr: releaseTagRejection{reason: releaseTagReasonMoved, tag: "v1.2.3"}, reason: releaseTagReasonMoved},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			s := &Server{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			s.writeWebhookResult(rr, reconcile.Result{}, tc.tagErr, func(error) {})
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rr.Code)
+			}
+			var got map[string]string
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if got["status"] != "ignored" || got["reason"] != tc.reason {
+				t.Fatalf("response = %v, want ignored/%s", got, tc.reason)
+			}
+		})
+	}
+}
+
+func TestServerWebhook_SkipMarkerResponse(t *testing.T) {
+	rr := httptest.NewRecorder()
+	s := &Server{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	s.writeWebhookResult(rr, reconcile.Result{}, ErrSkipDeploy, func(error) {})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got["status"] != "ignored" || got["reason"] != "skip_marker" {
+		t.Fatalf("response = %v, want ignored/skip_marker", got)
+	}
 }
 
 // scrape returns the /metrics body served by s.Ops (the per-test

@@ -205,8 +205,14 @@ func (p *Problem) Error() string {
 }
 
 // WriteProblem renders p as an RFC 7807 problem+json response with its status
-// code. Every HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
+// code. Gateway requests that explicitly accept text/html receive the safe
+// browser error page instead; API handlers continue to receive JSON. Every
+// HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
 func WriteProblem(w http.ResponseWriter, p *Problem) {
+	if req, ok := w.(interface{ ProblemHTMLRequest() *http.Request }); ok && AcceptsHTML(req.ProblemHTMLRequest()) {
+		writeProblemHTML(w, p)
+		return
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	for k, vs := range p.extraHeaders {
 		for _, v := range vs {
@@ -326,11 +332,17 @@ func (p *Problem) HasHeader(key string) []string {
 // Stable error codes (spec Appendix A, UX spec §7). Keep in sync with docs and
 // the CLI's exit-code mapping.
 const (
-	CodePlanLimitApps   = "plan_limit_apps"
-	CodePlanLimitRAM    = "plan_limit_ram"
-	CodePlanLimitConcur = "plan_limit_concurrency"
-	CodeSourceTooLarge  = "source_too_large"
-	CodeSourceInvalid   = "source_invalid"
+	CodePlanLimitApps          = "plan_limit_apps"
+	CodePlanLimitRAM           = "plan_limit_ram"
+	CodePlanLimitConcur        = "plan_limit_concurrency"
+	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidResourceProfile = "invalid_resource_profile"
+	CodeSourceTooLarge         = "source_too_large"
+	CodeSourceInvalid          = "source_invalid"
+	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
+	// the node-local developer-source cache was absent, stale, or corrupt.
+	// The CLI responds by uploading a complete source snapshot.
+	CodeDevSourceBaseMissing = "dev_source_base_missing"
 	// CodeSecretScanStrict is the 422 sentinel returned by both
 	//   - cmd/apid/scan_service.go (server-side tree scan rejected)
 	//   - cmd/gregale/printErr (--secret-scan=strict client-side rejected)
@@ -919,14 +931,15 @@ const (
 	// per-plan tier-ups (PR-A does NOT apply the plan gate; the
 	// code is reserved so a follow-up PR doesn't have to invent
 	// a new one).
-	CodeSidecarCapExceeded      = "sidecar_cap_exceeded"
-	CodeSidecarInvalidType      = "sidecar_invalid_type"
-	CodeSidecarInvalidImage     = "sidecar_invalid_image"
-	CodeSidecarStatefulDenied   = "sidecar_stateful_denied"
-	CodeSidecarInvalidName      = "sidecar_invalid_name"
-	CodeSidecarInvalidPort      = "sidecar_invalid_port"
-	CodeSidecarInvalidRamMB     = "sidecar_invalid_ram_mb"
-	CodeSidecarNotAllowedOnPlan = "sidecar_not_allowed_on_plan"
+	CodeSidecarCapExceeded          = "sidecar_cap_exceeded"
+	CodeSidecarInvalidType          = "sidecar_invalid_type"
+	CodeSidecarInvalidImage         = "sidecar_invalid_image"
+	CodeSidecarStatefulDenied       = "sidecar_stateful_denied"
+	CodeSidecarInvalidName          = "sidecar_invalid_name"
+	CodeSidecarInvalidPort          = "sidecar_invalid_port"
+	CodeSidecarInvalidRamMB         = "sidecar_invalid_ram_mb"
+	CodeSidecarInvalidCPUMillicores = "sidecar_invalid_cpu_millicores"
+	CodeSidecarNotAllowedOnPlan     = "sidecar_not_allowed_on_plan"
 
 	// CodeInitSidecarFailed (issue #463 / ADR-069 / PR-B AC #1) is
 	// the RFC 7807 stable code vmmd stamps onto a deployments row
@@ -1352,10 +1365,14 @@ const (
 	//     can branch on it without inventing a new code.
 	CodeInvalidCredentials = "invalid_credentials"
 	CodeEmailNotVerified   = "email_not_verified"
-	CodePasswordTooWeak    = "password_too_weak"
-	CodeResetTokenInvalid  = "reset_token_invalid"
-	CodeResetTokenExpired  = "reset_token_expired"
-	CodeAccountExists      = "account_exists"
+	// CodeEmailVerificationRequired is returned by authenticated deploy
+	// and billing mutations when a password-signup account has not yet
+	// consumed its verification link.
+	CodeEmailVerificationRequired = "email_verification_required"
+	CodePasswordTooWeak           = "password_too_weak"
+	CodeResetTokenInvalid         = "reset_token_invalid"
+	CodeResetTokenExpired         = "reset_token_expired"
+	CodeAccountExists             = "account_exists"
 
 	// CodeOAuthProviderUnavailable is the 503 returned by the
 	// /v1/auth/{google,github}{,/callback} handlers when the
@@ -1578,7 +1595,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget,
+	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending:
 		return http.StatusConflict
@@ -1591,7 +1608,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -1863,6 +1880,8 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
+	case CodeEmailVerificationRequired:
+		return http.StatusForbidden
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired:
@@ -1967,15 +1986,16 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		WithDocs(docsBase + "/plans#ram")
 }
 
-// ErrAppLayerTooLarge is returned when the built app layer (deps + code) exceeds
-// the plan's drive1 cap (spec §4.6). The message names the cap and observed size
-// so the deploy failure is actionable.
+// ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
+// exceed the plan's writable ephemeral drive1 capacity (spec §4.6). The
+// legacy problem code remains stable for clients; the message names both the
+// app-layer build boundary and its runtime-disk meaning.
 func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
-	capBytes := int64(l.AppLayerMaxMB) * 1024 * 1024
+	capBytes := l.EphemeralDiskMaxBytes()
 	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
 		"App too large",
-		fmt.Sprintf("%s plan caps the app layer at %d MB; built layer is %.1f MB.",
-			l.Plan, l.AppLayerMaxMB, float64(observedBytes)/(1024*1024))).
+		fmt.Sprintf("%s plan caps the writable ephemeral app disk at %d MB (app-layer build cap); built layer is %.1f MB.",
+			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits#app-layer")
 }
@@ -2263,6 +2283,15 @@ func ErrUploadSessionAlreadyCancelled(uploadID string) *Problem {
 		"Upload session not open",
 		fmt.Sprintf("Upload session %q is not in 'open' status; the .part file is gone.", uploadID)).
 		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrDevSourceBaseMissing tells an incremental-sync client to retry the same
+// target as a complete snapshot. Cache state is deliberately not durable.
+func ErrDevSourceBaseMissing() *Problem {
+	return NewProblem(http.StatusConflict, CodeDevSourceBaseMissing,
+		"Developer source base unavailable",
+		"the cached source revision is unavailable; retry with a complete source snapshot").
+		WithDocs(docsBase + "/dev/source-sync")
 }
 
 // ErrStatelessOnlyViolation is returned when a deploy shape (or resolved
@@ -3719,6 +3748,16 @@ func ErrSecretNotFound(key string) *Problem {
 		WithDocs(docsBase + "/secrets")
 }
 
+// ErrManagedSecretConflict protects an environment key owned by an active
+// managed PostgreSQL binding. CodeConflict is intentional until the managed
+// database API introduces its own stable public error vocabulary.
+func ErrManagedSecretConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict,
+		"Secret is managed",
+		"This environment key is controlled by an active managed PostgreSQL binding. Delete the binding before changing the secret.").
+		WithDocs(docsBase + "/postgres#bindings")
+}
+
 // ErrPlanLimitEnvVars is returned when an env PUT would exceed the plan's
 // per-app env-var count (issue #395 / ADR-045). Observed is the post-write
 // count. The 403 mirrors ErrPlanLimitSecrets so the SDK's error decoder can
@@ -4297,6 +4336,14 @@ func ErrSidecarInvalidRamMB(ramMB int) *Problem {
 		fmt.Sprintf("sidecar ram_mb %d must be 0 (inherit plan RAM) or in [32, 512].", ramMB))
 }
 
+// ErrSidecarInvalidCPUMillicores is returned when the sidecar
+// cpu_millicores is out of the accepted set.
+func ErrSidecarInvalidCPUMillicores(cpuMillicores int) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeSidecarInvalidCPUMillicores,
+		"Invalid sidecar cpu_millicores",
+		fmt.Sprintf("sidecar cpu_millicores %d must be 0 (inherit app cpu) or one of 250, 500, 1000.", cpuMillicores))
+}
+
 // ErrSidecarNotAllowedOnPlan is reserved for a future per-plan
 // gate (PR-A does NOT apply this gate — the global SidecarCapMax
 // is the load-bearing surface; see ADR-068 §Decision 1). The
@@ -4773,6 +4820,15 @@ func ErrEmailNotVerified(provider string) *Problem {
 		"Email not verified",
 		fmt.Sprintf("the %s account's primary email is not verified; verify it on the provider and retry.", provider)).
 		WithDocs(docsBase + "/auth/oauth")
+}
+
+// ErrEmailVerificationRequired is the authenticated 403 gate for deploy and
+// payment actions. The account remains usable for sign-in and read-only work.
+func ErrEmailVerificationRequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
+		"Email verification required",
+		"verify your email address before deploying apps or changing billing settings.").
+		WithDocs(docsBase + "/auth/email-verification")
 }
 
 // ErrPasswordTooWeak is the 400 returned by POST /signup and POST

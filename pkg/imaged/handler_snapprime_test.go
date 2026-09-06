@@ -13,11 +13,46 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/buildcache"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestReleaseBuildCacheLeaseAfterRootfsHandoff(t *testing.T) {
+	store := state.NewMemStore()
+	h := newHandler(store)
+	acct, _ := store.CreateAccount(context.Background(), "lease@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{AccountID: acct.ID, Slug: "lease-app", RAMMB: 256})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball})
+	root := t.TempDir()
+	lease, err := buildcache.LeasePath(root, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(lease), 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lease, []byte("artifact"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, lease, "build", 8); err != nil {
+		t.Fatal(err)
+	}
+	dep.RootfsPath = lease
+	h.releaseBuildCacheLease(context.Background(), dep)
+	if _, err := os.Stat(lease); err != nil {
+		t.Fatalf("referenced lease removed: %v", err)
+	}
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, filepath.Join(root, "final.ext4"), "app", 8); err != nil {
+		t.Fatal(err)
+	}
+	h.releaseBuildCacheLease(context.Background(), dep)
+	if _, err := os.Stat(lease); !os.IsNotExist(err) {
+		t.Fatalf("completed handoff lease remains: %v", err)
+	}
+}
 
 // --- F2: FC-version startup sweep ------------------------------------------
 

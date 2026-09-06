@@ -529,6 +529,37 @@ func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppRespon
 	return out, c.do(ctx, "POST", "/v1/apps", req, &out)
 }
 
+// UpsertDevSession creates or refreshes the stable developer preview for a
+// project. Source is uploaded separately through the normal deploy surface.
+func (c *Client) UpsertDevSession(ctx context.Context, project string, req UpsertDevSessionRequest) (DevSessionResponse, error) {
+	return c.PutDevSessionsProject(ctx, project, req)
+}
+
+// PutDevSessionsProject is the path-shaped SDK method for
+// PUT /v1/dev/sessions/{project}.
+func (c *Client) PutDevSessionsProject(ctx context.Context, project string, req UpsertDevSessionRequest) (DevSessionResponse, error) {
+	var out DevSessionResponse
+	return out, c.do(ctx, "PUT", "/v1/dev/sessions/"+project, req, &out)
+}
+
+// DestroyDevSession tears down the developer preview for a project. Passing a
+// workspace ID targets an isolated developer workspace; omission retains the
+// legacy account+project behavior.
+func (c *Client) DestroyDevSession(ctx context.Context, project string, workspaceID ...string) error {
+	return c.DeleteDevSessionsProject(ctx, project, workspaceID...)
+}
+
+// DeleteDevSessionsProject is the path-shaped SDK method for
+// DELETE /v1/dev/sessions/{project}.
+func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, workspaceID ...string) error {
+	path := "/v1/dev/sessions/" + project
+	if len(workspaceID) > 0 && workspaceID[0] != "" {
+		query := url.Values{"workspace_id": {workspaceID[0]}}
+		path += "?" + query.Encode()
+	}
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
 // Deploy creates a deployment for an app slug (JSON variant).
 // For tarball / dockerfile deploys use DeployMultipart.
 func (c *Client) Deploy(ctx context.Context, slug string, req CreateDeploymentRequest) (DeploymentResponse, error) {
@@ -824,6 +855,44 @@ func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string,
 	// semantics still hold; the file-open guard (if any) runs at the
 	// caller before this mint, so a rejected path never produces an
 	// Idempotency-Key on the wire.
+	req.Header.Set("Idempotency-Key", newUUIDv4())
+	var out DeploymentResponse
+	return out, c.doReq(c.uploadHTTP(), req, &out)
+}
+
+// DeployDevSource uploads either a complete developer source snapshot
+// (baseRevision empty) or a delta against a previously accepted revision. The
+// server always reconstructs a complete archive before normal deploy
+// validation. A missing disposable base returns CodeDevSourceBaseMissing so
+// callers can transparently retry with the complete snapshot.
+func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations, baseRevision, targetRevision string, deleted []string) (DeploymentResponse, error) {
+	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("invalid source root: %w", err)
+	}
+	if targetRevision == "" {
+		return DeploymentResponse{}, errors.New("developer source target revision is required")
+	}
+	var b bytes.Buffer
+	w := newDevSourceMultipartWriter(&b, slug, dockerfile, runtime, handler, storedRoot, ann, baseRevision, targetRevision, deleted)
+	fw, err := w.CreateFormFile("source", sourceName)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := io.Copy(fw, source); err != nil {
+		return DeploymentResponse{}, fmt.Errorf("copy source: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return DeploymentResponse{}, fmt.Errorf("close multipart writer: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/apps/"+slug+"/deployments/dev-source", &b)
+	if err != nil {
+		return DeploymentResponse{}, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("Idempotency-Key", newUUIDv4())
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
@@ -1279,6 +1348,20 @@ func (c *Client) Park(ctx context.Context, slug string) error {
 func (c *Client) Wake(ctx context.Context, slug string) error {
 	return c.do(ctx, "POST", "/v1/apps/"+slug+"/wake", nil, nil)
 }
+
+// PurgeAppCache asks the gateways to evict cached responses for an app. An
+// empty pathGlob purges the complete app cache; otherwise it is sent as the
+// optional path glob accepted by the API.
+func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error {
+	endpoint := "/v1/apps/" + slug + "/cache"
+	if pathGlob != "" {
+		q := url.Values{}
+		q.Set("path", pathGlob)
+		endpoint += "?" + q.Encode()
+	}
+	return c.do(ctx, "DELETE", endpoint, nil, nil)
+}
+
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
 	var out []InstanceResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/instances", nil, &out)
@@ -2854,6 +2937,76 @@ func (c *Client) GetAppUsageSummary(ctx context.Context, slug string, opts AppUs
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppRequestAnalytics returns the bounded historical request analytics
+// overview for slug. Since is a duration such as "24h" or "7d"; the server
+// clamps it to the plan's request-telemetry retention and reports that fact
+// in WindowClamped. Free accounts receive the normal plan-gated response.
+func (c *Client) GetAppRequestAnalytics(ctx context.Context, slug, since string) (RequestAnalyticsResponse, error) {
+	return c.GetAppRequestAnalyticsOpts(ctx, slug, AppRequestAnalyticsOptions{Since: since})
+}
+
+// AppRequestAnalyticsOptions carries the optional historical analytics
+// window. Since accepts a duration (24h, 7d) or an RFC3339 start timestamp;
+// Until is an optional RFC3339 exclusive upper bound.
+type AppRequestAnalyticsOptions struct {
+	Since string
+	Until string
+}
+
+// GetAppRequestAnalyticsOpts returns the bounded historical request analytics
+// overview for slug. The server clamps the effective window to plan retention.
+func (c *Client) GetAppRequestAnalyticsOpts(ctx context.Context, slug string, opts AppRequestAnalyticsOptions) (RequestAnalyticsResponse, error) {
+	var out RequestAnalyticsResponse
+	path := "/v1/apps/" + slug + "/analytics"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		q.Set("until", opts.Until)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// AppRequestAnalyticsTimeseriesOptions carries the optional historical
+// analytics window and exact route/method drill-down for the zero-filled
+// hourly series. Route and Method must be supplied together; empty values
+// request the app-wide series.
+type AppRequestAnalyticsTimeseriesOptions struct {
+	Since  string
+	Until  string
+	Route  string
+	Method string
+}
+
+// GetAppRequestAnalyticsTimeseries returns the zero-filled hourly request
+// analytics series for slug. The effective window is bounded by plan
+// retention and echoed in the response.
+func (c *Client) GetAppRequestAnalyticsTimeseries(ctx context.Context, slug string, opts AppRequestAnalyticsTimeseriesOptions) (RequestAnalyticsTimeseriesResponse, error) {
+	var out RequestAnalyticsTimeseriesResponse
+	path := "/v1/apps/" + slug + "/analytics/timeseries"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		q.Set("until", opts.Until)
+	}
+	if opts.Route != "" {
+		q.Set("route", opts.Route)
+	}
+	if opts.Method != "" {
+		q.Set("method", opts.Method)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppThrottleSuggestions returns the per-route throttle
 // recommendation payload for slug over the named range window
 // (ADR-091 D20.5 amendment, issue #881). The recommender is
@@ -4071,6 +4224,15 @@ func (c *Client) ListAppDebugRequests(ctx context.Context, slug, since string) (
 	if since != "" {
 		path += "?since=" + url.QueryEscape(since)
 	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugRequest returns one request-telemetry row by id. The
+// server scopes the lookup to the app resolved from slug, so a request
+// id from another app is indistinguishable from a missing request.
+func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (DebugTelemetryRequestItem, error) {
+	var out DebugTelemetryRequestItem
+	path := "/v1/apps/" + slug + "/debug/requests/" + reqID
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 

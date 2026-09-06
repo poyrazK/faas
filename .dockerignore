@@ -13,3 +13,5 @@ bin
 **/*.env
 **/*.env.*
 node_modules
+# Temporary credentials emitted by google-github-actions/auth.
+gha-creds-*.json

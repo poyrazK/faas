@@ -116,8 +116,6 @@ func cmdDebugRequestsList(args []string) int {
 }
 
 // cmdDebugRequestsGet renders a single request's metadata by id.
-// The underlying API has no GET /debug/requests/{id} endpoint
-// today; we read the list and filter locally.
 func cmdDebugRequestsGet(args []string) int {
 	if len(args) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale debug requests get <slug> <req_id>", debugCmdDocsTopic)
@@ -128,17 +126,11 @@ func cmdDebugRequestsGet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListAppDebugRequests(context.Background(), slug, "")
+	resp, err := client.GetAppDebugRequest(context.Background(), slug, reqID)
 	if err != nil {
-		return printErr("Could not list debug requests", err)
+		return printErr("Could not get debug request", err)
 	}
-	for _, r := range resp.Requests {
-		if r.ID == reqID {
-			return jsonOut(writeJSON(r))
-		}
-	}
-	fmt.Fprintf(os.Stderr, "request %q not found in the most recent window\n", reqID)
-	return 1
+	return jsonOut(writeJSON(resp))
 }
 
 // cmdDebugRequestsReplay queues a replay. PR-B returns a

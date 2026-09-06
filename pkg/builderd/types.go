@@ -32,9 +32,13 @@ type VMRequest struct {
 	Framework      Framework
 	Runtime        string // app runtime id (node22, python312, go124-alpine, ...)
 	RuntimeBaseRef string // resolved OCI ref used by Railpack for this build
-	LogPath        string // build log appended by the VM
-	RAMMB          int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
-	TimeoutSec     int    // wall-clock build budget (0 ⇒ pkg/api/limits.go default)
+	// DependencyCacheKey is a platform-derived, tenant-scoped digest. Empty
+	// keeps the builder fully ephemeral; developer sessions set it so matching
+	// BuildKit layers can cross otherwise-isolated builder VM lifetimes.
+	DependencyCacheKey string
+	LogPath            string // build log appended by the VM
+	RAMMB              int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
+	TimeoutSec         int    // wall-clock build budget (0 ⇒ pkg/api/limits.go default)
 	// Plan is the owning account's plan tier. vmmd validates it on
 	// CreateColdBoot (issue #301 / ADR-043) and routes the builder VM
 	// into the per-plan cgroup sub-slice. Empty = legacy path that
@@ -54,12 +58,14 @@ type VMResult struct {
 // BuildHandle is what Spawn returns; it's the caller's handle into a running
 // (or recently-running) builder VM. Always pair with WaitForCompletion.
 type BuildHandle struct {
-	Instance   string    // "build-<BuildID>" — the vmmd instance name
-	HostDrive1 string    // host-side 28 GiB tmp file (cleaned up by WaitForCompletion)
-	ExportDir  string    // host dir vmmd copies build-done.json + /build/out/* into
-	BuildID    string    // echoes req.BuildID
-	TimeoutSec int       // wall-clock budget the caller selected
-	StartedAt  time.Time // when Spawn returned; for log lines / metrics
+	Instance                string    // "build-<BuildID>" — the vmmd instance name
+	HostDrive1              string    // host-side 28 GiB tmp file (cleaned up by WaitForCompletion)
+	ExportDir               string    // host dir vmmd copies build-done.json + /build/out/* into
+	BuildID                 string    // echoes req.BuildID
+	TimeoutSec              int       // wall-clock budget the caller selected
+	StartedAt               time.Time // when Spawn returned; for log lines / metrics
+	DependencyCacheKey      string    // cache generation to publish after success
+	DependencyCacheRestored bool      // a prior BuildKit cache was staged into drive1
 }
 
 // BuildOutcome is what WaitForCompletion returns. The orchestrator at
@@ -87,4 +93,8 @@ type BuildOutcome struct {
 	// every other code; the orchestrator templates this into
 	// the whycopy Observed renderer's Fix field.
 	FailurePkg string
+	// Dependency-cache publication is best-effort and never changes the build
+	// result. The orchestrator surfaces a warning when the next sync will be cold.
+	DependencyCacheStored     bool
+	DependencyCacheStoreError string
 }

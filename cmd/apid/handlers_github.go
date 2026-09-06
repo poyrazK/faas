@@ -430,7 +430,7 @@ func (s *server) provisionOrFetchOAuthAccount(ctx context.Context, provider, sub
 	// 1. Sub-first lookup.
 	if link, err := s.store.OAuthLinkByProviderSubject(ctx, provider, sub); err == nil {
 		if acct, err := s.store.AccountByID(ctx, link.AccountID); err == nil {
-			return acct, nil
+			return s.verifyOAuthAccountEmail(ctx, acct)
 		}
 		// Link references a missing account: fall through to
 		// email-based recovery. The link stays orphaned or will be
@@ -444,7 +444,7 @@ func (s *server) provisionOrFetchOAuthAccount(ctx context.Context, provider, sub
 		if err := s.store.UpsertOAuthLink(ctx, acct.ID, provider, sub, email, true); err != nil {
 			s.log.Error("oauth.upsert_link", "provider", provider, "err", err)
 		}
-		return acct, nil
+		return s.verifyOAuthAccountEmail(ctx, acct)
 	}
 
 	// 3. Fresh account.

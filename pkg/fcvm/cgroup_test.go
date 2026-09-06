@@ -90,6 +90,25 @@ func TestWriteMemoryMaxAppendsNewline(t *testing.T) {
 	}
 }
 
+func TestWriteAppCgroupUsesConfiguredCPU(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	inst := "configured-cpu"
+	scope := filepath.Join(dir, ParentCgroupFor(api.PlanPro), PerInstanceScope(inst))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := writeAppCgroup(inst, api.PlanPro, 256, 500); err != nil {
+		t.Fatalf("writeAppCgroup: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read cpu.max: %v", err)
+	}
+	if got, want := string(body), "250000 500000\n"; got != want {
+		t.Fatalf("cpu.max = %q, want %q", got, want)
+	}
+}
+
 func TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
 	inst := "snapshot-headroom"
@@ -225,6 +244,27 @@ func TestWriteWorkloadCgroupMultiSidecars(t *testing.T) {
 		if got := strings.TrimSpace(string(body)); got != itoa(c.want) {
 			t.Errorf("%s/memory.max = %q, want %d", c.name, got, c.want)
 		}
+	}
+}
+
+func TestWriteWorkloadCgroupCPUOnly(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	parent := filepath.Join(dir, "faas-tenant.slice", "test-tenant-pro", "i-cpu")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatalf("setup parent: %v", err)
+	}
+	if err := writeWorkloadCgroup(parent, "metrics", 0, 250); err != nil {
+		t.Fatalf("writeWorkloadCgroup cpu-only: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "metrics", "memory.max")); !os.IsNotExist(err) {
+		t.Fatalf("cpu-only workload should not write memory.max, err=%v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(parent, "metrics", "cpu.max"))
+	if err != nil {
+		t.Fatalf("read metrics/cpu.max: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(body)), "25000 100000"; got != want {
+		t.Fatalf("metrics/cpu.max = %q, want %q", got, want)
 	}
 }
 

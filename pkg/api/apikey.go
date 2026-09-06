@@ -227,6 +227,9 @@ func ConstantTimeEqualHash(a, b []byte) bool {
 //	               /v1/apps/{slug}/rename.
 //	secrets:write— PUT/DELETE /v1/apps/{slug}/secrets/{key}.
 //	usage:read   — GET /v1/usage, /v1/usage/summary.
+//	storage:manage — bucket lifecycle and per-bucket grant management.
+//	storage:read   — object listing/GET signing with a bucket grant.
+//	storage:write  — object deletion/PUT signing with a bucket grant.
 //
 // `admin` implicitly satisfies every other scope check — the
 // principalHasScope helper grants any-of. Session-cookie auth (Key ==
@@ -268,6 +271,12 @@ const (
 	// can't POST, and a Scale customer with only env:write still
 	// can't POST upstreams).
 	ScopeUpstreamsWrite = "upstreams:write"
+	// Object storage separates control-plane management from data-plane
+	// access. Data-plane keys also need an explicit grant for the target
+	// bucket; these scopes alone never expose a bucket.
+	ScopeStorageManage = "storage:manage"
+	ScopeStorageRead   = "storage:read"
+	ScopeStorageWrite  = "storage:write"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -284,6 +293,9 @@ var validScopes = map[string]struct{}{
 	ScopeRegistryCredentialsRead:  {},
 	ScopeRegistryCredentialsWrite: {},
 	ScopeUpstreamsWrite:           {},
+	ScopeStorageManage:            {},
+	ScopeStorageRead:              {},
+	ScopeStorageWrite:             {},
 }
 
 // IsValidScope reports whether s is in the allowed scope vocabulary.
@@ -342,6 +354,11 @@ var (
 	// Granted by admin or apps:read.
 	ScopesReadSurface = []string{ScopeAdmin, ScopeAppsRead}
 
+	// ScopesDeploymentReadSurface: read one deployment by opaque ID.
+	// deploy:write is admitted so a least-privilege CI token can poll the
+	// deployment it just created without receiving account-wide apps:read.
+	ScopesDeploymentReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite}
+
 	// ScopesUsageReadSurface: the two narrow usage endpoints.
 	// Granted by admin or usage:read.
 	ScopesUsageReadSurface = []string{ScopeAdmin, ScopeUsageRead}
@@ -387,4 +404,11 @@ var (
 	// secrets and key/admin operations. Granted by admin or
 	// deploy:write.
 	ScopesDeployWriteSurface = []string{ScopeAdmin, ScopeDeployWrite}
+
+	// Object-storage route surfaces. Admin remains the universal escape
+	// hatch; session-cookie principals are implicitly admin in requireScope.
+	ScopesStorageManageSurface = []string{ScopeAdmin, ScopeStorageManage}
+	ScopesStorageReadSurface   = []string{ScopeAdmin, ScopeStorageRead}
+	ScopesStorageWriteSurface  = []string{ScopeAdmin, ScopeStorageWrite}
+	ScopesStorageListSurface   = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
 )

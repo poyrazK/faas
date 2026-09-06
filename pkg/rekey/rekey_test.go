@@ -1,7 +1,7 @@
 // rekey_test.go — unit tests for pkg/rekey.
 //
 // Tests use a tiny in-memory fakeStore (the methods pkg/rekey
-// uses — ListAppSecretsForRekey, UpsertAppSecretWithKidAndValueHashInScope). The
+// uses — ListAppSecretsForRekey, ResealAppSecretWithKidAndValueHashInScope). The
 // fakeStore matches the cursor encoding pgstore + memstore use so
 // the tests exercise the same wire shape.
 //
@@ -100,7 +100,7 @@ func (s *fakeStore) ListAppSecretsForRekey(_ context.Context, limit int, cursor 
 	return out, nil
 }
 
-func (s *fakeStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+func (s *fakeStore) ResealAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row := s.rows[encodeCursor(accountID, appID, scope, key)]
@@ -375,11 +375,11 @@ type failingFakeStore struct {
 	faultCursor string
 }
 
-func (s *failingFakeStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+func (s *failingFakeStore) ResealAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
 	if s.faultCursor != "" && encodeCursor(accountID, appID, scope, key) == s.faultCursor {
 		return context.DeadlineExceeded // sentinel "persist failed"
 	}
-	return s.fakeStore.UpsertAppSecretWithKidAndValueHashInScope(ctx, accountID, appID, scope, key, kid, valueHash, ciphertext)
+	return s.fakeStore.ResealAppSecretWithKidAndValueHashInScope(ctx, accountID, appID, scope, key, kid, valueHash, ciphertext)
 }
 
 // TestRun_CrashMidRow pins the cursor-pin-on-failure + >=

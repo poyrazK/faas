@@ -422,6 +422,43 @@ func TestClient_DestroyPreview(t *testing.T) {
 	}
 }
 
+func TestClient_DevSessionMethods(t *testing.T) {
+	var calls []string
+	const workspaceID = "0123456789abcdef0123456789abcdef"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if r.Method == http.MethodPut {
+			var req UpsertDevSessionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode PUT body: %v", err)
+			}
+			if req.WorkspaceID != workspaceID {
+				t.Errorf("PUT workspace_id = %q, want %q", req.WorkspaceID, workspaceID)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"app":{"id":"app-1","slug":"dev-demo-abc","type":"app","ram_mb":128,"max_concurrency":1,"concurrency_per_vm":1,"min_instances":0,"status":"active","url":"https://dev-demo-abc.gregale.dev","manifest":{},"autoscale_target_rps":0,"autoscale_target_cpu_pct":0},"expires_at":"2026-09-06T12:00:00Z"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL, "fp_test_secret")
+	got, err := c.UpsertDevSession(context.Background(), "demo", UpsertDevSessionRequest{WorkspaceID: workspaceID})
+	if err != nil {
+		t.Fatalf("UpsertDevSession: %v", err)
+	}
+	if got.App.Slug != "dev-demo-abc" {
+		t.Fatalf("decoded slug = %q", got.App.Slug)
+	}
+	if err := c.DestroyDevSession(context.Background(), "demo", workspaceID); err != nil {
+		t.Fatalf("DestroyDevSession: %v", err)
+	}
+	want := []string{"PUT /v1/dev/sessions/demo", "DELETE /v1/dev/sessions/demo?workspace_id=" + workspaceID}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
 // TestClient_DestroyPreview_ProductionAppReturns404 confirms
 // the SDK surfaces the apid's 404 preview_not_found error
 // rather than silently succeeding — the customer must see

@@ -551,6 +551,8 @@ func openCustomerFile(path string) (*os.File, error) {
 func cmdAppScale(slug string, args []string) int {
 	fs := flag.NewFlagSet("app scale", flag.ContinueOnError)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
+	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
+	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
@@ -596,6 +598,13 @@ func cmdAppScale(slug string, args []string) int {
 	if explicit["ram"] {
 		v := *ram
 		req.RAMMB = &v
+	}
+	if explicit["cpu-millicores"] {
+		v := *cpuMillicores
+		req.CPUMillicores = &v
+	}
+	if explicit["profile"] {
+		req.ResourceProfile = profile
 	}
 	if explicit["max-concurrency"] {
 		v := *conc
@@ -657,12 +666,12 @@ func cmdAppScale(slug string, args []string) int {
 		}
 		req.AppProtocol = &v
 	}
-	if req.RAMMB == nil && req.MaxConcurrency == nil &&
+	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil &&
 		req.IdleTimeoutS == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.RequireAuthn == nil && req.AppProtocol == nil {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> scale [--ram N] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	client, err := authedClient()

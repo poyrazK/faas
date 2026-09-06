@@ -127,9 +127,9 @@ func TestStubGithubdClient_EveryMethodReturnsNotReady(t *testing.T) {
 
 	_, _, err = s.ExchangeOAuthCode(ctx, "a", "c", "s")
 	assertGithubdNotReadyError(t, "ExchangeOAuthCode", err)
-	_, err = s.ListInstallableRepos(ctx, "a")
+	_, err = s.ListInstallableRepos(ctx, "a", 42)
 	assertGithubdNotReadyError(t, "ListInstallableRepos", err)
-	_, err = s.BindAppRepo(ctx, "app", "a", "r", "main")
+	_, err = s.BindAppRepo(ctx, "app", "a", 42, "r", "main")
 	assertGithubdNotReadyError(t, "BindAppRepo", err)
 	err = s.UnbindAppRepo(ctx, "app", "a")
 	assertGithubdNotReadyError(t, "UnbindAppRepo", err)

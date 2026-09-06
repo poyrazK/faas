@@ -868,7 +868,7 @@ func TestCacheSweep_ConcurrentStoreAndSweep(t *testing.T) {
 				continue
 			}
 			dir := filepath.Join(c.root, hash+".node.hobby")
-			if err := os.Chtimes(dir, now.Add(time.Duration(i+1)*time.Second), now.Add(time.Duration(i+1)*time.Second)); err != nil {
+			if err := os.Chtimes(dir, now.Add(time.Duration(i+1)*time.Second), now.Add(time.Duration(i+1)*time.Second)); err != nil && !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("chtimes: %v", err)
 			}
 		}

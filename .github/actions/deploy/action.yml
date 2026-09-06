@@ -16,8 +16,16 @@ author: "Gregale"
 
 inputs:
   api-key:
-    description: "Gregale API bearer token (use ${{ secrets.GREGALE_API_KEY }} for the deploy scope)"
-    required: true
+    description: "Optional Gregale bearer token. Omit to use GitHub OIDC (requires permissions: id-token: write)."
+    required: false
+    default: ""
+  # OIDC is the recommended path: the Action exchanges GitHub's job JWT for
+  # a five-minute Gregale deploy bearer, so customers do not store a long-lived
+  # secret in repository settings.
+  oidc-audience:
+    description: "Audience requested from GitHub and sent to Gregale's OIDC exchange"
+    required: false
+    default: "gregale"
   api-base:
     description: "Gregale API base URL (override per environment; defaults to the public API)"
     required: false
@@ -74,7 +82,7 @@ outputs:
   app-slug:
     description: "Echo of the input app slug"
   status:
-    description: "Final deployment status: ready | failed | cancelled | timeout"
+    description: "Observed deployment status: live | queued | failed | cancelled | superseded | timeout"
   url:
     description: "URL of the new deployment record on the control-plane API (https://{api-base}/v1/apps/{slug}/deployments/{id})"
   cli-version:
@@ -96,6 +104,9 @@ runs:
       # top of the file (cmd/.../src/run.sh:25).
       env:
         ACTION_PATH: ${{ github.action_path }}
+        FAAS_TOKEN: ${{ inputs.api-key }}
+        INPUT_APP: ${{ inputs.app }}
+        INPUT_FORMAT: ${{ inputs.format }}
       run: "$ACTION_PATH/src/run.sh validate"
     - name: Deploy
       shell: bash
@@ -109,6 +120,7 @@ runs:
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+        INPUT_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
         # Issue #977 / ADR-116: forward the annotation surface to
         # src/run.sh which appends the corresponding gregale
         # deploy flags. Default values resolve at action-time

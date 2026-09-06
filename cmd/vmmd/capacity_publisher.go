@@ -402,8 +402,10 @@ func buildCapacityReport(
 				CpuSeconds:          in.GetCpuSeconds(),
 				CpuThrottledSeconds: in.GetCpuThrottledSeconds(),
 				InflightRequests:    in.GetInflightRequests(),
+				RequestCountTotal:   in.GetRequestCountTotal(),
 				LastRequestAt:       in.GetLastRequestAt(),
 				NetTxBytes:          in.GetNetTxBytes(),
+				NetRxBytes:          in.GetNetRxBytes(),
 				OpenConns:           in.GetOpenConns(),
 			}
 			report.Instances = append(report.Instances, row)

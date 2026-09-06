@@ -118,6 +118,8 @@ func run(args []string) (status int) {
 		return cmdWhoami()
 	case "deploy":
 		return cmdDeployTarball(args[1:])
+	case "dev":
+		return cmdDev(args[1:])
 	case "canary":
 		return cmdCanary(args[1:])
 	case "preview":
@@ -252,6 +254,8 @@ func run(args []string) (status int) {
 		return cmdTraffic(args[1:])
 	case "mirror":
 		return cmdMirror(args[1:])
+	case "cache":
+		return cmdCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":

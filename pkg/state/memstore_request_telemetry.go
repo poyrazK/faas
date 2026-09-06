@@ -39,6 +39,12 @@ func (m *MemStore) ListRequestTelemetryByApp(_ context.Context, _ sqlc.ListReque
 	return nil, errMemStoreRequestTelemetry
 }
 
+// GetRequestTelemetryByAppAndID (ADR-127) — MemStore stub.
+// Postgres-only.
+func (m *MemStore) GetRequestTelemetryByAppAndID(_ context.Context, _ sqlc.GetRequestTelemetryByAppAndIDParams) (sqlc.GetRequestTelemetryByAppAndIDRow, error) {
+	return sqlc.GetRequestTelemetryByAppAndIDRow{}, errMemStoreRequestTelemetry
+}
+
 // RequestTelemetryByDeployment (ADR-127 §Decision 1) — MemStore
 // stub. Postgres-only.
 func (m *MemStore) RequestTelemetryByDeployment(_ context.Context, _ sqlc.RequestTelemetryByDeploymentParams) ([]sqlc.RequestTelemetryByDeploymentRow, error) {
@@ -48,6 +54,25 @@ func (m *MemStore) RequestTelemetryByDeployment(_ context.Context, _ sqlc.Reques
 // RequestTelemetryBaselineP95ByRoute (ADR-127 PR-B) — MemStore
 // stub. Postgres-only.
 func (m *MemStore) RequestTelemetryBaselineP95ByRoute(_ context.Context, _ sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
+// RequestTelemetryAnalyticsSummary (customer request analytics) — MemStore
+// stub. Postgres-only because request_telemetry is a partitioned SQL table.
+func (m *MemStore) RequestTelemetryAnalyticsSummary(_ context.Context, _ sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
+	return sqlc.RequestTelemetryAnalyticsSummaryRow{}, errMemStoreRequestTelemetry
+}
+
+// RequestTelemetryAnalyticsByRoute (customer request analytics) — MemStore
+// stub. Postgres-only because request_telemetry is a partitioned SQL table.
+func (m *MemStore) RequestTelemetryAnalyticsByRoute(_ context.Context, _ sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
+// RequestTelemetryAnalyticsTimeseries (customer request analytics) —
+// MemStore stub. Postgres-only because request_telemetry is a partitioned
+// SQL table.
+func (m *MemStore) RequestTelemetryAnalyticsTimeseries(_ context.Context, _ sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
 	return nil, errMemStoreRequestTelemetry
 }
 

@@ -58,6 +58,24 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	return w
 }
 
+// newDevSourceMultipartWriter extends the canonical deploy multipart shape
+// with content-addressed developer-source metadata. A missing baseRevision
+// means source is a complete snapshot; otherwise source contains changed
+// entries and deleted is applied against the advertised cached base.
+func newDevSourceMultipartWriter(dst *bytes.Buffer, slug string, dockerfile bool, runtime, handler, sourceRoot string, a DeployAnnotations, baseRevision, targetRevision string, deleted []string) *multipart.Writer {
+	w := newMultipartWriterWithSourceRoot(dst, slug, dockerfile, runtime, handler, sourceRoot, a)
+	if baseRevision != "" {
+		_ = w.WriteField("dev_source_base", baseRevision)
+	}
+	_ = w.WriteField("dev_source_target", targetRevision)
+	if len(deleted) > 0 {
+		if raw, err := json.Marshal(deleted); err == nil {
+			_ = w.WriteField("dev_source_deleted", string(raw))
+		}
+	}
+	return w
+}
+
 // DeployAnnotations is the annotation surface shared by every
 // CLI-driven deploy path (issue #977 / ADR-116). Zero values mean
 // "no annotation"; the server treats them as NULL on the row.

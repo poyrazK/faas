@@ -427,9 +427,8 @@ func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(c
 			// Keep the timestamp as the last attempt for backwards-compatible
 			// diagnostics; lastTickErr separately makes the health verdict
 			// distinguish an attempted-but-failed tick from a healthy one.
-			l.recordTick(name, start)
+			l.recordTick(name, start, err)
 			if err != nil {
-				l.recordTickFailure(name, err)
 				l.log.Warn("meter: "+name+" tick", "err", err)
 			}
 		}
@@ -459,7 +458,7 @@ func (l *Loop) runQuotaTicks(ctx context.Context) error {
 			start := time.Now()
 			l.runQuotaOnce(ctx)
 			l.ops.Observe("quota", time.Since(start), nil)
-			l.recordTick("quota", start)
+			l.recordTick("quota", start, nil)
 		}
 	}
 }
@@ -671,23 +670,17 @@ func (l *Loop) emitMeteredMB(ctx context.Context, rows []RolledRow) {
 	}
 }
 
-// recordTick stamps the last attempted tick for diagnostics. Centralized so
-// the runTicks / runQuotaTicks paths agree on the storage shape.
-func (l *Loop) recordTick(name string, at time.Time) {
+// recordTick publishes the last attempt and its result atomically. A failed
+// retry must never briefly clear the previous failure for health readers.
+func (l *Loop) recordTick(name string, at time.Time, err error) {
 	l.lastTickMu.Lock()
+	defer l.lastTickMu.Unlock()
 	l.lastTick[name] = at
-	delete(l.lastTickErr, name)
-	l.lastTickMu.Unlock()
-}
-
-func (l *Loop) recordTickFailure(name string, err error) {
-	l.lastTickMu.Lock()
 	if err == nil {
 		delete(l.lastTickErr, name)
 	} else {
 		l.lastTickErr[name] = err.Error()
 	}
-	l.lastTickMu.Unlock()
 }
 
 // LastTick returns the wall-clock time the named tick body last completed.

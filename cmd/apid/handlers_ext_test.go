@@ -1148,6 +1148,65 @@ func TestGetApp_SurfacesConcurrencyPerVMBound(t *testing.T) {
 	}
 }
 
+func TestGetApp_SurfacesEffectiveLimits(t *testing.T) {
+	cases := []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale}
+	for _, plan := range cases {
+		t.Run(string(plan), func(t *testing.T) {
+			e := setup(t, plan)
+			mustSeedApp(t, e, "limits-app")
+			rec := e.do(t, "GET", "/v1/apps/limits-app", nil, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body)
+			}
+			var out api.AppResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			limits := api.MustLimitsFor(plan)
+			got := out.EffectiveLimits
+			if got.MemoryLimitMB != out.RAMMB || got.PlanMemoryMaxMB != limits.RAMMB {
+				t.Errorf("memory limits = %d/%d, want %d/%d", got.MemoryLimitMB, got.PlanMemoryMaxMB, out.RAMMB, limits.RAMMB)
+			}
+			if got.GuestVCPUs != limits.VCPU || got.CPULimitMillicores != limits.CPUQuotaUS*1000/limits.CPUPeriodUS {
+				t.Errorf("cpu limits = %d vCPU/%dm, want %d/%dm", got.GuestVCPUs, got.CPULimitMillicores, limits.VCPU, limits.CPUQuotaUS*1000/limits.CPUPeriodUS)
+			}
+			if got.MaxInstances != out.MaxConcurrency || got.ConcurrencyPerInstance != limits.ConcurrencyPerVMBound {
+				t.Errorf("scaling limits = %d/%d, want %d/%d", got.MaxInstances, got.ConcurrencyPerInstance, out.MaxConcurrency, limits.ConcurrencyPerVMBound)
+			}
+			if got.AppRequestRateRPS != limits.RateLimitRPS || got.AppRequestBurst != limits.RateLimitBurst || got.AccountRequestRateRPM != limits.RateLimitPerAccountRPM {
+				t.Errorf("request rates = %d/%d/%d, want %d/%d/%d", got.AppRequestRateRPS, got.AppRequestBurst, got.AccountRequestRateRPM, limits.RateLimitRPS, limits.RateLimitBurst, limits.RateLimitPerAccountRPM)
+			}
+			if got.RequestBudgetMS != limits.RequestBudget().Milliseconds() || got.RequestBudgetMaxMS != limits.RequestBudgetMaxDuration().Milliseconds() {
+				t.Errorf("request budgets = %d/%d, want %d/%d", got.RequestBudgetMS, got.RequestBudgetMaxMS, limits.RequestBudget().Milliseconds(), limits.RequestBudgetMaxDuration().Milliseconds())
+			}
+			if !bytes.Contains(rec.Body.Bytes(), []byte(`"effective_limits":`)) {
+				t.Errorf("raw JSON missing effective_limits key:\n%s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestAppEffectiveLimits_UsesScalingPolicyCeiling(t *testing.T) {
+	app := state.App{
+		RAMMB:          384,
+		MaxConcurrency: 5,
+		ScalingPolicy:  &state.ScalingPolicy{MaxInstances: 3},
+	}
+	got := appEffectiveLimits(app, api.PlanPro)
+	if got.MaxInstances != 3 {
+		t.Fatalf("max_instances = %d, want scaling-policy ceiling 3", got.MaxInstances)
+	}
+	if got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != 512 {
+		t.Fatalf("memory limits = %d/%d, want 384/512", got.MemoryLimitMB, got.PlanMemoryMaxMB)
+	}
+	if got.EphemeralDiskMaxMB != api.MustLimitsFor(api.PlanPro).AppLayerMaxMB {
+		t.Fatalf("ephemeral disk limit = %d, want %d", got.EphemeralDiskMaxMB, api.MustLimitsFor(api.PlanPro).AppLayerMaxMB)
+	}
+	if got.CPULimitMillicores != api.DefaultAppCPUMillicores || got.PlanCPUMaxMillicores != api.DefaultAppCPUMillicores {
+		t.Fatalf("CPU limits = %d/%d, want %d/%d", got.CPULimitMillicores, got.PlanCPUMaxMillicores, api.DefaultAppCPUMillicores, api.DefaultAppCPUMillicores)
+	}
+}
+
 // TestUpdateApp_RAMValid covers the happy path: a valid RAM value persists
 // and the response reflects the new value.
 func TestUpdateApp_RAMValid(t *testing.T) {
@@ -1164,6 +1223,23 @@ func TestUpdateApp_RAMValid(t *testing.T) {
 	}
 	if out.RAMMB != 256 {
 		t.Errorf("RAM = %d, want 256", out.RAMMB)
+	}
+}
+
+func TestUpdateApp_CPUValid(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "upd-cpu")
+	cpu := 250
+	rec := e.do(t, "PATCH", "/v1/apps/upd-cpu", api.UpdateAppRequest{CPUMillicores: &cpu}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.CPUMillicores != 250 || out.EffectiveLimits.CPULimitMillicores != 250 {
+		t.Fatalf("CPU update not reflected: %+v", out)
 	}
 }
 
@@ -1654,6 +1730,10 @@ func TestListDomains_HappyPath(t *testing.T) {
 	if _, err := e.store.CreateCustomDomain(context.Background(), "y.example.com", appID, "tok"); err != nil {
 		t.Fatal(err)
 	}
+	expires := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := e.store.UpdateCustomDomainCertStatus(context.Background(), "y.example.com", state.CustomDomainCertIssued, expires, "", expires.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	rec := e.do(t, "GET", "/v1/domains", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -1662,7 +1742,7 @@ func TestListDomains_HappyPath(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(out) != 1 || out[0].Domain != "y.example.com" {
+	if len(out) != 1 || out[0].Domain != "y.example.com" || out[0].CertStatus != "issued" || out[0].CertExpiresAt == "" || out[0].DNSLastCheckedAt == "" {
 		t.Errorf("got %+v", out)
 	}
 }
@@ -2102,6 +2182,59 @@ func TestUsageSummary_HappyPath(t *testing.T) {
 	}
 	if out.IncludedGBHours == 0 {
 		t.Errorf("included = 0, want plan default")
+	}
+	if out.Daily == nil {
+		t.Errorf("daily = nil, want an empty array")
+	}
+}
+
+func TestUsageSummary_DailyTopApp(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appA, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appB, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := time.Now().UTC()
+	const gib = int64(1024 * 1024 * 1024)
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appA.ID, "instance-api", today, 7_200_000, 10, 3_600_000_000, gib, 2*gib, 3*gib, 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appB.ID, "instance-worker", today, 3_600_000, 5, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, "GET", "/v1/usage/summary", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.UsageSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Daily) != 1 {
+		t.Fatalf("daily = %+v, want one point", out.Daily)
+	}
+	if out.Daily[0].TopAppSlug != "api" || out.Daily[0].GBHours != 2.9296875 || out.Daily[0].TopAppGBHours != 1.953125 {
+		t.Fatalf("daily point = %+v", out.Daily[0])
+	}
+	if out.UsedGBHours != 2.9296875 {
+		t.Errorf("used GB-hours = %v, want 2.9296875", out.UsedGBHours)
+	}
+	if out.UsedCPUHours != 1 {
+		t.Errorf("used CPU-hours = %v, want 1", out.UsedCPUHours)
+	}
+	if out.UsedEgressGB != 3 {
+		t.Errorf("used egress GB = %v, want 3", out.UsedEgressGB)
+	}
+	if out.UsedIngressGB != 3 {
+		t.Errorf("used ingress GB = %v, want 3", out.UsedIngressGB)
+	}
+	if out.ColdBootTotal != 2 {
+		t.Errorf("cold boots = %d, want 2", out.ColdBootTotal)
 	}
 }
 

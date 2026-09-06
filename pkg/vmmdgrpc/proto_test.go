@@ -40,7 +40,7 @@ func TestWakeMethodFrom(t *testing.T) {
 func TestToWakeRequest_Happy(t *testing.T) {
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
-		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256, CpuMillicores: 500},
 		Snapshot: &vmmdpb.SnapshotRef{
 			VmstatePath:       "/v",
 			VmstateStorageKey: "snap/inst-1/vmstate",
@@ -55,7 +55,7 @@ func TestToWakeRequest_Happy(t *testing.T) {
 	if wr.Instance != "inst-1" || wr.BaseKey != "/b" || wr.LayerKey != "/l" {
 		t.Errorf("flattened fields wrong: %+v", wr)
 	}
-	if wr.VcpuCount != 2 || wr.MemSizeMiB != 256 {
+	if wr.VcpuCount != 2 || wr.MemSizeMiB != 256 || wr.CPUMillicores != 500 {
 		t.Errorf("int casts wrong: %+v", wr)
 	}
 	if wr.Snapshot == nil {
@@ -488,10 +488,11 @@ func TestSidecarsFromProto(t *testing.T) {
 	pbs := []*vmmdpb.SidecarSpec{
 		{
 			Name: "migrator", Image: "ghcr.io/org/m@sha256:00", Type: "init",
-			RamMb: 64, Port: 9091, Essential: true,
+			RamMb: 64, CpuMillicores: 250, Port: 9091, Essential: true,
 			StorageKey: "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4",
 			DriveSlot:  "layer-sidecar-0",
 			SealedEnv:  []*vmmdpb.SealedSecret{{Key: "TOKEN", Ciphertext: []byte("age-ciphertext")}},
+			DependsOn:  []*vmmdpb.WorkloadDependency{{Name: "main", Condition: "started"}},
 		},
 		{
 			Name: "scraper", Image: "ghcr.io/org/s@sha256:01", Type: "sidecar",
@@ -510,7 +511,7 @@ func TestSidecarsFromProto(t *testing.T) {
 	if got[0].Image != "ghcr.io/org/m@sha256:00" {
 		t.Errorf("entry 0 Image = %q, want digest ref", got[0].Image)
 	}
-	if got[0].RamMB != 64 || got[0].Port != 9091 || !got[0].Essential {
+	if got[0].RamMB != 64 || got[0].CPUMillicores != 250 || got[0].Port != 9091 || !got[0].Essential {
 		t.Errorf("entry 0 ram/port/essential: got %+v", got[0])
 	}
 	if got[0].DriveID != "layer-sidecar-0" {
@@ -521,6 +522,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	}
 	if len(got[0].SealedEnv) != 1 || got[0].SealedEnv[0].Key != "TOKEN" || string(got[0].SealedEnv[0].Ciphertext) != "age-ciphertext" {
 		t.Errorf("entry 0 sealed env wrong: got %+v", got[0].SealedEnv)
+	}
+	if len(got[0].DependsOn) != 1 || got[0].DependsOn[0].Name != "main" || got[0].DependsOn[0].Condition != api.WorkloadDependencyStarted {
+		t.Errorf("entry 0 dependencies wrong: got %+v", got[0].DependsOn)
 	}
 	if got[1].Name != "scraper" || got[1].Type != "sidecar" {
 		t.Errorf("entry 1 name/type: got %+v", got[1])

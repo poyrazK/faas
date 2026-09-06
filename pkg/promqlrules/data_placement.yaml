@@ -36,6 +36,7 @@ groups:
         annotations:
           summary: "Data-placement p95 RTT < 5ms for {{ $labels.kind }}/{{ $labels.region }}"
           description: "The chooser bias for {{ $labels.kind }} upstreams in {{ $labels.region }} is observing p95 RTT < 5ms for 10m — the connection-aware placement is operating within the spec's healthy envelope. This is informational; no action required."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUpstreamRttDegraded.md"
 
       - alert: FaasUpstreamRttDegraded
         expr: |

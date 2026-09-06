@@ -43,11 +43,12 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Ref: ${{ github.sha }}",
 				"app: my-app",
 				"uses: poyrazK/faas/.github/actions/deploy@v1",
-				"${{ secrets.GREGALE_API_KEY }}",
+				"id-token: write",
 				"https://api.gregale.dev",
 			},
 			mustNotLn: []string{
 				"# pin this Action", // no SHA provided → no pin comment
+				"api-key:",
 			},
 		},
 		{
@@ -98,17 +99,17 @@ func TestRenderGithubSnippet(t *testing.T) {
 			},
 		},
 		{
-			name: "secret reference is always ${{ secrets.GREGALE_API_KEY }}",
+			name: "OIDC is the default and no long-lived secret is emitted",
 			env:  githubSnippetEnv{Runner: true, Repository: "acme/widget", SHA: "0000000000000000000000000000000000000000"},
 			app:  "widget",
 			mustLines: []string{
-				"${{ secrets.GREGALE_API_KEY }}",
+				"id-token: write",
 			},
 			mustNotLn: []string{
-				// The token must never be a literal in the snippet.
-				// (The env values "acme/widget" and the SHA appear
-				// in the comment header, but no token is ever
-				// embedded.)
+				// The default snippet requests a short-lived GitHub OIDC
+				// token and never embeds or references a deploy secret.
+				"${{ secrets.GREGALE_API_KEY }}",
+				"api-key:",
 				"api-key: ghp_",
 				"api-key: gho_",
 				"api-key: FAAS_TOKEN=",

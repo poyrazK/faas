@@ -74,6 +74,7 @@ type Account struct {
 	OverageCapCents        pgtype.Int8
 	KeyGraceWindowDays     pgtype.Int4
 	EgressAllowlistExtra   int32
+	EmailVerifiedAt        pgtype.Timestamptz
 }
 
 type AccountAsyncQuotum struct {
@@ -191,6 +192,7 @@ type App struct {
 	Type                   string
 	Runtime                pgtype.Text
 	RamMb                  int32
+	CpuMillicores          int32
 	IdleTimeoutS           pgtype.Int4
 	MaxConcurrency         int32
 	Status                 string
@@ -563,12 +565,16 @@ type CronFireNowRequest struct {
 }
 
 type CustomDomain struct {
-	Domain         interface{}
-	AppID          pgtype.UUID
-	VerifiedAt     pgtype.Timestamptz
-	ChallengeToken string
-	AppIDRedirect  pgtype.UUID
-	OrgID          pgtype.UUID
+	Domain           interface{}
+	AppID            pgtype.UUID
+	VerifiedAt       pgtype.Timestamptz
+	ChallengeToken   string
+	AppIDRedirect    pgtype.UUID
+	OrgID            pgtype.UUID
+	CertStatus       string
+	CertExpiresAt    pgtype.Timestamptz
+	CertLastError    pgtype.Text
+	DnsLastCheckedAt pgtype.Timestamptz
 }
 
 type DataUpstream struct {
@@ -811,6 +817,14 @@ type EgressPolicy struct {
 	ChangedAt                          pgtype.Timestamptz
 	OverlayExceptions                  []string
 	DangerAcceptRfc1918LateralMovement bool
+}
+
+type EmailVerificationToken struct {
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
 }
 
 type Event struct {
@@ -1115,6 +1129,112 @@ type OauthLink struct {
 	Email           string
 	EmailVerified   bool
 	CreatedAt       pgtype.Timestamptz
+}
+
+type ObjectBucket struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Scope              string
+	Region             string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	State              string
+	LeaseToken         pgtype.Text
+	LeaseUntil         pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	AttemptCount       int32
+	RetryAt            pgtype.Timestamptz
+	LastErrorCode      string
+}
+
+type ObjectStorageAccessGrant struct {
+	AccountID  pgtype.UUID
+	BucketID   pgtype.UUID
+	ApiKeyID   pgtype.UUID
+	Permission string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ObjectStorageAuthorization struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	Count       int64
+}
+
+type ObjectStorageBucketUsage struct {
+	BucketID      pgtype.UUID
+	BaselineBytes int64
+	BaselineKeys  int64
+	GrantedBytes  int64
+	GrantedKeys   int64
+	ObservedBytes int64
+	ObservedKeys  int64
+	ObservedAt    pgtype.Timestamptz
+	AttemptAt     pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	Token         string
+}
+
+type ObjectStorageInventorySample struct {
+	Token      string
+	BucketID   pgtype.UUID
+	ObservedAt pgtype.Timestamptz
+	Bytes      int64
+	Objects    int64
+}
+
+type ObjectStorageKeyGrant struct {
+	BucketID pgtype.UUID
+	KeyHash  string
+	MaxBytes int64
+}
+
+type ObjectStorageMultipartUpload struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	BucketID         pgtype.UUID
+	ObjectKey        string
+	SizeBytes        int64
+	PartSizeBytes    int64
+	PartCount        int32
+	ContentType      string
+	ProviderUploadID string
+	CompletionParts  []byte
+	State            string
+	ExpiresAt        pgtype.Timestamptz
+	LeaseToken       pgtype.Text
+	LeaseUntil       pgtype.Timestamptz
+	AttemptCount     int32
+	RetryAt          pgtype.Timestamptz
+	LastErrorCode    string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type ObjectStorageUsageHead struct {
+	AccountID   pgtype.UUID
+	BackendID   string
+	PeriodStart pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+}
+
+type ObjectStorageUsageReport struct {
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Source             string
+	PeriodStart        pgtype.Timestamptz
+	ObservedAt         pgtype.Timestamptz
+	StoredByteHours    int64
+	RequestCount       int64
+	EgressBytes        int64
+	CostMillicents     int64
 }
 
 type OidcExchangedToken struct {

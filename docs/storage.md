@@ -3,6 +3,11 @@
 This platform is stateless. Your code runs in an ephemeral microVM
 that wakes, executes, parks, and forgets. Bring your own state.
 
+An opt-in [customer object-storage preview](object-storage.md) now lets Gregale
+manage private buckets on external S3 services (ADR-147). This does not add
+persistent VM disks or change runtime storage billing. Bring-your-own providers
+remain supported; native customer S3 keys are not part of the preview.
+
 ## Why stateless
 
 Scale-to-zero economics is the load-bearing reason: an instance
@@ -14,6 +19,22 @@ same snapshot, every park destroys local state — and snapshot
 reuse only works because instances are interchangeable. Local
 filesystem state is ephemeral by design; every wake is a fresh
 boot.
+
+## Ephemeral disk boundary
+
+Each app's main `drive1` is a writable ext4 upper layer. Its capacity is
+bounded by the plan's ephemeral disk ceiling, exposed as
+`ephemeral_disk_max_mb` in account and app effective-limit responses. The
+legacy `app_layer_max_mb` field remains for compatibility; both names refer to
+the same physical cap. Image builds enforce the ceiling before a snapshot is
+created, so a deployment cannot boot with a larger writable app layer than the
+plan allows.
+
+`/tmp` is a separate tmpfs and is also lost when the instance parks. Sidecar
+drives are read-only. Gregale does not attach durable customer volumes, and
+the API currently reports the per-plan ceiling rather than live free-space
+samples from a guest. Use object storage or an external database for state that
+must survive a wake/park cycle.
 
 The platform's deny-list (see `pkg/imaged/base.go` and the
 `stateless_only_violation` 422) rejects stateful base images at

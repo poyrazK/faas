@@ -62,5 +62,13 @@ export type CreateDeploymentRequest = {
    * Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder.
    */
   canary?: (CanaryPresetSpec | null);
+  /**
+   * Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses the plan default.
+   */
+  full_rootfs_allow_auto?: boolean | null;
+  /**
+   * Tri-state full-rootfs override: null uses the plan default, true forces full-rootfs, false forces the shared-base path.
+   */
+  full_rootfs_override?: boolean | null;
 };
 

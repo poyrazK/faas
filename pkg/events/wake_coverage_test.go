@@ -186,6 +186,24 @@ func TestSweep_ProxyFirstByte(t *testing.T) {
 	}
 }
 
+func TestSweep_PageServed(t *testing.T) {
+	now := time.Now()
+	accountID := "acct-1"
+	e := PageServed{
+		EmitAt: now, WakeID: "w1", AppID: "a1", RequestID: "r1",
+		ServedAt: now, AccountID: accountID,
+	}
+	if e.Kind() != WakePageServed {
+		t.Errorf("Kind = %q", e.Kind())
+	}
+	if got := e.Subject(); got == nil || *got != accountID {
+		t.Errorf("Subject = %v, want %s", got, accountID)
+	}
+	if e.Payload()["wake_id"] != "w1" {
+		t.Errorf("payload wake_id = %v", e.Payload()["wake_id"])
+	}
+}
+
 func TestSweep_ParkStarted(t *testing.T) {
 	now := time.Now()
 	e := ParkStarted{

@@ -132,12 +132,15 @@ var routeExclude = map[string]bool{
 	"GET /dashboard":                                          true, // HTML dashboard
 	"GET /dashboard/":                                         true, // HTML dashboard
 	"POST /dashboard/account/delete":                          true, // HTML form
+	"POST /dashboard/account/keys/{id}/delete":                true, // HTML form (issue #248)
+	"POST /dashboard/account/plan":                            true, // HTML form (issue #248)
 	"POST /dashboard/account/restore":                         true, // HTML form
 	"GET /dashboard/account/export":                           true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/dpa":                              true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                       true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                 true, // HTML form (hosted-checkout hand-off)
 	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":         true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
+	"POST /dashboard/apps/{slug}/rollback":                    true, // HTML form, app rollback (issue #248)
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":      true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable": true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
@@ -389,6 +392,7 @@ var schemaSpecOnly = map[string]bool{
 	"FilterCriteriaOp":   true,
 	"KafkaSASLMechanism": true,
 	"EnvDiffKind":        true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
+	"ResourceProfile":    true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.
@@ -781,6 +785,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 
 	files := []string{
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "object_storage.go"),
+		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),
 		filepath.Join(root, "pkg", "api", workflowFile),
 		filepath.Join(root, "pkg", "api", secretsFile),
 		filepath.Join(root, "pkg", "api", envFile),

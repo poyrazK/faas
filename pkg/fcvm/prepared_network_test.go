@@ -120,6 +120,39 @@ func TestPreparedNetworkPolicyAndExpiry(t *testing.T) {
 	}
 }
 
+func TestPreparedNetworkRefreshesOldSpareBeforeHardExpiry(t *testing.T) {
+	m, p := testPreparedPool(t, 3)
+	policy := fillTestPreparedPool(t, m, p, 100)
+	old := p.ready[0]
+	young := p.ready[1].lease.Instance
+	// A recent wake keeps demand active, but an unused spare can be older
+	// than the other entries after repeated bursts smaller than capacity.
+	p.ready[0].created = time.Now().Add(-3 * preparedNetworkTTL / 4)
+	p.observe(policy)
+	p.fill()
+	if len(p.ready) != 3 || len(m.alloc.reserved) != 3 || m.LeasedCount() != 0 {
+		t.Fatal("refresh changed cache capacity or admitted a guest")
+	}
+	keptYoung := false
+	for _, entry := range p.ready {
+		if entry.lease.Instance == old.lease.Instance {
+			t.Fatal("aging spare was not replaced before hard expiry")
+		}
+		keptYoung = keptYoung || entry.lease.Instance == young
+	}
+	if !keptYoung {
+		t.Fatal("refresh rebuilt a young entry unnecessarily")
+	}
+	// Each entry remains usable exactly once in the next full burst.
+	for i := range 3 {
+		entry := p.claim(fmt.Sprintf("refreshed-%d", i), policy)
+		if entry == nil {
+			t.Fatal("full burst missed after refreshing the old spare")
+		}
+		p.discard(*entry)
+	}
+}
+
 func TestPreparedNetworkChangedConfigRebuildsPolicy(t *testing.T) {
 	m, p := testPreparedPool(t, 1)
 	policy := fillTestPreparedPool(t, m, p, 250)

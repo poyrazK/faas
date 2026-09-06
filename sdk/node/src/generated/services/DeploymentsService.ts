@@ -75,7 +75,92 @@ export class DeploymentsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range.`,
+        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        413: `code: source_too_large`,
+        422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Create a developer deployment from a complete source snapshot or delta.
+   * Transport used only for ad-hoc developer environments created by
+   * `gregale dev`. With an empty `dev_source_base`, `source` is a complete
+   * source archive. With a base revision, `source` contains changed entries
+   * and `dev_source_deleted` removes paths from the cached base.
+   *
+   * The cache is account/app scoped, node-local, and disposable. apid
+   * reconstructs and verifies a complete archive before applying the same
+   * source-root, stateful-shape, secret-scan, Dockerfile, function, and
+   * enqueue gates as an ordinary source deployment. A missing base returns
+   * 409 `dev_source_base_missing`; clients retry the target as a complete
+   * snapshot. Older servers safely return 404 on this distinct route.
+   *
+   * @returns DeploymentResponse The reconstructed developer deployment whose build has been accepted and queued.
+   * @throws ApiError
+   */
+  public static deployDevSource({
+    slug,
+    formData,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    formData: {
+      /**
+       * Complete tar.gz when dev_source_base is absent; otherwise a tar.gz of changed entries.
+       */
+      source: Blob;
+      /**
+       * Canonical cached source revision. Omit for a complete snapshot.
+       */
+      dev_source_base?: string;
+      /**
+       * Canonical revision of the complete source tree after reconstruction.
+       */
+      dev_source_target: string;
+      /**
+       * JSON string array of canonical archive paths removed since dev_source_base.
+       */
+      dev_source_deleted?: string;
+      dockerfile?: boolean;
+      runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
+      handler?: string;
+      source_root?: string;
+      /**
+       * Optional JSON workflow-definition array attached to this developer deployment.
+       */
+      workflows?: string;
+    },
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/dev-source',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      formData: formData,
+      mediaType: 'multipart/form-data',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
+        404: `code: not_found`,
+        409: `code: dev_source_base_missing. Retry with a complete source snapshot.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
         429: `429. Two response shapes:
@@ -138,6 +223,7 @@ export class DeploymentsService {
         SHA, branch, or tag.
         `,
         401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `No durable GitHub install bound to the caller's account
         (code: github_install_not_found).
         `,
@@ -153,8 +239,13 @@ export class DeploymentsService {
     });
   }
   /**
+   * @deprecated
    * Create a deployment from a CLI-uploaded local tarball (zero-config).
    * Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+   * This multipart endpoint is deprecated for new clients. Use the
+   * resumable upload session endpoints under `/v1/uploads` for progress,
+   * retry-safe chunking, and commit deduplication; this route remains
+   * available during the migration window.
    * The CLI uploads a gzipped tar via the `tarball` form field and
    * an optional informational `{repo, ref}` JSON sidecar. The CLI
    * binary is the trust root: apid does NOT consult
@@ -230,6 +321,7 @@ export class DeploymentsService {
         sidecar JSON, or invalid tarball shape.
         `,
         401: `code: unauthorized`,
+        403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `code: not_found. The slug does not exist OR belongs to
         another account (loadAppAndPreflight's IDOR silent-404 —
         apid deliberately returns the same shape for both cases

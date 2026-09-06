@@ -24,12 +24,14 @@ import (
 
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug           string `json:"slug"`
-	Type           string `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime        string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB          int    `json:"ram_mb,omitempty"`  // 0 => plan default
-	MaxConcurrency int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
+	Slug            string `json:"slug"`
+	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
+	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB           int    `json:"ram_mb,omitempty"`           // 0 => plan default
+	CPUMillicores   int    `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
+	ResourceProfile string `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
+	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
+	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
@@ -130,13 +132,32 @@ type CreateAppRequest struct {
 	OverflowNode *string `json:"overflow_node,omitempty"`
 }
 
+// UpsertDevSessionRequest describes the application shape for an expiring,
+// CLI-managed developer preview. The project identity lives in the URL path;
+// WorkspaceID separates developers and local source trees within that project.
+type UpsertDevSessionRequest struct {
+	Type        string `json:"type,omitempty"`         // "app" (default) | "function"
+	Runtime     string `json:"runtime,omitempty"`      // required for functions
+	WorkspaceID string `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
+}
+
+// DevSessionResponse is returned when a developer preview is created or its
+// lease is refreshed. App.URL is the stable browser URL for this account and
+// developer workspace; ExpiresAt is renewed whenever the CLI syncs source.
+type DevSessionResponse struct {
+	App       AppResponse `json:"app"`
+	ExpiresAt time.Time   `json:"expires_at"`
+}
+
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
-	RAMMB          *int `json:"ram_mb,omitempty"`
-	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+	RAMMB           *int    `json:"ram_mb,omitempty"`
+	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
+	ResourceProfile *string `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
+	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
 	// replaces the full policy; use min=max=desired=0 to scale a service to
 	// zero. desired must fit the app's max_concurrency; include both fields
@@ -518,14 +539,46 @@ func (s *ScalingPolicy) ClearUnknownFields() {
 	s.unknownFields = nil
 }
 
+// AppEffectiveLimits is the resource and edge envelope that actually applies
+// to an app. It gives customers one place to see plan-derived limits whose
+// names otherwise invite incorrect assumptions (for example, guest-visible
+// vCPUs are distinct from the sustained cgroup CPU allowance).
+type AppEffectiveLimits struct {
+	MemoryLimitMB          int   `json:"memory_limit_mb"`
+	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
+	EphemeralDiskMaxMB     int   `json:"ephemeral_disk_max_mb"`
+	GuestVCPUs             int   `json:"guest_vcpus"`
+	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
+	PlanCPUMaxMillicores   int   `json:"plan_cpu_max_millicores"`
+	CPUWeight              int   `json:"cpu_weight"`
+	MaxInstances           int   `json:"max_instances"`
+	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
+	AppRequestRateRPS      int   `json:"app_request_rate_rps"`
+	AppRequestBurst        int   `json:"app_request_burst"`
+	AccountRequestRateRPM  int   `json:"account_request_rate_rpm"`
+	RequestBudgetMS        int64 `json:"request_budget_ms"`
+	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
+	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
+}
+
+// AppConfiguredResources is the resource shape selected for an app. It is
+// separate from EffectiveLimits because guest topology and plan ceilings can
+// differ from the app's sustained CPU and memory settings.
+type AppConfiguredResources struct {
+	MemoryMB      int `json:"memory_mb"`
+	CPUMillicores int `json:"cpu_millicores"`
+}
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID             string `json:"id"`
-	Slug           string `json:"slug"`
-	Type           string `json:"type"`
-	Runtime        string `json:"runtime,omitempty"`
-	RAMMB          int    `json:"ram_mb"`
-	MaxConcurrency int    `json:"max_concurrency"`
+	ID              string          `json:"id"`
+	Slug            string          `json:"slug"`
+	Type            string          `json:"type"`
+	Runtime         string          `json:"runtime,omitempty"`
+	RAMMB           int             `json:"ram_mb"`
+	CPUMillicores   int             `json:"cpu_millicores"`
+	ResourceProfile ResourceProfile `json:"resource_profile,omitempty"`
+	MaxConcurrency  int             `json:"max_concurrency"`
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
 	// MaxConcurrency (the per-app instance cap, spec §6.2-1) — this
@@ -538,7 +591,11 @@ type AppResponse struct {
 	// concurrency-safe; sync subprocess-per-request handlers are
 	// not).
 	ConcurrencyPerVMBound int `json:"concurrency_per_vm"`
-	IdleTimeoutS          int `json:"idle_timeout_s,omitempty"`
+	// EffectiveLimits makes the complete resource and request envelope
+	// visible without requiring the customer to infer it from their plan.
+	EffectiveLimits     AppEffectiveLimits     `json:"effective_limits"`
+	ConfiguredResources AppConfiguredResources `json:"configured_resources"`
+	IdleTimeoutS        int                    `json:"idle_timeout_s,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
@@ -982,6 +1039,14 @@ type CreateDeploymentRequest struct {
 	// (mirrors the TrafficPercent gate at line 922-923). nil on
 	// the wire → 'none' with zero ladder.
 	Canary *CanaryPresetSpec `json:"canary,omitempty"`
+	// FullRootfsAllowAuto controls fallback to a self-contained OCI rootfs
+	// when the image does not descend from a Gregale runtime base. Nil uses
+	// the plan default; an explicit value is persisted per deployment.
+	FullRootfsAllowAuto *bool `json:"full_rootfs_allow_auto,omitempty"`
+	// FullRootfsOverride is the tri-state override: nil honors the plan and
+	// allow-auto setting, true forces full-rootfs, and false forces the
+	// legacy shared-base path.
+	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
 }
 
 // CanaryPresetSpec is the canary ladder a customer asks for on a
@@ -2089,14 +2154,18 @@ type RollbackRequest struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
-	ID            string        `json:"id"`
-	Email         string        `json:"email"`
-	Plan          string        `json:"plan"`
-	Status        string        `json:"status"`
-	Limits        AccountLimits `json:"limits"`
-	UsageGBHours  float64       `json:"usage_gb_hours"`
-	AppCount      int           `json:"app_count"`
-	GitHubInstall string        `json:"github_install_id,omitempty"`
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	// EmailVerificationGraceEndsAt is present only for unverified password
+	// accounts so API and dashboard clients can render the 30-day deadline.
+	EmailVerificationGraceEndsAt *time.Time    `json:"email_verification_grace_ends_at,omitempty"`
+	Plan                         string        `json:"plan"`
+	Status                       string        `json:"status"`
+	Limits                       AccountLimits `json:"limits"`
+	UsageGBHours                 float64       `json:"usage_gb_hours"`
+	AppCount                     int           `json:"app_count"`
+	GitHubInstall                string        `json:"github_install_id,omitempty"`
 	// PlanChangeStatus and RequestedPlan are populated only when a plan
 	// change was accepted by the billing provider but is not yet reflected
 	// in the local entitlement. Keeping the current Plan in this response
@@ -2110,12 +2179,13 @@ type AccountResponse struct {
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan            string `json:"plan"`
-	RAMMB           int    `json:"ram_mb"`
-	MaxConcurrency  int    `json:"max_concurrency"`
-	DeployedApps    int    `json:"deployed_apps"`
-	IncludedGBHours int64  `json:"included_gb_hours"`
-	AppLayerMaxMB   int    `json:"app_layer_max_mb"`
+	Plan               string `json:"plan"`
+	RAMMB              int    `json:"ram_mb"`
+	MaxConcurrency     int    `json:"max_concurrency"`
+	DeployedApps       int    `json:"deployed_apps"`
+	IncludedGBHours    int64  `json:"included_gb_hours"`
+	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
+	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext
@@ -2271,19 +2341,15 @@ type CustomDomainResponse struct {
 	Default        bool     `json:"default,omitempty"`    // true when this domain is the app's default (issue #961 / Mega-A PR-3)
 	CertNotAfter   string   `json:"cert_not_after,omitempty"`
 	CertSANs       []string `json:"cert_sans,omitempty"`
-	// CertStatus summarises the live cert dial (issue #961 / Mega-A PR-3
-	// code-review round, MED-4). One of:
-	//   ""           — cert dial was not attempted (domain unverified, or
-	//                  dialCert not called because the cert is already known).
-	//   "issued"     — port-443 handshake succeeded and the leaf cert
-	//                  covers this domain (sanContains matched).
-	//   "pending"    — domain is verified but the cert dial has not yet
-	//                  succeeded (DNS propagated but cert not yet minted).
-	//   "dial_failed:<reason>" — TCP dial, TLS handshake, or cert parse
-	//                  failed. <reason> is one of: dial_refused,
-	//                  dial_timeout, handshake_failed, no_peer_certs,
-	//                  parse_failed. omitempty so legacy rows / pre-PR-3
-	//                  clients see bit-identical payloads.
+	// Durable legacy custom-domain TLS state (issue #1397 / F1). These
+	// fields are populated by the DNS/cert poller and remain available when
+	// the live cert endpoint is temporarily unreachable.
+	CertExpiresAt    string `json:"cert_expires_at,omitempty"`
+	CertLastError    string `json:"cert_last_error,omitempty"`
+	DNSLastCheckedAt string `json:"dns_last_checked_at,omitempty"`
+	// CertStatus is the durable TLS lifecycle (pending, issued, renewing, or
+	// failed). The per-domain show endpoint may temporarily override it with
+	// a live "dial_failed:<reason>" probe result; list/status remain durable.
 	CertStatus string `json:"cert_status,omitempty"`
 }
 
@@ -2494,8 +2560,8 @@ type UsageResponse struct {
 	// HTTP-response byte delta — informational only. Source:
 	// gateway statusRecorder.Bytes → meterd SampleAndRoll →
 	// usage_minutes.tx_bytes. Not billed (ADR-046 §6); the
-	// gateway-side producer lands in PR-2. 0 when no meterd
-	// sample has accumulated yet.
+	// gateway-side producer. 0 when no meterd sample has
+	// accumulated yet.
 	TXBytes int64 `json:"tx_bytes"`
 	// NetTxBytes (ADR-046, step 10) is the per-app monthly
 	// byte delta on root-side vethHost.rx_bytes —
@@ -2512,18 +2578,14 @@ type UsageResponse struct {
 	// instancestats.Poller → meterd SampleAndRoll →
 	// usage_minutes.net_rx_bytes. Informational only —
 	// not billed (ADR-048 §5). 0 when no meterd sample has
-	// accumulated yet or the wire regen that surfaces the
-	// ingress field has not yet landed (PR-A commit #2
-	// follow-up).
+	// accumulated yet.
 	NetRxBytes int64 `json:"net_rx_bytes"`
 	// ColdBootCount (ADR-048) is the per-app monthly
-	// count of WAKE_RESTORE → WAKE_COLD_BOOT transitions
-	// observed across this app's instances. Source:
-	// scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled
-	// by meterd SampleAndRoll → usage_minutes.
+	// count of customer requests whose authoritative wake outcome
+	// was WAKE_COLD_BOOT. Source: gatewayd's minute-bucketed
+	// usage stream → meterd SampleAndRoll → usage_minutes.
 	// cold_boot_count. Informational only — not billed.
-	// 0 when no meterd sample has accumulated yet or the
-	// wire regen has not yet landed.
+	// 0 when no meterd sample has accumulated yet.
 	ColdBootCount int64 `json:"cold_boots"`
 }
 
@@ -2805,9 +2867,20 @@ type SetPasswordRequest struct {
 	CurrentPassword string `json:"current_password,omitempty"`
 }
 
+// DailyUsagePoint is one day in the account's trailing usage trend.
+// GBHours is the sum across apps; TopAppSlug identifies the largest
+// contributor for that day. All fields are informational and use the
+// same GB-hour conversion as UsageSummaryResponse.
+type DailyUsagePoint struct {
+	Date          string  `json:"date"` // YYYY-MM-DD in UTC
+	GBHours       float64 `json:"gb_hours"`
+	TopAppSlug    string  `json:"top_app_slug,omitempty"`
+	TopAppGBHours float64 `json:"top_app_gb_hours,omitempty"`
+}
+
 // UsageSummaryResponse is the roll-up for the current month (or any
 // month passed as a query param). Used by the dashboard usage page so
-// the customer sees a single number ("used X of Y GB-h, overage $Z")
+// the customer sees the account summary and its trailing daily trend
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
@@ -2822,16 +2895,17 @@ type SetPasswordRequest struct {
 // billed. The two egress columns (tx_bytes + net_tx_bytes) are
 // exposed separately at the per-app UsageResponse level; the
 // summary rolls them up for the dashboard's single-number
-// panel. The gateway-side tx_bytes producer lands in PR-2.
+// panel.
 type UsageSummaryResponse struct {
 	Month           string  `json:"month"`             // YYYY-MM
-	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
+	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 1024 / 3600
 	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
 	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
 	// UsedCPUHours is the per-month CPU-hours Σ CPUUsageUsec /
 	// 3.6e9. Informational only — billing is on UsedGBHours.
-	// Issue #279 / PR-B.
+	// Issue #279 / PR-B. The customer dashboard renders this
+	// alongside the other account summary dimensions.
 	UsedCPUHours float64 `json:"used_cpu_hours"`
 	// UsedEgressGB is the per-month egress Σ (TXBytes +
 	// NetTxBytes) / 1024^3. Informational only — not
@@ -2848,12 +2922,15 @@ type UsageSummaryResponse struct {
 	// per-app breakdown lives at UsageResponse.NetRxBytes.
 	UsedIngressGB float64 `json:"used_ingress_gb"`
 	// ColdBootTotal (ADR-048) is the per-month Σ of
-	// WAKE_RESTORE → WAKE_COLD_BOOT transitions across
-	// every app on this account. Informational only — not
+	// customer requests whose wake outcome was WAKE_COLD_BOOT
+	// across every app on this account. Informational only — not
 	// billed. The dashboard's "this customer's cold-boot
 	// bill of health" panel reads this single number; the
 	// per-app breakdown lives at UsageResponse.ColdBootCount.
 	ColdBootTotal int64 `json:"cold_boots"`
+	// Daily is the trailing 30 UTC calendar days of account usage,
+	// grouped by day. It is additive so existing clients can ignore it.
+	Daily []DailyUsagePoint `json:"daily"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec
@@ -2871,6 +2948,16 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
 			WithDocs(docsBase + "/plans#concurrency")
 	}
 	return nil
+}
+
+// ValidateAppCPUMillicores validates the closed set supported by the first
+// configurable CPU release.
+func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
+	if ValidAppCPUMillicores(cpuMillicores) {
+		return nil
+	}
+	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppCPU,
+		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000")
 }
 
 // --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
@@ -4588,6 +4675,24 @@ const (
 	SidecarTypeSidecar SidecarType = "sidecar"
 )
 
+// WorkloadDependencyCondition controls when a workload may start after one
+// of its dependencies reaches a lifecycle milestone. An empty condition is
+// treated as started for backwards-compatible clients that omit it.
+type WorkloadDependencyCondition string
+
+const (
+	WorkloadDependencyStarted               WorkloadDependencyCondition = "started"
+	WorkloadDependencyHealthy               WorkloadDependencyCondition = "healthy"
+	WorkloadDependencyCompletedSuccessfully WorkloadDependencyCondition = "completed_successfully"
+)
+
+// WorkloadDependency describes one dependency in a bounded workload set.
+// Name is "main" for the primary workload or the name of another sidecar.
+type WorkloadDependency struct {
+	Name      string                      `json:"name"`
+	Condition WorkloadDependencyCondition `json:"condition,omitempty"`
+}
+
 // EvictionPriority is the per-app tier classification (issue #475).
 // 'best_effort' keeps the historical LRU-by-last_request_at reaper
 // behaviour: under cross-account RAM pressure, schedd may park the
@@ -4657,6 +4762,10 @@ var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?
 // plan RAM" (the common case). 32..512 enforced at the API
 // layer; the "+8 MB" baseline (PerVMOverheadMB) is added once
 // per instance in PR-B's admission, not per sidecar.
+//
+// CPUMillicores is this sidecar's sustained host/container CPU
+// quota in millicores. 0 preserves the app-level CPU plan cap;
+// non-zero values must be one of 250, 500, or 1000.
 type Sidecar struct {
 	// Name matches the RFC 1123 label grammar. Unique within a
 	// single request. Required.
@@ -4685,20 +4794,30 @@ type Sidecar struct {
 	// means "absent / inherit the plan RAM" (the common case).
 	// 32..512 enforced at the API layer.
 	RamMB int `json:"ram_mb,omitempty"`
-	// Essential defaults to true. If true and the sidecar exits
-	// non-zero: type=init → fail the deploy with
-	// `failure_class=user_error`; type=sidecar → restart-loop.
-	// If false: warn-log + restart-cap (PR-B's runtime contract).
+	// CPUMillicores is the per-sidecar sustained CPU ceiling.
+	// 0 preserves the plan CPU quota, non-zero values are one of
+	// 250, 500, or 1000.
+	CPUMillicores int `json:"cpu_millicores,omitempty"`
+	// Essential defaults to true. If true and the workload exits
+	// non-zero: the dependency set fails (`failure_class=user_error`)
+	// and essential long-running sidecars restart-loop. If false,
+	// the failure is logged and the other workloads continue.
 	// *bool so the wire form can distinguish "don't set" (nil)
 	// from "explicit true/false". PR-A only persists the field;
 	// the runtime effect is PR-B.
 	Essential *bool `json:"essential,omitempty"`
+	// DependsOn gates this workload on another workload's lifecycle state.
+	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
+	// condition means started. Init workloads remain prerequisites of the main
+	// workload and long-running sidecars for compatibility.
+	DependsOn []WorkloadDependency `json:"depends_on,omitempty"`
 }
 
 // Validate enforces ADR-068 §Decisions 1, 2, 4, 5: name grammar,
 // digest-pinning, type ∈ {init, sidecar}, cmd element non-empty,
 // env key grammar + per-value byte cap, port 0/absent or 1..65535,
-// ram_mb 0/inherit or 32..512, stateful denylist.
+// ram_mb 0/inherit or 32..512, stateful denylist, and dependency
+// condition/name syntax.
 //
 // Returns nil on success or a *Problem with RFC 7807 status 400
 // (or 403 for stateful image). The handler maps this directly to
@@ -4709,6 +4828,11 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	}
 	if !sidecarNameRe.MatchString(s.Name) {
 		return ErrSidecarInvalidName(s.Name)
+	}
+	if s.Name == "main" {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar name",
+			"sidecar name \"main\" is reserved for the primary workload.")
 	}
 	if !sidecarImageRe.MatchString(s.Image) {
 		return ErrSidecarInvalidImage(s.Name,
@@ -4755,6 +4879,40 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if s.RamMB != 0 && (s.RamMB < 32 || s.RamMB > 512) {
 		return ErrSidecarInvalidRamMB(s.RamMB)
 	}
+	if s.CPUMillicores != 0 && !ValidAppCPUMillicores(s.CPUMillicores) {
+		return ErrSidecarInvalidCPUMillicores(s.CPUMillicores)
+	}
+	if len(s.DependsOn) > WorkloadDependencyCapMax {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar dependency",
+			fmt.Sprintf("sidecar[%q] has %d dependencies; max is %d.", s.Name, len(s.DependsOn), WorkloadDependencyCapMax))
+	}
+	seenDeps := make(map[string]struct{}, len(s.DependsOn))
+	for i, dep := range s.DependsOn {
+		if !sidecarNameRe.MatchString(dep.Name) && dep.Name != "main" {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependency",
+				fmt.Sprintf("sidecar[%q].depends_on[%d].name %q is not a workload name.", s.Name, i, dep.Name))
+		}
+		if dep.Name == s.Name {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependency",
+				fmt.Sprintf("sidecar[%q] cannot depend on itself.", s.Name))
+		}
+		if _, ok := seenDeps[dep.Name]; ok {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependency",
+				fmt.Sprintf("sidecar[%q] depends on workload %q more than once.", s.Name, dep.Name))
+		}
+		seenDeps[dep.Name] = struct{}{}
+		switch dep.Condition {
+		case "", WorkloadDependencyStarted, WorkloadDependencyHealthy, WorkloadDependencyCompletedSuccessfully:
+		default:
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependency",
+				fmt.Sprintf("sidecar[%q].depends_on[%d].condition %q is invalid; use started, healthy, or completed_successfully.", s.Name, i, dep.Condition))
+		}
+	}
 	return nil
 }
 
@@ -4791,7 +4949,73 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 				fmt.Sprintf("at most one sidecar of type %q (got %d)", ss[i].Type, seen[ss[i].Type]))
 		}
 	}
+	// Validate the complete graph, including compatibility edges that keep
+	// init workloads ahead of the main and long-running sidecars. This catches
+	// unknown names and cycles before the request is persisted or reaches
+	// guest-init.
+	deps := map[string][]string{"main": nil}
+	for _, sc := range ss {
+		for _, dep := range sc.DependsOn {
+			if dep.Name != "main" && !names[dep.Name] {
+				return NewProblem(http.StatusBadRequest, CodeValidation,
+					"Invalid sidecar dependency",
+					fmt.Sprintf("sidecar[%q] depends on unknown workload %q.", sc.Name, dep.Name))
+			}
+			deps[sc.Name] = append(deps[sc.Name], dep.Name)
+		}
+	}
+	for _, sc := range ss {
+		if sc.Type == SidecarTypeInit {
+			deps["main"] = appendUniqueDependencyName(deps["main"], sc.Name)
+		}
+	}
+	for _, sc := range ss {
+		if sc.Type == SidecarTypeSidecar {
+			for _, init := range ss {
+				if init.Type == SidecarTypeInit {
+					deps[sc.Name] = appendUniqueDependencyName(deps[sc.Name], init.Name)
+				}
+			}
+		}
+	}
+	state := make(map[string]uint8, len(deps))
+	var visit func(string) *Problem
+	visit = func(name string) *Problem {
+		switch state[name] {
+		case 1:
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar dependencies",
+				fmt.Sprintf("workload dependency graph contains a cycle involving %q.", name))
+		case 2:
+			return nil
+		}
+		state[name] = 1
+		for _, dep := range deps[name] {
+			if p := visit(dep); p != nil {
+				return p
+			}
+		}
+		state[name] = 2
+		return nil
+	}
+	for _, sc := range ss {
+		if p := visit(sc.Name); p != nil {
+			return p
+		}
+	}
+	if p := visit("main"); p != nil {
+		return p
+	}
 	return nil
+}
+
+func appendUniqueDependencyName(names []string, name string) []string {
+	for _, existing := range names {
+		if existing == name {
+			return names
+		}
+	}
+	return append(names, name)
 }
 
 // --- per-account egress allowlist extra (issue #679 / PR-B / ADR-082) ---
@@ -6544,6 +6768,73 @@ type DebugTelemetryRequestItem struct {
 type DebugTelemetryListResponse struct {
 	Since    string                      `json:"since"`
 	Requests []DebugTelemetryRequestItem `json:"requests"`
+}
+
+// RequestAnalyticsRoute is one aggregated route/method row returned by
+// GET /v1/apps/{slug}/analytics. Counts include the request_telemetry row's
+// collapsed count, while latency percentiles are weighted by that count.
+type RequestAnalyticsRoute struct {
+	Route         string  `json:"route"`
+	Method        string  `json:"method"`
+	Requests      int64   `json:"requests"`
+	ErrorRequests int64   `json:"error_requests"`
+	ErrorRatePct  float64 `json:"error_rate_pct"`
+	ColdBoots     int64   `json:"cold_boots"`
+	P50MS         int     `json:"p50_ms"`
+	P95MS         int     `json:"p95_ms"`
+	P99MS         int     `json:"p99_ms"`
+}
+
+// RequestAnalyticsResponse is the bounded historical request analytics
+// envelope for one app. Since/Until are the effective half-open window; a
+// longer requested since value is represented by WindowClamped=true.
+type RequestAnalyticsResponse struct {
+	Slug            string                  `json:"slug"`
+	Since           string                  `json:"since"`
+	From            string                  `json:"from"`
+	Until           string                  `json:"until"`
+	WindowClamped   bool                    `json:"window_clamped"`
+	Requests        int64                   `json:"requests"`
+	ErrorRequests   int64                   `json:"error_requests"`
+	ErrorRatePct    float64                 `json:"error_rate_pct"`
+	ColdBoots       int64                   `json:"cold_boots"`
+	P50MS           int                     `json:"p50_ms"`
+	P95MS           int                     `json:"p95_ms"`
+	P99MS           int                     `json:"p99_ms"`
+	Routes          []RequestAnalyticsRoute `json:"routes"`
+	RoutesLimit     int                     `json:"routes_limit"`
+	RoutesTruncated bool                    `json:"routes_truncated"`
+	AsOf            string                  `json:"as_of"`
+}
+
+// RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
+// by GET /v1/apps/{slug}/analytics/timeseries. Counts include collapsed
+// request-telemetry row weights, and latency percentiles use the same weights.
+type RequestAnalyticsTimeseriesPoint struct {
+	Start         string  `json:"start"`
+	Requests      int64   `json:"requests"`
+	ErrorRequests int64   `json:"error_requests"`
+	ErrorRatePct  float64 `json:"error_rate_pct"`
+	ColdBoots     int64   `json:"cold_boots"`
+	P50MS         int     `json:"p50_ms"`
+	P95MS         int     `json:"p95_ms"`
+	P99MS         int     `json:"p99_ms"`
+}
+
+// RequestAnalyticsTimeseriesResponse is the zero-filled hourly series used
+// for customer-facing request analytics charts. The effective window is
+// bounded by the account's telemetry retention.
+type RequestAnalyticsTimeseriesResponse struct {
+	Slug          string                            `json:"slug"`
+	Route         string                            `json:"route,omitempty"`
+	Method        string                            `json:"method,omitempty"`
+	Since         string                            `json:"since"`
+	From          string                            `json:"from"`
+	Until         string                            `json:"until"`
+	WindowClamped bool                              `json:"window_clamped"`
+	Bucket        string                            `json:"bucket"`
+	Points        []RequestAnalyticsTimeseriesPoint `json:"points"`
+	AsOf          string                            `json:"as_of"`
 }
 
 // DebugRegressionItem is one row of debug_regression_observations

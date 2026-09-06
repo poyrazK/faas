@@ -66,6 +66,37 @@ func (s *server) requireMFA(next accountHandler) accountHandler {
 	return authAccountHandler(pkgHandler)
 }
 
+// requireVerifiedEmail gates customer actions that publish code or touch
+// money. Authentication and read-only account access remain available so an
+// unverified customer can sign in and follow the dashboard guidance.
+func (s *server) requireVerifiedEmail(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if !acct.EmailVerified() {
+			api.WriteProblem(w, api.ErrEmailVerificationRequired())
+			return
+		}
+		next(w, r, acct)
+	}
+}
+
+// requireVerifiedEmailHandler is the http.Handler counterpart for dashboard
+// routes that have already passed through sessionAuth.
+func (s *server) requireVerifiedEmailHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acct, ok := AccountFrom(r.Context())
+		if !ok {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+				"Unauthorized", "sign in is required."))
+			return
+		}
+		if !acct.EmailVerified() {
+			api.WriteProblem(w, api.ErrEmailVerificationRequired())
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // requireStepUp delegates to pkg/auth.Middleware.RequireStepUp
 // (IAM-hardening-mega-PR logical change 6, ADR-077). Compose order
 // for a sensitive-op route is:
@@ -285,9 +316,9 @@ func (s *server) clearSessionCookie(w http.ResponseWriter, _ *http.Request) {
 }
 
 // withDeprecation stamps the RFC 8594 + RFC 8288 deprecation headers
-// on the wrapped route so clients (and the operator UI's lint) can
-// detect a sunsetting endpoint. Three headers are set before the
-// handler runs:
+// on the wrapped operator route so clients (and the operator UI's
+// lint) can detect a sunsetting endpoint. Three headers are set before
+// the handler runs:
 //
 //   - Deprecation: true                         (RFC 8594 §2)
 //   - Sunset: Wed, 01 Oct 2026 00:00:00 GMT     (RFC 8594 §3)
@@ -315,10 +346,26 @@ func (s *server) withDeprecation(next accountHandler) accountHandler {
 		link   = `</v1/admin/obs/nodes/events>; rel="successor-version"`
 	)
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		h := w.Header()
-		h.Set("Deprecation", "true")
-		h.Set("Sunset", sunset)
-		h.Set("Link", link)
+		setDeprecationHeaders(w, sunset, link)
 		next(w, r, acct)
 	}
+}
+
+// withDeprecationHTTP is the outermost form for routes whose auth chain is
+// already an http.Handler. Unlike the accountHandler variant above, this
+// preserves the headers even when authentication rejects the request before
+// an account is available.
+func (s *server) withDeprecationHTTP(link string, next http.Handler) http.Handler {
+	const sunset = "Wed, 01 Oct 2026 00:00:00 GMT"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setDeprecationHeaders(w, sunset, link)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func setDeprecationHeaders(w http.ResponseWriter, sunset, link string) {
+	h := w.Header()
+	h.Set("Deprecation", "true")
+	h.Set("Sunset", sunset)
+	h.Set("Link", link)
 }

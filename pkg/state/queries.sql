@@ -1580,6 +1580,19 @@ WHERE app_id = $1
 ORDER BY received_at DESC
 LIMIT $4;
 
+-- name: GetRequestTelemetryByAppAndID :one
+-- Direct request drill-down for the customer debugger. The app_id
+-- predicate is the database-side tenant boundary; the handler has
+-- already resolved the slug through the caller's account.
+SELECT id, deployment_id, route, method, status, latency_ms,
+       cold_boot, trace_id, received_at
+FROM request_telemetry
+WHERE app_id = $1
+  AND id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+LIMIT 1;
+
 -- name: RequestTelemetryByDeployment :many
 -- Per-deployment drilldown. Used by gregale debug compare and the
 -- regression detector (PR-B). Uses
@@ -1614,6 +1627,162 @@ WHERE app_id = $1
   AND received_at >= $3
   AND received_at <  $4
 GROUP BY route;
+
+-- name: RequestTelemetryAnalyticsSummary :one
+-- Customer-facing request analytics over a bounded retention window.
+-- The recorder collapses identical requests into rows with `count`, so
+-- all request/error/cold-boot totals and percentiles must expand that
+-- weight rather than treating each stored row as one request.
+WITH filtered AS (
+    SELECT latency_ms, cold_boot, status, count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), latency_values AS (
+    SELECT latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY latency_ms
+), ranked AS (
+    SELECT latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER () AS total
+    FROM latency_values
+), totals AS (
+    SELECT COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+)
+SELECT requests,
+       error_requests,
+       cold_boots,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+       COALESCE((SELECT MIN(latency_ms) FROM ranked WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+FROM totals;
+
+-- name: RequestTelemetryAnalyticsByRoute :many
+-- Top route/method rows for the customer analytics overview. `count` is
+-- weighted throughout the same way as RequestTelemetryAnalyticsSummary.
+WITH filtered AS (
+    SELECT route, method, latency_ms, cold_boot, status,
+           count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), route_totals AS (
+    SELECT route,
+           method,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+    GROUP BY route, method
+), latency_values AS (
+    SELECT route,
+           method,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY route, method, latency_ms
+), ranked AS (
+    SELECT route,
+           method,
+           latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (PARTITION BY route, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY route, method) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT route,
+           method,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY route, method
+)
+SELECT totals.route,
+       totals.method,
+       totals.requests,
+       totals.error_requests,
+       totals.cold_boots,
+       percentiles.p50_ms,
+       percentiles.p95_ms,
+       percentiles.p99_ms
+FROM route_totals AS totals
+JOIN percentiles USING (route, method)
+ORDER BY totals.requests DESC, totals.method ASC, totals.route ASC
+LIMIT $5;
+
+-- name: RequestTelemetryAnalyticsTimeseries :many
+-- Zero-filled UTC hourly request analytics for customer charts. The
+-- recorder collapses rows by count, so all totals and percentile ranks
+-- expand that weight rather than counting stored rows.
+WITH buckets AS (
+    SELECT generate_series(
+        date_bin('1 hour', sqlc.arg('received_at')::timestamptz, 'epoch'::timestamptz),
+        date_bin('1 hour', sqlc.arg('received_at_2')::timestamptz - interval '1 microsecond', 'epoch'::timestamptz),
+        interval '1 hour'
+    )::timestamptz AS bucket_start
+), filtered AS (
+    SELECT date_bin('1 hour', received_at, 'epoch'::timestamptz) AS bucket_start,
+           latency_ms,
+           cold_boot,
+           status,
+           count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= sqlc.arg('received_at')::timestamptz
+      AND received_at <  sqlc.arg('received_at_2')::timestamptz
+      AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
+      AND (sqlc.arg('method')::text = '' OR method = sqlc.arg('method')::text)
+), latency_values AS (
+    SELECT bucket_start,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM filtered
+    GROUP BY bucket_start, latency_ms
+), ranked AS (
+    SELECT bucket_start,
+           latency_ms,
+           sample_count,
+           SUM(sample_count) OVER (PARTITION BY bucket_start ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY bucket_start) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT bucket_start,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY bucket_start
+), totals AS (
+    SELECT bucket_start,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM filtered
+    GROUP BY bucket_start
+)
+SELECT b.bucket_start,
+       COALESCE(t.requests, 0)::bigint AS requests,
+       COALESCE(t.error_requests, 0)::bigint AS error_requests,
+       COALESCE(t.cold_boots, 0)::bigint AS cold_boots,
+       COALESCE(p.p50_ms, 0)::int AS p50_ms,
+       COALESCE(p.p95_ms, 0)::int AS p95_ms,
+       COALESCE(p.p99_ms, 0)::int AS p99_ms
+FROM buckets AS b
+LEFT JOIN totals AS t USING (bucket_start)
+LEFT JOIN percentiles AS p USING (bucket_start)
+ORDER BY b.bucket_start ASC;
 
 -- PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
 -- read patterns. The cron in cmd/apid/debug_regression_cron.go composes
@@ -1996,22 +2165,6 @@ WHERE id = $1
   AND snapshot_miss_backoff_until IS NOT NULL;
 
 -- =====================================================================
--- Issue #1182 §P1 packaging follow-up: resumable upload sessions
--- (PR-1 of 3, server-only foundation). Wire shape:
---
---   POST   /v1/uploads                   → CreateUploadSession
---   PATCH  /v1/uploads/{id}              → AppendUploadBytes (atomic CAS)
---   POST   /v1/uploads/{id}/commit       → MarkUploadSessionCommitted
---   DELETE /v1/uploads/{id}              → CancelUploadSession
---
--- The atomic CAS in AppendUploadBytes is the load-bearing safety: a
--- slow client that resumes mid-flight (or two clients racing on the
--- same upload_id) corrupts the .part file if the row's received_bytes
--- is updated non-atomically. RETURNING * lets the handler see the
--- new received_bytes in one round-trip without a follow-up SELECT.
--- See docs/adr/NNN-resumable-upload-protocol.md (PR-3) for the
--- full design rationale.
--- =====================================================================
 
 -- name: CreateUploadSession :one
 -- Inserts a fresh upload_sessions row. The handler pre-validates
@@ -2233,6 +2386,126 @@ FROM upload_sessions
 WHERE account_id = $1::uuid
   AND status = 'open';
 
+-- name: ObjectBucketLockApp :one
+SELECT id FROM apps WHERE id = $1 AND account_id = $2 AND status <> 'deleted' FOR UPDATE;
+
+-- name: ObjectBucketByName :one
+SELECT * FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted';
+
+-- name: ObjectBucketCount :one
+SELECT count(*) FROM object_buckets WHERE app_id = $1 AND state <> 'deleted';
+
+-- name: ObjectBucketCountForAccount :one
+SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted';
+
+-- name: ObjectBucketPruneTombstones :exec
+DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
+
+-- name: ObjectBucketInsert :one
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
+
+-- name: ObjectBucketList :many
+SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;
+
+-- name: ObjectBucketGet :one
+SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted';
+
+-- name: ObjectBucketAccessGrantList :many
+SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
+       coalesce(k.label, '')::text AS key_label, k.status AS key_status,
+       g.created_at, g.updated_at
+FROM object_storage_access_grants g
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND b.state <> 'deleted'
+ORDER BY g.created_at, g.api_key_id;
+
+-- name: ObjectBucketAccessGrantGet :one
+SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
+       coalesce(k.label, '')::text AS key_label, k.status AS key_status,
+       g.created_at, g.updated_at
+FROM object_storage_access_grants g
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+  AND b.state <> 'deleted';
+
+-- name: ObjectBucketAccessGrantUpsert :execrows
+INSERT INTO object_storage_access_grants (account_id, bucket_id, api_key_id, permission)
+SELECT b.account_id, b.id, k.id, sqlc.arg(permission)::text
+FROM object_buckets b
+JOIN api_keys k ON k.account_id = b.account_id
+WHERE b.account_id = sqlc.arg(account_id) AND b.id = sqlc.arg(bucket_id)
+  AND b.state <> 'deleted' AND k.id = sqlc.arg(api_key_id)
+  AND k.status IN ('active', 'grace')
+  AND NOT ('admin' = ANY(k.scopes))
+  AND (sqlc.arg(permission)::text <> 'read' OR k.scopes @> ARRAY['storage:read']::text[])
+  AND (sqlc.arg(permission)::text <> 'write' OR k.scopes @> ARRAY['storage:write']::text[])
+  AND (sqlc.arg(permission)::text <> 'read_write' OR k.scopes @> ARRAY['storage:read', 'storage:write']::text[])
+ON CONFLICT (bucket_id, api_key_id) DO UPDATE
+SET permission = EXCLUDED.permission, updated_at = now();
+
+-- name: ObjectBucketAccessGrantDelete :execrows
+DELETE FROM object_storage_access_grants g
+USING object_buckets b, api_keys k
+WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+  AND b.id = g.bucket_id AND b.account_id = g.account_id AND b.state <> 'deleted'
+  AND k.id = g.api_key_id AND k.account_id = g.account_id;
+
+-- name: ObjectBucketAccessCheck :one
+SELECT EXISTS (
+    SELECT 1
+    FROM object_storage_access_grants g
+    JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+    JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+    WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
+      AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+      AND (($4::text = 'read' AND g.permission IN ('read', 'read_write'))
+        OR ($4::text = 'write' AND g.permission IN ('write', 'read_write')))
+      AND (($4::text = 'read' AND k.scopes @> ARRAY['storage:read']::text[])
+        OR ($4::text = 'write' AND k.scopes @> ARRAY['storage:write']::text[]))
+) AS allowed;
+
+-- name: ObjectBucketListForKey :many
+SELECT b.*
+FROM object_buckets b
+JOIN object_storage_access_grants g
+  ON g.bucket_id = b.id AND g.account_id = b.account_id
+JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+WHERE b.account_id = $1 AND b.app_id = $2 AND g.api_key_id = $3
+  AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+ORDER BY b.created_at, b.id;
+
+-- name: ObjectBucketClaim :one
+UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now(),
+attempt_count = CASE WHEN state <> $1 THEN 1 ELSE least(attempt_count + 1, 30) END,
+last_error_code = CASE WHEN state <> $1 THEN '' ELSE last_error_code END, retry_at = now()
+WHERE object_buckets.account_id = $4 AND object_buckets.app_id = $5 AND object_buckets.id = $6
+AND object_buckets.state <> 'deleted' AND (object_buckets.lease_until IS NULL OR object_buckets.lease_until < now())
+AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
+  AND m.state IN ('initiating','active','completing','aborting')
+))
+AND (NOT sqlc.arg(recovery)::boolean OR object_buckets.state = $1)
+AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING *;
+
+-- name: ObjectBucketFinish :execrows
+UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now(),
+attempt_count = 0, last_error_code = '', retry_at = now() WHERE id = $2 AND lease_token = $3;
+
+-- name: ObjectBucketRetry :execrows
+UPDATE object_buckets SET lease_token = NULL, lease_until = NULL, updated_at = now(),
+last_error_code = $3, retry_at = now() + ($4::int * interval '1 second')
+WHERE id = $1 AND lease_token = $2 AND state IN ('provisioning', 'deleting');
+
+-- name: ObjectBucketsDue :many
+SELECT * FROM object_buckets
+WHERE (state = 'deleting' OR (sqlc.arg(include_provisioning)::boolean AND state = 'provisioning'))
+AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
+ORDER BY retry_at, id LIMIT sqlc.arg(batch_limit)::int;
+
 -- name: SnapshotLocalityNodes :many
 SELECT node_id::text AS node_id, true AS is_origin
 FROM snapshot_origins
@@ -2242,3 +2515,142 @@ SELECT node_id::text AS node_id, false AS is_origin
 FROM snapshot_replicas
 WHERE snapshot_id = $1::uuid AND state = 'ready'
 ORDER BY node_id, is_origin DESC;
+
+-- name: ObjectUsageLockAccount :one
+SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
+
+-- name: ObjectUsageBucketAccount :one
+SELECT account_id FROM object_buckets WHERE id=$1;
+
+-- name: ObjectUsageBuckets :many
+SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
+u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
+WHERE b.account_id = $1;
+
+-- name: ObjectUsageGrant :one
+SELECT max_bytes FROM object_storage_key_grants WHERE bucket_id = $1 AND key_hash = $2;
+
+-- name: ObjectUsageGrantUpsert :exec
+INSERT INTO object_storage_key_grants (bucket_id, key_hash, max_bytes) VALUES ($1,$2,$3)
+ON CONFLICT (bucket_id,key_hash) DO UPDATE SET max_bytes = greatest(object_storage_key_grants.max_bytes, EXCLUDED.max_bytes);
+
+-- name: ObjectUsageGrantIncrement :exec
+UPDATE object_storage_bucket_usage SET granted_bytes = granted_bytes + $2, granted_keys = granted_keys + $3 WHERE bucket_id = $1;
+
+-- name: ObjectUsageAuthorizationCount :one
+SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2;
+
+-- name: ObjectUsageAuthorize :exec
+INSERT INTO object_storage_authorizations (account_id, period_start, count) VALUES ($1,$2,1)
+ON CONFLICT (account_id,period_start) DO UPDATE SET count = object_storage_authorizations.count + 1;
+
+-- name: ObjectUsageReports :many
+SELECT r.* FROM object_storage_usage_heads h JOIN object_storage_usage_reports r
+USING (account_id,backend_id,period_start,observed_at)
+WHERE h.account_id=$1 AND h.period_start=$2 ORDER BY h.backend_id;
+
+-- name: ObjectUsageReportHead :exec
+INSERT INTO object_storage_usage_heads (account_id,backend_id,period_start,observed_at) VALUES ($1,$2,$3,$4)
+ON CONFLICT (account_id,period_start,backend_id) DO UPDATE SET observed_at=EXCLUDED.observed_at;
+
+-- name: ObjectUsageReportGet :one
+SELECT * FROM object_storage_usage_reports WHERE account_id=$1 AND backend_id=$2 AND period_start=$3 AND observed_at=$4;
+
+-- name: ObjectUsageReportInsert :exec
+INSERT INTO object_storage_usage_reports (account_id,backend_id,backend_fingerprint,source,period_start,observed_at,stored_byte_hours,request_count,egress_bytes,cost_millicents)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
+
+-- name: ObjectInventoriesDue :many
+SELECT b.* FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
+AND (u.lease_until IS NULL OR u.lease_until < now())
+ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1;
+
+-- name: ObjectInventoryClaim :execrows
+INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
+SELECT id, now(), now()+interval '2 minutes', sqlc.arg(token)::text FROM object_buckets WHERE id=$1 AND state='ready'
+ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=now(),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
+WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now();
+
+-- name: ObjectInventoryFinish :execrows
+UPDATE object_storage_bucket_usage SET baseline_bytes = CASE WHEN observed_at IS NULL THEN sqlc.arg(bytes)::bigint ELSE baseline_bytes END,
+baseline_keys = CASE WHEN observed_at IS NULL THEN sqlc.arg(objects)::bigint ELSE baseline_keys END,
+observed_bytes=sqlc.arg(bytes),observed_keys=sqlc.arg(objects),observed_at=attempt_at,lease_until=NULL,token=''
+WHERE bucket_id=$1 AND token=$2 AND lease_until > now()
+AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready');
+
+-- name: ObjectInventorySample :exec
+INSERT INTO object_storage_inventory_samples (token,bucket_id,observed_at,bytes,objects)
+SELECT $2,u.bucket_id,u.observed_at,u.observed_bytes,u.observed_keys FROM object_storage_bucket_usage u WHERE u.bucket_id=$1;
+
+-- name: ObjectMultipartByKey :one
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
+AND state IN ('initiating','active','completing','aborting');
+
+-- name: ObjectMultipartLockBucket :one
+SELECT id FROM object_buckets
+WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE;
+
+-- name: ObjectMultipartCount :one
+SELECT count(*) FROM object_storage_multipart_uploads
+WHERE bucket_id=$1 AND state IN ('initiating','active','completing','aborting');
+
+-- name: ObjectMultipartInsert :one
+INSERT INTO object_storage_multipart_uploads
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *;
+
+-- name: ObjectMultipartGet :one
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4;
+
+-- name: ObjectMultipartClaim :one
+UPDATE object_storage_multipart_uploads SET
+state=sqlc.arg(operation), lease_token=sqlc.arg(token),
+lease_until=now()+(sqlc.arg(lease_seconds)::int * interval '1 second'),
+completion_parts=CASE WHEN state='active' AND sqlc.arg(operation)::text='completing'
+  THEN sqlc.arg(completion_parts)::jsonb ELSE completion_parts END,
+attempt_count=CASE WHEN state<>sqlc.arg(operation)::text THEN 1 ELSE least(attempt_count+1,30) END,
+last_error_code=CASE WHEN state<>sqlc.arg(operation)::text THEN '' ELSE last_error_code END,
+retry_at=now(), updated_at=now()
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
+AND bucket_id=sqlc.arg(bucket_id) AND id=sqlc.arg(id)
+AND (lease_until IS NULL OR lease_until<now())
+AND (retry_at<=now() OR state<>sqlc.arg(operation)::text)
+AND (NOT sqlc.arg(recovery)::boolean OR state=sqlc.arg(operation)::text
+  OR (state='active' AND sqlc.arg(operation)::text='aborting'))
+AND (
+  (sqlc.arg(operation)::text='initiating' AND state='initiating' AND provider_upload_id='') OR
+  (sqlc.arg(operation)::text='completing' AND state IN ('active','completing')
+    AND (state<>'active' OR expires_at>now())
+    AND (state<>'active' OR jsonb_array_length(sqlc.arg(completion_parts)::jsonb)>0)) OR
+  (sqlc.arg(operation)::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
+) RETURNING *;
+
+-- name: ObjectMultipartActivate :execrows
+UPDATE object_storage_multipart_uploads SET state='active',provider_upload_id=$3,
+lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='initiating' AND $3<>'';
+
+-- name: ObjectMultipartFinish :execrows
+UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND
+((state='completing' AND $3='completed') OR (state='aborting' AND $3='aborted'));
+
+-- name: ObjectMultipartRetry :execrows
+UPDATE object_storage_multipart_uploads SET lease_token=NULL,lease_until=NULL,last_error_code=$3,
+retry_at=now()+($4::int * interval '1 second'),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state IN ('initiating','completing','aborting');
+
+-- name: ObjectMultipartDue :many
+SELECT * FROM object_storage_multipart_uploads
+WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
+  OR (state='active' AND expires_at<=now()))
+AND (lease_until IS NULL OR lease_until<now())
+ORDER BY retry_at,id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: SnapshotStorageKeys :many
+SELECT storage_key FROM snapshots WHERE deployment_id = $1;

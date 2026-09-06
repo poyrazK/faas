@@ -10,14 +10,33 @@ import (
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.
 
+// ResourceProfile is a named RAM/CPU shape supported by the public API.
+type ResourceProfile string
+
+const (
+	ResourceProfileMicro  ResourceProfile = "micro"
+	ResourceProfileSmall  ResourceProfile = "small"
+	ResourceProfileMedium ResourceProfile = "medium"
+	ResourceProfileLarge  ResourceProfile = "large"
+	ResourceProfileXLarge ResourceProfile = "xlarge"
+)
+
+type ResourceProfileSpec struct {
+	Name          ResourceProfile
+	MemoryMB      int
+	CPUMillicores int
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug           string `json:"slug"`
-	Type           string `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime        string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
-	RAMMB          int    `json:"ram_mb,omitempty"`  // 0 => plan default
-	MaxConcurrency int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
+	Slug            string `json:"slug"`
+	Type            string `json:"type,omitempty"`    // "app" (default) | "function"
+	Runtime         string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
+	RAMMB           int    `json:"ram_mb,omitempty"`  // 0 => plan default
+	CPUMillicores   int    `json:"cpu_millicores,omitempty"`
+	ResourceProfile string `json:"resource_profile,omitempty"`
+	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
+	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
 	// Lifecycle fields are optional at create-time. Empty values preserve the
 	// request-driven default; service_replicas is valid only for service mode.
 	ExecutionMode    string           `json:"execution_mode,omitempty"`
@@ -41,9 +60,11 @@ type CreateAppRequest struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
-	RAMMB          *int `json:"ram_mb,omitempty"`
-	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+	RAMMB           *int    `json:"ram_mb,omitempty"`
+	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
+	ResourceProfile *string `json:"resource_profile,omitempty"`
+	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
 	// Lifecycle fields are tri-state: nil leaves the current value unchanged.
 	// service_replicas replaces the complete replica policy when present.
 	ExecutionMode    *string          `json:"execution_mode,omitempty"`
@@ -132,14 +153,40 @@ type RenameAppRequest struct {
 	NewSlug string `json:"new_slug"`
 }
 
+// AppEffectiveLimits is the effective resource and request envelope for an app.
+type AppEffectiveLimits struct {
+	MemoryLimitMB          int   `json:"memory_limit_mb"`
+	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
+	EphemeralDiskMaxMB     int   `json:"ephemeral_disk_max_mb"`
+	GuestVCPUs             int   `json:"guest_vcpus"`
+	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
+	PlanCPUMaxMillicores   int   `json:"plan_cpu_max_millicores"`
+	CPUWeight              int   `json:"cpu_weight"`
+	MaxInstances           int   `json:"max_instances"`
+	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
+	AppRequestRateRPS      int   `json:"app_request_rate_rps"`
+	AppRequestBurst        int   `json:"app_request_burst"`
+	AccountRequestRateRPM  int   `json:"account_request_rate_rpm"`
+	RequestBudgetMS        int64 `json:"request_budget_ms"`
+	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
+	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
+}
+
+type AppConfiguredResources struct {
+	MemoryMB      int `json:"memory_mb"`
+	CPUMillicores int `json:"cpu_millicores"`
+}
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID             string `json:"id"`
-	Slug           string `json:"slug"`
-	Type           string `json:"type"`
-	Runtime        string `json:"runtime,omitempty"`
-	RAMMB          int    `json:"ram_mb"`
-	MaxConcurrency int    `json:"max_concurrency"`
+	ID              string `json:"id"`
+	Slug            string `json:"slug"`
+	Type            string `json:"type"`
+	Runtime         string `json:"runtime,omitempty"`
+	RAMMB           int    `json:"ram_mb"`
+	CPUMillicores   int    `json:"cpu_millicores"`
+	ResourceProfile string `json:"resource_profile,omitempty"`
+	MaxConcurrency  int    `json:"max_concurrency"`
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
 	// MaxConcurrency (the per-app instance cap, spec §6.2-1) — this
@@ -151,7 +198,9 @@ type AppResponse struct {
 	// single-event-loop, Python asyncio, Go net/http are
 	// concurrency-safe; sync subprocess-per-request handlers are
 	// not).
-	ConcurrencyPerVMBound int `json:"concurrency_per_vm"`
+	ConcurrencyPerVMBound int                    `json:"concurrency_per_vm"`
+	EffectiveLimits       AppEffectiveLimits     `json:"effective_limits"`
+	ConfiguredResources   AppConfiguredResources `json:"configured_resources"`
 	// RequireAuthn (issue #560) is the per-deployment token-
 	// gate flag. When true, every incoming request to this
 	// app must carry a valid `Authorization: Bearer <token>`
@@ -312,12 +361,13 @@ type AccountResponse struct {
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan            string `json:"plan"`
-	RAMMB           int    `json:"ram_mb"`
-	MaxConcurrency  int    `json:"max_concurrency"`
-	DeployedApps    int    `json:"deployed_apps"`
-	IncludedGBHours int64  `json:"included_gb_hours"`
-	AppLayerMaxMB   int    `json:"app_layer_max_mb"`
+	Plan               string `json:"plan"`
+	RAMMB              int    `json:"ram_mb"`
+	MaxConcurrency     int    `json:"max_concurrency"`
+	DeployedApps       int    `json:"deployed_apps"`
+	IncludedGBHours    int64  `json:"included_gb_hours"`
+	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
+	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext

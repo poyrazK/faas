@@ -21,8 +21,12 @@
   is compared again after request validation. A mismatch rebuilds the network
   through the ordinary setup path before starting any VMM.
 - **Lifecycle:** Replenishment follows successful wakes and runs in one daemon
-  worker with bounded operations. Entries expire after 60 seconds; an idle
-  cache stops replenishing. A policy change evicts obsolete unused entries.
+  worker with bounded operations. Entries expire after 60 seconds. While a
+  policy remains recently observed, maintenance runs every 15 seconds and
+  replaces unused entries aged 30 seconds before they become unclaimable.
+  This prevents an old spare in a partially consumed pool from expiring
+  between maintenance ticks. Refresh uses the existing capacity and teardown
+  rules; an idle cache stops replenishing. A policy change evicts obsolete unused entries.
   Shutdown drains unused networks after RPC shutdown. Failed teardown keeps
   the slot reserved and retries, rather than exposing a surviving network to
   another VM. Startup removes only UUID-qualified `fc-prepared-*` names left

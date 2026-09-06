@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -153,12 +154,14 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
 	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
-		"app_id":          created.ID,
-		"slug":            created.Slug,
-		"type":            string(created.Type),
-		"ram_mb":          created.RAMMB,
-		"max_concurrency": created.MaxConcurrency,
-		"runtime":         created.Runtime,
+		"app_id":           created.ID,
+		"slug":             created.Slug,
+		"type":             string(created.Type),
+		"ram_mb":           created.RAMMB,
+		"cpu_millicores":   created.CPUMillicores,
+		"resource_profile": api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
+		"max_concurrency":  created.MaxConcurrency,
+		"runtime":          created.Runtime,
 	})
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponse(created, acct.Plan)
@@ -181,8 +184,29 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 			"Invalid runtime", "functions require runtime node22, python312, go124, go124-alpine, node24, or python313")
 	}
 	ram := req.RAMMB
+	cpuMillicores := req.CPUMillicores
+	if req.ResourceProfile != "" {
+		profile, ok := api.ResourceProfileSpecFor(req.ResourceProfile)
+		if !ok {
+			return state.App{}, api.ErrInvalidResourceProfile(req.ResourceProfile)
+		}
+		if ram != 0 && ram != profile.MemoryMB {
+			return state.App{}, api.ErrResourceProfileConflict("ram_mb", profile.Name, profile.MemoryMB, ram)
+		}
+		if cpuMillicores != 0 && cpuMillicores != profile.CPUMillicores {
+			return state.App{}, api.ErrResourceProfileConflict("cpu_millicores", profile.Name, profile.CPUMillicores, cpuMillicores)
+		}
+		ram = profile.MemoryMB
+		cpuMillicores = profile.CPUMillicores
+	}
 	if ram == 0 {
 		ram = limits.RAMMB
+	}
+	if cpuMillicores == 0 {
+		cpuMillicores = api.DefaultAppCPUMillicores
+	}
+	if prob := api.ValidateAppCPUMillicores(cpuMillicores); prob != nil {
+		return state.App{}, prob
 	}
 	mc := req.MaxConcurrency
 	if mc == 0 {
@@ -369,7 +393,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	}
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
-		RAMMB: ram, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
+		RAMMB: ram, CPUMillicores: cpuMillicores, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
 		StreamingEnabled: streaming,
 		WebSocketEnabled: ws,
 		// ADR-093: per-route observability opt-in (plan-level
@@ -438,7 +462,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		// overflow which createDeploymentMultipart maps to 413.
 		max := int64(limits.SourceTarballMaxMB) * 1024 * 1024
 		r.Body = http.MaxBytesReader(w, r.Body, max)
-		s.createDeploymentMultipart(w, r, acct, app)
+		s.createDeploymentMultipart(w, r, acct, app, false)
 		return
 	}
 	var req api.CreateDeploymentRequest
@@ -507,7 +531,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// we read prev BEFORE the call so the supersede-notify can carry
 	// its id (LatestDeployment returns the post-supersede row).
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
-	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits)
+	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
 		return
@@ -546,6 +570,28 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
 }
 
+// handleDevSourceDeploy is the developer-only delta transport. Keeping it on
+// a distinct route makes compatibility safe: an older apid returns 404, so the
+// CLI can retry the complete archive through the canonical deploy endpoint
+// instead of an old server accidentally treating a delta as complete source.
+func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
+	if !ok {
+		return
+	}
+	if app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 {
+		s.notFound(w, "no such developer environment")
+		return
+	}
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		api.WriteProblem(w, api.ErrValidation("developer source sync requires multipart/form-data"))
+		return
+	}
+	max := int64(limits.SourceTarballMaxMB)*1024*1024 + api.DevSourceMetadataMaxBytes
+	r.Body = http.MaxBytesReader(w, r.Body, max)
+	s.createDeploymentMultipart(w, r, acct, app, true)
+}
+
 // loadAppAndPreflight resolves the app from the URL slug, enforces
 // IDOR (app.AccountID == acct.ID), and hoists the per-plan limits.
 // On any failure path, writes the appropriate error response and
@@ -581,13 +627,19 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), Runtime: a.Runtime,
-		RAMMB: a.RAMMB, MaxConcurrency: a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
+		RAMMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
+		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		// Issue #559: platform-advertised per-VM concurrency cap
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
 		// through the accessor to 0 — same fail-closed contract
 		// as MaxMinInstances.
 		ConcurrencyPerVMBound: plan.ConcurrencyPerVMBound(),
+		EffectiveLimits:       appEffectiveLimits(a, plan),
+		ConfiguredResources: api.AppConfiguredResources{
+			MemoryMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		},
 		// ux_spec §6.5: per-app floor the reaper honors when
 		// parking idle instances. Pro/Scale only (apid gates).
 		MinInstances: a.MinInstances,
@@ -728,6 +780,40 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 	}
 }
 
+func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
+	limits, ok := api.LimitsFor(plan)
+	if !ok {
+		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency}
+	}
+	maxInstances := a.MaxConcurrency
+	if a.ScalingPolicy != nil && a.ScalingPolicy.MaxInstances > 0 {
+		maxInstances = a.ScalingPolicy.MaxInstances
+	}
+	cpuMillicores := effectiveAppCPUMillicores(a, plan)
+	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
+	return api.AppEffectiveLimits{
+		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
+		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
+		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
+		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
+		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
+		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
+		RequestBudgetMS:       limits.RequestBudget().Milliseconds(),
+		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
+		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
+	}
+}
+
+func effectiveAppCPUMillicores(a state.App, plan api.Plan) int {
+	if a.CPUMillicores > 0 {
+		return a.CPUMillicores
+	}
+	if limits, ok := api.LimitsFor(plan); ok && limits.CPUQuotaUS > 0 && limits.CPUPeriodUS > 0 {
+		return int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
+	}
+	return api.DefaultAppCPUMillicores
+}
+
 // cORSOriginsList materialises the text[] column as a non-nil slice.
 // A nil column (legacy row, never configured) projects as an empty
 // slice on the wire so dashboards can render an empty origin list
@@ -803,18 +889,24 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 func (s *server) accountResponse(ctx context.Context, acct state.Account, r *http.Request) api.AccountResponse {
 	l := api.MustLimitsFor(acct.Plan)
 	resp := api.AccountResponse{
-		ID:     acct.ID,
-		Email:  acct.Email,
-		Plan:   string(acct.Plan),
-		Status: string(acct.Status),
+		ID:            acct.ID,
+		Email:         acct.Email,
+		EmailVerified: acct.EmailVerified(),
+		Plan:          string(acct.Plan),
+		Status:        string(acct.Status),
 		Limits: api.AccountLimits{
-			Plan:            string(acct.Plan),
-			RAMMB:           l.RAMMB,
-			MaxConcurrency:  l.MaxConcurrency,
-			DeployedApps:    l.DeployedApps,
-			IncludedGBHours: int64(l.IncludedGBHours),
-			AppLayerMaxMB:   l.AppLayerMaxMB,
+			Plan:               string(acct.Plan),
+			RAMMB:              l.RAMMB,
+			MaxConcurrency:     l.MaxConcurrency,
+			DeployedApps:       l.DeployedApps,
+			IncludedGBHours:    int64(l.IncludedGBHours),
+			AppLayerMaxMB:      l.AppLayerMaxMB,
+			EphemeralDiskMaxMB: l.EphemeralDiskMaxMB(),
 		},
+	}
+	if !acct.EmailVerified() {
+		graceEnds := acct.CreatedAt.Add(emailVerificationGrace)
+		resp.EmailVerificationGraceEndsAt = &graceEnds
 	}
 	if inst, err := s.store.GitHubInstallForAccount(ctx, acct.ID); err == nil {
 		resp.GitHubInstall = strconv.FormatInt(inst.InstallationID, 10)
@@ -829,7 +921,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			for _, u := range rows {
 				mbSec += u.MBSeconds
 			}
-			resp.UsageGBHours = float64(mbSec) / 3_600_000.0
+			resp.UsageGBHours = meter.GBHours(mbSec)
 		}
 	}
 	return resp

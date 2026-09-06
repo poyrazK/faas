@@ -456,8 +456,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
 		Framework: fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
 	}
-	if cached, ok := b.cache.LookupBuild(recipe); ok {
+	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
+	if cacheAvailable {
+		recipe.BuilderBaseIdentity = buildEnvironment.BuilderBaseIdentity
+		recipe.TargetPlatform = buildEnvironment.TargetPlatform
+	}
+	if cached, ok := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID); ok {
 		if b.stopIfBuildCancelled(ctx, build.ID) {
+			b.cache.ReleaseLease(cached.Path)
 			return BuildResult{}, nil
 		}
 		// Cache hit is one of the two real "build started" sites
@@ -469,8 +475,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		buildStart = time.Now()
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("cache hit (%s, %d bytes) — skipping vm spawn\n", cached.Path, cached.Bytes))
-		return b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
+		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, buildStart)
+		if completeErr != nil || completed.BuildID == "" {
+			b.cache.ReleaseLease(cached.Path)
+		}
+		return completed, completeErr
 
 	}
 
@@ -516,18 +526,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	vmCtx, cancel := context.WithTimeout(ctx, timeout)
 
 	handle, err := b.vm.Spawn(vmCtx, VMRequest{
-		BuildID:        build.ID,
-		TenantID:       app.AccountID,
-		DeploymentID:   dep.ID,
-		SourcePath:     dep.SourcePath,
-		SourceRoot:     dep.SourceRoot,
-		Framework:      fw,
-		Runtime:        runtimeName,
-		RuntimeBaseRef: runtimeBaseRef,
-		LogPath:        dep.LogPath,
-		RAMMB:          api.BuildVMRAMMB,
-		TimeoutSec:     b.cfg.BuildTimeoutSeconds,
-		Plan:           string(acct.Plan),
+		BuildID:            build.ID,
+		TenantID:           app.AccountID,
+		DeploymentID:       dep.ID,
+		SourcePath:         dep.SourcePath,
+		SourceRoot:         dep.SourceRoot,
+		Framework:          fw,
+		Runtime:            runtimeName,
+		RuntimeBaseRef:     runtimeBaseRef,
+		DependencyCacheKey: dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef),
+		LogPath:            dep.LogPath,
+		RAMMB:              api.BuildVMRAMMB,
+		TimeoutSec:         b.cfg.BuildTimeoutSeconds,
+		Plan:               string(acct.Plan),
 	})
 	if err != nil {
 		// Translate a context-deadline to timeout-class; everything else is infra.
@@ -544,6 +555,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// allowed to use its export headroom to collect build-done.json and the OCI
 	// tarball after the in-guest build reaches its own timeout.
 	cancel()
+	if handle.DependencyCacheKey != "" {
+		if handle.DependencyCacheRestored {
+			b.emitBuildLog(ctx, build.ID, "dependency cache restored — reusing matching install layers\n")
+		} else {
+			b.emitBuildLog(ctx, build.ID, "dependency cache cold — installing dependencies\n")
+		}
+	}
 
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	watchDone := make(chan struct{})
@@ -583,6 +601,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
+	}
+	if out.DependencyCacheStoreError != "" {
+		b.log.Warn("builderd: dependency cache store failed (continuing)", "build", build.ID, "err", out.DependencyCacheStoreError)
+		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next sync may reinstall dependencies\n")
+	} else if out.DependencyCacheStored {
+		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next developer sync\n")
 	}
 	if out.ExitCode != 0 {
 		// Prefer the failure class the guest-init captured in build-done.json
@@ -657,12 +681,59 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
-	// Only cache a successfully committed build, never a stale completion.
-	if err := b.cache.StoreBuild(recipe, out.OCIImage, artifactBytes); err != nil {
-		b.log.Warn("builderd: cache store failed (continuing)", "err", err)
+	// Only cache a successfully committed build produced by the same builder
+	// environment observed before VM launch. A concurrent base restage leaves
+	// the successful deployment intact but deliberately skips cache publication.
+	if cacheAvailable && b.buildEnvironmentStillCurrent(buildEnvironment) {
+		if err := b.cache.StoreBuild(recipe, out.OCIImage, artifactBytes); err != nil {
+			b.log.Warn("builderd: cache store failed (continuing)", "err", err)
+		}
 	}
 	return result, nil
 
+}
+
+func (b *Builderd) resolveBuildEnvironment() (BuildEnvironment, bool) {
+	environment, err := currentBuildEnvironment(b.vm)
+	if err != nil {
+		b.log.Warn("builderd: build cache unavailable; builder environment identity is not current", "err", err)
+		return BuildEnvironment{}, false
+	}
+	return environment, true
+}
+
+func (b *Builderd) buildEnvironmentStillCurrent(want BuildEnvironment) bool {
+	have, err := currentBuildEnvironment(b.vm)
+	if err != nil {
+		b.log.Warn("builderd: build cache skipped; builder environment identity is unavailable", "err", err)
+		return false
+	}
+	if have != want {
+		b.log.Warn("builderd: build cache skipped; builder environment changed",
+			"before", want.BuilderBaseIdentity, "after", have.BuilderBaseIdentity,
+			"before_platform", want.TargetPlatform, "after_platform", have.TargetPlatform)
+		return false
+	}
+	return true
+}
+
+func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment BuildEnvironment, available bool, deploymentID string) (CacheEntry, bool) {
+	if !available {
+		return CacheEntry{}, false
+	}
+	cached, ok, err := b.cache.LeaseBuild(recipe, deploymentID)
+	if err != nil {
+		b.log.Warn("builderd: build cache lease failed; rebuilding", "deployment", deploymentID, "err", err)
+		return CacheEntry{}, false
+	}
+	if !ok {
+		return CacheEntry{}, false
+	}
+	if !b.buildEnvironmentStillCurrent(environment) {
+		b.cache.ReleaseLease(cached.Path)
+		return CacheEntry{}, false
+	}
+	return cached, true
 }
 
 // snapshotBootPayload identifies the compute node that produced the local

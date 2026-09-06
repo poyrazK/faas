@@ -12,6 +12,17 @@ import (
 // where guest-init reads it at boot (spec §4.6, §4.8).
 const AppManifestPath = "/etc/faas/app.json"
 
+// FullRootfsMarkerPath identifies an ext4 artifact that already contains a
+// complete OCI root filesystem. guest-init uses it to skip the shared-base
+// overlay assembly and pivot directly into the mounted image. The regular
+// two-drive builder removes this marker from customer content before
+// publishing, so an image cannot opt itself into the mode.
+const FullRootfsMarkerPath = "/etc/faas/.full-rootfs"
+
+// FullRootfsMarkerValue is the authenticated marker payload written by the
+// imaged builder and checked by guest-init before bypassing the shared base.
+const FullRootfsMarkerValue = "gregale-full-rootfs-v1\n"
+
 // SidecarWorkloadManifestPath is the directory where imaged stores the
 // effective runtime contract for each sidecar. The sidecar name is appended
 // as one validated path component and the file name is workload.json. Keeping
@@ -19,6 +30,12 @@ const AppManifestPath = "/etc/faas/app.json"
 // boot and restore without sending plaintext customer command or environment
 // data over the wake wire.
 const SidecarWorkloadManifestPath = "/etc/faas/workloads"
+
+// FullRootfsSidecarMountPath is the guest-only mount root for sidecar image
+// drives when the main workload uses a self-contained full-rootfs artifact.
+// guest-init creates one validated child directory per sidecar beneath this
+// platform-owned path and runs the workload from the sidecar image's root.
+const FullRootfsSidecarMountPath = "/run/faas/sidecars"
 
 // Defaults for the guest runtime contract (spec §4.8, §4.9).
 const (

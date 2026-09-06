@@ -3,6 +3,10 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // cacheRuleContextKey is the unexported context-key type the
@@ -51,6 +55,150 @@ func withCacheRuleContext(ctx context.Context, rule *EdgeRuleCacheResolved, appI
 func cacheRuleFromContext(ctx context.Context) *cacheRuleSnapshot {
 	v, _ := ctx.Value(cacheRuleContextKey{}).(*cacheRuleSnapshot)
 	return v
+}
+
+// tryServeStaleWhileWaking serves an eligible stale response to a request
+// that arrives while another request is already driving the app's wake gate.
+// The wake leader continues to the newly ready instance and its cache writer
+// refreshes this route; followers get a bounded stale response instead of
+// waiting behind the restore.
+func (h *Handler) tryServeStaleWhileWaking(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (bool, string) {
+	if h == nil || h.gate == nil || !h.gate.Inflight(app.ID) {
+		return false, ""
+	}
+	return h.serveStaleWhileWaking(w, r, app, rec)
+}
+
+// tryServeStaleAndStartWake handles the first request to a parked app. It
+// serves the stale entry immediately, then starts a detached wake and cache
+// refresh so the request never waits on the restore.
+func (h *Handler) tryServeStaleAndStartWake(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, rule *EdgeRuleCacheResolved) (bool, string) {
+	served, outcome := h.serveStaleWhileWaking(w, r, app, rec)
+	if !served {
+		return false, ""
+	}
+	h.startStaleWhileWakingRefresh(r, app, rule)
+	return true, outcome
+}
+
+// serveStaleWhileWaking replays an eligible stale cache entry. The caller
+// decides whether a wake is already in flight or is about to be started.
+func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (bool, string) {
+	if h == nil || h.responseCache == nil {
+		return false, ""
+	}
+	snap := cacheRuleFromContext(r.Context())
+	if snap == nil || snap.Rule == nil || snap.Rule.StaleIfErrorSeconds <= 0 {
+		return false, ""
+	}
+	if r.Header.Get("Authorization") != "" || hasSessionCookie(r) {
+		return false, ""
+	}
+	if r.Method != "GET" && r.Method != "HEAD" {
+		return false, ""
+	}
+	key := CacheKey{
+		AppID:          snap.AppID,
+		DeploymentID:   "",
+		RuleID:         snap.Rule.ID,
+		Method:         snap.Method,
+		NormalizedPath: snap.Path,
+		Query:          snap.Query,
+		VaryHash:       snap.VaryHash,
+	}
+	outcome, entry := h.responseCache.Get(key)
+	if outcome != "stale_if_error_eligible" {
+		return false, ""
+	}
+	for k, vs := range entry.header {
+		if isHopByHopHeader(k) {
+			continue
+		}
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.Header().Set("x-faas-cache", "stale-while-waking")
+	w.Header().Add("Warning", `110 - "Response is Stale"`)
+	w.Header().Set("X-From-Cache", "stale")
+	w.Header().Set("Content-Length", strconvItoa(len(entry.body)))
+	w.WriteHeader(entry.statusCode)
+	_, _ = w.Write(entry.body)
+	rec.status = entry.statusCode
+	rec.Bytes = int64(len(entry.body))
+	if h.metrics != nil {
+		h.metrics.cacheStaleWhileWaking.WithLabelValues(app.ID).Inc()
+	}
+	h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
+	return true, "stale_while_waking"
+}
+
+func (h *Handler) startStaleWhileWakingRefresh(r *http.Request, app App, rule *EdgeRuleCacheResolved) {
+	if h == nil || h.backend == nil || h.responseCache == nil || rule == nil {
+		return
+	}
+	snap := cacheRuleFromContext(r.Context())
+	if snap == nil {
+		return
+	}
+	key := CacheKey{
+		AppID:          snap.AppID,
+		DeploymentID:   "",
+		RuleID:         snap.Rule.ID,
+		Method:         snap.Method,
+		NormalizedPath: snap.Path,
+		Query:          snap.Query,
+		VaryHash:       snap.VaryHash,
+	}
+	detached := context.WithoutCancel(r.Context())
+	request := r.Clone(detached)
+	request.Body = http.NoBody
+	go func(ctx context.Context) {
+		_, _, _ = h.cacheRefresh.Do(key.String(), func() (any, error) {
+			ctx, cancel := context.WithTimeout(ctx, time.Duration(api.WakeQueueTTLSeconds)*time.Second)
+			defer cancel()
+			limits, _ := api.LimitsFor(app.Plan)
+			if _, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan); err != nil {
+				return nil, err
+			}
+			h.refreshCacheFromWarmTarget(ctx, request, app, rule, key)
+			return nil, nil
+		})
+	}(detached)
+}
+
+func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Request, app App, rule *EdgeRuleCacheResolved, key CacheKey) {
+	if h == nil || h.backend == nil || h.responseCache == nil || rule == nil {
+		return
+	}
+	pick := h.backend.Pick(app.ID)
+	if !pick.OK {
+		return
+	}
+	if h.proxyByNode == nil && h.proxyFor == nil {
+		return
+	}
+	target := pick.Target
+	base := httptest.NewRecorder()
+	rec := &statusRecorder{ResponseWriter: base, status: http.StatusOK}
+	cw := newCacheWriter(rec, rec, rule, ResponseCachePerEntryMaxBytes)
+	capped := h.setupBufferedCapWriter(cw, app, app.Plan.MaxResponseBodyBytes())
+	request := r.Clone(ctx)
+	request.Body = http.NoBody
+	request.Header.Set("x-faas-instance", target.InstanceID)
+	request.Header.Set("x-faas-protocol", decideProtocol(app))
+	if h.proxyByNode != nil {
+		h.proxyByNode(target).ServeHTTP(capped, request)
+	} else {
+		h.proxyFor(target.NodeID, app.Plan.MaxResponseBodyBytes()).ServeHTTP(capped, request)
+	}
+	if cw.shouldStore() {
+		cw.finishCacheCapture(h.responseCache, key, time.Now())
+		if h.metrics != nil {
+			h.metrics.responseCacheBytes.Set(float64(h.responseCache.Bytes()))
+			h.metrics.responseCacheEntries.Set(float64(h.responseCache.Len()))
+		}
+	}
 }
 
 // tryServeStaleOnWakeError (ADR-122 §Decision, kind=cache

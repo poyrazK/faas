@@ -77,17 +77,20 @@ type CPUSource interface {
 // polled, regression). The TX and NetTX returned values are
 // already per-tick deltas; the sampler appends them additively
 // to the (instance, minute) row.
+type UsageDeltas struct {
+	TXBytes       uint64
+	NetTXBytes    uint64
+	NetRXBytes    uint64
+	Requests      int64
+	ColdBootCount int32
+}
+
 type EgressSource interface {
-	// EgressBytes returns (txBytes, netTxBytes, ok). txBytes is
-	// the gateway-side HTTP response byte count for this
-	// instance this tick; netTxBytes is the root-side
-	// vethHost.rx_bytes delta for this instance this tick. The
-	// sampler does NOT compute a delta itself — the readers
-	// own regression handling (mirroring cpustats's
-	// drop-baseline contract). nil is OK for either field when
-	// the corresponding source has no data; the sampler
-	// writes 0 for that column and stamps the other normally.
-	EgressBytes(instanceID string) (txBytes, netTxBytes uint64, ok bool)
+	// ReadUsageDeltas returns every telemetry delta collected since the
+	// previous read for this instance. Combining the fields in one read is
+	// intentional: the gateway source drains atomically, so bytes, requests,
+	// and cold boots cannot be split across two sampling minutes.
+	ReadUsageDeltas(instanceID string) (UsageDeltas, bool)
 }
 
 // TailSecondsSource (issue #667 / ADR-078) is the per-instance
@@ -286,16 +289,10 @@ type RolledRow struct {
 	// scheddIngressAdapter. Zero when no source is wired
 	// or the source has no data this tick.
 	NetRxBytes int64
-	// ColdBootCount (ADR-048) is the per-minute count of
-	// WAKE_RESTORE→WAKE_COLD_BOOT transitions observed
-	// for this instance. The sampler detects the
-	// transition by comparing LastWakeMethod on
-	// scheddgrpc.InstanceStatsRow across two consecutive
-	// ticks for the same (instance, minute) — only the
-	// transition counts; a redelivered tick within the
-	// same minute is a no-op. Zero when no source is
-	// wired or the instance is in WAKE_RESTORE steady-
-	// state for the whole minute.
+	// ColdBootCount (ADR-048) is the number of customer requests
+	// in this sample whose authoritative wake outcome was a cold
+	// boot. Gatewayd records it in the same atomic bucket as the
+	// request and response-byte counters.
 	ColdBootCount int32
 	// TailSeconds (issue #667 / ADR-078) is the per-minute
 	// wall-clock seconds the instance spent draining waitUntil
@@ -399,9 +396,6 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			sidecarByDeploy[inst.DeploymentID] = mbs
 		}
 		for _, ins := range ins {
-			if !state.State(ins.State).CountsForRAM() {
-				continue
-			}
 			// Issue #72 / ADR-125: skip mode='mirror' instances at
 			// the sampler. A mirror VM never serves the customer —
 			// the customer only saw the source deployment's
@@ -418,6 +412,33 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			if state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
+			usage, usageOK := s.usageDeltas(ins.ID)
+			// A request may finish just before the idle reaper parks its
+			// instance. The gateway stream is independent of lifecycle
+			// state, so drain its final activity into a telemetry-only row
+			// instead of dropping it because RAM is no longer resident.
+			if !state.State(ins.State).CountsForRAM() {
+				if !usageOK {
+					continue
+				}
+				row := RolledRow{
+					InstanceID:    ins.ID,
+					AppID:         app.ID,
+					AccountID:     app.AccountID,
+					Minute:        minute,
+					Mode:          ins.Mode,
+					Plan:          string(planByAccount[app.AccountID]),
+					TXBytes:       int64(usage.TXBytes),
+					NetTxBytes:    int64(usage.NetTXBytes),
+					NetRxBytes:    int64(usage.NetRXBytes),
+					ColdBootCount: usage.ColdBootCount,
+				}
+				if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, ins.ID, minute, 0, usage.Requests, 0, row.TXBytes, row.NetTxBytes, row.NetRxBytes, row.ColdBootCount, 0); err != nil {
+					return out, err
+				}
+				out = append(out, row)
+				continue
+			}
 			sidecarMBs := sidecarByDeploy[ins.DeploymentID]
 			row := RolledRow{
 				InstanceID:  ins.ID,
@@ -429,16 +450,23 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				Mode:        ins.Mode,
 				Plan:        string(planByAccount[app.AccountID]),
 			}
-			// Move 1 (event-driven packaging): set usage_minutes.requests
-			// to the count of invocations the drain drove through this
-			// instance in this minute. Index-backed by
-			// invocations_instance_idx (state='dispatching'). For
-			// instances with zero traffic (just parked, not yet woken)
-			// this returns 0 — matching the existing free-tier
-			// semantics.
-			requests, err := s.store.CountInstanceInvocationsInMinute(ctx, ins.ID, minute)
-			if err != nil {
-				return out, fmt.Errorf("meter: sample %s/%s: %w", app.ID, ins.ID, err)
+			// Production traffic is pushed by gatewayd-internal and drained
+			// atomically here. The invocation-table fallback preserves the
+			// legacy/test path when no live usage source is wired.
+			requests := int64(0)
+			if usageOK {
+				requests = usage.Requests
+				row.TXBytes = int64(usage.TXBytes)
+				row.NetTxBytes = int64(usage.NetTXBytes)
+				row.NetRxBytes = int64(usage.NetRXBytes)
+				row.ColdBootCount = usage.ColdBootCount
+			} else {
+				var invocationRequests int
+				invocationRequests, err = s.store.CountInstanceInvocationsInMinute(ctx, ins.ID, minute)
+				if err != nil {
+					return out, fmt.Errorf("meter: sample %s/%s: %w", app.ID, ins.ID, err)
+				}
+				requests = int64(invocationRequests)
 			}
 			row.CPUUsec = s.cpuDeltaForMinute(ins.ID, minute)
 			// PR 2 (ADR-046): wire EgressSource so this row
@@ -452,10 +480,6 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			// no row for this instance; in both cases the
 			// additive-merge baseline stays put (mirrors the
 			// cpu path's contract — same idempotency).
-			if txBytes, netTxBytes, ok := s.egressBytes(ins.ID); ok {
-				row.TXBytes = int64(txBytes)
-				row.NetTxBytes = int64(netTxBytes)
-			}
 			// ADR-048 (extend metering telemetry): ingress bytes
 			// and WakeMethod transitions are wired by tasks A.3a
 			// and A.3b. Until then, the sampler passes 0 for both
@@ -656,11 +680,11 @@ func (s *Sampler) cpuDeltaForMinute(instanceID string, minute time.Time) int64 {
 // accumulators on the producer side (mirror of the cpu baseline
 // but moved across the wire boundary so the per-tick delta is
 // computed where the counter lives).
-func (s *Sampler) egressBytes(instanceID string) (uint64, uint64, bool) {
+func (s *Sampler) usageDeltas(instanceID string) (UsageDeltas, bool) {
 	if s.egress == nil {
-		return 0, 0, false
+		return UsageDeltas{}, false
 	}
-	return s.egress.EgressBytes(instanceID)
+	return s.egress.ReadUsageDeltas(instanceID)
 }
 
 // tailSecondsFor returns the per-instance accumulated waitUntil

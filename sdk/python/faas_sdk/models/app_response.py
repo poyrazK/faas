@@ -9,12 +9,16 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app_response_app_protocol
+from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
 from ..models.app_response_type import AppResponseType, check_app_response_type
+from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_configured_resources import AppConfiguredResources
+    from ..models.app_effective_limits import AppEffectiveLimits
     from ..models.app_manifest import AppManifest
     from ..models.parked_deployment_ref import ParkedDeploymentRef
     from ..models.public_auth_status import PublicAuthStatus
@@ -35,8 +39,14 @@ class AppResponse:
     slug: str
     type_: AppResponseType
     ram_mb: int
+    cpu_millicores: AppResponseCpuMillicores
+    configured_resources: AppConfiguredResources
+    """The memory and sustained CPU shape selected for each instance of this app."""
     max_concurrency: int
     concurrency_per_vm: int
+    effective_limits: AppEffectiveLimits
+    """The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the
+    app configuration and current plan; they describe enforcement rather than guest hardware alone."""
     min_instances: int
     status: str
     url: str
@@ -59,6 +69,9 @@ class AppResponse:
     ADR-037."""
     runtime: AppResponseRuntime | Unset = UNSET
     """Runtime for `type: function` apps. Omit for `type: app` (the default)."""
+    resource_profile: ResourceProfile | Unset = UNSET
+    """Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
+    and placement controls."""
     idle_timeout_s: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
@@ -142,9 +155,15 @@ class AppResponse:
 
         ram_mb = self.ram_mb
 
+        cpu_millicores: int = self.cpu_millicores
+
+        configured_resources = self.configured_resources.to_dict()
+
         max_concurrency = self.max_concurrency
 
         concurrency_per_vm = self.concurrency_per_vm
+
+        effective_limits = self.effective_limits.to_dict()
 
         min_instances = self.min_instances
 
@@ -161,6 +180,10 @@ class AppResponse:
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
             runtime = self.runtime
+
+        resource_profile: str | Unset = UNSET
+        if not isinstance(self.resource_profile, Unset):
+            resource_profile = self.resource_profile
 
         idle_timeout_s: int | None | Unset
         if isinstance(self.idle_timeout_s, Unset):
@@ -268,8 +291,11 @@ class AppResponse:
                 "slug": slug,
                 "type": type_,
                 "ram_mb": ram_mb,
+                "cpu_millicores": cpu_millicores,
+                "configured_resources": configured_resources,
                 "max_concurrency": max_concurrency,
                 "concurrency_per_vm": concurrency_per_vm,
+                "effective_limits": effective_limits,
                 "min_instances": min_instances,
                 "status": status,
                 "url": url,
@@ -280,6 +306,8 @@ class AppResponse:
         )
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
+        if resource_profile is not UNSET:
+            field_dict["resource_profile"] = resource_profile
         if idle_timeout_s is not UNSET:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if egress_allowlist is not UNSET:
@@ -329,6 +357,8 @@ class AppResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_configured_resources import AppConfiguredResources
+        from ..models.app_effective_limits import AppEffectiveLimits
         from ..models.app_manifest import AppManifest
         from ..models.parked_deployment_ref import ParkedDeploymentRef
         from ..models.public_auth_status import PublicAuthStatus
@@ -343,9 +373,15 @@ class AppResponse:
 
         ram_mb = d.pop("ram_mb")
 
+        cpu_millicores = check_app_response_cpu_millicores(d.pop("cpu_millicores"))
+
+        configured_resources = AppConfiguredResources.from_dict(d.pop("configured_resources"))
+
         max_concurrency = d.pop("max_concurrency")
 
         concurrency_per_vm = d.pop("concurrency_per_vm")
+
+        effective_limits = AppEffectiveLimits.from_dict(d.pop("effective_limits"))
 
         min_instances = d.pop("min_instances")
 
@@ -365,6 +401,13 @@ class AppResponse:
             runtime = UNSET
         else:
             runtime = check_app_response_runtime(_runtime)
+
+        _resource_profile = d.pop("resource_profile", UNSET)
+        resource_profile: ResourceProfile | Unset
+        if isinstance(_resource_profile, Unset):
+            resource_profile = UNSET
+        else:
+            resource_profile = check_resource_profile(_resource_profile)
 
         def _parse_idle_timeout_s(data: object) -> int | None | Unset:
             if data is None:
@@ -534,8 +577,11 @@ class AppResponse:
             slug=slug,
             type_=type_,
             ram_mb=ram_mb,
+            cpu_millicores=cpu_millicores,
+            configured_resources=configured_resources,
             max_concurrency=max_concurrency,
             concurrency_per_vm=concurrency_per_vm,
+            effective_limits=effective_limits,
             min_instances=min_instances,
             status=status,
             url=url,
@@ -543,6 +589,7 @@ class AppResponse:
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
             runtime=runtime,
+            resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,

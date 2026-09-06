@@ -49,6 +49,7 @@
   </header>
 
   <main>
+    {{template "email-verification-banner" .}}
     <h1>{{.Data.Rule.Name}}</h1>
     <p>Per-rule drill-down (SAFE-RELEASES-OBS PR-D). Cross-linked from any <code>deploy.rolled_back</code> audit row whose <code>alert_rule_id</code> matches this rule.</p>
 

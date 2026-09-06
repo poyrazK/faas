@@ -298,6 +298,82 @@ func TestHandleDeployment_RealBuildPath(t *testing.T) {
 	}
 }
 
+// TestHandleDeployment_FullRootfsWithSidecars proves the full-rootfs dispatch
+// keeps the deployment's sidecar set instead of rejecting it before the main
+// artifact is built. The fake builder stands in for mkfs and the fake puller
+// supplies an app whose diff-id prefix does not match the shared base, forcing
+// the typed full-rootfs fallback.
+func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "img-app-fullroot-sidecars", RAMMB: 512, Runtime: "node22",
+		IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	fullRootfs := true
+	sidecarRef := "ghcr.io/org/metrics@sha256:" + strings.Repeat("a", 64)
+	sidecarsJSON, err := json.Marshal([]map[string]any{
+		{"name": "metrics", "image": sidecarRef, "type": "sidecar", "port": 9090},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "ghcr.io/org/app:v1", Kind: state.DeploymentKindImage,
+		Sidecars: sidecarsJSON, FullRootfsOverride: &fullRootfs,
+	})
+
+	appConfigDigest := "sha256:" + strings.Repeat("b", 64)
+	baseConfigDigest := "sha256:" + strings.Repeat("c", 64)
+	baseLayer := "sha256:" + strings.Repeat("d", 64)
+	appLayer := "sha256:" + strings.Repeat("e", 64)
+	sidecarLayer := "sha256:" + strings.Repeat("f", 64)
+	appDiff := "sha256:" + strings.Repeat("1", 64)
+	baseDiff := "sha256:" + strings.Repeat("2", 64)
+	mp := &fakeManifestPuller{
+		digest: "ghcr.io/org/app@sha256:" + strings.Repeat("9", 64),
+		appRef: dep.ImageDigest,
+		appManifest: oci.Manifest{Config: oci.Descriptor{Digest: appConfigDigest}, Layers: []oci.Descriptor{
+			{Digest: baseLayer, Size: 100}, {Digest: appLayer, Size: 100},
+		}},
+		appConfig:    oci.Config{Entrypoint: []string{"/bin/sh"}, Cmd: []string{"-c", "echo ok"}, DiffIDs: []string{appDiff}},
+		baseManifest: oci.Manifest{Config: oci.Descriptor{Digest: baseConfigDigest}},
+		baseConfig:   oci.Config{DiffIDs: []string{baseDiff}},
+		sidecarManifests: map[string]oci.Manifest{
+			sidecarRef: {Layers: []oci.Descriptor{{Digest: sidecarLayer, Size: 100}}},
+		},
+		layerBlobs: make(map[string][]byte),
+	}
+	mp.putConfig(appConfigDigest, mp.appConfig)
+	mp.putConfig(baseConfigDigest, mp.baseConfig)
+	mp.layerBlobs[baseLayer] = gzTar(t, map[string]string{"etc/passwd": "app:x:1000:1000::/home/app:/bin/sh\n"})
+	mp.layerBlobs[appLayer] = gzTar(t, map[string]string{"app/server": "#!/bin/sh\n"})
+	mp.layerBlobs[sidecarLayer] = gzTar(t, map[string]string{"metrics": "#!/bin/sh\n"})
+
+	b := &fakeBuilder{}
+	notif := &fakeNotifier{}
+	h := New(store, notif, mp, b, "/tmp/guest-init", t.TempDir(), silentLogger())
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image","image_digest":"ghcr.io/org/app:v1"}`,
+	})
+
+	got, _ := store.DeploymentByID(context.Background(), dep.ID)
+	if got.Status != state.DeploySnapshotting {
+		t.Fatalf("status = %s, want snapshotting (err=%q)", got.Status, got.Error)
+	}
+	rows, err := store.ListDeploymentSidecarLayers(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].SidecarName != "metrics" {
+		t.Fatalf("sidecar rows = %#v, want one metrics row", rows)
+	}
+	if findNotify(notif, db.NotifySnapshotPrime) == nil {
+		t.Fatal("expected snapshot_prime notification")
+	}
+}
+
 // TestHandleDeployment_RealBuild_BaseMismatchErrors asserts the M6 build path
 // refuses an app whose layers don't sit on the chosen base.
 func TestHandleDeployment_RealBuild_BaseMismatchErrors(t *testing.T) {
@@ -356,8 +432,13 @@ func TestHandleDeployment_RealBuild_BaseMismatchErrors(t *testing.T) {
 	if got.Status != state.DeployFailed {
 		t.Errorf("status = %s, want failed", got.Status)
 	}
-	if !strings.Contains(got.Error, "above base") {
-		t.Errorf("error %q should mention 'above base'", got.Error)
+	// ADR-141 §Decision 3: the prefix-check failure surfaces the
+	// typed ErrLayersNotAboveBase sentinel. Free plan + no
+	// override keeps the today-equivalent failure behavior,
+	// surfaced as DeployFailed with the canonical sentinel lifted
+	// to CodeImageManifestInvalid.
+	if !strings.Contains(got.Error, "above base") && !strings.Contains(got.Error, "full-rootfs") {
+		t.Errorf("error %q should mention 'above base' or 'full-rootfs'", got.Error)
 	}
 }
 

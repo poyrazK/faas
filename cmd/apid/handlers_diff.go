@@ -269,6 +269,7 @@ func diffPendingFromRequest(req *api.DiffRequest) deploydiff.Pending {
 	if req.AppConfig != nil {
 		p.AppConfig = deploydiff.AppConfigPatch{
 			RAMMB:               req.AppConfig.RAMMB,
+			CPUMillicores:       req.AppConfig.CPUMillicores,
 			IdleTimeoutS:        req.AppConfig.IdleTimeoutS,
 			MaxConcurrency:      req.AppConfig.MaxConcurrency,
 			MinInstances:        req.AppConfig.MinInstances,

@@ -21,6 +21,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/buildcache"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -72,6 +73,12 @@ type LayerBuilder interface {
 	// layers via ApplyLayerGz, and hands the dir here — mkfs +
 	// publish, no layer apply inside Build.
 	BuildBaseFromStaging(ctx context.Context, staging string, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error)
+	// BuildFullRootfs (ADR-141 §Decision 1)
+	// assembles a self-contained ext4 rootfs from ALL of the app
+	// image's layers — bypasses the two-drive shared-base path
+	// entirely. Used by imaged.buildFullRootfsLayer when the app
+	// image is NOT built FROM one of our runner-* bases.
+	BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error)
 }
 
 // Handler is the imaged orchestrator. It owns the transition walk that
@@ -1743,61 +1750,85 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// satisfies AuthManifestPuller so both paths carry the
 		// correct auth shape.
 		above, diffs, err := h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
+		fullRootfsDispatched := false
 		if err != nil {
-			// aboveBaseLayers can surface any of the three puller-side
-			// sentinels (image-not-found on app manifest 404, invalid
-			// platform/manifest metadata, egress-denial on a private
-			// registry) so it goes through markDeployFailed too. Non-pull
-			// failures (e.g. base mismatch) get code "" — the message
-			// preserves the upstream string.
-			_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: above-base")
-			return err
-		}
-		// Issue #461 / ADR-062: mark credential used after a successful
-		// above-base resolution — every authenticated pull above this
-		// line was either app manifest, app config, or app blob.
-		h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
-		defer func() {
-			for _, c := range above.closers {
-				_ = c.Close()
+			// ADR-141 §Decision 3 + §Decision 2: when the app image is
+			// not built FROM our runner-* base, dispatch on the
+			// tri-state FullRootfsAllowAuto / FullRootfsOverride
+			// fields (commit 6 widens state.Deployment). The
+			// typed sentinel is the ONLY signal the dispatch
+			// consults — never a string match — so future wrapping
+			// (telemetry, retries) cannot bypass the gate.
+			//
+			if errors.Is(err, oci.ErrLayersNotAboveBase) {
+				fullErr := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth)
+				if fullErr != nil {
+					_ = h.markDeployFailed(ctx, dep.ID, fullErr, "imaged: full-rootfs dispatch")
+					return fullErr
+				}
+				// The common sidecar build and layer scan below must still run
+				// after the main full-rootfs artifact is published.
+				fullRootfsDispatched = true
+			} else {
+				// aboveBaseLayers can surface any of the three puller-side
+				// sentinels (image-not-found on app manifest 404, invalid
+				// platform/manifest metadata, egress-denial on a private
+				// registry) so it goes through markDeployFailed too. Non-pull
+				// failures (e.g. base mismatch) get code "" — the message
+				// preserves the upstream string.
+				_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: above-base")
+				return err
 			}
-		}()
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
-			Layers:        above.readers,
-			Manifest:      manifest,
-			GuestInitPath: h.guestInitPath,
-			Plan:          acct.Plan,
-			Storage:       be,
-			StorageKey:    appsKey,
-			// Issue #299 / ADR-038 Phase 3: SBOM emission runs
-			// inside Builder.Build on the staging dir (the only
-			// artefact that contains the customer's source tree at
-			// that point). SBOMKey is stamped onto the
-			// build_provenance row after a successful build — see
-			// updateBuildProvenanceSBOM below.
-			SBOMRun:        h.syftRun,
-			SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
-		})
-		if err != nil {
-			_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
-			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
-		// Stamp the SBOM storage key onto build_provenance.sbom_storage_key
-		// (issue #299 / ADR-038 Phase 3). Best-effort: an error here
-		// is logged at WARN and the build still succeeds (the SBOM
-		// is observational metadata, schema §4.2).
-		h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
-			_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
-			return fmt.Errorf("imaged: stamp rootfs: %w", err)
+		// dispatchFullRootfs already published the complete main image;
+		// otherwise build the above-base delta through the two-drive path.
+		if !fullRootfsDispatched {
+			// Issue #461 / ADR-062: mark credential used after a successful
+			// above-base resolution — every authenticated pull above this
+			// line was either app manifest, app config, or app blob.
+			h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
+			defer func() {
+				for _, c := range above.closers {
+					_ = c.Close()
+				}
+			}()
+			result, err := h.builder.Build(ctx, rootfs.BuildInput{
+				Layers:        above.readers,
+				Manifest:      manifest,
+				GuestInitPath: h.guestInitPath,
+				Plan:          acct.Plan,
+				Storage:       be,
+				StorageKey:    appsKey,
+				// Issue #299 / ADR-038 Phase 3: SBOM emission runs
+				// inside Builder.Build on the staging dir (the only
+				// artefact that contains the customer's source tree at
+				// that point). SBOMKey is stamped onto the
+				// build_provenance row after a successful build — see
+				// updateBuildProvenanceSBOM below.
+				SBOMRun:        h.syftRun,
+				SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
+			})
+			if err != nil {
+				_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
+				return fmt.Errorf("imaged: build app layer: %w", err)
+			}
+			// Stamp the SBOM storage key onto build_provenance.sbom_storage_key
+			// (issue #299 / ADR-038 Phase 3). Best-effort: an error here
+			// is logged at WARN and the build still succeeds (the SBOM
+			// is observational metadata, schema §4.2).
+			h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
+			if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+				_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
+				return fmt.Errorf("imaged: stamp rootfs: %w", err)
+			}
+			if err := h.replicateLayer(ctx, appsKey); err != nil {
+				_ = h.transition(ctx, dep.ID, state.DeployFailed, err.Error())
+				return err
+			}
+			h.log.Info("imaged: build app layer (two-drive)",
+				"app", app.Slug, "digest", digest, "key", result.ImageKey,
+				"bytes", result.ContentBytes, "above_diff_ids", len(diffs))
 		}
-		if err := h.replicateLayer(ctx, appsKey); err != nil {
-			_ = h.transition(ctx, dep.ID, state.DeployFailed, err.Error())
-			return err
-		}
-		h.log.Info("imaged: build app layer (two-drive)",
-			"app", app.Slug, "digest", digest, "key", result.ImageKey,
-			"bytes", result.ContentBytes, "above_diff_ids", len(diffs))
 	} else {
 		// M5 fallback: stream all layers as-is. Used by fakes that only
 		// implement oci.Puller — the existing unit tests exercise this
@@ -2469,7 +2500,12 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 			return fmt.Errorf("imaged: load existing snapshot: %w", err)
 		}
 	}
-	if p.NodeID != "" {
+	if stored.StorageKey != p.StorageKey && state.IsSnapshotCaptureKey(p.StorageKey) {
+		// A second capture can finish before the first notification is read.
+		// Keep the already-published pair and discard only this unused one.
+		h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: p.StorageKey})
+	}
+	if p.NodeID != "" && stored.StorageKey == p.StorageKey {
 		if origins, ok := h.store.(state.SnapshotOriginStore); ok {
 			if originErr := origins.RecordSnapshotOrigin(ctx, stored.ID, p.NodeID); originErr != nil {
 				// Origin metadata improves locality but is not the blob's
@@ -2579,6 +2615,12 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 			"deployment", p.DeploymentID)
 		return nil
 	}
+	// Cache hits arrive through a deployment-specific hard link. Keep it for
+	// crash recovery while this handler runs, then remove it only after the
+	// deployment row has stopped referencing the handoff (or reached a
+	// terminal failure). Register this before markFailedOnUnhandledError so
+	// the failure transition runs before the release check on an error.
+	defer h.releaseBuildCacheLease(ctx, dep)
 	// Issue #195 B1.5: install the defer AFTER the empty-rootfs
 	// early-return so the no-op skip path doesn't touch the row.
 	// The defer covers the build-window + snapshot_prime notifier
@@ -2663,6 +2705,25 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
 	}
 	return nil
+}
+
+func (h *Handler) releaseBuildCacheLease(parent context.Context, dep state.Deployment) {
+	if _, ok := buildcache.ParseLeasePath(dep.RootfsPath); !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	defer cancel()
+	current, err := h.store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		h.log.Warn("imaged: check build cache lease", "deployment", dep.ID, "err", err)
+		return
+	}
+	if current.RootfsPath == dep.RootfsPath && current.Status != state.DeployFailed {
+		return
+	}
+	if err := buildcache.Release(dep.RootfsPath); err != nil {
+		h.log.Warn("imaged: release build cache lease", "deployment", dep.ID, "err", err)
+	}
 }
 
 // ensureDeploymentRuntimeBase makes the shared drive0 available before
@@ -3144,6 +3205,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
 	}
 	if !keepSnap {
+		h.cleanupSnapshotCaptures(ctx, be, dep.ID)
 		memKey := state.SnapMemKey(dep.ID)
 		vmKey := state.SnapVMStateKey(dep.ID)
 		if err := be.Delete(ctx, memKey); err != nil {
@@ -3209,6 +3271,7 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 			h.log.Warn("imaged: app cleanup list sidecar layers",
 				"deployment", d.ID, "err", listErr)
 		}
+		h.cleanupSnapshotCaptures(ctx, be, d.ID)
 		memKey := state.SnapMemKey(d.ID)
 		vmKey := state.SnapVMStateKey(d.ID)
 		if err := be.Delete(ctx, memKey); err != nil {
@@ -3450,4 +3513,157 @@ func (h *Handler) emitWarmSnapshotStale(ctx context.Context, fcVersion string, b
 			"stale_count": staleThisApp,
 		})
 	}
+}
+
+// dispatchFullRootfs is the typed-sentinel gate that decides whether
+// the deployment proceeds via the full-rootfs build path
+// or surfaces today-equivalent failure (ADR-141 §Decision 2 +
+// §Decision 3).
+//
+// Tri-state resolution:
+//   - dep.FullRootfsOverride=&false → today-equivalent failure (force-off).
+//   - dep.FullRootfsOverride=&true  → full-rootfs (force-on, even on Free).
+//   - dep.FullRootfsOverride=nil:
+//   - dep.FullRootfsAllowAuto && paid plan → full-rootfs (auto).
+//   - else                              → today-equivalent failure.
+//
+// "Paid plan" means PlanHobby / PlanPro / PlanScale per
+// api.PlanMeetsMinimumPlan(_, PlanHobby). Free plan auto-fallback
+// is rejected; the customer MUST opt in via FullRootfsOverride=&true.
+// The two-drive path's behavior is unchanged for any image whose
+// layers prefix one of our runner-* bases.
+func (h *Handler) dispatchFullRootfs(
+	ctx context.Context,
+	app state.App,
+	dep state.Deployment,
+	acct state.Account,
+	manifest api.AppManifest,
+	appAuth *oci.BasicAuth,
+) error {
+	if dep.FullRootfsOverride != nil && !*dep.FullRootfsOverride {
+		// Force-off: surface today-equivalent failure so pkg/api
+		// SentinelToCode maps to CodeImageManifestInvalid (422).
+		return fmt.Errorf("%w: customer forced two-drive path via FullRootfsOverride=&false", oci.ErrLayersNotAboveBase)
+	}
+	if dep.FullRootfsOverride != nil && *dep.FullRootfsOverride {
+		// Force-on: honor regardless of plan / AllowAuto.
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+	}
+	if dep.FullRootfsAllowAuto && api.PlanMeetsFullRootfs(acct.Plan) {
+		// Auto-dispatch: paid plans opt-in by default. Free plans
+		// must explicitly opt in via FullRootfsOverride=&true.
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+	}
+	// Default: today-equivalent failure on Free without override
+	// (and on any future plan whose AllowAuto=false without
+	// override).
+	return fmt.Errorf("%w: plan %s does not auto-dispatch to full-rootfs; pass FullRootfsOverride=&true to opt in",
+		oci.ErrLayersNotAboveBase, acct.Plan)
+}
+
+// buildFullRootfsLayer pulls ALL of the app image's layers
+// (bottom-to-top), calls rootfs.Builder.BuildFullRootfs, and stamps
+// the resulting ext4 to the same appsKey the two-drive path uses
+// (ADR-141 §Decision 4: shared StorageKey shape). No drive0 base
+// pull — full-rootfs images are self-contained.
+//
+// The auth wire mirrors aboveBaseLayers (M6 two-drive path): the
+// app manifest + app blobs carry appAuth; no base is consulted.
+func (h *Handler) buildFullRootfsLayer(
+	ctx context.Context,
+	app state.App,
+	dep state.Deployment,
+	acct state.Account,
+	manifest api.AppManifest,
+	appAuth *oci.BasicAuth,
+) error {
+	mp, ok := h.oci.(oci.ManifestPuller)
+	if !ok {
+		return fmt.Errorf("imaged: full-rootfs requires oci.ManifestPuller; got %T", h.oci)
+	}
+	appRepo := repoWithHost(dep.ImageDigest)
+	if appRepo == "" {
+		return fmt.Errorf("imaged: cannot derive repo from %q", dep.ImageDigest)
+	}
+	start := time.Now()
+	appManifest, err := pullManifestWithAuth(ctx, mp, dep.ImageDigest, appAuth)
+	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
+	if err != nil {
+		return fmt.Errorf("imaged: full-rootfs manifest: %w", err)
+	}
+	// Issue #461 / ADR-062: stamp credential used after a
+	// successful app manifest pull on the full-rootfs path too —
+	// every authenticated pull above this line was either app
+	// manifest, app config, or app blob.
+	refHost := ""
+	if parsedRef, parseErr := oci.ParseReference(dep.ImageDigest); parseErr == nil {
+		refHost = parsedRef.APIHost()
+	}
+	h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
+
+	if len(appManifest.Layers) == 0 {
+		return fmt.Errorf("imaged: full-rootfs image has zero layers")
+	}
+	readers := make([]io.Reader, 0, len(appManifest.Layers))
+	closers := make([]io.Closer, 0, len(appManifest.Layers))
+	for _, l := range appManifest.Layers {
+		start := time.Now()
+		rc, err := pullBlobWithAuth(ctx, mp, appRepo, l.Digest, appAuth)
+		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(start))
+		if err != nil {
+			for _, c := range closers {
+				_ = c.Close()
+			}
+			return fmt.Errorf("imaged: full-rootfs pull blob %s: %w", l.Digest, err)
+		}
+		closers = append(closers, rc)
+		readers = append(readers, rc)
+	}
+	defer func() {
+		for _, c := range closers {
+			_ = c.Close()
+		}
+	}()
+
+	be, err := h.storageFor()
+	if err != nil {
+		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
+	}
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+
+	res, err := h.builder.BuildFullRootfs(ctx, rootfs.BuildFullRootfsInput{
+		Layers:         readers,
+		Manifest:       manifest,
+		GuestInitPath:  h.guestInitPath,
+		Plan:           acct.Plan,
+		Storage:        be,
+		StorageKey:     appsKey,
+		SBOMRun:        h.syftRun,
+		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
+		// BuildFullRootfs derives the image's merged /etc/passwd resolver
+		// while applying the pulled layers; no host-side passwd data is used.
+		Resolver: nil,
+	})
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build full-rootfs: "+err.Error())
+		return fmt.Errorf("imaged: build full-rootfs: %w", err)
+	}
+	h.updateBuildProvenanceSBOM(ctx, dep.ID, res.SBOMKey)
+	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, res.ContentBytes); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp full-rootfs: "+err.Error())
+		return fmt.Errorf("imaged: stamp full-rootfs: %w", err)
+	}
+	if err := h.replicateLayer(ctx, appsKey); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, err.Error())
+		return err
+	}
+	h.log.Info("imaged: build app layer (full-rootfs)",
+		"app", app.Slug,
+		"digest", dep.ImageDigest,
+		"key", res.ImageKey,
+		"bytes", res.ContentBytes,
+		"layers", len(appManifest.Layers),
+		"plan", string(acct.Plan),
+	)
+	return nil
 }

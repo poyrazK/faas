@@ -26,6 +26,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -36,20 +37,30 @@ import (
 // means the completion test only has one string to pin.
 const fromStageFlag = "--from="
 
+const deploysRetryUsage = "usage: gregale deploys retry <id> [--from=<stage>]"
+
 // cmdDeploysRetry is the subcommand handler. Returns 0 on
 // success, 1 on user-input errors, 2 on API errors (per the
 // gregale exit-code convention).
 func cmdDeploysRetry(args []string) int {
+	if hasHelpFlag(args) {
+		PrintUsage(osStdout, deploysRetryUsage, "deploys")
+		return 0
+	}
 	if len(args) < 1 {
 		// PrintUsage (not printErr) for usage errors — printErr
 		// unconditionally calls err.Error() and the CLI convention
 		// is to keep PrintUsage for the no-args branch (mirrors
 		// cmdDeploysShow's branch at deploys_show.go:116).
-		PrintUsage(os.Stderr, "usage: gregale deploys retry <id> [--from=<stage>]", "deploys")
+		PrintUsage(os.Stderr, deploysRetryUsage, "deploys")
 		return 1
 	}
 	ctx := context.Background()
 	depID := args[0]
+	if _, err := uuid.Parse(depID); err != nil {
+		printErr("invalid deployment id", fmt.Errorf("expected UUID: %w", err))
+		return 1
+	}
 
 	// Parse --from=<stage>. Default = "" (handler falls back to
 	// the failing stage on the source row).

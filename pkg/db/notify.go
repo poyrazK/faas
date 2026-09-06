@@ -206,9 +206,14 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 const (
 	NotifyAppChanged        = "app_changed"
 	NotifyDeploymentChanged = "deployment_changed"
-	NotifyDomainChanged     = "domain_changed"
-	NotifyCronChanged       = "cron_changed"
-	NotifyTriggerChanged    = "trigger_changed"
+	// NotifyGithubDeploymentChanged is emitted by the deployment status
+	// trigger for githubd's Check Run projector. It is intentionally separate
+	// from NotifyDeploymentChanged so existing scheduler/gateway consumers do
+	// not receive a duplicate of their explicit lifecycle notifications.
+	NotifyGithubDeploymentChanged = "github_deployment_changed"
+	NotifyDomainChanged           = "domain_changed"
+	NotifyCronChanged             = "cron_changed"
+	NotifyTriggerChanged          = "trigger_changed"
 	// NotifyJobChanged fires when a row is inserted/updated/deleted
 	// in public.jobs (issue #1184 Workstream A / ADR-099). Listeners:
 	//   - schedd dispatchJobsTick: wakes the 1s tick to claim any
@@ -408,6 +413,10 @@ const (
 	//   against notify loss. Consumed by cmd/gatewayd-internal/
 	//   backend.go (PR 8).
 	NotifyEdgeRuleChanged = "edge_rule_changed"
+	// NotifyCachePurge is emitted by the explicit per-app cache purge API.
+	// Payload: {"app_id":uuid,"path_glob":string}; an empty glob purges
+	// the app's complete response cache.
+	NotifyCachePurge = "cache_purge_requested"
 	// NotifyAppOpenAPIDocChanged (ADR-126 / issue #975 item #2)
 	// {"app_id":uuid, "op":"created|replaced|deleted"}.
 	//   apid is the only listener (cmd/apid/openapi_doc_subscriber.go

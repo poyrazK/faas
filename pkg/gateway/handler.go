@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"golang.org/x/sync/singleflight"
 )
 
 // ResolveSlugFn (ADR-093) is the (slug → appID) resolver the
@@ -54,6 +55,8 @@ type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
 	Plan      api.Plan
+	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
+	MaxConcurrency int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -801,6 +804,10 @@ type Handler struct {
 	// / InvalidateAll) and is wired by the db.Notify handler in
 	// commit 14.
 	responseCache *ResponseCache
+	// cacheRefresh coalesces detached stale-while-waking refreshes by
+	// response-cache key. The customer request returns the stale body while
+	// one background wake + origin fetch repopulates the entry.
+	cacheRefresh singleflight.Group
 	// publicAuthUnsealer turns an APP_BASIC_AUTH secretbox
 	// sealed blob into the username/password pair the
 	// request header carries. nil = unseal disabled (unit
@@ -892,6 +899,16 @@ type Handler struct {
 	// h.drain == nil — see the wrapper in serveHTTPWithDrain
 	// for the nil guard.
 	drain *drain.Tracker
+	// wakePageAudit records browser wake-page visits in the shared events
+	// stream. It uses the existing narrow best-effort auditor seam so this
+	// package stays independent of cmd/gatewayd-internal and pkg/state.
+	wakePageAudit RequireAuthnAuditor
+	// wakePageMu / wakePageCycles correlate pages served before a detached
+	// wake returns with the scheduler-issued wake ID. That ID is not known
+	// until EnsureWarm/Admit completes, so pending visits are flushed by the
+	// wake leader when the real ID becomes available.
+	wakePageMu     sync.Mutex
+	wakePageCycles map[string]*wakePageCycle
 }
 
 // emptyAccountWarned is the process-wide trip flag for
@@ -955,9 +972,10 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 				}
 			},
 		),
-		burstPressure: &burstPressure{},
-		metrics:       m,
-		log:           log,
+		burstPressure:  &burstPressure{},
+		metrics:        m,
+		log:            log,
+		wakePageCycles: make(map[string]*wakePageCycle),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
 		// loaded from api.MirrorMaxConcurrentPerRule (default 5)
 		// so the per-rule VM cost circuit matches the MirrorMaxLifetimeSeconds
@@ -1140,6 +1158,14 @@ func (h *Handler) WithRouteConsumerLimiter(l *Limiter) *Handler {
 // contract as WithLimiter — do NOT expose as a config knob.
 func (h *Handler) WithAccountLimiter(l *Limiter) *Handler {
 	h.accountLimiter = l
+	return h
+}
+
+// WithWakePageAudit installs the best-effort sink for wake.page_served rows.
+// Production wires gatewayd's shared events writer; nil keeps the page usable
+// in tests and on installations that do not enable the audit stream.
+func (h *Handler) WithWakePageAudit(audit RequireAuthnAuditor) *Handler {
+	h.wakePageAudit = audit
 	return h
 }
 
@@ -4434,6 +4460,19 @@ type capWriter struct {
 	onWarn   func(bucket string)
 }
 
+// ProblemHTMLRequest preserves browser error negotiation through the body
+// cap wrapper. Most cap failures write through the original writer, but this
+// forwarding keeps the wrapper safe for any future platform error path.
+func (c *capWriter) ProblemHTMLRequest() *http.Request {
+	if c == nil {
+		return nil
+	}
+	if provider, ok := c.ResponseWriter.(interface{ ProblemHTMLRequest() *http.Request }); ok {
+		return provider.ProblemHTMLRequest()
+	}
+	return nil
+}
+
 func (c *capWriter) Write(b []byte) (int, error) {
 	if c.disabled.Load() {
 		return 0, http.ErrHandlerTimeout
@@ -4673,7 +4712,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Status-class capture (used for metrics + slog). Doesn't buffer the body
 	// or alter the headers — strictly observability.
-	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 	w = rec
 
 	// Stamp the request-received timestamp onto the context so every exit
@@ -5022,10 +5061,26 @@ haveApp:
 	// preflight OPTIONS) so preflight responses are never
 	// cached — an OPTIONS cached against the wrong Origin is a
 	// real CORS bypass.
-	cacheRule := (*EdgeRuleCacheResolved)(nil)
 	if served, rule := h.applyEdgeRuleCache(w, r, app, rec); served {
 		return
 	} else if rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
+		// Stash the matched rule before installing the cache writer so a
+		// follower can replay an eligible stale entry without creating a
+		// store-skipped capture. The wake leader continues to the origin;
+		// its normal cache writer refreshes this entry after the instance is
+		// ready.
+		r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
+		wakeInFlight := h.gate != nil && h.gate.Inflight(app.ID)
+		if wakeInFlight {
+			if served, _ := h.tryServeStaleWhileWaking(w, r, app, rec); served {
+				h.startStaleWhileWakingRefresh(r, app, rule)
+				return
+			}
+		} else if h.backend != nil && h.backend.HealthyCount(app.ID) == 0 {
+			if served, _ := h.tryServeStaleAndStartWake(w, r, app, rec, rule); served {
+				return
+			}
+		}
 		// Miss path — install the cacheWriter tee so the
 		// upstream response populates the cache. The rule
 		// non-nil + auth-bypass-clear + method-in-vocab
@@ -5036,7 +5091,6 @@ haveApp:
 		// itself short-circuited to a miss.
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
 		w = cw
-		cacheRule = rule
 		defer func() {
 			if cw.shouldStore() {
 				key := CacheKey{
@@ -5073,10 +5127,6 @@ haveApp:
 		// stash, the gate-failure path would have to
 		// re-run the matcher (the rule was already
 		// resolved above, no point doing it twice).
-		if rule != nil {
-			r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
-		}
-		_ = cacheRule
 	}
 
 	// Issue #463 / ADR-069 / ADR-071 / PR-C §5: resolve the
@@ -5197,9 +5247,27 @@ haveApp:
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
 		// N instances before short-circuiting.
+		// Browser requests get a short edge wait so a long cold boot can
+		// render a useful page while the WakeGate's detached leader keeps
+		// booting. API clients retain the plan-derived wait budget.
+		wakeCtx := r.Context()
+		var cancelWakePage context.CancelFunc
+		if api.AcceptsHTML(r) {
+			wakeCtx, cancelWakePage = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
+			defer cancelWakePage()
+		}
 		//nolint:contextcheck // request ctx at handler boundary.
-		cold, wakeID, wakeMethod, err = h.ensureCapacity(r.Context(), app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan)
+		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan)
 		if err != nil {
+			if api.AcceptsHTML(r) && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
+				// The caller's short wait expired, but the detached wake is
+				// still alive. Record the visit and let the page's fetch/meta
+				// retry land on the app without a manual reload.
+				h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
+				writeWakePage(w, r.Header.Get("x-faas-wake-id"))
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return
+			}
 			// The per-app gate rejects excess cold-wake followers before the
 			// gateway-wide admission queue is reached. Count that outcome on
 			// the same bounded admission surface so operators can distinguish
@@ -5251,13 +5319,16 @@ haveApp:
 	// that re-seeds the cache.
 	if !pick.OK && pick.ColdBucket != "" {
 		//nolint:contextcheck // request ctx at handler boundary; this is the wake-fan-out retry branch.
-		if _, _, _, err := h.backend.Admit(r.Context(), app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency); err != nil {
+		bucketWakeID, bucketMethod, _, bucketErr := h.backend.Admit(r.Context(), app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency)
+		if bucketErr != nil {
 			// Log-and-continue: the existing "warmest bucket"
 			// fallback inside Pick already handled the
 			// fallback path. Failure here means the cold
 			// bucket won't wake this request — the next
 			// notify will refresh weights.
-			h.log.Warn("apid: wake-fan-out admit failed", "err", err, "deployment_id", pick.ColdBucket)
+			h.log.Warn("apid: wake-fan-out admit failed", "err", bucketErr, "deployment_id", pick.ColdBucket)
+		} else if bucketWakeID != "" {
+			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}
 		pick = h.backend.Pick(app.ID)
 	}
@@ -5271,6 +5342,10 @@ haveApp:
 		return
 	}
 	target := pick.Target
+	// The cached target retains the VM's original wake ID. Only this
+	// request's admission belongs in a wake timeline; warm traffic must not
+	// append synchronous wake events for the rest of the VM's lifetime.
+	target.WakeID = wakeID
 
 	// Mirror fan-out (issue #72 / ADR-124 / ADR-125 PR-A3). After
 	// the customer request has been routed, fan out one goroutine
@@ -5331,6 +5406,7 @@ haveApp:
 	// x-faas-instance so an attacker can't steer the proxy to an
 	// arbitrary instance by setting the header (issue #168 trust model).
 	r.Header.Set("x-faas-instance", target.InstanceID)
+	r.Header.Set("x-faas-app", app.ID)
 
 	// Per-request wake-timing recorder (spec §6.3) installed AFTER
 	// upstream stamping so the trace sees only the proxy hop, not the
@@ -5579,6 +5655,7 @@ haveApp:
 		// via evts.Platform so the session-level accounting
 		// doesn't double-count.
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
+		h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 		return
 	}
 	if h.proxyByNode != nil {
@@ -5669,6 +5746,7 @@ haveApp:
 		h.streamingFallbackLog(app.ID, rec.ContentType)
 	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
+	h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 	// PR-B residual capture. On the streaming path the per-flush
 	// deltas already attributed every byte that hit the wire; the
 	// one outstanding delta is the trailing slice between the
@@ -5839,16 +5917,21 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			if target.DeploymentID != "" {
 				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
 			}
+			telemetryRoute := routeLabel
+			if telemetryRoute == "" {
+				// Route metrics are optional; the telemetry schema requires a label.
+				telemetryRoute = otherRouteLabel
+			}
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
 				AccountID:    acctUUID,
 				AppID:        appUUID,
 				DeploymentID: deploymentUUID,
-				Route:        routeLabel,
+				Route:        telemetryRoute,
 				Method:       r.Method,
 				Status:       status,
 				LatencyMS:    int(elapsed / time.Millisecond),
 				ColdBoot:     cold,
-				TraceID:      requestID,
+				TraceID:      telemetryTraceID(requestID),
 				ReceivedAt:   time.Now(),
 			})
 		}
@@ -5983,6 +6066,17 @@ func (h *Handler) recordEgress(rec *statusRecorder, target Target, app App) {
 	if h.metrics != nil && app.ID != "" {
 		h.metrics.ObserveResponseBytes(app.ID, string(app.Plan), rec.Bytes)
 	}
+}
+
+// recordUsageRequest attributes one request that reached an instance to the
+// same minute-bucketed stream as response bytes. The wake method comes from
+// schedd's authoritative wake result, so restores are not mislabeled as cold
+// boots merely because the request had to wake a parked instance.
+func (h *Handler) recordUsageRequest(target Target, coldBoot bool) {
+	if h.egressSink == nil || target.InstanceID == "" {
+		return
+	}
+	h.egressSink.RecordRequest(target.InstanceID, coldBoot)
 }
 
 // writeAppRateLimitHeaders writes the X-RateLimit-{Limit,Remaining,Reset}
@@ -6257,6 +6351,7 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
+	request     *http.Request
 	Bytes       int64
 	ContentType string
 
@@ -6318,6 +6413,16 @@ type statusRecorder struct {
 	// reader (dispatchMirror) — the Go memory model would flag a
 	// plain int read/write as a race.
 	mirrorStatusSink *atomic.Int32
+}
+
+// ProblemHTMLRequest lets the shared API problem writer negotiate the
+// browser-facing error page for gateway requests. API handlers do not use this
+// wrapper, so their RFC 7807 JSON responses remain unchanged.
+func (s *statusRecorder) ProblemHTMLRequest() *http.Request {
+	if s == nil {
+		return nil
+	}
+	return s.request
 }
 
 // captureStatusForMirror (issue #72 / ADR-133 / ADR-125 PR-A3)
@@ -6567,6 +6672,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		cold           bool
 		method         WakeMethod
 	)
+	h.beginWakePageCycle(appID)
 	policy := WakeAdmissionPolicyForPlan(plan)
 	werr := h.gate.WaitWithPolicy(ctx, appID, accountID, policy,
 		func() bool {
@@ -6586,6 +6692,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 						h.log.Warn("gateway: live target reconciliation failed", "app_id", appID, "err", reconcileErr)
 					}
 				} else if h.backend.HealthyCount(appID) > 0 {
+					h.finishWakePageCycle(ctx, appID, "")
 					return nil
 				}
 			}
@@ -6596,11 +6703,13 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 						return e
 					}
 					if atCapacity {
+						h.finishWakePageCycle(admitCtx, appID, "")
 						return nil
 					}
 					admittedWakeID = id
 					method = m
 					cold = true
+					h.finishWakePageCycle(admitCtx, appID, id)
 					return nil
 				}
 				id, m, atCapacity, e := h.backend.Admit(admitCtx, appID, "", scope, sched.TriggerGateway, maxConcurrency)
@@ -6608,19 +6717,30 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					return e
 				}
 				if atCapacity {
+					h.finishWakePageCycle(admitCtx, appID, "")
 					return nil
 				}
 				admittedWakeID = id
 				method = m
 				cold = true
+				h.finishWakePageCycle(admitCtx, appID, id)
 				return nil
 			}
+			var admitErr error
 			if h.admissionQueue == nil {
-				return admit(ctx)
+				admitErr = admit(ctx)
+			} else {
+				queued, wait, err := h.admissionQueue.Do(ctx, appID, string(plan), policy, admit)
+				admitErr = err
+				if h.metrics != nil {
+					h.metrics.ObserveWakeAdmission(string(plan), admitErr, queued, wait)
+				}
 			}
-			queued, wait, admitErr := h.admissionQueue.Do(ctx, appID, string(plan), policy, admit)
-			if h.metrics != nil {
-				h.metrics.ObserveWakeAdmission(string(plan), admitErr, queued, wait)
+			if admitErr != nil {
+				// The detached leader owns the wake generation. If it
+				// fails before an ID is returned, discard any page visits
+				// so a later retry cannot attach them to a different wake.
+				h.finishWakePageCycle(ctx, appID, "")
 			}
 			return admitErr
 		},

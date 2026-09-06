@@ -73,12 +73,13 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 		return &vmmdpb.StatsResponse{
 			TotalResidentBytes: wrapperspb.Int64(256 << 20),
 			Instances: []*vmmdpb.InstanceStats{{
-				Instance:         "vm-1",
-				ResidentBytes:    wrapperspb.Int64(256 << 20),
-				CpuPct:           wrapperspb.Double(12.5),
-				InflightRequests: 3,
-				OpenConns:        5,
-				LastRequestAt:    timestamppb.New(time.Unix(123, 0)),
+				Instance:          "vm-1",
+				ResidentBytes:     wrapperspb.Int64(256 << 20),
+				CpuPct:            wrapperspb.Double(12.5),
+				InflightRequests:  3,
+				RequestCountTotal: wrapperspb.Int64(123),
+				OpenConns:         5,
+				LastRequestAt:     timestamppb.New(time.Unix(123, 0)),
 			}},
 		}, nil
 	})
@@ -91,7 +92,7 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 		t.Fatalf("telemetry rows = %d, want 1", len(got.GetInstances()))
 	}
 	row := got.GetInstances()[0]
-	if row.GetInstanceId() != "vm-1" || row.GetInflightRequests() != 3 || row.GetOpenConns() != 5 || row.GetCpuPct().GetValue() != 12.5 {
+	if row.GetInstanceId() != "vm-1" || row.GetInflightRequests() != 3 || row.GetOpenConns() != 5 || row.GetRequestCountTotal() == nil || row.GetRequestCountTotal().GetValue() != 123 || row.GetCpuPct().GetValue() != 12.5 {
 		t.Fatalf("telemetry row = %+v, want vm-1 cpu=12.5 inflight=3 open_conns=5", row)
 	}
 }

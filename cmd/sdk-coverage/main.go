@@ -123,6 +123,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/auth/google/callback": true, // 302 to dashboard (browser-only)
 	"GET /v1/auth/github":          true, // 302 to GitHub consent (browser-only)
 	"GET /v1/auth/github/callback": true, // 302 to dashboard (browser-only)
+	"GET /v1/auth/verify-email":    true, // HTML email-confirmation landing page (browser-only)
 	"GET /auth/reset":              true, // HTML form render (browser-only)
 	"POST /logout":                 true, // dashboard form post (browser-only); SDK's Logout wraps the same handler as a convenience
 
@@ -246,9 +247,11 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/instances":               "ListInstances",
 	"POST /v1/apps/{slug}/park":                   "Park",
 	"POST /v1/apps/{slug}/wake":                   "Wake",
+	"DELETE /v1/apps/{slug}/cache":                "PurgeAppCache",
 	"POST /v1/apps/{slug}/rollback":               "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
 	"POST /v1/apps/{slug}/deployments":            "Deploy",
+	"POST /v1/apps/{slug}/deployments/dev-source": "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref": "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
 	"GET /v1/uploads/{id}":                        "GetUploadSession",    // issue #1182; resumable session discovery after restart
 	"POST /v1/apps/{slug}/diff":                   "Diff",                // PR-1 of deploy-diff cluster; CI gate input
@@ -424,12 +427,28 @@ var methodRouteMap = map[string]string{
 	// as alerts/edge-rules/webhooks above. The PUT route is the
 	// upsert/create verb (the spec writes a single row per (kind, host,
 	// port) tuple, with the response carrying the persisted id).
-	"GET /v1/apps/{slug}/upstreams":         "ListAppDataUpstreams",
-	"GET /v1/apps/{slug}/upstreams/{id}":    "GetAppDataUpstream",
-	"PUT /v1/apps/{slug}/upstreams":         "CreateAppDataUpstream",
-	"DELETE /v1/apps/{slug}/upstreams/{id}": "DeleteAppDataUpstream",
-	"GET /v1/keys":                          "ListKeys",
-	"POST /v1/keys":                         "CreateKey",
+	"GET /v1/apps/{slug}/upstreams":                                                            "ListAppDataUpstreams",
+	"GET /v1/apps/{slug}/upstreams/{id}":                                                       "GetAppDataUpstream",
+	"PUT /v1/apps/{slug}/upstreams":                                                            "CreateAppDataUpstream",
+	"DELETE /v1/apps/{slug}/upstreams/{id}":                                                    "DeleteAppDataUpstream",
+	"GET /v1/keys":                                                                             "ListKeys",
+	"GET /v1/apps/{slug}/buckets":                                                              "ListObjectBuckets",
+	"GET /v1/account/object-storage-usage":                                                     "GetObjectStorageUsage",
+	"POST /v1/admin/object-storage/usage-reports":                                              "RecordObjectStorageUsage",
+	"POST /v1/apps/{slug}/buckets":                                                             "CreateObjectBucket",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}":                                                  "DeleteObjectBucket",
+	"GET /v1/apps/{slug}/buckets/{bucket}/access-grants":                                       "ListObjectBucketAccessGrants",
+	"PUT /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                                 "SetObjectBucketAccessGrant",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                              "DeleteObjectBucketAccessGrant",
+	"GET /v1/apps/{slug}/buckets/{bucket}/objects":                                             "ListBucketObjects",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/objects":                                          "DeleteBucketObject",
+	"POST /v1/apps/{slug}/buckets/{bucket}/signed-url":                                         "SignBucketObject",
+	"POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads":                                  "CreateObjectMultipartUpload",
+	"GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}":                          "GetObjectMultipartUpload",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}":                       "AbortObjectMultipartUpload",
+	"POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url": "SignObjectMultipartPart",
+	"POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete":                "CompleteObjectMultipartUpload",
+	"POST /v1/keys": "CreateKey",
 	// Move 2 routes — the auto-derivation produces names with literal
 	// hyphens (e.g. "DeleteDelayed-tasksId") because the spec path uses
 	// the k8s-style hyphen; the explicit map below drops the hyphen and
@@ -564,8 +583,10 @@ var methodRouteMap = map[string]string{
 	// to match the sibling per-app family (GetAppMetrics,
 	// GetAppSLO, GetAppRoutes) and use the DTO type name
 	// (AppUsageSummary) for the noun.
-	"GET /v1/apps/{slug}/wake-timeline": "GetAppWakeTimeline",
-	"GET /v1/apps/{slug}/usage":         "GetAppUsageSummary",
+	"GET /v1/apps/{slug}/wake-timeline":        "GetAppWakeTimeline",
+	"GET /v1/apps/{slug}/usage":                "GetAppUsageSummary",
+	"GET /v1/apps/{slug}/analytics":            "GetAppRequestAnalytics",
+	"GET /v1/apps/{slug}/analytics/timeseries": "GetAppRequestAnalyticsTimeseries",
 
 	// ADR-127 / PR-A — production debugger data plane. The
 	// auto-derivation would produce GetAppsSlugDebugRequests
@@ -573,7 +594,8 @@ var methodRouteMap = map[string]string{
 	// match the operationId on the spec side and the per-resource
 	// list family (ListAlertRules, ListEdgeRules, ListAppWebhooks)
 	// — drop the slug placeholder from the verb.
-	"GET /v1/apps/{slug}/debug/requests": "ListAppDebugRequests",
+	"GET /v1/apps/{slug}/debug/requests":          "ListAppDebugRequests",
+	"GET /v1/apps/{slug}/debug/requests/{req_id}": "GetAppDebugRequest",
 
 	// ADR-127 / PR-B — production debugger consumer surface.
 	// Same rationale as the PR-A request list: drop the slug from

@@ -28,13 +28,10 @@
 // they only assert on the returned build_id).
 //
 // RETRY + PARTIAL-SUCCESS:
-// Enqueue failures are best-effort (logged, not returned).
-// The webhooks HTTP contract is "200 OK with deployment_id"
-// on success; partial-success is rendered as
-// {reconciled: true, build_ids: [...]} with a separate
-// metric counter for enqueue failures. The alternative
-// (failing the entire push because one of 50 builds was
-// rejected) is worse for the customer.
+// Direct/test callers retain the historical partial-success result. Durable
+// inbox dispatch carries DeliveryID and returns an aggregate error when any
+// app fails, allowing the worker to retry the delivery. Successful app work is
+// idempotent at apid, so the retry fills only the missing work.
 
 package githubd
 
@@ -65,7 +62,12 @@ import (
 // builderd never fetches it. SourceBytes is the on-disk size
 // of the staged tarball.
 type BuildSpec struct {
-	App          state.App
+	App state.App
+	// DeliveryID is the authenticated X-GitHub-Delivery value for the
+	// durable inbox item currently being dispatched. The apid bridge derives
+	// stable deployment/build IDs from (delivery, app), making a reclaimed
+	// delivery safe after a process crash or lost gRPC response.
+	DeliveryID   string
 	CommitSHA    string
 	RepoFullName string
 	Ref          string

@@ -249,6 +249,29 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			oci.WithTimeout(ociPullTimeout()),
 		}
 	}
+	// OCI-backed deployments get a node-local content-addressed blob cache by
+	// default. Local-storage deployments can opt in with the explicit env var
+	// without changing their existing storage layout. The cache is separate
+	// from final ext4 artifacts because registry blobs are immutable and can be
+	// shared by every deployment that references the same digest.
+	blobCacheRoot := strings.TrimSpace(os.Getenv("FAAS_OCI_BLOB_CACHE_DIR"))
+	if blobCacheRoot == "" && envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
+		blobCacheRoot = filepath.Join(envOr("FAAS_STORAGE_CACHE_DIR", "/var/lib/faas/cache"), "oci-blobs")
+	}
+	if blobCacheRoot != "" {
+		blobCacheMaxBytes := ociBlobCacheMaxBytes()
+		blobCache, cacheErr := oci.NewDiskBlobCache(blobCacheRoot, blobCacheMaxBytes)
+		if cacheErr != nil {
+			return fmt.Errorf("imaged: initialize OCI blob cache: %w", cacheErr)
+		}
+		blobCache.SetObserver(oci.BlobCacheObserverFuncs{
+			Hit:      ops.ImagedOCIBlobCacheHit,
+			Miss:     ops.ImagedOCIBlobCacheMiss,
+			Eviction: ops.ImagedOCIBlobCacheEviction,
+		})
+		pullerOpts = append(pullerOpts, oci.WithBlobCache(blobCache))
+		log.Info("imaged: OCI blob cache enabled", "root", blobCache.Root(), "max_bytes", blobCacheMaxBytes)
+	}
 	puller := oci.NewRegistryClient(pullerOpts...)
 	log.Info("imaged: oci puller ready", "timeout_s", int(ociPullTimeout().Seconds()))
 
@@ -564,7 +587,11 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// can wire /readyz on the same mux as /metrics. defer
 		// stop so the SIGTERM drain window surfaces in
 		// daemon_ready as 0.
-		imagedProbe := BuildReadinessProbe(envOr("FAAS_STORAGE_ROOT", defaultStorageRoot))
+		cacheRoot := ""
+		if cache := storage.AsCacheBackend(storageBackend); cache != nil {
+			cacheRoot = cache.Root()
+		}
+		imagedProbe := buildImageReadinessProbe(envOr("FAAS_STORAGE_BACKEND", "local"), envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), cacheRoot)
 		imagedProbe.SetReadyObserver(func(ready bool, reason string) {
 			ops.MarkReady("imaged", ready, reason)
 		})
@@ -733,6 +760,21 @@ func ociPullTimeout() time.Duration {
 		return time.Duration(api.OCIPullTimeoutSeconds) * time.Second
 	}
 	return time.Duration(secs) * time.Second
+}
+
+// ociBlobCacheMaxBytes returns the byte budget for the node-local OCI blob
+// cache. Invalid or non-positive values fall back to the platform default so
+// a malformed environment override cannot prevent imaged from starting.
+func ociBlobCacheMaxBytes() int64 {
+	v := strings.TrimSpace(os.Getenv("FAAS_OCI_BLOB_CACHE_MAX_BYTES"))
+	if v == "" {
+		return oci.DefaultBlobCacheMaxBytes
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return oci.DefaultBlobCacheMaxBytes
+	}
+	return n
 }
 
 // makeGrypeRunner wires an explicit Grype subprocess runner bound

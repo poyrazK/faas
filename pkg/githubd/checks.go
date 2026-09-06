@@ -10,14 +10,10 @@
 //	CheckPhaseFailed    → "completed" / "failure"
 //
 // GitHub requires idempotent check-run writes to avoid creating
-// duplicates on retry. We use the (repo, sha, phase) tuple as the
-// dedup key — the same phase transition for the same commit is
-// always the same check-run; subsequent calls hit
+// duplicates on retry. We persist the (repo, sha, check-name) → run ID
+// mapping so every phase for one app updates the same Check Run. Subsequent calls hit
 // PATCH /repos/{owner}/{repo}/check-runs/{id} instead of POSTing
 // a new one.
-//
-// Idempotency storage lives in pkg/state (slice 8 adds the table
-// to migration 00006).
 package githubd
 
 import (
@@ -57,11 +53,22 @@ type BindingsLookup interface {
 	InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error)
 }
 
+type CheckRunStore interface {
+	CheckRunID(ctx context.Context, repoFullName, commitSHA, checkName string) (int64, error)
+	SaveCheckRunID(ctx context.Context, repoFullName, commitSHA, checkName string, id int64) error
+}
+
 // ChecksAPI writes check-runs to api.github.com.
 type ChecksAPI struct {
-	Tokens   *TokenCache // provides the installation token per installation_id
-	HTTP     HTTPClient
-	Bindings BindingsLookup // repo → installation_id (review finding #1+#2 closure)
+	Tokens    *TokenCache // provides the installation token per installation_id
+	HTTP      HTTPClient
+	Bindings  BindingsLookup // repo → installation_id (review finding #1+#2 closure)
+	CheckRuns CheckRunStore
+}
+
+func (c *ChecksAPI) WithCheckRunStore(store CheckRunStore) *ChecksAPI {
+	c.CheckRuns = store
+	return c
 }
 
 // NewChecksAPI builds a ChecksAPI. tokens may be nil for tests
@@ -84,7 +91,7 @@ func NewChecksAPI(tokens *TokenCache, hc HTTPClient, bindings BindingsLookup) (*
 // commit-icon update.
 type checkRunRequest struct {
 	Name       string          `json:"name"`
-	HeadSHA    string          `json:"head_sha"`
+	HeadSHA    string          `json:"head_sha,omitempty"`
 	Status     string          `json:"status"`
 	Conclusion string          `json:"conclusion,omitempty"`
 	DetailsURL string          `json:"details_url,omitempty"`
@@ -100,6 +107,85 @@ type checkRunOutput struct {
 // checkRunResponse is the shape GitHub returns from POST/PATCH.
 type checkRunResponse struct {
 	ID int64 `json:"id"`
+}
+
+// writeCheckRun creates the first Check Run for a commit and PATCHes that same
+// run for subsequent phases when durable identity storage is configured.
+func (c *ChecksAPI) writeCheckRun(ctx context.Context, repoFullName, commitSHA, checkName string, payload checkRunRequest) error {
+	token, err := c.tokensForRepo(ctx, repoFullName)
+	if err != nil {
+		return err
+	}
+	return c.writeCheckRunWithToken(ctx, token, repoFullName, commitSHA, checkName, payload)
+}
+
+func (c *ChecksAPI) writeCheckRunForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, checkName string, payload checkRunRequest) error {
+	if c.Tokens == nil || installationID <= 0 {
+		return fmt.Errorf("githubd: installation-scoped check token is not configured")
+	}
+	token, err := c.Tokens.Token(ctx, installationID)
+	if err != nil {
+		return fmt.Errorf("githubd: get install token (install=%d): %w", installationID, err)
+	}
+	return c.writeCheckRunWithToken(ctx, token, repoFullName, commitSHA, checkName, payload)
+}
+
+func (c *ChecksAPI) writeCheckRunWithToken(ctx context.Context, token, repoFullName, commitSHA, checkName string, payload checkRunRequest) error {
+	method := http.MethodPost
+	endpoint := fmt.Sprintf("%s/repos/%s/check-runs", GitHubAPI, repoFullName)
+	existingID := int64(0)
+	if c.CheckRuns != nil {
+		id, lookupErr := c.CheckRuns.CheckRunID(ctx, repoFullName, commitSHA, checkName)
+		switch {
+		case lookupErr == nil:
+			existingID = id
+			method = http.MethodPatch
+			endpoint = fmt.Sprintf("%s/repos/%s/check-runs/%d", GitHubAPI, repoFullName, id)
+			payload.HeadSHA = "" // update-check-run does not accept head_sha
+		case !errors.Is(lookupErr, ErrCheckRunNotFound):
+			return lookupErr
+		}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "faas-githubd/1.0")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("githubd: write check-run: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return fmt.Errorf("githubd: write check-run: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var out checkRunResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		// Older test doubles returned an empty 201 body. GitHub returns the
+		// created object, which is required only when durable identity is wired.
+		if c.CheckRuns != nil {
+			return fmt.Errorf("githubd: decode check-run response: %w", err)
+		}
+		return nil
+	}
+	if out.ID == 0 {
+		out.ID = existingID
+	}
+	if c.CheckRuns != nil && out.ID != 0 {
+		if err := c.CheckRuns.SaveCheckRunID(ctx, repoFullName, commitSHA, checkName, out.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // prodCheckName is the Check Run name stamped by the production
@@ -152,10 +238,6 @@ func (c *ChecksAPI) WritePreviewCheck(ctx context.Context, repoFullName, commitS
 	if repoFullName == "" || commitSHA == "" {
 		return fmt.Errorf("githubd: repo and sha required for preview check-run")
 	}
-	tokens, err := c.tokensForRepo(ctx, repoFullName)
-	if err != nil {
-		return err
-	}
 	fullSummary := summary
 	if previewURL != "" {
 		// Markdown link shape — GitHub's Check Run summary
@@ -165,7 +247,7 @@ func (c *ChecksAPI) WritePreviewCheck(ctx context.Context, repoFullName, commitS
 		// blow up the PR UI's summary panel width.
 		fullSummary = summary + "\n\nPreview URL: <" + previewURL + ">"
 	}
-	body, err := json.Marshal(checkRunRequest{
+	return c.writeCheckRun(ctx, repoFullName, commitSHA, previewCheckName, checkRunRequest{
 		Name:       previewCheckName,
 		HeadSHA:    commitSHA,
 		Status:     phaseToStatus(phase),
@@ -176,31 +258,6 @@ func (c *ChecksAPI) WritePreviewCheck(ctx context.Context, repoFullName, commitS
 		},
 		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
 	})
-	if err != nil {
-		return err
-	}
-	endpoint := fmt.Sprintf("%s/repos/%s/check-runs", GitHubAPI, repoFullName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+tokens)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "faas-githubd/1.0")
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("githubd: write preview check-run: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return fmt.Errorf("githubd: write preview check-run: status=%d body=%s",
-			resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	return nil
 }
 
 // previewPhaseTitle maps a CheckPhase to a preview-specific
@@ -240,11 +297,7 @@ func (c *ChecksAPI) WritePreviewCheckForkRefused(ctx context.Context, repoFullNa
 	if repoFullName == "" || commitSHA == "" {
 		return fmt.Errorf("githubd: repo and sha required for preview check-run")
 	}
-	tokens, err := c.tokensForRepo(ctx, repoFullName)
-	if err != nil {
-		return err
-	}
-	body, err := json.Marshal(checkRunRequest{
+	return c.writeCheckRun(ctx, repoFullName, commitSHA, previewCheckName, checkRunRequest{
 		Name:       previewCheckName,
 		HeadSHA:    commitSHA,
 		Status:     statusCompleted,
@@ -255,46 +308,16 @@ func (c *ChecksAPI) WritePreviewCheckForkRefused(ctx context.Context, repoFullNa
 		},
 		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
 	})
-	if err != nil {
-		return err
-	}
-	endpoint := fmt.Sprintf("%s/repos/%s/check-runs", GitHubAPI, repoFullName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+tokens)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "faas-githubd/1.0")
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("githubd: write preview check-run: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return fmt.Errorf("githubd: write preview check-run: status=%d body=%s",
-			resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	return nil
 }
 
-// WriteCheck posts a check-run for (repo, sha, phase). Idempotency
-// is the caller's responsibility — this method always creates a
-// new check-run; the StateStore-wrapped variant (NewStatefulChecks)
-// is the one slice 8 callers should use.
+// WriteCheck writes a check-run for (repo, sha, phase). When CheckRuns is
+// configured, later phases PATCH the persisted run ID; test/legacy instances
+// without that store retain the original create-per-call behavior.
 func (c *ChecksAPI) WriteCheck(ctx context.Context, repoFullName, commitSHA string, phase githubdgrpc.CheckPhase, logsURL, summary string) error {
 	if repoFullName == "" || commitSHA == "" {
 		return fmt.Errorf("githubd: repo and sha required for check-run")
 	}
-	tokens, err := c.tokensForRepo(ctx, repoFullName)
-	if err != nil {
-		return err
-	}
-	body, err := json.Marshal(checkRunRequest{
+	return c.writeCheckRun(ctx, repoFullName, commitSHA, prodCheckName, checkRunRequest{
 		Name:       prodCheckName,
 		HeadSHA:    commitSHA,
 		Status:     phaseToStatus(phase),
@@ -306,34 +329,80 @@ func (c *ChecksAPI) WriteCheck(ctx context.Context, repoFullName, commitSHA stri
 		},
 		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
 	})
-	if err != nil {
-		return err
-	}
-	endpoint := fmt.Sprintf("%s/repos/%s/check-runs", GitHubAPI, repoFullName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+tokens)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "faas-githubd/1.0")
-	req.Header.Set("Content-Type", "application/json")
+}
 
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("githubd: write check-run: %w", err)
+// WriteSkippedCheckForInstallation posts a completed neutral production check
+// when a commit explicitly opts out of deployment with [skip deploy] or
+// [deploy skip]. The installation-scoped token keeps the acknowledgement
+// least-privilege and matches the push dispatcher's binding resolution.
+func (c *ChecksAPI) WriteSkippedCheckForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
+	if repoFullName == "" || commitSHA == "" {
+		return fmt.Errorf("githubd: repo and sha required for skipped check-run")
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return fmt.Errorf("githubd: write check-run: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, prodCheckName, checkRunRequest{
+		Name:       prodCheckName,
+		HeadSHA:    commitSHA,
+		Status:     statusCompleted,
+		Conclusion: previewCheckConclusionNeutral,
+		Output: &checkRunOutput{
+			Title:   "Deployment skipped",
+			Summary: summary,
+		},
+		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
+	})
+}
+
+// WriteAppCheck writes the independent lifecycle row for one workload in a
+// monorepo. The exact installation ID comes from the authenticated webhook or
+// durable deployment binding, avoiding an unscoped repo reverse lookup.
+func (c *ChecksAPI) WriteAppCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, logsURL, summary string) error {
+	if repoFullName == "" || commitSHA == "" || appSlug == "" {
+		return fmt.Errorf("githubd: repo, sha, and app slug required for app check-run")
 	}
-	var out checkRunResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return fmt.Errorf("githubd: decode check-run response: %w", err)
+	checkName := "gregale / " + appSlug
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, checkName, checkRunRequest{
+		Name:       checkName,
+		HeadSHA:    commitSHA,
+		Status:     phaseToStatus(phase),
+		Conclusion: phaseToConclusion(phase),
+		DetailsURL: logsURL,
+		Output: &checkRunOutput{
+			Title:   phaseTitle(phase),
+			Summary: summary,
+		},
+		ExternalID: fmt.Sprintf("faas/%s/%s/%s", repoFullName, appSlug, commitSHA),
+	})
+}
+
+func (c *ChecksAPI) WritePreviewCheckForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA string, phase githubdgrpc.CheckPhase, previewURL, summary string) error {
+	if repoFullName == "" || commitSHA == "" {
+		return fmt.Errorf("githubd: repo and sha required for preview check-run")
 	}
-	return nil
+	if previewURL != "" {
+		summary += "\n\nPreview URL: <" + previewURL + ">"
+	}
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, previewCheckName, checkRunRequest{
+		Name:       previewCheckName,
+		HeadSHA:    commitSHA,
+		Status:     phaseToStatus(phase),
+		Conclusion: phaseToConclusion(phase),
+		Output:     &checkRunOutput{Title: previewPhaseTitle(phase), Summary: summary},
+		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
+	})
+}
+
+func (c *ChecksAPI) WritePreviewCheckForkRefusedForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
+	if repoFullName == "" || commitSHA == "" {
+		return fmt.Errorf("githubd: repo and sha required for preview check-run")
+	}
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, previewCheckName, checkRunRequest{
+		Name:       previewCheckName,
+		HeadSHA:    commitSHA,
+		Status:     statusCompleted,
+		Conclusion: previewCheckConclusionNeutral,
+		Output:     &checkRunOutput{Title: "Preview skipped (security policy)", Summary: summary},
+		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
+	})
 }
 
 // tokensForRepo resolves the installation token for the repo's

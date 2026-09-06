@@ -160,21 +160,23 @@ func (p *Problem) WithDocs(url string) *Problem {
 // Stable error codes (spec Appendix A, UX spec §7). Keep in sync with docs and
 // the CLI's exit-code mapping.
 const (
-	CodePlanLimitApps   = "plan_limit_apps"
-	CodePlanLimitRAM    = "plan_limit_ram"
-	CodePlanLimitConcur = "plan_limit_concurrency"
-	CodeSourceTooLarge  = "source_too_large"
-	CodeSourceInvalid   = "source_invalid"
-	CodeAppLayerTooBig  = "app_layer_too_large"
-	CodeBuildUndetected = "build_undetected"
-	CodeBuildOOM        = "build_oom"
-	CodeBuildTimeout    = "build_timeout"
-	CodeQuotaExhausted  = "quota_exhausted"
-	CodeBillingPastDue  = "billing_past_due"
-	CodeCapacity        = "capacity_unavailable"
-	CodeUnauthorized    = "unauthorized"
-	CodeMFARequired     = "mfa_required"
-	CodeStepUpRequired  = "step_up_required"
+	CodePlanLimitApps          = "plan_limit_apps"
+	CodePlanLimitRAM           = "plan_limit_ram"
+	CodePlanLimitConcur        = "plan_limit_concurrency"
+	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidResourceProfile = "invalid_resource_profile"
+	CodeSourceTooLarge         = "source_too_large"
+	CodeSourceInvalid          = "source_invalid"
+	CodeAppLayerTooBig         = "app_layer_too_large"
+	CodeBuildUndetected        = "build_undetected"
+	CodeBuildOOM               = "build_oom"
+	CodeBuildTimeout           = "build_timeout"
+	CodeQuotaExhausted         = "quota_exhausted"
+	CodeBillingPastDue         = "billing_past_due"
+	CodeCapacity               = "capacity_unavailable"
+	CodeUnauthorized           = "unauthorized"
+	CodeMFARequired            = "mfa_required"
+	CodeStepUpRequired         = "step_up_required"
 	// CodeUnsupportedByCLI is returned when a bearer-key SDK client
 	// targets a dashboard-session-only route. Use the dedicated
 	// session-aware helper when the caller has the dashboard cookies.
@@ -379,12 +381,13 @@ const (
 	//     and "email already taken"; the constant exists so future
 	//     surfaces (e.g. an explicit "claim this email" admin tool)
 	//     can branch on it without inventing a new code.
-	CodeInvalidCredentials = "invalid_credentials"
-	CodeEmailNotVerified   = "email_not_verified"
-	CodePasswordTooWeak    = "password_too_weak"
-	CodeResetTokenInvalid  = "reset_token_invalid"
-	CodeResetTokenExpired  = "reset_token_expired"
-	CodeAccountExists      = "account_exists"
+	CodeInvalidCredentials        = "invalid_credentials"
+	CodeEmailNotVerified          = "email_not_verified"
+	CodeEmailVerificationRequired = "email_verification_required"
+	CodePasswordTooWeak           = "password_too_weak"
+	CodeResetTokenInvalid         = "reset_token_invalid"
+	CodeResetTokenExpired         = "reset_token_expired"
+	CodeAccountExists             = "account_exists"
 
 	// CodeRateLimited is the wire string the authlimiter middleware
 	// emits on a 429. It is plain-text, not a Problem-shaped body, so
@@ -433,7 +436,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
-	case CodeDeployFailed:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity
 	case CodeImageNotFound, CodeImageManifestInvalid:
 		return http.StatusUnprocessableEntity
@@ -465,6 +468,8 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
+	case CodeEmailVerificationRequired:
+		return http.StatusForbidden
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired:
@@ -495,15 +500,14 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		WithDocs(docsBase + "/plans#ram")
 }
 
-// ErrAppLayerTooLarge is returned when the built app layer (deps + code) exceeds
-// the plan's drive1 cap (spec §4.6). The message names the cap and observed size
-// so the deploy failure is actionable.
+// ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
+// exceed the plan's writable ephemeral drive1 capacity (spec §4.6).
 func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
-	capBytes := int64(l.AppLayerMaxMB) * 1024 * 1024
+	capBytes := l.EphemeralDiskMaxBytes()
 	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
 		"App too large",
-		fmt.Sprintf("%s plan caps the app layer at %d MB; built layer is %.1f MB.",
-			l.Plan, l.AppLayerMaxMB, float64(observedBytes)/(1024*1024))).
+		fmt.Sprintf("%s plan caps the writable ephemeral app disk at %d MB (app-layer build cap); built layer is %.1f MB.",
+			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits#app-layer")
 }

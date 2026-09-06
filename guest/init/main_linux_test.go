@@ -8,8 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -333,22 +335,22 @@ func TestBuildArgv(t *testing.T) {
 		{
 			name: "node → railpack",
 			fw:   api.FrameworkRailpackNode,
-			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:latest --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
+			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
 		},
 		{
 			name: "python → railpack",
 			fw:   api.FrameworkRailpackPython,
-			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:latest --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
+			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
 		},
 		{
 			name: "go → railpack",
 			fw:   api.FrameworkRailpackGo,
-			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:latest --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
+			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
 		},
 		{
 			name: "auto → railpack (default branch)",
 			fw:   api.FrameworkAuto,
-			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:latest --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
+			want: []string{"/bin/sh", "-c", "set -x; /usr/local/bin/railpack prepare '/build/src' --plan-out '/build/railpack-plan.json' --info-out '/build/railpack-info.json' && exec /usr/local/bin/buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend gateway.v0 --opt source=ghcr.io/railwayapp/railpack-frontend:v0.38.0@sha256:b66c90368efcf6f2966cfa504cdbde93af7ba6092d676e0c7604cbc5ddf3acec --opt filename=railpack-plan.json --local context='/build/src' --local dockerfile='/build' --output type=oci,dest='/build/out/image.tar' --progress plain"},
 		},
 	}
 	for _, tc := range cases {
@@ -376,8 +378,8 @@ func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 	if !strings.Contains(joined, "railpack prepare '/build/src/apps/api'") {
 		t.Fatalf("workspace argv does not prepare selected workdir: %s", joined)
 	}
-	if !strings.Contains(joined, "--local context='/build/src'") {
-		t.Fatalf("workspace argv does not use repository build context: %s", joined)
+	if !strings.Contains(joined, "--local context='/build/src/apps/api'") {
+		t.Fatalf("workspace argv does not use the plan’s selected source directory: %s", joined)
 	}
 
 	docker := buildArgv(api.BuildManifest{
@@ -390,6 +392,64 @@ func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 	if !strings.Contains(dockerJoined, "--local context=/build/src") ||
 		!strings.Contains(dockerJoined, "--local dockerfile=/build/src/apps/api") {
 		t.Fatalf("workspace docker argv has wrong context/workdir: %s", dockerJoined)
+	}
+}
+
+func TestBuildArgv_DeveloperDependencyCache(t *testing.T) {
+	got := buildArgv(api.BuildManifest{
+		Framework:             api.FrameworkRailpackNode,
+		Workdir:               "/build/src",
+		OutDir:                "/build/out",
+		DependencyCache:       true,
+		DependencyCacheImport: true,
+	})
+	joined := strings.Join(got, " ")
+	for _, want := range []string{
+		"--import-cache 'type=local,src=/build/cache'",
+		"--export-cache 'type=local,dest=/build/out/cache,mode=max'",
+		"--output type=oci,dest='/build/out/image.tar'",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("developer cache argv missing %q: %s", want, joined)
+		}
+	}
+
+	cold := strings.Join(buildArgv(api.BuildManifest{
+		Framework:       api.FrameworkRailpackNode,
+		Workdir:         "/build/src",
+		OutDir:          "/build/out",
+		DependencyCache: true,
+	}), " ")
+	if strings.Contains(cold, "--import-cache") || !strings.Contains(cold, "--export-cache") {
+		t.Fatalf("cold developer cache argv = %s", cold)
+	}
+}
+
+func TestRemoveOversizedDependencyCache(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cache")
+	if err := os.MkdirAll(filepath.Join(root, "blobs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "blobs", "one"), []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := removeOversizedDependencyCache(root, 32)
+	if err != nil || removed {
+		t.Fatalf("under budget: removed=%v err=%v", removed, err)
+	}
+	removed, err = removeOversizedDependencyCache(root, 3)
+	if err != nil || !removed {
+		t.Fatalf("over budget: removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("oversized cache remains: %v", err)
+	}
+	removed, err = removeOversizedDependencyCache(filepath.Join(t.TempDir(), "missing"), 3)
+	if err != nil || removed {
+		t.Fatalf("missing cache: removed=%v err=%v", removed, err)
 	}
 }
 
@@ -523,4 +583,24 @@ func equalSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// Shutdown must reap the daemon before the guest syncs and powers off.
+func TestStopBuildDaemonReapsBeforeReturn(t *testing.T) {
+	cmd := exec.Command("sleep", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait(); close(done) }()
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	start := time.Now()
+	stopBuildDaemon(cmd, done)
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Fatalf("daemon shutdown took %s", elapsed)
+	}
+	if err := syscall.Kill(cmd.Process.Pid, 0); err != syscall.ESRCH {
+		t.Fatalf("daemon was not reaped before return: %v", err)
+	}
 }

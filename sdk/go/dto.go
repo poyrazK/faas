@@ -18,10 +18,14 @@ import "github.com/poyrazK/faas-go/internal/api"
 // DTOs in internal/api should be added here on the next PR.
 type (
 	// App lifecycle.
-	CreateAppRequest = api.CreateAppRequest
-	UpdateAppRequest = api.UpdateAppRequest
-	RenameAppRequest = api.RenameAppRequest
-	AppResponse      = api.AppResponse
+	CreateAppRequest       = api.CreateAppRequest
+	UpdateAppRequest       = api.UpdateAppRequest
+	RenameAppRequest       = api.RenameAppRequest
+	AppResponse            = api.AppResponse
+	AppEffectiveLimits     = api.AppEffectiveLimits
+	AppConfiguredResources = api.AppConfiguredResources
+	ResourceProfile        = api.ResourceProfile
+	ResourceProfileSpec    = api.ResourceProfileSpec
 
 	// Deployments.
 	CreateDeploymentRequest = api.CreateDeploymentRequest
@@ -128,4 +132,12 @@ type (
 	// RaiseOverageCap).
 	SetAccountEgressAllowlistExtraRequest = api.SetAccountEgressAllowlistExtraRequest
 	AccountEgressAllowlistExtraResponse   = api.AccountEgressAllowlistExtraResponse
+)
+
+const (
+	ResourceProfileMicro  = api.ResourceProfileMicro
+	ResourceProfileSmall  = api.ResourceProfileSmall
+	ResourceProfileMedium = api.ResourceProfileMedium
+	ResourceProfileLarge  = api.ResourceProfileLarge
+	ResourceProfileXLarge = api.ResourceProfileXLarge
 )

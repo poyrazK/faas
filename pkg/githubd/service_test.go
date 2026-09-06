@@ -213,6 +213,31 @@ func TestHandlePushRequest_NoBindingIsSilent(t *testing.T) {
 	}
 }
 
+func TestHandlePushRequest_SkipMarkerStopsBeforeSourceFetch(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	svc.Source = &stubSource{err: errors.New("source must not be fetched")}
+	var checkInstall int64
+	var checkSummary string
+	svc.WriteSkippedCheckForInstallation = func(_ context.Context, installID int64, repo, sha, summary string) error {
+		checkInstall = installID
+		checkSummary = summary
+		if repo != "octo/api" || sha != "deadbeef" {
+			t.Errorf("check target = %s@%s", repo, sha)
+		}
+		return nil
+	}
+	body := []byte(`{"ref":"refs/heads/main","after":"deadbeef","repository":{"full_name":"octo/api","name":"api"},"head_commit":{"message":"docs: update [skip deploy]"},"pusher":{"name":"alice"}}`)
+	_, err := svc.HandlePushRequest(context.Background(), body)
+	if !IsSkipDeploy(err) {
+		t.Fatalf("err = %v, want ErrSkipDeploy", err)
+	}
+	if checkInstall != rig.install || !strings.Contains(checkSummary, "[skip deploy]") {
+		t.Errorf("skipped check = install %d summary %q", checkInstall, checkSummary)
+	}
+}
+
 func TestHandlePushRequest_FeatureBranchIgnored(t *testing.T) {
 	// Seed a project whose production_branch="main". Push to
 	// refs/heads/feature/x — bind matches via the feature/x row,
@@ -283,13 +308,101 @@ func TestHandlePushRequest_ReconcileErrorBubbles(t *testing.T) {
 	}
 }
 
-func TestHandlePushRequest_TagIsIgnored(t *testing.T) {
+func TestHandlePushRequest_TagDeploysAgainstDefaultBranch(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
 	svc := newServiceForRig(t, rig)
-	body := []byte(`{"ref":"refs/tags/v1.0","after":"x","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	body := []byte(`{"ref":"refs/tags/v1.0.0","before":"0000000000000000000000000000000000000000","after":"x","created":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"pusher":{"name":"alice"}}`)
+	result, err := svc.HandlePushRequest(context.Background(), body)
+	if err != nil {
+		t.Fatalf("tag push: %v", err)
+	}
+	if len(result.Added) != 1 {
+		t.Errorf("tag result.Added = %d, want 1", len(result.Added))
+	}
+}
+
+func TestHandlePushRequest_TagUsesConfiguredProductionBranch(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "release")
+	svc := newServiceForRig(t, rig)
+	// No default-branch binding: the project row must supply the
+	// configured production branch instead of silently ignoring the
+	// release tag.
+	svc.Bindings = &stubBindings{byRepo: map[string]state.GitHubBinding{}}
+	body := []byte(`{"ref":"refs/tags/v1.1.0","before":"0000000000000000000000000000000000000000","after":"x","created":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
+	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
+		t.Fatalf("tag push on configured branch: %v", err)
+	}
+}
+
+func TestHandlePushRequest_TagDeletionIsIgnored(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	body := []byte(`{"ref":"refs/tags/v1.0","after":"0000000000000000000000000000000000000000","deleted":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"pusher":{"name":"alice"}}`)
 	_, err := svc.HandlePushRequest(context.Background(), body)
 	if !IsNoBinding(err) {
-		t.Errorf("tag push → err = %v, want ErrNoBinding", err)
+		t.Errorf("tag deletion → err = %v, want ErrNoBinding", err)
+	}
+}
+
+func TestValidateReleaseTag(t *testing.T) {
+	const zero = "0000000000000000000000000000000000000000"
+	tests := []struct {
+		name    string
+		tag     string
+		before  string
+		created bool
+		forced  bool
+		reason  string
+	}{
+		{name: "stable", tag: "v1.2.3", before: zero, created: true},
+		{name: "prerelease", tag: "v2.0.0-rc.1", before: zero, created: true},
+		{name: "build metadata", tag: "v2.0.0+build.7", before: zero, created: true},
+		{name: "missing patch", tag: "v1.2", before: zero, created: true, reason: releaseTagReasonInvalid},
+		{name: "missing v prefix", tag: "1.2.3", before: zero, created: true, reason: releaseTagReasonInvalid},
+		{name: "leading zero", tag: "v01.2.3", before: zero, created: true, reason: releaseTagReasonInvalid},
+		{name: "moved tag", tag: "v1.2.3", before: "0123456789abcdef0123456789abcdef01234567", reason: releaseTagReasonMoved},
+		{name: "missing created flag", tag: "v1.2.3", before: zero, reason: releaseTagReasonMoved},
+		{name: "forced tag", tag: "v1.2.3", before: zero, created: true, forced: true, reason: releaseTagReasonMoved},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateReleaseTag(tt.tag, tt.before, tt.created, tt.forced)
+			if tt.reason == "" {
+				if err != nil {
+					t.Fatalf("validateReleaseTag() = %v, want nil", err)
+				}
+				return
+			}
+			if !isReleaseTagRejected(err) || releaseTagRejectReason(err) != tt.reason {
+				t.Fatalf("validateReleaseTag() = %v, want rejection %q", err, tt.reason)
+			}
+		})
+	}
+}
+
+func TestHandlePushRequest_MovedTagIsIgnoredBeforeBindingLookup(t *testing.T) {
+	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// A moved tag must be rejected before any binding or source dependency
+	// is touched. Leaving those dependencies unset makes that ordering
+	// observable: the result must still be the typed policy rejection.
+	body := []byte(`{"ref":"refs/tags/v1.2.3","before":"0123456789abcdef0123456789abcdef01234567","after":"fedcba98","created":false,"forced":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42}}`)
+	_, err := svc.HandlePushRequest(context.Background(), body)
+	if !isReleaseTagRejected(err) || releaseTagRejectReason(err) != releaseTagReasonMoved {
+		t.Fatalf("HandlePushRequest() = %v, want moved-tag rejection", err)
+	}
+}
+
+func TestHandlePushRequest_BranchDeletionIsIgnored(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	body := []byte(`{"ref":"refs/heads/main","after":"0000000000000000000000000000000000000000","deleted":true,"repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	_, err := svc.HandlePushRequest(context.Background(), body)
+	if !IsNoBinding(err) {
+		t.Errorf("branch deletion → err = %v, want ErrNoBinding", err)
 	}
 }
 
@@ -321,6 +434,7 @@ type recordingEnqueuer struct {
 type enqueueCall struct {
 	accountID  string
 	appID      string
+	deliveryID string
 	commitSHA  string
 	sourcePath string
 }
@@ -329,6 +443,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Bu
 	r.calls = append(r.calls, enqueueCall{
 		accountID:  spec.App.AccountID,
 		appID:      spec.App.ID,
+		deliveryID: spec.DeliveryID,
 		commitSHA:  spec.CommitSHA,
 		sourcePath: spec.SourcePath,
 	})
@@ -420,6 +535,24 @@ func TestHandlePushRequest_FanOut_EnqueueError_SoftFail(t *testing.T) {
 	}
 	if len(result.BuildIDs) != 0 {
 		t.Errorf("result.BuildIDs = %v, want [] (enqueue failed)", result.BuildIDs)
+	}
+}
+
+func TestHandlePushRequest_DurableDeliveryRetriesPartialFanOut(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	enq := &recordingEnqueuer{err: errors.New("queue unavailable")}
+	svc.Enqueuer = enq
+	body := []byte(`{"ref":"refs/heads/main","after":"sha-1","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	ctx := context.WithValue(context.Background(), webhookDeliveryContextKey{}, "delivery-1")
+
+	_, err := svc.HandlePushRequest(ctx, body)
+	if err == nil || !strings.Contains(err.Error(), "delivery-1 incomplete") {
+		t.Fatalf("HandlePushRequest error = %v, want durable delivery retry error", err)
+	}
+	if len(enq.calls) != 1 || enq.calls[0].deliveryID != "delivery-1" {
+		t.Fatalf("enqueue calls = %+v, want propagated delivery id", enq.calls)
 	}
 }
 
@@ -607,6 +740,21 @@ func TestHandlePushRequest_PathFilter_MatchesOneApp(t *testing.T) {
 	}
 	if cf.calls != 1 {
 		t.Errorf("ChangedFiles calls = %d, want 1", cf.calls)
+	}
+}
+
+func TestHandlePushRequest_PathFilter_SourceOnlyRetryStillBuilds(t *testing.T) {
+	cf := &stubChangedFiles{files: []string{"services/auth/api/index.ts"}}
+	svc, rec, _ := pathFilterRig(t, cf, false)
+	body := []byte(`{"ref":"refs/heads/main","before":"base123","after":"head456","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
+			t.Fatalf("HandlePushRequest attempt %d: %v", attempt, err)
+		}
+	}
+	if len(rec.calls) != 2 {
+		t.Fatalf("Enqueue calls = %d, want one auth build on both initial and converged retry", len(rec.calls))
 	}
 }
 

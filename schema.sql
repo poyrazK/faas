@@ -908,6 +908,7 @@ CREATE TABLE public.accounts (
     overage_cap_cents bigint,
     key_grace_window_days integer,
     egress_allowlist_extra integer DEFAULT 0 NOT NULL,
+    email_verified_at timestamp with time zone,
     CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
     CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
     CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
@@ -1028,7 +1029,7 @@ CREATE TABLE public.api_keys (
     created_ip inet,
     created_ua text,
     parent_key_id uuid,
-    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'apps:read'::text, 'env:read'::text, 'env:write'::text]) AND (cardinality(scopes) > 0))),
+    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );
 
@@ -1240,6 +1241,7 @@ CREATE TABLE public.apps (
     type text DEFAULT 'app'::text NOT NULL,
     runtime text,
     ram_mb integer NOT NULL,
+    cpu_millicores integer DEFAULT 1000 NOT NULL,
     idle_timeout_s integer,
     max_concurrency integer DEFAULT 1 NOT NULL,
     status text DEFAULT 'active'::text NOT NULL,
@@ -1306,6 +1308,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
     CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
     CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
+    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
@@ -1715,7 +1718,12 @@ CREATE TABLE public.custom_domains (
     verified_at timestamp with time zone,
     challenge_token text DEFAULT ''::text NOT NULL,
     app_id_redirect uuid,
-    org_id uuid
+    org_id uuid,
+    cert_status text DEFAULT 'pending'::text NOT NULL,
+    cert_expires_at timestamp with time zone,
+    cert_last_error text,
+    dns_last_checked_at timestamp with time zone,
+    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text])))
 );
 
 
@@ -2128,6 +2136,19 @@ CREATE TABLE public.egress_policy (
     danger_accept_rfc1918_lateral_movement boolean DEFAULT false NOT NULL,
     CONSTRAINT egress_policy_pair_check CHECK (((NOT danger_accept_rfc1918_lateral_movement) OR (COALESCE(array_length(overlay_exceptions, 1), 0) > 0))),
     CONSTRAINT egress_policy_singleton CHECK ((id = 'singleton'::text))
+);
+
+
+--
+-- Name: email_verification_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.email_verification_tokens (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -4195,6 +4216,14 @@ ALTER TABLE ONLY public.login_tokens
 
 
 --
+-- Name: email_verification_tokens email_verification_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_tokens
+    ADD CONSTRAINT email_verification_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
 -- Name: mail_suppressions mail_suppressions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5227,6 +5256,11 @@ CREATE INDEX custom_domains_org_id_idx ON public.custom_domains USING btree (org
 
 CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree (domain) WHERE (verified_at IS NULL);
 
+-- Name: custom_domains_cert_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_cert_expiry_idx ON public.custom_domains USING btree (cert_expires_at) WHERE (cert_status = ANY (ARRAY['issued'::text, 'renewing'::text]));
+
 
 --
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
@@ -5772,6 +5806,13 @@ CREATE UNIQUE INDEX jobs_account_name_uniq ON public.jobs USING btree (account_i
 --
 
 CREATE INDEX login_tokens_account_idx ON public.login_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: email_verification_tokens_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_tokens USING btree (account_id, expires_at);
 
 
 --
@@ -7561,6 +7602,14 @@ ALTER TABLE ONLY public.login_tokens
 
 
 --
+-- Name: email_verification_tokens email_verification_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_tokens
+    ADD CONSTRAINT email_verification_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: mail_suppressions mail_suppressions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7929,6 +7978,292 @@ ALTER TABLE ONLY public.usage_minutes
 
 
 --
+-- Name: copy_object_storage_grants_on_key_rotation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.copy_object_storage_grants_on_key_rotation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.rotated_from_id IS NOT NULL THEN
+        INSERT INTO object_storage_access_grants
+            (account_id, bucket_id, api_key_id, permission, created_at, updated_at)
+        SELECT account_id, bucket_id, NEW.id, permission, now(), now()
+          FROM object_storage_access_grants
+         WHERE api_key_id = NEW.rotated_from_id
+        ON CONFLICT (bucket_id, api_key_id) DO UPDATE
+            SET permission = EXCLUDED.permission, updated_at = now();
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: delete_object_storage_grants_on_bucket_delete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.delete_object_storage_grants_on_bucket_delete() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DELETE FROM object_storage_access_grants WHERE bucket_id = NEW.id;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_app_object_buckets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_app_object_buckets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'deleted' AND EXISTS (SELECT 1 FROM object_buckets WHERE app_id = NEW.id AND state <> 'deleted') THEN
+        RAISE EXCEPTION 'app has object buckets' USING ERRCODE = '23514', CONSTRAINT = 'app_has_object_buckets';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: object_buckets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_buckets (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    scope text NOT NULL,
+    region text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    state text DEFAULT 'provisioning'::text NOT NULL,
+    lease_token text,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error_code text DEFAULT '' NOT NULL,
+    CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
+    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
+    CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
+    CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
+    CONSTRAINT object_buckets_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
+    CONSTRAINT object_buckets_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'deleting'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: object_storage_access_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_access_grants (
+    account_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    api_key_id uuid NOT NULL,
+    permission text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_storage_access_grants_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
+    CONSTRAINT object_storage_access_grants_pkey PRIMARY KEY (bucket_id, api_key_id)
+);
+
+CREATE INDEX object_storage_access_grants_key_idx ON public.object_storage_access_grants USING btree (account_id, api_key_id, bucket_id);
+
+
+--
+-- Name: object_buckets object_buckets_physical_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_physical_name_key UNIQUE (physical_name);
+
+
+--
+-- Name: object_buckets object_buckets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_access_grants object_storage_access_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_access_grants
+    ADD CONSTRAINT object_storage_access_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_access_grants object_storage_access_grants_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_access_grants
+    ADD CONSTRAINT object_storage_access_grants_api_key_id_fkey FOREIGN KEY (api_key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_access_grants object_storage_access_grants_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_access_grants
+    ADD CONSTRAINT object_storage_access_grants_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_buckets_account_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_buckets_account_app_idx ON public.object_buckets USING btree (account_id, app_id);
+
+CREATE INDEX object_buckets_recovery_idx ON public.object_buckets USING btree (retry_at, id) WHERE (state = ANY (ARRAY['provisioning'::text, 'deleting'::text]));
+
+
+--
+-- Name: object_buckets_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX object_buckets_name_idx ON public.object_buckets USING btree (app_id, scope, name) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: apps app_object_buckets_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_object_buckets_guard BEFORE UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_app_object_buckets();
+
+
+--
+-- Name: api_keys api_key_rotation_copy_object_storage_grants; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_key_rotation_copy_object_storage_grants AFTER INSERT ON public.api_keys FOR EACH ROW WHEN ((new.rotated_from_id IS NOT NULL)) EXECUTE FUNCTION public.copy_object_storage_grants_on_key_rotation();
+
+
+--
+-- Name: object_buckets object_bucket_delete_access_grants; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_delete_access_grants AFTER UPDATE OF state ON public.object_buckets FOR EACH ROW WHEN (((new.state = 'deleted'::text) AND (old.state IS DISTINCT FROM new.state))) EXECUTE FUNCTION public.delete_object_storage_grants_on_bucket_delete();
+
+
+--
+-- Name: object_buckets object_buckets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: object_buckets object_buckets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+-- +goose Up
+-- All objects tolerate migration-ledger replay; never reset accounting data.
+CREATE TABLE IF NOT EXISTS object_storage_bucket_usage (
+    bucket_id uuid PRIMARY KEY REFERENCES object_buckets(id) ON DELETE CASCADE,
+    baseline_bytes bigint NOT NULL DEFAULT 0 CHECK (baseline_bytes >= 0),
+    baseline_keys bigint NOT NULL DEFAULT 0 CHECK (baseline_keys >= 0),
+    granted_bytes bigint NOT NULL DEFAULT 0 CHECK (granted_bytes >= 0),
+    granted_keys bigint NOT NULL DEFAULT 0 CHECK (granted_keys >= 0),
+    observed_bytes bigint NOT NULL DEFAULT 0 CHECK (observed_bytes >= 0),
+    observed_keys bigint NOT NULL DEFAULT 0 CHECK (observed_keys >= 0),
+    observed_at timestamptz,
+    attempt_at timestamptz,
+    lease_until timestamptz,
+    token text NOT NULL DEFAULT '',
+    CHECK ((token = '' AND lease_until IS NULL) OR (token <> '' AND lease_until IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS object_storage_key_grants (
+    bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
+    key_hash text NOT NULL CHECK (length(key_hash) = 64),
+    max_bytes bigint NOT NULL CHECK (max_bytes BETWEEN 0 AND 5497558138880),
+    PRIMARY KEY (bucket_id, key_hash)
+);
+CREATE TABLE IF NOT EXISTS object_storage_authorizations (
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    period_start timestamptz NOT NULL CHECK (period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
+    count bigint NOT NULL CHECK (count > 0),
+    PRIMARY KEY (account_id, period_start)
+);
+CREATE TABLE IF NOT EXISTS object_storage_inventory_samples (
+    token text PRIMARY KEY CHECK (token <> ''),
+    bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
+    observed_at timestamptz NOT NULL,
+    bytes bigint NOT NULL CHECK (bytes >= 0),
+    objects bigint NOT NULL CHECK (objects >= 0)
+);
+CREATE TABLE IF NOT EXISTS object_storage_usage_reports (
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    backend_id text NOT NULL CHECK (length(backend_id) BETWEEN 1 AND 63),
+    backend_fingerprint text NOT NULL CHECK (length(backend_fingerprint) = 64),
+    source text NOT NULL CHECK (length(source) BETWEEN 1 AND 128),
+    period_start timestamptz NOT NULL CHECK (period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
+    observed_at timestamptz NOT NULL CHECK (observed_at >= period_start AND observed_at < period_start + interval '1 month'),
+    stored_byte_hours bigint NOT NULL CHECK (stored_byte_hours BETWEEN 0 AND 1152921504606846976),
+    request_count bigint NOT NULL CHECK (request_count BETWEEN 0 AND 1152921504606846976),
+    egress_bytes bigint NOT NULL CHECK (egress_bytes BETWEEN 0 AND 1152921504606846976),
+    cost_millicents bigint NOT NULL CHECK (cost_millicents BETWEEN 0 AND 1152921504606846976),
+    PRIMARY KEY (account_id, backend_id, period_start, observed_at)
+);
+CREATE TABLE IF NOT EXISTS object_storage_usage_heads (
+    account_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    period_start timestamptz NOT NULL,
+    observed_at timestamptz NOT NULL,
+    PRIMARY KEY (account_id, period_start, backend_id),
+    FOREIGN KEY (account_id, backend_id, period_start, observed_at)
+        REFERENCES object_storage_usage_reports(account_id, backend_id, period_start, observed_at) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS object_storage_multipart_uploads (
+    id uuid PRIMARY KEY,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
+    object_key text NOT NULL CHECK (length(object_key) BETWEEN 1 AND 1024),
+    size_bytes bigint NOT NULL CHECK (size_bytes BETWEEN 1 AND 5497558138880),
+    part_size_bytes bigint NOT NULL CHECK (part_size_bytes BETWEEN 1 AND 5368709120),
+    part_count integer NOT NULL CHECK (part_count BETWEEN 1 AND 10000),
+    content_type text NOT NULL DEFAULT '' CHECK (length(content_type) <= 255),
+    provider_upload_id text NOT NULL DEFAULT '' CHECK (length(provider_upload_id) <= 4096),
+    completion_parts jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(completion_parts) = 'array'),
+    state text NOT NULL DEFAULT 'initiating' CHECK (state IN ('initiating','active','completing','aborting','completed','aborted')),
+    expires_at timestamptz NOT NULL,
+    lease_token text,
+    lease_until timestamptz,
+    attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 30),
+    retry_at timestamptz NOT NULL DEFAULT now(),
+    last_error_code text NOT NULL DEFAULT '' CHECK (length(last_error_code) <= 32),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CHECK ((lease_token IS NULL) = (lease_until IS NULL)),
+    CHECK (state = 'initiating' OR provider_upload_id <> '')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS object_storage_multipart_live_key_idx
+    ON object_storage_multipart_uploads (bucket_id, object_key)
+    WHERE state IN ('initiating','active','completing','aborting');
+CREATE INDEX IF NOT EXISTS object_storage_multipart_retry_idx
+    ON object_storage_multipart_uploads (retry_at, id)
+    WHERE state IN ('initiating','completing','aborting');
+CREATE INDEX IF NOT EXISTS object_storage_multipart_expiry_idx
+    ON object_storage_multipart_uploads (expires_at, id)
+    WHERE state = 'active';
+
 -- Name: upload_commit_outcomes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8012,5 +8347,4 @@ ALTER TABLE ONLY public.upload_commit_outcomes
     ADD CONSTRAINT upload_commit_outcomes_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.upload_sessions(id) ON DELETE CASCADE;
 
 
---
 --

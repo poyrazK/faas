@@ -1248,6 +1248,10 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			InflightRequests: row.GetInflightRequests(),
 			OpenConns:        row.GetOpenConns(),
 		}
+		if value := row.GetRequestCountTotal(); value != nil {
+			v := value.GetValue()
+			item.RequestCountTotal = &v
+		}
 		if value := row.GetResidentBytes(); value != nil {
 			v := value.GetValue()
 			item.ResidentBytes = &v
@@ -1270,6 +1274,10 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 		if value := row.GetNetTxBytes(); value != nil {
 			v := value.GetValue()
 			item.NetTxBytes = &v
+		}
+		if value := row.GetNetRxBytes(); value != nil {
+			v := value.GetValue()
+			item.NetRxBytes = &v
 		}
 		out = append(out, item)
 	}
@@ -1335,6 +1343,8 @@ func (s *Server) ListInstanceStats(ctx context.Context, _ *scheddpb.ListInstance
 				CpuValid:      uint32(r.CPU),
 				NetTxBytes:    r.TXBytes,
 				TxValid:       uint32(r.TX),
+				NetRxBytes:    r.RXBytes,
+				RxValid:       uint32(r.RX),
 				SidecarRamMbs: int32SliceToProto(r.SidecarMBs),
 			}
 			rows = append(rows, row)

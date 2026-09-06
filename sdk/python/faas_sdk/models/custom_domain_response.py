@@ -36,9 +36,15 @@ class CustomDomainResponse:
     """Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME
     points at a CDN, the SANs reveal which CDN."""
     cert_status: None | str | Unset = UNSET
-    """One of `issued` | `pending` | `dial_failed:<reason>`. The show endpoint surfaces this verbatim so the
-    customer can distinguish DNS-not-propagated from cert-not-yet-issued from TLS-handshake-refused. Issue #961 /
-    Mega-A PR-3 code-review round (MED-4)."""
+    """Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, or failed; issue #1397 / F1).
+    The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the
+    edge."""
+    cert_expires_at: datetime.datetime | None | Unset = UNSET
+    """Durable certificate expiry timestamp recorded by the cert observer."""
+    cert_last_error: None | str | Unset = UNSET
+    """Most recent certificate issuance/renewal error, when cert_status is failed."""
+    dns_last_checked_at: datetime.datetime | None | Unset = UNSET
+    """Timestamp of the most recent DNS verification/doctor probe."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,6 +94,28 @@ class CustomDomainResponse:
         else:
             cert_status = self.cert_status
 
+        cert_expires_at: None | str | Unset
+        if isinstance(self.cert_expires_at, Unset):
+            cert_expires_at = UNSET
+        elif isinstance(self.cert_expires_at, datetime.datetime):
+            cert_expires_at = self.cert_expires_at.isoformat()
+        else:
+            cert_expires_at = self.cert_expires_at
+
+        cert_last_error: None | str | Unset
+        if isinstance(self.cert_last_error, Unset):
+            cert_last_error = UNSET
+        else:
+            cert_last_error = self.cert_last_error
+
+        dns_last_checked_at: None | str | Unset
+        if isinstance(self.dns_last_checked_at, Unset):
+            dns_last_checked_at = UNSET
+        elif isinstance(self.dns_last_checked_at, datetime.datetime):
+            dns_last_checked_at = self.dns_last_checked_at.isoformat()
+        else:
+            dns_last_checked_at = self.dns_last_checked_at
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -111,6 +139,12 @@ class CustomDomainResponse:
             field_dict["cert_sans"] = cert_sans
         if cert_status is not UNSET:
             field_dict["cert_status"] = cert_status
+        if cert_expires_at is not UNSET:
+            field_dict["cert_expires_at"] = cert_expires_at
+        if cert_last_error is not UNSET:
+            field_dict["cert_last_error"] = cert_last_error
+        if dns_last_checked_at is not UNSET:
+            field_dict["dns_last_checked_at"] = dns_last_checked_at
 
         return field_dict
 
@@ -188,6 +222,49 @@ class CustomDomainResponse:
 
         cert_status = _parse_cert_status(d.pop("cert_status", UNSET))
 
+        def _parse_cert_expires_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                cert_expires_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return cert_expires_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        cert_expires_at = _parse_cert_expires_at(d.pop("cert_expires_at", UNSET))
+
+        def _parse_cert_last_error(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        cert_last_error = _parse_cert_last_error(d.pop("cert_last_error", UNSET))
+
+        def _parse_dns_last_checked_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                dns_last_checked_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return dns_last_checked_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        dns_last_checked_at = _parse_dns_last_checked_at(d.pop("dns_last_checked_at", UNSET))
+
         custom_domain_response = cls(
             domain=domain,
             app_id=app_id,
@@ -199,6 +276,9 @@ class CustomDomainResponse:
             cert_not_after=cert_not_after,
             cert_sans=cert_sans,
             cert_status=cert_status,
+            cert_expires_at=cert_expires_at,
+            cert_last_error=cert_last_error,
+            dns_last_checked_at=dns_last_checked_at,
         )
 
         custom_domain_response.additional_properties = d

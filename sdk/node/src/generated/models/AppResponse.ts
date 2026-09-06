@@ -2,9 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppConfiguredResources } from './AppConfiguredResources.js';
+import type { AppEffectiveLimits } from './AppEffectiveLimits.js';
 import type { AppManifest } from './AppManifest.js';
 import type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
 import type { PublicAuthStatus } from './PublicAuthStatus.js';
+import type { ResourceProfile } from './ResourceProfile.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 /**
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
@@ -18,8 +21,15 @@ export type AppResponse = {
    */
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
   ram_mb: number;
+  cpu_millicores: 250 | 500 | 1000;
+  /**
+   * Named profile when the configured memory and CPU exactly match one of the platform profiles; omitted for custom shapes.
+   */
+  resource_profile?: ResourceProfile;
+  configured_resources: AppConfiguredResources;
   max_concurrency: number;
   concurrency_per_vm: number;
+  effective_limits: AppEffectiveLimits;
   idle_timeout_s?: number | null;
   min_instances: number;
   status: string;

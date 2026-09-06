@@ -40,6 +40,9 @@ from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
+from .app_configured_resources import AppConfiguredResources
+from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
+from .app_effective_limits import AppEffectiveLimits
 from .app_env_list_response import AppEnvListResponse
 from .app_env_list_response_env_by_scope import AppEnvListResponseEnvByScope
 from .app_env_response import AppEnvResponse
@@ -70,6 +73,7 @@ from .app_registry_credential_list_response import AppRegistryCredentialListResp
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
+from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
 from .app_response_type import AppResponseType
@@ -147,6 +151,7 @@ from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .cors_preset_list_response import CorsPresetListResponse
@@ -159,6 +164,7 @@ from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
 from .create_app_request import CreateAppRequest
 from .create_app_request_app_protocol import CreateAppRequestAppProtocol
+from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
@@ -192,6 +198,8 @@ from .create_job_run_request_env_overrides import CreateJobRunRequestEnvOverride
 from .create_key_request import CreateKeyRequest
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
 from .create_mirror_rule_request import CreateMirrorRuleRequest
+from .create_object_bucket_body import CreateObjectBucketBody
+from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
@@ -216,6 +224,7 @@ from .csrf_token_response import CSRFTokenResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
+from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
 from .data_upstream_list_response import DataUpstreamListResponse
 from .data_upstream_response import DataUpstreamResponse
@@ -237,6 +246,8 @@ from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
+from .deploy_dev_source_body import DeployDevSourceBody
+from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
 from .deployment_healthcheck import DeploymentHealthcheck
@@ -261,8 +272,10 @@ from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseP
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_tag import DeploymentResponseTag
+from .dev_session_response import DevSessionResponse
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
+from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
 from .diff_app_config_patch_eviction_priority import DiffAppConfigPatchEvictionPriority
 from .diff_break import DiffBreak
 from .diff_break_severity import DiffBreakSeverity
@@ -341,6 +354,7 @@ from .get_account_slo_window import GetAccountSLOWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
+from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
 from .get_app_slo_window import GetAppSLOWindow
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
@@ -415,6 +429,8 @@ from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
+from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
 from .list_cron_runs_response import ListCronRunsResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_instances_response import ListInstancesResponse
@@ -446,10 +462,31 @@ from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
+from .mirror_clean_condition import MirrorCleanCondition
 from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
 from .o_auth_provider_capability import OAuthProviderCapability
+from .object_bucket import ObjectBucket
+from .object_bucket_access_grant import ObjectBucketAccessGrant
+from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
+from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
+from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
+from .object_bucket_list import ObjectBucketList
+from .object_bucket_state import ObjectBucketState
+from .object_multipart_completed_part import ObjectMultipartCompletedPart
+from .object_multipart_part_sign_request import ObjectMultipartPartSignRequest
+from .object_multipart_upload import ObjectMultipartUpload
+from .object_multipart_upload_state import ObjectMultipartUploadState
+from .object_sign_request import ObjectSignRequest
+from .object_sign_request_method import ObjectSignRequestMethod
+from .object_signed_request import ObjectSignedRequest
+from .object_signed_request_headers import ObjectSignedRequestHeaders
+from .object_signed_request_method import ObjectSignedRequestMethod
+from .object_storage_policy import ObjectStoragePolicy
+from .object_storage_usage import ObjectStorageUsage
+from .object_storage_usage_report import ObjectStorageUsageReport
+from .object_storage_usage_response import ObjectStorageUsageResponse
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
@@ -553,6 +590,14 @@ from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .repo_response import RepoResponse
+from .request_analytics_response import RequestAnalyticsResponse
+from .request_analytics_route import RequestAnalyticsRoute
+from .request_analytics_route_method import RequestAnalyticsRouteMethod
+from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
+from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
+from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
+from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
+from .resource_profile import ResourceProfile
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
@@ -589,9 +634,12 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
+from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
+from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_env import SidecarEnv
 from .sidecar_type import SidecarType
 from .slo_duration import SLODuration
@@ -646,6 +694,9 @@ from .update_alert_rule_request_metric import UpdateAlertRuleRequestMetric
 from .update_alert_rule_request_window_spec import UpdateAlertRuleRequestWindowSpec
 from .update_app_request import UpdateAppRequest
 from .update_app_request_app_protocol import UpdateAppRequestAppProtocol
+from .update_app_request_cpu_millicores_type_1 import UpdateAppRequestCpuMillicoresType1
+from .update_app_request_cpu_millicores_type_2_type_1 import UpdateAppRequestCpuMillicoresType2Type1
+from .update_app_request_cpu_millicores_type_3_type_1 import UpdateAppRequestCpuMillicoresType3Type1
 from .update_app_request_eviction_priority_type_1 import UpdateAppRequestEvictionPriorityType1
 from .update_app_request_eviction_priority_type_2_type_1 import UpdateAppRequestEvictionPriorityType2Type1
 from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequestEvictionPriorityType3Type1
@@ -688,6 +739,9 @@ from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
 from .upload_start_request import UploadStartRequest
 from .upload_start_response import UploadStartResponse
+from .upsert_dev_session_request import UpsertDevSessionRequest
+from .upsert_dev_session_request_runtime import UpsertDevSessionRequestRuntime
+from .upsert_dev_session_request_type import UpsertDevSessionRequestType
 from .usage_export_response import UsageExportResponse
 from .usage_response import UsageResponse
 from .usage_summary_response import UsageSummaryResponse
@@ -711,6 +765,8 @@ from .workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
 from .workflow_step_spec_method import WorkflowStepSpecMethod
 from .workflow_trigger_spec import WorkflowTriggerSpec
 from .workflow_trigger_spec_type import WorkflowTriggerSpecType
+from .workload_dependency import WorkloadDependency
+from .workload_dependency_condition import WorkloadDependencyCondition
 
 __all__ = (
     "AccountAppSecretResponse",
@@ -753,6 +809,9 @@ __all__ = (
     "APIKeyResponse",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
+    "AppConfiguredResources",
+    "AppConfiguredResourcesCpuMillicores",
+    "AppEffectiveLimits",
     "AppEnvListResponse",
     "AppEnvListResponseEnvByScope",
     "AppEnvResponse",
@@ -786,6 +845,7 @@ __all__ = (
     "AppRegistryCredentialResponse",
     "AppResponse",
     "AppResponseAppProtocol",
+    "AppResponseCpuMillicores",
     "AppResponseEvictionPriority",
     "AppResponseRuntime",
     "AppResponseType",
@@ -860,6 +920,7 @@ __all__ = (
     "ChangePlanRequestPlan",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CompleteObjectMultipartUploadRequest",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "CorsPresetListResponse",
@@ -872,6 +933,7 @@ __all__ = (
     "CreateAlertRuleRequestWindowSpec",
     "CreateAppRequest",
     "CreateAppRequestAppProtocol",
+    "CreateAppRequestCpuMillicores",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
     "CreateAppRequestRestartPolicy",
@@ -905,6 +967,8 @@ __all__ = (
     "CreateKeyRequest",
     "CreateKeyRequestScopesItem",
     "CreateMirrorRuleRequest",
+    "CreateObjectBucketBody",
+    "CreateObjectMultipartUploadRequest",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
@@ -925,6 +989,7 @@ __all__ = (
     "CustomDomainResponse",
     "CustomStage",
     "DailyUsageListResponse",
+    "DailyUsagePoint",
     "DailyUsageResponse",
     "DataUpstreamListResponse",
     "DataUpstreamResponse",
@@ -946,6 +1011,8 @@ __all__ = (
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
+    "DeployDevSourceBody",
+    "DeployDevSourceBodyRuntime",
     "DeploymentAuditResponse",
     "DeploymentAuditResponseKind",
     "DeploymentHealthcheck",
@@ -966,8 +1033,10 @@ __all__ = (
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
     "DeploymentResponseTag",
+    "DevSessionResponse",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
+    "DiffAppConfigPatchCpuMillicores",
     "DiffAppConfigPatchEvictionPriority",
     "DiffBreak",
     "DiffBreakSeverity",
@@ -1046,6 +1115,7 @@ __all__ = (
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
+    "GetAppRequestAnalyticsTimeseriesMethod",
     "GetAppSLOWindow",
     "GetAppsMetricsRange",
     "GetBuildSbomResponse200",
@@ -1120,6 +1190,8 @@ __all__ = (
     "KafkaTriggerConfig",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListBucketObjectsResponse200",
+    "ListBucketObjectsResponse200ItemsItem",
     "ListCronRunsResponse",
     "ListDeploymentAuditResponse",
     "ListInstancesResponse",
@@ -1151,10 +1223,31 @@ __all__ = (
     "MFARecoverResponse",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
+    "MirrorCleanCondition",
     "MirrorRuleListResponse",
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
     "OAuthProviderCapability",
+    "ObjectBucket",
+    "ObjectBucketAccessGrant",
+    "ObjectBucketAccessGrantKeyStatus",
+    "ObjectBucketAccessGrantList",
+    "ObjectBucketAccessGrantPermission",
+    "ObjectBucketList",
+    "ObjectBucketState",
+    "ObjectMultipartCompletedPart",
+    "ObjectMultipartPartSignRequest",
+    "ObjectMultipartUpload",
+    "ObjectMultipartUploadState",
+    "ObjectSignedRequest",
+    "ObjectSignedRequestHeaders",
+    "ObjectSignedRequestMethod",
+    "ObjectSignRequest",
+    "ObjectSignRequestMethod",
+    "ObjectStoragePolicy",
+    "ObjectStorageUsage",
+    "ObjectStorageUsageReport",
+    "ObjectStorageUsageResponse",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
@@ -1256,6 +1349,14 @@ __all__ = (
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "RepoResponse",
+    "RequestAnalyticsResponse",
+    "RequestAnalyticsRoute",
+    "RequestAnalyticsRouteMethod",
+    "RequestAnalyticsTimeseriesPoint",
+    "RequestAnalyticsTimeseriesResponse",
+    "RequestAnalyticsTimeseriesResponseBucket",
+    "RequestAnalyticsTimeseriesResponseMethod",
+    "ResourceProfile",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",
@@ -1290,9 +1391,12 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
     "SetGraceWindowRequest",
+    "SetObjectBucketAccessGrantRequest",
+    "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
     "SeverityCounts",
     "Sidecar",
+    "SidecarCpuMillicores",
     "SidecarEnv",
     "SidecarType",
     "SLODuration",
@@ -1347,6 +1451,9 @@ __all__ = (
     "UpdateAlertRuleRequestWindowSpec",
     "UpdateAppRequest",
     "UpdateAppRequestAppProtocol",
+    "UpdateAppRequestCpuMillicoresType1",
+    "UpdateAppRequestCpuMillicoresType2Type1",
+    "UpdateAppRequestCpuMillicoresType3Type1",
     "UpdateAppRequestEvictionPriorityType1",
     "UpdateAppRequestEvictionPriorityType2Type1",
     "UpdateAppRequestEvictionPriorityType3Type1",
@@ -1385,6 +1492,9 @@ __all__ = (
     "UploadSessionResponseStatus",
     "UploadStartRequest",
     "UploadStartResponse",
+    "UpsertDevSessionRequest",
+    "UpsertDevSessionRequestRuntime",
+    "UpsertDevSessionRequestType",
     "UsageExportResponse",
     "UsageResponse",
     "UsageSummaryResponse",
@@ -1408,4 +1518,6 @@ __all__ = (
     "WorkflowStepSpecMethod",
     "WorkflowTriggerSpec",
     "WorkflowTriggerSpecType",
+    "WorkloadDependency",
+    "WorkloadDependencyCondition",
 )

@@ -72,6 +72,27 @@ func TestSampleReadsCPUAndRSS(t *testing.T) {
 	}
 }
 
+func TestSampleReadsLegacyDoublePrefixedPlanPath(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("cgroup v2 is Linux-only")
+	}
+	root := withFakeRoot(t)
+	dir := filepath.Join(root, fcvm.LegacyParentCgroupFor(api.PlanScale), "vm-legacy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cpu.stat"), []byte("usage_usec 77\nthrottled_usec 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "memory.current"), []byte("8192\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := New(root, nil).Sample("vm-legacy", api.PlanScale)
+	if !ok || got.CPUUsageUsec != 77 || got.RSSBytes != 8192 {
+		t.Fatalf("legacy sample = %+v, %v", got, ok)
+	}
+}
+
 func TestSampleReturnsFalseOnMissingScope(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("cgroup v2 is Linux-only")

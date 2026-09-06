@@ -2,6 +2,13 @@ package gateway
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -204,5 +211,128 @@ func TestPGBackendAdmitBurstCapsLegacyAdapters(t *testing.T) {
 	}
 	if got := b.HealthyCount("app-1"); got != api.ScaleUpMaxBurstPerTick {
 		t.Fatalf("healthy targets = %d, want %d", got, api.ScaleUpMaxBurstPerTick)
+	}
+}
+
+// cappedBurstBackend models a successful first restore followed by a
+// scheduler refusal to expand beyond the app or host limit.
+type cappedBurstBackend struct {
+	*fakeBackend
+	burstCalls atomic.Int32
+	release    chan struct{}
+	burstErr   error
+}
+
+func (b *cappedBurstBackend) Admit(ctx context.Context, appID, deploymentID, scope, trigger string, maxConcurrency int) (string, WakeMethod, bool, error) {
+	if b.release != nil {
+		select {
+		case <-b.release:
+		case <-ctx.Done():
+			return "", WakeMethodUnspecified, false, ctx.Err()
+		}
+	}
+	return b.fakeBackend.Admit(ctx, appID, deploymentID, scope, trigger, maxConcurrency)
+}
+
+func (b *cappedBurstBackend) AdmitBurst(context.Context, string, string, string, int, int) (int, error) {
+	b.burstCalls.Add(1)
+	return 0, b.burstErr
+}
+
+func TestHandlerColdBurstRespectsAppInstanceCeiling(t *testing.T) {
+	b := &cappedBurstBackend{
+		fakeBackend: &fakeBackend{
+			app:  App{ID: "app-1", Plan: api.PlanScale, MaxConcurrency: 1},
+			host: "app.example.com", upstream: "node-1",
+		},
+		release: make(chan struct{}),
+	}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.WithForwarding(func(Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	})
+	var once sync.Once
+	release := func() { once.Do(func() { close(b.release) }) }
+	t.Cleanup(release)
+	results := make(chan int, 100)
+	for i := 0; i < 100; i++ {
+		go func() {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil))
+			results <- rec.Code
+		}()
+	}
+	deadline := time.After(3 * time.Second)
+	for h.gate.InflightWaiters(b.app.ID) != 100 {
+		select {
+		case <-deadline:
+			t.Fatal("100 requests did not join the shared wake")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	release()
+	for i := 0; i < 100; i++ {
+		select {
+		case status := <-results:
+			if status != http.StatusOK {
+				t.Errorf("request returned %d, want 200", status)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("burst did not finish")
+		}
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 1 {
+		t.Errorf("cold admissions = %d, want one shared restore", got)
+	}
+	if got := b.burstCalls.Load(); got != 0 {
+		t.Errorf("extra admissions = %d, want none at app ceiling", got)
+	}
+}
+
+func TestBurstCapacityUsesExistingTargetsWhenExpansionStalls(t *testing.T) {
+	backendErr := errors.New("scheduler RPC failed")
+	for _, tt := range []struct {
+		name     string
+		healthy  bool
+		admitErr error
+		wantErr  error
+	}{
+		{name: "host full with ready target", healthy: true},
+		{name: "no ready target", wantErr: errBurstCapacityStalled},
+		{name: "real scheduler failure", healthy: true, admitErr: backendErr, wantErr: backendErr},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &cappedBurstBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}}, burstErr: tt.admitErr}
+			if tt.healthy {
+				b.AddTarget(Target{NodeID: "node-1", InstanceID: "restored"})
+			}
+			h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+			h.burstPressure.state(b.app.ID).inflight.Store(100)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := h.maybeBurstCapacity(ctx, b.app, 20, 80); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("maybeBurstCapacity = %v, want %v", err, tt.wantErr)
+			}
+			if got := b.burstCalls.Load(); got != 1 {
+				t.Fatalf("admissions = %d, want one bounded attempt", got)
+			}
+		})
+	}
+}
+
+func TestBurstCapacityClampsAppCeilingToPlan(t *testing.T) {
+	for _, appLimit := range []int{0, 1, 100} {
+		t.Run(itoa(uint64(appLimit)), func(t *testing.T) {
+			b := &cappedBurstBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", MaxConcurrency: appLimit}}}
+			b.AddTarget(Target{NodeID: "node-1", InstanceID: "ready"})
+			h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+			h.burstPressure.state(b.app.ID).inflight.Store(100)
+			if err := h.maybeBurstCapacity(context.Background(), b.app, 1, 80); err != nil {
+				t.Fatal(err)
+			}
+			if b.burstCalls.Load() != 0 {
+				t.Fatal("attempted admission beyond plan ceiling")
+			}
+		})
 	}
 }

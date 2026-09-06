@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -99,11 +100,18 @@ type auditEventOutboxRow struct {
 // (unique email, unique slug, unique key hash) so tests exercise real error
 // paths. It is NOT durable — production uses the Postgres store.
 type MemStore struct {
-	mu        sync.Mutex
-	accounts  map[string]Account
-	keys      map[string]APIKey
-	keyByHash map[string]APIKey
-	apps      map[string]App
+	objectBuckets          map[string]ObjectBucket
+	objectUsage            map[string]ObjectBucketUsage
+	objectGrants           map[string]map[string]int64
+	objectReports          []api.ObjectStorageUsageReport
+	objectAuthorizations   map[string]int64
+	objectAccessGrants     map[string]ObjectBucketAccessGrant
+	objectMultipartUploads map[string]ObjectMultipartUpload
+	mu                     sync.Mutex
+	accounts               map[string]Account
+	keys                   map[string]APIKey
+	keyByHash              map[string]APIKey
+	apps                   map[string]App
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -118,9 +126,8 @@ type MemStore struct {
 	// handler writes after verifying the install against api.github.com
 	// (review findings #1 + #2 closure, ADR-012).
 	githubBindings map[string]GitHubBinding
-	// githubInstalls is the durable OAuth handshake state per
-	// account (PR-C). Keyed by accountID so the cold-start rehydrate
-	// path in pkg/githubd/realservice.go can look up by account.
+	// githubInstalls is keyed by accountID + NUL + installationID so an
+	// account can retain personal and organization installations.
 	githubInstalls map[string]GitHubInstall
 	// githubWebhookSecrets is the per-tenant webhook secret
 	// store (PR-D / ADR-012 §7 amendment). Keyed by
@@ -343,6 +350,9 @@ type MemStore struct {
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
 	loginTokens map[string]LoginToken
+	// emailVerificationTokens is separate from loginTokens because consume
+	// verifies the account but never authenticates the caller.
+	emailVerificationTokens map[string]EmailVerificationToken
 	// cliAuthCodes is keyed by the SHA-256 hash of the raw code
 	// (same key format as loginTokens). AccountID is empty until the
 	// dashboard claims the code; the claim statement fills it in
@@ -696,12 +706,14 @@ type builderUsageRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		accounts:       map[string]Account{},
-		keys:           map[string]APIKey{},
-		keyByHash:      map[string]APIKey{},
-		apps:           map[string]App{},
-		githubBindings: map[string]GitHubBinding{},
-		githubInstalls: map[string]GitHubInstall{},
+		objectAccessGrants:     map[string]ObjectBucketAccessGrant{},
+		objectMultipartUploads: map[string]ObjectMultipartUpload{},
+		accounts:               map[string]Account{},
+		keys:                   map[string]APIKey{},
+		keyByHash:              map[string]APIKey{},
+		apps:                   map[string]App{},
+		githubBindings:         map[string]GitHubBinding{},
+		githubInstalls:         map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
@@ -775,17 +787,18 @@ func NewMemStore() *MemStore {
 		oidcTrustPolicies:   map[string]OIDCTrustPolicy{},
 		oidcExchangedTokens: map[string]OIDCExchangedToken{},
 		// ADR-100 / tenant surfaces — see memstore_tenant_surface.go.
-		tenantSurfaces:    map[string]TenantSurface{},
-		tenantHostnames:   map[string]TenantHostname{},
-		invocations:       map[string]Invocation{},
-		accountAsyncQuota: map[string]accountAsyncQuotaRow{},
-		instances:         map[string]Instance{},
-		loginTokens:       map[string]LoginToken{},
-		cliAuthCodes:      map[string]CliAuthCode{},
-		accountPasswords:  map[string]AccountPassword{},
-		oauthLinks:        map[string]OAuthLink{},
-		deploymentLogs:    map[string][]LogEntry{},
-		deploymentSeq:     map[string]int64{},
+		tenantSurfaces:          map[string]TenantSurface{},
+		tenantHostnames:         map[string]TenantHostname{},
+		invocations:             map[string]Invocation{},
+		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
+		instances:               map[string]Instance{},
+		loginTokens:             map[string]LoginToken{},
+		emailVerificationTokens: map[string]EmailVerificationToken{},
+		cliAuthCodes:            map[string]CliAuthCode{},
+		accountPasswords:        map[string]AccountPassword{},
+		oauthLinks:              map[string]OAuthLink{},
+		deploymentLogs:          map[string][]LogEntry{},
+		deploymentSeq:           map[string]int64{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -900,7 +913,8 @@ func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan)
 			return Account{}, fmt.Errorf("state: account with email %q exists", email)
 		}
 	}
-	a := Account{ID: newID(), Email: email, Plan: plan, Status: AccountActive, CreatedAt: time.Now()}
+	now := time.Now().UTC()
+	a := Account{ID: newID(), Email: email, Plan: plan, Status: AccountActive, CreatedAt: now, EmailVerifiedAt: &now}
 	m.accounts[a.ID] = a
 	return a, nil
 }
@@ -929,6 +943,10 @@ func (m *MemStore) CreateAccountWithPersonalOrg(_ context.Context, params Create
 		Plan:      params.Plan,
 		Status:    AccountActive,
 		CreatedAt: now,
+	}
+	if !params.RequireEmailVerification {
+		verifiedAt := now
+		acct.EmailVerifiedAt = &verifiedAt
 	}
 	m.accounts[acct.ID] = acct
 
@@ -1153,7 +1171,27 @@ func (m *MemStore) AccountByOIDCSubject(_ context.Context, issuerURL, subject st
 		matches = append(matches, policy)
 	}
 	if len(matches) == 0 {
-		return Account{}, ErrNotFound
+		repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
+		if !ok {
+			return Account{}, ErrNotFound
+		}
+		accountIDs := map[string]struct{}{}
+		for appID, binding := range m.githubBindings {
+			app, appOK := m.apps[appID]
+			_, accountOK := m.accounts[binding.AccountID]
+			installKey := binding.AccountID + "\x00" + strconv.FormatInt(binding.InstallID, 10)
+			_, installOK := m.githubInstalls[installKey]
+			if strings.EqualFold(binding.RepoFullName, repo) && appOK && accountOK && installOK &&
+				app.AccountID == binding.AccountID {
+				accountIDs[binding.AccountID] = struct{}{}
+			}
+		}
+		if len(accountIDs) != 1 {
+			return Account{}, ErrNotFound
+		}
+		for accountID := range accountIDs {
+			return m.accounts[accountID], nil
+		}
 	}
 	sort.Slice(matches, func(i, j int) bool {
 		iSpecific := matches[i].SubjectPattern != ""
@@ -1695,6 +1733,7 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
+	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -1722,6 +1761,7 @@ func (m *MemStore) DeleteAPIKey(_ context.Context, accountID, keyID string) erro
 	}
 	delete(m.keys, keyID)
 	delete(m.keyByHash, hex.EncodeToString(k.Hash))
+	m.deleteObjectBucketAccessGrantsForKeyLocked(keyID)
 	return nil
 }
 
@@ -1740,6 +1780,7 @@ func (m *MemStore) DeleteAPIKeyReturning(_ context.Context, accountID, keyID str
 	}
 	delete(m.keys, keyID)
 	delete(m.keyByHash, hex.EncodeToString(k.Hash))
+	m.deleteObjectBucketAccessGrantsForKeyLocked(keyID)
 	return k, nil
 }
 
@@ -1912,6 +1953,7 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
+	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -2102,6 +2144,7 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
+	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -2442,6 +2485,9 @@ func (m *MemStore) ApplyProjectPlan(
 		if a.Status == "" {
 			a.Status = AppActive
 		}
+		if a.CPUMillicores == 0 {
+			a.CPUMillicores = api.DefaultAppCPUMillicores
+		}
 		a.CreatedAt = now
 		m.apps[a.ID] = a
 		insertedApps = append(insertedApps, a)
@@ -2485,6 +2531,9 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	}
 	if app.Status == "" {
 		app.Status = AppActive
+	}
+	if app.CPUMillicores == 0 {
+		app.CPUMillicores = api.DefaultAppCPUMillicores
 	}
 	// Issue #475: snap empty Go zero to the schema DEFAULT 'best_effort'
 	// so the column reads as a real value right out of CreateApp. The
@@ -2547,6 +2596,9 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	}
 	if app.Status == "" {
 		app.Status = AppActive
+	}
+	if app.CPUMillicores == 0 {
+		app.CPUMillicores = api.DefaultAppCPUMillicores
 	}
 	// Issue #475: same snap-to-default as CreateApp above — the
 	// quota-gated path must round-trip 'best_effort' just like the
@@ -2674,6 +2726,23 @@ func (m *MemStore) SetPreviewPrState(_ context.Context, appID, prState string) (
 		return App{}, ErrNotFound
 	}
 	a.PreviewPrState = prState
+	m.apps[appID] = a
+	return a, nil
+}
+
+// RefreshDevSession is the in-memory mirror of PgStore.RefreshDevSession.
+// preview_pr_number=0 is the discriminator for CLI-created developer
+// sessions; GitHub PR previews are never eligible for this transition.
+func (m *MemStore) RefreshDevSession(_ context.Context, appID string, expiresAt time.Time) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[appID]
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber != 0 || a.Status == AppDeleted {
+		return App{}, ErrNotFound
+	}
+	t := expiresAt
+	a.PreviewPrState = PreviewPrStateOpen
+	a.PreviewExpiresAt = &t
 	m.apps[appID] = a
 	return a, nil
 }
@@ -3693,6 +3762,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	if p.RAMMB != nil {
 		a.RAMMB = *p.RAMMB
 	}
+	if p.CPUMillicores != nil {
+		a.CPUMillicores = *p.CPUMillicores
+	}
 	if p.SetIdleTimeout {
 		a.IdleTimeoutS = intOrZero(p.IdleTimeoutS)
 	}
@@ -4019,6 +4091,11 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return App{}, ErrConflict
+		}
+	}
 	a.Status = AppDeleted
 	m.apps[id] = a
 	return a, nil
@@ -4077,10 +4154,17 @@ func (m *MemStore) InstallationIDForRepo(_ context.Context, repoFullName string)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	installID := int64(0)
 	for _, b := range m.githubBindings {
 		if b.RepoFullName == repoFullName && b.InstallID != 0 {
-			return b.InstallID, nil
+			if installID != 0 && installID != b.InstallID {
+				return 0, ErrNotFound
+			}
+			installID = b.InstallID
 		}
+	}
+	if installID != 0 {
+		return installID, nil
 	}
 	return 0, ErrNotFound
 }
@@ -4103,7 +4187,8 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.apps[b.AppID]; !ok {
+	app, ok := m.apps[b.AppID]
+	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
 	m.githubBindings[b.AppID] = b
@@ -4130,6 +4215,17 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
 // lookup. Mirrors PgStore. Returns ErrNotFound when no app is bound.
 func (m *MemStore) GithubInstallBindingForRepoBranch(_ context.Context, repoFullName, productionBranch string) (GitHubBinding, error) {
+	return m.githubInstallBindingForRepoBranch(repoFullName, productionBranch, 0)
+}
+
+func (m *MemStore) GithubInstallBindingForRepoBranchInstallation(_ context.Context, repoFullName, productionBranch string, installationID int64) (GitHubBinding, error) {
+	if installationID <= 0 {
+		return GitHubBinding{}, ErrNotFound
+	}
+	return m.githubInstallBindingForRepoBranch(repoFullName, productionBranch, installationID)
+}
+
+func (m *MemStore) githubInstallBindingForRepoBranch(repoFullName, productionBranch string, installationID int64) (GitHubBinding, error) {
 	if repoFullName == "" {
 		return GitHubBinding{}, ErrNotFound
 	}
@@ -4139,7 +4235,7 @@ func (m *MemStore) GithubInstallBindingForRepoBranch(_ context.Context, repoFull
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, b := range m.githubBindings {
-		if b.RepoFullName == repoFullName && b.ProductionBranch == productionBranch && b.InstallID != 0 {
+		if b.RepoFullName == repoFullName && b.ProductionBranch == productionBranch && b.InstallID != 0 && (installationID == 0 || b.InstallID == installationID) {
 			return b, nil
 		}
 	}
@@ -4164,7 +4260,7 @@ func (m *MemStore) ListGithubInstallBindingsForAccount(_ context.Context, accoun
 }
 
 // UpsertGitHubInstall persists the durable OAuth handshake state
-// (PR-C). Idempotent on (AccountID) by map insert; the AccountID
+// (PR-C). Idempotent on (AccountID, InstallationID) by map insert; the AccountID
 // FK isn't enforced in MemStore (in-memory), but the upsert still
 // rejects empty AccountID / AuditGithubLogin so test parity with
 // PgStore holds.
@@ -4180,7 +4276,7 @@ func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.githubInstalls[inst.AccountID] = inst
+	m.githubInstalls[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
 }
 
@@ -4193,7 +4289,27 @@ func (m *MemStore) GitHubInstallForAccount(_ context.Context, accountID string) 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	inst, ok := m.githubInstalls[accountID]
+	var inst GitHubInstall
+	found := false
+	for _, candidate := range m.githubInstalls {
+		if candidate.AccountID == accountID && (!found || candidate.SealedAt.After(inst.SealedAt)) {
+			inst = candidate
+			found = true
+		}
+	}
+	if !found {
+		return GitHubInstall{}, ErrNotFound
+	}
+	return inst, nil
+}
+
+func (m *MemStore) GitHubInstallForAccountInstallation(_ context.Context, accountID string, installationID int64) (GitHubInstall, error) {
+	if accountID == "" || installationID <= 0 {
+		return GitHubInstall{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.githubInstalls[accountID+"\x00"+strconv.FormatInt(installationID, 10)]
 	if !ok {
 		return GitHubInstall{}, ErrNotFound
 	}
@@ -4290,6 +4406,11 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, ErrNotFound
+	}
+	if d.ID != "" {
+		if _, exists := m.deployments[d.ID]; exists {
+			return Deployment{}, ErrConflict
+		}
 	}
 	if d.CanaryPreset == "" {
 		d.CanaryPreset = "none"
@@ -6833,7 +6954,7 @@ func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token st
 	if _, dup := m.domains[domain]; dup {
 		return CustomDomain{}, fmt.Errorf("state: domain %q already exists", domain)
 	}
-	d := CustomDomain{Domain: domain, AppID: appID, ChallengeToken: token}
+	d := CustomDomain{Domain: domain, AppID: appID, ChallengeToken: token, CertStatus: CustomDomainCertPending}
 	m.domains[domain] = d
 	return d, nil
 }
@@ -6890,6 +7011,21 @@ func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 	return nil
 }
 
+func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.domains[domain]
+	if !ok {
+		return ErrNotFound
+	}
+	d.CertStatus = status
+	d.CertExpiresAt = expiresAt
+	d.CertLastError = lastError
+	d.DNSLastCheckedAt = dnsCheckedAt
+	m.domains[domain] = d
+	return nil
+}
+
 func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -6937,6 +7073,22 @@ func (m *MemStore) ListAllCustomDomainsForDoctor(_ context.Context) ([]string, e
 			out = append(out, h.Hostname)
 		}
 	}
+	return out, nil
+}
+
+// ListUnverifiedCustomDomains is the bounded poller's read seam. It is kept
+// outside Store for compatibility with narrow test doubles; production PgStore
+// and MemStore both expose it for the optional type assertion in dns_poller.
+func (m *MemStore) ListUnverifiedCustomDomains(_ context.Context) ([]CustomDomain, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]CustomDomain, 0)
+	for _, d := range m.domains {
+		if !d.Verified() {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
 	return out, nil
 }
 
@@ -11856,6 +12008,52 @@ func (m *MemStore) UsageDaily(_ context.Context, _ string, _ time.Time) ([]Daily
 	return nil, nil
 }
 
+// UsageDailyForAccount derives the same bounded shape from MemStore's minute
+// rows. MemStore does not run the production usage_daily rollup cron, but
+// aggregating its source rows keeps dashboard and API tests representative of
+// the production read contract. ADR-048 / issue #308.
+func (m *MemStore) UsageDailyForAccount(_ context.Context, accountID string) ([]DailyUsage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	start := today.AddDate(0, 0, -29)
+	end := today.AddDate(0, 0, 1)
+	byKey := make(map[string]*DailyUsage)
+	for _, minute := range m.usage {
+		if minute.AccountID != accountID || minute.Minute.Before(start) || !minute.Minute.Before(end) {
+			continue
+		}
+		day := time.Date(minute.Minute.Year(), minute.Minute.Month(), minute.Minute.Day(), 0, 0, 0, 0, time.UTC)
+		key := minute.AppID + "\x00" + day.Format("2006-01-02")
+		row := byKey[key]
+		if row == nil {
+			row = &DailyUsage{AccountID: accountID, AppID: minute.AppID, Day: day}
+			byKey[key] = row
+		}
+		row.MBSeconds += minute.MBSeconds
+		row.Requests += minute.Requests
+		row.CPUUsec += minute.CPUUsec
+		row.TXBytes += minute.TXBytes
+		row.NetTxBytes += minute.NetTxBytes
+		row.NetRxBytes += minute.NetRxBytes
+		row.ColdBootCount += int64(minute.ColdBootCount)
+		row.TailSeconds += minute.TailSeconds
+	}
+	out := make([]DailyUsage, 0, len(byKey))
+	for _, row := range byKey {
+		out = append(out, *row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Day.Equal(out[j].Day) {
+			return out[i].Day.Before(out[j].Day)
+		}
+		return out[i].AppID < out[j].AppID
+	})
+	return out, nil
+}
+
 // UsageSLOForApp + UsageSLOForAccount mirror pgstore for the
 // customer-facing SLO surface (issue #696 / ADR-082). The
 // MemStore does not maintain usage_minutes — pkg/meter
@@ -12320,6 +12518,67 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 	return removed, nil
 }
 
+// IssueEmailVerificationToken stores a one-shot verification token hash.
+func (m *MemStore) IssueEmailVerificationToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[accountID]; !ok {
+		return ErrNotFound
+	}
+	if m.emailVerificationTokens == nil {
+		m.emailVerificationTokens = map[string]EmailVerificationToken{}
+	}
+	m.emailVerificationTokens[string(tokenHash)] = EmailVerificationToken{
+		TokenHash: append([]byte(nil), tokenHash...),
+		AccountID: accountID,
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+// ConsumeEmailVerificationToken atomically consumes tokenHash and marks the
+// bound account verified. Unknown, expired, and replayed tokens collapse to
+// ErrNotFound so callers do not expose token state.
+func (m *MemStore) ConsumeEmailVerificationToken(_ context.Context, tokenHash []byte) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tok, ok := m.emailVerificationTokens[string(tokenHash)]
+	if !ok || tok.ConsumedAt != nil || !tok.ExpiresAt.After(time.Now()) {
+		delete(m.emailVerificationTokens, string(tokenHash))
+		return "", ErrNotFound
+	}
+	acct, ok := m.accounts[tok.AccountID]
+	if !ok {
+		return "", ErrNotFound
+	}
+	now := time.Now().UTC()
+	tok.ConsumedAt = &now
+	m.emailVerificationTokens[string(tokenHash)] = tok
+	if acct.EmailVerifiedAt == nil {
+		acct.EmailVerifiedAt = &now
+		m.accounts[acct.ID] = acct
+	}
+	return tok.AccountID, nil
+}
+
+// MarkAccountEmailVerified marks accountID verified without consuming an
+// email-verification token. Magic-link login uses this because following its
+// emailed one-shot link already proves control of the same address.
+func (m *MemStore) MarkAccountEmailVerified(_ context.Context, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	acct, ok := m.accounts[accountID]
+	if !ok {
+		return ErrNotFound
+	}
+	if acct.EmailVerifiedAt == nil {
+		now := time.Now().UTC()
+		acct.EmailVerifiedAt = &now
+		m.accounts[accountID] = acct
+	}
+	return nil
+}
+
 // DeleteOldEvents (ADR-075) prunes audit-log events whose `at` is
 // older than the cutoff. Mirrors the PgStore shape so tests can
 // drive the in-memory twin of the daily retention loop without
@@ -12692,6 +12951,9 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
+	}
 	existing.Ciphertext = ciphertext
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
@@ -12717,6 +12979,9 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	}
 	if existing.AccountID != accountID {
 		return ErrNotFound
+	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -12749,11 +13014,79 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
+	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
 	existing.ValueHash = valueHash
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
+	return nil
+}
+
+// ResealAppSecretWithKidAndValueHashInScope is the maintenance-only update
+// used by the host-key replayer. Unlike a customer upsert, it may replace the
+// encrypted envelope of a managed row and always preserves ownership fields.
+func (m *MemStore) ResealAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: appID, Scope: scope, Key: key}
+	existing, ok := m.secrets[k]
+	if !ok || existing.AccountID != accountID {
+		return ErrNotFound
+	}
+	existing.Ciphertext = ciphertext
+	existing.Kid = kid
+	existing.ValueHash = valueHash
+	existing.UpdatedAt = time.Now()
+	m.secrets[k] = existing
+	return nil
+}
+
+func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret) error {
+	if secret.AccountID == "" || secret.AppID == "" || secret.Scope == "" || secret.Key == "" ||
+		len(secret.Ciphertext) == 0 || secret.ManagedPostgresBindingID == "" ||
+		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
+	existing, ok := m.secrets[k]
+	if ok && (existing.ManagedPostgresBindingID != secret.ManagedPostgresBindingID ||
+		existing.ManagedCredentialGeneration > secret.ManagedCredentialGeneration ||
+		(existing.ManagedCredentialGeneration == secret.ManagedCredentialGeneration && existing.ManagedCredentialRef != secret.ManagedCredentialRef)) {
+		return ErrConflict
+	}
+	for existingKey, candidate := range m.secrets {
+		if existingKey != k && candidate.ManagedCredentialRef == secret.ManagedCredentialRef {
+			return ErrConflict
+		}
+	}
+	now := time.Now()
+	if ok {
+		secret.CreatedAt = existing.CreatedAt
+	} else {
+		secret.CreatedAt = now
+	}
+	secret.UpdatedAt = now
+	m.secrets[k] = secret
+	return nil
+}
+
+func (m *MemStore) DeleteManagedPostgresSecret(_ context.Context, credentialRef string) error {
+	if credentialRef == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, secret := range m.secrets {
+		if secret.ManagedCredentialRef == credentialRef {
+			delete(m.secrets, key)
+			return nil
+		}
+	}
 	return nil
 }
 
@@ -12800,6 +13133,9 @@ func (m *MemStore) DeleteAppSecretInScope(_ context.Context, accountID, appID, s
 	row, ok := m.secrets[k]
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
+	}
+	if row.ManagedPostgresBindingID != "" {
+		return ErrConflict
 	}
 	delete(m.secrets, k)
 	return nil
@@ -13463,6 +13799,40 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	// grace timer gets ErrNotFound and swallows it.
 	if a.Status != AccountDeletedPending {
 		return ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AccountID == id && b.State != "deleted" {
+			return ErrConflict
+		}
+	}
+	for bucketID, b := range m.objectBuckets {
+		if b.AccountID == id {
+			delete(m.objectBuckets, bucketID)
+			delete(m.objectUsage, bucketID)
+			delete(m.objectGrants, bucketID)
+		}
+	}
+	for grantKey, grant := range m.objectAccessGrants {
+		if grant.AccountID == id {
+			delete(m.objectAccessGrants, grantKey)
+		}
+	}
+	for uploadID, upload := range m.objectMultipartUploads {
+		if upload.AccountID == id {
+			delete(m.objectMultipartUploads, uploadID)
+		}
+	}
+	reports := m.objectReports[:0]
+	for _, r := range m.objectReports {
+		if r.AccountID != id {
+			reports = append(reports, r)
+		}
+	}
+	m.objectReports = reports
+	for key := range m.objectAuthorizations {
+		if strings.HasPrefix(key, id) {
+			delete(m.objectAuthorizations, key)
+		}
 	}
 	// Drop children first so the parent's final delete is the sentinel.
 	for k := range m.secrets {

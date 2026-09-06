@@ -49,8 +49,12 @@ func BuildReadinessProbe(storageRoot string) *wire.ReadyzProbe {
 	}
 	cacheDir := filepath.Join(storageRoot, "cache")
 
+	return buildWritableReadinessProbe(storageRoot, cacheDir)
+}
+
+func buildWritableReadinessProbe(paths ...string) *wire.ReadyzProbe {
 	p := &wire.ReadyzProbe{}
-	for _, path := range []string{storageRoot, cacheDir} {
+	for _, path := range paths {
 		sig, stop := writableSignal(path, 5*time.Second)
 		p.RegisterSignal(sig, stop)
 	}
@@ -189,4 +193,12 @@ func checkFileWritable(path string) error {
 		return err
 	}
 	return f.Close()
+}
+
+func buildImageReadinessProbe(kind, storageRoot, cacheRoot string) *wire.ReadyzProbe {
+	// OCI writes the configured local cache; the local-backend root can be read-only.
+	if kind == "oci" && cacheRoot != "" {
+		return buildWritableReadinessProbe(cacheRoot)
+	}
+	return BuildReadinessProbe(storageRoot)
 }

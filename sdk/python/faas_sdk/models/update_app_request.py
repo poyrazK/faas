@@ -6,7 +6,20 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..models.update_app_request_app_protocol import UpdateAppRequestAppProtocol, check_update_app_request_app_protocol
+from ..models.update_app_request_cpu_millicores_type_1 import (
+    UpdateAppRequestCpuMillicoresType1,
+    check_update_app_request_cpu_millicores_type_1,
+)
+from ..models.update_app_request_cpu_millicores_type_2_type_1 import (
+    UpdateAppRequestCpuMillicoresType2Type1,
+    check_update_app_request_cpu_millicores_type_2_type_1,
+)
+from ..models.update_app_request_cpu_millicores_type_3_type_1 import (
+    UpdateAppRequestCpuMillicoresType3Type1,
+    check_update_app_request_cpu_millicores_type_3_type_1,
+)
 from ..models.update_app_request_eviction_priority_type_1 import (
     UpdateAppRequestEvictionPriorityType1,
     check_update_app_request_eviction_priority_type_1,
@@ -59,6 +72,17 @@ class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
     ram_mb: int | None | Unset = UNSET
+    cpu_millicores: (
+        None
+        | Unset
+        | UpdateAppRequestCpuMillicoresType1
+        | UpdateAppRequestCpuMillicoresType2Type1
+        | UpdateAppRequestCpuMillicoresType3Type1
+    ) = UNSET
+    """Sustained CPU allowance per instance. Omit for no change."""
+    resource_profile: None | ResourceProfile | Unset = UNSET
+    """Named memory/CPU profile. Omit for no change; explicit ram_mb or cpu_millicores must agree with the selected
+    profile."""
     idle_timeout_s: int | None | Unset = UNSET
     max_concurrency: int | None | Unset = UNSET
     execution_mode: (
@@ -164,6 +188,26 @@ class UpdateAppRequest:
             ram_mb = UNSET
         else:
             ram_mb = self.ram_mb
+
+        cpu_millicores: int | None | Unset
+        if isinstance(self.cpu_millicores, Unset):
+            cpu_millicores = UNSET
+        elif isinstance(self.cpu_millicores, int):
+            cpu_millicores = self.cpu_millicores
+        elif isinstance(self.cpu_millicores, int):
+            cpu_millicores = self.cpu_millicores
+        elif isinstance(self.cpu_millicores, int):
+            cpu_millicores = self.cpu_millicores
+        else:
+            cpu_millicores = self.cpu_millicores
+
+        resource_profile: None | str | Unset
+        if isinstance(self.resource_profile, Unset):
+            resource_profile = UNSET
+        elif isinstance(self.resource_profile, str):
+            resource_profile = self.resource_profile
+        else:
+            resource_profile = self.resource_profile
 
         idle_timeout_s: int | None | Unset
         if isinstance(self.idle_timeout_s, Unset):
@@ -346,6 +390,10 @@ class UpdateAppRequest:
         field_dict.update({})
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
+        if cpu_millicores is not UNSET:
+            field_dict["cpu_millicores"] = cpu_millicores
+        if resource_profile is not UNSET:
+            field_dict["resource_profile"] = resource_profile
         if idle_timeout_s is not UNSET:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if max_concurrency is not UNSET:
@@ -419,6 +467,71 @@ class UpdateAppRequest:
             return cast(int | None | Unset, data)
 
         ram_mb = _parse_ram_mb(d.pop("ram_mb", UNSET))
+
+        def _parse_cpu_millicores(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestCpuMillicoresType1
+            | UpdateAppRequestCpuMillicoresType2Type1
+            | UpdateAppRequestCpuMillicoresType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, int):
+                    raise TypeError()
+                cpu_millicores_type_1 = check_update_app_request_cpu_millicores_type_1(data)
+
+                return cpu_millicores_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, int):
+                    raise TypeError()
+                cpu_millicores_type_2_type_1 = check_update_app_request_cpu_millicores_type_2_type_1(data)
+
+                return cpu_millicores_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, int):
+                    raise TypeError()
+                cpu_millicores_type_3_type_1 = check_update_app_request_cpu_millicores_type_3_type_1(data)
+
+                return cpu_millicores_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestCpuMillicoresType1
+                | UpdateAppRequestCpuMillicoresType2Type1
+                | UpdateAppRequestCpuMillicoresType3Type1,
+                data,
+            )
+
+        cpu_millicores = _parse_cpu_millicores(d.pop("cpu_millicores", UNSET))
+
+        def _parse_resource_profile(data: object) -> None | ResourceProfile | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                resource_profile_type_0 = check_resource_profile(data)
+
+                return resource_profile_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ResourceProfile | Unset, data)
+
+        resource_profile = _parse_resource_profile(d.pop("resource_profile", UNSET))
 
         def _parse_idle_timeout_s(data: object) -> int | None | Unset:
             if data is None:
@@ -780,6 +893,8 @@ class UpdateAppRequest:
 
         update_app_request = cls(
             ram_mb=ram_mb,
+            cpu_millicores=cpu_millicores,
+            resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
             max_concurrency=max_concurrency,
             execution_mode=execution_mode,

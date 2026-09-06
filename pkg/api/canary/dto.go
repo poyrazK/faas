@@ -24,6 +24,16 @@ package canary
 // (per-account spec at meterd runtime, gated on Enterprise
 // plan) can reuse this DTO without a wire break.
 type CustomStage struct {
-	Percent  int    `json:"percent"`
-	Duration string `json:"duration"` // time.ParseDuration string form
+	Percent     int                   `json:"percent"`
+	Duration    string                `json:"duration"` // time.ParseDuration string form
+	MirrorClean *MirrorCleanCondition `json:"mirror_clean,omitempty"`
+}
+
+// MirrorCleanCondition gates advancement out of a canary stage on a clean
+// traffic mirror window. The condition is satisfied only after at least
+// MinInvocations mirror comparisons have completed in the last WindowSeconds
+// and every comparison is free of status, schema, body, and crash signals.
+type MirrorCleanCondition struct {
+	MinInvocations int `json:"min_invocations"`
+	WindowSeconds  int `json:"window_s"`
 }

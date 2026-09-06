@@ -281,14 +281,14 @@ func TestErrSourceTooLarge(t *testing.T) {
 // clients branch on these strings so they must not drift silently.
 func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 	codes := []string{
-		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur,
+		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU,
 		CodeSourceTooLarge, CodeAppLayerTooBig,
 		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout,
 		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity,
 		CodeUnauthorized, CodeNotFound, CodeValidation,
 		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,
 		CodeCliAuthPending, CodeCliAuthUnavailable,
-		CodeInvalidCredentials, CodeEmailNotVerified, CodePasswordTooWeak,
+		CodeInvalidCredentials, CodeEmailNotVerified, CodeEmailVerificationRequired, CodePasswordTooWeak,
 		CodeResetTokenInvalid, CodeResetTokenExpired, CodeAccountExists,
 		// IAM-6 / ADR-061 (issue #190). One cluster per ADR table.
 		CodeOrgNotFound, CodeOrgSlugInvalid, CodeOrgSlugTaken,
@@ -339,7 +339,8 @@ func TestStatusForCode_ImageCodes(t *testing.T) {
 // invalid_credentials and email_not_verified must collapse to 401 so
 // the dashboard form can render a single "sign in failed" copy for
 // both; the surface must NOT distinguish them, otherwise an attacker
-// can probe for which case fired.
+// can probe for which case fired. The authenticated verification gate
+// is a 403 because the caller is known but cannot perform the action yet.
 func TestStatusForCode_AuthCodes(t *testing.T) {
 	cases := []struct {
 		code string
@@ -347,6 +348,7 @@ func TestStatusForCode_AuthCodes(t *testing.T) {
 	}{
 		{CodeInvalidCredentials, http.StatusUnauthorized},
 		{CodeEmailNotVerified, http.StatusUnauthorized},
+		{CodeEmailVerificationRequired, http.StatusForbidden},
 		{CodePasswordTooWeak, http.StatusBadRequest},
 		{CodeAccountExists, http.StatusBadRequest},
 		{CodeResetTokenInvalid, http.StatusGone},

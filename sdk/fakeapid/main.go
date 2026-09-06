@@ -34,6 +34,7 @@ var healthzBody = mustJSON(map[string]bool{"ok": true})
 var accountResponse = mustJSON(map[string]any{
 	"id":             "0123456789abcdef0123456789abcdef",
 	"email":          "ops@example.com",
+	"email_verified": true,
 	"plan":           "hobby",
 	"status":         "active",
 	"limits":         accountLimits(),
@@ -43,12 +44,13 @@ var accountResponse = mustJSON(map[string]any{
 
 func accountLimits() map[string]any {
 	return map[string]any{
-		"plan":              "hobby",
-		"ram_mb":            256,
-		"max_concurrency":   2,
-		"deployed_apps":     3,
-		"included_gb_hours": 50,
-		"app_layer_max_mb":  512,
+		"plan":                  "hobby",
+		"ram_mb":                256,
+		"max_concurrency":       2,
+		"deployed_apps":         3,
+		"included_gb_hours":     50,
+		"app_layer_max_mb":      512,
+		"ephemeral_disk_max_mb": 512,
 	}
 }
 
@@ -56,9 +58,9 @@ func accountLimits() map[string]any {
 // Slug is mutated per-request for CreateApp / GetApp to echo the
 // path or body value. MinInstances, Autoscale* are required to
 // round-trip; EgressAllowlist materialises as [] (not null).
-// ConcurrencyPerVMBound (issue #559) is required by the OpenAPI
-// schema — fakeapid advertises 5 to match the Hobby plan the
-// other endpoints already pin. RequireAuthn (issue #560) is
+// ConcurrencyPerVMBound (issue #559) and EffectiveLimits are required
+// by the OpenAPI schema — fakeapid advertises the same Hobby-plan
+// values as the other endpoints. RequireAuthn (issue #560) is
 // always false in the fake — fakeapid is an internal
 // localhost-only stub that doesn't exercise the per-deployment
 // token gate; production gated-app traffic routes through
@@ -69,8 +71,11 @@ func appResponse(slug string) []byte {
 		"slug":                     slug,
 		"type":                     "app",
 		"ram_mb":                   256,
+		"cpu_millicores":           1000,
+		"configured_resources":     appConfiguredResources(),
 		"max_concurrency":          2,
 		"concurrency_per_vm":       5,
+		"effective_limits":         appEffectiveLimits(),
 		"min_instances":            0,
 		"status":                   "active",
 		"url":                      "https://" + slug + ".example.com",
@@ -80,6 +85,30 @@ func appResponse(slug string) []byte {
 		"autoscale_target_cpu_pct": 0,
 		"require_authn":            false,
 	})
+}
+
+func appConfiguredResources() map[string]any {
+	return map[string]any{"memory_mb": 256, "cpu_millicores": 1000}
+}
+
+func appEffectiveLimits() map[string]any {
+	return map[string]any{
+		"memory_limit_mb":          256,
+		"plan_memory_max_mb":       256,
+		"ephemeral_disk_max_mb":    512,
+		"guest_vcpus":              2,
+		"cpu_limit_millicores":     1000,
+		"plan_cpu_max_millicores":  1000,
+		"cpu_weight":               4,
+		"max_instances":            2,
+		"concurrency_per_instance": 5,
+		"app_request_rate_rps":     20,
+		"app_request_burst":        100,
+		"account_request_rate_rpm": 200,
+		"request_budget_ms":        3000,
+		"request_budget_max_ms":    30000,
+		"response_write_timeout_s": 900,
+	}
 }
 
 func appManifest() map[string]any {
@@ -232,8 +261,11 @@ func (f *fixture) handler() http.Handler {
 					"slug":                     "hello-world",
 					"type":                     "app",
 					"ram_mb":                   256,
+					"cpu_millicores":           1000,
+					"configured_resources":     appConfiguredResources(),
 					"max_concurrency":          2,
 					"concurrency_per_vm":       5,
+					"effective_limits":         appEffectiveLimits(),
 					"min_instances":            0,
 					"status":                   "active",
 					"url":                      "https://hello-world.example.com",

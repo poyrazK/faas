@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,27 @@ import (
 
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
+
+const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
+
+// githubActionsRepositoryFromSubject extracts OWNER/REPO from GitHub's
+// `repo:OWNER/REPO:...` subject form. It is used only as a first-use bridge
+// from an already OAuth-verified repository binding to an OIDC trust policy.
+func githubActionsRepositoryFromSubject(issuerURL, subject string) (string, bool) {
+	if strings.TrimRight(issuerURL, "/") != githubActionsOIDCIssuer || !strings.HasPrefix(subject, "repo:") {
+		return "", false
+	}
+	rest := strings.TrimPrefix(subject, "repo:")
+	colon := strings.IndexByte(rest, ':')
+	if colon <= 0 {
+		return "", false
+	}
+	repo := rest[:colon]
+	if strings.Count(repo, "/") != 1 || strings.HasPrefix(repo, "/") || strings.HasSuffix(repo, "/") {
+		return "", false
+	}
+	return repo, true
+}
 
 // ErrCertFingerprintDrift is returned by UpsertComputeNodeFromVmmd
 // when the cert_fingerprint on the existing compute_nodes row
@@ -1289,6 +1311,13 @@ type Store interface {
 	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
 	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
 
+	// Email verification tokens prove control of accounts.email without
+	// authenticating the browser. ConsumeEmailVerificationToken atomically
+	// consumes the one-shot token and stamps accounts.email_verified_at.
+	IssueEmailVerificationToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error
+	ConsumeEmailVerificationToken(ctx context.Context, tokenHash []byte) (string, error)
+	MarkAccountEmailVerified(ctx context.Context, accountID string) error
+
 	// Audit events (IAM-4 / ADR-035, retention ADR-075). The
 	// events table grows ~3-4 GB/year per active-tier customer
 	// through the auth / key / secret / account / stateless
@@ -1503,6 +1532,11 @@ type Store interface {
 	// production app id is ErrNotFound, so a bug in the janitor's
 	// query can never relabel a customer's live app.
 	SetPreviewPrState(ctx context.Context, appID, prState string) (App, error)
+	// RefreshDevSession extends an ad-hoc developer preview's lease and
+	// restores its serving state to open. Developer previews are encoded as
+	// preview rows with preview_pr_number=0; the implementation must refuse
+	// ordinary PR previews and production apps.
+	RefreshDevSession(ctx context.Context, appID string, expiresAt time.Time) (App, error)
 	// StampPreviewDestroyCommentedAt (Mega-C PR-1 / issue #961
 	// leaf 3) records that the one-click PR comment destroy hint
 	// was posted to GitHub for this preview row. githubd's
@@ -1981,10 +2015,9 @@ type Store interface {
 	// checks.go needs to mint the right per-install access token for
 	// the repo's push, not the hardcoded installation_id=1 placeholder
 	// that shipped with M7.5. Returns ErrNotFound if no app is bound
-	// to (repo). When two apps are bound to the same (install_id,
-	// repo) — impossible per the migration unique index — the first
-	// hit wins; apid is the canonical owner of bindings so this is
-	// not a contention point in practice.
+	// to (repo), or when the repository resolves to more than one
+	// installation. Ambiguity fails closed so one tenant can never use
+	// another tenant's installation token.
 	InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error)
 	// UpsertGithubInstallBinding persists the (account → app →
 	// installation, repo, branch) edge with a deterministic
@@ -2012,6 +2045,10 @@ type Store interface {
 	// Returns ErrNotFound when no app is bound to (repo, branch).
 	// Uses the (repo, branch) partial index added in 00047.
 	GithubInstallBindingForRepoBranch(ctx context.Context, repoFullName, productionBranch string) (GitHubBinding, error)
+	// GithubInstallBindingForRepoBranchInstallation is the webhook-safe
+	// lookup when GitHub supplied installation.id. It prevents an identical
+	// repo name bound in another tenant from winning an arbitrary LIMIT 1.
+	GithubInstallBindingForRepoBranchInstallation(ctx context.Context, repoFullName, productionBranch string, installationID int64) (GitHubBinding, error)
 	// ListGithubInstallBindingsForAccount is the dashboard's hydrate
 	// path: given an account_id, return every bind the account
 	// currently owns. The map is keyed by appID so the dashboard's
@@ -2020,8 +2057,8 @@ type Store interface {
 	ListGithubInstallBindingsForAccount(ctx context.Context, accountID string) (map[string]GitHubBinding, error)
 
 	// UpsertGitHubInstall persists the OAuth handshake state for one
-	// account's GitHub App install (PR-C). Idempotent on (AccountID)
-	// via ON CONFLICT (account_id) DO UPDATE so a retry of the OAuth
+	// account's GitHub App install (PR-C). Idempotent on
+	// (AccountID, InstallationID) so a retry of the OAuth
 	// flow doesn't crash on the unique-PK constraint. The account row
 	// itself must exist (the FK enforces this); pre-CASCADE deletes
 	// of an account surface as ErrNotFound here so the caller can
@@ -2038,6 +2075,10 @@ type Store interface {
 	// dashboard's bind picker hydrates off this signal to decide
 	// whether to render the "Connect GitHub" button vs the bind list.
 	GitHubInstallForAccount(ctx context.Context, accountID string) (GitHubInstall, error)
+	// GitHubInstallForAccountInstallation resolves the exact installation a
+	// bind or webhook named. This is the multi-install-safe path; callers must
+	// not silently substitute another installation owned by the account.
+	GitHubInstallForAccountInstallation(ctx context.Context, accountID string, installationID int64) (GitHubInstall, error)
 
 	// UpsertGithubWebhookSecret installs or rotates the per-tenant
 	// webhook secret for one GitHub App installation (PR-D / ADR-012
@@ -2775,6 +2816,9 @@ type Store interface {
 	ListDomainsForApp(ctx context.Context, appID string) ([]CustomDomain, error)
 	ListDomainsForAccount(ctx context.Context, accountID string) ([]CustomDomain, error)
 	MarkDomainVerified(ctx context.Context, domain string) error
+	// UpdateCustomDomainCertStatus persists the certmagic/doctor observation
+	// for a legacy custom domain. Zero timestamps clear the nullable columns.
+	UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error
 	DeleteCustomDomain(ctx context.Context, domain string) error
 
 	// Domain doctor observations (ADR-120). The dns_poller
@@ -4572,6 +4616,11 @@ type Store interface {
 	// day is a UTC midnight time; the returned rows cover the
 	// single day. Empty when no rollup has fired yet. ADR-048 §5.
 	UsageDaily(ctx context.Context, accountID string, day time.Time) ([]DailyUsage, error)
+	// UsageDailyForAccount returns the per-(account, app, day) rollup
+	// rows for the trailing 30 UTC calendar days, oldest first. The
+	// bounded window keeps the customer analytics read predictable and
+	// is backed by usage_daily_account_day_idx. ADR-048 / issue #308.
+	UsageDailyForAccount(ctx context.Context, accountID string) ([]DailyUsage, error)
 	// TrafficAnomalyAggregate is the per-(account, app, minute) anomaly
 	// scan that powers GET /v1/admin/obs/anomalies (ADR-091 §3.6 /
 	// PR #2). The handler passes (since, baselineCutoff, limit);
@@ -4898,6 +4947,15 @@ type Store interface {
 	// legacy UpsertAppSecretWithKidInScope stays for callers
 	// that don't carry the field.
 	UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
+	// ResealAppSecretWithKidAndValueHashInScope is reserved for the host-key
+	// maintenance replayer. It updates an existing encrypted row while
+	// preserving managed credential ownership metadata.
+	ResealAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
+	// PutManagedPostgresSecret writes an already-sealed credential owned by a
+	// managed PostgreSQL binding. DeleteManagedPostgresSecret is idempotent so
+	// a deletion reconciler can safely resume after a crash.
+	PutManagedPostgresSecret(ctx context.Context, secret AppSecret) error
+	DeleteManagedPostgresSecret(ctx context.Context, credentialRef string) error
 	// GetAppSecretInScope is the scope-aware sibling of
 	// GetAppSecret (ADR-092 PR-A). Returns ErrNotFound when no
 	// row exists at (account_id, app_id, scope, key).
@@ -5483,6 +5541,12 @@ type Store interface {
 	// be pre-clamped to api.DebugTelemetryMaxLimit by the handler.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
 
+	// GetRequestTelemetryByAppAndID backs GET
+	// /v1/apps/{slug}/debug/requests/{req_id}. The app_id and bounded
+	// received_at predicates keep the direct lookup tenant-scoped and
+	// within the caller's plan retention window.
+	GetRequestTelemetryByAppAndID(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIDParams) (sqlc.GetRequestTelemetryByAppAndIDRow, error)
+
 	// RequestTelemetryByDeployment backs the per-deployment
 	// drilldown and the regression detector (PR-B cron). Uses
 	// request_telemetry_app_dep_received_idx. Same limit contract
@@ -5497,6 +5561,14 @@ type Store interface {
 	// sqlc v1.31's "ambiguous column" parser; PR-B documents the
 	// Go-side composition in pkg/state/pgstore.go).
 	RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error)
+
+	// RequestTelemetryAnalyticsSummary and RequestTelemetryAnalyticsByRoute
+	// back the customer-facing aggregated request analytics endpoint. Both
+	// queries are retention-windowed and weight collapsed telemetry rows by
+	// their count column.
+	RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error)
+	RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error)
+	RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error)
 
 	// --- ADR-127 PR-B — regression observation persistence + dashboard reads ---
 

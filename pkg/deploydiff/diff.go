@@ -139,6 +139,7 @@ type Pending struct {
 // the nil-vs-explicit distinction.
 type AppConfigPatch struct {
 	RAMMB               *int
+	CPUMillicores       *int
 	IdleTimeoutS        *int
 	MaxConcurrency      *int
 	MinInstances        *int

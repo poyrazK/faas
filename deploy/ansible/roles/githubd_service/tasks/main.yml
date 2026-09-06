@@ -3,13 +3,13 @@
 #
 # Plain-unix-socket daemons: githubd serves the GitHub App webhook +
 # device-flow callbacks on a unix socket at /run/faas/githubd.sock.
-# It reads GITHUB_WEBHOOK_SECRET (and the GitHub App keypair) via
-# sealed.env — those are operator-provisioned at first-boot, NOT
+# It reads FAAS_GITHUB_WEBHOOK_SECRET (and the GitHub App keypair) via
+# /etc/faas/secrets/githubd/githubd.env — those are operator-provisioned at first-boot, NOT
 # checked by this role (mirrors gatewayd_public_service / gatewayd_internal_service:
 # the role drops the unit + example TOML; the operator wires secrets).
 #
 # What's NOT here (operator-provisioned):
-#   - sealed.env entries for GITHUB_WEBHOOK_SECRET + the GitHub App
+#   - githubd.env entries for FAAS_GITHUB_WEBHOOK_SECRET + the GitHub App
 #     private key (PEM, base64-wrapped)
 #   - PKI leaves under /etc/faas/tls/githubd/ (laid out by
 #     `gregalectl pki init --box-role=control-plane` — PR-3)

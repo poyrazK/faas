@@ -50,7 +50,7 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 	// silent PlanWake→WakeColdBoot looks like a snapshot regression.
 	m := NewManager(
 		wire.ExecRunner{},
-		NewJailerVMM(JailChrootBase, 30*time.Second),
+		newMetalVMM(t, 30*time.Second),
 		Paths{Kernel: kernel},
 		fcVer,
 		slog.New(slog.NewTextHandler(testLogWriter{t}, nil)),

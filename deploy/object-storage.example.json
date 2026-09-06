@@ -1,0 +1,21 @@
+{
+  "default_region": "us-east-1",
+  "defaults": { "us-east-1": "managed-virginia-v1" },
+  "max_buckets_per_app": 10,
+  "max_upload_bytes": 104857600,
+  "accounting": null,
+  "backends": [
+    {
+      "id": "managed-virginia-v1",
+      "driver": "s3",
+      "region": "us-east-1",
+      "namespace": "replace-with-your-dedicated-provider-project-id",
+      "endpoint": "https://s3.us-east-va.io.cloud.ovh.us",
+      "s3_region": "us-east-va",
+      "path_style": true,
+      "access_key_env": "GREGALE_OBJECT_STORAGE_ACCESS_KEY",
+      "secret_key_env": "GREGALE_OBJECT_STORAGE_SECRET_KEY",
+      "allowed_origins": ["https://gregale.dev"]
+    }
+  ]
+}

@@ -129,14 +129,20 @@ func TestNormalizeCreateKeyScopes(t *testing.T) {
 			want:    []string{ScopeAppsRead, ScopeDeployWrite},
 		},
 		{
-			name: "all_six_accepted",
+			name: "all_scopes_accepted",
 			request: []string{
 				ScopeAdmin, ScopeAppsRead, ScopeDeployWrite,
 				ScopeSecretsRead, ScopeSecretsWrite, ScopeUsageRead,
+				ScopeEnvRead, ScopeEnvWrite, ScopeRegistryCredentialsRead,
+				ScopeRegistryCredentialsWrite, ScopeUpstreamsWrite,
+				ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite,
 			},
 			want: []string{
 				ScopeAdmin, ScopeAppsRead, ScopeDeployWrite,
 				ScopeSecretsRead, ScopeSecretsWrite, ScopeUsageRead,
+				ScopeEnvRead, ScopeEnvWrite, ScopeRegistryCredentialsRead,
+				ScopeRegistryCredentialsWrite, ScopeUpstreamsWrite,
+				ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite,
 			},
 		},
 		{
@@ -185,6 +191,9 @@ func TestIsValidScope(t *testing.T) {
 		ScopeSecretsRead, ScopeSecretsWrite, ScopeUsageRead,
 		// Issue #395 / ADR-045: env surfaces.
 		ScopeEnvRead, ScopeEnvWrite,
+		ScopeRegistryCredentialsRead, ScopeRegistryCredentialsWrite,
+		ScopeUpstreamsWrite,
+		ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite,
 	}
 	for _, s := range valid {
 		if !IsValidScope(s) {
@@ -218,9 +227,14 @@ func TestScopeSurfaceConstants(t *testing.T) {
 	}
 	mustContain("ScopesAdminOnly", ScopesAdminOnly, ScopeAdmin)
 	mustContain("ScopesReadSurface", ScopesReadSurface, ScopeAdmin, ScopeAppsRead)
+	mustContain("ScopesDeploymentReadSurface", ScopesDeploymentReadSurface, ScopeAdmin, ScopeAppsRead, ScopeDeployWrite)
 	mustContain("ScopesUsageReadSurface", ScopesUsageReadSurface, ScopeAdmin, ScopeUsageRead)
 	mustContain("ScopesSecretsWriteSurface", ScopesSecretsWriteSurface, ScopeAdmin, ScopeSecretsWrite)
 	mustContain("ScopesDeployWriteSurface", ScopesDeployWriteSurface, ScopeAdmin, ScopeDeployWrite)
 	// Issue #395 / ADR-045: env:write mirrors secrets:write in shape.
 	mustContain("ScopesEnvWriteSurface", ScopesEnvWriteSurface, ScopeAdmin, ScopeEnvWrite)
+	mustContain("ScopesStorageManageSurface", ScopesStorageManageSurface, ScopeAdmin, ScopeStorageManage)
+	mustContain("ScopesStorageReadSurface", ScopesStorageReadSurface, ScopeAdmin, ScopeStorageRead)
+	mustContain("ScopesStorageWriteSurface", ScopesStorageWriteSurface, ScopeAdmin, ScopeStorageWrite)
+	mustContain("ScopesStorageListSurface", ScopesStorageListSurface, ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite)
 }

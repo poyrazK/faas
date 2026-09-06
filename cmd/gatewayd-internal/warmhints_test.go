@@ -181,3 +181,20 @@ func TestWarmHintConsumer_NewConsumerNilSafety(t *testing.T) {
 func drainForTest(g *warmHintConsumer, ctx context.Context, stream scheddgrpc.WarmHintStream) error {
 	return g.drain(ctx, stream)
 }
+
+func TestWarmHintHeartbeatRefreshesReadinessWithoutCacheEntry(t *testing.T) {
+	cache := gateway.NewWarmHintCache()
+	g := newTestConsumer(cache)
+	touches := 0
+	g.SetOnTouch(func() { touches++ })
+	stream := &fakeWarmHintStream{events: []scheddgrpc.WarmHintEvent{{WrittenAt: time.Now()}}}
+	if err := g.drain(context.Background(), stream); !errors.Is(err, io.EOF) {
+		t.Fatal(err)
+	}
+	if touches != 2 {
+		t.Fatalf("touches=%d, want registration plus heartbeat", touches)
+	}
+	if cache.Len() != 0 {
+		t.Fatal("heartbeat inserted a routing hint")
+	}
+}

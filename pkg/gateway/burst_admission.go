@@ -89,6 +89,11 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 	if h == nil || h.backend == nil || h.burstPressure == nil || app.ID == "" || maxInstances <= 0 || perVM <= 0 {
 		return nil
 	}
+	// Match schedd's effective ceiling, including legacy zero values and
+	// apps whose saved limit exceeds a downgraded plan.
+	if app.MaxConcurrency > 0 && app.MaxConcurrency < maxInstances {
+		maxInstances = app.MaxConcurrency
+	}
 	admitter, ok := h.backend.(burstCapacityAdmitter)
 	if !ok {
 		return nil
@@ -116,6 +121,12 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 
 		select {
 		case <-generation.done:
+			// A scheduler refusal to expand does not invalidate targets that
+			// already exist. Let the normal forwarding limits and request
+			// budget bound their work instead of failing the whole burst.
+			if errors.Is(generation.err, errBurstCapacityStalled) && h.backend.HealthyCount(app.ID) > 0 {
+				return nil
+			}
 			if generation.err != nil {
 				return generation.err
 			}
