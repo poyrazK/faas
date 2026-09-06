@@ -56,6 +56,7 @@ const (
 	obsFile               = "obs.go"             // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
 	corsPresetsFile       = "cors_preset_dto.go" // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
 	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
+	managedPostgresFile   = "managed_postgres.go"
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -208,6 +209,7 @@ var dtoExclude = map[string]bool{
 	"CliAuthStatus":                true, // enum used by CLI auth
 	"StatusPage":                   true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
+	"ManagedPostgresPlanLimits":    true, // internal plan policy, not a wire DTO
 	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	"RotateAlertRuleSecretRequest": true, // PR 3 / ADR-045: server-mints the secret; request body is empty, not in spec
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
@@ -819,6 +821,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", corsPresetsFile),
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
+		filepath.Join(root, "pkg", "api", managedPostgresFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

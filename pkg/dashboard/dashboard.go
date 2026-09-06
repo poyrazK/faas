@@ -454,6 +454,42 @@ type DomainItem struct {
 	CertExpiresAt    string
 	CertLastError    string
 	DNSLastCheckedAt string
+	DoctorURL        string
+}
+
+// AppDomainsData is the dashboard-facing payload for the per-app custom
+// domains page. The page is read-only: domain mutations continue through the
+// existing API/CLI paths, while this view combines durable TLS state with the
+// cached domain-doctor observation.
+type AppDomainsData struct {
+	App          AppListItem
+	Domains      []DomainPageItem
+	WWWApexHint  string
+	ErrorMessage string
+}
+
+// DomainPageItem is one custom-domain row on the app domains page.
+type DomainPageItem struct {
+	Domain           string
+	Verified         bool
+	VerifiedAt       string
+	TXTRecord        string
+	CertStatus       string
+	CertExpiresAt    string
+	CertLastError    string
+	DNSLastCheckedAt string
+	DoctorURL        string
+	Doctor           *DomainDoctorSummary
+}
+
+// DomainDoctorSummary is the latest cached doctor result. The page does not
+// trigger a network probe for every row; the doctor link performs the existing
+// bounded refresh when the observation is missing or stale.
+type DomainDoctorSummary struct {
+	Healthy    bool
+	Stale      bool
+	ObservedAt string
+	Checks     []DashboardDoctorCheck
 }
 
 // CronItem is one row on the app detail page's crons tab

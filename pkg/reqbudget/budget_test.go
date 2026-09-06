@@ -2,6 +2,7 @@ package reqbudget
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -346,6 +347,62 @@ func TestBudget_WithCeiling_ZeroMeansNoCeiling(t *testing.T) {
 	}
 	if bc.Total != 2950*time.Millisecond {
 		t.Errorf("ceiling=0: bc.Total = %v, want 2950ms", bc.Total)
+	}
+}
+
+func TestWithStreamBudgetExpiresBeforeDetach(t *testing.T) {
+	budgetCtx, budgetCancel, _ := WithRemaining(context.Background(), 100*time.Millisecond, 100*time.Millisecond, "forward", "GET:/stream")
+	defer budgetCancel()
+
+	streamCtx, _, cancel := WithStream(budgetCtx)
+	defer cancel()
+	select {
+	case <-streamCtx.Done():
+		if !errors.Is(streamCtx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("stream ctx error = %v, want deadline exceeded", streamCtx.Err())
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("stream context did not honor the request budget")
+	}
+}
+
+func TestWithStreamDetachDropsBudgetKeepsCancellation(t *testing.T) {
+	base, baseCancel := context.WithCancel(context.Background())
+	defer baseCancel()
+	budgetCtx, budgetCancel, _ := WithRemaining(base, 100*time.Millisecond, 100*time.Millisecond, "forward", "GET:/stream")
+	defer budgetCancel()
+
+	streamCtx, detach, cancel := WithStream(budgetCtx)
+	defer cancel()
+	detach()
+	if _, ok := FromContext(streamCtx); ok {
+		t.Fatal("detached stream still exposes request budget")
+	}
+
+	select {
+	case <-streamCtx.Done():
+		t.Fatal("detached stream was canceled by the request budget")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	baseCancel()
+	select {
+	case <-streamCtx.Done():
+		if !errors.Is(streamCtx.Err(), context.Canceled) {
+			t.Fatalf("stream ctx error = %v, want canceled", streamCtx.Err())
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("detached stream did not preserve parent cancellation")
+	}
+}
+
+func TestWithStreamNoBudgetIsIdentity(t *testing.T) {
+	parent := context.Background()
+	streamCtx, detach, cancel := WithStream(parent)
+	defer cancel()
+	detach()
+	if streamCtx != parent {
+		t.Fatal("WithStream without budget should return the parent context")
 	}
 }
 

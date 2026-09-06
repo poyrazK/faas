@@ -38,6 +38,8 @@ servers:
 tags:
   - name: storage
     description: Private customer object-storage preview, separate from runtime snapshots and image layers.
+  - name: managed_postgres
+    description: Provider-neutral managed PostgreSQL databases and workload bindings.
   - name: account
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
@@ -288,6 +290,184 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/postgres/databases:
+    get:
+      operationId: listManagedPostgresDatabases
+      summary: List managed PostgreSQL databases
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Account databases
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabaseList' }
+        default:
+          description: Authentication or database listing error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createManagedPostgresDatabase
+      summary: Create a managed PostgreSQL database
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedPostgresDatabaseRequest' }
+      responses:
+        '201':
+          description: Database accepted or ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: Invalid request, plan limit, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getManagedPostgresDatabase
+      summary: Get managed PostgreSQL database status
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Database status without provider credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: Authentication or database status error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteManagedPostgresDatabase
+      summary: Delete a managed PostgreSQL database
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Database deletion status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: Authentication or database deletion error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}/restore:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: restoreManagedPostgresDatabase
+      summary: Restore a database into a new managed PostgreSQL database
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreManagedPostgresDatabaseRequest' }
+      responses:
+        '201':
+          description: Restore accepted or ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: Invalid point in time, plan limit, or provider error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}/bindings:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: listManagedPostgresBindings
+      summary: List workload bindings for a database
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Bindings without credential material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBindingList' }
+        default:
+          description: Authentication or binding listing error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createManagedPostgresBinding
+      summary: Bind a workload app to a database
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedPostgresBindingRequest' }
+      responses:
+        '201':
+          description: Binding accepted or ready; credentials are delivered through the app secret
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: Invalid request, conflict, or provider error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/bindings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getManagedPostgresBinding
+      summary: Get a workload database binding
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Binding metadata without credential material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: Authentication or binding status error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteManagedPostgresBinding
+      summary: Remove a workload database binding
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Binding deletion status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: Authentication or binding deletion error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets:
     parameters:
       - { name: slug, description: App whose bucket catalog is being managed., in: path, required: true, schema: { type: string } }
@@ -12077,6 +12257,12 @@ components:
       required: true
       schema: { type: string, pattern: '^[a-f0-9]{32}$' }
       description: 32-hex-char opaque ID (NOT canonical UUID).
+    ManagedPostgresID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Opaque Gregale managed PostgreSQL resource identifier.
     SecretKey:
       name: key
       in: path
@@ -12154,6 +12340,88 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    ManagedPostgresDatabase:
+      description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
+      type: object
+      required: [id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, state, created_at, updated_at]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        region: { type: string }
+        postgres_major: { type: integer, minimum: 12, maximum: 99 }
+        service_class: { type: string, enum: [development, burstable, production] }
+        availability: { type: string, enum: [single_zone, high_availability] }
+        scale_to_zero: { type: boolean }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        restore_window_seconds: { type: integer, format: int64, minimum: 0 }
+        restore_source_database_id: { type: [string, "null"], minLength: 1, maxLength: 128 }
+        restore_point_in_time: { type: [string, "null"], format: date-time }
+        state: { type: string, enum: [provisioning, ready, updating, deleting, failed, deleted] }
+        last_error_code: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: [string, "null"], format: date-time }
+    ManagedPostgresDatabaseList:
+      description: Account-scoped managed PostgreSQL database collection.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresDatabase' } }
+    CreateManagedPostgresDatabaseRequest:
+      description: Customer request to reserve a managed PostgreSQL database.
+      type: object
+      additionalProperties: false
+      required: [name, region]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        region: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        postgres_major: { type: integer, minimum: 12, maximum: 99, default: 16 }
+        service_class: { type: string, enum: [development, burstable, production], default: development }
+        availability: { type: string, enum: [single_zone, high_availability], default: single_zone }
+        scale_to_zero: { type: boolean, default: true }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        restore_window_seconds: { type: integer, format: int64, minimum: 0 }
+    RestoreManagedPostgresDatabaseRequest:
+      description: Point-in-time restore request that creates a new database.
+      type: object
+      additionalProperties: false
+      required: [name, point_in_time]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        point_in_time: { type: string, format: date-time }
+    ManagedPostgresBinding:
+      description: Workload binding metadata. Credentials are delivered through the app secret surface and never returned here.
+      type: object
+      required: [id, database_id, app_id, scope, environment_key, access, credential_generation, state, created_at, updated_at]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        database_id: { type: string, minLength: 1, maxLength: 128 }
+        app_id: { type: string, minLength: 1, maxLength: 128 }
+        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
+        access: { type: string, enum: [read_write, read_only] }
+        credential_generation: { type: integer, format: int64, minimum: 1 }
+        state: { type: string, enum: [provisioning, ready, deleting, failed, deleted] }
+        last_error_code: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ManagedPostgresBindingList:
+      description: Workload bindings attached to one managed PostgreSQL database.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresBinding' } }
+    CreateManagedPostgresBindingRequest:
+      description: Request to inject a managed database credential into an app environment.
+      type: object
+      additionalProperties: false
+      required: [app_id, scope, environment_key, access]
+      properties:
+        app_id: { type: string, minLength: 1, maxLength: 128 }
+        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
+        access: { type: string, enum: [read_write, read_only] }
+
     ObjectBucket:
       description: Private logical bucket metadata without upstream credentials or placement details.
       type: object
@@ -13196,7 +13464,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read] }
           description: "Permission set attached to the exported key. Object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -18879,7 +19147,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read] }
           description: "Closed permission set attached to the key. storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -18905,7 +19173,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read] }
           description: "Requested permission set. The server rejects unknown scopes. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
@@ -18932,7 +19200,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 

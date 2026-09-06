@@ -12,6 +12,9 @@
 // at each downstream hop. When the inbound ctx has no Budget (an
 // internal goroutine, an admin path), WithOverhead and WithCeiling
 // are identity no-ops so existing call-sites are unaffected.
+// Long-lived responses use WithStream: the request budget remains active
+// until response headers are committed, then detach drops only that budget
+// while retaining the original client/server cancellation root.
 //
 // Source of truth for default values lives in pkg/api/limits.go
 // (RequestBudgetDefault, RequestBudgetMax, RequestBudgetApidDefault,

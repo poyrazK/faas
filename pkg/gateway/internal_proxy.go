@@ -46,6 +46,7 @@ import (
 
 	"golang.org/x/net/http2"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
@@ -355,7 +356,9 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "internal proxy not configured", http.StatusBadGateway)
 		return
 	}
-	outReq := r.Clone(r.Context())
+	streamCtx, detachBudget, touch, cancelStream := newStreamSession(r.Context(), 0, streamIdleTimeout)
+	defer cancelStream()
+	outReq := r.Clone(streamCtx)
 	outReq.URL.Scheme = p.Target.Scheme
 	outReq.URL.Host = p.Target.Host
 	// Keep the inbound Host as the routing key. gatewayd-internal
@@ -429,11 +432,14 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	} else {
 		outReq.Header.Set("X-Forwarded-Proto", "http")
 	}
-	// RoundTrip runs on r.Context() directly (issue #687). The dial
-	// step is bounded by p.DialTimeout via the transport's
-	// DialContext/DialTLSContext closure; the body copy is bounded
-	// by the inbound request deadline (customer-side) so a
-	// 60-second cold-wake streaming response is not cut at 10 s.
+	if outReq.Body != nil {
+		outReq.Body = &activityReadCloser{ReadCloser: outReq.Body, activity: touch}
+	}
+	// RoundTrip runs on a detachable stream context (issue #687). The
+	// dial step is bounded by p.DialTimeout via the transport's
+	// DialContext/DialTLSContext closure; once a long-lived response
+	// commits its headers, the ordinary request budget is detached and
+	// body copy is bounded by activity plus the stream idle timeout.
 	//
 	// resp.Body ownership transferred to copyResponseBody — it
 	// owns the close (defer in the read goroutine + the cancel
@@ -465,7 +471,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		// envelope here keeps the customer-visible status honest;
 		// the metric attribution is fixed separately since the
 		// middleware still observes bw.wrote.
-		if requestBudgetExpired(r.Context()) {
+		if requestBudgetExpired(streamCtx) {
 			p.logger().Warn("internal round-trip exceeded request budget",
 				"target", p.Target.String(),
 				"err", err)
@@ -500,7 +506,11 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(resp.StatusCode)
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
-	if _, err := copyResponseBody(r.Context(), w, resp.Body); err != nil && !errors.Is(err, context.Canceled) {
+	if isLongLivedResponse(resp.StatusCode, resp.Header) {
+		detachBudget()
+		touch()
+	}
+	if _, err := copyResponseBodyWithActivity(streamCtx, w, resp.Body, touch); err != nil && !errors.Is(err, context.Canceled) {
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)
@@ -530,8 +540,9 @@ func isHopByHop(h string) bool {
 }
 
 // copyResponseBody drains src to dst, returning on ctx cancel or
-// io.EOF. The caller is expected to have set a request-level
-// timeout (r.Context) that bounds the copy.
+// io.EOF. Long-lived callers pass a detachable stream context so
+// the initial request budget ends at response headers while client
+// cancellation and the stream idle timeout remain active.
 //
 // Issue #687 (PR-3 review follow-up): three things matter here.
 // (1) Per-Write Flush so SSE / chunked-JSON customers see flushes
@@ -550,6 +561,10 @@ func isHopByHop(h string) bool {
 // The function owns src's lifecycle: defer Body.Close in the
 // caller is redundant after this change.
 func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (int64, error) {
+	return copyResponseBodyWithActivity(ctx, dst, src, nil)
+}
+
+func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, activity func()) (int64, error) {
 	flusher, _ := dst.(http.Flusher) // ok if dst isn't an http.ResponseWriter
 	type result struct {
 		n   int64
@@ -628,6 +643,9 @@ func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (in
 						break
 					}
 				}
+				if activity != nil && written > 0 {
+					activity()
+				}
 				if flusher != nil {
 					flusher.Flush()
 				}
@@ -658,6 +676,31 @@ func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (in
 		_ = src.Close()
 		<-done
 		return 0, ctx.Err()
+	}
+}
+
+type activityReadCloser struct {
+	io.ReadCloser
+	activity func()
+}
+
+func (r *activityReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if n > 0 && r.activity != nil {
+		r.activity()
+	}
+	return n, err
+}
+
+func isLongLivedResponse(statusCode int, h http.Header) bool {
+	if statusCode != http.StatusSwitchingProtocols && (statusCode < http.StatusOK || statusCode >= http.StatusBadRequest) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(h.Get(api.StreamingStatusHeader))) {
+	case string(api.StreamingStatusStreaming), string(api.StreamingStatusUpgradeBypass):
+		return true
+	default:
+		return false
 	}
 }
 

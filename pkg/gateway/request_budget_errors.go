@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -18,10 +19,14 @@ func requestBudgetExpired(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}
-	if _, ok := reqbudget.FromContext(ctx); !ok {
+	b, ok := reqbudget.FromContext(ctx)
+	if !ok {
 		return false
 	}
-	return errors.Is(ctx.Err(), context.DeadlineExceeded)
+	// Transports can return EOF at the same instant the budget timer fires,
+	// before the context's Err field is observable to this goroutine. The
+	// budget's own wall-clock calculation is the authoritative fallback.
+	return errors.Is(ctx.Err(), context.DeadlineExceeded) || b.Remaining(time.Time{}) <= 0
 }
 
 func writeRequestBudgetExceeded(w http.ResponseWriter) {
