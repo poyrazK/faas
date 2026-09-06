@@ -260,9 +260,7 @@ func normalizeDebugFlagArgs(args []string, valueFlags map[string]bool) (flagArgs
 		if strings.HasPrefix(arg, "-") && arg != "-" {
 			flagArgs = append(flagArgs, arg)
 			name := strings.TrimLeft(arg, "-")
-			if eq := strings.IndexByte(name, '='); eq >= 0 {
-				name = name[:eq]
-			} else if valueFlags[name] && i+1 < len(args) {
+			if strings.IndexByte(name, '=') < 0 && valueFlags[name] && i+1 < len(args) {
 				i++
 				flagArgs = append(flagArgs, args[i])
 			}
