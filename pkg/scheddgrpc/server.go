@@ -1248,6 +1248,10 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			InflightRequests: row.GetInflightRequests(),
 			OpenConns:        row.GetOpenConns(),
 		}
+		if value := row.GetRequestCountTotal(); value != nil {
+			v := value.GetValue()
+			item.RequestCountTotal = &v
+		}
 		if value := row.GetResidentBytes(); value != nil {
 			v := value.GetValue()
 			item.ResidentBytes = &v
