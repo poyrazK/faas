@@ -185,6 +185,13 @@ func syncJob(ctx context.Context, backend storage.StorageBackend, job state.Snap
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if resolver, ok := backend.(storage.LocalPathResolver); ok {
+			if _, local, err := resolver.LocalPath(key); err != nil {
+				return fmt.Errorf("resolve %q: %w", key, err)
+			} else if local {
+				continue
+			}
+		}
 		rc, err := backend.Get(ctx, key)
 		if err != nil {
 			return fmt.Errorf("get %q: %w", key, err)
