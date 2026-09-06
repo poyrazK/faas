@@ -27,6 +27,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -70,6 +71,8 @@ type edgeRuleStore interface {
 // parse time (gateway_edge_rule_compile_error_total{kind}). nil
 // is safe — the compile helpers guard before incrementing.
 type gatewaydEdgeRules struct {
+	loadMu   sync.Mutex
+	loads    map[edgeLoadKey]chan struct{}
 	store    edgeRuleStore
 	cache    *gateway.EdgeRuleCache
 	log      *slog.Logger
@@ -110,7 +113,7 @@ func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate valida
 	}
 }
 
-// loadHost compiles every kind's slice for host into a fresh
+// loadHostUncached compiles every kind's slice for host into a fresh
 // hostEntry. Shared by all Match* methods so a cache miss for
 // ANY kind recompiles all kinds in one pass (the SQL roundtrip
 // dominates; the path.Match walks are irrelevant). Returns
@@ -124,7 +127,7 @@ func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate valida
 // (reuses the same PathGlobError tuple shape); PR-B widens it
 // to include kind=validate compile errors; the maintenance
 // amendment widens it again to include kind=maintenance.
-func (g *gatewaydEdgeRules) loadHost(ctx context.Context, host string) (*gateway.HostEntry, error) {
+func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (*gateway.HostEntry, error) {
 	generation := g.cache.Generation()
 	storeRules, err := g.store.MatchEdgeRulesForHost(ctx, host)
 	if err != nil {

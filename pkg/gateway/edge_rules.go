@@ -44,6 +44,7 @@ import (
 	"errors"
 	"net"
 	"path"
+	"slices"
 	"sync"
 	"time"
 )
@@ -452,6 +453,32 @@ func NewEdgeRuleCache(capacity int) *EdgeRuleCache {
 		capacity = 1
 	}
 	return &EdgeRuleCache{now: time.Now, cap: capacity, ll: list.New(), byID: map[string]*list.Element{}}
+}
+
+// GetHost returns a value-copy of every compiled rule slice for a current host.
+// Loaders use it to recheck the cache after joining an in-flight database read.
+func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	out := *entry
+	out.Route = slices.Clone(entry.Route)
+	out.Rewrite = slices.Clone(entry.Rewrite)
+	out.Redirect = slices.Clone(entry.Redirect)
+	out.Headers = slices.Clone(entry.Headers)
+	out.CORS = slices.Clone(entry.CORS)
+	out.JWT = slices.Clone(entry.JWT)
+	out.IP = slices.Clone(entry.IP)
+	out.Validate = slices.Clone(entry.Validate)
+	out.Limit = slices.Clone(entry.Limit)
+	out.Maintenance = slices.Clone(entry.Maintenance)
+	out.Geo = slices.Clone(entry.Geo)
+	out.Throttle = slices.Clone(entry.Throttle)
+	out.Budget = slices.Clone(entry.Budget)
+	out.Cache = slices.Clone(entry.Cache)
+	out.PathGlobErrs = slices.Clone(entry.PathGlobErrs)
+	return &out, true
 }
 
 // Get returns the cached `kind=route` slice for host and whether
