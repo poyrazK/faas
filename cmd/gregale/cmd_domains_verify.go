@@ -110,7 +110,7 @@ func cmdDomainsStatus(args []string) int {
 		if d.CertLastError != "" {
 			fmt.Printf(" %s", d.CertLastError)
 		}
-		fmt.Fprintln(os.Stdout)
+		_, _ = fmt.Fprintln(os.Stdout)
 	}
 	return 0
 }
