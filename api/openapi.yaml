@@ -12156,6 +12156,25 @@ components:
         authorizations: { type: integer, format: int64, minimum: 0 }
         fresh: { type: boolean }
         period_start: { type: string, format: date-time }
+    ObjectStoragePricing:
+      description: Operator-supplied customer rate card. Rates are integer millicents and are not provider-specific.
+      type: object
+      required: [currency, storage_millicents_per_gib_month, requests_millicents_per_million, egress_millicents_per_gib]
+      properties:
+        currency: { type: string, minLength: 3, maxLength: 3, pattern: '^[A-Z]{3}$' }
+        storage_millicents_per_gib_month: { type: integer, format: int64, minimum: 0 }
+        requests_millicents_per_million: { type: integer, format: int64, minimum: 0 }
+        egress_millicents_per_gib: { type: integer, format: int64, minimum: 0 }
+    ObjectStorageCharge:
+      description: Current UTC-month customer charge estimate. This is not an invoice until a billing provider posts a line item.
+      type: object
+      required: [currency, storage_millicents, requests_millicents, egress_millicents, total_millicents]
+      properties:
+        currency: { type: string, minLength: 3, maxLength: 3, pattern: '^[A-Z]{3}$' }
+        storage_millicents: { type: integer, format: int64, minimum: 0 }
+        requests_millicents: { type: integer, format: int64, minimum: 0 }
+        egress_millicents: { type: integer, format: int64, minimum: 0 }
+        total_millicents: { type: integer, format: int64, minimum: 0 }
     ObjectStorageUsageResponse:
       description: Current UTC-month accounting and operator safety policy.
       type: object
@@ -12163,6 +12182,7 @@ components:
       properties:
         usage: { $ref: '#/components/schemas/ObjectStorageUsage' }
         policy: { $ref: '#/components/schemas/ObjectStoragePolicy' }
+        charges: { $ref: '#/components/schemas/ObjectStorageCharge' }
     ObjectStorageUsageReport:
       description: Authoritative cumulative provider usage for one account, backend and UTC month. Missing data is not zero; costs are EUR millicents.
       type: object

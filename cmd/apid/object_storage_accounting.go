@@ -49,7 +49,13 @@ func (s *server) getObjectStorageUsage(w http.ResponseWriter, r *http.Request, a
 		bucketProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, api.ObjectStorageUsageResponse{Usage: state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, now), Policy: s.objectStorage.Accounting})
+	usage := state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, now)
+	charges, err := s.objectStorage.ChargeForUsage(usage)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	writeJSON(w, 200, api.ObjectStorageUsageResponse{Usage: usage, Policy: s.objectStorage.Accounting, Charges: charges})
 }
 
 func (s *server) recordObjectStorageUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObjectStorageCharge } from './ObjectStorageCharge.js';
 import type { ObjectStoragePolicy } from './ObjectStoragePolicy.js';
 import type { ObjectStorageUsage } from './ObjectStorageUsage.js';
 /**
@@ -10,5 +11,6 @@ import type { ObjectStorageUsage } from './ObjectStorageUsage.js';
 export type ObjectStorageUsageResponse = {
   usage: ObjectStorageUsage;
   policy: ObjectStoragePolicy;
+  charges?: ObjectStorageCharge;
 };
 
