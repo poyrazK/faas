@@ -100,6 +100,10 @@ type WriteCheck func(ctx context.Context, repoFullName, commitSHA string, phase 
 
 type WriteAppCheckFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, summary string) error
 
+// WriteSkippedCheckForInstallationFunc writes the neutral production Check
+// Run used when a commit explicitly opts out of deployment.
+type WriteSkippedCheckForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error
+
 // WritePreviewCheck is the seam githubd uses to push PR-preview
 // Check Run updates back to GitHub (issue #272 / ADR-094). Wired
 // by cmd/githubd/main.go to ChecksAPI.WritePreviewCheck; nil-safe
@@ -148,15 +152,16 @@ type WritePreviewDestroyComment = WritePreviewDestroyCommentFunc
 // mode="error" / mode="breaker_open" metric labels rather than
 // silently downgrading to full fan-out.
 type Service struct {
-	Log           *slog.Logger
-	Bindings      AppBindingStore
-	Installs      InstallsLookup
-	Source        SourceFetcher
-	Reconcile     *reconcile.Service
-	Enqueuer      BuildEnqueuer
-	ChangedFiles  ChangedFilesClient
-	WriteCheck    WriteCheck
-	WriteAppCheck WriteAppCheckFunc
+	Log                              *slog.Logger
+	Bindings                         AppBindingStore
+	Installs                         InstallsLookup
+	Source                           SourceFetcher
+	Reconcile                        *reconcile.Service
+	Enqueuer                         BuildEnqueuer
+	ChangedFiles                     ChangedFilesClient
+	WriteCheck                       WriteCheck
+	WriteAppCheck                    WriteAppCheckFunc
+	WriteSkippedCheckForInstallation WriteSkippedCheckForInstallationFunc
 	// Ops is the per-daemon Prometheus facade. Used by the
 	// push-dispatch path to increment
 	// githubd_path_filter_total{mode} after lookupChangedFiles
@@ -398,6 +403,21 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			"install_installation_id", install.InstallationID,
 			"repo", ev.Repository.FullName)
 		return reconcile.Result{}, ErrNoBinding
+	}
+
+	// An explicit commit marker is a customer-controlled no-op. Resolve the
+	// binding/install/project first so the neutral Check Run can use the
+	// installation-scoped token, then stop before source fetch, scan, or
+	// reconcile. Durable webhook deliveries treat ErrSkipDeploy as complete.
+	if marker := ev.DeploySkipMarker(); marker != "" {
+		s.Ops.ObserveGithubdPushSkipped(wire.PushSkippedReasonMarker)
+		if s.WriteSkippedCheckForInstallation != nil {
+			summary := fmt.Sprintf("Deployment skipped by commit marker %s.", marker)
+			if checkErr := s.WriteSkippedCheckForInstallation(ctx, install.InstallationID, ev.Repository.FullName, ev.After, summary); checkErr != nil {
+				return reconcile.Result{}, fmt.Errorf("githubd: write skipped check: %w", checkErr)
+			}
+		}
+		return reconcile.Result{}, ErrSkipDeploy
 	}
 
 	// 4. Fetch the source tree. The fetcher unseals the install
@@ -796,6 +816,20 @@ func (errNoBinding) Error() string { return "githubd: no binding for push" }
 // IsNoBinding reports whether err is the no-binding sentinel.
 func IsNoBinding(err error) bool {
 	return errors.As(err, new(errNoBinding))
+}
+
+// ErrSkipDeploy is returned when a push contains an explicit deployment
+// opt-out marker ([skip deploy] or [deploy skip]). The HTTP handler maps it to
+// a successful ignored response and the durable worker completes the inbox row
+// without retrying the delivery.
+var ErrSkipDeploy = errSkipDeploy{}
+
+type errSkipDeploy struct{}
+
+func (errSkipDeploy) Error() string { return "githubd: deployment skipped by commit marker" }
+
+func IsSkipDeploy(err error) bool {
+	return errors.As(err, new(errSkipDeploy))
 }
 
 // previewDefaultTTL is the wall-clock duration a preview app

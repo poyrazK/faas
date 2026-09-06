@@ -8,6 +8,7 @@ package githubd
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 // PullRequestAction enumerates the GitHub `pull_request` webhook
@@ -150,6 +151,29 @@ type PushEvent struct {
 	Repository   PushRepository      `json:"repository"` // repo identity
 	Installation InstallationPayload `json:"installation"`
 	Pusher       PushPusher          `json:"pusher"` // optional audit
+	HeadCommit   PushCommit          `json:"head_commit"`
+	Commits      []PushCommit        `json:"commits"`
+}
+
+// PushCommit is the commit-message subset used by deploy trigger policy.
+type PushCommit struct {
+	Message string `json:"message"`
+}
+
+// DeploySkipMarker returns the first supported commit marker, if any.
+// GitHub includes both head_commit and commits in push payloads depending on
+// the delivery shape, so inspect both and keep the policy case-insensitive.
+func (ev PushEvent) DeploySkipMarker() string {
+	for _, commit := range append([]PushCommit{ev.HeadCommit}, ev.Commits...) {
+		message := strings.ToLower(commit.Message)
+		if strings.Contains(message, "[skip deploy]") {
+			return "[skip deploy]"
+		}
+		if strings.Contains(message, "[deploy skip]") {
+			return "[deploy skip]"
+		}
+	}
+	return ""
 }
 
 // PushRepository is the bits of `repository` the dispatch logic

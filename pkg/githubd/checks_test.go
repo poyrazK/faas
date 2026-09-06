@@ -332,6 +332,25 @@ func TestWritePreviewCheckForkRefused_HappyPath(t *testing.T) {
 	}
 }
 
+func TestWriteSkippedCheckForInstallation_HappyPath(t *testing.T) {
+	c, gotBody := newPreviewChecksAPI(t)
+	err := c.WriteSkippedCheckForInstallation(context.Background(), 99, "octo/api", "deadbeef", "Deployment skipped by commit marker [skip deploy].")
+	if err != nil {
+		t.Fatalf("WriteSkippedCheckForInstallation: %v", err)
+	}
+	body := *gotBody.Load()
+	if body["name"] != prodCheckName {
+		t.Errorf("name = %v, want %q", body["name"], prodCheckName)
+	}
+	if body["status"] != statusCompleted || body["conclusion"] != previewCheckConclusionNeutral {
+		t.Errorf("status/conclusion = %v/%v, want completed/neutral", body["status"], body["conclusion"])
+	}
+	output, _ := body["output"].(map[string]any)
+	if output["title"] != "Deployment skipped" || !strings.Contains(output["summary"].(string), "[skip deploy]") {
+		t.Errorf("output = %v, want deployment skipped marker summary", output)
+	}
+}
+
 // TestWritePreviewCheckForkRefused_RejectsMissingArgs mirrors
 // the production guard.
 func TestWritePreviewCheckForkRefused_RejectsMissingArgs(t *testing.T) {

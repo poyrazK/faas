@@ -416,6 +416,13 @@ func (s *Server) writeWebhookResult(w http.ResponseWriter, result reconcile.Resu
 			observe(nil)
 			return
 		}
+		if IsSkipDeploy(err) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ignored","reason":"skip_marker"}`))
+			observe(nil)
+			return
+		}
 		if isReleaseTagRejected(err) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)

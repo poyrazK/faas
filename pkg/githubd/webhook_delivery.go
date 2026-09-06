@@ -235,7 +235,7 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 				break
 			}
 			dispatchErr := service.HandleWebhookDelivery(ctx, delivery)
-			if dispatchErr == nil || IsNoBinding(dispatchErr) || IsIgnored(dispatchErr) || isReleaseTagRejected(dispatchErr) {
+			if dispatchErr == nil || IsNoBinding(dispatchErr) || IsIgnored(dispatchErr) || IsSkipDeploy(dispatchErr) || isReleaseTagRejected(dispatchErr) {
 				if err := store.Complete(ctx, delivery.DeliveryID); err != nil {
 					log.Error("githubd: complete webhook delivery", "delivery_id", delivery.DeliveryID, "err", err)
 				}

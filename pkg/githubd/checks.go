@@ -331,6 +331,27 @@ func (c *ChecksAPI) WriteCheck(ctx context.Context, repoFullName, commitSHA stri
 	})
 }
 
+// WriteSkippedCheckForInstallation posts a completed neutral production check
+// when a commit explicitly opts out of deployment with [skip deploy] or
+// [deploy skip]. The installation-scoped token keeps the acknowledgement
+// least-privilege and matches the push dispatcher's binding resolution.
+func (c *ChecksAPI) WriteSkippedCheckForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
+	if repoFullName == "" || commitSHA == "" {
+		return fmt.Errorf("githubd: repo and sha required for skipped check-run")
+	}
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, prodCheckName, checkRunRequest{
+		Name:       prodCheckName,
+		HeadSHA:    commitSHA,
+		Status:     statusCompleted,
+		Conclusion: previewCheckConclusionNeutral,
+		Output: &checkRunOutput{
+			Title:   "Deployment skipped",
+			Summary: summary,
+		},
+		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
+	})
+}
+
 // WriteAppCheck writes the independent lifecycle row for one workload in a
 // monorepo. The exact installation ID comes from the authenticated webhook or
 // durable deployment binding, avoiding an unscoped repo reverse lookup.

@@ -390,6 +390,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				webhookSvc.WriteAppCheck = func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, summary string) error {
 					return checks.WriteAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, phase, "", summary)
 				}
+				webhookSvc.WriteSkippedCheckForInstallation = checks.WriteSkippedCheckForInstallation
 				// PR-A's preview Check Run seams were
 				// declared on Service but never wired to the
 				// live ChecksAPI — every preview event

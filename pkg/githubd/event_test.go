@@ -99,6 +99,32 @@ func TestDecodePush_EmptyBeforeIsAccepted(t *testing.T) {
 	}
 }
 
+func TestPushEvent_DeploySkipMarker(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		body   string
+		marker string
+	}{
+		{name: "head commit", body: `{"ref":"refs/heads/main","after":"sha","repository":{"full_name":"octo/api"},"head_commit":{"message":"release [skip deploy]"}}`, marker: "[skip deploy]"},
+		{name: "commit list case insensitive", body: `{"ref":"refs/heads/main","after":"sha","repository":{"full_name":"octo/api"},"commits":[{"message":"docs [DEPLOY SKIP]"}]}`, marker: "[deploy skip]"},
+		{name: "ordinary commit", body: `{"ref":"refs/heads/main","after":"sha","repository":{"full_name":"octo/api"},"head_commit":{"message":"release"}}`},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ev, err := DecodePush([]byte(tc.body))
+			if err != nil {
+				t.Fatalf("DecodePush: %v", err)
+			}
+			if got := ev.DeploySkipMarker(); got != tc.marker {
+				t.Errorf("DeploySkipMarker() = %q, want %q", got, tc.marker)
+			}
+		})
+	}
+}
+
 // validPRBody is a complete pull_request body the happy-path tests
 // reuse. The head SHA is the standard 40-char hex form; the head
 // repo's full_name matches the base repo's full_name (i.e. NOT a

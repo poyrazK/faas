@@ -1659,6 +1659,10 @@ type OpsMetrics struct {
 	// breakerFailureThreshold consecutive failures, then auto-
 	// resets after breakerCooldown).
 	githubdPathFilterTotal *prometheus.CounterVec
+	// githubdPushSkippedTotal counts customer-requested deployment skips,
+	// labelled by a closed reason set so commit text never becomes a metric
+	// label. Only githubd increments this single-registry counter.
+	githubdPushSkippedTotal *prometheus.CounterVec
 	// registryCredentialMarkUsedFailures: ADR-062 / issue #461.
 	// Counts every failure of imaged's
 	// store.MarkAppRegistryCredentialUsed call after a successful
@@ -3094,6 +3098,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_path_filter_total",
 		Help: "Path-filter mode counter for githubd push dispatch (issue #432 phase 5, ADR-050 §109). mode ∈ {paths, full_fallback, truncated, error, breaker_open}. One increment per inbound webhook after lookupChangedFiles picks a mode. mode=paths is the optimistic path; the others collapse into the rebuild-all fallback for that push. The single-registry pattern demands the field is present on every daemon's OpsMetrics — only githubd increments via ObserveGithubdPathFilter.",
 	}, []string{"mode"})
+	githubdPushSkippedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_push_skipped_total",
+		Help: "Customer-requested deployment skips in githubd push dispatch. reason is a closed policy label.",
+	}, []string{"reason"})
 	// PR-E sister collector for the user-space OCI dialer. Only
 	// registered when prefix == "imaged" — on every other daemon the
 	// field stays nil and the imaged-side hook in cmd/imaged/main.go
@@ -3207,6 +3215,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidStatelessAdvisoryEventsTotal,
 		apidGithubdBridgeEnqueuedTotal,
 		githubdPathFilterTotal,
+		githubdPushSkippedTotal,
 		throttleSecondsTotal, throttleRatio,
 		egressSourceErrors,
 		wakePhaseEmitted, wakePhaseDur, recoveryEventEmitted,
@@ -3931,6 +3940,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, mode := range []string{PathFilterModePaths, PathFilterModeFullFallback, PathFilterModeTruncated, PathFilterModeError, PathFilterModeBreakerOpen} {
 		githubdPathFilterTotal.WithLabelValues(mode)
 	}
+	for _, reason := range []string{PushSkippedReasonMarker} {
+		githubdPushSkippedTotal.WithLabelValues(reason)
+	}
 	// issue #299: pre-instantiate the closed `severity` label set
 	// for imageScanVulns so the rows surface in /metrics from boot
 	// — same precedent as every other CounterVec on this struct.
@@ -4440,6 +4452,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidStatelessAdvisoryEventsTotal:                      apidStatelessAdvisoryEventsTotal,
 		apidGithubdBridgeEnqueuedTotal:                        apidGithubdBridgeEnqueuedTotal,
 		githubdPathFilterTotal:                                githubdPathFilterTotal,
+		githubdPushSkippedTotal:                               githubdPushSkippedTotal,
 		wakePhaseEmitted:                                      wakePhaseEmitted,
 		wakePhaseDur:                                          wakePhaseDur,
 		recoveryEventEmitted:                                  recoveryEventEmitted,
@@ -7581,7 +7594,28 @@ const (
 	PathFilterModeTruncated    = "truncated"
 	PathFilterModeError        = "error"
 	PathFilterModeBreakerOpen  = "breaker_open"
+	PushSkippedReasonMarker    = "marker"
 )
+
+// ObserveGithubdPushSkipped increments githubd_push_skipped_total{reason}.
+// The reason vocabulary is deliberately closed so commit messages cannot
+// create unbounded Prometheus series.
+func (m *OpsMetrics) ObserveGithubdPushSkipped(reason string) {
+	if m == nil || m.githubdPushSkippedTotal == nil {
+		return
+	}
+	if reason == PushSkippedReasonMarker {
+		m.githubdPushSkippedTotal.WithLabelValues(reason).Inc()
+	}
+}
+
+// GithubdPushSkippedTotal returns the metric series for service-level tests.
+func (m *OpsMetrics) GithubdPushSkippedTotal(reason string) prometheus.Counter {
+	if m == nil || m.githubdPushSkippedTotal == nil || reason != PushSkippedReasonMarker {
+		return nil
+	}
+	return m.githubdPushSkippedTotal.WithLabelValues(reason)
+}
 
 // ObserveAdvisoryBatchResult increments
 // stateless_advisory_batches_emitted_total{result} (Mega-PR B).
