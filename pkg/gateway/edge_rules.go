@@ -335,7 +335,11 @@ type EdgeRuleGeoResolved struct {
 // one per kind). Wholesale `Reset()` on `db.NotifyEdgeRuleChanged`
 // is the only invalidation — single-box scale assumption per
 // spec §4.3. Mirrors `RouteCache` at `pkg/gateway/routes.go:11-96`.
+const edgeRuleNegativeTTL = 30 * time.Second
+
 type EdgeRuleCache struct {
+	generation uint64
+	now        func() time.Time
 	// mu (ADR-091 hardening PR-A) is a sync.RWMutex rather than the
 	// previous sync.Mutex. The hot path is read-dominant (every
 	// cache hit + every cache miss walks the map under at least an
@@ -370,15 +374,16 @@ type EdgeRuleCache struct {
 // `cache.Put(host, &gateway.HostEntry{...})` — see how the cmd-side
 // loadHost builds the entry. PR 5 widens with CORS / JWT / IP slots.
 type HostEntry struct {
-	Host     string
-	Route    []EdgeRuleResolved
-	Rewrite  []EdgeRuleRewriteResolved
-	Redirect []EdgeRuleRedirectResolved
-	Headers  []EdgeRuleHeadersResolved
-	CORS     []EdgeRuleCORSResolved
-	JWT      []EdgeRuleJWTResolved
-	IP       []EdgeRuleIPResolved
-	Validate []EdgeRuleValidateResolved
+	expiresAt time.Time
+	Host      string
+	Route     []EdgeRuleResolved
+	Rewrite   []EdgeRuleRewriteResolved
+	Redirect  []EdgeRuleRedirectResolved
+	Headers   []EdgeRuleHeadersResolved
+	CORS      []EdgeRuleCORSResolved
+	JWT       []EdgeRuleJWTResolved
+	IP        []EdgeRuleIPResolved
+	Validate  []EdgeRuleValidateResolved
 	// Limit carries the kind=limit subset (ADR-091 D24). Same
 	// shape as Validate above; the applier
 	// (handler.go::applyEdgeRuleLimit) installs MaxBytesReader on
@@ -446,22 +451,24 @@ func NewEdgeRuleCache(capacity int) *EdgeRuleCache {
 	if capacity < 1 {
 		capacity = 1
 	}
-	return &EdgeRuleCache{cap: capacity, ll: list.New(), byID: map[string]*list.Element{}}
+	return &EdgeRuleCache{now: time.Now, cap: capacity, ll: list.New(), byID: map[string]*list.Element{}}
 }
 
 // Get returns the cached `kind=route` slice for host and whether
 // the entry was present, promoting the entry on hit. Returns
-// (nil, false) when the host has no compiled entry OR the entry
-// exists but the route slice is nil — both cases are a miss from
-// the matcher's perspective.
+// (nil, false) when the host has no current entry. A cached host
+// with no route rules returns (nil, true), like every other kind.
 //
 // Returns a value-copy of the underlying slice so callers can
 // mutate without poisoning the cache (mirrors the RouteCache
 // value-copy pattern at `pkg/gateway/routes.go`).
 func (c *EdgeRuleCache) Get(host string) ([]EdgeRuleResolved, bool) {
 	entry, ok := c.getEntry(host)
-	if !ok || entry.Route == nil {
+	if !ok {
 		return nil, false
+	}
+	if entry.Route == nil {
+		return nil, true
 	}
 	src := entry.Route
 	out := make([]EdgeRuleResolved, len(src))
@@ -762,51 +769,66 @@ func (c *EdgeRuleCache) getEntry(host string) (*HostEntry, bool) {
 	if !ok {
 		return nil, false
 	}
+	entry := el.Value.(*HostEntry)
+	if !entry.expiresAt.IsZero() && !c.now().Before(entry.expiresAt) {
+		c.removeElement(el)
+		return nil, false
+	}
 	c.ll.MoveToFront(el)
-	return el.Value.(*HostEntry), true
+	return entry, true
 }
 
-// Put replaces the entire hostEntry for host with the supplied
-// compiled slices, evicting the LRU entry if the cache is over
-// capacity. A nil entry is a no-op (the next Get returns a
-// miss and the loader re-hits PG). PR 8 may add a negative-cache
-// sentinel for hosts with zero active rules — deferred because
-// the cache is advisory and a missing entry costs one indexed
-// PG read (~0.5ms warm).
-//
-// All slices are populated from the SAME PG read (a miss for
-// any kind re-runs the SQL query and recompiles every kind); this
-// is the loader's contract (cmd/gatewayd-internal/edge_rules.go).
-func (c *EdgeRuleCache) Put(host string, e *HostEntry) {
-	if e == nil {
-		return
-	}
-	// PR 5 contract (widened from PR 4, then again by PR-B for
-	// kind=validate and by ADR-091 D21 for kind=geo): a Put whose
-	// HostEntry has empty/nil slices for every kind is a no-op (the
-	// loader re-hits PG on the next Get). Pinning this so a future
-	// test or refactor can't silently start caching "no rules"
-	// entries (which would mask a loader bug).
-	if len(e.Route) == 0 && len(e.Rewrite) == 0 &&
-		len(e.Redirect) == 0 && len(e.Headers) == 0 &&
-		len(e.CORS) == 0 && len(e.JWT) == 0 && len(e.IP) == 0 &&
-		len(e.Validate) == 0 && len(e.Limit) == 0 &&
-		len(e.Maintenance) == 0 && len(e.Geo) == 0 {
-		return
-	}
-	e.Host = host
+// Put caches a successfully loaded rule set. Nil means no usable result;
+// an empty set is a negative entry with a bounded lifetime (ADR-160).
+func (c *EdgeRuleCache) Put(host string, entry *HostEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.putLocked(host, entry)
+}
+
+// Generation fences a database read against invalidation while it is in flight.
+func (c *EdgeRuleCache) Generation() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.generation
+}
+
+// PutIfGeneration does not repopulate the cache with a read started before Reset.
+func (c *EdgeRuleCache) PutIfGeneration(host string, entry *HostEntry, generation uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.generation == generation {
+		c.putLocked(host, entry)
+	}
+}
+
+func (c *EdgeRuleCache) putLocked(host string, entry *HostEntry) {
+	if entry == nil {
+		return
+	}
+	// Cache metadata belongs to this insertion, not to the loader's result.
+	cached := *entry
+	cached.Host = host
+	cached.expiresAt = time.Time{}
+	if !cached.hasRules() {
+		cached.expiresAt = c.now().Add(edgeRuleNegativeTTL)
+	}
 	if el, ok := c.byID[host]; ok {
-		el.Value = e
+		el.Value = &cached
 		c.ll.MoveToFront(el)
 		return
 	}
-	el := c.ll.PushFront(e)
+	el := c.ll.PushFront(&cached)
 	c.byID[host] = el
 	if c.ll.Len() > c.cap {
 		c.evictLRU()
 	}
+}
+
+func (e *HostEntry) hasRules() bool {
+	return len(e.Route)+len(e.Rewrite)+len(e.Redirect)+len(e.Headers)+
+		len(e.CORS)+len(e.JWT)+len(e.IP)+len(e.Validate)+len(e.Limit)+
+		len(e.Maintenance)+len(e.Geo)+len(e.Throttle)+len(e.Budget)+len(e.Cache) > 0
 }
 
 // Reset drops every cached entry. gatewayd-internal calls this on
@@ -814,6 +836,7 @@ func (c *EdgeRuleCache) Put(host string, e *HostEntry) {
 func (c *EdgeRuleCache) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.generation++
 	c.ll.Init()
 	c.byID = map[string]*list.Element{}
 }

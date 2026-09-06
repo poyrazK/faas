@@ -84,16 +84,18 @@ func TestEdgeRuleCache_ResetClearsAll(t *testing.T) {
 	}
 }
 
-func TestEdgeRuleCache_EmptyRulesIsNoOp(t *testing.T) {
-	// Putting an empty/nil rules slice is a no-op (the loader
-	// re-hits PG on the next Get). PR 8 may add a negative-cache
-	// sentinel — deferred because the cache is advisory and a
-	// missing entry costs one indexed PG read (~0.5ms warm).
+func TestEdgeRuleCache_EmptyRulesAreCached(t *testing.T) {
 	c := NewEdgeRuleCache(4)
-	c.Put("empty.example.com", nil)
-	c.Put("empty2.example.com", &HostEntry{Host: "empty2.example.com", Route: []EdgeRuleResolved{}})
-	if c.Len() != 0 {
-		t.Errorf("len = %d, want 0 (empty Put is no-op)", c.Len())
+	c.Put("failed.example.com", nil)
+	c.Put("empty.example.com", &HostEntry{})
+	if c.Len() != 1 {
+		t.Fatalf("entries = %d, want only successful empty result", c.Len())
+	}
+	if _, ok := c.Get("failed.example.com"); ok {
+		t.Fatal("nil result was cached")
+	}
+	if rules, ok := c.Get("empty.example.com"); !ok || len(rules) != 0 {
+		t.Fatal("empty result missed cache")
 	}
 }
 
