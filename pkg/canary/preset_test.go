@@ -15,7 +15,9 @@ package canary
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,14 +25,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	canarycatalog "github.com/onebox-faas/faas/pkg/api/canary"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // stubStore satisfies the canary.Store interface for tests.
 type stubStore struct {
-	mu      sync.Mutex
-	rows    []CanaryRow
-	listErr error
+	mu            sync.Mutex
+	rows          []CanaryRow
+	listErr       error
+	mirrorSummary MirrorSummary
+	mirrorErr     error
 }
 
 func (s *stubStore) ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error) {
@@ -44,12 +49,19 @@ func (s *stubStore) ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error)
 	return out, nil
 }
 
+func (s *stubStore) MirrorSummaryForDeployment(_ context.Context, _, _ string, _ time.Time) (MirrorSummary, error) {
+	return s.mirrorSummary, s.mirrorErr
+}
+
 // stubAPID satisfies the APIDClient interface for tests by capturing
 type stubAPID struct {
-	mu       sync.Mutex
-	advances []string
-	expected []int
-	err      error
+	mu         sync.Mutex
+	advances   []string
+	expected   []int
+	err        error
+	recoveries []struct {
+		slug, action, reason string
+	}
 }
 
 func (a *stubAPID) AdvanceCanary(ctx context.Context, id string, expectedStep int) (api.CanaryAdvanceResponse, error) {
@@ -61,6 +73,78 @@ func (a *stubAPID) AdvanceCanary(ctx context.Context, id string, expectedStep in
 	a.advances = append(a.advances, id)
 	a.expected = append(a.expected, expectedStep)
 	return api.CanaryAdvanceResponse{}, nil
+}
+
+func (a *stubAPID) RecoverRollout(_ context.Context, slug, action, reason string) (api.RolloutTransitionResponse, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.recoveries = append(a.recoveries, struct {
+		slug, action, reason string
+	}{slug: slug, action: action, reason: reason})
+	return api.RolloutTransitionResponse{}, nil
+}
+
+func mirrorCleanRow(t *testing.T, now time.Time) CanaryRow {
+	t.Helper()
+	raw, err := json.Marshal([]canarycatalog.CustomStage{
+		{Percent: 1, Duration: "1s", MirrorClean: &canarycatalog.MirrorCleanCondition{MinInvocations: 2, WindowSeconds: 300}},
+		{Percent: 100, Duration: "0s"},
+	})
+	if err != nil {
+		t.Fatalf("marshal mirror_clean stages: %v", err)
+	}
+	return CanaryRow{
+		ID:                "00000000-0000-0000-0000-000000000001",
+		AppID:             "00000000-0000-0000-0000-000000000002",
+		AppSlug:           "demo",
+		CanaryPreset:      "custom",
+		CanaryStep:        0,
+		CanaryTotalSteps:  2,
+		CanaryStepStarted: now.Add(-time.Minute),
+		RolloutState:      "rolling_out",
+		CanaryStages:      raw,
+	}
+}
+
+func TestProgressionOnce_MirrorCleanGate(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name        string
+		summary     MirrorSummary
+		wantAdvance int
+		wantAbort   int
+		wantWait    int
+		wantReason  string
+	}{
+		{name: "clean and enough traffic", summary: MirrorSummary{TotalInvocations: 2}, wantAdvance: 1},
+		{name: "clean but insufficient traffic", summary: MirrorSummary{TotalInvocations: 1}, wantWait: 1},
+		{name: "drift aborts", summary: MirrorSummary{TotalInvocations: 1, StatusDiffCount: 1, BodyDiffCount: 2}, wantAbort: 1, wantReason: "status_diff_count=1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &stubStore{rows: []CanaryRow{mirrorCleanRow(t, now)}, mirrorSummary: tc.summary}
+			apid := &stubAPID{}
+			prog := NewProgression(store, apid, nil, slog.Default())
+			prog.Now = func() time.Time { return now }
+
+			stats, err := prog.Once(context.Background())
+			if err != nil {
+				t.Fatalf("Once: %v", err)
+			}
+			if stats.Advanced != tc.wantAdvance || stats.Aborted != tc.wantAbort || stats.SkippedMirrorNotReady != tc.wantWait {
+				t.Fatalf("stats = %+v; want advance=%d abort=%d wait=%d", stats, tc.wantAdvance, tc.wantAbort, tc.wantWait)
+			}
+			if len(apid.advances) != tc.wantAdvance {
+				t.Errorf("advances = %d; want %d", len(apid.advances), tc.wantAdvance)
+			}
+			if len(apid.recoveries) != tc.wantAbort {
+				t.Errorf("recoveries = %d; want %d", len(apid.recoveries), tc.wantAbort)
+			}
+			if tc.wantReason != "" && (len(apid.recoveries) != 1 || !strings.Contains(apid.recoveries[0].reason, tc.wantReason)) {
+				t.Errorf("abort reason = %q; want substring %q", apid.recoveries[0].reason, tc.wantReason)
+			}
+		})
+	}
 }
 
 // TestProgressionOnce_ZeroTimestampDefensiveGuard — code-review

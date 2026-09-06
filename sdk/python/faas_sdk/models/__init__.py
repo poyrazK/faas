@@ -460,6 +460,7 @@ from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
+from .mirror_clean_condition import MirrorCleanCondition
 from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
@@ -632,6 +633,7 @@ from .set_object_bucket_access_grant_request_permission import SetObjectBucketAc
 from .set_password_request import SetPasswordRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
+from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_env import SidecarEnv
 from .sidecar_type import SidecarType
 from .slo_duration import SLODuration
@@ -1208,6 +1210,7 @@ __all__ = (
     "MFARecoverResponse",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
+    "MirrorCleanCondition",
     "MirrorRuleListResponse",
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
@@ -1376,6 +1379,7 @@ __all__ = (
     "SetPasswordRequest",
     "SeverityCounts",
     "Sidecar",
+    "SidecarCpuMillicores",
     "SidecarEnv",
     "SidecarType",
     "SLODuration",
