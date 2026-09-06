@@ -18,6 +18,7 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale app <slug> egress-allowlist {show|add <cidr>|remove <cidr>|clear}", "apps")
 		return 1
 	}
+	action := args[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -27,7 +28,7 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		return printErr("Could not load app", err)
 	}
 	current := append([]string(nil), app.EgressAllowlist...)
-	switch args[0] {
+	switch action {
 	case "show":
 		if jsonOutput {
 			return jsonOut(writeJSON(struct {
@@ -48,11 +49,11 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		current = nil
 	case "add", "remove":
 		if len(args) != 2 || args[1] == "" {
-			PrintUsage(os.Stderr, "usage: gregale app <slug> egress-allowlist "+args[0]+" <cidr>", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app <slug> egress-allowlist "+action+" <cidr>", "apps")
 			return 1
 		}
 		prefix := args[1]
-		if args[0] == "add" {
+		if action == "add" {
 			for _, existing := range current {
 				if existing == prefix {
 					return 0
@@ -79,7 +80,7 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
 	}
-	if args[0] == "clear" {
+	if action == "clear" {
 		PrintOK(osStdout, "App %s egress allowlist cleared.", slug)
 	} else {
 		PrintOK(osStdout, "App %s egress allowlist updated.", slug)
