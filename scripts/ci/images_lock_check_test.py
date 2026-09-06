@@ -13,14 +13,17 @@ plain `python3 -m unittest` tests invoked by the Makefile via
 """
 from __future__ import annotations
 
-import json
+import email.message
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent
 
@@ -178,6 +181,57 @@ class TestImagesLockUpdatePlatformSelection(unittest.TestCase):
             ]
         }
         self.assertIsNone(update._select_platform_digest(manifest, "linux/amd64"))
+
+    def test_non_docker_registry_bearer_auth_resolves_child(self) -> None:
+        update = _load_lock_update_module()
+        response_headers = email.message.Message()
+        response_headers.add_header(
+            "WWW-Authenticate",
+            'Bearer realm="https://cgr.example/token",service="cgr.example",'
+            'scope="repository:chainguard/bash:pull"',
+        )
+
+        class Response:
+            def __init__(self, body: dict, headers: dict[str, str] | None = None):
+                self.body = json.dumps(body).encode()
+                self.headers = headers or {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return self.body
+
+        requests: list = []
+
+        def urlopen(request, timeout):
+            self.assertIn(timeout, (10, 15))
+            requests.append(request)
+            if len(requests) == 1:
+                raise urllib.error.HTTPError(
+                    request.full_url, 401, "Unauthorized", response_headers, None
+                )
+            if len(requests) == 2:
+                self.assertEqual(request.full_url.split("?", 1)[0], "https://cgr.example/token")
+                return Response({"token": "registry-token"})
+            self.assertEqual(request.headers["Authorization"], "Bearer registry-token")
+            return Response({
+                "manifests": [
+                    {"digest": "sha256:arm", "platform": {"os": "linux", "architecture": "arm64"}},
+                    {"digest": "sha256:x86", "platform": {"os": "linux", "architecture": "amd64"}},
+                ]
+            })
+
+        with mock.patch.object(update.urllib.request, "urlopen", side_effect=urlopen):
+            digest = update.resolve_via_registry_api(
+                "cgr.example/chainguard/bash", "latest", "linux/amd64"
+            )
+
+        self.assertEqual(digest, "sha256:x86")
+        self.assertEqual(len(requests), 3)
 
 
 if __name__ == "__main__":

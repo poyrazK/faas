@@ -34,6 +34,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -74,29 +75,53 @@ def _auth_header_for(repo: str) -> dict[str, str] | None:
     return None
 
 
-def _docker_token(repo: str) -> str | None:
-    """Anonymous bearer token for docker.io from the v2 token endpoint.
+def _registry_location(repo: str) -> tuple[str, str]:
+    """Return the registry API host and repository path for a lock ref."""
+    if repo.startswith("docker.io/"):
+        return "registry-1.docker.io", repo.removeprefix("docker.io/")
+    host, separator, path = repo.partition("/")
+    if not separator or not path:
+        return "registry-1.docker.io", f"library/{host}"
+    return host, path
 
-    Only used for `docker.io/library/...` repos that require a token
-    even for anonymous pulls. The hardcoded `service` matches what
-    Docker Hub expects.
-    """
-    if not repo.startswith("docker.io/"):
+
+def _parse_bearer_challenge(challenge: str) -> tuple[str, dict[str, str]] | None:
+    """Parse a Registry v2 WWW-Authenticate Bearer challenge."""
+    scheme, separator, raw_params = challenge.partition(" ")
+    if not separator or scheme.lower() != "bearer":
         return None
-    parts = repo.split("/", 1)
-    if len(parts) != 2 or not parts[1]:
-        return None
-    image = parts[1]
-    url = (
-        f"https://auth.docker.io/token?service=registry.docker.io"
-        f"&scope=repository:{image}:pull"
-    )
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:
-            data = json.loads(r.read())
+        params = urllib.request.parse_keqv_list(
+            urllib.request.parse_http_list(raw_params)
+        )
+    except (TypeError, ValueError):
+        return None
+    realm = params.pop("realm", "")
+    if not realm:
+        return None
+    return realm, params
+
+
+def _registry_bearer_token(
+    challenge: str,
+    basic_auth: dict[str, str] | None,
+) -> str | None:
+    """Exchange a Registry v2 Bearer challenge for an anonymous/auth token."""
+    parsed = _parse_bearer_challenge(challenge)
+    if parsed is None:
+        return None
+    realm, params = parsed
+    query = urllib.parse.urlencode(params)
+    separator = "&" if urllib.parse.urlparse(realm).query else "?"
+    token_url = f"{realm}{separator}{query}" if query else realm
+    request = urllib.request.Request(token_url, headers=basic_auth or {})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = json.loads(response.read())
     except (urllib.error.URLError, json.JSONDecodeError, OSError):
         return None
-    return data.get("token")
+    token = data.get("token") or data.get("access_token")
+    return token if isinstance(token, str) and token else None
 
 
 def resolve_via_crane(repo: str, tag: str, platform: str | None = "linux/amd64") -> str | None:
@@ -153,33 +178,41 @@ def resolve_via_registry_api(repo: str, tag: str, platform: str) -> str | None:
         "application/vnd.oci.image.manifest.v1+json,"
         "application/vnd.oci.image.index.v1+json"
     )
-    # `resolved_repo` is stored in the lock using a fully-qualified
-    # Docker Hub reference (`docker.io/library/debian`), while the
-    # registry v2 endpoint addresses the repository without its host
-    # prefix (`/v2/library/debian/...`). Keeping the host in the URL
-    # produces a valid-looking but nonexistent repository path and makes
-    # every anonymous Docker Hub resolution fail closed.
-    registry_repo = repo.removeprefix("docker.io/")
-    url = f"https://registry-1.docker.io/v2/{registry_repo}/manifests/{tag}"
+    registry, registry_repo = _registry_location(repo)
+    url = f"https://{registry}/v2/{registry_repo}/manifests/{tag}"
     headers: dict[str, str] = {"Accept": accept}
-    auth = _auth_header_for("registry-1.docker.io")
+    auth = _auth_header_for(registry)
     if auth:
         headers.update(auth)
-    else:
-        token = _docker_token(repo)
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
     # HEAD returns the manifest-list digest even when a platform is
     # requested. GET is intentional: the child descriptor is only present in
     # the index JSON. Returning the list digest here makes imaged reject the
     # pin later because it correctly refuses manifest lists at boot.
-    req = urllib.request.Request(url, headers=headers, method="GET")
+    request = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            raw = r.read()
-            response_digest = r.headers.get("Docker-Content-Digest")
+        response = urllib.request.urlopen(request, timeout=15)
+    except urllib.error.HTTPError as error:
+        if error.code != 401:
+            error.close()
+            return None
+        challenge = error.headers.get("WWW-Authenticate", "")
+        error.close()
+        token = _registry_bearer_token(
+            challenge, auth
+        )
+        if not token:
+            return None
+        retry_headers = {**headers, "Authorization": f"Bearer {token}"}
+        retry = urllib.request.Request(url, headers=retry_headers, method="GET")
+        try:
+            response = urllib.request.urlopen(retry, timeout=15)
+        except (urllib.error.URLError, OSError):
+            return None
     except (urllib.error.URLError, OSError):
         return None
+    with response:
+        raw = response.read()
+        response_digest = response.headers.get("Docker-Content-Digest")
     try:
         manifest = json.loads(raw)
     except (json.JSONDecodeError, TypeError):

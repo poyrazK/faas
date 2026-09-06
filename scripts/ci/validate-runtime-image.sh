@@ -30,7 +30,7 @@ case "${runtime_image}" in
   runner-go124)
     # Go customer artifacts are compiled in the builder and executed
     # directly; the compiler is deliberately absent from the runtime base.
-    required=(etc/passwd usr/lib/x86_64-linux-gnu/libc.so.6)
+    required=(etc/passwd usr/lib/libc.so.6 usr/lib/ld-linux-x86-64.so.2 lib64)
     ;;
   runner-go124-alpine)
     required=(etc/passwd lib/ld-musl-x86_64.so.1)
@@ -74,6 +74,16 @@ for path in "${required[@]}"; do
     exit 1
   fi
 done
+
+# Go handlers are compiled in the builder VM. A compiler in either runtime
+# image expands the trusted guest surface and makes old toolchain CVEs part of
+# every function base even though no request needs `go build`.
+if [[ "${runtime_image}" == runner-go124 || "${runtime_image}" == runner-go124-alpine ]]; then
+  if grep -Eq '^(\./)?usr/local/go(/|$)' "${rootfs_listing}"; then
+    echo "::error::${image_ref} contains the Go toolchain; compile in builderd and keep it out of the runtime base" >&2
+    exit 1
+  fi
+fi
 
 # The OCI image is also booted as a container here. Runtime bases deliberately
 # receive the Firecracker PID 1 binary during imaged's ext4 staging, so this
