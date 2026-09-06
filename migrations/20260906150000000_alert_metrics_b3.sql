@@ -57,7 +57,7 @@ INSERT INTO alert_presets (
     (
         'daily_spend_eur_1',
         'Daily usage cost exceeds €1',
-        'Fires when the app\'s estimated raw RAM usage cost exceeds €1 during the current UTC day. This is a burn-rate signal; monthly included allowances are not subtracted.',
+        'Fires when the app''s estimated raw RAM usage cost exceeds €1 during the current UTC day. This is a burn-rate signal; monthly included allowances are not subtracted.',
         'cost',
         'daily_cost_cents', 'gt', 100.0, '24h',
         60, true, 'hobby'
