@@ -10,6 +10,6 @@ export type CreateKeyRequest = {
   /**
    * Requested permission set. The server rejects unknown scopes. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket.
    */
-  scopes?: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'storage:manage' | 'storage:read' | 'storage:write'>;
+  scopes?: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'storage:manage' | 'storage:read' | 'storage:write' | 'postgres:manage' | 'postgres:read'>;
 };
 

@@ -276,6 +276,15 @@ var methodRouteMap = map[string]string{
 	// method names.
 	"GET /v1/account/egress_allowlist_extra":                  "GetEgressAllowlistExtra",
 	"PATCH /v1/account/egress_allowlist_extra":                "SetEgressAllowlistExtra",
+	"GET /v1/postgres/databases":                              "ListManagedPostgresDatabases",
+	"POST /v1/postgres/databases":                             "CreateManagedPostgresDatabase",
+	"GET /v1/postgres/databases/{id}":                         "GetManagedPostgresDatabase",
+	"DELETE /v1/postgres/databases/{id}":                      "DeleteManagedPostgresDatabase",
+	"POST /v1/postgres/databases/{id}/restore":                "RestoreManagedPostgresDatabase",
+	"GET /v1/postgres/databases/{id}/bindings":                "ListManagedPostgresBindings",
+	"POST /v1/postgres/databases/{id}/bindings":               "CreateManagedPostgresBinding",
+	"GET /v1/postgres/bindings/{id}":                          "GetManagedPostgresBinding",
+	"DELETE /v1/postgres/bindings/{id}":                       "DeleteManagedPostgresBinding",
 	"GET /v1/apps/{slug}/logs":                                "StreamAppLogs",
 	"GET /v1/deployments/{id}/logs":                           "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                           "GetDeploymentScan",              // issue #464 / ADR-055; per-deploy grype CVE drill-down
