@@ -1,4 +1,4 @@
--- filename: 20260906170000000_deployment_api_hosting_receipt.sql
+-- filename: 20260906180000000_deployment_api_hosting_receipt.sql
 -- +goose Up
 -- +goose StatementBegin
 
