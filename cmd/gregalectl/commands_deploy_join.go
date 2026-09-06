@@ -381,6 +381,7 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			"install the signed release while the database row remains drained",
 			"render configuration, initialize host identity, and unseal supplied backup envelopes",
 			"wait for sockets, gateway, and systemd readiness",
+			"verify every active compute daemon executes the installed release",
 			"run the node-scoped doctor and verify the control-plane row before activation",
 		},
 	}
