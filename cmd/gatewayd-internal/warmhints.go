@@ -31,13 +31,9 @@ package main
 
 import (
 	"context"
-	"errors"
-	"io"
 	"log/slog"
+	"sync"
 	"time"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
@@ -65,7 +61,7 @@ import (
 // on every Pick.
 //
 // onTouch is a callback the consumer invokes after every
-// successful cache.Update — and once at construction (see
+// successful cache.Update or heartbeat — and once at construction (see
 // the /readyz staleness-signal wiring in run.go). The
 // callback drives a gateway.NewStalenessSignal instance so
 // the daemon's /readyz reflects "the warm-hint stream is
@@ -80,6 +76,7 @@ type warmHintConsumer struct {
 	sched   scheddgrpc.ScheddClient
 	cache   *gateway.WarmHintCache
 	log     *slog.Logger
+	touchMu sync.RWMutex
 	onTouch func()
 }
 
@@ -141,13 +138,24 @@ func newWarmHintConsumer(sched scheddgrpc.ScheddClient, cache *gateway.WarmHintC
 // effectively disables the staleness touch (e.g. tests that
 // construct the consumer without a probe).
 func (g *warmHintConsumer) SetOnTouch(touch func()) {
+	g.touchMu.Lock()
 	g.onTouch = touch
+	g.touchMu.Unlock()
 	if touch != nil {
 		// Seed the staleness signal's lastTouch so the helper
 		// goroutine doesn't observe "no touch yet" on its first
 		// tick (see NewStalenessSignal — the goroutine flips the
 		// signal false with reason "no touch yet" until the first
 		// touch lands, irrespective of the pre-arm at construction).
+		touch()
+	}
+}
+
+func (g *warmHintConsumer) touch() {
+	g.touchMu.RLock()
+	touch := g.onTouch
+	g.touchMu.RUnlock()
+	if touch != nil {
 		touch()
 	}
 }
@@ -161,9 +169,8 @@ func (g *warmHintConsumer) SetOnTouch(touch func()) {
 //
 // Wire error mapping:
 //
-//   - io.EOF: clean shutdown, return nil (rare in practice — the
-//     schedd stream only ends on ctx cancel).
-//   - codes.Canceled: caller (gatewayd) cancelled, return nil.
+//   - io.EOF: reconnect while the daemon context remains active.
+//   - codes.Canceled: reconnect unless the daemon context was canceled.
 //   - codes.Unavailable: transient — reconnect with backoff.
 //   - anything else: log + reconnect (treat as transient until
 //     a real ops case calls for stronger semantics).
@@ -209,13 +216,11 @@ func (g *warmHintConsumer) Run(ctx context.Context) {
 		// that takes >2 min to listen would cause /readyz to
 		// flip false with reason "stale" before the stream
 		// ever delivers an event.
-		if g.onTouch != nil {
-			g.onTouch()
-		}
+		g.touch()
 		err = g.drain(ctx, stream)
 		switch {
-		case err == nil, errors.Is(err, io.EOF), status.Code(err) == codes.Canceled:
-			// Clean shutdown — caller cancelled. Exit; the
+		case ctx.Err() != nil:
+			// The daemon context was canceled. Exit; the
 			// daemon's main ctx drives this return.
 			return
 		default:
@@ -260,6 +265,10 @@ func (g *warmHintConsumer) drain(ctx context.Context, stream scheddgrpc.WarmHint
 			}
 			return err
 		}
+		if ev.AppID == "" && ev.NodeID == "" && !ev.WrittenAt.IsZero() {
+			g.touch()
+			continue
+		}
 		// Drop malformed events silently — schedd is the only
 		// producer and we trust its emit path. Empty AppID/NodeID
 		// would be a programming bug; logging at warn level is
@@ -283,9 +292,7 @@ func (g *warmHintConsumer) drain(ctx context.Context, stream scheddgrpc.WarmHint
 		// touch() is itself nil-safe via the consumer's onTouch
 		// guard, so the same shape works when /readyz staleness
 		// isn't wired (e2e harness, unit tests).
-		if g.onTouch != nil {
-			g.onTouch()
-		}
+		g.touch()
 	}
 }
 

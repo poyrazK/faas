@@ -321,6 +321,7 @@ type recordingEnqueuer struct {
 type enqueueCall struct {
 	accountID  string
 	appID      string
+	deliveryID string
 	commitSHA  string
 	sourcePath string
 }
@@ -329,6 +330,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Bu
 	r.calls = append(r.calls, enqueueCall{
 		accountID:  spec.App.AccountID,
 		appID:      spec.App.ID,
+		deliveryID: spec.DeliveryID,
 		commitSHA:  spec.CommitSHA,
 		sourcePath: spec.SourcePath,
 	})
@@ -420,6 +422,24 @@ func TestHandlePushRequest_FanOut_EnqueueError_SoftFail(t *testing.T) {
 	}
 	if len(result.BuildIDs) != 0 {
 		t.Errorf("result.BuildIDs = %v, want [] (enqueue failed)", result.BuildIDs)
+	}
+}
+
+func TestHandlePushRequest_DurableDeliveryRetriesPartialFanOut(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	enq := &recordingEnqueuer{err: errors.New("queue unavailable")}
+	svc.Enqueuer = enq
+	body := []byte(`{"ref":"refs/heads/main","after":"sha-1","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	ctx := context.WithValue(context.Background(), webhookDeliveryContextKey{}, "delivery-1")
+
+	_, err := svc.HandlePushRequest(ctx, body)
+	if err == nil || !strings.Contains(err.Error(), "delivery-1 incomplete") {
+		t.Fatalf("HandlePushRequest error = %v, want durable delivery retry error", err)
+	}
+	if len(enq.calls) != 1 || enq.calls[0].deliveryID != "delivery-1" {
+		t.Fatalf("enqueue calls = %+v, want propagated delivery id", enq.calls)
 	}
 }
 
@@ -607,6 +627,21 @@ func TestHandlePushRequest_PathFilter_MatchesOneApp(t *testing.T) {
 	}
 	if cf.calls != 1 {
 		t.Errorf("ChangedFiles calls = %d, want 1", cf.calls)
+	}
+}
+
+func TestHandlePushRequest_PathFilter_SourceOnlyRetryStillBuilds(t *testing.T) {
+	cf := &stubChangedFiles{files: []string{"services/auth/api/index.ts"}}
+	svc, rec, _ := pathFilterRig(t, cf, false)
+	body := []byte(`{"ref":"refs/heads/main","before":"base123","after":"head456","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
+			t.Fatalf("HandlePushRequest attempt %d: %v", attempt, err)
+		}
+	}
+	if len(rec.calls) != 2 {
+		t.Fatalf("Enqueue calls = %d, want one auth build on both initial and converged retry", len(rec.calls))
 	}
 }
 

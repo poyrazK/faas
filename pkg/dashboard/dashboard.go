@@ -1283,11 +1283,17 @@ type APIKeyItem struct {
 	Scopes     []string
 	CreatedAt  string
 	LastUsedAt string // empty until first use
+	CanRevoke  bool
 }
 
 // AccountData is the /dashboard/account page payload.
 type AccountData struct {
 	Keys []APIKeyItem
+	// KeyDeleteConfirmToken is shared by the account page's key-revoke
+	// forms. Its sidecar uses a dedicated cookie name so it can coexist
+	// with the account-delete and GitHub-connect CSRF tokens rendered on
+	// the same page.
+	KeyDeleteConfirmToken string
 	// ShowDelete + DeleteConfirmToken drive the "Danger zone" partial
 	// in templates/account.html. The token is a sealed envelope bound
 	// to (action="delete", account_id) that the POST handler verifies
@@ -1308,6 +1314,10 @@ type AccountData struct {
 	// faas_csrf sidecar cookie. Same envelope shape as the delete /
 	// restore tokens above — sealed by (action, account_id).
 	ConnectGithubConfirmToken string
+	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
+	// a dedicated cookie name because the account page renders several
+	// independently action-bound forms at once.
+	PlanConfirmToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a

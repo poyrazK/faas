@@ -326,12 +326,13 @@ func (p *Problem) HasHeader(key string) []string {
 // Stable error codes (spec Appendix A, UX spec §7). Keep in sync with docs and
 // the CLI's exit-code mapping.
 const (
-	CodePlanLimitApps   = "plan_limit_apps"
-	CodePlanLimitRAM    = "plan_limit_ram"
-	CodePlanLimitConcur = "plan_limit_concurrency"
-	CodeInvalidAppCPU   = "invalid_cpu_millicores"
-	CodeSourceTooLarge  = "source_too_large"
-	CodeSourceInvalid   = "source_invalid"
+	CodePlanLimitApps          = "plan_limit_apps"
+	CodePlanLimitRAM           = "plan_limit_ram"
+	CodePlanLimitConcur        = "plan_limit_concurrency"
+	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidResourceProfile = "invalid_resource_profile"
+	CodeSourceTooLarge         = "source_too_large"
+	CodeSourceInvalid          = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -1600,7 +1601,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid:
 		// 403 — the deploy is REJECTED at accept time, distinct from

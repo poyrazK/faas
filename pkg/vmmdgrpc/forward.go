@@ -1392,10 +1392,8 @@ func (s *Server) endActivity(instanceID string) {
 //     ForwardHTTPStreamResponse_BodyChunk frames. Transfer-Encoding:
 //     chunked on the response side is decoded by httputil.NewChunkedReader
 //     (matches v1's behaviour at forward.go:355).
-//  6. Cancellation: stream.Context() is bound to the H2C request ctx
-//     AND to a watcher goroutine that closes the unix socket on
-//     cancel — the v1 body-goroutine-leak fix that issue #686 wired
-//     through.
+//  6. Cancellation: stream.Context() cancels only its H2C request.
+//     Other streams keep using the manager-owned bridge and connection.
 //  7. Cleanup: idle bridges and vmmd shutdown close the transport, remove
 //     the unix socket, and terminate/reap the child. Set
 //     FAAS_STREAM_BRIDGE_PERSISTENT=0 to restore process-per-RPC startup.
@@ -1589,6 +1587,12 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		_ = bodyPw.Close()
 		var bridgeErr error
 		if persistent {
+			// A canceled RPC owns only its HTTP/2 stream, not the shared
+			// bridge process. Killing the bridge here resets unrelated
+			// requests that still have time left in their budgets.
+			if reqCtx.Err() != nil {
+				return status.FromContextError(reqCtx.Err()).Err()
+			}
 			s.streamBridges.invalidate(bridgeLease)
 		} else {
 			bridgeErr = stopStreamBridge(ctx, cmd, stderr)

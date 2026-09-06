@@ -4397,6 +4397,11 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, ErrNotFound
 	}
+	if d.ID != "" {
+		if _, exists := m.deployments[d.ID]; exists {
+			return Deployment{}, ErrConflict
+		}
+	}
 	if d.CanaryPreset == "" {
 		d.CanaryPreset = "none"
 	}

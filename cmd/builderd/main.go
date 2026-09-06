@@ -176,7 +176,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cfg.BuildDriveDir writable (the overlay mount source).
 	// Constructed after openDB so the pool is live; the vmmd
 	// dial signal races alongside the driver dial below.
-	builderdProbe := BuildReadinessProbe(ctx, pool, cfg.BuildDriveDir, vmmTarget, nil)
 
 	// Issue #95 / ADR-025: dial vmmd through the location-transparent
 	// helper. tcp/dns targets require the tls_* cluster; nil TLS on a
@@ -185,6 +184,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: load vmmd TLS: %w", err)
 	}
+	builderdProbe := buildReadinessProbeForDrive(ctx, pool, cfg.BuildDriveDir, vmmTarget, tlsReadinessDialer(vmmTLS))
+
 	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, cfg.BuilderBase, cfg.BuildDriveDir, cfg.BuildExportDir)
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
@@ -212,7 +213,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Builderd without an events Platform). The Platform writes
 	// the events row + bumps wake_phase_emitted_total.
 	eventsPlatform := events.NewPlatform("builderd", store, log, ops, nil)
-	b := builderdpkg.New(store, notif, driver, nil, nil, resid, builderdpkg.Config{
+	cache := builderdpkg.NewCache(cfg.CacheDir).WithLeaseReferenceChecker(
+		func(ctx context.Context, deploymentID, leasePath string) (bool, error) {
+			dep, err := store.DeploymentByID(ctx, deploymentID)
+			if errors.Is(err, state.ErrNotFound) {
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			return dep.RootfsPath == leasePath, nil
+		},
+	)
+	b := builderdpkg.New(store, notif, driver, cache, nil, resid, builderdpkg.Config{
 		CacheDir:            cfg.CacheDir,
 		MetricsAddr:         cfg.MetricsAddr,
 		BuildTimeoutSeconds: cfg.BuildTimeoutSeconds,
@@ -223,11 +236,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// override per-builder via the toml field.
 		BuilderNodeID: cfg.BuilderNodeID,
 	}, log).WithOpsMetrics(ops).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage)
-	// builderd.New instantiates its own *Cache from cfg.CacheDir;
-	// we construct a sibling Cache at the same root for the GC loop
-	// (Cache.Sweep is pure filesystem, no shared state with Builderd).
-	cache := builderdpkg.NewCache(cfg.CacheDir)
-
 	notifCh, err := db.SubscribeWithReconnect(ctx, pool, builderNotificationChannels(), log)
 	if err != nil {
 		return err
@@ -307,9 +315,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Build cache GC (issue #196 B2.1). Content-addressed cache at
 	// cfg.CacheDir grows forever as builds accumulate; a daily sweep
 	// enforces TTL + size cap (defaults: 30 days, 50 GiB). The sweep
-	// is pure filesystem work — a sibling Cache instance pointed at
-	// the same root is enough; no shared state with Builderd is
-	// needed.
+	// shares the Cache instance used by build workers so lookup+lease,
+	// Store and Sweep cannot race over the same entry.
 	gcInterval := cfg.CacheGCSweepInterval
 	if gcInterval <= 0 {
 		gcInterval = 24 * time.Hour

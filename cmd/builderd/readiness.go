@@ -62,6 +62,10 @@ func BuildReadinessProbe(ctx context.Context, pool pgPool, storageRoot, vmmTarge
 		storageRoot = defaultBuildsDir
 	}
 	buildsDir := filepath.Join(storageRoot, "builds")
+	return buildReadinessProbeForDrive(ctx, pool, buildsDir, vmmTarget, dial)
+}
+
+func buildReadinessProbeForDrive(ctx context.Context, pool pgPool, buildsDir, vmmTarget string, dial vmmdDialer) *wire.ReadyzProbe {
 	if dial == nil {
 		// No dial seam: simulate via a TCP attempt. Production
 		// passes deps.dialVmmd; tests inject a stub.

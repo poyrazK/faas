@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/githubd"
@@ -12,15 +10,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// syncDeploymentCheck projects the durable deployment state machine onto the
-// Check Run created by the webhook dispatcher. The repo is resolved from the
-// app binding, its project, or (for previews) the bound parent app.
-func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *githubd.ChecksAPI, payload string, log *slog.Logger) {
-	var event struct {
-		DeploymentID string `json:"deployment_id"`
-	}
-	if err := json.Unmarshal([]byte(payload), &event); err != nil || event.DeploymentID == "" {
-		return
+// syncDeploymentCheck projects current durable deployment state onto its
+// stable GitHub Check Run. Callers retry returned errors through the durable
+// check outbox; no status transition depends on a lossy LISTEN notification.
+func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *githubd.ChecksAPI, deploymentID string) error {
+	if deploymentID == "" {
+		return fmt.Errorf("githubd: deployment check: empty deployment id")
 	}
 	var commitSHA, kind, status, failure, repo, appSlug, previewOf string
 	var installationID int64
@@ -36,36 +31,30 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		  on parent.account_id = a.account_id
 		 and parent.slug = a.preview_of_slug
 		 and parent.deleted_at is null
-		where d.id = $1`, event.DeploymentID).Scan(
+		where d.id = $1`, deploymentID).Scan(
 		&commitSHA, &kind, &status, &failure, &repo, &appSlug, &previewOf, &installationID)
-	if err != nil || commitSHA == "" || repo == "" || installationID <= 0 {
-		if err != nil {
-			log.Debug("githubd: deployment check lookup skipped", "deployment_id", event.DeploymentID, "err", err)
-		}
-		return
+	if err != nil {
+		return fmt.Errorf("githubd: deployment check lookup %s: %w", deploymentID, err)
+	}
+	if commitSHA == "" || repo == "" || installationID <= 0 {
+		return fmt.Errorf("githubd: deployment check %s missing commit, repo, or installation", deploymentID)
 	}
 	if kind != string(state.DeploymentKindGitHub) && kind != string(state.DeploymentKindPreview) {
-		return
+		return nil
 	}
 	phase, ok := checkPhaseForDeploymentStatus(status)
 	if !ok {
-		return
+		return nil
 	}
-	summary := fmt.Sprintf("Gregale deployment %s is %s.", event.DeploymentID, status)
+	summary := fmt.Sprintf("Gregale deployment %s is %s.", deploymentID, status)
 	if failure != "" {
 		summary += " " + failure
 	}
-	var writeErr error
 	if kind == string(state.DeploymentKindPreview) || previewOf != "" {
-		writeErr = checks.WritePreviewCheckForInstallation(ctx, installationID, repo, commitSHA, phase,
+		return checks.WritePreviewCheckForInstallation(ctx, installationID, repo, commitSHA, phase,
 			"https://"+appSlug+".gregale.dev", summary)
-	} else {
-		writeErr = checks.WriteAppCheck(ctx, installationID, repo, commitSHA, appSlug, phase, "", summary)
 	}
-	if writeErr != nil {
-		log.Warn("githubd: sync deployment check", "deployment_id", event.DeploymentID,
-			"repo", repo, "status", status, "err", writeErr)
-	}
+	return checks.WriteAppCheck(ctx, installationID, repo, commitSHA, appSlug, phase, "", summary)
 }
 
 func checkPhaseForDeploymentStatus(status string) (githubdgrpc.CheckPhase, bool) {

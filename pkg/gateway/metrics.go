@@ -77,6 +77,7 @@ package gateway
 
 import (
 	"log/slog"
+	"math"
 	"net/http"
 	"time"
 
@@ -974,16 +975,12 @@ func NewMetrics() *Metrics {
 			Name: "gateway_top_tenant_rps",
 			Help: "Top-N 5s request rate per tenant observed at the edge (issue #300). Label key is account_id for parity with apid_top_tenant_rps; the label VALUE at the gateway is the resolved app_id (gatewayd-internal is pre-auth and only sees hostname→app routing). Cardinality bounded at topAccountSetCap (1000) + 1 \"other\" overflow by pkg/wire/topn.go via the cmd/gatewayd-internal/topn.go sampler. The overflow bucket literally named \"other\" matches apid's gauge.",
 		}, []string{"account_id"}),
-		// ADR-024 H3 (closed in PR #345). Gauge starts unset (NaN at
-		// scrape time — Prometheus drops NaN series, so an idle daemon
-		// emits no series at all); the page rule's `<` then returns
-		// false and the alert stays silent until a real cert has been
-		// minted. SetTLSCertExpiry may emit a negative value when a
-		// cert on disk is past its NotAfter — that's intentional, the
-		// page rule fires regardless.
+		// ADR-024 H3: initialize to NaN until a certificate is observed.
+		// Prometheus retains NaN, but expiry comparisons do not match it.
+		// SetTLSCertExpiry preserves negative values for expired certificates.
 		tlsCertExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_tls_cert_expiry_seconds",
-			Help: "Smallest remaining lifetime across cached certs on disk (cfg.StorageDir). ADR-024 H3 (closed). Page at ≤14 d; warn at ≤30 d. Gauge is unset (no series) before the first cert is minted; the `<` alert expression handles a missing series correctly. A negative value means a cert on disk is already past its NotAfter — the page rule fires regardless.",
+			Help: "Smallest remaining lifetime across cached certs on disk (cfg.StorageDir). ADR-024 H3 (closed). Page at ≤14 d; warn at ≤30 d. Gauge is NaN until a certificate is observed; expiry comparisons do not match NaN. A negative value means a cert on disk is already past its NotAfter — the page rule fires regardless.",
 		}),
 		// ADR-024 H3 follow-up (Finding 2): per-host visibility. Same
 		// gauge family as tlsCertExpiry but with hostname + kind
@@ -1387,6 +1384,8 @@ func NewMetrics() *Metrics {
 	// surfaces from boot. The pre-instantiate loop above (where
 	// tenantSurfaceCert is stamped across the closed (result, kind)
 	// cartesian) is the same pattern as the rest of the family.
+	// No certificate observation is distinct from a certificate expiring now.
+	m.tlsCertExpiry.Set(math.NaN())
 	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,

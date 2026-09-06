@@ -54,6 +54,16 @@ a database error, or a lost notification could leave contradictory state.
   ext4 for every build. If the sidecar is missing, malformed, older than the
   base, or changes during a build, continue the build but do not reuse or
   publish a cache entry.
+- On a cache hit, atomically hard-link the validated artifact into a
+  deployment-specific lease before publishing build success. Cache GC may
+  evict the canonical entry without invalidating this handoff. Imaged removes
+  the lease after it replaces `rootfs_path` with the final app layer or records
+  a terminal failure. Daily maintenance preserves leases still referenced by
+  a deployment and removes crash leftovers after the reference changes.
+- Refresh an entry's directory timestamp on every validated hit and evict by
+  that access timestamp, so frequently reused artifacts remain in the cache.
+  Serialize GC against lookup, lease publication, and cache writes within the
+  builderd process.
 
 ## Consequences and limits
 
@@ -67,9 +77,10 @@ recipe encoding require a recipe version bump. The v2 recipe closes builder
 toolchain and platform reuse, but external package registries can still make a
 fresh build non-reproducible without dependency lockfiles.
 
-Recovery covers the committed build-to-imaged handoff before imaging starts.
-It does not resume an imaged process that crashes partway through conversion.
+Recovery covers the committed build-to-imaged handoff before imaging starts,
+including cache hits whose canonical cache entry is evicted. It does not resume
+an imaged process that crashes partway through conversion.
 Uploaded but unqueued source objects and deployment rows left by an apid crash
-still need retention/reconciliation. Cache GC leases, export retention, full
-log delivery, toolchain identity, incremental caching, CI/release gates, and
-release-tag ordering remain separate follow-ups to the build pipeline audit.
+still need retention/reconciliation. Export retention, full log delivery,
+incremental caching, CI/release gates, and release-tag ordering remain separate
+follow-ups to the build pipeline audit.

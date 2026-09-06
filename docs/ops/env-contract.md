@@ -178,7 +178,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MAIL_RESEND_API_KEY` | shared | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_RESEND_WEBHOOK_SECRET` | apid | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_TRANSPORT` | apid, meterd, shared | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
-| `FAAS_MANAGED_POSTGRES_CONFIG` | shared | `default` | optional provider-registry JSON path; the foundation remains disabled until an apid adapter and launch gates are wired (ADR-155) |
+| `FAAS_MANAGED_POSTGRES_CONFIG` | shared | `default` | optional provider-registry JSON path; apid loads the dark-wired Neon adapter and reconciler, while the file's provisioning_enabled flag defaults false (ADR-155) |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |
 | `FAAS_MFA_RECOVERY_HMAC_KEY` | apid | `secrets-env` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |

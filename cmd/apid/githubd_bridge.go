@@ -315,6 +315,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	kind := eventKindToDeploymentKind(req.EventKind)
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, apidsource.EnqueueParams{
 		AppID:       app.ID,
+		DeliveryID:  req.DeliveryId,
 		Kind:        kind,
 		SourcePath:  req.SourcePath,
 		SourceBytes: req.SourceBytes,

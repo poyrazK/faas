@@ -13,6 +13,7 @@ from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
 from ..models.app_response_type import AppResponseType, check_app_response_type
+from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -68,6 +69,9 @@ class AppResponse:
     ADR-037."""
     runtime: AppResponseRuntime | Unset = UNSET
     """Runtime for `type: function` apps. Omit for `type: app` (the default)."""
+    resource_profile: ResourceProfile | Unset = UNSET
+    """Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
+    and placement controls."""
     idle_timeout_s: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
@@ -176,6 +180,10 @@ class AppResponse:
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
             runtime = self.runtime
+
+        resource_profile: str | Unset = UNSET
+        if not isinstance(self.resource_profile, Unset):
+            resource_profile = self.resource_profile
 
         idle_timeout_s: int | None | Unset
         if isinstance(self.idle_timeout_s, Unset):
@@ -298,6 +306,8 @@ class AppResponse:
         )
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
+        if resource_profile is not UNSET:
+            field_dict["resource_profile"] = resource_profile
         if idle_timeout_s is not UNSET:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if egress_allowlist is not UNSET:
@@ -391,6 +401,13 @@ class AppResponse:
             runtime = UNSET
         else:
             runtime = check_app_response_runtime(_runtime)
+
+        _resource_profile = d.pop("resource_profile", UNSET)
+        resource_profile: ResourceProfile | Unset
+        if isinstance(_resource_profile, Unset):
+            resource_profile = UNSET
+        else:
+            resource_profile = check_resource_profile(_resource_profile)
 
         def _parse_idle_timeout_s(data: object) -> int | None | Unset:
             if data is None:
@@ -572,6 +589,7 @@ class AppResponse:
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
             runtime=runtime,
+            resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,

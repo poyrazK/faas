@@ -131,6 +131,8 @@ var routeExclude = map[string]bool{
 	"GET /dashboard":                                          true, // HTML dashboard
 	"GET /dashboard/":                                         true, // HTML dashboard
 	"POST /dashboard/account/delete":                          true, // HTML form
+	"POST /dashboard/account/keys/{id}/delete":                true, // HTML form (issue #248)
+	"POST /dashboard/account/plan":                            true, // HTML form (issue #248)
 	"POST /dashboard/account/restore":                         true, // HTML form
 	"GET /dashboard/account/export":                           true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/dpa":                              true, // session-auth twin of DPA
@@ -388,6 +390,7 @@ var schemaSpecOnly = map[string]bool{
 	"FilterCriteriaOp":   true,
 	"KafkaSASLMechanism": true,
 	"EnvDiffKind":        true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
+	"ResourceProfile":    true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.

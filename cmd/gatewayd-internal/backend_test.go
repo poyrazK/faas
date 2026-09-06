@@ -146,7 +146,11 @@ type fakeInvalidator struct {
 	// that received InvalidateResponseCacheByApp — paired
 	// 1:1 with resetApps in the NotifyAppChanged handler arm
 	// so tests can assert both fire on the same notification.
-	responseCacheByApp []string
+	responseCacheByApp  []string
+	responseCacheByPath []struct {
+		appID    string
+		pathGlob string
+	}
 	// responseCacheAll counts InvalidateResponseCacheAll calls
 	// (the NotifyEdgeRuleChanged handler arm fires wholesale).
 	responseCacheAll int
@@ -206,6 +210,15 @@ func (f *fakeInvalidator) InvalidateResponseCacheByApp(appID string) {
 	f.mu.Lock()
 	f.responseCacheByApp = append(f.responseCacheByApp, appID)
 	f.mu.Unlock()
+}
+func (f *fakeInvalidator) InvalidateResponseCacheByPath(appID, pathGlob string) error {
+	f.mu.Lock()
+	f.responseCacheByPath = append(f.responseCacheByPath, struct {
+		appID    string
+		pathGlob string
+	}{appID: appID, pathGlob: pathGlob})
+	f.mu.Unlock()
+	return nil
 }
 func (f *fakeInvalidator) InvalidateResponseCacheAll() {
 	f.mu.Lock()
@@ -310,6 +323,31 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	}
 	if f.refreshed[0] != "app-7" {
 		t.Errorf("refreshed[0] = %q, want app-7", f.refreshed[0])
+	}
+	if len(f.responseCacheByApp) != 1 || f.responseCacheByApp[0] != "app-7" {
+		t.Errorf("responseCacheByApp = %v, want [app-7]", f.responseCacheByApp)
+	}
+}
+
+func TestHandleInvalidation_CachePurge(t *testing.T) {
+	f := &fakeInvalidator{}
+	log := testLogger()
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyCachePurge,
+		Payload: `{"app_id":"app-7","path_glob":"/products/*"}`,
+	}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyCachePurge,
+		Payload: `not json`,
+	}, log)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.responseCacheByPath) != 1 {
+		t.Fatalf("responseCacheByPath = %v, want one entry", f.responseCacheByPath)
+	}
+	if got := f.responseCacheByPath[0]; got.appID != "app-7" || got.pathGlob != "/products/*" {
+		t.Errorf("cache purge = %+v, want app-7 /products/*", got)
 	}
 }
 
@@ -584,4 +622,18 @@ func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
 // _test.go files.
 func unlimitedLimiterForTest() *gateway.Limiter {
 	return gateway.NewLimiter().WithNoop()
+}
+
+func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "limited", api.PlanScale)
+	app.MaxConcurrency = 1
+	r := pgRouter{store: store}
+	got, ok, err := r.toApp(context.Background(), app)
+	if err != nil || !ok {
+		t.Fatalf("toApp ok=%v err=%v", ok, err)
+	}
+	if got.MaxConcurrency != 1 {
+		t.Fatalf("app ceiling = %d, want 1", got.MaxConcurrency)
+	}
 }

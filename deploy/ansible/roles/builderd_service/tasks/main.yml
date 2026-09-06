@@ -183,6 +183,17 @@
     group: faas
     mode: "0770"
 
+# Cache-hit artifacts are hard-linked here while imaged consumes the builder
+# handoff. The imaged unit receives write access to this child only, leaving
+# canonical cache entries read-only to the sibling daemon.
+- name: builderd_service — ensure build cache lease directory exists
+  ansible.builtin.file:
+    path: "{{ builderd_cache_dir }}/.leases"
+    state: directory
+    owner: faas-builderd
+    group: faas
+    mode: "0770"
+
 # builderd's ProtectSystem=strict namespace also allows the shared log and
 # spool roots. The compute_only_service role converges these later, but this
 # role runs first in bootstrap and must make its own declared write paths

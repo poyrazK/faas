@@ -21,6 +21,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/buildcache"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -2609,6 +2610,12 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 			"deployment", p.DeploymentID)
 		return nil
 	}
+	// Cache hits arrive through a deployment-specific hard link. Keep it for
+	// crash recovery while this handler runs, then remove it only after the
+	// deployment row has stopped referencing the handoff (or reached a
+	// terminal failure). Register this before markFailedOnUnhandledError so
+	// the failure transition runs before the release check on an error.
+	defer h.releaseBuildCacheLease(ctx, dep)
 	// Issue #195 B1.5: install the defer AFTER the empty-rootfs
 	// early-return so the no-op skip path doesn't touch the row.
 	// The defer covers the build-window + snapshot_prime notifier
@@ -2693,6 +2700,25 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
 	}
 	return nil
+}
+
+func (h *Handler) releaseBuildCacheLease(parent context.Context, dep state.Deployment) {
+	if _, ok := buildcache.ParseLeasePath(dep.RootfsPath); !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	defer cancel()
+	current, err := h.store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		h.log.Warn("imaged: check build cache lease", "deployment", dep.ID, "err", err)
+		return
+	}
+	if current.RootfsPath == dep.RootfsPath && current.Status != state.DeployFailed {
+		return
+	}
+	if err := buildcache.Release(dep.RootfsPath); err != nil {
+		h.log.Warn("imaged: release build cache lease", "deployment", dep.ID, "err", err)
+	}
 }
 
 // ensureDeploymentRuntimeBase makes the shared drive0 available before

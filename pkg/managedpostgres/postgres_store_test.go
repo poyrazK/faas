@@ -205,6 +205,10 @@ func (*concurrentReadyProvider) IssueCredentials(context.Context, CredentialRequ
 	return CredentialMaterial{}, ErrUnsupported
 }
 
+func (*concurrentReadyProvider) RevokeCredentials(context.Context, CredentialRequest) error {
+	return ErrUnsupported
+}
+
 func (*concurrentReadyProvider) Usage(_ context.Context, _ string, window UsageWindow) (Usage, error) {
 	return Usage{Window: window}, nil
 }
@@ -226,12 +230,13 @@ func TestPostgresStoreConcurrentReconcilersContactProviderOnce(t *testing.T) {
 	}
 
 	service, err := NewService(registry, store, ServiceOptions{
-		LeaseDuration:   2 * time.Minute,
-		ProviderTimeout: time.Second,
-		PollInterval:    time.Second,
-		Now:             func() time.Time { return now },
-		NewID:           uuid.NewString,
-		NewLeaseToken:   uuid.NewString,
+		LeaseDuration:       2 * time.Minute,
+		ProviderTimeout:     time.Second,
+		PollInterval:        time.Second,
+		ProvisioningEnabled: func() bool { return true },
+		Now:                 func() time.Time { return now },
+		NewID:               uuid.NewString,
+		NewLeaseToken:       uuid.NewString,
 	})
 	if err != nil {
 		t.Fatal(err)

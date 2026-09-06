@@ -587,7 +587,11 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// can wire /readyz on the same mux as /metrics. defer
 		// stop so the SIGTERM drain window surfaces in
 		// daemon_ready as 0.
-		imagedProbe := BuildReadinessProbe(envOr("FAAS_STORAGE_ROOT", defaultStorageRoot))
+		cacheRoot := ""
+		if cache := storage.AsCacheBackend(storageBackend); cache != nil {
+			cacheRoot = cache.Root()
+		}
+		imagedProbe := buildImageReadinessProbe(envOr("FAAS_STORAGE_BACKEND", "local"), envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), cacheRoot)
 		imagedProbe.SetReadyObserver(func(ready bool, reason string) {
 			ops.MarkReady("imaged", ready, reason)
 		})

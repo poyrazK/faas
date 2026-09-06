@@ -205,6 +205,23 @@ func NewService(log *slog.Logger) *Service {
 	return &Service{Log: log}
 }
 
+type webhookDeliveryContextKey struct{}
+
+// HandleWebhookDelivery dispatches a durable inbox item. DeliveryID is kept
+// out of the GitHub JSON body and carried through context solely to stamp the
+// downstream per-app enqueue idempotency key.
+func (s *Service) HandleWebhookDelivery(ctx context.Context, delivery WebhookDelivery) error {
+	if delivery.DeliveryID != "" {
+		ctx = context.WithValue(ctx, webhookDeliveryContextKey{}, delivery.DeliveryID)
+	}
+	return s.HandleWebhookEvent(ctx, delivery.EventType, delivery.Payload)
+}
+
+func webhookDeliveryID(ctx context.Context) string {
+	deliveryID, _ := ctx.Value(webhookDeliveryContextKey{}).(string)
+	return deliveryID
+}
+
 // HandleWebhookEvent routes the standard X-GitHub-Event value. Keeping the
 // router beside the business service prevents the HTTP transport and durable
 // worker from drifting into push-only behavior.
@@ -397,9 +414,14 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	if enqueuer == nil {
 		enqueuer = NewNoopEnqueuer(s.Log)
 	}
-	touched := make([]state.App, 0, len(result.Added)+len(result.Changed))
-	touched = append(touched, result.Added...)
-	touched = append(touched, result.Changed...)
+	// Build selection starts from the full active project membership, not the
+	// reconcile metadata delta. A source-only commit does not change an app row,
+	// and a retried delivery sees an already-converged reconcile result; both
+	// still need the same path-filtered deployment fan-out.
+	touched, err := s.Reconcile.Store.AppsForProject(ctx, binding.AccountID, project.ID)
+	if err != nil {
+		return result, fmt.Errorf("githubd: list project apps for build fan-out: %w", err)
+	}
 
 	// Path-filter optimization (review #1): when the reconcile
 	// step produced zero apps (empty touched set, e.g. a default-
@@ -437,18 +459,23 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// path which short-circuited lookupChangedFiles.
 	s.ObserveFilterMode(filterMode)
 	toEnqueue, skipped := s.filterByPath(touched, changedFiles, filterMode)
+	deliveryID := webhookDeliveryID(ctx)
 
 	// Legacy embeddings expose one repository-wide check. Production uses the
 	// per-app writer below so monorepo workloads do not overwrite one another.
-	if s.WriteAppCheck == nil && s.WriteCheck != nil && len(toEnqueue) > 0 {
+	// Durable deliveries let the deployment outbox write the initial queued
+	// state; skipping the eager write prevents a reclaimed, already-live
+	// delivery from regressing its Check Run back to queued.
+	if deliveryID == "" && s.WriteAppCheck == nil && s.WriteCheck != nil && len(toEnqueue) > 0 {
 		if werr := s.WriteCheck(ctx, ev.Repository.FullName, ev.After, githubdgrpc.CheckPhaseQueued); werr != nil {
 			s.Log.Warn("githubd: write queued check", "err", werr, "repo", ev.Repository.FullName, "sha", ev.After)
 		}
 	}
 
 	buildIDs := make([]string, 0, len(toEnqueue))
+	var deliveryErrors []error
 	for _, app := range toEnqueue {
-		if s.WriteAppCheck != nil {
+		if deliveryID == "" && s.WriteAppCheck != nil {
 			if werr := s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
 				app.Slug, githubdgrpc.CheckPhaseQueued, "Deployment queued."); werr != nil {
 				s.Log.Warn("githubd: write queued app check", "app_id", app.ID, "err", werr)
@@ -464,14 +491,18 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		sourcePath, sourceBytes, sourceURL, stageErr := s.stageAppSource(ctx, tree, app, project, ev.After, branch)
 		if stageErr != nil {
 			s.Log.Warn("githubd: stage app source", "app_id", app.ID, "err", stageErr, "repo", ev.Repository.FullName, "sha", ev.After)
-			if s.WriteAppCheck != nil {
+			if deliveryID == "" && s.WriteAppCheck != nil {
 				_ = s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
 					app.Slug, githubdgrpc.CheckPhaseFailed, "Source staging failed: "+stageErr.Error())
+			}
+			if deliveryID != "" {
+				deliveryErrors = append(deliveryErrors, fmt.Errorf("stage app %s: %w", app.ID, stageErr))
 			}
 			continue
 		}
 		build, err := enqueuer.Enqueue(ctx, BuildSpec{
 			App:          app,
+			DeliveryID:   deliveryID,
 			CommitSHA:    ev.After,
 			RepoFullName: ev.Repository.FullName,
 			Ref:          ev.Ref,
@@ -487,15 +518,16 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			EventKind: githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH,
 		})
 		if err != nil {
-			// Best-effort: log + continue. The webhook
-			// contract is 200 OK with the partial build_ids
-			// list; failing the whole push because one of
-			// 50 builds was rejected is worse for the
-			// customer.
+			// Direct compatibility callers keep partial-success. Durable
+			// delivery dispatch aggregates the failure after fan-out so
+			// the inbox retries; already-successful apps are idempotent.
 			s.Log.Warn("githubd: enqueue build", "app_id", app.ID, "err", err, "repo", ev.Repository.FullName, "sha", ev.After)
-			if s.WriteAppCheck != nil {
+			if deliveryID == "" && s.WriteAppCheck != nil {
 				_ = s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
 					app.Slug, githubdgrpc.CheckPhaseFailed, "Build enqueue failed: "+err.Error())
+			}
+			if deliveryID != "" {
+				deliveryErrors = append(deliveryErrors, fmt.Errorf("enqueue app %s: %w", app.ID, err))
 			}
 			continue
 		}
@@ -510,6 +542,9 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 	}
 	result.BuildIDs = buildIDs
+	if len(deliveryErrors) > 0 {
+		return result, fmt.Errorf("githubd: delivery %s incomplete: %w", deliveryID, errors.Join(deliveryErrors...))
+	}
 
 	s.Log.Info("githubd push → reconcile",
 		"repo", ev.Repository.FullName, "branch", branch,
@@ -1204,14 +1239,16 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	//    pipeline (a follow-up PR-A.1) will transition it to
 	//    `in_progress` / `completed`.
 	previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
-	if werr := s.writePreviewCheck(ctx, install.InstallationID,
-		ev.Repository.FullName, ev.PullRequest.HeadSHA,
-		githubdgrpc.CheckPhaseQueued, previewURL,
-		fmt.Sprintf("Preview provisioned for PR #%d against %q",
-			ev.Number, parentApp.Slug)); werr != nil {
-		s.Log.Warn("githubd: write queued preview check", "err", werr,
-			"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA,
-			"preview_slug", previewSlugVal)
+	if webhookDeliveryID(ctx) == "" {
+		if werr := s.writePreviewCheck(ctx, install.InstallationID,
+			ev.Repository.FullName, ev.PullRequest.HeadSHA,
+			githubdgrpc.CheckPhaseQueued, previewURL,
+			fmt.Sprintf("Preview provisioned for PR #%d against %q",
+				ev.Number, parentApp.Slug)); werr != nil {
+			s.Log.Warn("githubd: write queued preview check", "err", werr,
+				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA,
+				"preview_slug", previewSlugVal)
+		}
 	}
 
 	// Fetch, stage, and enqueue the preview's head revision. Older unit rigs
@@ -1237,6 +1274,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		}
 		build, enqueueErr := s.Enqueuer.Enqueue(ctx, BuildSpec{
 			App:          created,
+			DeliveryID:   webhookDeliveryID(ctx),
 			CommitSHA:    ev.PullRequest.HeadSHA,
 			RepoFullName: ev.Repository.FullName,
 			Ref:          "refs/heads/" + ev.PullRequest.HeadRef,

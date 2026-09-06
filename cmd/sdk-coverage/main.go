@@ -231,6 +231,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/instances":               "ListInstances",
 	"POST /v1/apps/{slug}/park":                   "Park",
 	"POST /v1/apps/{slug}/wake":                   "Wake",
+	"DELETE /v1/apps/{slug}/cache":                "PurgeAppCache",
 	"POST /v1/apps/{slug}/rollback":               "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
 	"POST /v1/apps/{slug}/deployments":            "Deploy",

@@ -804,6 +804,26 @@ func TestCmdAppScale_ForwardsExplicitFlags(t *testing.T) {
 	}
 }
 
+func TestCmdAppScale_ForwardsResourceProfile(t *testing.T) {
+	sink := &multiSink{onScale: func(string, []byte) (int, any) {
+		return http.StatusOK, api.AppResponse{Slug: "profile-app", ResourceProfile: api.ResourceProfileSmall}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := cmdAppScale("profile-app", []string{"--profile", "small"}); code != 0 {
+		t.Fatalf("cmdAppScale exit = %d, want 0", code)
+	}
+	var req api.UpdateAppRequest
+	if err := json.Unmarshal(sink.lastBody, &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.ResourceProfile == nil || *req.ResourceProfile != "small" {
+		t.Fatalf("resource_profile = %v, want small", req.ResourceProfile)
+	}
+}
+
 // --- issue #470 PR C / ADR-074: warm-snapshot opt-in flags -----------------
 
 // TestCmdAppScale_WarmSnapshotEnabledTrue pins that --warm-snapshot

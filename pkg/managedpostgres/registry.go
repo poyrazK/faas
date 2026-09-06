@@ -19,6 +19,7 @@ type Config struct {
 	DefaultRegion          string            `json:"default_region"`
 	Defaults               map[string]string `json:"defaults"`
 	MaxDatabasesPerAccount int               `json:"max_databases_per_account"`
+	ProvisioningEnabled    bool              `json:"provisioning_enabled"`
 	Backends               []BackendConfig   `json:"backends"`
 }
 
@@ -45,6 +46,7 @@ type Factory func(BackendConfig, func(string) string) (Provider, error)
 type Registry struct {
 	DefaultRegion          string
 	MaxDatabasesPerAccount int
+	ProvisioningEnabled    bool
 	backends               map[string]Backend
 	defaults               map[string]string
 }
@@ -59,6 +61,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 	registry := &Registry{
 		DefaultRegion:          config.DefaultRegion,
 		MaxDatabasesPerAccount: config.MaxDatabasesPerAccount,
+		ProvisioningEnabled:    config.ProvisioningEnabled,
 		backends:               make(map[string]Backend, len(config.Backends)),
 		defaults:               make(map[string]string, len(config.Defaults)),
 	}

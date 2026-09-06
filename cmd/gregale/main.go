@@ -254,6 +254,8 @@ func run(args []string) (status int) {
 		return cmdTraffic(args[1:])
 	case "mirror":
 		return cmdMirror(args[1:])
+	case "cache":
+		return cmdCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":

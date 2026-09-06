@@ -710,6 +710,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if prob := resolveUpdateResourceProfile(&req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	ram, mc := app.RAMMB, app.MaxConcurrency
 	if req.RAMMB != nil {
@@ -1078,6 +1082,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// raw netip.Prefix so the JSON is stable across Go minor bumps.
 	oldApp := map[string]any{}
 	newApp := map[string]any{}
+	if req.ResourceProfile != nil {
+		oldApp["resource_profile"] = api.ResourceProfileForResources(app.RAMMB, effectiveAppCPUMillicores(app, acct.Plan))
+		newApp["resource_profile"] = api.ResourceProfileForResources(updated.RAMMB, effectiveAppCPUMillicores(updated, acct.Plan))
+	}
 	if req.RAMMB != nil {
 		oldApp["ram_mb"] = app.RAMMB
 		newApp["ram_mb"] = updated.RAMMB
@@ -1292,6 +1300,30 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	resp := s.appResponse(updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
+}
+
+// resolveUpdateResourceProfile expands a named profile into the existing
+// RAM/CPU update fields before validation and persistence. Explicit values may
+// accompany a profile only when they agree with its resolved shape; this keeps
+// a typo or ambiguous request from silently selecting the wrong cgroup quota.
+func resolveUpdateResourceProfile(req *api.UpdateAppRequest) *api.Problem {
+	if req.ResourceProfile == nil {
+		return nil
+	}
+	profile, ok := api.ResourceProfileSpecFor(*req.ResourceProfile)
+	if !ok {
+		return api.ErrInvalidResourceProfile(*req.ResourceProfile)
+	}
+	if req.RAMMB != nil && *req.RAMMB != profile.MemoryMB {
+		return api.ErrResourceProfileConflict("ram_mb", profile.Name, profile.MemoryMB, *req.RAMMB)
+	}
+	if req.CPUMillicores != nil && *req.CPUMillicores != profile.CPUMillicores {
+		return api.ErrResourceProfileConflict("cpu_millicores", profile.Name, profile.CPUMillicores, *req.CPUMillicores)
+	}
+	memory, cpu := profile.MemoryMB, profile.CPUMillicores
+	req.RAMMB = &memory
+	req.CPUMillicores = &cpu
+	return nil
 }
 
 // deleteApp marks the app as deleted (soft delete; PG snapshot GC runs on the
@@ -2862,13 +2894,7 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 
 func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	// IAM-5 (issue #189): DELETE is now a soft revoke. The row
-	// stays in the table for audit lineage (rotated_from_id chain
-	// preserves the predecessor's id; revoced_at marks the kill).
-	// Repeated DELETE on a revoked key is idempotent — MarkAPIKeyRevoked
-	// is a "update if not revoked" and returns the row either way.
-	updated, err := s.store.MarkAPIKeyRevoked(r.Context(), acct.ID, id)
-	if err != nil {
+	if _, err := s.revokeAPIKey(r.Context(), acct, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")
 			return
@@ -2876,19 +2902,36 @@ func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not revoke key"))
 		return
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"revoked","account":"`+acct.ID+`"}`)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// revokeAPIKey is the shared mutation core for the REST and dashboard key
+// revocation surfaces. Keeping notification and audit emission here ensures
+// both entry points produce the same authentication-cache invalidation and
+// key.revoked event.
+func (s *server) revokeAPIKey(ctx context.Context, acct state.Account, id string) (state.APIKey, error) {
+	// IAM-5 (issue #189): DELETE is now a soft revoke. The row
+	// stays in the table for audit lineage (rotated_from_id chain
+	// preserves the predecessor's id; revoced_at marks the kill).
+	// Repeated DELETE on a revoked key is idempotent — MarkAPIKeyRevoked
+	// is a "update if not revoked" and returns the row either way.
+	updated, err := s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
+	if err != nil {
+		return state.APIKey{}, err
+	}
+	_ = s.notif.Notify(ctx, db.NotifyKeyChanged, `{"kind":"revoked","account":"`+acct.ID+`"}`)
 	// IAM-4 + IAM-1 (ADR-034 rev2 / ADR-035): record the key
 	// revocation carrying the dismissed scopes so an operator can
 	// answer "what did this key allow before it died?" without
 	// re-deriving it from logs. The `reason` field is "manual"
 	// (this path) vs "rotation" (rotateKey) vs "expired" (lazy
 	// auth-time gate). Dashboard filters by reason.
-	s.audit.Emit(r.Context(), "key.revoked", &acct.ID, map[string]any{
+	s.audit.Emit(ctx, "key.revoked", &acct.ID, map[string]any{
 		"key_id": updated.ID,
 		"scopes": updated.Scopes,
 		"reason": "manual",
 	})
-	w.WriteHeader(http.StatusNoContent)
+	return updated, nil
 }
 
 // rotateKey mints a new key and demotes the old key in a single
