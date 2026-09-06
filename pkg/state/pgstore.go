@@ -6859,32 +6859,9 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 	return s.DeploymentByID(ctx, id)
 }
 
-// RetryDeploymentFromStage (ADR-117 §Production-ready follow-on,
-// C2) inserts a fresh `deployments` row copying every input
-// primitive from `failedID` and seeds `stage_state.current` to
-// `fromStage` with an empty history. See Store.RetryDeploymentFromStage
-// docblock for the wire contract.
-//
-// Implementation:
-//  1. Validate fromStage against pkg/state.AllStageNames
-//     (ErrInvalidArgument on unknown).
-//  2. Read the failed row by DeploymentByID.
-//  3. Build a new Deployment struct copying the input primitives
-//     (ImageDigest, Kind, SourcePath/Root/Bytes, Handler, LogPath,
-//     SourceURL, CommitSHA, Override*, Sidecars, MinInstances,
-//     TrafficPercent, Scope). The actor attribution columns
-//     (DeployedByUserID/Via/FromIP/PusherLogin) get a fresh
-//     stamp at INSERT time — a retry is a new operator action.
-//  4. INSERT a new row at status='pending' with stage_state =
-//     `{current: fromStage, current_started_at: NULL, history: []}`.
-//     The new row's id is uuid.NewString() so the wire SSE channel
-//     can detect the retry as a row-creation event.
-//
-// Reversibility: the failed row is NOT mutated. The retry is a
-// new row, not a status flip. This is intentional — failure
-// history stays observable, and the customer-facing UI shows
-// both the failed attempt and the retry in the same dashboard
-// list.
+// RetryDeploymentFromStage creates a pending retry under the parent-app lock.
+// The original attempt is unchanged; APID owns subsequent build publication.
+// See RetryStageState and ADR-162 for the actual restart stage.
 func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string, fromStage StageName) (Deployment, error) {
 	// Step 1 — closed-vocab guard. A caller-supplied unknown stage
 	// returns ErrInvalidArgument which the apid handler maps to a
@@ -6896,6 +6873,15 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	src, err := s.DeploymentByID(ctx, failedID)
 	if err != nil {
 		return Deployment{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var active int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status='active' for update`, src.AppID).Scan(&active); err != nil {
+		return Deployment{}, mapErr(err)
 	}
 	// Step 3 — build the new Deployment. The id is fresh; the
 	// actor attribution columns (DeployedVia / DeployedByUserID /
@@ -6928,6 +6914,9 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		OverrideHealthcheck:   src.OverrideHealthcheck,
 		OverrideLivenessProbe: src.OverrideLivenessProbe,
 		Sidecars:              src.Sidecars,
+		Workflows:             append(json.RawMessage(nil), src.Workflows...),
+		FullRootfsAllowAuto:   src.FullRootfsAllowAuto,
+		FullRootfsOverride:    src.FullRootfsOverride,
 		MinInstances:          src.MinInstances,
 		TrafficPercent:        src.TrafficPercent,
 		Scope:                 src.Scope,
@@ -6941,15 +6930,11 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	// supersedes the prior live row (a retry is independent of
 	// the prior row's status — it doesn't replace it). The seed
 	// jsonb is marshalled here so the SQL is a single INSERT.
-	stageSeed, err := json.Marshal(StageState{
-		Current:          fromStage,
-		CurrentStartedAt: nil,
-		History:          []StageStateItem{},
-	})
+	stageSeed, err := json.Marshal(RetryStageState(fromStage))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("RetryDeploymentFromStage: encode stage_state seed: %w", err)
 	}
-	row := s.pool.QueryRow(ctx,
+	row := tx.QueryRow(ctx,
 		`insert into deployments (app_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
 		                          override_liveness_probe,
@@ -6959,11 +6944,11 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          traffic_percent,
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
-		                          stage_state)
+		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', $19, $20,
 		         coalesce(nullif($21, ''), 'default'),
 		         nullif($22, '')::uuid, coalesce(nullif($23, ''), 'api'), nullif($24, '')::inet, nullif($25, ''),
-		         $26)
+		         $26, $27, $28, $29)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -6984,9 +6969,12 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		// audit-trail linkage from failed row → deployer chips
 		// survives a retry.
 		newDep.DeployedByUserID, newDep.DeployedVia, newDep.DeployedFromIP, newDep.PusherLogin,
-		stageSeed)
+		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride)
 	created, err := scanDeployment(row)
 	if err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}
 	return created, nil

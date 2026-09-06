@@ -1896,9 +1896,11 @@ func (d Deployment) DeploymentPreviewActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
-	Current          StageName        `json:"current"`
-	CurrentStartedAt *time.Time       `json:"current_started_at,omitempty"`
-	History          []StageStateItem `json:"history"`
+	RetryRequestedStage StageName        `json:"retry_requested_stage,omitempty"`
+	RetryRestartReason  string           `json:"retry_restart_reason,omitempty"`
+	Current             StageName        `json:"current"`
+	CurrentStartedAt    *time.Time       `json:"current_started_at,omitempty"`
+	History             []StageStateItem `json:"history"`
 }
 
 // StageStateItem is one closed stage transition in the

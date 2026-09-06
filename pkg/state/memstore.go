@@ -5711,7 +5711,7 @@ func (m *MemStore) CloseDeploymentStage(_ context.Context, id string, name Stage
 // Mirrors pgstore: validate against pkg/state.AllStageNames
 // (ErrInvalidArgument on unknown), copy every input primitive
 // from the failed row, seed the new row's stage_state to
-// `{current: fromStage, current_started_at: NULL, history: []}`.
+// `RetryStageState(fromStage)` (actual source_download + requested-stage metadata).
 // The fresh id is allocated by the existing newID() helper.
 func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, fromStage StageName) (Deployment, error) {
 	m.mu.Lock()
@@ -5721,6 +5721,9 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	}
 	src, ok := m.deployments[failedID]
 	if !ok {
+		return Deployment{}, ErrNotFound
+	}
+	if app, ok := m.apps[src.AppID]; !ok || app.Status != AppActive {
 		return Deployment{}, ErrNotFound
 	}
 	// Build a new row. The Status field stays DeployPending so
@@ -5761,6 +5764,9 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 		OverrideHealthcheck:   src.OverrideHealthcheck,
 		OverrideLivenessProbe: src.OverrideLivenessProbe,
 		Sidecars:              src.Sidecars,
+		Workflows:             append(json.RawMessage(nil), src.Workflows...),
+		FullRootfsAllowAuto:   src.FullRootfsAllowAuto,
+		FullRootfsOverride:    src.FullRootfsOverride,
 		MinInstances:          src.MinInstances,
 		TrafficPercent:        src.TrafficPercent,
 		Scope:                 src.Scope,
@@ -5774,11 +5780,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// empty history. imaged's transitionWithStage will append
 	// the first row (fromStage → next) the same way it does on
 	// a CLI-driven fresh deploy.
-	seed, err := json.Marshal(StageState{
-		Current:          fromStage,
-		CurrentStartedAt: nil,
-		History:          []StageStateItem{},
-	})
+	seed, err := json.Marshal(RetryStageState(fromStage))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("RetryDeploymentFromStage: encode stage_state seed: %w", err)
 	}

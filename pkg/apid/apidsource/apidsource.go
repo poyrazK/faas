@@ -134,22 +134,28 @@ type Notifier interface {
 // bridge stamps it from req.Pusher.Login; the apid paths leave
 // it empty.
 type EnqueueParams struct {
-	AppID string
 	// DeliveryID is the authenticated GitHub webhook delivery ID. When set,
 	// Enqueue derives stable deployment/build UUIDs from (delivery, app) and
 	// recovers existing rows after retries or ambiguous commit responses.
-	DeliveryID  string
-	Kind        state.DeploymentKind
-	SourcePath  string
-	SourceBytes int64
-	SourceRoot  string
-	SourceURL   string
-	CommitSHA   string
-	Scope       string
-	Handler     string
-	Source      string
-	LogSpool    string
-	Log         *slog.Logger
+	DeliveryID string
+	// RetryOf preserves the original deployment and copies its input settings.
+	// RetryFrom records the requested stage; retained source is rebuilt when
+	// intermediate stage checkpoints are unavailable.
+	RetryOf       string
+	RetryFrom     state.StageName
+	SourceBuildID string // original build's immutable source object, for retries
+	AppID         string
+	Kind          state.DeploymentKind
+	SourcePath    string
+	SourceBytes   int64
+	SourceRoot    string
+	SourceURL     string
+	CommitSHA     string
+	Scope         string
+	Handler       string
+	Source        string
+	LogSpool      string
+	Log           *slog.Logger
 	// Issue #606 / SAFE-RELEASES-E.1 actor columns. ActorVia
 	// must be one of the closed-set values enforced by the
 	// deployments.deployed_via CHECK constraint; ActorUserID
@@ -274,19 +280,27 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	if p.DeliveryID != "" {
 		deploymentID, buildID = githubDeliveryIDs(p.DeliveryID, p.AppID)
 	}
-	if err := publishSource(ctx, sourceStorage, buildID, p.SourcePath); err != nil {
+	var sourceErr error
+	if p.RetryOf != "" {
+		sourceErr = publishRetrySource(ctx, sourceStorage, buildID, p)
+	} else {
+		sourceErr = publishSource(ctx, sourceStorage, buildID, p.SourcePath)
+	}
+	if err := sourceErr; err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source handoff: %w", err)
 	}
 
 	// Step 1: read prior deployment so the supersede notify can
 	// carry the right deployment_id.
-	prev := state.Deployment{}
-	if scoped, ok := store.(interface {
-		LatestDeploymentForScope(context.Context, string, string) (state.Deployment, error)
-	}); ok {
-		prev, _ = scoped.LatestDeploymentForScope(ctx, p.AppID, p.Scope)
-	} else {
-		prev, _ = store.LatestDeployment(ctx, p.AppID)
+	var prev state.Deployment
+	if p.RetryOf == "" {
+		if scoped, ok := store.(interface {
+			LatestDeploymentForScope(context.Context, string, string) (state.Deployment, error)
+		}); ok {
+			prev, _ = scoped.LatestDeploymentForScope(ctx, p.AppID, p.Scope)
+		} else {
+			prev, _ = store.LatestDeployment(ctx, p.AppID)
+		}
 	}
 
 	// Step 2: create the deployment row. SourceURL + CommitSHA are
@@ -296,7 +310,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// strings to NULL/'' via the migrations/00303 nullif()+coalesce()
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
-	d, err := store.CreateDeployment(ctx, state.Deployment{
+	d, err := createDeployment(ctx, store, p, state.Deployment{
 		ID:          deploymentID,
 		AppID:       p.AppID,
 		Kind:        p.Kind,
@@ -469,4 +483,17 @@ func githubDeliveryIDs(deliveryID, appID string) (deploymentID, buildID string) 
 	key := deliveryID + "\x00" + appID
 	return uuid.NewSHA1(githubDeliveryNamespace, []byte(key+"\x00deployment")).String(),
 		uuid.NewSHA1(githubDeliveryNamespace, []byte(key+"\x00build")).String()
+}
+
+func createDeployment(ctx context.Context, store Store, p EnqueueParams, input state.Deployment) (state.Deployment, error) {
+	if p.RetryOf == "" {
+		return store.CreateDeployment(ctx, input)
+	}
+	retries, ok := store.(interface {
+		RetryDeploymentFromStage(context.Context, string, state.StageName) (state.Deployment, error)
+	})
+	if !ok {
+		return state.Deployment{}, fmt.Errorf("apidsource: store does not support deployment retry")
+	}
+	return retries.RetryDeploymentFromStage(ctx, p.RetryOf, p.RetryFrom)
 }

@@ -5775,8 +5775,8 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	if err := json.Unmarshal(got.StageState, &state); err != nil {
 		t.Fatalf("decode new stage_state: %v", err)
 	}
-	if state.Current != StageSnapshotPrepare {
-		t.Errorf("new stage_state.Current = %q, want %q", state.Current, StageSnapshotPrepare)
+	if state.Current != StageSourceDownload || state.RetryRequestedStage != StageSnapshotPrepare {
+		t.Errorf("retry stage state = %+v; want actual source_download, requested snapshot_prepare", state)
 	}
 	if state.CurrentStartedAt != nil {
 		t.Errorf("new stage_state.CurrentStartedAt = %v, want nil", state.CurrentStartedAt)

@@ -391,6 +391,9 @@ func RenderSummaryHTML(ss state.StageState, status string, terminalAt time.Time)
 	}
 
 	var rowsHTML strings.Builder
+	if ss.RetryRestartReason != "" {
+		fmt.Fprintf(&rowsHTML, "<p class=\"stage-retry-note\">%s</p>", template.HTMLEscapeString(ss.RetryRestartReason))
+	}
 	var totalMs int64
 	for _, name := range order {
 		item, ok := byName[name]

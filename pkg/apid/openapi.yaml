@@ -14233,6 +14233,9 @@ components:
       type: object
       required: [id, app_id, image_digest, kind, status, created_at]
       properties:
+        stage_state:
+          type: object
+          description: Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt.
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         build_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$' }

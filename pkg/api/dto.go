@@ -1603,13 +1603,14 @@ type ListDeploymentAuditResponse struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
-	ID          string `json:"id"`
-	AppID       string `json:"app_id"`
-	BuildID     string `json:"build_id,omitempty"`
-	ImageDigest string `json:"image_digest"`
-	Kind        string `json:"kind"`
-	Status      string `json:"status"`
-	Error       string `json:"error,omitempty"`
+	StageState  json.RawMessage `json:"stage_state,omitempty"`
+	ID          string          `json:"id"`
+	AppID       string          `json:"app_id"`
+	BuildID     string          `json:"build_id,omitempty"`
+	ImageDigest string          `json:"image_digest"`
+	Kind        string          `json:"kind"`
+	Status      string          `json:"status"`
+	Error       string          `json:"error,omitempty"`
 	// ErrorCode carries the RFC 7807 code ADR-021 lifted from the
 	// puller-side sentinels (image_not_found / image_egress_denied /
 	// image_manifest_invalid). Empty for every deployment created
