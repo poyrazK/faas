@@ -35,8 +35,15 @@ const (
 	// MinLayerMB floors the image so tiny apps still get room for inode tables
 	// and journal.
 	MinLayerMB = 16
-	// slackFloorMB is the minimum absolute overhead added on top of content.
+	// slackFloorMB is the minimum absolute metadata overhead added when
+	// sizing shared base filesystems.
 	slackFloorMB = 4
+	// appSlackFloorMB also leaves writable space for guest-init to create the
+	// overlay work directory and for the running workload to use its upper
+	// layer. Four MiB was enough for mkfs.ext4 to populate a Go function but
+	// left only 52 free blocks; the resulting image then failed every cold
+	// boot with ENOSPC before the handler started.
+	appSlackFloorMB = 9
 	// baseSlackPct is the baseline fractional overhead for
 	// BasePaddedSizeMB, floored at slackFloorMB. Calibrated to match
 	// the legacy 10 % for trees where most files sit at or above
@@ -148,7 +155,7 @@ func PaddedSizeMB(contentBytes int64) int {
 		contentBytes = 0
 	}
 	slack := contentBytes * int64(perAppSlackPct) / 100
-	if floor := int64(slackFloorMB) * mib; slack < floor {
+	if floor := int64(appSlackFloorMB) * mib; slack < floor {
 		slack = floor
 	}
 	total := contentBytes + slack
@@ -212,8 +219,17 @@ func CheckCap(l api.Limits, contentBytes int64) (sizeMB int, err error) {
 // allocation when the tree contains many small runtime files (for example,
 // Node's CA bundle and npm metadata). Using only apparent byte size can make
 // mkfs.ext4 -d run out of blocks even though the nominal 10% app slack fits.
+// This is the initial size estimate. App image publication can retry explicit
+// filesystem allocation failures with more room, enforcing the same cap on
+// every attempt and returning the completed image size.
 func CheckCapForStaging(l api.Limits, stats SmallFileStats) (sizeMB int, err error) {
-	sizeMB = BasePaddedSizeMB(stats.ContentBytes, stats.SmallRatio)
+	// BasePaddedSizeMB protects trees dominated by small files. The app
+	// estimate also keeps PaddedSizeMB's larger absolute slack floor so a
+	// successfully populated image still has writable runtime headroom.
+	sizeMB = max(
+		BasePaddedSizeMB(stats.ContentBytes, stats.SmallRatio),
+		PaddedSizeMB(stats.ContentBytes),
+	)
 	if sizeMB > l.EphemeralDiskMaxMB() {
 		return sizeMB, api.ErrAppLayerTooLarge(l, int64(sizeMB)*mib)
 	}

@@ -169,9 +169,10 @@ func TestBasePaddedSizeMB(t *testing.T) {
 	if got := BasePaddedSizeMB(0, 0); got != MinLayerMB {
 		t.Errorf("empty content -> %d, want floor %d", got, MinLayerMB)
 	}
-	// Tree with NO small files: BasePaddedSizeMB must equal the legacy
-	// PaddedSizeMB (smallFileSlackPct contributes 0 when smallRatio=0).
-	for c := int64(0); c <= 500*mib; c += 50 * mib {
+	// Tree with NO small files: once percentage slack dominates both absolute
+	// floors, BasePaddedSizeMB matches PaddedSizeMB (smallFileSlackPct
+	// contributes 0 when smallRatio=0).
+	for c := int64(100 * mib); c <= 500*mib; c += 50 * mib {
 		legacy := PaddedSizeMB(c)
 		new := BasePaddedSizeMB(c, 0)
 		if legacy != new {
@@ -224,6 +225,24 @@ func TestCheckCapForStagingAccountsForSmallFiles(t *testing.T) {
 	}
 	if sizeMB <= PaddedSizeMB(stats.ContentBytes) {
 		t.Fatalf("small-file-aware size %d MB did not exceed legacy size %d MB", sizeMB, PaddedSizeMB(stats.ContentBytes))
+	}
+}
+
+func TestCheckCapForStagingKeepsWritableAppHeadroom(t *testing.T) {
+	limits, ok := api.LimitsFor(api.PlanFree)
+	if !ok {
+		t.Fatal("free limits missing")
+	}
+	// This is the apparent size of the Go layer from the live ENOSPC
+	// regression. The former 10%/4 MiB estimate produced a 30 MiB ext4 with
+	// only 52 free blocks, which could not create /work during guest boot.
+	const goFunctionBytes = 25_564_510
+	sizeMB, err := CheckCapForStaging(limits, SmallFileStats{ContentBytes: goFunctionBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sizeMB != 34 {
+		t.Fatalf("Go function app image = %d MiB, want 34 MiB with runtime headroom", sizeMB)
 	}
 }
 
