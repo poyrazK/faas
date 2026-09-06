@@ -212,6 +212,9 @@ func CheckCap(l api.Limits, contentBytes int64) (sizeMB int, err error) {
 // allocation when the tree contains many small runtime files (for example,
 // Node's CA bundle and npm metadata). Using only apparent byte size can make
 // mkfs.ext4 -d run out of blocks even though the nominal 10% app slack fits.
+// This is the initial size estimate. App image publication can retry explicit
+// filesystem allocation failures with more room, enforcing the same cap on
+// every attempt and returning the completed image size.
 func CheckCapForStaging(l api.Limits, stats SmallFileStats) (sizeMB int, err error) {
 	sizeMB = BasePaddedSizeMB(stats.ContentBytes, stats.SmallRatio)
 	if sizeMB > l.EphemeralDiskMaxMB() {

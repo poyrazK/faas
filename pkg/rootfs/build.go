@@ -349,7 +349,8 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		return BuildResult{}, err
 	}
 
-	if err := b.publishExt4(ctx, in, staging, sizeMB); err != nil {
+	sizeMB, err = b.publishExt4(ctx, in, staging, sizeMB, limits)
+	if err != nil {
 		return BuildResult{}, err
 	}
 
@@ -456,25 +457,22 @@ func ensureRuntimeDirectory(staging, rel string) error {
 //
 // The temp file is removed before returning; the caller sees no scratch
 // left behind even on error.
-func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string, sizeMB int) error {
+func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string, sizeMB int, limits api.Limits) (int, error) {
 	if in.OutImage != "" {
 		// Legacy path. Mkfs writes directly to OutImage; the caller's
 		// filesystem already provides atomicity (or it doesn't, and we
 		// honour that — pre-#96 production). Kept for the integration
 		// test.
 		if err := os.MkdirAll(filepath.Dir(in.OutImage), 0o755); err != nil {
-			return fmt.Errorf("rootfs: mkdir out dir: %w", err)
+			return 0, fmt.Errorf("rootfs: mkdir out dir: %w", err)
 		}
-		if err := b.run.Run(ctx, MkfsCommand(staging, in.OutImage, sizeMB)); err != nil {
-			return fmt.Errorf("rootfs: mkfs: %w", err)
-		}
-		return nil
+		return b.runAppMkfs(ctx, staging, in.OutImage, sizeMB, limits)
 	}
 	// Storage path. Mkfs into a sibling temp file, then Put the bytes
 	// under StorageKey and remove the temp.
 	tmp, err := os.CreateTemp(filepath.Dir(staging), "faas-mkfs-*.ext4")
 	if err != nil {
-		return fmt.Errorf("rootfs: create tmp ext4: %w", err)
+		return 0, fmt.Errorf("rootfs: create tmp ext4: %w", err)
 	}
 	tmpPath := tmp.Name()
 	closed := false
@@ -485,22 +483,23 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 		_ = os.Remove(tmpPath)
 	}()
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("rootfs: close tmp ext4: %w", err)
+		return 0, fmt.Errorf("rootfs: close tmp ext4: %w", err)
 	}
-	if err := b.run.Run(ctx, MkfsCommand(staging, tmpPath, sizeMB)); err != nil {
-		return fmt.Errorf("rootfs: mkfs: %w", err)
+	sizeMB, err = b.runAppMkfs(ctx, staging, tmpPath, sizeMB, limits)
+	if err != nil {
+		return 0, err
 	}
 	// nolint:forbidigo // tmpPath is from os.MkdirTemp at the top of
 	// this function — a daemon-internal scratch file the builder just
 	// wrote via MkfsCommand. Not a customer path.
 	f, err := os.Open(tmpPath)
 	if err != nil {
-		return fmt.Errorf("rootfs: open mkfs output: %w", err)
+		return 0, fmt.Errorf("rootfs: open mkfs output: %w", err)
 	}
 	closed = true // release the open file before Put; storage Put closes the file via defer elsewhere
 	defer func() { _ = f.Close() }()
 	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
-		return fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
+		return 0, fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
 	}
 	// ADR-038: sign the published ext4 so schedd's cold-boot verify
 	// (pkg/cosign.LocalVerifier) can detect tampering. Signing
@@ -513,10 +512,10 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	if b.signer != nil {
 		sigKey := "sigs/" + in.StorageKey + ".sig"
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
+			return 0, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
 		}
 	}
-	return nil
+	return sizeMB, nil
 }
 
 // emitSBOM runs the injected SBOM subprocess against the staging
