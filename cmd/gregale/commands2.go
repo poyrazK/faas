@@ -1872,7 +1872,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 				return printErr("Bad --tarball", deployErr)
 			}
-		} else if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		} else if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+			uploadOptions := api.UploadDeployOptions{
+				Runtime: *runtime, Handler: *handler, Dockerfile: *dockerfile,
+				SourceRoot: sourceRoot, Reason: ann.Reason, Tag: ann.Tag,
+				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
+			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
 				lastPercent := -1
@@ -1886,7 +1891,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			var uploadErr error
-			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress)
+			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress, uploadOptions)
 			if uploadErr == nil && !usedResumable {
 				dep, uploadErr = DeployTarballWithSourceRoot(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
 			}

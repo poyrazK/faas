@@ -55,6 +55,7 @@ const (
 	operatorConfigFile    = "operator_config.go" // ADR-132 — operator runtime configuration
 	obsFile               = "obs.go"             // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
 	corsPresetsFile       = "cors_preset_dto.go" // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
+	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -812,6 +813,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", obsFile),
 		filepath.Join(root, "pkg", "api", corsPresetsFile),
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
+		filepath.Join(root, "pkg", "api", uploadSessionFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

@@ -23,10 +23,14 @@ import (
 // ChunkSize is selected by apid and is the maximum body size accepted by each
 // PATCH request.
 type ResumableUploadSession struct {
-	UploadID  string
-	ChunkSize int64
-	TotalSize int64
-	ExpiresAt string
+	UploadID      string
+	AppSlug       string
+	ChunkSize     int64
+	TotalSize     int64
+	ReceivedBytes int64
+	Status        string
+	ExpiresAt     string
+	DeploymentID  *string
 }
 
 // ErrResumableUploadUnsupported means the API server predates the resumable
@@ -35,9 +39,10 @@ type ResumableUploadSession struct {
 var ErrResumableUploadUnsupported = errors.New("api: resumable uploads are not supported by this server")
 
 type resumableUploadStartRequest struct {
-	AppSlug   string  `json:"app_slug"`
-	TotalSize int64   `json:"total_size"`
-	Sha256Hex *string `json:"sha256_hex,omitempty"`
+	AppSlug       string               `json:"app_slug"`
+	TotalSize     int64                `json:"total_size"`
+	Sha256Hex     *string              `json:"sha256_hex,omitempty"`
+	DeployOptions *UploadDeployOptions `json:"deploy_options,omitempty"`
 }
 
 type resumableUploadStartResponse struct {
@@ -50,21 +55,38 @@ type resumableUploadStartResponse struct {
 // StartUpload opens a resumable upload session. sha256Hex is optional; pass
 // an empty string when the caller wants to calculate the digest while sending
 // chunks instead of reading the archive once before the upload begins.
-func (c *Client) StartUpload(ctx context.Context, appSlug string, totalSize int64, sha256Hex string) (ResumableUploadSession, error) {
+func (c *Client) StartUpload(ctx context.Context, appSlug string, totalSize int64, sha256Hex string, options ...UploadDeployOptions) (ResumableUploadSession, error) {
 	var digest *string
 	if sha256Hex != "" {
 		digest = &sha256Hex
 	}
 	var out resumableUploadStartResponse
+	var deployOptions *UploadDeployOptions
+	if len(options) > 0 {
+		deployOptions = &options[0]
+	}
 	_, _, err := c.doResumableUpload(ctx, http.MethodPost, "/v1/uploads", resumableUploadStartRequest{
-		AppSlug:   appSlug,
-		TotalSize: totalSize,
-		Sha256Hex: digest,
+		AppSlug:       appSlug,
+		TotalSize:     totalSize,
+		Sha256Hex:     digest,
+		DeployOptions: deployOptions,
 	}, "application/json", nil, &out, true)
 	if err != nil {
 		return ResumableUploadSession{}, err
 	}
-	return ResumableUploadSession(out), nil
+	return ResumableUploadSession{
+		UploadID: out.UploadID, ChunkSize: out.ChunkSize, TotalSize: out.TotalSize, ExpiresAt: out.ExpiresAt,
+	}, nil
+}
+
+// GetUploadSession discovers the current server-side offset and terminal
+// state. Callers can persist the upload id and use this after a process
+// restart instead of starting a duplicate session.
+func (c *Client) GetUploadSession(ctx context.Context, uploadID string) (UploadSessionResponse, error) {
+	var out UploadSessionResponse
+	_, _, err := c.doResumableUpload(ctx, http.MethodGet,
+		"/v1/uploads/"+url.PathEscape(uploadID), nil, "", nil, &out, false)
+	return out, err
 }
 
 // AppendUpload appends one chunk at the absolute offset supplied by the

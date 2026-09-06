@@ -734,6 +734,11 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .upload_deploy_options import UploadDeployOptions
+from .upload_session_response import UploadSessionResponse
+from .upload_session_response_status import UploadSessionResponseStatus
+from .upload_start_request import UploadStartRequest
+from .upload_start_response import UploadStartResponse
 from .upsert_dev_session_request import UpsertDevSessionRequest
 from .upsert_dev_session_request_runtime import UpsertDevSessionRequestRuntime
 from .upsert_dev_session_request_type import UpsertDevSessionRequestType
@@ -1482,6 +1487,11 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UploadDeployOptions",
+    "UploadSessionResponse",
+    "UploadSessionResponseStatus",
+    "UploadStartRequest",
+    "UploadStartResponse",
     "UpsertDevSessionRequest",
     "UpsertDevSessionRequestRuntime",
     "UpsertDevSessionRequestType",

@@ -31,7 +31,7 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode start request: %v", err)
 			}
-			if req.AppSlug != "demo" || req.TotalSize != 6 || req.Sha256Hex != nil {
+			if req.AppSlug != "demo" || req.TotalSize != 6 || req.Sha256Hex != nil || req.DeployOptions == nil || req.DeployOptions.SourceRoot != "apps/api" {
 				t.Errorf("start request = %+v", req)
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -43,6 +43,8 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 			patchBody, _ = io.ReadAll(r.Body)
 			w.Header().Set("Upload-Offset", strconv.Itoa(6))
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/uploads/upload-1":
+			_ = json.NewEncoder(w).Encode(UploadSessionResponse{UploadID: "upload-1", AppSlug: "demo", ChunkSize: 3, TotalSize: 6, ReceivedBytes: 3, Status: "open"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads/upload-1/commit":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(DeploymentResponse{ID: "dep-1", AppID: "demo", Status: "pending"})
@@ -56,12 +58,16 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 
 	c := NewClient(srv.URL, "fp_test").SetCompletionCache(nil)
 	ctx := context.Background()
-	session, err := c.StartUpload(ctx, "demo", 6, "")
+	session, err := c.StartUpload(ctx, "demo", 6, "", UploadDeployOptions{SourceRoot: "apps/api"})
 	if err != nil {
 		t.Fatalf("StartUpload: %v", err)
 	}
 	if session.UploadID != "upload-1" || session.ChunkSize != 3 || session.TotalSize != 6 {
 		t.Fatalf("session = %+v", session)
+	}
+	state, err := c.GetUploadSession(ctx, session.UploadID)
+	if err != nil || state.ReceivedBytes != 3 || state.Status != "open" {
+		t.Fatalf("GetUploadSession = %+v, %v", state, err)
 	}
 
 	next, err := c.AppendUpload(ctx, session.UploadID, 3, []byte("abc"))
@@ -85,6 +91,7 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 
 	wantMethods := []string{
 		"POST /v1/uploads",
+		"GET /v1/uploads/upload-1",
 		"PATCH /v1/uploads/upload-1",
 		"POST /v1/uploads/upload-1/commit",
 		"DELETE /v1/uploads/upload-1",

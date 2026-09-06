@@ -2164,6 +2164,228 @@ FROM deployments
 WHERE id = $1
   AND snapshot_miss_backoff_until IS NOT NULL;
 
+-- =====================================================================
+
+-- name: CreateUploadSession :one
+-- Inserts a fresh upload_sessions row. The handler pre-validates
+-- total_size against limits.SourceTarballMaxMB (pkg/api/limits.go)
+-- and the per-account open-session cap (5 per (account_id, app_slug))
+-- before this INSERT — sqlc only owns the type-safe binding. The
+-- 1-GiB hard ceiling in the SQL CHECK is the worst-case spool size,
+-- not the customer-facing quota.
+INSERT INTO upload_sessions (
+    id, account_id, app_slug, total_size, chunk_size, sha256_hex, part_path, deploy_options
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
+)
+RETURNING id, account_id, app_slug, total_size, received_bytes, chunk_size,
+          sha256_hex, part_path, status, created_at, last_patched_at, expires_at,
+          deployment_id, deploy_options;
+
+-- name: GetUploadSession :one
+-- Reads a single upload_sessions row by id. Used by:
+--   (a) the handler's POST /commit pre-check (validate status='open',
+--       received_bytes == total_size before validating tar shape);
+--   (b) the CLI's GET-when-resuming-after-network-drop path
+--       (PR-2 cmd/gregale/upload_session.go) which learns the
+--       server's current received_bytes to compute the next chunk's
+--       Upload-Offset header.
+-- No FOR UPDATE here — the row is append-only under normal operation
+-- and the CAS in AppendUploadBytes is the serialisation point. If
+-- future work needs a transactional read-modify-write (e.g., admin
+-- force-close), add a separate GetUploadSessionForUpdate :one.
+SELECT id, account_id, app_slug, total_size, received_bytes, chunk_size,
+       sha256_hex, part_path, status, created_at, last_patched_at, expires_at,
+       deployment_id, deploy_options
+FROM upload_sessions
+WHERE id = $1;
+
+-- name: AppendUploadBytes :one
+-- The atomic CAS that makes the resumable protocol safe under
+-- concurrent PATCHes on the same upload_id. The handler reads
+-- the client's Upload-Offset header (the offset the client claims
+-- the server is currently at) and the chunk_size it sent, then
+-- computes expected_new = client_offset + chunk_bytes. The WHERE
+-- clause pins the row to (id=$1 AND status='open' AND
+-- expires_at > now() AND received_bytes=$3) — a row whose received_bytes has already
+-- advanced (e.g., a racing PATCH from a retry) returns 0 rows and
+-- the handler maps that to 409 Conflict with the actual current
+-- offset in the body.
+--
+-- RETURNING exposes the new received_bytes so the handler doesn't
+-- need a follow-up SELECT on the happy path. last_patched_at is
+-- bumped to now() so the reaper's idle-aware expiry (NOT in PR-1;
+-- deferred — see plan "Out of scope") has a fresh anchor.
+UPDATE upload_sessions
+   SET received_bytes = $3,
+       last_patched_at = now()
+ WHERE id = $1
+   AND status = 'open'
+   AND expires_at > now()
+   AND received_bytes = $2
+RETURNING received_bytes, total_size;
+
+-- name: MarkUploadSessionCommitted :one
+-- Final state transition: open → committed. The handler runs
+-- validateTarballShape + scanForStatefulShape (cmd/apid/
+-- deploy_inputs.go:291-447) BEFORE this UPDATE so a commit that
+-- fails validation leaves the row at status='open' and the .part
+-- file in place for retry. deployment_id is set after the build
+-- row is enqueued (apidsource.Enqueue) so the row points at the
+-- deployment that consumed the .part.
+--
+-- The UPDATE WHERE status='open' is the second-line idempotency
+-- guard: a retry of POST /v1/uploads/{id}/commit that races with
+-- itself hits 0 rows and the handler reads upload_commit_outcomes
+-- to return the original deployment_id.
+UPDATE upload_sessions
+   SET status = 'committed',
+       deployment_id = $2
+ WHERE id = $1
+   AND status = 'open'
+RETURNING id, status, deployment_id;
+
+-- name: CancelUploadSession :exec
+-- Explicit cancel from DELETE /v1/uploads/{id}. The handler also
+-- removes the .part file via os.Remove AFTER the UPDATE commits —
+-- doing it before would leak a file if the UPDATE rolled back.
+-- Status transition is open → cancelled; a second cancel or a
+-- commit-after-cancel hits 0 rows and the handler returns 409
+-- upload_session_already_cancelled.
+UPDATE upload_sessions
+   SET status = 'cancelled'
+ WHERE id = $1
+   AND account_id = $2::uuid
+   AND status = 'open';
+
+-- name: ReapExpiredUploadSessions :many
+-- The reaper's scan query (cmd/apid/upload_session_reaper.go).
+-- Returns at most 100 rows per invocation to bound memory; the
+-- goroutine ticker at cmd/apid/main.go re-invokes on its 5-minute
+-- cadence. partial index upload_sessions_expires_idx makes this
+-- an index-only scan over the open sessions whose expires_at has
+-- passed. The handler then UPDATEs status='expired' and removes
+-- the .part file via os.Remove.
+--
+-- The status='open' predicate is load-bearing — once a session is
+-- committed/cancelled/expired the .part file is already gone and
+-- the row is terminal.
+SELECT id, part_path
+FROM upload_sessions
+WHERE status = 'open'
+  AND expires_at < now()
+ORDER BY expires_at ASC
+LIMIT 100;
+
+-- name: ReapStaleUploadPartFiles :many
+-- PR-1 fixup #5: sweep .part files for terminal rows whose
+-- builderd consumption window has closed. The commit handler
+-- leaves .part in place for builderd to consume
+-- (pkg/builderd/builderd.go:407 hashFile(SourcePath)); the
+-- cancel handler removes its .part at the same time it flips
+-- status='cancelled'; but neither has a 1-hour cleanup guarantee
+-- for committed rows. This query returns rows in terminal
+-- status whose last_patched_at is >1h old and whose part_path
+-- cleanup marker is still set; the reaper removes the file and
+-- clears the marker after a successful removal.
+--
+-- The status IN (committed, cancelled, expired) predicate is
+-- load-bearing — we never sweep open sessions (could race a
+-- PATCH). The last_patched_at < now() - '1 hour' guard stops
+-- us from racing a builderd that's mid-consumption right after
+-- commit. The 100-row LIMIT bounds the per-tick work the same
+-- way ReapExpiredUploadSessions does.
+--
+-- Index strategy: pg doesn't have an index on (status,
+-- last_patched_at) today; the scan is sequential over the
+-- terminal-status rows. At expected volumes (≪ 1k terminal
+-- rows/day per apid) this is fine. If terminal-row volume
+-- grows, add a partial index on (last_patched_at) WHERE
+-- status IN ('committed', 'cancelled', 'expired') — leaving
+-- as a follow-up ADR rather than conflated into PR-1's
+-- migration slot 533.
+SELECT id, part_path
+FROM upload_sessions
+WHERE status IN ('committed', 'cancelled', 'expired')
+  AND part_path <> ''
+  AND last_patched_at < now() - INTERVAL '1 hour'
+ORDER BY last_patched_at ASC
+LIMIT 100;
+
+-- name: ClearUploadSessionPartPath :exec
+-- Records that the spool file has been removed. Terminal status is
+-- required so an out-of-order cleanup call cannot hide the path of
+-- an open session that a concurrent PATCH still needs.
+UPDATE upload_sessions
+   SET part_path = ''
+ WHERE id = $1
+   AND status IN ('committed', 'cancelled', 'expired')
+   AND part_path <> '';
+
+-- name: ExpireUploadSession :exec
+-- Marks a single session as expired after the reaper removes its
+-- .part file. Split into a separate query from ReapExpiredUploadSessions
+-- so the reaper can: (a) scan, (b) delete the file, (c) UPDATE.
+-- If (c) fails the row stays at status='open' and the next reaper
+-- tick re-runs against it — the file is already gone, so os.Remove
+-- returns ErrNotExist and is logged + skipped. This avoids the
+-- alternative of a single UPDATE ... RETURNING part_path that
+-- would race the file delete across two replicas (single-process
+-- for now; future multi-replica deployment needs SELECT ... FOR
+-- UPDATE SKIP LOCKED).
+UPDATE upload_sessions
+   SET status = 'expired'
+ WHERE id = $1
+   AND status = 'open';
+
+-- name: RecordUploadCommitOutcome :one
+-- INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
+-- companion table. The handler calls this AFTER a successful
+-- apidsource.Enqueue and BEFORE writing the 201 response. On
+-- retry of POST /v1/uploads/{id}/commit (network blip after the
+-- server wrote the row but before the client got the response),
+-- the INSERT hits the conflict path and returns 0 rows; the
+-- handler then calls GetUploadCommitOutcome to return the
+-- original deployment_id. ON CONFLICT DO NOTHING (rather than
+-- DO UPDATE) is correct: the original row is canonical.
+INSERT INTO upload_commit_outcomes (upload_id, deployment_id, build_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (upload_id) DO NOTHING
+RETURNING upload_id, deployment_id, build_id, finalized_at;
+
+-- name: GetUploadCommitOutcome :one
+-- Reads the dedupe row for a retry of POST /v1/uploads/{id}/commit.
+-- Returns 0 rows if the original commit never wrote (handler
+-- surfaces this as 500 — the prior UPDATE MarkUploadSessionCommitted
+-- also failed, so the operator needs the build row's failure
+-- class).
+SELECT upload_id, deployment_id, build_id, finalized_at
+FROM upload_commit_outcomes
+WHERE upload_id = $1;
+
+-- name: CountOpenUploadSessionsByAccountApp :one
+-- Per-(account_id, app_slug) open-session cap check at the top of
+-- POST /v1/uploads. Returns the current count; the handler
+-- refuses with 429 upload_session_too_many when count >= 5.
+-- Hits the partial index upload_sessions_account_open_idx.
+SELECT COUNT(*)::bigint AS count
+FROM upload_sessions
+WHERE account_id = $1::uuid
+  AND app_slug = $2
+  AND status = 'open';
+
+-- name: SumOpenUploadSessionBytesByAccount :one
+-- Per-account open-spool budget check (4 × SourceTarballMaxMB cap
+-- per plan). The handler sums the declared total_size across all
+-- open sessions for the account, adds the new total_size, and
+-- refuses with 429 upload_session_too_many if the sum exceeds
+-- the budget. Hits upload_sessions_account_open_idx for the
+-- (account_id) predicate; the SUM is over the partial index.
+SELECT COALESCE(SUM(total_size), 0)::bigint AS bytes
+FROM upload_sessions
+WHERE account_id = $1::uuid
+  AND status = 'open';
+
 -- name: ObjectBucketLockApp :one
 SELECT id FROM apps WHERE id = $1 AND account_id = $2 AND status <> 'deleted' FOR UPDATE;
 
