@@ -170,6 +170,49 @@ func TestUploadSession_OffsetCAS(t *testing.T) {
 	}
 }
 
+func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	e := setup(t, api.PlanFree)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "metadata"}, nil)
+	body, err := json.Marshal(startUploadRequest{
+		AppSlug: "metadata", TotalSize: 4096,
+		DeployOptions: &api.UploadDeployOptions{SourceRoot: "apps/api", Dockerfile: true, Reason: "release"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	var started startUploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	row, err := e.store.GetUploadSession(t.Context(), started.UploadID)
+	if err != nil || !bytes.Contains(row.DeployOptions, []byte(`"source_root":"apps/api"`)) {
+		t.Fatalf("persisted options = %s, err=%v", row.DeployOptions, err)
+	}
+	req = httptest.NewRequest("GET", "/v1/uploads/"+started.UploadID, nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec = httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get: %d %s", rec.Code, rec.Body.String())
+	}
+	var state api.UploadSessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.UploadID != started.UploadID || state.ReceivedBytes != 0 || state.Status != "open" {
+		t.Fatalf("discovery = %+v", state)
+	}
+}
+
 func TestUploadSession_Cancel(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
 	e := setup(t, api.PlanFree)
