@@ -54,7 +54,7 @@ import (
 )
 
 // listAlertPresets returns every row in alert_presets ordered by
-// category, name. The catalog is small (8 rows in PR-A) so no
+// category, name. The catalog is small (10 rows after B3) so no
 // pagination; the response is a flat slice.
 //
 // Plan-tier filtering: rows whose minimum_plan is above the

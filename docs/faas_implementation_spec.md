@@ -1370,6 +1370,10 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `gateway_stream_active{app,plan}` gauge | n/a (per-app) | none (ADR-047: in-flight streams — see §12.5) |
 | `gateway_cold_boot_total{app}` share | < 2 % of wakes | none (ADR-042: customer dashboard; fleet wake latency is the SLO) |
 | cold-boot fallback rate | < 2 % of wakes | > 10 % warn (snapshot rot) |
+| `new_error_fingerprint` alert metric | 0 newly-seen fingerprints | > 0 / 15 m (app_errors `first_seen_at`) |
+| `cold_wake_rate_pct` alert metric | n/a (per-app) | > 10 % / 1 h (request_telemetry `cold_boot`) |
+| `gateway_queue_depth{app}` alert metric | plan queue cap | > 50 / 15 m (queue backlog) |
+| `daily_cost_cents` alert metric | n/a (per-app) | > 100 cents / 24 h (usage_daily RAM burn rate) |
 | `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 sustained page (hot loop) |
 | `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page |
 | `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page |

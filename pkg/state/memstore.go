@@ -292,7 +292,7 @@ type MemStore struct {
 	// alertPresets mirrors alert_presets (issue #1233 / ADR-123).
 	// System-owned catalog; only the seed migrations write these.
 	// Keyed by preset.ID — the apid enable handler reads via
-	// AlertPresetByName which scans the map (8 rows, O(N) is fine).
+	// AlertPresetByName which scans the map (10 rows, O(N) is fine).
 	alertPresets map[string]AlertPreset
 	// accountSpendSnapshots mirrors account_spend_snapshot
 	// (migrations/00420 in this branch's renumber). meterd appends
@@ -14841,7 +14841,7 @@ func (m *MemStore) SeedAlertPresetForTest(p AlertPreset) {
 	m.alertPresets[p.Name] = p
 }
 
-// AlertPresetByName scans the map (8 rows). O(N) is acceptable
+// AlertPresetByName scans the map (10 rows). O(N) is acceptable
 // for the catalog cardinality. Returns ErrNotFound on no match.
 func (m *MemStore) AlertPresetByName(_ context.Context, name string) (AlertPreset, error) {
 	m.mu.Lock()

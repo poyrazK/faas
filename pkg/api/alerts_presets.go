@@ -17,7 +17,7 @@ package api
 // AllowedAlertPresetCategories is the closed set for the `category`
 // field on alert_presets. Mirrors the alert_presets_category_chk DB
 // constraint (migrations/00347_alert_presets.sql). Used by the
-// dashboard grid header to bucket the 8 cards.
+// dashboard grid header to bucket the catalog cards.
 var AllowedAlertPresetCategories = []string{
 	"availability",
 	"reliability",
@@ -53,7 +53,7 @@ func AlertPresetMinimumPlan(p string) bool {
 }
 
 // AlertPresetResponse is the GET /v1/alert-presets wire shape.
-// Returned as a flat slice (no pagination — catalog has 8 rows).
+// Returned as a flat slice (no pagination — the catalog is bounded).
 // The handler maps from the pgstore.CorsPreset-shaped row at the
 // pkg/api ↔ pkg/state boundary so neither side imports the other
 // (precedent: AlertRuleResponseFromRow at alerts.go:205).
