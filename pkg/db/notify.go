@@ -328,10 +328,10 @@ const (
 	// NotifyComputeNodeChanged {"node_id":uuid, "active":bool}
 	// schedd (SetComputeNodeActive + UpsertComputeNode) →
 	// gatewayd-internal (NodeClientCache.Evict). gatewayd-internal's per-node
-	// *grpc.ClientConn must drop on every UPSERT (admin UPDATE)
-	// and every active=false (heartbeat watchdog), so a future
-	// request to the same node re-dials against the fresh row.
-	// Issue #98 / ADR-028.
+	// *grpc.ClientConn drops on effective configuration and lifecycle changes,
+	// so the next request re-dials against the fresh row. ADR-161 suppresses
+	// heartbeat-only and no-op updates to preserve in-flight RPCs.
+	// Issue #98 / ADR-028; lifecycle is also present in the JSON payload.
 	//
 	// NotifyInvocationDue {"invocation_id":uuid, "app_id":uuid,
 	//                     "source":"async_invoke|queue|delayed_task|cron"}
