@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One collapsed telemetry row persisted by the recorder; count is the number of gateway-served requests represented by it.
+ * One row per gateway-served request, persisted by the recorder (PR-A).
  */
 export type DebugTelemetryRequestItem = {
   id: string;
@@ -15,7 +15,9 @@ export type DebugTelemetryRequestItem = {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
   status: number;
   latency_ms: number;
-  /** Number of requests represented by this collapsed telemetry row. */
+  /**
+   * Number of original requests represented by this collapsed telemetry row.
+   */
   count: number;
   cold_boot: boolean;
   /**
@@ -24,3 +26,4 @@ export type DebugTelemetryRequestItem = {
   trace_id?: string | null;
   received_at: string;
 };
+

@@ -108,7 +108,6 @@ export class AppsService {
         'slug': slug,
       },
       errors: {
-        400: `code: validation_failed`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429. Two response shapes:
@@ -862,8 +861,9 @@ export class AppsService {
   }
   /**
    * Per-app request telemetry (ADR-127 / PR-A).
-   * Recent request rows for an app — status, latency_ms, route,
-   * method, deployment_id, cold_boot, trace_id, received_at.
+   * Recent request telemetry rows for an app — status, latency_ms, route,
+   * method, deployment_id, cold_boot, trace_id, received_at, and the
+   * number of original requests represented by each collapsed row.
    * PR-A ships the read endpoint only; the write-side (publisher
    * → gRPC IncrementRequestTelemetry → apid receiver → sqlc
    * INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -914,6 +914,7 @@ export class AppsService {
         'route': route,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
