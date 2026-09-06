@@ -18,6 +18,7 @@
 //	[1B type=0x03][json envelope: sidecar_restart]
 //	[1B type=0x04][1B outcome][6B reserved][8B elapsed_ms BE uint64]
 //	[1B type=0x05][json envelope: workload_oom]                          ← NEW (Cluster C / ADR-121)
+//	[1B type=0x06][json envelope: disk telemetry]
 //
 // The host strips the NUL-terminated runtime and uses the
 // preceding 4 bytes (if present) as the warmup_ms duration for
@@ -30,7 +31,7 @@
 // workload_OOM channel: the guest-init cgroup.events listener
 // emits a JSON envelope {peak_mb, plan_mb} when the per-VM
 // cgroup v2 leaf detects an oom_kill event. Type outside the
-// closed set {0x01, 0x02, 0x03, 0x04, 0x05} is dropped with a
+// closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06} is dropped with a
 // Warn (forward-compatible with future event classes).
 //
 // Concurrency: one goroutine reads the DGRAM fd. Each receipt
@@ -96,6 +97,9 @@ const (
 	// CodeAppRuntimeOOM (templated peak + plan into the
 	// customer's ErrorWhy / ErrorFix prose).
 	VsockFrameworkReadyHostTypeWorkloadOOM byte = 0x05
+	// VsockFrameworkReadyHostTypeDisk carries the latest writable-root
+	// filesystem sample emitted by guest-init.
+	VsockFrameworkReadyHostTypeDisk byte = 0x06
 )
 
 // Sidecar init-exit status closed enum (issue #463 / ADR-069 /
@@ -264,6 +268,8 @@ func (r *FrameworkReadyReceiver) loop() {
 			r.dispatchTailEvent(instance, msg.Tail)
 		case parseFWReadyKindWorkloadOOM:
 			r.dispatchWorkloadOOM(instance, msg.WorkloadOOM)
+		case parseFWReadyKindDisk:
+			r.dispatchDiskUsage(instance, msg.Disk)
 		}
 	}
 }
@@ -423,13 +429,30 @@ func (r *FrameworkReadyReceiver) dispatchWorkloadOOM(instance string, wire workl
 		"peak_mb", wire.PeakMB, "plan_mb", wire.PlanMB)
 }
 
+func (r *FrameworkReadyReceiver) dispatchDiskUsage(instance string, wire diskUsageWire) {
+	if r.mgr == nil {
+		return
+	}
+	pressure, changed := r.mgr.ReportDiskUsage(instance, wire.UsedBytes, wire.CapacityBytes)
+	if !changed {
+		return
+	}
+	if pressure == fcvm.DiskPressureNormal {
+		r.log.Info("guest writable filesystem pressure recovered", "instance", instance, "pressure", pressure.String())
+		return
+	}
+	r.log.Warn("guest writable filesystem pressure", "instance", instance,
+		"pressure", pressure.String(), "used_bytes", wire.UsedBytes,
+		"capacity_bytes", wire.CapacityBytes)
+}
+
 // parseFWKind is the discriminator for
 // parseFrameworkReadyDatagram (issue #463 / ADR-069 /
 // ADR-071 / PR-C, extended for tail events in issue #667 /
 // ADR-078, extended for workload OOM in Cluster C /
 // ADR-121). Closed set: OK for type=0x01, InitExit for
 // type=0x02, Restart for type=0x03, Tail for type=0x04,
-// WorkloadOOM for type=0x05. A future type=0x06 adds its
+// WorkloadOOM for type=0x05, DiskTelemetry for type=0x06. A future type=0x07 adds its
 // own enum value here.
 type parseFWKind uint8
 
@@ -445,6 +468,8 @@ const (
 	// workload OOM receipt (type=0x05) carrying a small
 	// UTF-8 JSON envelope with peak_mb / plan_mb.
 	parseFWReadyKindWorkloadOOM
+	// parseFWReadyKindDisk carries guest writable-root filesystem usage.
+	parseFWReadyKindDisk
 )
 
 // tailEventOutcome (issue #667 / ADR-078) mirrors the
@@ -465,7 +490,8 @@ const (
 // parseFrameworkReadyDatagram. Type=0x01 fills WarmupMs +
 // Kind; type=0x02/0x03 fill the matching envelope; type=0x04
 // fills the Tail outcome + elapsed_ms; type=0x05 (Cluster C /
-// ADR-121) fills WorkloadOOM's peak_mb + plan_mb. The
+// ADR-121) fills WorkloadOOM's peak_mb + plan_mb; type=0x06 fills Disk's
+// used_bytes + capacity_bytes. The
 // instance id is NOT on the wire — the host resolves it from
 // the DGRAM peer CID.
 type parseFWReadyMsg struct {
@@ -490,6 +516,12 @@ type parseFWReadyMsg struct {
 	// values are tolerated at the wire (the engine guard
 	// is downstream).
 	WorkloadOOM workloadOOMWire
+	Disk        diskUsageWire
+}
+
+type diskUsageWire struct {
+	UsedBytes     int64 `json:"used_bytes"`
+	CapacityBytes int64 `json:"capacity_bytes"`
 }
 
 // parseFWReadyTailWire is the type=0x04 body view (issue #667 /
@@ -544,6 +576,8 @@ func (m parseFWReadyMsg) TypeLabel() string {
 		return fmt.Sprintf("tail_event(0x%02x)", VsockFrameworkReadyHostTypeTail)
 	case parseFWReadyKindWorkloadOOM:
 		return fmt.Sprintf("workload_oom(0x%02x)", VsockFrameworkReadyHostTypeWorkloadOOM)
+	case parseFWReadyKindDisk:
+		return fmt.Sprintf("disk_telemetry(0x%02x)", VsockFrameworkReadyHostTypeDisk)
 	default:
 		return "unknown"
 	}
@@ -650,6 +684,17 @@ func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 		if err := json.Unmarshal(rest, &msg.WorkloadOOM); err != nil {
 			return msg, fmt.Errorf("workload_oom: %w", err)
 		}
+	case VsockFrameworkReadyHostTypeDisk:
+		if uint32(len(rest)) > 256 {
+			return msg, fmt.Errorf("disk_telemetry: body too large: %d", len(rest))
+		}
+		if err := json.Unmarshal(rest, &msg.Disk); err != nil {
+			return msg, fmt.Errorf("disk_telemetry: %w", err)
+		}
+		if msg.Disk.UsedBytes < 0 || msg.Disk.CapacityBytes <= 0 || msg.Disk.UsedBytes > msg.Disk.CapacityBytes {
+			return msg, fmt.Errorf("disk_telemetry: invalid sample used=%d capacity=%d", msg.Disk.UsedBytes, msg.Disk.CapacityBytes)
+		}
+		msg.Kind = parseFWReadyKindDisk
 	default:
 		return msg, fmt.Errorf("unknown msg sub-type 0x%02x", b[0])
 	}

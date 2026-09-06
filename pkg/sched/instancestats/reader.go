@@ -161,6 +161,11 @@ type InstanceStat struct {
 	// RX is the validity of RXBytes. Mirrors TX semantics:
 	// Unknown on first sample / regression / cache miss.
 	RX Validity
+	// DiskUsedBytes and DiskCapacityBytes are the latest guest writable-root
+	// filesystem sample. DiskValid is false until both values arrive.
+	DiskUsedBytes     int64
+	DiskCapacityBytes int64
+	DiskValid         bool
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is
 	// the per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Nil/empty = legacy

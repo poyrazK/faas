@@ -92,6 +92,14 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	if mode == modeApp {
+		// Disk usage is an app-runtime signal. Jobs and builder VMs are
+		// single-purpose artifacts whose writable space is not part of the
+		// stateless app telemetry contract.
+		diskCtx, diskCancel := context.WithCancel(context.Background())
+		defer diskCancel()
+		startDiskTelemetry(diskCtx)
+	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's
 	// command, ship the vsock DGRAM, poweroff. No readiness

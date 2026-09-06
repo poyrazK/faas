@@ -523,6 +523,13 @@ type Instance struct {
 	// "signal landed at unix-time-zero" are observably
 	// distinct, and the latter never happens.
 	FrameworkReadyAt *time.Time
+	// Disk telemetry is sampled inside the guest from the merged writable
+	// application filesystem. It is intentionally live-only: no persistent
+	// volume or billing state is implied by these fields.
+	DiskUsedBytes     int64
+	DiskCapacityBytes int64
+	DiskPressure      DiskPressure
+	DiskSampledAt     time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -548,6 +555,54 @@ type Instance struct {
 	// Reset to 0 on every Wake. Mirrors pkg/state/types.go
 	// where it lives on DailyUsage after the meterd rollup.
 	tailSecondsAccum int64
+}
+
+// DiskPressure is the bounded operator signal derived from one guest disk
+// sample. The thresholds are deliberately coarse so transient filesystem
+// fluctuations do not create a high-cardinality event stream.
+type DiskPressure uint8
+
+const (
+	DiskPressureUnknown DiskPressure = iota
+	DiskPressureNormal
+	DiskPressureNearFull
+	DiskPressureFull
+)
+
+func (p DiskPressure) String() string {
+	switch p {
+	case DiskPressureNormal:
+		return "normal"
+	case DiskPressureNearFull:
+		return "near_full"
+	case DiskPressureFull:
+		return "full"
+	default:
+		return "unknown"
+	}
+}
+
+// DiskUsage is the latest validated guest filesystem sample for one live VM.
+type DiskUsage struct {
+	UsedBytes     int64
+	CapacityBytes int64
+	Pressure      DiskPressure
+	SampledAt     time.Time
+}
+
+func diskPressure(used, capacity int64) DiskPressure {
+	if capacity <= 0 || used < 0 || used > capacity {
+		return DiskPressureUnknown
+	}
+	ratio := float64(used) / float64(capacity)
+	switch {
+	case ratio >= 0.95:
+		return DiskPressureFull
+	case ratio >= 0.80:
+		return DiskPressureNearFull
+	default:
+		return DiskPressureNormal
+	}
 }
 
 // Manager tracks live instances and serialises nothing on the hot path beyond a
@@ -622,6 +677,7 @@ type Manager struct {
 	// receiver so unit tests that drive Manager directly without
 	// metrics don't need a stub.
 	frameworkReadyMetrics *FrameworkReadyMetrics
+	diskMetrics           *DiskMetrics
 	// wakePhaseMetrics (ADR-098 C11) is the optional
 	// `vmmd_wake_phase_duration_seconds` histogram the vmmd cmd
 	// wires via SetWakePhaseMetrics. nil-safe: Wake calls
@@ -1415,6 +1471,9 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
 	m.mu.Unlock()
+	if m.diskMetrics != nil {
+		m.diskMetrics.Delete(instance)
+	}
 	if !ok {
 		return
 	}
@@ -1953,6 +2012,66 @@ func (m *Manager) MarkInstanceFrameworkReady(ctx context.Context, instance strin
 		m.frameworkReadyMetrics.ObserveWarmup(runtime, appID, float64(warmupMs)/1000.0)
 	}
 	return true, appID, runtime, nil
+}
+
+// ReportDiskUsage records one validated guest filesystem sample. It returns
+// the resulting pressure class and whether that class changed, allowing the
+// vsock receiver to emit bounded transition logs instead of one warning per
+// sampling tick.
+func (m *Manager) ReportDiskUsage(instance string, usedBytes, capacityBytes int64) (DiskPressure, bool) {
+	pressure := diskPressure(usedBytes, capacityBytes)
+	if pressure == DiskPressureUnknown {
+		return pressure, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return DiskPressureUnknown, false
+	}
+	changed := inst.DiskPressure != pressure
+	// A normal first sample is baseline establishment, not a recovery
+	// event. Near-full and full first samples remain visible immediately.
+	if inst.DiskPressure == DiskPressureUnknown && pressure == DiskPressureNormal {
+		changed = false
+	}
+	inst.DiskUsedBytes = usedBytes
+	inst.DiskCapacityBytes = capacityBytes
+	inst.DiskPressure = pressure
+	inst.DiskSampledAt = time.Now()
+	if m.diskMetrics != nil {
+		m.diskMetrics.Observe(instance, usedBytes, capacityBytes, pressure)
+	}
+	return pressure, changed
+}
+
+// WithDiskMetrics attaches the bounded per-instance guest filesystem metrics.
+func (m *Manager) WithDiskMetrics(metrics *DiskMetrics) *Manager {
+	if m != nil {
+		m.diskMetrics = metrics
+	}
+	return m
+}
+
+// DiskUsage returns the latest live-instance disk sample. A missing or
+// pre-telemetry sample reports ok=false so consumers can preserve absent
+// versus zero semantics on the wire.
+func (m *Manager) DiskUsage(instance string) (DiskUsage, bool) {
+	if m == nil {
+		return DiskUsage{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || inst.DiskPressure == DiskPressureUnknown {
+		return DiskUsage{}, false
+	}
+	return DiskUsage{
+		UsedBytes:     inst.DiskUsedBytes,
+		CapacityBytes: inst.DiskCapacityBytes,
+		Pressure:      inst.DiskPressure,
+		SampledAt:     inst.DiskSampledAt,
+	}, true
 }
 
 // MarkInstanceTailTerminal (issue #667 / ADR-078) decrements the
@@ -3833,6 +3952,9 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	// whose Lease.Slot was just freed.
 	delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	m.mu.Unlock()
+	if m.diskMetrics != nil {
+		m.diskMetrics.Delete(instance)
+	}
 	// An upload deadline must not cancel the cleanup owed by Park.
 	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
 	if err != nil {
@@ -4009,6 +4131,9 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
 	m.mu.Unlock()
+	if m.diskMetrics != nil {
+		m.diskMetrics.Delete(instance)
+	}
 	if !ok {
 		// Unknown instance — match Destroy's idempotent shape.
 		return false, 0, nil
@@ -4045,6 +4170,9 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
 	m.mu.Unlock()
+	if m.diskMetrics != nil {
+		m.diskMetrics.Delete(instance)
+	}
 	if !ok {
 		// Already gone — still safe to export (idempotent), and the exit code
 		// is meaningless here.

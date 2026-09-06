@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // LogFrameSink is the per-frame callback the StreamAppLogs handler
@@ -1279,6 +1280,14 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			v := value.GetValue()
 			item.NetRxBytes = &v
 		}
+		if value := row.GetDiskUsedBytes(); value != nil {
+			v := value.GetValue()
+			item.DiskUsedBytes = &v
+		}
+		if value := row.GetDiskCapacityBytes(); value != nil {
+			v := value.GetValue()
+			item.DiskCapacityBytes = &v
+		}
 		out = append(out, item)
 	}
 	return out
@@ -1346,6 +1355,10 @@ func (s *Server) ListInstanceStats(ctx context.Context, _ *scheddpb.ListInstance
 				NetRxBytes:    r.RXBytes,
 				RxValid:       uint32(r.RX),
 				SidecarRamMbs: int32SliceToProto(r.SidecarMBs),
+			}
+			if r.DiskValid {
+				row.DiskUsedBytes = wrapperspb.Int64(r.DiskUsedBytes)
+				row.DiskCapacityBytes = wrapperspb.Int64(r.DiskCapacityBytes)
 			}
 			rows = append(rows, row)
 		}
