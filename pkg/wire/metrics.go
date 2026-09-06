@@ -1126,8 +1126,8 @@ type OpsMetrics struct {
 	// expose the path (apid, imaged, builderd, gatewayd-internal, meterd,
 	// githubd, faas CLI). Buckets: 100 µs → 100 ms.
 	cpuStatsCollectDur prometheus.Histogram
-	// residentGBPerCustomer: per-plan "resident GB-hours per paying
-	// customer" gauge emitted by meterd (ADR-031, PR #141). Labelled
+	// residentGBPerCustomer: per-plan month-to-date average resident GB
+	// per paying customer gauge emitted by meterd (ADR-031, PR #141). Labelled
 	// by plan ∈ {free, hobby, pro, scale} so the §12 dashboard's
 	// "Resident GB per paying customer" panel can split by plan while
 	// the FaasResidentGbPerCustomerHigh alert rule fans out per-plan.
@@ -2529,7 +2529,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	})
 	residentGBPerCustomer := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_resident_gb_per_customer",
-		Help: "Monthly GB-RAM-hours divided by paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
+		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
 	}, []string{"plan"})
 	billingCapExceededTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_billing_cap_exceeded_total",
@@ -6802,10 +6802,9 @@ func (m *OpsMetrics) ImagedOCIBlobCacheEviction() {
 
 // SetResidentGBPerCustomer writes one sample to the
 // <daemon>_resident_gb_per_customer gauge (ADR-031, PR #141).
-// Spec §12 target is 0.305 GB-RAM-hours per paying customer
-// (= 312 MB / Hobby plan's 256 MB ≈ 312 MB-monthly inclusive); > 0.45
-// warns. Safe on a nil receiver so meterd unit tests without metrics
-// keep working.
+// Spec §12 target is 0.305 average resident GB per paying customer
+// (≈ 312 MB/customer); > 0.45 warns. Safe on a nil receiver so meterd
+// unit tests without metrics keep working.
 func (m *OpsMetrics) SetResidentGBPerCustomer(plan string, gb float64) {
 	if m == nil {
 		return

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -125,12 +126,12 @@ func TestResidency_PayingPredicate(t *testing.T) {
 }
 
 // TestResidency_RunOnce_HappyPath: 2 Hobby paying customers consume
-// 1 GB-month and 2 GB-month → avg = 1.5 GB/customer → gauge emits 1.5
-// for plan=hobby. The other plans stay at 0 (no paying customers).
+// 1 GB-hour and 2 GB-hours over the first 2 hours of the month → average
+// residency = 0.75 GB/customer. The other plans stay at 0.
 // Pre-instantiated label set means every plan label surfaces in
 // /metrics from boot even with zero customers.
 func TestResidency_RunOnce_HappyPath(t *testing.T) {
-	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 1, 2, 0, 0, 0, time.UTC)
 	r, store, ops := newResidencyTestHarness(t, now)
 
 	a1, err := store.CreateAccount(context.Background(), "h1@x", api.PlanHobby)
@@ -148,8 +149,8 @@ func TestResidency_RunOnce_HappyPath(t *testing.T) {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
-	if got := gaugeForPlan(t, ops, "hobby"); got != 1.5 {
-		t.Errorf("hobby gauge = %v, want 1.5 (avg of 1 + 2 over 2 customers)", got)
+	if got := gaugeForPlan(t, ops, "hobby"); got != 0.75 {
+		t.Errorf("hobby gauge = %v, want 0.75 ((1 + 2 GB-hours) / 2 hours / 2 customers)", got)
 	}
 	for _, p := range []string{"free", "pro", "scale"} {
 		if got := gaugeForPlan(t, ops, p); got != 0 {
@@ -189,7 +190,7 @@ func TestResidency_RunOnce_ExcludesDeletedPending(t *testing.T) {
 // total GB. NaN-free result. Common case for new accounts that
 // haven't woken an instance yet.
 func TestResidency_RunOnce_MissingUsageRows(t *testing.T) {
-	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 1, 2, 0, 0, 0, time.UTC)
 	r, store, ops := newResidencyTestHarness(t, now)
 
 	a1, err := store.CreateAccount(context.Background(), "active-no-usage@x", api.PlanScale)
@@ -210,9 +211,9 @@ func TestResidency_RunOnce_MissingUsageRows(t *testing.T) {
 	if counts[api.PlanScale] != 2 {
 		t.Errorf("scale paying count = %d, want 2 (both active)", counts[api.PlanScale])
 	}
-	// Average is Σ=4 over n=2 = 2 GB/customer.
-	if got := gaugeForPlan(t, ops, "scale"); got != 2 {
-		t.Errorf("scale gauge = %v, want 2", got)
+	// Average residency is Σ=4 GB-hours over 2 hours and 2 customers = 1 GB.
+	if got := gaugeForPlan(t, ops, "scale"); got != 1 {
+		t.Errorf("scale gauge = %v, want 1", got)
 	}
 }
 
@@ -225,7 +226,7 @@ func TestResidency_RunOnce_MissingUsageRows(t *testing.T) {
 // (which exercises the legitimate ErrNotFound path) but uses a
 // transientErrStore to inject a non-ErrNotFound error instead.
 func TestResidency_RunOnce_TransientErrorSkipsAccount(t *testing.T) {
-	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 1, 2, 0, 0, 0, time.UTC)
 
 	// Build a harness with a MemStore and a registry we can scrape.
 	store := state.NewMemStore()
@@ -267,9 +268,9 @@ func TestResidency_RunOnce_TransientErrorSkipsAccount(t *testing.T) {
 	if got := counts[api.PlanHobby]; got != 1 {
 		t.Errorf("hobby paying count = %d, want 1 (h1 transient-skipped, h2 counted)", got)
 	}
-	// ΣGB = 4 (only h2). Average = 4 / 1 = 4 GB/customer.
-	if got := gaugeForPlan(t, ops, "hobby"); got != 4 {
-		t.Errorf("hobby gauge = %v, want 4 (4 GB over 1 counted customer)", got)
+	// ΣGB = 4 GB-hours (only h2). Average = 4 / 2 hours / 1 customer = 2 GB.
+	if got := gaugeForPlan(t, ops, "hobby"); got != 2 {
+		t.Errorf("hobby gauge = %v, want 2 (4 GB-hours over 2 hours and 1 counted customer)", got)
 	}
 	// First (non-wrapped) registry was never written to — confirm the
 	// wrapper's ops pointer was the one Residency wrote through. This
@@ -280,6 +281,27 @@ func TestResidency_RunOnce_TransientErrorSkipsAccount(t *testing.T) {
 		if got := gaugeForPlan(t, ops, p); got != 0 {
 			t.Errorf("%s gauge = %v, want 0 (no paying customers)", p, got)
 		}
+	}
+}
+
+// TestResidency_RunOnce_FirstMonthMinute uses the sampler's one-minute
+// granularity at the exact UTC month boundary. The denominator clamps to one
+// minute, so one fully resident 1 GiB minute reports 1 average resident GB.
+func TestResidency_RunOnce_FirstMonthMinute(t *testing.T) {
+	now := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	r, store, ops := newResidencyTestHarness(t, now)
+
+	a, err := store.CreateAccount(context.Background(), "month-boundary@x", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendUsage(t, store, a.ID, 1024*60, now)
+
+	if _, err := r.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if got := gaugeForPlan(t, ops, "scale"); math.Abs(got-1) > 0.001 {
+		t.Errorf("scale gauge = %v, want 1 (one 1 GiB minute / one elapsed minute)", got)
 	}
 }
 

@@ -10,9 +10,11 @@ The §12 fleet dashboard's "Resident GB per paying customer" panel
 shows a single plan crossing the 0.45 warn threshold for 1 hour.
 Plan label is in the alertname annotation: `{{ $labels.plan }}`.
 
-The metric is monthly GB-RAM-hours divided by the paying-customer
-count of the plan, emitted by meterd's residency tick (every 60 s,
-`pkg/meter/residency.go`). "Paying" is `active | past_due | suspended`
+The metric is month-to-date GB-RAM-hours divided by elapsed hours in
+the UTC month and by the paying-customer count of the plan. This yields
+average resident GB per customer. It is emitted by meterd's residency
+tick (every 60 s, `pkg/meter/residency.go`). "Paying" is
+`active | past_due | suspended`
 (per ADR-031) — the deliberate divergence from `state.Account.Active()`
 because suspended accounts still have running instances until the
 reaper parks them, and their GB-hours are real platform cost.
@@ -72,5 +74,5 @@ the offending app(s) via the per-account breakdown above and either:
 
 1. Adjust the customer's idle timeout / max concurrency via
    `apid PATCH /v1/apps/{slug}` (operator action — Pro/Scale only).
-2. Wait for monthly GB to drop — usage resets at month-end UTC.
+2. Reduce unnecessary residency and let the month-to-date average fall.
 3. Migrate the customer to a higher plan via Stripe self-service.

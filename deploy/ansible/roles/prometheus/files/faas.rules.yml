@@ -1023,7 +1023,7 @@ groups:
           family: residency
         annotations:
           summary: "Resident GB per paying customer > 0.45 (plan {{ $labels.plan }})"
-          description: "Plan {{ $labels.plan }} has been above the §12 page threshold (0.45 GB-RAM-hours / paying customer) for 1h. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
+          description: "Plan {{ $labels.plan }} has been above the §12 threshold (0.45 average resident GB / paying customer) for 1h. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResidentGbPerCustomerHigh.md"
 
       # ─────────────────────────────────────────────────────────────────
