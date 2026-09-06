@@ -86,6 +86,8 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		select e.snapshot_id, cn.id, coalesce(cn.region, '')
 		  from snapshot_fanout_events e
 		  join snapshots sn on sn.id = e.snapshot_id
+		  join deployments d on d.id = sn.deployment_id
+		  join apps a on a.id = d.app_id
 		  cross join compute_nodes cn
 		  left join snapshot_origins so on so.snapshot_id = sn.id
 		 where e.id > $2
@@ -93,6 +95,8 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		   and cn.active = true
 		   and sn.stale = false
 		   and sn.storage_key <> ''
+		   and a.status <> 'deleted'
+		   and d.status in ('snapshotting', 'live', 'superseded')
 		   and (so.snapshot_id is null or so.region = '' or so.region = coalesce(cn.region, ''))
 		   and (so.snapshot_id is null or so.node_id is null or so.node_id <> cn.id)
 		on conflict (snapshot_id, node_id) do nothing`, nodeID, lastEventID)
@@ -179,16 +183,26 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		from snapshot_replicas r
 		join snapshots sn on sn.id = r.snapshot_id
 		join deployments d on d.id = sn.deployment_id
+		join apps a on a.id = d.app_id
 		join compute_nodes cn on cn.id = r.node_id
 		where r.node_id = $1
 		  and sn.stale = false
+		  and a.status <> 'deleted'
+		  and d.status in ('snapshotting', 'live', 'superseded')
 		  and r.attempts < $2
 		  and (
 				r.state in ('pending', 'failed')
 				or (r.state = 'syncing' and r.updated_at < now() - interval '5 minutes')
 			  )
 		  and (r.next_attempt_at is null or r.next_attempt_at <= now())
-		order by r.created_at, r.snapshot_id
+		order by case d.status
+		           when 'live' then 0
+		           when 'snapshotting' then 1
+		           else 2
+		         end,
+		         sn.created_at desc,
+		         r.created_at desc,
+		         r.snapshot_id
 		for update of r skip locked
 		limit 1`, nodeID, snapshotReplicaMaxAttempts)
 	if err := row.Scan(&job.SnapshotID, &job.DeploymentID, &job.StorageKey,
