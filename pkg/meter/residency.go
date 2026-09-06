@@ -11,8 +11,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// Residency computes "resident GB-RAM-hours per paying customer" per
-// plan and emits the §12 dashboard panel (ADR-031, PR #141).
+// Residency computes month-to-date average resident GB per paying customer
+// and emits the §12 dashboard panel (ADR-031, PR #141).
 //
 // Why a per-plan average: the spec line 417 names the row "resident GB
 // per paying customer" with a single threshold (> 0.45 warn). The
@@ -22,8 +22,9 @@ import (
 // toward the §12 page threshold (0.45) — the alert rule
 // FaasResidentGbPerCustomerHigh fans out via {{ $labels.plan }}.
 //
-// Definition: Σ(monthly GB-RAM-hours across paying accounts of plan P)
+// Definition: Σ(month-to-date GB-RAM-hours across paying accounts of plan P)
 //
+//	÷ elapsed hours in the UTC month
 //	÷ count(paying accounts of plan P)
 //
 // "Paying" includes active + past_due + suspended, but NOT
@@ -80,6 +81,20 @@ func Paying(a state.Account) bool {
 	return false
 }
 
+// residencyElapsedHours returns the elapsed wall-clock hours in the current
+// UTC month. The first minute is used as the minimum denominator because
+// usage rows are sampled at minute granularity; it also keeps a tick exactly
+// at the month boundary finite.
+func residencyElapsedHours(now time.Time) float64 {
+	now = now.UTC()
+	elapsed := now.Sub(AccountMonthKey(now)).Hours()
+	const oneMinuteHours = 1.0 / 60.0
+	if elapsed < oneMinuteHours {
+		return oneMinuteHours
+	}
+	return elapsed
+}
+
 // RunOnce emits one round of per-plan resident GB-per-customer gauges.
 // Returns the per-plan paying-customer counts so tests can assert
 // "active + past_due counted, suspended counted, deleted_pending
@@ -110,6 +125,7 @@ func (r *Residency) RunOnce(ctx context.Context) (map[api.Plan]int, error) {
 	}
 
 	now := r.now()
+	elapsedHours := residencyElapsedHours(now)
 	totalGB := make(map[api.Plan]float64)
 	count := make(map[api.Plan]int)
 	for _, acct := range accounts {
@@ -144,7 +160,7 @@ func (r *Residency) RunOnce(ctx context.Context) (map[api.Plan]int, error) {
 	for _, plan := range api.Plans {
 		var avg float64
 		if n := count[plan]; n > 0 {
-			avg = totalGB[plan] / float64(n)
+			avg = totalGB[plan] / elapsedHours / float64(n)
 		}
 		r.ops.SetResidentGBPerCustomer(string(plan), avg)
 	}
