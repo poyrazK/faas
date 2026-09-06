@@ -2421,6 +2421,16 @@ func (s *server) handler() http.Handler {
 	// (Go 1.22+ mux needs concrete segment counts; the
 	// /crons/{id}/fire-now suffix is the path tail).
 	mux.Handle("POST /dashboard/apps/{slug}/crons/{id}/fire-now", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardFireCron))))
+	// G2 / issue #1397 — the combined env + secrets editor uses
+	// form-encoded POST adapters because browsers cannot submit PUT or
+	// DELETE forms. Each adapter verifies its own named CSRF envelope and
+	// then delegates to the corresponding JSON handler, preserving the
+	// existing validation, quota, audit, and RFC 7807 behavior.
+	mux.Handle("POST /dashboard/apps/{slug}/env", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetEnv))))
+	mux.Handle("POST /dashboard/apps/{slug}/env/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEnv))))
+	mux.Handle("POST /dashboard/apps/{slug}/secrets", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetSecret))))
+	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteSecret))))
+	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/rotate", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateSecret))))
 	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
 	// named CSRF cookie and the same rollback core as the REST endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollback))))

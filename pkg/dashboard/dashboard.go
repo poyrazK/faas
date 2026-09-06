@@ -274,6 +274,51 @@ type LogInstanceItem struct {
 	StartedAt string
 }
 
+// EnvSecretsData is the dashboard-facing payload for the combined
+// environment and secrets editor (/dashboard/apps/{slug}/env and
+// /dashboard/apps/{slug}/secrets). Values for runtime env vars are shown
+// because env is explicitly non-sensitive configuration; secret values are
+// never projected and can only be supplied to a write or rotation form.
+type EnvSecretsData struct {
+	AppSlug       string
+	AppStatus     string
+	SelectedScope string
+	WriteScope    string
+	ScopeOptions  []string
+	Env           []EnvItem
+	Secrets       []SecretItem
+	EnvCount      int
+	EnvQuota      int
+	SecretCount   int
+	SecretQuota   int
+	EnvCSRF       string
+	SecretCSRF    string
+	Flash         string
+}
+
+// EnvItem is one editable, non-sensitive app environment variable.
+type EnvItem struct {
+	Scope     string
+	Key       string
+	Value     string
+	CreatedAt string
+	UpdatedAt string
+}
+
+// SecretItem is the write-only projection of an app secret. ValueHashPrefix
+// is intentionally short so the page can help identify a row without
+// disclosing its value; Managed is true for provider-owned credentials that
+// reject customer delete/rotate mutations.
+type SecretItem struct {
+	Scope           string
+	Key             string
+	ValueHashPrefix string
+	Kid             string
+	CreatedAt       string
+	UpdatedAt       string
+	Managed         bool
+}
+
 // ScanSummary is the per-deploy grype scan summary
 // (issue #464 / ADR-055). The full typed payload lives on
 // the deployments row (state.Deployment.ScanResult +
