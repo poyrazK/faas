@@ -27,11 +27,11 @@ type TLSCutoverState struct {
 // render an explicit "no drill recorded" state.
 func ReadTLSCutoverState(path string) (TLSCutoverState, error) {
 	var state TLSCutoverState
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // path is the operator-controlled TLS drill state file, never a customer path.
 	if err != nil {
 		return state, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
