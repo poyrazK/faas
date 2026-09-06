@@ -2380,6 +2380,17 @@ paths:
       tags: [apps]
       operationId: getAppWakeTimeline
       summary: Per-app wake timeline (JSON mirror of the dashboard page).
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Inclusive RFC3339 lower bound; defaults to 24 hours before until."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Inclusive RFC3339 upper bound; defaults to now."
       description: |
         Wire-friendly mirror of the dashboard's per-app wake-timeline
         HTML page (`/dashboard/apps/{slug}/wake-timeline`,
@@ -20529,9 +20540,19 @@ components:
           type: string
           format: date-time
           description: "RFC3339 UTC timestamp of the wake."
+        wake_id:
+          type: string
+          description: "Wake-attempt correlation ID."
         trigger:
           type: string
           description: "Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on pre-PR-A fleet rows."
+        method:
+          type: string
+          description: "Wake method (restore or cold_boot), when telemetry is available."
+        tier:
+          type: string
+          enum: [warm, init, cold_boot_fallback]
+          description: "Snapshot tier selected for the wake."
         queued_count:
           type: integer
           format: int32

@@ -610,6 +610,10 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "overflow node:", *a.OverflowNode)
 		}
 		fmt.Printf("%-30s %s\n", "status:", a.Status)
+		// Issue #1395 / A4: show a best-effort wake-tier recommendation
+		// only for apps with enough recent wake history. JSON output stays
+		// a stable AppResponse payload, so this is text-mode only.
+		renderWakeRecommendation(ctx, client, slug, a)
 		return 0
 	}
 

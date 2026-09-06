@@ -14085,6 +14085,8 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 		`SELECT DISTINCT ON (bs.wake_id)
 		        bs.wake_id                       AS wake_id,
 		        bs.trigger                       AS trigger,
+		        bs.method                        AS method,
+		        bs.tier                          AS tier,
 		        bs.queued_count                  AS queued_count,
 		        bs.concurrency_at_admit          AS concurrency_at_admit,
 		        bs.at_capacity                   AS at_capacity,
@@ -14092,8 +14094,10 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 		        COALESCE((EXTRACT(EPOCH FROM (bc.completed_at - bs.started_at)) * 1000)::int, 0) AS ready_in_ms
 		 FROM (
 		   SELECT DISTINCT ON (data->>'wake_id')
-		          data->>'wake_id'             AS wake_id,
-		          data->>'trigger'             AS trigger,
+		           data->>'wake_id'             AS wake_id,
+		           data->>'trigger'             AS trigger,
+		           data->>'method'              AS method,
+		           data->>'tier'                AS tier,
 		          (data->>'queued_count')::int        AS queued_count,
 		          (data->>'concurrency_at_admit')::int AS concurrency_at_admit,
 		          COALESCE((data->>'at_capacity')::bool, false) AS at_capacity,
@@ -14122,12 +14126,20 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 		var wakeID string
 		var meta WakeBootMeta
 		var trigger *string
+		var method *string
+		var tier *string
 		var atCapPresent *bool
-		if err := rows.Scan(&wakeID, &trigger, &meta.QueuedCount, &meta.ConcurrencyAtAdmit, &meta.AtCapacity, &atCapPresent, &meta.ReadyInMS); err != nil {
+		if err := rows.Scan(&wakeID, &trigger, &method, &tier, &meta.QueuedCount, &meta.ConcurrencyAtAdmit, &meta.AtCapacity, &atCapPresent, &meta.ReadyInMS); err != nil {
 			return nil, fmt.Errorf("LookupBootStartedForWakes: scan: %w", err)
 		}
 		if trigger != nil {
 			meta.Trigger = *trigger
+		}
+		if method != nil {
+			meta.Method = *method
+		}
+		if tier != nil {
+			meta.Tier = *tier
 		}
 		if atCapPresent != nil {
 			meta.AtCapacityPresent = *atCapPresent

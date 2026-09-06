@@ -54,7 +54,11 @@ func (s *server) getAppWakeTimeline(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
-	resp, err := buildAppWakeTimeline(r.Context(), s.store, app, s.log, acct)
+	since, until, ok := parseWakeTimelineWindow(w, r)
+	if !ok {
+		return
+	}
+	resp, err := buildAppWakeTimelineWindow(r.Context(), s.store, app, s.log, acct, since, until)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"wake-timeline fetch failed",
@@ -64,12 +68,42 @@ func (s *server) getAppWakeTimeline(w http.ResponseWriter, r *http.Request, acct
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func parseWakeTimelineWindow(w http.ResponseWriter, r *http.Request) (time.Time, time.Time, bool) {
+	now := time.Now().UTC()
+	until := now
+	if raw := r.URL.Query().Get("until"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid until", "until must be an RFC3339 timestamp"))
+			return time.Time{}, time.Time{}, false
+		}
+		until = parsed.UTC()
+	}
+	since := until.Add(-24 * time.Hour)
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid since", "since must be an RFC3339 timestamp"))
+			return time.Time{}, time.Time{}, false
+		}
+		since = parsed.UTC()
+	}
+	if since.After(until) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid wake-timeline window", "since must be before until"))
+		return time.Time{}, time.Time{}, false
+	}
+	return since, until, true
+}
+
 // buildAppWakeTimeline runs the SQL reads + aggregation math for
-// the JSON mirror. Mirrors handlers_dashboard.go:2605-2661
-// line-for-line (24h cutoff descending-break, two-denominator rule
-// for at-cap %). The HTML page calls the same math inline — keeping
-// this re-implementation narrow prevents the JSON mirror from
-// drifting if the HTML page is touched.
+// the JSON mirror. The default is the dashboard's 24h window;
+// explicit since/until query parameters let CLI callers request a
+// longer bounded history (A4 uses the trailing seven days). The
+// two-denominator rule for at-capacity percentage remains shared
+// with the dashboard helper.
 //
 // Returns the response with AsOf set to the caller's local
 // time.Now().UTC(); the handler stamps that as the JSON envelope's
@@ -83,6 +117,21 @@ func buildAppWakeTimeline(
 	app state.App,
 	log *slog.Logger,
 	acct state.Account,
+) (api.AppWakeTimelineResponse, error) {
+	now := time.Now().UTC()
+	return buildAppWakeTimelineWindow(ctx, store, app, log, acct, now.Add(-24*time.Hour), now)
+}
+
+func buildAppWakeTimelineWindow(
+	ctx context.Context,
+	store interface {
+		ListLatestInstancesForApp(ctx context.Context, appID string, limit int) ([]state.Instance, error)
+		LookupBootStartedForWakes(ctx context.Context, wakeIDs []string) (map[string]state.WakeBootMeta, error)
+	},
+	app state.App,
+	log *slog.Logger,
+	acct state.Account,
+	since, until time.Time,
 ) (api.AppWakeTimelineResponse, error) {
 	instances, err := store.ListLatestInstancesForApp(ctx, app.ID, 50)
 	if err != nil {
@@ -113,19 +162,23 @@ func buildAppWakeTimeline(
 	// ReadyInMS em-dash sentinel semantics) stay here because
 	// they're a wire-contract concern, not an aggregation
 	// concern.
-	cutoff := time.Now().UTC().Add(-24 * time.Hour)
-	agg := aggregateWakeTimeline(instances, bootMetas, cutoff)
+	timelineInstances := wakeTimelineWindow(instances, since, until)
+	// The range has already been applied above; a zero cutoff keeps the
+	// shared aggregation helper's counters and denominator semantics
+	// intact for both the default 24h and explicit windows.
+	agg := aggregateWakeTimeline(timelineInstances, bootMetas, time.Time{})
 
 	// Use the shared helper for the post-cutoff prefix so the
 	// row-build loop doesn't re-implement the same
 	// descending-break that aggregateWakeTimeline just performed
 	// — the review cluster flagged this duplication as the
 	// primary drift hazard.
-	timelineRows := wakeTimelineCutoff(instances, cutoff)
+	timelineRows := timelineInstances
 
 	rows := make([]api.WakeTimelineJSONRow, 0, len(timelineRows))
 	for _, ins := range timelineRows {
 		row := api.WakeTimelineJSONRow{
+			WakeID:            ins.WakeID,
 			Kind:              "wake.boot_started",
 			State:             ins.State,
 			AtCapacity:        false,
@@ -137,6 +190,8 @@ func buildAppWakeTimeline(
 		}
 		if meta, hasMeta := bootMetas[ins.WakeID]; hasMeta {
 			row.Trigger = meta.Trigger
+			row.Method = meta.Method
+			row.Tier = meta.Tier
 			row.QueuedCount = int32(meta.QueuedCount)
 			row.ConcurrencyAtAdmit = int32(meta.ConcurrencyAtAdmit)
 			row.AtCapacity = meta.AtCapacity
@@ -160,4 +215,24 @@ func buildAppWakeTimeline(
 		Rows:              rows,
 		AsOf:              time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func wakeTimelineWindow(instances []state.Instance, since, until time.Time) []state.Instance {
+	if len(instances) == 0 {
+		return instances
+	}
+	rows := make([]state.Instance, 0, len(instances))
+	for _, ins := range instances {
+		if !ins.StartedAt.IsZero() {
+			started := ins.StartedAt.UTC()
+			if started.After(until) {
+				continue
+			}
+			if started.Before(since) {
+				break
+			}
+		}
+		rows = append(rows, ins)
+	}
+	return rows
 }
