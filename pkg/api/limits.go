@@ -2404,8 +2404,8 @@ var planLimits = map[Plan]Limits{
 		// Issue #695 / ADR-080: Pro unlocks both the token gate
 		// (RequireAuthn above) AND the bearer scope (PublicAuthBearerAllowed
 		// above). Default new apps to (true, "bearer") so the customer
-		// inherits secure-by-default. The opt-out path --no-require-authn
-		// --public-auth=open is universal across all plans and gates.
+		// inherits secure-by-default. The CLI's --no-require-authn opt-out
+		// also selects public_auth=open and is universal across all plans.
 		RequireAuthnDefault:   true,
 		PublicAuthModeDefault: "bearer",
 		// IAM-5 (issue #189): Pro gets 50 keys — 2 per app across the

@@ -255,7 +255,7 @@ func cmdApp(args []string) int {
 	// surfaces here as an "Update failed" error with the API's
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
-	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; back to public-by-default")
+	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -429,6 +429,13 @@ func cmdApp(args []string) int {
 	if explicit["no-require-authn"] {
 		v := false
 		req.RequireAuthn = &v
+		// Secure-by-default paid plans also default public_auth to
+		// bearer. Disabling only require_authn would therefore leave the
+		// public URL returning 401, despite this flag promising a public
+		// app. Keep an explicitly selected --public-auth mode authoritative.
+		if !explicit["public-auth"] {
+			req.PublicAuth = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
+		}
 	}
 	// ADR-124: per-app wire-protocol selector. Validate the
 	// closed set locally so a typo surfaces as a usage error
@@ -734,9 +741,15 @@ func buildCreateRequest(slug string, sh shape, runtime string, requireAuthnPtr *
 // The probe costs one extra round-trip on the slug-conflict path, which
 // is rare in normal use (zero-config deploy on a fresh repo is the only
 // caller that hits it). The happy path is unchanged.
-func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string) error {
+func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock) error {
 	if _, err := client.CreateApp(ctx, req); err == nil {
-		return nil
+		// CreateApp intentionally has no public_auth field: apid stamps the
+		// plan default. Apply an explicit CLI override before deployment so
+		// a paid-plan `--no-require-authn` app is reachable as promised.
+		if publicAuthPtr != nil {
+			_, err = client.UpdateApp(ctx, req.Slug, api.UpdateAppRequest{PublicAuth: publicAuthPtr})
+		}
+		return err
 	} else {
 		var ae *APIError
 		if !errors.As(err, &ae) || ae.Problem.Status != 409 {
@@ -754,8 +767,8 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 		// --app-protocol, when set) onto the existing app via PATCH. The
 		// plan gate (Pro/Scale only) still fires at the apid PATCH handler
 		// — the existing #560 contract is preserved verbatim.
-		if requireAuthnPtr != nil || appProtocolPtr != nil || req.ResourceProfile != "" {
-			upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr}
+		if requireAuthnPtr != nil || appProtocolPtr != nil || publicAuthPtr != nil || req.ResourceProfile != "" {
+			upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr}
 			if appProtocolPtr != nil {
 				upd.AppProtocol = appProtocolPtr
 			}
@@ -1028,7 +1041,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// gate through `gregale deploy --require-authn` or `gregale
 	// app <slug> --require-authn`.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
-	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; back to public-by-default")
+	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL")
 	// ADR-124: per-app wire-protocol selector (PATCH path).
 	// Same single-string flag shape as the CREATE path above.
 	// Empty value = no change (the Set bit in UpdateAppParams
@@ -1204,6 +1217,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		waitForDeploy = false
 	}
 	var requireAuthnPtr *bool
+	var publicAuthPtr *api.PublicAuthBlock
 	switch {
 	case explicit["require-authn"]:
 		v := true
@@ -1211,6 +1225,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	case explicit["no-require-authn"]:
 		v := false
 		requireAuthnPtr = &v
+		publicAuthPtr = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
 	}
 	// ADR-124: per-app wire-protocol selector (deploy path).
 	// Single-string flag (closed set); empty value = omit so
@@ -1859,7 +1874,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr, *profile)
-		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr); err != nil {
+		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr); err != nil {
 			return printErr("Could not create or fetch app", err)
 		}
 	} else if *profile != "" {
