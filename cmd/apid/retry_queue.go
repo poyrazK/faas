@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -42,6 +43,10 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 		LogSpool:      spoolRoot(), Log: s.log,
 	})
 	if err != nil {
+		if errors.Is(err, apidsource.ErrRetrySourceUnavailable) {
+			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeSourceInvalid,
+				"Retry source unavailable", "The original source archive is no longer available. Upload the source again to deploy.")
+		}
 		return state.Deployment{}, err
 	}
 	created, err := s.store.DeploymentByID(ctx, result.DeploymentID)
