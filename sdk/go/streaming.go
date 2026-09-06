@@ -3,7 +3,7 @@ package faas
 import (
 	"io"
 
-	"github.com/poyrazK/faas-go/internal/api"
+	"github.com/poyrazK/faas/sdk/go/internal/api"
 )
 
 // Decoder is a typed SSE frame reader. It is returned by Client's

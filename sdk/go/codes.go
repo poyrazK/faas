@@ -1,6 +1,6 @@
 package faas
 
-import "github.com/poyrazK/faas-go/internal/api"
+import "github.com/poyrazK/faas/sdk/go/internal/api"
 
 // Problem.Code values. The string values are part of the wire
 // contract; the SDK re-exports the typed constants so customers

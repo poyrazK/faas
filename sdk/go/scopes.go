@@ -1,6 +1,6 @@
 package faas
 
-import "github.com/poyrazK/faas-go/internal/api"
+import "github.com/poyrazK/faas/sdk/go/internal/api"
 
 // Plan and Limits re-exports. The Plan enum is the customer-facing
 // plan identifier (free / hobby / pro / scale); the Limits struct

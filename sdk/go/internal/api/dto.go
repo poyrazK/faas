@@ -1066,7 +1066,7 @@ type AccountSLOResponse struct {
 // fails on any spec-route/method drift, which is the contract
 // we're upholding here. The redeclaration (rather than type-aliasing)
 // is forced by the separate-module layout: sdk/go is its own Go
-// module (module github.com/poyrazK/faas-go) and cannot import
+// module (module github.com/poyrazK/faas/sdk/go) and cannot import
 // pkg/api (which lives in module github.com/onebox-faas/faas).
 
 // CreateOrgRequest is the body of POST /v1/orgs.

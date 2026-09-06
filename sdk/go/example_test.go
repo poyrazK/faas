@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	faas "github.com/poyrazK/faas-go"
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // ExampleClient_GetApp demonstrates the basic shape: build a Client,
