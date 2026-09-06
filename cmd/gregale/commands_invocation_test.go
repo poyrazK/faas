@@ -54,6 +54,25 @@ func TestCmdInvoke_ExitCodeByTerminalState(t *testing.T) {
 	}
 }
 
+func TestCmdInvoke_JSONFailedExitsOne(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.InvokeResponse{
+			ID:     "5a0d1c2e-0000-4000-8000-000000000003",
+			Status: "failed",
+		})
+	}))
+	defer srv.Close()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if got := cmdInvoke([]string{"some-app"}); got != 1 {
+		t.Errorf("cmdInvoke(JSON failed) = %d, want 1", got)
+	}
+}
+
 // The async path only queues the work, so a successful enqueue is a
 // successful command regardless of how the invocation later resolves.
 func TestCmdInvoke_Async_ExitsZeroOnQueued(t *testing.T) {

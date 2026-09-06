@@ -63,11 +63,14 @@ func cmdInvoke(args []string) int {
 		return printErr("Invoke failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
-	}
-	PrintOK(os.Stdout, "Invocation %s status=%s", resp.ID, resp.Status)
-	if len(resp.Result) > 0 {
-		_, _ = fmt.Fprintln(os.Stdout, string(resp.Result))
+		if code := jsonOut(writeJSON(resp)); code != 0 {
+			return code
+		}
+	} else {
+		PrintOK(os.Stdout, "Invocation %s status=%s", resp.ID, resp.Status)
+		if len(resp.Result) > 0 {
+			_, _ = fmt.Fprintln(os.Stdout, string(resp.Result))
+		}
 	}
 	// A synchronous invoke that came back `failed` is a failed smoke
 	// test, so it must not exit 0. The HTTP call succeeded (the
