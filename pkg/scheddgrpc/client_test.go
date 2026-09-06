@@ -127,18 +127,22 @@ func TestClientReportActivity(t *testing.T) {
 		},
 	})
 	now := time.UnixMilli(1_700_000_000_000)
-	applied, err := c.ReportActivity(context.Background(), []state.InstanceTouch{
-		{InstanceID: "i-1", LastRequest: now},
-		{InstanceID: "i-2", LastRequest: now},
-	})
+	want := []state.InstanceTouch{
+		{InstanceID: "i-1", LastRequest: now, RequestDelta: 51},
+		{InstanceID: "i-2", LastRequest: now.Add(time.Second), RequestDelta: 49},
+		{InstanceID: "legacy", LastRequest: now, RequestDelta: 0},
+	}
+	applied, err := c.ReportActivity(context.Background(), want)
 	if err != nil {
 		t.Fatalf("ReportActivity: %v", err)
 	}
-	if applied != 2 {
-		t.Errorf("applied = %d, want 2", applied)
+	if applied != len(want) || len(got) != len(want) {
+		t.Fatalf("applied=%d touches=%+v, want %d", applied, got, len(want))
 	}
-	if len(got) != 2 || got[0].InstanceID != "i-1" || !got[0].LastRequest.Equal(now) {
-		t.Errorf("touches round-trip = %+v", got)
+	for i, touch := range want {
+		if got[i].InstanceID != touch.InstanceID || !got[i].LastRequest.Equal(touch.LastRequest) || got[i].RequestDelta != touch.RequestDelta {
+			t.Errorf("touch %d round-trip = %+v, want %+v", i, got[i], touch)
+		}
 	}
 }
 
