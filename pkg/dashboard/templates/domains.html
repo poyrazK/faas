@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    h2 { border-top: 1px solid #eee; padding-top: 1rem; margin-top: 1.5rem; }
+    .muted { color: #6b7280; }
+    .notice { padding: 0.55rem 0.75rem; border-radius: 4px; background: #fef3c7; color: #92400e; }
+    .error { padding: 0.55rem 0.75rem; border-radius: 4px; background: #fee2e2; color: #991b1b; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; }
+    .badge.ok, .badge.issued { background: #d1fae5; color: #065f46; }
+    .badge.fail { background: #fee2e2; color: #991b1b; }
+    .badge.pending, .badge.dim { background: #f3f4f6; color: #6b7280; }
+    .badge.renewing { background: #dbeafe; color: #1e40af; }
+    .doctor-checks { margin: 0.35rem 0 0; padding-left: 1.2rem; }
+    .doctor-checks li { margin: 0.15rem 0; }
+    .sample { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/pricing">Pricing</a>
+      <a href="/dashboard/invoices">Invoices</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p class="muted"><a href="/dashboard/apps/{{.Data.App.Slug}}">Apps / {{.Data.App.Slug}}</a></p>
+    <h1>Domains: <code>{{.Data.App.Slug}}</code></h1>
+    <p>Custom domains, verification, certificate lifecycle, and DNS health.</p>
+
+    {{if .Data.ErrorMessage}}<p class="error">{{.Data.ErrorMessage}}</p>{{end}}
+    {{if .Data.WWWApexHint}}<p class="notice"><strong>www / apex:</strong> {{.Data.WWWApexHint}}</p>{{end}}
+
+    <h2>Custom domains</h2>
+    {{if .Data.Domains}}
+      <table aria-label="Custom domains">
+        <thead><tr><th>Domain</th><th>Verification</th><th>Certificate</th><th>DNS checked</th><th>Domain doctor</th></tr></thead>
+        <tbody>
+          {{range .Data.Domains}}
+            <tr>
+              <td>
+                <code>{{.Domain}}</code>
+                {{if .VerifiedAt}}<br><small class="muted">verified {{.VerifiedAt}}</small>{{end}}
+                {{if and (not .Verified) .TXTRecord}}<br><small>Publish <code class="sample">{{.TXTRecord}}</code></small>{{end}}
+              </td>
+              <td>{{if .Verified}}<span class="badge ok">verified</span>{{else}}<span class="badge pending">pending</span>{{end}}</td>
+              <td>
+                {{if eq .CertStatus "issued"}}<span class="badge issued">issued</span>
+                {{else if eq .CertStatus "renewing"}}<span class="badge renewing">renewing</span>
+                {{else if eq .CertStatus "failed"}}<span class="badge fail">failed</span>
+                {{else}}<span class="badge dim">{{if .CertStatus}}{{.CertStatus}}{{else}}pending{{end}}</span>{{end}}
+                {{if .CertExpiresAt}}<br><small class="muted">expires {{.CertExpiresAt}}</small>{{end}}
+                {{if .CertLastError}}<br><small class="sample">{{.CertLastError}}</small>{{end}}
+              </td>
+              <td>{{if .DNSLastCheckedAt}}{{.DNSLastCheckedAt}}{{else}}—{{end}}</td>
+              <td>
+                <a href="{{.DoctorURL}}">Open doctor →</a>
+                {{if .Doctor}}
+                  <br>
+                  {{if .Doctor.Healthy}}<span class="badge ok">healthy</span>{{else}}<span class="badge fail">needs attention</span>{{end}}
+                  {{if .Doctor.Stale}} <span class="badge pending">stale</span>{{end}}
+                  {{if .Doctor.ObservedAt}}<br><small class="muted">observed {{.Doctor.ObservedAt}}</small>{{end}}
+                  <details>
+                    <summary>Checks</summary>
+                    <ul class="doctor-checks">
+                      {{range .Doctor.Checks}}
+                        <li><span class="badge {{.Status}}">{{.Status}}</span> <code>{{.Name}}</code> — {{.Detail}}</li>
+                      {{end}}
+                    </ul>
+                  </details>
+                {{else}}
+                  <br><small class="muted">No cached observation yet.</small>
+                {{end}}
+              </td>
+            </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{else if not .Data.ErrorMessage}}
+      <p class="muted">No custom domains are attached to this app.</p>
+    {{end}}
+
+    <p class="muted">To attach or remove a domain, use the existing <code>gregale domains</code> commands or API. This page never exposes certificate keys or unredacted data.</p>
+  </main>
+  <footer>onebox faas · custom domains</footer>
+</body>
+</html>

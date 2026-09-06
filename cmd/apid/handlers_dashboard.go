@@ -63,6 +63,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/logs  → live + archived app logs
 //	GET /dashboard/apps/{slug}/env|secrets → environment + secrets editor
 //	GET /dashboard/apps/{slug}/errors → grouped errors + drill-down
+//	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
@@ -101,6 +102,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G5 / issue #1397 — custom domains with durable TLS status
+			// and cached domain-doctor checks.
+			if dslug, ok := parseAppDomainsPath(slug); ok {
+				s.renderAppDomains(w, r, log, acct, dslug)
+				return
+			}
 			// G3 / issue #1397 — grouped application errors with
 			// fingerprint drill-down and the oldest redacted sample.
 			if eslug, ok := parseAppErrorsPath(slug); ok {
@@ -671,7 +678,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		for _, d := range domains {
 			item := dashboard.DomainItem{
 				Domain: d.Domain, Verified: d.Verified(), CertStatus: string(d.CertStatus),
-				CertLastError: d.CertLastError,
+				CertLastError: d.CertLastError, DoctorURL: dashboardDomainDoctorURL(app.Slug, d.Domain),
 			}
 			if !d.CertExpiresAt.IsZero() {
 				item.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)
