@@ -202,12 +202,11 @@ func writeMemoryMax(instance string, planMB int) error {
 }
 
 // writeWorkloadCgroup (issue #463 / ADR-069 / PR-B) creates a child
-// cgroup scope under the per-instance scope with memory.max =
-// workload.RamMB. The parent scope's memory.max stays at the plan
-// ceiling (writePlanCgroup wrote it); the kernel evaluates the
-// innermost effective memory.max, so a sidecar child that hits
-// its cap is contained while the main workload's child stays
-// untouched.
+// cgroup scope under the per-instance scope with optional memory.max
+// and cpu.max limits. The parent scope's limits stay at the plan
+// ceiling (writePlanCgroup wrote them); the kernel evaluates the
+// innermost effective limits, so a sidecar child that hits either
+// cap is contained while the main workload's child stays untouched.
 //
 // The child scope is a leaf — no processes are fork'd into it (the
 // firecracker process remains in the parent scope set by jailer,
@@ -232,42 +231,88 @@ func writeMemoryMax(instance string, planMB int) error {
 // simple reject — there's no benign caller that needs a path
 // separator in a workload name.
 //
-// Idempotent: the same workloadName + ramMB pair produces a
+// cpu.max uses the standard 100ms cgroup period. A millicore value
+// is converted to a quota against that period (250m = 25000us),
+// preserving the requested fraction of one host CPU independently
+// of the parent plan's period.
+//
+// Idempotent: the same workloadName + limits pair produces a
 // no-op write. The scope path is removed by vmm.Kill's
 // os.RemoveAll(scopePath) on the parent, which cascades to
 // children (Parent's cgroup.procs is empty once firecracker is
 // reaped, so the kernel allows the child leaves to be removed).
 // The leaf may sit unattached for a few hundred ms during Kill;
 // that's fine — leakcheck is gate-time, not real-time.
-func writeWorkloadCgroup(parentScope, workloadName string, ramMB int) error {
+func writeWorkloadCgroup(parentScope, workloadName string, ramMB int, cpuMillicoresOpt ...int) error {
 	if workloadName == "" {
 		return fmt.Errorf("fcvm: cgroup: workload name empty")
 	}
 	if strings.ContainsAny(workloadName, "/\\") || workloadName == "." || workloadName == ".." {
 		return fmt.Errorf("fcvm: cgroup: workload name %q contains path separator", workloadName)
 	}
-	if ramMB < 1 {
-		return fmt.Errorf("fcvm: cgroup: workload %q ramMB %d < 1", workloadName, ramMB)
+	if ramMB < 0 {
+		return fmt.Errorf("fcvm: cgroup: workload %q ramMB %d < 0", workloadName, ramMB)
+	}
+	cpuMillicores := 0
+	if len(cpuMillicoresOpt) > 0 {
+		cpuMillicores = cpuMillicoresOpt[0]
+	}
+	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
+		return fmt.Errorf("fcvm: cgroup: workload %q invalid cpu_millicores %d", workloadName, cpuMillicores)
+	}
+	if ramMB == 0 && cpuMillicores == 0 {
+		return fmt.Errorf("fcvm: cgroup: workload %q has no memory or CPU limit", workloadName)
 	}
 	childScope := filepath.Join(parentScope, workloadName)
 	if err := os.MkdirAll(childScope, 0o755); err != nil {
 		return fmt.Errorf("fcvm: cgroup: mkdir %s: %w", childScope, err)
 	}
-	// Write memory.max directly (NOT via writeMemoryMaxTo). The
-	// latter wraps input through BillableRAMMB which adds the
-	// +8 MB per-VM overhead; that overhead is allocated ONLY on
-	// the parent scope (it's the host-side firecracker process
-	// overhead, not a per-workload surcharge). Workloads' ram_mb
-	// is the billable RAM the customer paid for; adding +8 MB
-	// here would push the workload cap above the plan ceiling.
-	bytes := int64(ramMB) << 20
-	path := filepath.Join(childScope, "memory.max")
-	body := fmt.Sprintf("%d\n", bytes)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("fcvm: cgroup: child scope %s missing: %w", childScope, err)
+	if ramMB > 0 {
+		// Write memory.max directly (NOT via writeMemoryMaxTo). The
+		// latter wraps input through BillableRAMMB which adds the
+		// +8 MB per-VM overhead; that overhead is allocated ONLY on
+		// the parent scope (it's the host-side firecracker process
+		// overhead, not a per-workload surcharge).
+		bytes := int64(ramMB) << 20
+		path := filepath.Join(childScope, "memory.max")
+		body := fmt.Sprintf("%d\n", bytes)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("fcvm: cgroup: child scope %s missing: %w", childScope, err)
+			}
+			return fmt.Errorf("fcvm: cgroup: write %s: %w", path, err)
 		}
-		return fmt.Errorf("fcvm: cgroup: write %s: %w", path, err)
+	} else {
+		// A reused leaf may still carry a previous RAM override. Reset
+		// it to the parent limit when the new workload inherits RAM.
+		path := filepath.Join(childScope, "memory.max")
+		if _, err := os.Stat(path); err == nil {
+			if err := os.WriteFile(path, []byte("max\n"), 0o644); err != nil {
+				return fmt.Errorf("fcvm: cgroup: reset %s: %w", path, err)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("fcvm: cgroup: stat %s: %w", path, err)
+		}
+	}
+	cpuPath := filepath.Join(childScope, "cpu.max")
+	if cpuMillicores > 0 {
+		const periodUS = 100_000
+		quotaUS := cpuMillicores * periodUS / 1000
+		body := fmt.Sprintf("%d %d\n", quotaUS, periodUS)
+		if err := os.WriteFile(cpuPath, []byte(body), 0o644); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("fcvm: cgroup: child scope %s missing: %w", childScope, err)
+			}
+			return fmt.Errorf("fcvm: cgroup: write %s: %w", cpuPath, err)
+		}
+	} else if _, err := os.Stat(cpuPath); err == nil {
+		// Reset a reused leaf so a previous CPU override cannot survive
+		// a later wake that inherits the parent app quota.
+		if err := os.WriteFile(cpuPath, []byte("max 100000\n"), 0o644); err != nil {
+			return fmt.Errorf("fcvm: cgroup: reset %s: %w", cpuPath, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("fcvm: cgroup: stat %s: %w", cpuPath, err)
 	}
 	return nil
 }

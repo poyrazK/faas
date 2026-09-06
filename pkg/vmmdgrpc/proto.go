@@ -437,16 +437,17 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 	for _, p := range pbs {
 		sealedEnv := sealedFromProto(p.GetSealedEnv())
 		out = append(out, fcvm.WorkloadSpec{
-			Name:       p.GetName(),
-			Type:       p.GetType(),
-			Image:      p.GetImage(),
-			StorageKey: p.GetStorageKey(),
-			DriveID:    p.GetDriveSlot(),
-			RamMB:      int(p.GetRamMb()),
-			Port:       int(p.GetPort()),
-			Essential:  p.GetEssential(),
-			SealedEnv:  sealedEnv,
-			DependsOn:  workloadDependenciesFromProto(p.GetDependsOn()),
+			Name:          p.GetName(),
+			Type:          p.GetType(),
+			Image:         p.GetImage(),
+			StorageKey:    p.GetStorageKey(),
+			DriveID:       p.GetDriveSlot(),
+			RamMB:         int(p.GetRamMb()),
+			CPUMillicores: int(p.GetCpuMillicores()),
+			Port:          int(p.GetPort()),
+			Essential:     p.GetEssential(),
+			SealedEnv:     sealedEnv,
+			DependsOn:     workloadDependenciesFromProto(p.GetDependsOn()),
 		})
 	}
 	return out

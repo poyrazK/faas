@@ -247,6 +247,27 @@ func TestWriteWorkloadCgroupMultiSidecars(t *testing.T) {
 	}
 }
 
+func TestWriteWorkloadCgroupCPUOnly(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	parent := filepath.Join(dir, "faas-tenant.slice", "test-tenant-pro", "i-cpu")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatalf("setup parent: %v", err)
+	}
+	if err := writeWorkloadCgroup(parent, "metrics", 0, 250); err != nil {
+		t.Fatalf("writeWorkloadCgroup cpu-only: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "metrics", "memory.max")); !os.IsNotExist(err) {
+		t.Fatalf("cpu-only workload should not write memory.max, err=%v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(parent, "metrics", "cpu.max"))
+	if err != nil {
+		t.Fatalf("read metrics/cpu.max: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(body)), "25000 100000"; got != want {
+		t.Fatalf("metrics/cpu.max = %q, want %q", got, want)
+	}
+}
+
 // TestWriteWorkloadCgroupRejectsPathTraversal pins the security
 // scan: a workload name containing "/" or ".." must not be
 // allowed to escape the parent scope. The reject happens BEFORE

@@ -537,6 +537,9 @@ message SidecarSpec {
   string type       = 3;
   // ram_mb is the per-sidecar cgroup memory.max (32..512).
   int32  ram_mb     = 4;
+  // cpu_millicores is the per-sidecar sustained CPU quota.
+  // 0 preserves the parent app quota for legacy callers.
+  int32  cpu_millicores = 11;
   // port is the listen port inside the guest netns (1..65535).
   // 0 means "absent / inherit the main workload's port".
   uint32 port       = 5;

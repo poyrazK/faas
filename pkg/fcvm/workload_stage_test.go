@@ -265,6 +265,14 @@ func TestWorkloadManifest_RoundTripsCmdEntry(t *testing.T) {
 			wantJSON: `{"cmd":["/usr/local/bin/node-exporter","--web.listen=:9100"],"essential":true,"name":"metrics","port":9100,"ram_mb":64,"type":"sidecar"}`,
 		},
 		{
+			name: "cpu quota",
+			in: workloadManifest{
+				Name: "metrics", Type: "sidecar",
+				RamMB: 64, CPUMillicores: 250, Port: 9100, Essential: true,
+			},
+			wantJSON: `{"cpu_millicores":250,"essential":true,"name":"metrics","port":9100,"ram_mb":64,"type":"sidecar"}`,
+		},
+		{
 			name: "entrypoint and cmd",
 			in: workloadManifest{
 				Name: "metrics", Type: "sidecar",

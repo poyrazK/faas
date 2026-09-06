@@ -488,7 +488,7 @@ func TestSidecarsFromProto(t *testing.T) {
 	pbs := []*vmmdpb.SidecarSpec{
 		{
 			Name: "migrator", Image: "ghcr.io/org/m@sha256:00", Type: "init",
-			RamMb: 64, Port: 9091, Essential: true,
+			RamMb: 64, CpuMillicores: 250, Port: 9091, Essential: true,
 			StorageKey: "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4",
 			DriveSlot:  "layer-sidecar-0",
 			SealedEnv:  []*vmmdpb.SealedSecret{{Key: "TOKEN", Ciphertext: []byte("age-ciphertext")}},
@@ -511,7 +511,7 @@ func TestSidecarsFromProto(t *testing.T) {
 	if got[0].Image != "ghcr.io/org/m@sha256:00" {
 		t.Errorf("entry 0 Image = %q, want digest ref", got[0].Image)
 	}
-	if got[0].RamMB != 64 || got[0].Port != 9091 || !got[0].Essential {
+	if got[0].RamMB != 64 || got[0].CPUMillicores != 250 || got[0].Port != 9091 || !got[0].Essential {
 		t.Errorf("entry 0 ram/port/essential: got %+v", got[0])
 	}
 	if got[0].DriveID != "layer-sidecar-0" {
