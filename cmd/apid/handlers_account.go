@@ -733,12 +733,22 @@ func listDomainsForAccountExport(ctx context.Context, st state.Store, accountID 
 	}
 	out := make([]api.CustomDomainResponse, 0, len(rows))
 	for _, d := range rows {
-		out = append(out, api.CustomDomainResponse{
-			Domain:     d.Domain,
-			AppID:      d.AppID,
-			Verified:   d.Verified(),
-			VerifiedAt: formatTimeOrEmpty(d.VerifiedAt),
-		})
+		status := d.CertStatus
+		if status == "" {
+			status = state.CustomDomainCertPending
+		}
+		resp := api.CustomDomainResponse{
+			Domain:           d.Domain,
+			AppID:            d.AppID,
+			Verified:         d.Verified(),
+			VerifiedAt:       formatTimeOrEmpty(d.VerifiedAt),
+			CertStatus:       string(status),
+			CertLastError:    d.CertLastError,
+			CertExpiresAt:    formatTimeOrEmpty(d.CertExpiresAt),
+			DNSLastCheckedAt: formatTimeOrEmpty(d.DNSLastCheckedAt),
+		}
+		resp.CertNotAfter = resp.CertExpiresAt
+		out = append(out, resp)
 	}
 	return out, nil
 }

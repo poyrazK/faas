@@ -2004,13 +2004,28 @@ type BuildProvenance struct {
 	FrameworkVer string
 }
 
+// CustomDomainCertStatus is the durable TLS lifecycle for a legacy custom
+// domain. The values intentionally match the API contract from issue #1397.
+type CustomDomainCertStatus string
+
+const (
+	CustomDomainCertPending  CustomDomainCertStatus = "pending"
+	CustomDomainCertIssued   CustomDomainCertStatus = "issued"
+	CustomDomainCertRenewing CustomDomainCertStatus = "renewing"
+	CustomDomainCertFailed   CustomDomainCertStatus = "failed"
+)
+
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
-	Domain         string
-	AppID          string
-	ChallengeToken string
-	VerifiedAt     time.Time // zero = unverified
+	Domain           string
+	AppID            string
+	ChallengeToken   string
+	VerifiedAt       time.Time // zero = unverified
+	CertStatus       CustomDomainCertStatus
+	CertExpiresAt    time.Time
+	CertLastError    string
+	DNSLastCheckedAt time.Time
 }
 
 // Verified reports whether the TXT challenge has been satisfied.

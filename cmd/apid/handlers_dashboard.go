@@ -629,6 +629,28 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			previews = projectPreviewItems(previewRows, app.Slug, s.domain)
 		}
 	}
+	// F1 / issue #1397: durable custom-domain TLS state. This is a
+	// best-effort read like the other detail panels; a transient domains
+	// query failure must not take down the app page.
+	var domainItems []dashboard.DomainItem
+	if domains, derr := s.store.ListDomainsForApp(ctx, app.ID); derr != nil {
+		log.Warn("dashboard renderAppDetail: list domains", "account_id", acct.ID, "app_id", app.ID, "err", derr)
+	} else {
+		domainItems = make([]dashboard.DomainItem, 0, len(domains))
+		for _, d := range domains {
+			item := dashboard.DomainItem{
+				Domain: d.Domain, Verified: d.Verified(), CertStatus: string(d.CertStatus),
+				CertLastError: d.CertLastError,
+			}
+			if !d.CertExpiresAt.IsZero() {
+				item.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)
+			}
+			if !d.DNSLastCheckedAt.IsZero() {
+				item.DNSLastCheckedAt = d.DNSLastCheckedAt.UTC().Format(time.RFC3339)
+			}
+			domainItems = append(domainItems, item)
+		}
+	}
 	analyticsRoute, analyticsMethod, _ := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("analytics_route"), r.URL.Query().Get("analytics_method"))
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
 		App:             appRow,
@@ -641,6 +663,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		Crons:           cronItems,
 		Workflows:       workflowItems,
 		Previews:        previews,
+		Domains:         domainItems,
 		RecentInstances: recentItems,
 		// Issue #791 PR-E / ADR-090 closure — cron fire-now
 		// post-redirect banner. Reads ?fired=1 / ?fired=error and

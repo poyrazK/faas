@@ -112,3 +112,14 @@ func TestDomainsDispatch_DoctorReportsFail(t *testing.T) {
 		t.Fatalf("cmdDomains doctor exit = %d, want 1 (unhealthy)", code)
 	}
 }
+
+func TestDomainsDispatch_StatusRegistered(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `[{"domain":"app.example.com","app_id":"a","verified":true,"cert_status":"issued","cert_expires_at":"2027-01-01T00:00:00Z"}]`, http.StatusOK)
+	if code := cmdDomains([]string{"status"}); code != 0 {
+		t.Fatalf("cmdDomains status exit = %d, want 0", code)
+	}
+	if f.sawMethod != "GET" || f.sawPath != "/v1/domains" {
+		t.Errorf("status route = %s %s, want GET /v1/domains", f.sawMethod, f.sawPath)
+	}
+}

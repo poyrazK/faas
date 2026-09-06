@@ -15665,7 +15665,10 @@ components:
         default: { type: boolean, description: "True when this domain is the app's default (issue #961 / Mega-A PR-3). Set via `gregale domains set-default`." }
         cert_not_after: { type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field." }
         cert_sans: { type: array, items: { type: string }, description: "Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME points at a CDN, the SANs reveal which CDN." }
-        cert_status: { type: [string, "null"], description: "One of `issued` | `pending` | `dial_failed:<reason>`. The show endpoint surfaces this verbatim so the customer can distinguish DNS-not-propagated from cert-not-yet-issued from TLS-handshake-refused. Issue #961 / Mega-A PR-3 code-review round (MED-4)." }
+        cert_status: { type: [string, "null"], description: "Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, or failed; issue #1397 / F1). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge." }
+        cert_expires_at: { type: [string, "null"], format: date-time, description: "Durable certificate expiry timestamp recorded by the cert observer." }
+        cert_last_error: { type: [string, "null"], description: "Most recent certificate issuance/renewal error, when cert_status is failed." }
+        dns_last_checked_at: { type: [string, "null"], format: date-time, description: "Timestamp of the most recent DNS verification/doctor probe." }
 
     CreateCustomDomainRequest:
       description: "Bind a custom domain to an app."

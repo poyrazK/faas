@@ -1718,7 +1718,12 @@ CREATE TABLE public.custom_domains (
     verified_at timestamp with time zone,
     challenge_token text DEFAULT ''::text NOT NULL,
     app_id_redirect uuid,
-    org_id uuid
+    org_id uuid,
+    cert_status text DEFAULT 'pending'::text NOT NULL,
+    cert_expires_at timestamp with time zone,
+    cert_last_error text,
+    dns_last_checked_at timestamp with time zone,
+    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text])))
 );
 
 
@@ -5250,6 +5255,11 @@ CREATE INDEX custom_domains_org_id_idx ON public.custom_domains USING btree (org
 --
 
 CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree (domain) WHERE (verified_at IS NULL);
+
+-- Name: custom_domains_cert_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_cert_expiry_idx ON public.custom_domains USING btree (cert_expires_at) WHERE (cert_status = ANY (ARRAY['issued'::text, 'renewing'::text]));
 
 
 --

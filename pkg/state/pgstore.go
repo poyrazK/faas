@@ -7945,10 +7945,12 @@ func (s *PgStore) RequeueBuild(ctx context.Context, id string) error {
 func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error) {
 	row := s.pool.QueryRow(ctx,
 		`insert into custom_domains (domain, app_id, challenge_token) values ($1, $2, $3)
-		 returning domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz)`,
+		 returning domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
+		          cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
+		          coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz)`,
 		domain, appID, token)
 	d := CustomDomain{}
-	if err := row.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &d.VerifiedAt); err != nil {
+	if err := scanCustomDomain(row, &d); err != nil {
 		return CustomDomain{}, mapErr(err)
 	}
 	return d, nil
@@ -7956,10 +7958,12 @@ func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token s
 
 func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain, error) {
 	row := s.pool.QueryRow(ctx,
-		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz)
+		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
+		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
+		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz)
 		   from custom_domains where domain = $1`, domain)
 	d := CustomDomain{}
-	if err := row.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &d.VerifiedAt); err != nil {
+	if err := scanCustomDomain(row, &d); err != nil {
 		return CustomDomain{}, mapErr(err)
 	}
 	return d, nil
@@ -7967,7 +7971,9 @@ func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain
 
 func (s *PgStore) ListDomainsForApp(ctx context.Context, appID string) ([]CustomDomain, error) {
 	rows, err := s.pool.Query(ctx,
-		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz)
+		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
+		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
+		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz)
 		   from custom_domains where app_id = $1 order by domain`, appID)
 	if err != nil {
 		return nil, err
@@ -7978,7 +7984,9 @@ func (s *PgStore) ListDomainsForApp(ctx context.Context, appID string) ([]Custom
 
 func (s *PgStore) ListDomainsForAccount(ctx context.Context, accountID string) ([]CustomDomain, error) {
 	rows, err := s.pool.Query(ctx,
-		`select d.domain, d.app_id, d.challenge_token, coalesce(d.verified_at, 'epoch'::timestamptz)
+		`select d.domain, d.app_id, d.challenge_token, coalesce(d.verified_at, 'epoch'::timestamptz),
+		        d.cert_status, coalesce(d.cert_expires_at, 'epoch'::timestamptz),
+		        coalesce(d.cert_last_error, ''), coalesce(d.dns_last_checked_at, 'epoch'::timestamptz)
 		 from custom_domains d join apps a on a.id = d.app_id
 		 where a.account_id = $1 order by d.domain`, accountID)
 	if err != nil {
@@ -7988,8 +7996,43 @@ func (s *PgStore) ListDomainsForAccount(ctx context.Context, accountID string) (
 	return scanDomains(rows)
 }
 
+// ListUnverifiedCustomDomains is the poller's read seam. It intentionally
+// returns the full domain row so the TXT token is read in the same query as
+// the pending index scan.
+func (s *PgStore) ListUnverifiedCustomDomains(ctx context.Context) ([]CustomDomain, error) {
+	rows, err := s.pool.Query(ctx, `
+		select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
+		       cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
+		       coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz)
+		  from custom_domains
+		 where verified_at is null
+		 order by domain`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDomains(rows)
+}
+
 func (s *PgStore) MarkDomainVerified(ctx context.Context, domain string) error {
 	tag, err := s.pool.Exec(ctx, `update custom_domains set verified_at = now() where domain = $1`, domain)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		update custom_domains
+		   set cert_status = $2,
+		       cert_expires_at = $3,
+		       cert_last_error = $4,
+		       dns_last_checked_at = $5
+		 where domain = $1`, domain, string(status), nullableTime(expiresAt), nullableStr(lastError), nullableTime(dnsCheckedAt))
 	if err != nil {
 		return err
 	}
@@ -17585,12 +17628,33 @@ func scanDomains(rows pgx.Rows) ([]CustomDomain, error) {
 	var out []CustomDomain
 	for rows.Next() {
 		d := CustomDomain{}
-		if err := rows.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &d.VerifiedAt); err != nil {
+		if err := scanCustomDomain(rows, &d); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+type customDomainScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCustomDomain(row customDomainScanner, d *CustomDomain) error {
+	var expiresAt, dnsCheckedAt time.Time
+	var status string
+	if err := row.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &d.VerifiedAt,
+		&status, &expiresAt, &d.CertLastError, &dnsCheckedAt); err != nil {
+		return err
+	}
+	d.CertStatus = CustomDomainCertStatus(status)
+	if !expiresAt.Equal(time.Unix(0, 0).UTC()) {
+		d.CertExpiresAt = expiresAt
+	}
+	if !dnsCheckedAt.Equal(time.Unix(0, 0).UTC()) {
+		d.DNSLastCheckedAt = dnsCheckedAt
+	}
+	return nil
 }
 
 func scanCrons(rows pgx.Rows) ([]Cron, error) {

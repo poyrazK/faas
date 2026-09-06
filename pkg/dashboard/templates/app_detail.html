@@ -27,6 +27,8 @@
     .badge.sleeping { background: #e5e7eb; color: #374151; }
     .badge.waking   { background: #dbeafe; color: #1e40af; }
     .badge.dim      { background: #f3f4f6; color: #6b7280; }
+    .badge.cert-failed { background: #fee2e2; color: #991b1b; }
+    .badge.cert-renewing { background: #dbeafe; color: #1e40af; }
     /* Severity color chips — palette is mirrored verbatim from
        pkg/dashboard/templates/deployment_detail.html so the
        list view (app_detail.html) and the detail view
@@ -174,7 +176,7 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{template "email-verification-banner" .}}
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
@@ -219,6 +221,25 @@
         <tr><th>Request budget</th><td>{{.Data.EffectiveLimits.RequestBudgetMS}} ms default · {{.Data.EffectiveLimits.RequestBudgetMaxMS}} ms maximum</td></tr>
         <tr><th>Response write timeout</th><td>{{.Data.EffectiveLimits.ResponseWriteTimeoutS}} s</td></tr>
       </table>
+      {{end}}
+
+      {{/* F1 / issue #1397: durable custom-domain certificate state. */}}
+      {{if .Data.Domains}}
+        <h2>Custom domains</h2>
+        <table aria-label="Custom domain certificate status">
+          <thead><tr><th>Domain</th><th>Verification</th><th>Certificate</th><th>Expires</th><th>Last error</th></tr></thead>
+          <tbody>
+            {{range .Data.Domains}}
+              <tr>
+                <td><code>{{.Domain}}</code></td>
+                <td>{{if .Verified}}<span class="badge running">verified</span>{{else}}<span class="badge dim">pending</span>{{end}}</td>
+                <td>{{if eq .CertStatus "issued"}}<span class="badge running">issued</span>{{else if eq .CertStatus "renewing"}}<span class="badge cert-renewing">renewing</span>{{else if eq .CertStatus "failed"}}<span class="badge cert-failed">failed</span>{{else}}<span class="badge dim">{{if .CertStatus}}{{.CertStatus}}{{else}}pending{{end}}</span>{{end}}</td>
+                <td>{{if .CertExpiresAt}}{{.CertExpiresAt}}{{else}}—{{end}}</td>
+                <td>{{if .CertLastError}}<code>{{.CertLastError}}</code>{{else}}—{{end}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
       {{end}}
 
       <h2>Recent deployments</h2>

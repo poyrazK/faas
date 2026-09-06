@@ -2059,11 +2059,17 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 	cert, err := dialCert(ctx, d.Domain)
 	if err != nil {
 		resp.CertStatus = classifyCertError(err)
+		if resp.CertLastError == "" {
+			resp.CertLastError = err.Error()
+		}
 		return resp, err
 	}
 	resp.CertNotAfter = cert.NotAfter.UTC().Format(time.RFC3339)
+	resp.CertExpiresAt = resp.CertNotAfter
 	resp.CertSANs = cert.DNSNames
 	resp.CertStatus = certStatusIssued
+	resp.CertLastError = ""
+	_ = s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertIssued, cert.NotAfter, "", d.DNSLastCheckedAt)
 	return resp, nil
 }
 
@@ -4212,17 +4218,31 @@ func instanceResponse(ins state.Instance, minInstancesTarget int) api.InstanceRe
 }
 
 func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
+	status := d.CertStatus
+	if status == "" {
+		status = state.CustomDomainCertPending
+	}
 	r := api.CustomDomainResponse{
 		Domain:         d.Domain,
 		AppID:          d.AppID,
 		ChallengeToken: d.ChallengeToken,
 		Verified:       d.Verified(),
+		CertStatus:     string(status),
+		CertLastError:  d.CertLastError,
 	}
 	if d.Verified() {
 		r.VerifiedAt = d.VerifiedAt.UTC().Format(time.RFC3339)
 	}
 	if d.ChallengeToken != "" {
 		r.TXTRecord = "_faas-verify." + d.Domain + `  TXT  "` + d.ChallengeToken + `"`
+	}
+	if !d.CertExpiresAt.IsZero() {
+		r.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)
+		// CertNotAfter is the pre-F1 name retained for existing clients.
+		r.CertNotAfter = r.CertExpiresAt
+	}
+	if !d.DNSLastCheckedAt.IsZero() {
+		r.DNSLastCheckedAt = d.DNSLastCheckedAt.UTC().Format(time.RFC3339)
 	}
 	return r
 }

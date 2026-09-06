@@ -59,6 +59,7 @@ const (
 	subDomainsSetDefault = "set-default"
 	subDomainsVerify     = "verify"
 	subDomainsShow       = "show"
+	subDomainsStatus     = "status"
 	subDomainsDoctor     = "doctor"
 
 	statusPending  = "pending"
@@ -2179,6 +2180,8 @@ func cmdDomains(args []string) int {
 		return cmdDomainsVerify(args[1:])
 	case subDomainsShow:
 		return cmdDomainsShow(args[1:])
+	case subDomainsStatus:
+		return cmdDomainsStatus(args[1:])
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
 	}

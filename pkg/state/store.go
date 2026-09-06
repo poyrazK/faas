@@ -2816,6 +2816,9 @@ type Store interface {
 	ListDomainsForApp(ctx context.Context, appID string) ([]CustomDomain, error)
 	ListDomainsForAccount(ctx context.Context, accountID string) ([]CustomDomain, error)
 	MarkDomainVerified(ctx context.Context, domain string) error
+	// UpdateCustomDomainCertStatus persists the certmagic/doctor observation
+	// for a legacy custom domain. Zero timestamps clear the nullable columns.
+	UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error
 	DeleteCustomDomain(ctx context.Context, domain string) error
 
 	// Domain doctor observations (ADR-120). The dns_poller
