@@ -18,6 +18,7 @@ var (
 	ErrInvalid       = errors.New("invalid managed postgres request")
 	ErrUnsupported   = errors.New("managed postgres feature unsupported")
 	ErrQuotaExceeded = errors.New("managed postgres quota exceeded")
+	ErrUsageStale    = errors.New("managed postgres usage is stale")
 )
 
 type State string
@@ -235,6 +236,88 @@ func (u Usage) Validate() error {
 	return nil
 }
 
+// UsagePolicy is the operator-owned safety policy for the dark managed
+// PostgreSQL preview. It deliberately uses canonical Gregale meters rather
+// than provider SKU names. A zero policy is disabled; enabling it requires a
+// finite collection window and stale-data bound.
+type UsagePolicy struct {
+	Enabled                      bool
+	CollectionInterval           time.Duration
+	Window                       time.Duration
+	StaleAfter                   time.Duration
+	MaxMonthlyCostMillicents     int64
+	MaxMonthlyComputeUnitSeconds int64
+	MaxMonthlyEgressBytes        int64
+	ComputeUnitHourMillicents    int64
+	EgressGiBMillicents          int64
+}
+
+func (p UsagePolicy) Validate() error {
+	if !p.Enabled {
+		return nil
+	}
+	if p.CollectionInterval < time.Minute || p.Window < time.Hour || p.Window > 24*time.Hour || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
+		return ErrInvalid
+	}
+	if p.MaxMonthlyCostMillicents <= 0 || p.MaxMonthlyComputeUnitSeconds <= 0 || p.MaxMonthlyEgressBytes <= 0 {
+		return ErrInvalid
+	}
+	if p.ComputeUnitHourMillicents < 0 || p.EgressGiBMillicents < 0 {
+		return ErrInvalid
+	}
+	return nil
+}
+
+// UsageRecord is one provider observation for one complete window and meter.
+// The database key plus window makes recording idempotent; a later provider
+// correction replaces the quantity instead of double-counting it.
+type UsageRecord struct {
+	AccountID          string
+	DatabaseID         string
+	BackendID          string
+	BackendFingerprint string
+	WindowFrom         time.Time
+	WindowTo           time.Time
+	ObservedAt         time.Time
+	Meter              Meter
+	Quantity           int64
+	CostMillicents     int64
+}
+
+func (r UsageRecord) Validate() error {
+	if r.AccountID == "" || r.DatabaseID == "" || !ValidName(r.BackendID) || len(r.BackendFingerprint) != 64 ||
+		r.WindowFrom.IsZero() || !r.WindowTo.After(r.WindowFrom) || r.ObservedAt.IsZero() ||
+		!validMeter(r.Meter) || r.Quantity < 0 || r.CostMillicents < 0 {
+		return ErrInvalid
+	}
+	return nil
+}
+
+type UsageSnapshot struct {
+	PeriodStart        time.Time
+	LastObservedAt     time.Time
+	ReadyDatabases     int
+	ComputeUnitSeconds int64
+	EgressBytes        int64
+	CostMillicents     int64
+}
+
+func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
+	if !policy.Enabled || s.ReadyDatabases == 0 {
+		return false
+	}
+	return s.LastObservedAt.IsZero() || now.Sub(s.LastObservedAt) > policy.StaleAfter
+}
+
+func (s UsageSnapshot) Exceeds(policy UsagePolicy) bool {
+	if !policy.Enabled {
+		return false
+	}
+	return s.CostMillicents >= policy.MaxMonthlyCostMillicents ||
+		s.ComputeUnitSeconds >= policy.MaxMonthlyComputeUnitSeconds ||
+		s.EgressBytes >= policy.MaxMonthlyEgressBytes
+}
+
 type Capabilities struct {
 	PostgresMajors          []int
 	ServiceClasses          []ServiceClass
@@ -387,6 +470,15 @@ type Store interface {
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
 	Release(context.Context, string, string, State, string, time.Time, time.Time) error
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
+}
+
+// UsageStore is the durable metering boundary. It is separate from Store so
+// lifecycle test doubles remain small while production PostgreSQL can provide
+// an atomic, idempotent usage ledger and account snapshot.
+type UsageStore interface {
+	ListUsageDatabases(context.Context, int) ([]Database, error)
+	RecordUsage(context.Context, []UsageRecord) error
+	UsageSnapshot(context.Context, string, time.Time) (UsageSnapshot, error)
 }
 
 // BindingStore persists the saga that connects one ready database to one app

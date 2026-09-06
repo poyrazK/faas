@@ -49,6 +49,7 @@ type server struct {
 	managedPostgresReconciler        *managedpostgres.Reconciler
 	managedPostgresBindings          *managedpostgres.BindingService
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
+	managedPostgresUsageCollector    *managedpostgres.UsageCollector
 	store                            state.Store
 	log                              *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache

@@ -89,6 +89,24 @@ reported yet: Neon's byte-month metric must not be mislabeled as Gregale
 byte-seconds. Storage accounting and spend enforcement therefore remain preview
 blockers.
 
+## Usage collection and admission guardrails
+
+The provider-neutral usage ledger is disabled by default. An operator may turn
+it on with the `usage` block in the example configuration, after replacing the
+zero-valued caps and rates with approved commercial limits. The collector
+imports only complete provider windows, records them idempotently by database,
+window, and meter, and currently consumes Neon's compute-unit seconds and
+egress bytes. Storage byte-months remain deliberately unmetered until they can
+be represented without changing Gregale's canonical units.
+
+When enabled, a new database reservation is admitted only if the account has a
+fresh usage observation and has not crossed its monthly cost, compute, or
+egress ceiling. Missing or stale observations fail closed; an existing named
+database remains idempotent and can still be reconciled. This is an operator
+safety control, not a customer invoice or plan-entitlement API. The durable
+ledger is ready for billing integration, but public plans, invoices, and usage
+endpoints remain separate launch work.
+
 The adapter contract is based on Neon's maintained
 [v2 OpenAPI specification](https://neon.com/api_spec/release/v2.json). A live
 qualification run against an isolated organization is still required before
