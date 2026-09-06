@@ -3128,7 +3128,11 @@ const (
 
 	// Edge request caps (spec §4.1).
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
-	WakeQueueCap        = 512              // per-app wake queue
+	// WakePageAfterMs is the browser-only grace period before the gateway
+	// returns its 200 "Waking up" page. API clients keep the normal wake
+	// wait/error contract; the page is an edge UX affordance only.
+	WakePageAfterMs     = 1500
+	WakeQueueCap        = 512 // per-app wake queue
 	WakeQueueTTLSeconds = 30
 
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake

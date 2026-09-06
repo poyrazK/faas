@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-// acceptsHTML reports whether the request explicitly accepts text/html with a
+// AcceptsHTML reports whether the request explicitly accepts text/html with a
 // non-zero quality value. A wildcard does not opt into the browser page: API
 // clients commonly send */* and must continue receiving problem+json.
-func acceptsHTML(r *http.Request) bool {
+func AcceptsHTML(r *http.Request) bool {
 	if r == nil {
 		return false
 	}

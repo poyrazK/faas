@@ -209,7 +209,7 @@ func (p *Problem) Error() string {
 // browser error page instead; API handlers continue to receive JSON. Every
 // HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
 func WriteProblem(w http.ResponseWriter, p *Problem) {
-	if req, ok := w.(interface{ ProblemHTMLRequest() *http.Request }); ok && acceptsHTML(req.ProblemHTMLRequest()) {
+	if req, ok := w.(interface{ ProblemHTMLRequest() *http.Request }); ok && AcceptsHTML(req.ProblemHTMLRequest()) {
 		writeProblemHTML(w, p)
 		return
 	}
