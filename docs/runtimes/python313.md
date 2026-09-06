@@ -3,8 +3,8 @@
 Python 3.13 on the function surface (prewarmed persistent adapter with a
 legacy per-request subprocess fallback, §4.9
 envelope contract). Built by Railpack v0.31.1 with `--plan python`;
-the underlying Python version is bound by the OCI base image
-(`python:3.13-slim-bookworm` from `images/runner-python313.Dockerfile`).
+the underlying Python version is bound by the versioned `python-3.13` Wolfi
+package in `images/runner-python313.Dockerfile`.
 No new dispatch logic — Railpack's `--plan python` is version-agnostic,
 so detection priority (`docker > node > python > go` in
 `pkg/builderd/detect.go`) treats `python312` and `python313`
@@ -77,8 +77,11 @@ image (no runner shim).
 
 - Base ref: `ghcr.io/onebox-faas/runner-python313:latest`
 - Source: `images/runner-python313.Dockerfile`
-  (`FROM python:3.13-slim-bookworm@sha256:REPLACE_ME_AT_MERGE_TIME`)
-- Disk: ~140 MB uncompressed, amortized across all `python313` apps
+  (`FROM cgr.dev/chainguard/wolfi-base:latest`, digest-pinned for linux/amd64)
+- The runtime uses Wolfi glibc and retains the conventional
+  `/usr/local/bin/python3` path. Wheels built for the manylinux 2.17 ABI remain
+  loadable, while Python's minor version is held at 3.13.
+- Disk: ~65 MB uncompressed, amortized across all `python313` apps
   via the two-drive scheme (drive0 = shared base, drive1 = per-app
   layer). Per-app cost is just the customer's `site-packages` + handler.
 

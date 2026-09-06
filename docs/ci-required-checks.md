@@ -67,8 +67,10 @@ commit to the designated amd64 KVM host, and tests the matching
 a pull-request status check because this public repository must not execute
 untrusted pull-request code with root access to a persistent compute node.
 Every successful Dockerfile and Railpack fixture must also complete its Grype
-scan without a fixable CRITICAL or HIGH finding, matching the image-publishing
-policy in `scripts/ci/scan-oci-image.sh`.
+scan. The hardened Python 3.13 runtime rejects every CRITICAL finding to match
+vmmd admission. Legacy runtime bases and builder artifacts retain their
+fixable-finding gates while their base migrations land separately. The shared
+policy lives in `scripts/ci/scan-oci-image.sh`.
 
 ## How to update this table
 

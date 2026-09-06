@@ -95,4 +95,13 @@ docker run --rm --platform "${expected_platform}" --entrypoint /bin/sh "${image_
 # Execute Bash to check its loader and shared libraries as well as its path.
 docker run --rm --platform "${expected_platform}" --entrypoint /bin/bash "${image_ref}" \
   -ceu 'test -n "${BASH_VERSION}"'
+if [[ "${runtime_image}" == runner-python313 ]]; then
+  python_minor=$(docker run --rm --platform "${expected_platform}" \
+    --entrypoint /usr/local/bin/python3 "${image_ref}" \
+    -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+  if [[ "${python_minor}" != 3.13 ]]; then
+    echo "::error::${image_ref} has Python ${python_minor}, want Python 3.13" >&2
+    exit 1
+  fi
+fi
 echo "OK: ${image_ref} contains the ${runtime_image} rootfs contract"
