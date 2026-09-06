@@ -4436,6 +4436,19 @@ type capWriter struct {
 	onWarn   func(bucket string)
 }
 
+// ProblemHTMLRequest preserves browser error negotiation through the body
+// cap wrapper. Most cap failures write through the original writer, but this
+// forwarding keeps the wrapper safe for any future platform error path.
+func (c *capWriter) ProblemHTMLRequest() *http.Request {
+	if c == nil {
+		return nil
+	}
+	if provider, ok := c.ResponseWriter.(interface{ ProblemHTMLRequest() *http.Request }); ok {
+		return provider.ProblemHTMLRequest()
+	}
+	return nil
+}
+
 func (c *capWriter) Write(b []byte) (int, error) {
 	if c.disabled.Load() {
 		return 0, http.ErrHandlerTimeout
@@ -4675,7 +4688,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Status-class capture (used for metrics + slog). Doesn't buffer the body
 	// or alter the headers — strictly observability.
-	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 	w = rec
 
 	// Stamp the request-received timestamp onto the context so every exit
@@ -6277,6 +6290,7 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
+	request     *http.Request
 	Bytes       int64
 	ContentType string
 
@@ -6338,6 +6352,16 @@ type statusRecorder struct {
 	// reader (dispatchMirror) — the Go memory model would flag a
 	// plain int read/write as a race.
 	mirrorStatusSink *atomic.Int32
+}
+
+// ProblemHTMLRequest lets the shared API problem writer negotiate the
+// browser-facing error page for gateway requests. API handlers do not use this
+// wrapper, so their RFC 7807 JSON responses remain unchanged.
+func (s *statusRecorder) ProblemHTMLRequest() *http.Request {
+	if s == nil {
+		return nil
+	}
+	return s.request
 }
 
 // captureStatusForMirror (issue #72 / ADR-133 / ADR-125 PR-A3)

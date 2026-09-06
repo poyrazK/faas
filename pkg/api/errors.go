@@ -205,8 +205,14 @@ func (p *Problem) Error() string {
 }
 
 // WriteProblem renders p as an RFC 7807 problem+json response with its status
-// code. Every HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
+// code. Gateway requests that explicitly accept text/html receive the safe
+// browser error page instead; API handlers continue to receive JSON. Every
+// HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
 func WriteProblem(w http.ResponseWriter, p *Problem) {
+	if req, ok := w.(interface{ ProblemHTMLRequest() *http.Request }); ok && acceptsHTML(req.ProblemHTMLRequest()) {
+		writeProblemHTML(w, p)
+		return
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	for k, vs := range p.extraHeaders {
 		for _, v := range vs {

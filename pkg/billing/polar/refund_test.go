@@ -23,10 +23,13 @@ type refundServer struct {
 	postBody  string // response body for a 2xx POST
 	hangup    bool   // close the connection on POST without a response
 	listItems string // JSON array returned by GET /v1/refunds
-	posts     int
-	gets      int
-	lastPost  map[string]any
-	lastQuery string
+	// listItemsAfterPost is installed before the POST response so a
+	// recovery lookup observes the provider-side write deterministically.
+	listItemsAfterPost string
+	posts              int
+	gets               int
+	lastPost           map[string]any
+	lastQuery          string
 }
 
 func (f *refundServer) handler(t *testing.T) http.HandlerFunc {
@@ -53,6 +56,9 @@ func (f *refundServer) handler(t *testing.T) http.HandlerFunc {
 				t.Errorf("decode refund body: %v", err)
 			}
 			f.lastPost = body
+			if f.listItemsAfterPost != "" {
+				f.listItems = f.listItemsAfterPost
+			}
 			if f.hangup {
 				hj, ok := w.(http.Hijacker)
 				if !ok {
@@ -149,27 +155,13 @@ func TestRefund_HappyPathStampsMetadataMarker(t *testing.T) {
 // but the response was a 502; the refund exists on re-read, so the
 // call succeeds without a second POST.
 func TestRefund_AmbiguousFailureRecoversByLookup(t *testing.T) {
-	f := &refundServer{postCode: http.StatusBadGateway}
+	f := &refundServer{
+		postCode:           http.StatusBadGateway,
+		listItemsAfterPost: existingRefundItem,
+	}
 	p, closeFn := newRefundProvider(t, f)
 	defer closeFn()
-	// The listing is empty before the POST and shows the refund after it.
-	f.mu.Lock()
-	f.listItems = ""
-	f.mu.Unlock()
 	ctx := billing.ContextWithIdempotencyKey(context.Background(), "operator-refund-42")
-	// Flip the listing once the POST has been seen: wrap the handler via
-	// a goroutine-safe hook — simplest is to pre-arm after first GET.
-	go func() {
-		for {
-			f.mu.Lock()
-			if f.posts >= 1 {
-				f.listItems = existingRefundItem
-				f.mu.Unlock()
-				return
-			}
-			f.mu.Unlock()
-		}
-	}()
 	res, err := p.Refund(ctx, "order-1", 500)
 	if err != nil {
 		t.Fatalf("Refund: %v (want recovery via lookup)", err)
