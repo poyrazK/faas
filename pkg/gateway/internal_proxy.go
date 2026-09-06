@@ -471,7 +471,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		// envelope here keeps the customer-visible status honest;
 		// the metric attribution is fixed separately since the
 		// middleware still observes bw.wrote.
-		if requestBudgetExpired(r.Context()) {
+		if requestBudgetExpired(streamCtx) {
 			p.logger().Warn("internal round-trip exceeded request budget",
 				"target", p.Target.String(),
 				"err", err)

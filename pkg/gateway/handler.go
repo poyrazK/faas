@@ -4728,7 +4728,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// than inside stampRequestBudget itself. This keeps cold-start and proxy
 	// work alive for the allotted budget while still releasing the timer on
 	// every return path.
-	defer func() { cancelStampedRequestBudget(r.Context()) }()
+	defer func() { cancelStampedRequestBudget(r.Context()) }() //nolint:contextcheck // evaluate the rebound request context at handler return.
 
 	// Drain tracker (issue #587 / PR-A): the returned closure fires
 	// on every return path below, including the early-out problem
