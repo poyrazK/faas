@@ -294,6 +294,59 @@ func TestMemStoreSnapshotReplicaRetiresTerminalAndDeletedSnapshots(t *testing.T)
 	assertNoReadyReplica(deletedSnap.ID)
 }
 
+func TestMemStoreRAMChangeRetiresIncompatibleSnapshots(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	region := DefaultLocalityLabel
+	peer := ComputeNode{
+		ID: "ram-change-peer", Name: "ram-change-peer", TargetURL: "unix:///ram-change-peer.sock",
+		AdmissionCeilingMB: 4096, VCPUBudget: 16, Active: true, Region: &region,
+	}
+	if _, err := m.CreateComputeNode(ctx, peer); err != nil {
+		t.Fatal(err)
+	}
+	app, dep := seedMemReplicaDeployment(t, m, "dep-ram-change", "replica-ram-change")
+	snap, err := m.CreateSnapshot(ctx, Snapshot{
+		ID: "snap-ram-change", DeploymentID: dep.ID, FCVersion: "fc-1",
+		MemBytes: int64(app.RAMMB) << 20, StorageKey: SnapMemKey(dep.ID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.EnqueueSnapshotReplicasForNode(ctx, peer.ID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := m.ClaimSnapshotReplica(ctx, peer.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkSnapshotReplicaReady(ctx, job.SnapshotID, peer.ID); err != nil {
+		t.Fatal(err)
+	}
+	sameRAM := app.RAMMB
+	if _, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{RAMMB: &sameRAM}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.LatestSnapshot(ctx, dep.ID); err != nil {
+		t.Fatalf("no-op RAM update invalidated snapshot: %v", err)
+	}
+
+	newRAM := 512
+	if _, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{RAMMB: &newRAM}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.LatestSnapshot(ctx, dep.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("snapshot remained usable after RAM change: %v", err)
+	}
+	locality, err := m.SnapshotLocalityFor(ctx, snap.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locality.OriginNodeID != "" || len(locality.ReadyNodeIDs) != 0 {
+		t.Fatalf("RAM-incompatible snapshot retained replica locality: %+v", locality)
+	}
+}
+
 func TestSnapshotReplicaRetryDelayIsCapped(t *testing.T) {
 	tests := []struct {
 		attempt int

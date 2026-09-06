@@ -261,3 +261,46 @@ func TestPgSnapshotReplicaLifecycleRetiresDeadSnapshots(t *testing.T) {
 	}
 	assertRetired(deletedSnapshot.ID, deletedDeploymentID)
 }
+
+func TestPgRAMChangeRetiresIncompatibleSnapshots(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	_, appID, deploymentID := seedLiveDeploy(t, s, ctx, "-snapshot-ram", "snapshot-ram")
+
+	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: deploymentID, FCVersion: "fc-ram", MemBytes: 512 << 20,
+		StorageKey: state.SnapMemKey(deploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	sameRAM := 512
+	if _, err := s.UpdateApp(ctx, appID, state.UpdateAppParams{RAMMB: &sameRAM}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LatestSnapshot(ctx, deploymentID); err != nil {
+		t.Fatalf("no-op RAM update invalidated snapshot: %v", err)
+	}
+
+	newRAM := 256
+	if _, err := s.UpdateApp(ctx, appID, state.UpdateAppParams{RAMMB: &newRAM}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LatestSnapshot(ctx, deploymentID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("snapshot remained usable after RAM change: %v", err)
+	}
+	var stale bool
+	var replicas int
+	if err := pool.QueryRow(ctx, `select stale from snapshots where id = $1`, snap.ID).Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from snapshot_replicas where snapshot_id = $1`, snap.ID).Scan(&replicas); err != nil {
+		t.Fatal(err)
+	}
+	if !stale || replicas != 0 {
+		t.Fatalf("RAM-incompatible snapshot stale=%t replicas=%d, want true/0", stale, replicas)
+	}
+}
