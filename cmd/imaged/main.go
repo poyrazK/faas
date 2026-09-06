@@ -531,15 +531,16 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	loop := imaged.NewLoop(imaged.LoopConfig{
-		Handler:   h,
-		Store:     store,
-		Pool:      pool,
-		Log:       log,
-		Now:       d.now,
-		LvUsedPct: d.lvUsedPct,
-		DetectFC:  d.detectFC,
-		AppsRoot:  appsRoot,
-		GCEvery:   envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		Handler:     h,
+		Store:       store,
+		Pool:        pool,
+		Log:         log,
+		Now:         d.now,
+		LvUsedPct:   d.lvUsedPct,
+		DetectFC:    d.detectFC,
+		AppsRoot:    appsRoot,
+		StorageRoot: envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
+		GCEvery:     envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
 		// PR-B: builderd owns the build-queue durability surface now;
 		// imaged no longer runs a reaper tick or subscribes to
 		// NotifyBuildQueued. FAAS_REAP_INTERVAL +

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -2138,7 +2140,7 @@ func TestMemStore_ListSnapshotsForGC(t *testing.T) {
 	}
 }
 
-func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
+func TestMemStore_ListSnapshotsForGC_IncludesDeletedAppForCleanup(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
 	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
@@ -2158,8 +2160,38 @@ func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
 	}
 
 	rows, _ := m.ListSnapshotsForGC(ctx)
-	if len(rows) != 0 {
-		t.Errorf("deleted app's snapshot leaked into GC: %d rows", len(rows))
+	if len(rows) != 1 {
+		t.Fatalf("deleted app's snapshot missing from GC cleanup: %d rows", len(rows))
+	}
+	if rows[0].AppStatus != AppDeleted {
+		t.Errorf("AppStatus = %q, want %q", rows[0].AppStatus, AppDeleted)
+	}
+}
+
+func TestMemStore_ListSnapshotDeploymentIDsIncludesStaleAndDeduplicates(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, _ := m.CreateAccount(ctx, "ids@example.com", "pro")
+	app, _ := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "snapshot-ids", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
+	snapA, _ := m.CreateSnapshot(ctx, Snapshot{DeploymentID: depA.ID, FCVersion: "1.8.0", StorageKey: SnapMemKey(depA.ID)})
+	_, _ = m.CreateSnapshot(ctx, Snapshot{DeploymentID: depA.ID, FCVersion: "1.8.0", StorageKey: SnapshotCaptureMemKey(depA.ID, SnapshotTierInit, "capture-a")})
+	_, _ = m.CreateSnapshot(ctx, Snapshot{DeploymentID: depB.ID, FCVersion: "1.8.0", StorageKey: SnapMemKey(depB.ID)})
+	if err := m.MarkSnapshotStale(ctx, snapA.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := m.ListSnapshotDeploymentIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{depA.ID, depB.ID}
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("deployment IDs = %v, want %v", got, want)
 	}
 }
 

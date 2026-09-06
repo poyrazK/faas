@@ -1363,6 +1363,9 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			if localPath, pathOK, pathErr := resolver.LocalPath(spec.StorageKey); pathErr != nil {
 				return SnapshotInfo{}, fmt.Errorf("vmm: resolve snapshot mem path: %w", pathErr)
 			} else if pathOK {
+				if prepErr := prepareLocalSnapshotPath(spec.StorageKey, localPath); prepErr != nil {
+					return SnapshotInfo{}, fmt.Errorf("vmm: prepare local snapshot path: %w", prepErr)
+				}
 				var moveErr error
 				memBytes, moveErr = moveOut(filepath.Join(root, memName), localPath)
 				if moveErr != nil {
@@ -1446,6 +1449,43 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// responsible caller (Manager.WarmSnapshot → vmm.WarmSnapshot
 	// → vmmdgrpc.WarmSnapshot) MUST fire ResumeVM on success.
 	return SnapshotInfo{MemBytes: memBytes, VMStateBytes: stateBytes}, nil
+}
+
+// prepareLocalSnapshotPath gives the unprivileged imaged GC group ownership
+// and write permission on directories created by root-owned vmmd. The snapshot
+// root's group is the deployment-defined shared group (faas in production), so
+// this avoids hard-coding a host GID and remains hermetic in tests.
+func prepareLocalSnapshotPath(storageKey, localPath string) error {
+	parts := strings.Split(storageKey, "/")
+	if len(parts) < 3 || parts[0] != "snap" {
+		return nil
+	}
+	root := filepath.Clean(localPath)
+	for range parts[1:] {
+		root = filepath.Dir(root)
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	stat, ok := rootInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("snapshot root %q has unsupported stat metadata", root)
+	}
+	dir := root
+	for _, part := range parts[1 : len(parts)-1] {
+		dir = filepath.Join(dir, part)
+		if err := os.Mkdir(dir, 0o2770); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if err := os.Chown(dir, -1, int(stat.Gid)); err != nil {
+			return err
+		}
+		if err := os.Chmod(dir, 0o2770); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ResumeVM (issue #470 / PR #470-FU-A) is the host-side resume

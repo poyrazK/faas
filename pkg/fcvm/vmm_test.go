@@ -395,6 +395,28 @@ func TestMoveOut_CrossDeviceFallback(t *testing.T) {
 	}
 }
 
+func TestPrepareLocalSnapshotPathMakesNestedDirsGroupWritable(t *testing.T) {
+	root := t.TempDir()
+	localPath := filepath.Join(root, "deployment", "captures", "capture", "mem")
+	key := "snap/deployment/captures/capture/mem"
+	if err := prepareLocalSnapshotPath(key, localPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{
+		filepath.Join(root, "deployment"),
+		filepath.Join(root, "deployment", "captures"),
+		filepath.Join(root, "deployment", "captures", "capture"),
+	} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o770 {
+			t.Errorf("%s mode = %o, want 770", dir, info.Mode().Perm())
+		}
+	}
+}
+
 func TestChrootRoot_AndSocketPath(t *testing.T) {
 	v := NewJailerVMM("/srv/fc/jail", 30*time.Second)
 	got := v.chrootRoot("inst-1")

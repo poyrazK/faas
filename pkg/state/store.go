@@ -3988,9 +3988,16 @@ type Store interface {
 	// Snapshot GC (imaged nightly + on FC upgrade, spec §4.6 + §4.4).
 	//
 	// ListSnapshotsForGC returns every non-stale snapshot joined with its
-	// deployment + app + account. Soft-deleted apps (status='deleted') are
-	// excluded; their snapshots have no in-flight wake target.
+	// deployment + app + account. It includes soft-deleted apps and terminal
+	// deployments so imaged can remove their rows and storage artifacts.
 	ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error)
+	// ListSnapshotsStaleOlderThan returns stale snapshots whose retention
+	// window has expired, including the metadata needed to remove their files.
+	ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]SnapshotForGC, error)
+	// ListSnapshotDeploymentIDs returns the distinct deployment IDs referenced
+	// by every snapshot row, including retained stale rows. Imaged uses this
+	// compact projection to distinguish legacy local orphans from retained data.
+	ListSnapshotDeploymentIDs(ctx context.Context) ([]string, error)
 	// DeleteSnapshotsByID bulk-removes the named snapshot rows (no cascade).
 	// Returns the number of rows deleted; a second call with the same ids
 	// returns 0 and no error.
