@@ -79,10 +79,10 @@ func writeWakePage(w http.ResponseWriter, wakeID string) {
         });
         const isWakePage = response.headers.get("x-faas-wake-page") === "1";
         if (!isWakePage) {
-          const body = await response.text();
-          document.open();
-          document.write(body);
-          document.close();
+          // Let the browser render the app response in its normal
+          // navigation context. Avoid copying an arbitrary app body
+          // through document.write (and preserve non-HTML responses).
+          window.location.replace(window.location.href);
           return;
         }
         const nextWakeID = response.headers.get("x-faas-wake-id");
