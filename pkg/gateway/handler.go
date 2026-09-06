@@ -5247,6 +5247,10 @@ haveApp:
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
 		// N instances before short-circuiting.
+		maxInstances := limits.MaxConcurrency
+		if app.MaxConcurrency > 0 && app.MaxConcurrency < maxInstances {
+			maxInstances = app.MaxConcurrency
+		}
 		// Browser requests get a short edge wait so a long cold boot can
 		// render a useful page while the WakeGate's detached leader keeps
 		// booting. API clients retain the plan-derived wait budget.
@@ -5257,7 +5261,7 @@ haveApp:
 			defer cancelWakePage()
 		}
 		//nolint:contextcheck // request ctx at handler boundary.
-		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan)
+		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan)
 		if err != nil {
 			if api.AcceptsHTML(r) && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
@@ -5348,6 +5352,12 @@ haveApp:
 		return
 	}
 	target := pick.Target
+	// A coalesced wake can return several VMs. Correlate this newly woken
+	// request with the selected VM, while keeping ordinary warm responses
+	// free of cached historical wake IDs.
+	if cold && wakeID != "" && target.WakeID != "" {
+		wakeID = target.WakeID
+	}
 	// The cached target retains the VM's original wake ID. Only this
 	// request's admission belongs in a wake timeline; warm traffic must not
 	// append synchronous wake events for the rest of the VM's lifetime.
@@ -6703,6 +6713,16 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 				}
 			}
 			admit := func(admitCtx context.Context) error {
+				if ensurer, ok := h.backend.(capacityWarmEnsurer); ok && scope == "" {
+					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, sched.TriggerGateway, h.initialWakeDemand(appID, maxConcurrency, plan))
+					if e != nil {
+						return e
+					}
+					if !atCapacity {
+						admittedWakeID, method, cold = id, m, true
+					}
+					return nil
+				}
 				if ensurer, ok := h.backend.(warmEnsurer); ok && scope == "" {
 					id, m, atCapacity, e := ensurer.EnsureWarm(admitCtx, appID, scope, sched.TriggerGateway)
 					if e != nil {

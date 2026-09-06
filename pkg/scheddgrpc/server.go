@@ -500,7 +500,15 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 		return nil, err
 	}
 	start := time.Now()
-	out, err := s.engine.EnsureWake(ctx, req.GetAppId(), req.GetTrigger())
+	var out sched.CoordOutcome
+	var err error
+	if capacity, ok := s.engine.(interface {
+		EnsureWakeCapacity(context.Context, string, string, int) (sched.CoordOutcome, error)
+	}); ok && req.GetDesiredInstances() > 1 {
+		out, err = capacity.EnsureWakeCapacity(ctx, req.GetAppId(), req.GetTrigger(), int(req.GetDesiredInstances()))
+	} else {
+		out, err = s.engine.EnsureWake(ctx, req.GetAppId(), req.GetTrigger())
+	}
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		// Per-app queue-full is a 503; the engine returns the typed
@@ -524,14 +532,24 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Internal), "ensure_wake_nil_instance",
 			"engine EnsureWake returned nil instance without error", ""))
 	}
-	return &scheddpb.EnsureWakeResponse{
+	response := &scheddpb.EnsureWakeResponse{
 		InstanceId:   out.Instance.InstanceID,
 		NodeId:       out.Instance.NodeID,
 		Method:       coordMethodToWakeMethod(out.Instance),
 		WakeId:       out.Instance.WakeID,
 		Port:         out.Instance.Port,
 		DeploymentId: out.Instance.DeploymentID,
-	}, nil
+	}
+	for _, instance := range out.Additional {
+		if instance != nil {
+			response.AdditionalInstances = append(response.AdditionalInstances, &scheddpb.AdmitInstanceResponse{
+				InstanceId: instance.InstanceID, NodeId: instance.NodeID,
+				DeploymentId: instance.DeploymentID, WakeId: instance.WakeID,
+				Port: instance.Port, Method: coordMethodToWakeMethod(instance),
+			})
+		}
+	}
+	return response, nil
 }
 
 // coordMethodToWakeMethod maps the coordinator's ColdBoot bool to the

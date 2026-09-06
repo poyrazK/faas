@@ -85,6 +85,9 @@ type CoordOutcome struct {
 	// Instance is the live row schedd admitted (or the existing
 	// RUNNING row the fast-path returned). Nil on the error path.
 	Instance *CoordInstance
+	// Additional contains other ready instances from the same approved burst.
+	// The slice and its entries are immutable once shared with followers.
+	Additional []*CoordInstance
 	// Err mirrors the leader's outcome. Followers inherit the leader's
 	// error verbatim.
 	Err error

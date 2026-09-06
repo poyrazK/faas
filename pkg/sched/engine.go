@@ -1684,6 +1684,13 @@ func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, i
 //   - leader's *api.Problem: ledger / chooser / store error.
 //   - nil: the wake succeeded; Outcome.Instance is populated.
 func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOutcome, error) {
+	return e.EnsureWakeCapacity(ctx, appID, trigger, 1)
+}
+
+// EnsureWakeCapacity shares the existing wake coordinator and accepts a bounded
+// desired-capacity hint from a coalesced gateway burst. Followers inherit the
+// leader's actual results; unmet demand is reconciled by their ordinary path.
+func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, desired int) (CoordOutcome, error) {
 	if e == nil || e.wakeCoord == nil {
 		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: engine not fully constructed")
 	}
@@ -1752,7 +1759,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	// This is the load-bearing coordinated-wake invariant (spec
 	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
 	// goroutine detach.
-	res, err := e.Wake(leaderCtx, appID, "", "", trigger)
+	results, err := e.wakeInitialCapacity(leaderCtx, appID, trigger, desired)
 	if err != nil {
 		out.Err = err
 		return out, err
@@ -1765,17 +1772,13 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	// query. Forward the typed sentinel so the gateway retries
 	// against the existing live targets (per the AdmitInstance
 	// AtCapacity contract).
-	if res.AtCapacity {
+	if len(results) == 0 || results[0].AtCapacity {
 		out.Err = ErrAtCapacity
 		return out, ErrAtCapacity
 	}
-	out.Instance = &CoordInstance{
-		InstanceID:   res.InstanceID,
-		NodeID:       res.NodeID,
-		DeploymentID: res.DeploymentID,
-		WakeID:       res.WakeID,
-		Port:         int32(res.Port),
-		ColdBoot:     res.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT,
+	out.Instance = coordinateWakeResult(results[0])
+	for _, result := range results[1:] {
+		out.Additional = append(out.Additional, coordinateWakeResult(result))
 	}
 	return out, nil
 }
@@ -2744,6 +2747,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				WithHeader("Retry-After", "5")
 		}
 	}
+
+	signalAdmissionReady(ctx)
 
 	// ── Phase 3: drop the lock, do the slow vmmd RPC ──────────────
 	var out *WakeOutcome
