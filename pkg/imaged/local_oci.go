@@ -121,7 +121,7 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 // belongs on a function's drive1. Node and Python builds are expected to be
 // based on the selected runtime image, so only layers above that base are
 // copied. Go builds are normalized to one small layer containing Railpack's
-// static /app/server binary; this makes both glibc and Alpine Go runtimes
+// executable selected by its image config; this makes both Go runtimes
 // independent of the builder VM's base chain.
 func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePath string) ([]io.Reader, string, func(), error) {
 	config, layers, cleanup, err := loadLocalOCIArchive(archivePath)
@@ -134,7 +134,12 @@ func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePat
 		return nil, "", func() {}, err
 	}
 	if runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine {
-		goLayer, goCleanup, err := makeGoHandlerLayer(layers)
+		executable, err := goFunctionExecutable(config)
+		if err != nil {
+			cleanup()
+			return nil, "", func() {}, err
+		}
+		goLayer, goCleanup, err := makeGoHandlerLayer(layers, executable)
 		if err != nil {
 			cleanup()
 			return nil, "", func() {}, err
@@ -201,7 +206,7 @@ func functionHandlerPaths(runtime string) (source, target string, err error) {
 	}
 }
 
-func makeGoHandlerLayer(layers []io.ReadCloser) (io.ReadCloser, func(), error) {
+func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadCloser, func(), error) {
 	staging, err := os.MkdirTemp("", "faas-go-handler-")
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("create Go handler staging dir: %w", err)
@@ -213,16 +218,12 @@ func makeGoHandlerLayer(layers []io.ReadCloser) (io.ReadCloser, func(), error) {
 			return nil, func() {}, fmt.Errorf("apply Go build layer %d: %w", i, err)
 		}
 	}
-	source := filepath.Join(staging, "app", "server")
-	info, err := os.Stat(source)
+	src, info, err := openGoFunctionExecutable(staging, executable)
 	if err != nil {
 		cleanupStaging()
-		return nil, func() {}, fmt.Errorf("go build artifact missing /app/server: %w", err)
+		return nil, func() {}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-		cleanupStaging()
-		return nil, func() {}, errors.New("go build artifact /app/server is not an executable regular file")
-	}
+	defer func() { _ = src.Close() }()
 
 	archive, err := os.CreateTemp("", "faas-go-handler-*.tar.gz")
 	if err != nil {
@@ -240,12 +241,6 @@ func makeGoHandlerLayer(layers []io.ReadCloser) (io.ReadCloser, func(), error) {
 	if err := tw.WriteHeader(hdr); err != nil {
 		removeArchive()
 		return nil, func() {}, fmt.Errorf("write Go handler layer header: %w", err)
-	}
-	//nolint:forbidigo // source is the file we just validated under a private temporary staging directory.
-	src, err := os.Open(source)
-	if err != nil {
-		removeArchive()
-		return nil, func() {}, fmt.Errorf("open Go handler binary: %w", err)
 	}
 	_, copyErr := io.Copy(tw, src)
 	closeErr := src.Close()
