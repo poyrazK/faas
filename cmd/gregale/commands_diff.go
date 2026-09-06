@@ -139,7 +139,8 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	} else {
 		// Plan tier not resolved — apid's `Whoami` only surfaces a
 		// partial AccountLimits table today (ram_mb, concurrency,
-		// deployed_apps, included_gb_hours, app_layer_max_mb — no
+		// deployed_apps, included_gb_hours, app_layer_max_mb,
+		// ephemeral_disk_max_mb — no
 		// crons / edge_rules / envs / etc.). Skip the gate and
 		// emit a single warn so the customer's eye lands on it.
 		d.Breaks = append(d.Breaks, deploydiff.Break{

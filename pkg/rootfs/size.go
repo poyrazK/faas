@@ -201,7 +201,7 @@ func BasePaddedSizeMB(contentBytes int64, smallRatio float64) int {
 // layer would exceed the cap — the deploy fails here, before any snapshot work.
 func CheckCap(l api.Limits, contentBytes int64) (sizeMB int, err error) {
 	sizeMB = PaddedSizeMB(contentBytes)
-	if sizeMB > l.AppLayerMaxMB {
+	if sizeMB > l.EphemeralDiskMaxMB() {
 		return sizeMB, api.ErrAppLayerTooLarge(l, int64(sizeMB)*mib)
 	}
 	return sizeMB, nil
@@ -214,7 +214,7 @@ func CheckCap(l api.Limits, contentBytes int64) (sizeMB int, err error) {
 // mkfs.ext4 -d run out of blocks even though the nominal 10% app slack fits.
 func CheckCapForStaging(l api.Limits, stats SmallFileStats) (sizeMB int, err error) {
 	sizeMB = BasePaddedSizeMB(stats.ContentBytes, stats.SmallRatio)
-	if sizeMB > l.AppLayerMaxMB {
+	if sizeMB > l.EphemeralDiskMaxMB() {
 		return sizeMB, api.ErrAppLayerTooLarge(l, int64(sizeMB)*mib)
 	}
 	return sizeMB, nil

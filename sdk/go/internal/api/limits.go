@@ -93,3 +93,19 @@ type Limits struct {
 	// (Pro: 16; Scale: 64).
 	EgressAllowlistMaxSize int
 }
+
+// EphemeralDiskMaxMB returns the maximum writable drive1 capacity represented
+// by the plan's app-layer cap. The server keeps AppLayerMaxMB as the canonical
+// field for compatibility; this name makes the storage meaning explicit to
+// SDK callers.
+func (l Limits) EphemeralDiskMaxMB() int {
+	return l.AppLayerMaxMB
+}
+
+// EphemeralDiskMaxBytes returns the ephemeral disk ceiling in bytes.
+func (l Limits) EphemeralDiskMaxBytes() int64 {
+	if l.EphemeralDiskMaxMB() <= 0 {
+		return 0
+	}
+	return int64(l.EphemeralDiskMaxMB()) * 1024 * 1024
+}

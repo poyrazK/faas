@@ -1986,15 +1986,16 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		WithDocs(docsBase + "/plans#ram")
 }
 
-// ErrAppLayerTooLarge is returned when the built app layer (deps + code) exceeds
-// the plan's drive1 cap (spec §4.6). The message names the cap and observed size
-// so the deploy failure is actionable.
+// ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
+// exceed the plan's writable ephemeral drive1 capacity (spec §4.6). The
+// legacy problem code remains stable for clients; the message names both the
+// app-layer build boundary and its runtime-disk meaning.
 func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
-	capBytes := int64(l.AppLayerMaxMB) * 1024 * 1024
+	capBytes := l.EphemeralDiskMaxBytes()
 	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
 		"App too large",
-		fmt.Sprintf("%s plan caps the app layer at %d MB; built layer is %.1f MB.",
-			l.Plan, l.AppLayerMaxMB, float64(observedBytes)/(1024*1024))).
+		fmt.Sprintf("%s plan caps the writable ephemeral app disk at %d MB (app-layer build cap); built layer is %.1f MB.",
+			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits#app-layer")
 }

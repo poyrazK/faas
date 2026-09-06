@@ -1505,6 +1505,25 @@ type Limits struct {
 	WorkflowMaxWaitDays int
 }
 
+// EphemeralDiskMaxMB returns the maximum writable runtime disk capacity
+// represented by the per-app drive1 ext4 image. The storage contract has
+// historically exposed this boundary as AppLayerMaxMB because the same cap
+// is checked while building the image. Keep one source of truth while giving
+// runtime and API callers the storage-specific name.
+func (l Limits) EphemeralDiskMaxMB() int {
+	return l.AppLayerMaxMB
+}
+
+// EphemeralDiskMaxBytes returns EphemeralDiskMaxMB in bytes. A zero result
+// means the limits value is unset or invalid; callers should fail closed
+// rather than treating it as unlimited.
+func (l Limits) EphemeralDiskMaxBytes() int64 {
+	if l.EphemeralDiskMaxMB() <= 0 {
+		return 0
+	}
+	return int64(l.EphemeralDiskMaxMB()) * 1024 * 1024
+}
+
 // UpstreamProbeMaxConcurrent (ADR-098 §D2) is the global worker-pool
 // cap on meterd's upstream-probe loop. Read by cmd/meterd at boot
 // time and by pkg/meter/upstream_probe.go on each loop tick. NOT a
