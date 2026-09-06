@@ -356,6 +356,7 @@ type AccountResponse struct {
 	Limits           AccountLimits `json:"limits"`
 	UsageGBHours     float64       `json:"usage_gb_hours"`
 	AppCount         int           `json:"app_count"`
+	DeveloperAppCount int          `json:"developer_app_count"`
 	GitHubInstall    string        `json:"github_install_id,omitempty"`
 	PlanChangeStatus string        `json:"plan_change_status,omitempty"`
 	RequestedPlan    string        `json:"requested_plan,omitempty"`
@@ -370,6 +371,7 @@ type AccountLimits struct {
 	RAMMB              int    `json:"ram_mb"`
 	MaxConcurrency     int    `json:"max_concurrency"`
 	DeployedApps       int    `json:"deployed_apps"`
+	DeveloperApps      int    `json:"developer_apps"`
 	IncludedGBHours    int64  `json:"included_gb_hours"`
 	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
 	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`

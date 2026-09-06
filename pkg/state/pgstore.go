@@ -1995,17 +1995,30 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
 	}
 
-	// 2. Authoritative count under the lock. Same predicate as
-	//    CountDeployedApps — matches the MemStore shape so handlers
-	//    don't have to know which store is in use.
+	// 2. Authoritative count under the lock. Developer environments use
+	//    their own cap; production apps and PR previews use DeployedApps.
+	//    Keeping both counts inside the account lock closes the same TOCTOU
+	//    window for either quota family.
 	var observed int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold')`,
-		app.AccountID).Scan(&observed); err != nil {
+	developer := IsDeveloperApp(app)
+	countQuery := `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)`
+	limit := limits.DeployedApps
+	kind := QuotaErrorKindApps
+	if developer {
+		countQuery = `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0`
+		limit = limits.DeveloperApps
+		// Older internal callers construct a partial Limits value. Keep
+		// those callers safe while the plan table carries the real cap.
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindDeveloperApps
+	}
+	if err := tx.QueryRow(ctx, countQuery, app.AccountID).Scan(&observed); err != nil {
 		return App{}, fmt.Errorf("state: count apps for account %s: %w", app.AccountID, err)
 	}
-	if observed >= limits.DeployedApps {
-		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	if observed >= limit {
+		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
 
 	// 3. Conditional insert. The slug unique index surfaces a collision
@@ -3107,7 +3120,15 @@ func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID,
 func (s *PgStore) CountDeployedApps(ctx context.Context, accountID string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
-		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold')`,
+		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)`,
+		accountID).Scan(&n)
+	return n, err
+}
+
+func (s *PgStore) CountDeveloperApps(ctx context.Context, accountID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0`,
 		accountID).Scan(&n)
 	return n, err
 }

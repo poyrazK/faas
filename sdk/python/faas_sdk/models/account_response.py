@@ -21,8 +21,8 @@ T = TypeVar("T", bound="AccountResponse")
 
 @_attrs_define
 class AccountResponse:
-    """Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, and total app
-    count.
+    """Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app
+    count, and developer-environment count.
 
     """
 
@@ -33,9 +33,11 @@ class AccountResponse:
     status: AccountResponseStatus
     limits: AccountLimits
     """Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-
-    hours, and max app-layer bytes per build."""
+    hours, and writable ephemeral app-disk capacity."""
     usage_gb_hours: float
     app_count: int
+    developer_app_count: int
+    """Live `gregale dev` environments; these do not consume deployed_apps slots."""
     email_verification_grace_ends_at: datetime.datetime | Unset = UNSET
     """30-day verification deadline; present only while email_verified is false."""
     github_install_id: None | str | Unset = UNSET
@@ -60,6 +62,8 @@ class AccountResponse:
         usage_gb_hours = self.usage_gb_hours
 
         app_count = self.app_count
+
+        developer_app_count = self.developer_app_count
 
         email_verification_grace_ends_at: str | Unset = UNSET
         if not isinstance(self.email_verification_grace_ends_at, Unset):
@@ -93,6 +97,7 @@ class AccountResponse:
                 "limits": limits,
                 "usage_gb_hours": usage_gb_hours,
                 "app_count": app_count,
+                "developer_app_count": developer_app_count,
             }
         )
         if email_verification_grace_ends_at is not UNSET:
@@ -128,6 +133,8 @@ class AccountResponse:
         usage_gb_hours = d.pop("usage_gb_hours")
 
         app_count = d.pop("app_count")
+
+        developer_app_count = d.pop("developer_app_count")
 
         _email_verification_grace_ends_at = d.pop("email_verification_grace_ends_at", UNSET)
         email_verification_grace_ends_at: datetime.datetime | Unset
@@ -170,6 +177,7 @@ class AccountResponse:
             limits=limits,
             usage_gb_hours=usage_gb_hours,
             app_count=app_count,
+            developer_app_count=developer_app_count,
             email_verification_grace_ends_at=email_verification_grace_ends_at,
             github_install_id=github_install_id,
             plan_change_status=plan_change_status,

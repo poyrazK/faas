@@ -40,6 +40,7 @@ var accountResponse = mustJSON(map[string]any{
 	"limits":         accountLimits(),
 	"usage_gb_hours": 1.234,
 	"app_count":      3,
+	"developer_app_count": 1,
 })
 
 func accountLimits() map[string]any {
@@ -48,6 +49,7 @@ func accountLimits() map[string]any {
 		"ram_mb":                256,
 		"max_concurrency":       2,
 		"deployed_apps":         3,
+		"developer_apps":        2,
 		"included_gb_hours":     50,
 		"app_layer_max_mb":      512,
 		"ephemeral_disk_max_mb": 512,

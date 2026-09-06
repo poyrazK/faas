@@ -90,8 +90,10 @@ type DPAView struct {
 
 // IndexData is the /dashboard/ overview payload.
 type IndexData struct {
-	DeployedAppCount int
-	Plan             string
+	DeployedAppCount   int
+	DeveloperAppCount  int
+	DeveloperAppsLimit int
+	Plan               string
 }
 
 // AppListItem is one row on /dashboard/apps.

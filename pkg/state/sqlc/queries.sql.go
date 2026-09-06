@@ -656,6 +656,7 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 
 const countDeployedApps = `-- name: CountDeployedApps :one
 select count(*) from apps where account_id = $1 and status in ('active', 'evicted_cold')
+  and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)
 `
 
 func (q *Queries) CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {

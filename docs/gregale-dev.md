@@ -39,6 +39,7 @@ gregale dev --once             # sync once, do not watch
 gregale dev --path apps/api    # select one workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
+gregale dev status             # show developer-environment quota usage
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
 ```
@@ -70,5 +71,7 @@ expired environment. Stopping the watcher with Ctrl-C leaves the environment
 available—use `--stop` from the same source directory when it should be removed
 immediately.
 
-Developer environments currently consume the same deployed-app quota as pull
-request previews. Separate development quotas remain a follow-up improvement.
+Developer environments have a separate per-plan quota from production apps and
+pull-request previews. They are still backed by the same preview lifecycle and
+24-hour lease; `gregale dev status` reports the account-wide budget so a local
+workspace cannot unexpectedly block a deploy or PR preview.

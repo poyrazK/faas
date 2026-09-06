@@ -907,7 +907,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"developer_apps":2,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"developer_app_count":1,"github_install_id":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -958,7 +958,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"developer_apps":2,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"developer_app_count":1,"github_install_id":null}
         '202':
           description: The provider accepted a deferred plan change; the current local entitlement remains active until the provider webhook confirms it.
           content:
@@ -1073,7 +1073,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"developer_apps":2,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"developer_app_count":1,"github_install_id":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
 
@@ -12567,9 +12567,9 @@ components:
     # ─── Account ──────────────────────────────────────────────────────────
 
     AccountResponse:
-      description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, and total app count."
+      description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
       type: object
-      required: [id, email, email_verified, plan, status, limits, usage_gb_hours, app_count]
+      required: [id, email, email_verified, plan, status, limits, usage_gb_hours, app_count, developer_app_count]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         email: { type: string, format: email }
@@ -12583,6 +12583,7 @@ components:
         limits: { $ref: '#/components/schemas/AccountLimits' }
         usage_gb_hours: { type: number }
         app_count: { type: integer }
+        developer_app_count: { type: integer, description: "Live `gregale dev` environments; these do not consume deployed_apps slots." }
         github_install_id: { type: [string, "null"] }
         plan_change_status: { type: string }
         requested_plan: { type: string, enum: [free, hobby, pro, scale] }
@@ -12591,12 +12592,13 @@ components:
     AccountLimits:
       description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and writable ephemeral app-disk capacity."
       type: object
-      required: [plan, ram_mb, max_concurrency, deployed_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb]
+      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
+        developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
         ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }

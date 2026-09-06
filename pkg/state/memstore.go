@@ -2573,16 +2573,30 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
-	// 1. Authoritative count under the same lock. Mirrors the predicate
-	//    PgStore uses against the apps table.
+	// 1. Authoritative count under the same lock. Mirrors the PgStore
+	//    predicates, including the separate developer-environment cap.
 	observed := 0
+	developer := IsDeveloperApp(app)
 	for _, a := range m.apps {
-		if a.AccountID == app.AccountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
-			observed++
+		if a.AccountID != app.AccountID || (a.Status != AppActive && a.Status != AppEvictedCold) {
+			continue
 		}
+		if developer != IsDeveloperApp(a) {
+			continue
+		}
+		observed++
 	}
-	if observed >= limits.DeployedApps {
-		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	limit := limits.DeployedApps
+	kind := QuotaErrorKindApps
+	if developer {
+		limit = limits.DeveloperApps
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindDeveloperApps
+	}
+	if observed >= limit {
+		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
 	// 2. Conditional insert. Slug uniqueness is enforced by the same
 	//    loop CreateApp uses; returning ErrConflict keeps the wire
@@ -3649,7 +3663,19 @@ func (m *MemStore) CountDeployedApps(_ context.Context, accountID string) (int, 
 	defer m.mu.Unlock()
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
+		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && !IsDeveloperApp(a) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *MemStore) CountDeveloperApps(_ context.Context, accountID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, a := range m.apps {
+		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && IsDeveloperApp(a) {
 			n++
 		}
 	}
