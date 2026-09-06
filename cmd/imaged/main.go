@@ -34,6 +34,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -442,6 +443,16 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// override with FAAS_VMM_SOCK for dev (e.g. a bufconn
 		// test on a Mac).
 		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log))
+	// Optional public readiness verification. Split-box installations set the
+	// origin explicitly; leaving it empty preserves the existing offline/local
+	// deployment path and records a skipped smoke in the receipt.
+	if smokeURL := strings.TrimSpace(os.Getenv("FAAS_API_HOSTING_SMOKE_URL")); smokeURL != "" {
+		verifier := apihostingreceipt.Verifier{BaseURL: smokeURL, AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second}
+		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			return verifier.Verify(ctx, app.Slug, imaged.HostingHealthPath(app, dep))
+		})
+		log.Info("imaged: API hosting readiness smoke enabled", "base_url", smokeURL)
+	}
 
 	// Issue #461 / ADR-062: load the host age identity so imaged
 	// can transiently unseal per-app private-registry Basic Auth

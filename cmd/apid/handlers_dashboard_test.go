@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -1237,5 +1239,49 @@ func TestDashboardDeploymentItem_PopulatesRepoFullName(t *testing.T) {
 	imgItem := dashboardDeploymentItem(imgDep)
 	if imgItem.RepoFullName != "" {
 		t.Errorf("image-deploy RepoFullName = %q, want empty", imgItem.RepoFullName)
+	}
+}
+
+func TestDashboardHostingReceipt_ProjectsReadinessEvidence(t *testing.T) {
+	want := apihostingreceipt.Receipt{
+		SchemaVersion: apihostingreceipt.SchemaVersion,
+		DeploymentID:  "d-receipt",
+		AppID:         "app-receipt",
+		AppURL:        "https://receipt-app.apps.gregale.dev",
+		Source: apihostingreceipt.Source{
+			Kind:      "github",
+			URL:       "github://acme/receipt-app@deadbeef",
+			CommitSHA: "deadbeef",
+		},
+		Profile: frameworkprofile.Profile{
+			Version:      frameworkprofile.Version,
+			Framework:    "fastapi",
+			FrameworkVer: "0.115",
+			Port:         8080,
+			HealthPath:   "/healthz",
+		},
+		Smoke: apihostingreceipt.SmokeResult{
+			Status:     apihostingreceipt.SmokeVerified,
+			Path:       "/healthz",
+			StatusCode: 200,
+			LatencyMS:  42,
+		},
+	}
+	raw, err := apihostingreceipt.Encode(want)
+	if err != nil {
+		t.Fatalf("encode receipt: %v", err)
+	}
+	got, err := dashboardHostingReceipt(raw)
+	if err != nil {
+		t.Fatalf("dashboardHostingReceipt: %v", err)
+	}
+	if got == nil {
+		t.Fatal("dashboardHostingReceipt returned nil view")
+	}
+	if got.AppURL != want.AppURL || got.Framework != want.Profile.Framework || got.HealthPath != want.Profile.HealthPath || got.SmokeStatus != want.Smoke.Status {
+		t.Fatalf("projection = %+v, want app=%q framework=%q path=%q status=%q", got, want.AppURL, want.Profile.Framework, want.Profile.HealthPath, want.Smoke.Status)
+	}
+	if empty, err := dashboardHostingReceipt(json.RawMessage(`{}`)); err != nil || empty != nil {
+		t.Fatalf("empty receipt = (%v, %v), want (nil, nil)", empty, err)
 	}
 }

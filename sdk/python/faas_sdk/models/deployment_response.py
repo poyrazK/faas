@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from ..models.build_plan import BuildPlan
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+    from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
     from ..models.log_excerpt import LogExcerpt
@@ -174,6 +175,9 @@ class DeploymentResponse:
     build_plan: BuildPlan | None | Unset = UNSET
     """Auto-detected build plan (issue #961 / Mega-A PR-2). One-line summary the CLI prints after `gregale deploy`.
     nil for image deploys."""
+    hosting_receipt: DeploymentResponseHostingReceiptType0 | None | Unset = UNSET
+    """Durable non-secret deployment evidence captured after readiness, including the resolved API profile,
+    artifact identity, and post-readiness smoke result."""
     deployed_by_user_id: None | Unset | UUID = UNSET
     """UUID of the deploying local account (FK → accounts.id, ON DELETE SET NULL). Empty when the deploy came from
     a non-local source (e.g. a githubd pusher not bound to a local account)."""
@@ -260,6 +264,7 @@ class DeploymentResponse:
         from ..models.build_plan import BuildPlan
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
 
@@ -417,6 +422,14 @@ class DeploymentResponse:
             build_plan = self.build_plan.to_dict()
         else:
             build_plan = self.build_plan
+
+        hosting_receipt: dict[str, Any] | None | Unset
+        if isinstance(self.hosting_receipt, Unset):
+            hosting_receipt = UNSET
+        elif isinstance(self.hosting_receipt, DeploymentResponseHostingReceiptType0):
+            hosting_receipt = self.hosting_receipt.to_dict()
+        else:
+            hosting_receipt = self.hosting_receipt
 
         deployed_by_user_id: None | str | Unset
         if isinstance(self.deployed_by_user_id, Unset):
@@ -610,6 +623,8 @@ class DeploymentResponse:
             field_dict["secret_scan"] = secret_scan
         if build_plan is not UNSET:
             field_dict["build_plan"] = build_plan
+        if hosting_receipt is not UNSET:
+            field_dict["hosting_receipt"] = hosting_receipt
         if deployed_by_user_id is not UNSET:
             field_dict["deployed_by_user_id"] = deployed_by_user_id
         if deployed_via is not UNSET:
@@ -664,6 +679,7 @@ class DeploymentResponse:
         from ..models.build_plan import BuildPlan
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
         from ..models.log_excerpt import LogExcerpt
@@ -936,6 +952,23 @@ class DeploymentResponse:
             return cast(BuildPlan | None | Unset, data)
 
         build_plan = _parse_build_plan(d.pop("build_plan", UNSET))
+
+        def _parse_hosting_receipt(data: object) -> DeploymentResponseHostingReceiptType0 | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                hosting_receipt_type_0 = DeploymentResponseHostingReceiptType0.from_dict(data)
+
+                return hosting_receipt_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DeploymentResponseHostingReceiptType0 | None | Unset, data)
+
+        hosting_receipt = _parse_hosting_receipt(d.pop("hosting_receipt", UNSET))
 
         def _parse_deployed_by_user_id(data: object) -> None | Unset | UUID:
             if data is None:
@@ -1261,6 +1294,7 @@ class DeploymentResponse:
             scope=scope,
             secret_scan=secret_scan,
             build_plan=build_plan,
+            hosting_receipt=hosting_receipt,
             deployed_by_user_id=deployed_by_user_id,
             deployed_via=deployed_via,
             deployed_from_ip=deployed_from_ip,

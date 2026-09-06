@@ -178,3 +178,17 @@ func TestDeploymentResponse_BuildPlan_OverridesPopulated(t *testing.T) {
 		t.Errorf("port = %d, want 3000", resp.BuildPlan.Port)
 	}
 }
+
+func TestDeploymentResponse_HostingReceiptRoundTrips(t *testing.T) {
+	srv := newServer(state.NewMemStore(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"gregale.dev", noopNotifier{})
+	d := state.Deployment{
+		ID: "d1", AppID: "a1", Kind: state.DeploymentKindImage,
+		Status: state.DeployLive, APIHostingReceipt: []byte(`{"schema_version":1,"smoke":{"status":"verified"}}`),
+	}
+	resp := srv.deploymentResponse(d, state.App{ID: "a1"})
+	if string(resp.APIHostingReceipt) != string(d.APIHostingReceipt) {
+		t.Fatalf("hosting receipt = %s, want %s", resp.APIHostingReceipt, d.APIHostingReceipt)
+	}
+}
