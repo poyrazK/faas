@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -58,16 +59,54 @@ type CheckRunStore interface {
 	SaveCheckRunID(ctx context.Context, repoFullName, commitSHA, checkName string, id int64) error
 }
 
+// GitHubDeploymentStore persists the GitHub Deployment identity associated
+// with one durable Gregale deployment. The local deployment row is the
+// source of truth; this mapping makes every later lifecycle update a PATCH-
+// equivalent status POST against the same GitHub Deployment instead of
+// creating one row per phase.
+type GitHubDeploymentStore interface {
+	GitHubDeploymentID(ctx context.Context, deploymentID string) (int64, error)
+	SaveGitHubDeploymentID(ctx context.Context, deploymentID string, githubDeploymentID int64) error
+}
+
+var ErrGitHubDeploymentNotFound = errors.New("githubd: github deployment not found")
+
+// GitHubDeploymentUpdate is the provider-facing projection of one durable
+// deployment transition. Status uses Gregale's durable vocabulary; the
+// writer maps it to GitHub's queued/in_progress/success/failure/inactive
+// states.
+type GitHubDeploymentUpdate struct {
+	LocalDeploymentID     string
+	InstallationID        int64
+	RepoFullName          string
+	CommitSHA             string
+	Ref                   string
+	Environment           string
+	Status                string
+	Description           string
+	TargetURL             string
+	EnvironmentURL        string
+	LogURL                string
+	TransientEnvironment  bool
+	ProductionEnvironment bool
+}
+
 // ChecksAPI writes check-runs to api.github.com.
 type ChecksAPI struct {
-	Tokens    *TokenCache // provides the installation token per installation_id
-	HTTP      HTTPClient
-	Bindings  BindingsLookup // repo → installation_id (review finding #1+#2 closure)
-	CheckRuns CheckRunStore
+	Tokens      *TokenCache // provides the installation token per installation_id
+	HTTP        HTTPClient
+	Bindings    BindingsLookup // repo → installation_id (review finding #1+#2 closure)
+	CheckRuns   CheckRunStore
+	Deployments GitHubDeploymentStore
 }
 
 func (c *ChecksAPI) WithCheckRunStore(store CheckRunStore) *ChecksAPI {
 	c.CheckRuns = store
+	return c
+}
+
+func (c *ChecksAPI) WithGitHubDeploymentStore(store GitHubDeploymentStore) *ChecksAPI {
+	c.Deployments = store
 	return c
 }
 
@@ -107,6 +146,35 @@ type checkRunOutput struct {
 // checkRunResponse is the shape GitHub returns from POST/PATCH.
 type checkRunResponse struct {
 	ID int64 `json:"id"`
+}
+
+type githubDeploymentResponse struct {
+	ID          int64  `json:"id"`
+	SHA         string `json:"sha"`
+	Environment string `json:"environment"`
+	Description string `json:"description"`
+}
+
+type githubDeploymentRequest struct {
+	Ref                   string            `json:"ref"`
+	Task                  string            `json:"task,omitempty"`
+	AutoMerge             bool              `json:"auto_merge"`
+	RequiredContexts      []string          `json:"required_contexts"`
+	Payload               map[string]string `json:"payload,omitempty"`
+	Environment           string            `json:"environment"`
+	Description           string            `json:"description"`
+	TransientEnvironment  bool              `json:"transient_environment"`
+	ProductionEnvironment bool              `json:"production_environment"`
+}
+
+type githubDeploymentStatusRequest struct {
+	State          string `json:"state"`
+	TargetURL      string `json:"target_url,omitempty"`
+	LogURL         string `json:"log_url,omitempty"`
+	Description    string `json:"description,omitempty"`
+	EnvironmentURL string `json:"environment_url,omitempty"`
+	Environment    string `json:"environment,omitempty"`
+	AutoInactive   bool   `json:"auto_inactive,omitempty"`
 }
 
 // writeCheckRun creates the first Check Run for a commit and PATCHes that same
@@ -186,6 +254,190 @@ func (c *ChecksAPI) writeCheckRunWithToken(ctx context.Context, token, repoFullN
 		}
 	}
 	return nil
+}
+
+// WriteGitHubDeploymentStatus creates (once) and then advances the GitHub
+// Deployment corresponding to a durable Gregale deployment. The lookup-before-
+// create path closes the retry window where GitHub accepted a create request
+// but the response was lost before the local identity could be persisted.
+func (c *ChecksAPI) WriteGitHubDeploymentStatus(ctx context.Context, update GitHubDeploymentUpdate) error {
+	state, ok := githubDeploymentState(update.Status)
+	if !ok {
+		return nil
+	}
+	if update.LocalDeploymentID == "" || update.InstallationID <= 0 ||
+		update.RepoFullName == "" || update.CommitSHA == "" || update.Environment == "" {
+		return fmt.Errorf("githubd: local deployment id, installation, repo, sha, and environment are required")
+	}
+	if c.Deployments == nil {
+		return fmt.Errorf("githubd: github deployment store is not configured")
+	}
+	token, err := c.installationToken(ctx, update.InstallationID)
+	if err != nil {
+		return err
+	}
+	githubID, err := c.ensureGitHubDeployment(ctx, token, update)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(githubDeploymentStatusRequest{
+		State:          state,
+		TargetURL:      update.TargetURL,
+		LogURL:         update.LogURL,
+		Description:    update.Description,
+		EnvironmentURL: update.EnvironmentURL,
+		Environment:    update.Environment,
+		AutoInactive:   state == "success" && !update.TransientEnvironment,
+	})
+	if err != nil {
+		return fmt.Errorf("githubd: marshal github deployment status: %w", err)
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/deployments/%d/statuses", GitHubAPI, update.RepoFullName, githubID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	setGitHubHeaders(req, token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("githubd: write github deployment status: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return fmt.Errorf("githubd: write github deployment status: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+func (c *ChecksAPI) ensureGitHubDeployment(ctx context.Context, token string, update GitHubDeploymentUpdate) (int64, error) {
+	githubID, lookupErr := c.Deployments.GitHubDeploymentID(ctx, update.LocalDeploymentID)
+	switch {
+	case lookupErr == nil && githubID > 0:
+		return githubID, nil
+	case lookupErr != nil && !errors.Is(lookupErr, ErrGitHubDeploymentNotFound):
+		return 0, lookupErr
+	case lookupErr == nil:
+		return 0, fmt.Errorf("githubd: stored github deployment id is invalid")
+	}
+
+	// GitHub has no idempotency key for deployment creation. Search by the
+	// stable local marker before POSTing so a lost response does not create a
+	// duplicate deployment on the next outbox attempt.
+	githubID, err := c.findGitHubDeployment(ctx, token, update)
+	if err != nil {
+		return 0, err
+	}
+	if githubID == 0 {
+		githubID, err = c.createGitHubDeployment(ctx, token, update)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if err := c.Deployments.SaveGitHubDeploymentID(ctx, update.LocalDeploymentID, githubID); err != nil {
+		return 0, err
+	}
+	return githubID, nil
+}
+
+func (c *ChecksAPI) findGitHubDeployment(ctx context.Context, token string, update GitHubDeploymentUpdate) (int64, error) {
+	endpoint := fmt.Sprintf("%s/repos/%s/deployments", GitHubAPI, update.RepoFullName)
+	query := url.Values{}
+	query.Set("sha", update.CommitSHA)
+	query.Set("environment", update.Environment)
+	query.Set("per_page", "100")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+query.Encode(), nil)
+	if err != nil {
+		return 0, err
+	}
+	setGitHubHeaders(req, token)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("githubd: list github deployments: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return 0, fmt.Errorf("githubd: list github deployments: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var deployments []githubDeploymentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&deployments); err != nil {
+		return 0, fmt.Errorf("githubd: decode github deployments: %w", err)
+	}
+	marker := githubDeploymentMarker(update.LocalDeploymentID)
+	for _, deployment := range deployments {
+		if deployment.ID != 0 && strings.Contains(deployment.Description, marker) {
+			return deployment.ID, nil
+		}
+	}
+	return 0, nil
+}
+
+func (c *ChecksAPI) createGitHubDeployment(ctx context.Context, token string, update GitHubDeploymentUpdate) (int64, error) {
+	ref := update.Ref
+	if ref == "" {
+		ref = update.CommitSHA
+	}
+	payload, err := json.Marshal(githubDeploymentRequest{
+		Ref:                   ref,
+		Task:                  "gregale-deploy",
+		AutoMerge:             false,
+		RequiredContexts:      []string{},
+		Payload:               map[string]string{"gregale_deployment_id": update.LocalDeploymentID},
+		Environment:           update.Environment,
+		Description:           update.Description + " (" + githubDeploymentMarker(update.LocalDeploymentID) + ")",
+		TransientEnvironment:  update.TransientEnvironment,
+		ProductionEnvironment: update.ProductionEnvironment,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("githubd: marshal github deployment: %w", err)
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/deployments", GitHubAPI, update.RepoFullName)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	setGitHubHeaders(req, token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("githubd: create github deployment: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return 0, fmt.Errorf("githubd: create github deployment: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var deployment githubDeploymentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&deployment); err != nil {
+		return 0, fmt.Errorf("githubd: decode github deployment: %w", err)
+	}
+	if deployment.ID <= 0 {
+		return 0, fmt.Errorf("githubd: create github deployment returned empty id")
+	}
+	return deployment.ID, nil
+}
+
+func githubDeploymentMarker(localDeploymentID string) string {
+	return "gregale-deployment:" + localDeploymentID
+}
+
+func githubDeploymentState(status string) (string, bool) {
+	switch status {
+	case "pending":
+		return "queued", true
+	case "building", "imaging", "snapshotting":
+		return "in_progress", true
+	case "live":
+		return "success", true
+	case "failed":
+		return "failure", true
+	case "cancelled", "superseded":
+		return "inactive", true
+	default:
+		return "", false
+	}
 }
 
 // prodCheckName is the Check Run name stamped by the production
