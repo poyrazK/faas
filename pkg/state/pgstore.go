@@ -21729,6 +21729,101 @@ func (s *PgStore) ListDataUpstreamProbesByHostRegion(ctx context.Context, arg sq
 	return out, nil
 }
 
+// ListDataUpstreamProbeHistory aggregates probe samples for one app into
+// server-side time buckets. The raw probe table has no app_id column, so the
+// join is pinned to the app-scoped data_upstreams row by redacted host hash
+// and kind; account_id/app_id remain mandatory predicates on that row.
+//
+// Successful RTTs feed the percentiles while sample_count includes failed
+// probes as well. This lets the dashboard distinguish a bucket with a high
+// failure rate from a bucket with no probe activity without exposing raw
+// error rows or plaintext hosts.
+func (s *PgStore) ListDataUpstreamProbeHistory(ctx context.Context, accountID, appID, deploymentScope, region string, since, until time.Time, bucket time.Duration) ([]DataUpstreamProbeHistory, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			u.host_redacted_hash,
+			u.kind,
+			u.port,
+			u.scope,
+			u.deployment_scope,
+			p.region,
+			date_bin(
+				make_interval(secs => $7::double precision),
+				p.sampled_at,
+				'epoch'::timestamptz
+			) AS bucket_start,
+			(percentile_cont(0.50) WITHIN GROUP (ORDER BY p.rtt_ms)
+				FILTER (WHERE p.rtt_ms IS NOT NULL))::int AS p50_ms,
+			(percentile_cont(0.95) WITHIN GROUP (ORDER BY p.rtt_ms)
+				FILTER (WHERE p.rtt_ms IS NOT NULL))::int AS p95_ms,
+			count(*)::int AS sample_count
+		FROM data_upstreams u
+		JOIN data_upstream_probes p
+		  ON p.host_redacted_hash = u.host_redacted_hash
+		 AND p.kind = u.kind
+		WHERE u.account_id = $1::uuid
+		  AND u.app_id = $2::uuid
+		  AND ($3 = '' OR u.deployment_scope = $3)
+		  AND ($4 = '' OR p.region = $4)
+		  AND p.sampled_at >= $5
+		  AND p.sampled_at < $6
+		GROUP BY u.id, u.host_redacted_hash, u.kind, u.port,
+		         u.scope, u.deployment_scope, p.region, bucket_start
+		ORDER BY u.id, p.region, bucket_start
+	`, accountID, appID, deploymentScope, region, since, until, int64(bucket/time.Second))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]DataUpstreamProbeHistory, 0, 8)
+	for rows.Next() {
+		var (
+			hostHash, kind, scope, depScope, probeRegion string
+			port, sampleCount                            int32
+			bucketStart                                  time.Time
+			p50, p95                                     *int32
+		)
+		if err := rows.Scan(
+			&hostHash, &kind, &port, &scope, &depScope, &probeRegion,
+			&bucketStart, &p50, &p95, &sampleCount,
+		); err != nil {
+			return nil, err
+		}
+		bucketRow := DataUpstreamProbeHistoryBucket{
+			SampledAt:   bucketStart.UTC(),
+			SampleCount: int(sampleCount),
+		}
+		if p50 != nil {
+			v := int(*p50)
+			bucketRow.P50Ms = &v
+		}
+		if p95 != nil {
+			v := int(*p95)
+			bucketRow.P95Ms = &v
+		}
+		kindValue := DataUpstreamKind(kind)
+		if len(out) == 0 || out[len(out)-1].HostRedactedHash != hostHash ||
+			out[len(out)-1].Kind != kindValue ||
+			out[len(out)-1].Port != int(port) ||
+			out[len(out)-1].Scope != scope ||
+			out[len(out)-1].DeploymentScope != depScope ||
+			out[len(out)-1].Region != probeRegion {
+			out = append(out, DataUpstreamProbeHistory{
+				HostRedactedHash: hostHash,
+				Kind:             kindValue,
+				Port:             int(port),
+				Scope:            scope,
+				DeploymentScope:  depScope,
+				Region:           probeRegion,
+				Buckets:          make([]DataUpstreamProbeHistoryBucket, 0, 8),
+			})
+		}
+		out[len(out)-1].Buckets = append(out[len(out)-1].Buckets, bucketRow)
+	}
+	return out, rows.Err()
+}
+
 // PruneDataUpstreamProbesOlderThan is the retention purge. meterd
 // calls this hourly with cutoff = now() - 30 days. The partition
 // pruning on sampled_at makes the partial-partition tail O(affected

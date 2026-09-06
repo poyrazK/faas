@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.install_bind_response_deploy_branches import InstallBindResponseDeployBranches
+
 
 T = TypeVar("T", bound="InstallBindResponse")
 
@@ -16,6 +22,7 @@ class InstallBindResponse:
     binding_id: str
     repo_full_name: str
     production_branch: str
+    deploy_branches: InstallBindResponseDeployBranches | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -24,6 +31,10 @@ class InstallBindResponse:
         repo_full_name = self.repo_full_name
 
         production_branch = self.production_branch
+
+        deploy_branches: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.deploy_branches, Unset):
+            deploy_branches = self.deploy_branches.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -34,11 +45,15 @@ class InstallBindResponse:
                 "production_branch": production_branch,
             }
         )
+        if deploy_branches is not UNSET:
+            field_dict["deploy_branches"] = deploy_branches
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.install_bind_response_deploy_branches import InstallBindResponseDeployBranches
+
         d = dict(src_dict)
         binding_id = d.pop("binding_id")
 
@@ -46,10 +61,18 @@ class InstallBindResponse:
 
         production_branch = d.pop("production_branch")
 
+        _deploy_branches = d.pop("deploy_branches", UNSET)
+        deploy_branches: InstallBindResponseDeployBranches | Unset
+        if isinstance(_deploy_branches, Unset):
+            deploy_branches = UNSET
+        else:
+            deploy_branches = InstallBindResponseDeployBranches.from_dict(_deploy_branches)
+
         install_bind_response = cls(
             binding_id=binding_id,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
+            deploy_branches=deploy_branches,
         )
 
         install_bind_response.additional_properties = d

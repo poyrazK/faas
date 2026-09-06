@@ -120,6 +120,8 @@ export type { CustomStage } from './models/CustomStage.js';
 export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js';
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
 export type { DailyUsageResponse } from './models/DailyUsageResponse.js';
+export type { DataUpstreamHistoryBucket } from './models/DataUpstreamHistoryBucket.js';
+export type { DataUpstreamHistoryResponse } from './models/DataUpstreamHistoryResponse.js';
 export type { DataUpstreamListResponse } from './models/DataUpstreamListResponse.js';
 export type { DataUpstreamResponse } from './models/DataUpstreamResponse.js';
 export type { DebugCompareRequest } from './models/DebugCompareRequest.js';

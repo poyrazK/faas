@@ -63,6 +63,11 @@ func (m *MemStore) ListDataUpstreamProbesByHostRegion(_ context.Context, _ sqlc.
 	return nil, errMemStoreDataUpstreams
 }
 
+// ListDataUpstreamProbeHistory (issue #953) — MemStore stub. Postgres-only.
+func (m *MemStore) ListDataUpstreamProbeHistory(_ context.Context, _, _, _, _ string, _, _ time.Time, _ time.Duration) ([]DataUpstreamProbeHistory, error) {
+	return nil, errMemStoreDataUpstreams
+}
+
 // PruneDataUpstreamProbesOlderThan (ADR-098) — MemStore stub.
 // Postgres-only.
 func (m *MemStore) PruneDataUpstreamProbesOlderThan(_ context.Context, _ time.Time) error {

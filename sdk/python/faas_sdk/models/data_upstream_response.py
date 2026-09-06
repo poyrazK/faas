@@ -33,7 +33,8 @@ class DataUpstreamResponse:
     created_at: datetime.datetime
     last_seen_at: datetime.datetime
     host_last4: str | Unset = UNSET
-    """Compatibility field name. First 8 hex chars of host_redacted_hash; safe for operator correlation (8 chars = ~4B capacity)."""
+    """Compatibility field name. First 8 hex chars of host_redacted_hash; safe for operator correlation (8 chars =
+    ~4B capacity)."""
     scope: str | Unset = UNSET
     """ADR-090 deployment-scope filter (3..40 chars, lowercase alnum + dash). Echoes the value persisted on the
     row; absent when the default scope applies."""

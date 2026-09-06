@@ -3,6 +3,7 @@
 // Wire surface (mirrors the env handlers in handlers_env.go):
 //
 //	GET    /v1/apps/{slug}/upstreams             → listUpstreams
+//	GET    /v1/apps/{slug}/upstreams/history     → getUpstreamHistory
 //	GET    /v1/apps/{slug}/upstreams/{id}        → getUpstream
 //	PUT    /v1/apps/{slug}/upstreams             → createUpstream
 //	DELETE /v1/apps/{slug}/upstreams/{id}        → deleteUpstream
