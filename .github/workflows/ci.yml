@@ -790,6 +790,22 @@ jobs:
         # correct install location for the local-dev `go install` path.
         run: make spec-check
 
+  # Product truth gate (API-hosting roadmap Phase 0 / PR 1). The registry is
+  # the source of truth for maturity, entitlements, docs, and acceptance
+  # evidence; this job catches a hand-edited matrix or invalid claim before it
+  # can reach the customer-facing site.
+  capabilities-check:
+    name: capabilities-check (product registry + matrix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: product capability registry and generated matrix
+        run: make capabilities-check
+
   # Go SDK build + test gate (issue #266, PR 2). The SDK is a nested
   # Go module at sdk/go/ (module github.com/poyrazK/faas/sdk/go). The
   # daemon's `make test` walks the daemon's package tree only; the

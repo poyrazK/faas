@@ -933,6 +933,17 @@ subprocessor-md: ## Regenerate docs/compliance/subprocessors.md from docs/compli
 	@$(GO) run ./cmd/subprocessor-md > docs/compliance/subprocessors.md
 	@echo "subprocessor-md: docs/compliance/subprocessors.md regenerated"
 
+.PHONY: capabilities-md
+capabilities-md: ## Regenerate the API-hosting capability matrix from the product registry
+	@$(GO) run ./cmd/capabilities-md > docs/capabilities.md
+	@echo "capabilities-md: docs/capabilities.md regenerated"
+
+.PHONY: capabilities-check
+capabilities-check: ## Verify the product capability registry and generated matrix are in sync
+	@$(GO) run ./cmd/capabilities-md > /tmp/faas-capabilities.md
+	@cmp -s /tmp/faas-capabilities.md docs/capabilities.md || (echo "docs/capabilities.md is stale; run 'make capabilities-md'"; diff -u docs/capabilities.md /tmp/faas-capabilities.md || true; exit 1)
+	@echo "capabilities-check: OK"
+
 .PHONY: sdk-check
 sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Client
 	# Pure-read AST/YAML diff (no I/O, no goroutines), so the recipe
@@ -1008,6 +1019,8 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 # downstream artefact is in sync with the spec.
 .PHONY: pre-pr
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
+	@echo "==> pre-pr: capabilities-check (product registry ↔ generated matrix)"
+	@$(MAKE) capabilities-check
 	@echo "==> pre-pr: spec-check (api/openapi.yaml ↔ pkg/apid/openapi.yaml)"
 	@$(MAKE) spec-check
 	@echo "==> pre-pr: proto-check (checked-in *.pb.go matches protoc)"

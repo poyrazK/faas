@@ -47,6 +47,7 @@ was red on `unit tests (pg shard 2)`).
 | `load (1k rps hot-path)`                                    | p50 regression under load (issue #266)    | `ci.yml:~700`     |
 | `workflow-lint (actionlint)`                                | Workflow YAML semantic lint               | `ci.yml:~1175`    |
 | `runtime-contract-gate`                                     | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml:runtime-contract-gate` |
+| `capabilities-check (product registry + matrix)`             | Product capability registry ↔ generated customer matrix drift | `ci.yml:~800` |
 
 Runtime OCI vulnerability scanning is enforced by the `images.yml` builder and
 runtime matrix jobs. Those jobs scan the exact locally-built or published
