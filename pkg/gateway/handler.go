@@ -5311,14 +5311,15 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		var cancelWakePage context.CancelFunc
-		if api.AcceptsHTML(r) {
+		showWakePage := acceptsWakePage(r)
+		if showWakePage {
 			wakeCtx, cancelWakePage = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
 			defer cancelWakePage()
 		}
 		//nolint:contextcheck // request ctx at handler boundary.
 		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan)
 		if err != nil {
-			if api.AcceptsHTML(r) && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
+			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
 				// still alive. Record the visit and let the page's fetch/meta
 				// retry land on the app without a manual reload.

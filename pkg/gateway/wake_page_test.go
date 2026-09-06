@@ -78,6 +78,12 @@ func TestBrowserColdWakeServesRetryPageAndRecordsTimeline(t *testing.T) {
 	if got := rec.Header().Get(wakePageHeader); got != "1" {
 		t.Errorf("%s = %q, want 1", wakePageHeader, got)
 	}
+	if got := rec.Header().Get("X-Robots-Tag"); got != "noindex, nofollow, noarchive" {
+		t.Errorf("X-Robots-Tag = %q, want noindex, nofollow, noarchive", got)
+	}
+	if got := rec.Header().Get("Vary"); got != "Accept, Sec-Fetch-Mode, Sec-Fetch-Dest" {
+		t.Errorf("Vary = %q, want Accept, Sec-Fetch-Mode, Sec-Fetch-Dest", got)
+	}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) && pageBackend.HealthyCount(backend.app.ID) == 0 {
@@ -118,5 +124,37 @@ func TestBrowserColdWakeServesRetryPageAndRecordsTimeline(t *testing.T) {
 	}
 	if _, ok := row.data["served_at"]; !ok {
 		t.Error("page_served row missing served_at")
+	}
+}
+
+func TestAcceptsWakePageRequiresNavigationWhenFetchMetadataPresent(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		mode   string
+		dest   string
+		want   bool
+	}{
+		{name: "legacy browser fallback", method: http.MethodGet, want: true},
+		{name: "top-level navigation", method: http.MethodGet, mode: "navigate", dest: "document", want: true},
+		{name: "head navigation", method: http.MethodHead, mode: "navigate", dest: "document", want: true},
+		{name: "cors fetch", method: http.MethodGet, mode: "cors", dest: "empty", want: false},
+		{name: "script fetch", method: http.MethodGet, mode: "no-cors", dest: "script", want: false},
+		{name: "post navigation", method: http.MethodPost, mode: "navigate", dest: "document", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "http://jane-api.apps.dom/", nil)
+			req.Header.Set("Accept", "text/html")
+			if tt.mode != "" {
+				req.Header.Set("Sec-Fetch-Mode", tt.mode)
+			}
+			if tt.dest != "" {
+				req.Header.Set("Sec-Fetch-Dest", tt.dest)
+			}
+			if got := acceptsWakePage(req); got != tt.want {
+				t.Fatalf("acceptsWakePage = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
