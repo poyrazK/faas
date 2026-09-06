@@ -890,7 +890,7 @@ func TestOpsMetrics_SnapshotDiskDriftNilSafe(t *testing.T) {
 // TestOpsMetrics_WakePhaseClosedSet (issue #517 / PR-C / ADR-064) —
 // the wake-phase collector pair is registered on every daemon
 // (single-registry pattern, memory wire-opsmetrics-single-registry)
-// and pre-instantiated with the closed 13-phase × 2-result label
+// and pre-instantiated with the closed 14-phase × 2-result label
 // set so the §12 wake-latency panel surfaces zero on an idle
 // daemon. The accessor must be nil-safe on a nil receiver so
 // engine unit tests without metrics keep working.

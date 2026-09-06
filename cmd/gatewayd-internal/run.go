@@ -1721,6 +1721,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// nil. Production wires both unconditionally after
 	// deps.authMw is built in run().
 	handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	// E2 / issue #1397: browser wake pages use the same gatewayd audit
+	// writer as the auth gates so wake.page_served joins the eventual
+	// scheduler wake by its real wake_id.
+	handler.WithWakePageAudit(deps.requireAuthnAudit)
 	// ADR-089 / issue #561 PR 3: arm the per-host edge-rule
 	// matcher so ServeHTTP consults it BEFORE Backend.Lookup
 	// (handler.go:1599-1618). The resolve closure wraps

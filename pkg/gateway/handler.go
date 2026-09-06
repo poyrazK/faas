@@ -894,6 +894,16 @@ type Handler struct {
 	// h.drain == nil — see the wrapper in serveHTTPWithDrain
 	// for the nil guard.
 	drain *drain.Tracker
+	// wakePageAudit records browser wake-page visits in the shared events
+	// stream. It uses the existing narrow best-effort auditor seam so this
+	// package stays independent of cmd/gatewayd-internal and pkg/state.
+	wakePageAudit RequireAuthnAuditor
+	// wakePageMu / wakePageCycles correlate pages served before a detached
+	// wake returns with the scheduler-issued wake ID. That ID is not known
+	// until EnsureWarm/Admit completes, so pending visits are flushed by the
+	// wake leader when the real ID becomes available.
+	wakePageMu     sync.Mutex
+	wakePageCycles map[string]*wakePageCycle
 }
 
 // emptyAccountWarned is the process-wide trip flag for
@@ -957,9 +967,10 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 				}
 			},
 		),
-		burstPressure: &burstPressure{},
-		metrics:       m,
-		log:           log,
+		burstPressure:  &burstPressure{},
+		metrics:        m,
+		log:            log,
+		wakePageCycles: make(map[string]*wakePageCycle),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
 		// loaded from api.MirrorMaxConcurrentPerRule (default 5)
 		// so the per-rule VM cost circuit matches the MirrorMaxLifetimeSeconds
@@ -1142,6 +1153,14 @@ func (h *Handler) WithRouteConsumerLimiter(l *Limiter) *Handler {
 // contract as WithLimiter — do NOT expose as a config knob.
 func (h *Handler) WithAccountLimiter(l *Limiter) *Handler {
 	h.accountLimiter = l
+	return h
+}
+
+// WithWakePageAudit installs the best-effort sink for wake.page_served rows.
+// Production wires gatewayd's shared events writer; nil keeps the page usable
+// in tests and on installations that do not enable the audit stream.
+func (h *Handler) WithWakePageAudit(audit RequireAuthnAuditor) *Handler {
+	h.wakePageAudit = audit
 	return h
 }
 
@@ -5212,9 +5231,27 @@ haveApp:
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
 		// N instances before short-circuiting.
+		// Browser requests get a short edge wait so a long cold boot can
+		// render a useful page while the WakeGate's detached leader keeps
+		// booting. API clients retain the plan-derived wait budget.
+		wakeCtx := r.Context()
+		var cancelWakePage context.CancelFunc
+		if api.AcceptsHTML(r) {
+			wakeCtx, cancelWakePage = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
+			defer cancelWakePage()
+		}
 		//nolint:contextcheck // request ctx at handler boundary.
-		cold, wakeID, wakeMethod, err = h.ensureCapacity(r.Context(), app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan)
+		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan)
 		if err != nil {
+			if api.AcceptsHTML(r) && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
+				// The caller's short wait expired, but the detached wake is
+				// still alive. Record the visit and let the page's fetch/meta
+				// retry land on the app without a manual reload.
+				h.noteWakePageServed(app.ID, app.AccountID, requestIDFrom(r), time.Now())
+				writeWakePage(w, r.Header.Get("x-faas-wake-id"))
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return
+			}
 			// The per-app gate rejects excess cold-wake followers before the
 			// gateway-wide admission queue is reached. Count that outcome on
 			// the same bounded admission surface so operators can distinguish
@@ -6611,6 +6648,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		cold           bool
 		method         WakeMethod
 	)
+	h.beginWakePageCycle(appID)
 	policy := WakeAdmissionPolicyForPlan(plan)
 	werr := h.gate.WaitWithPolicy(ctx, appID, accountID, policy,
 		func() bool {
@@ -6630,6 +6668,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 						h.log.Warn("gateway: live target reconciliation failed", "app_id", appID, "err", reconcileErr)
 					}
 				} else if h.backend.HealthyCount(appID) > 0 {
+					h.finishWakePageCycle(appID, "")
 					return nil
 				}
 			}
@@ -6640,11 +6679,13 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 						return e
 					}
 					if atCapacity {
+						h.finishWakePageCycle(appID, "")
 						return nil
 					}
 					admittedWakeID = id
 					method = m
 					cold = true
+					h.finishWakePageCycle(appID, id)
 					return nil
 				}
 				id, m, atCapacity, e := h.backend.Admit(admitCtx, appID, "", scope, sched.TriggerGateway, maxConcurrency)
@@ -6652,19 +6693,30 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					return e
 				}
 				if atCapacity {
+					h.finishWakePageCycle(appID, "")
 					return nil
 				}
 				admittedWakeID = id
 				method = m
 				cold = true
+				h.finishWakePageCycle(appID, id)
 				return nil
 			}
+			var admitErr error
 			if h.admissionQueue == nil {
-				return admit(ctx)
+				admitErr = admit(ctx)
+			} else {
+				queued, wait, err := h.admissionQueue.Do(ctx, appID, string(plan), policy, admit)
+				admitErr = err
+				if h.metrics != nil {
+					h.metrics.ObserveWakeAdmission(string(plan), admitErr, queued, wait)
+				}
 			}
-			queued, wait, admitErr := h.admissionQueue.Do(ctx, appID, string(plan), policy, admit)
-			if h.metrics != nil {
-				h.metrics.ObserveWakeAdmission(string(plan), admitErr, queued, wait)
+			if admitErr != nil {
+				// The detached leader owns the wake generation. If it
+				// fails before an ID is returned, discard any page visits
+				// so a later retry cannot attach them to a different wake.
+				h.finishWakePageCycle(appID, "")
 			}
 			return admitErr
 		},

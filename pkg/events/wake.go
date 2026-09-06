@@ -10,7 +10,7 @@
 //
 // Naming follows the spec §5.1 audit-event taxonomy prefixed with
 // `wake.` so a single §12 panel selector (`kind_prefix=wake.`)
-// captures the whole wake lifecycle. The 13 kinds cover the full
+// captures the whole wake lifecycle. The wake kinds cover the full
 // wake envelope (queue → admit → boot → readiness → proxy → park /
 // build / deploy), and the legacy bare names (`state_transition`,
 // `wake_boot_error`, `park_snapshot_error`, `watchdog_timeout`,
@@ -79,6 +79,11 @@ const (
 	// callback). Payload: {wake_id, app_id, request_id,
 	// instance_id, node_id, latency_ms}.
 	WakeProxyFirstByte = "wake.proxy_first_byte"
+	// WakePageServed — gatewayd returned the browser "Waking up" page while
+	// the detached wake was still in progress. The row is joined to the
+	// eventual wake by wake_id once the scheduler returns its ID.
+	// Payload: {wake_id, app_id, request_id, served_at}.
+	WakePageServed = "wake.page_served"
 	// WakeParkStarted — schedd transitioning the instance to
 	// SNAPSHOTTING. Payload: {wake_id, app_id, instance_id,
 	// node_id, started_at}.
@@ -516,6 +521,30 @@ type ProxyFirstByte struct {
 	InstanceID string
 	NodeID     string
 	LatencyMs  int64
+}
+
+// PageServed records that a browser received the short-lived wake page before
+// the app became routable. The event is emitted after the detached wake has a
+// real wake ID, so it remains queryable through the wake timeline endpoint.
+type PageServed struct {
+	EmitAt    time.Time
+	WakeID    string
+	AppID     string
+	RequestID string
+	ServedAt  time.Time
+	AccountID string
+}
+
+func (e PageServed) Kind() string     { return WakePageServed }
+func (e PageServed) At() time.Time    { return e.EmitAt }
+func (e PageServed) Subject() *string { return addrString(e.AccountID) }
+func (e PageServed) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":    e.WakeID,
+		"app_id":     e.AppID,
+		"request_id": e.RequestID,
+		"served_at":  e.ServedAt.UTC(),
+	}
 }
 
 func (e ProxyFirstByte) Kind() string     { return WakeProxyFirstByte }

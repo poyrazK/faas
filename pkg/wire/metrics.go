@@ -3113,14 +3113,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Issue #517 / PR-C / ADR-064 — wake-phase collector pair.
 	// Counter gauges per-phase emit counts; histogram buckets
 	// the per-phase duration. Both labelled by the same closed
-	// (phase, result) tuple; the closed 13-phase set is
+	// (phase, result) tuple; the closed 14-phase set is
 	// pre-instantiated below so the §12 wake-latency panel exists
 	// from boot. The histogram buckets are sized for the wake
 	// envelope: queue→admit <100ms; boot <30s; readiness <60s;
 	// proxy <5s; the 60s tail catches pathological stalls.
 	wakePhaseEmitted := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_phase_emitted_total",
-		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 13-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
+		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 14-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
 	}, []string{"phase", "result"})
 	// vmmd already exports execution timings under wake_phase_duration_seconds.
 	// Event-store latency is a different family (and has different labels).
@@ -4012,7 +4012,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		snapshotBackoffStamp.WithLabelValues(outcome)
 	}
 	// Issue #517 / PR-C / ADR-064: pre-instantiate the closed
-	// 15-phase × 2-result label set for wakePhaseEmitted and
+	// 17-phase × 2-result label set for wakePhaseEmitted and
 	// wakePhaseDur so the §12 wake-latency panel surfaces zero
 	// on an idle daemon (mirrors the buildDuration / stripePush
 	// pre-instantiation precedents above). The phase list mirrors
@@ -4021,7 +4021,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// lock-step. result ∈ {ok, failed}.
 	for _, phase := range []string{
 		"queue_accepted", "admitted", "boot_started", "boot_completed",
-		"boot_failed", "readiness_200", "proxy_first_byte",
+		"boot_failed", "readiness_200", "proxy_first_byte", "page_served",
 		"park_started", "park_completed", "stalled",
 		"build_succeeded", "build_failed", "deploy_failed",
 		// ADR-098 C11: vmmd-side phase-decomposed wake timings

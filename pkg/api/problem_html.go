@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-// acceptsHTML reports whether the request explicitly accepts text/html with a
+// AcceptsHTML reports whether the request explicitly accepts text/html with a
 // non-zero quality value. A wildcard does not opt into the browser page: API
 // clients commonly send */* and must continue receiving problem+json.
-func acceptsHTML(r *http.Request) bool {
+func AcceptsHTML(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
@@ -31,6 +31,11 @@ func acceptsHTML(r *http.Request) bool {
 	}
 	return false
 }
+
+// acceptsHTML is retained as the package-local spelling used by older call
+// sites. New callers should use AcceptsHTML so browser negotiation can be
+// shared by success pages as well as problem responses.
+func acceptsHTML(r *http.Request) bool { return AcceptsHTML(r) }
 
 // writeProblemHTML is deliberately generic and contains no problem detail:
 // gateway errors may include hostnames, app slugs, or internal diagnostics.
