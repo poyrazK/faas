@@ -333,6 +333,14 @@ func runAppWithEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 // single-workload path, whose host-side cgroup is the authoritative cap.
 // An optional CPU value adds the matching per-workload cpu.max leaf.
 func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, cpuMillicoresOpt ...int) error {
+	return runAppWithRAMAndWorkloadEnv(m, secrets, apiEnv, sup, ramMB, singleWorkloadEndpointEnv(m.EffectivePort()), cpuMillicoresOpt...)
+}
+
+// runAppWithRAMAndWorkloadEnv is the workload-set variant of runAppWithRAM.
+// Endpoint variables are stamped after customer env and the platform PORT
+// contract, so a workload cannot redirect its sibling endpoints by setting a
+// reserved variable in its image or deployment env.
+func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = m.EffectiveWorkingDir()
@@ -350,6 +358,7 @@ func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
+	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env. The
 	// W3C trace context was shipped from the host via the vsock
 	// resume hook; the supervisor reads it via GetResumeTraceparent

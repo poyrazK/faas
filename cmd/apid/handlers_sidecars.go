@@ -148,7 +148,14 @@ func validateAndPlanSidecars(req *api.CreateDeploymentRequest, acct state.Accoun
 	if !acct.Plan.SidecarAllowed() {
 		return api.ErrSidecarNotAllowedOnPlan(acct.Plan)
 	}
-	return req.Sidecars.Validate(limits)
+	if p := req.Sidecars.Validate(limits); p != nil {
+		return p
+	}
+	mainPort := 0
+	if req.Overrides != nil {
+		mainPort = req.Overrides.Port
+	}
+	return req.Sidecars.ValidatePortConflicts(mainPort)
 }
 
 // enforceSignatureGate is the pre-flight signature-enforcement
