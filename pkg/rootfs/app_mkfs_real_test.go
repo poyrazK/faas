@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -68,7 +69,7 @@ func TestAppMkfsRealGoLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(run.sizes) != 2 || run.sizes[0] != 30 || result.SizeMB != 34 {
+	if len(run.sizes) != 1 || run.sizes[0] != 34 || result.SizeMB != 34 {
 		t.Fatalf("attempts=%v result=%+v", run.sizes, result)
 	}
 	info, err := os.Stat(output)
@@ -88,6 +89,41 @@ func TestAppMkfsRealGoLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(data, handler) {
-		t.Fatal("populated handler differs after retry")
+		t.Fatal("populated handler differs after filesystem build")
 	}
+	stats, err := exec.CommandContext(t.Context(), "debugfs", "-R", "stats", output).CombinedOutput()
+	if err != nil {
+		t.Fatalf("debugfs stats: %v: %s", err, stats)
+	}
+	freeBytes, err := ext4FreeBytes(string(stats))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freeBytes < 2*mib {
+		t.Fatalf("app image has only %d writable bytes after population, want at least %d", freeBytes, 2*mib)
+	}
+	mkdirOutput, err := exec.CommandContext(t.Context(), "debugfs", "-w", "-R", "mkdir /work", output).CombinedOutput()
+	if err != nil || strings.Contains(strings.ToLower(string(mkdirOutput)), "no space left") {
+		t.Fatalf("app image cannot allocate overlay work directory: %v: %s", err, mkdirOutput)
+	}
+}
+
+func ext4FreeBytes(stats string) (int64, error) {
+	var freeBlocks, blockSize int64
+	for _, line := range strings.Split(stats, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		switch strings.TrimSuffix(fields[0], ":") + " " + strings.TrimSuffix(fields[1], ":") {
+		case "Free blocks":
+			freeBlocks, _ = strconv.ParseInt(fields[2], 10, 64)
+		case "Block size":
+			blockSize, _ = strconv.ParseInt(fields[2], 10, 64)
+		}
+	}
+	if freeBlocks == 0 || blockSize == 0 {
+		return 0, fmt.Errorf("missing ext4 free-block stats: %q", stats)
+	}
+	return freeBlocks * blockSize, nil
 }
