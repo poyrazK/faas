@@ -3677,6 +3677,8 @@ type Event struct {
 //     absent-value convention.
 type WakeBootMeta struct {
 	Trigger            string // pkg/sched/triggers.go closed enum; "" if absent
+	Method             string // restore or cold_boot; "" if absent
+	Tier               string // warm, init, or cold_boot_fallback; "" if absent
 	QueuedCount        int    // ledger.Concurrency at admit; 0 if absent
 	ConcurrencyAtAdmit int    // same reading; 0 is the cold-start case
 	AtCapacity         bool   // PR-A — true when admitted at the plan's per-app MaxConcurrency ceiling

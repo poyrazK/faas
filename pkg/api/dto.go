@@ -4246,6 +4246,8 @@ type AppUsageSummaryResponse struct {
 // (jsonb-absent vs jsonb-present-and-zero) and the explicit
 // AtCapacityPresent bit, which the HTML renderer emits as em-dash
 // when false.
+// WakeID / Method / Tier identify the wake attempt and selected
+// snapshot tier so clients can aggregate latency by tier.
 //
 // ReadyInMS = -1 sentinel encodes "still booting or rejected, no
 // boot_completed row to compute from" — the JSON wire shape picks
@@ -4254,10 +4256,13 @@ type AppUsageSummaryResponse struct {
 // on -1, mirroring the HTML page cell-empty branch
 // (pkg/dashboard/views/wake_timeline.go:158).
 type WakeTimelineJSONRow struct {
+	WakeID             string `json:"wake_id,omitempty"`
 	Kind               string `json:"kind"`
 	State              string `json:"state"`
 	At                 string `json:"at"` // RFC3339
 	Trigger            string `json:"trigger,omitempty"`
+	Method             string `json:"method,omitempty"`
+	Tier               string `json:"tier,omitempty"`
 	QueuedCount        int32  `json:"queued_count,omitempty"`
 	ConcurrencyAtAdmit int32  `json:"concurrency_at_admit,omitempty"`
 	AtCapacity         bool   `json:"at_capacity"`

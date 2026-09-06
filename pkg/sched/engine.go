@@ -2693,6 +2693,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		trigger:            trigger,
 		queuedCount:        concurrency,
 		concurrencyAtAdmit: concurrency,
+		chosenTier:         chosenTier,
 		atCapacity:         atCapacity,
 	}
 	// issue #517 / PR-C / ADR-064 — emit wake.queue_accepted at
@@ -2809,6 +2810,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			InstanceID:         bootInput.insID,
 			NodeID:             bootInput.nodeID,
 			Method:             method,
+			Tier:               bootInput.chosenTier,
 			RequestedAt:        bootInput.startedAt, // best-effort stamp
 			Trigger:            bootInput.trigger,
 			QueuedCount:        bootInput.queuedCount,
@@ -3131,6 +3133,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			InstanceID:         bootInput.insID,
 			NodeID:             bootInput.nodeID,
 			Method:             completedMethod,
+			Tier:               bootInput.chosenTier,
 			StartedAt:          bootInput.startedAt,
 			CompletedAt:        now,
 			Trigger:            bootInput.trigger,
@@ -3204,6 +3207,7 @@ type bootInput struct {
 	trigger            string
 	queuedCount        int
 	concurrencyAtAdmit int
+	chosenTier         string
 	// atCapacity (PR-A) is the bool returned by admitGate's
 	// wakeAdmit branch — true when the pre-admit ledger reading is
 	// maxConc-1 and this admit pushes the post-admit ledger to the

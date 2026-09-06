@@ -4,6 +4,7 @@ package state_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(original.CanaryStages) != string(customStages) {
+	if !jsonEqual(original.CanaryStages, customStages) {
 		t.Fatalf("deployment projection lost custom canary stages: %s", original.CanaryStages)
 	}
 	retry, err := s.RetryDeploymentFromStage(ctx, original.ID, state.StageSecurityScan)
@@ -68,7 +69,7 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 	if !retry.RollbackOn5xx || retry.Reason != original.Reason || retry.Tag != original.Tag || retry.DeployedBy != original.DeployedBy || retry.PRNumber != original.PRNumber || retry.Priority != original.Priority {
 		t.Fatalf("retry lost policy or annotation metadata: %+v", retry)
 	}
-	if retry.CanaryPreset != "custom" || retry.CanaryStep != 0 || retry.CanaryTotalSteps != 3 || retry.TrafficPercent != 5 || string(retry.CanaryStages) != string(customStages) {
+	if retry.CanaryPreset != "custom" || retry.CanaryStep != 0 || retry.CanaryTotalSteps != 3 || retry.TrafficPercent != 5 || !jsonEqual(retry.CanaryStages, customStages) {
 		t.Fatalf("retry did not restart custom canary: %+v", retry)
 	}
 	if retry.CanaryStepStartedAt == nil || !retry.CanaryStepStartedAt.After(oldStarted) || retry.RolloutState != "pending" || retry.RolloutStartedAt != nil {
@@ -93,4 +94,12 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 	if err != nil || old.Status != state.DeployFailed {
 		t.Fatalf("original changed: %+v %v", old, err)
 	}
+}
+
+func jsonEqual(a, b []byte) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
 }
