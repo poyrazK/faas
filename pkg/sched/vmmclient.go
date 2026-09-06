@@ -254,11 +254,13 @@ type StatsSnapshot struct {
 // zero / absent shape and the poller falls back to durable state for
 // the timestamp.
 type VMInstanceStat struct {
-	InstanceID    string
-	LeaseUID      int32
-	HostIP        string
-	ResidentBytes *int64
-	CPUPct        *float64
+	InstanceID        string
+	LeaseUID          int32
+	HostIP            string
+	ResidentBytes     *int64
+	DiskUsedBytes     *int64
+	DiskCapacityBytes *int64
+	CPUPct            *float64
 	// CPUSeconds is the cumulative CPU-seconds reading from
 	// vmmd's cpustats cache (issue #279 / PR-B). nil on the
 	// wire when the cache has no baseline for the instance
@@ -972,6 +974,14 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 	if v := in.GetResidentBytes(); v != nil {
 		b := v.GetValue()
 		row.ResidentBytes = &b
+	}
+	if v := in.GetDiskUsedBytes(); v != nil {
+		b := v.GetValue()
+		row.DiskUsedBytes = &b
+	}
+	if v := in.GetDiskCapacityBytes(); v != nil {
+		b := v.GetValue()
+		row.DiskCapacityBytes = &b
 	}
 	if v := in.GetCpuPct(); v != nil {
 		c := v.GetValue()

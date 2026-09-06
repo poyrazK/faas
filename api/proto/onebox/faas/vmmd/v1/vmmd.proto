@@ -1011,6 +1011,10 @@ message InstanceStats {
   // (root → guest = ingress). Same wrapper/regression contract as
   // net_tx_bytes; meterd computes interval deltas from both counters.
   google.protobuf.Int64Value net_rx_bytes = 13;
+  // Writable application filesystem usage sampled by guest-init. Wrapper
+  // fields keep an unavailable sample distinct from a real zero.
+  google.protobuf.Int64Value disk_used_bytes = 14;
+  google.protobuf.Int64Value disk_capacity_bytes = 15;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
