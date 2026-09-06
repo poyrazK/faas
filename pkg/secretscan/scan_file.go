@@ -89,7 +89,7 @@ func scanOneLine(path string, lineNo int, line []byte, out []Finding, inPEMBlock
 	}
 	// Try the env-parser shape first: KEY=VALUE.
 	if key, value, ok := splitKeyValue(line, '='); ok {
-		if f := matchValue(path, lineNo, key, value, inPEMBlock); f != nil {
+		if f := matchSourceValue(path, lineNo, key, value, inPEMBlock); f != nil {
 			out = append(out, *f)
 		}
 		return out
@@ -98,13 +98,13 @@ func scanOneLine(path string, lineNo int, line []byte, out []Finding, inPEMBlock
 	// if the KEY on the left is key-shaped — that filter keeps URL values
 	// from accidentally splitting on the host:port boundary.
 	if key, value, ok := splitKeyValueColon(trimmed); ok {
-		if f := matchValue(path, lineNo, key, value, inPEMBlock); f != nil {
+		if f := matchSourceValue(path, lineNo, key, value, inPEMBlock); f != nil {
 			out = append(out, *f)
 		}
 		return out
 	}
 	// Whole-line value candidate (PEM armour, base64 blob, etc.).
-	if f := matchValue(path, lineNo, "", trimmed, inPEMBlock); f != nil {
+	if f := matchSourceValue(path, lineNo, "", trimmed, inPEMBlock); f != nil {
 		out = append(out, *f)
 	}
 	return out
