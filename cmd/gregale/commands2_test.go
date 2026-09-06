@@ -507,8 +507,23 @@ func TestCmdConnect_UnknownServiceErrors(t *testing.T) {
 	_ = withRecorder(t)
 	t.Setenv("FAAS_TOKEN", "tok")
 	t.Setenv("FAAS_API", "https://api.example.test")
+	stderr, restore := captureStderr(t)
+	defer restore()
+
 	if code := cmdConnect([]string{"gitlab"}); code != 1 {
 		t.Errorf("cmdConnect exit = %d, want 1", code)
+	}
+	msg := stderr.String()
+	for _, want := range []string{
+		"unknown service",
+		"gitlab",
+		svcGithub,
+		svcRepo,
+		"<owner>/<name>",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("stderr missing %q\n--- stderr ---\n%s", want, msg)
+		}
 	}
 }
 

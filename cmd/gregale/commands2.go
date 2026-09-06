@@ -2805,7 +2805,7 @@ func boolPtr(b bool) *bool { return &b }
 // docs/adr/0XX-megab-trust-root.md.
 func cmdConnect(args []string) int {
 	if len(args) < 1 {
-		PrintUsage(os.Stderr, "usage: gregale connect {github|repo <owner>/<name>}", "connect")
+		PrintUsage(os.Stderr, "usage: gregale connect [--json] {github|repo <owner>/<name>}", "connect")
 		return 1
 	}
 	switch args[0] {
@@ -2842,7 +2842,11 @@ func cmdConnect(args []string) int {
 		// flow is server-side, no API key required).
 		return cmdConnectRepo(args[1:])
 	default:
-		PrintFail(os.Stderr, "unknown service %q (supported: %s, %s)", args[0], svcGithub, svcRepo)
+		// Shape annotation per surface: github takes no args, repo
+		// takes a positional <owner>/<name>. Mirrors the no-arg usage
+		// line above so a customer who only saw this message would
+		// know whether to type a repo name or a service name next.
+		PrintFail(os.Stderr, "unknown service %q (supported: %s (no args), %s <owner>/<name>)", args[0], svcGithub, svcRepo)
 		return 1
 	}
 }
