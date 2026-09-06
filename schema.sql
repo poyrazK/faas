@@ -1982,6 +1982,7 @@ CREATE TABLE public.deployments (
     source_path text,
     source_root text,
     source_bytes bigint,
+    source_sha256 text,
     handler text,
     log_path text,
     error_code text,

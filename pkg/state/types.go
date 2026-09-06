@@ -1391,8 +1391,12 @@ type Deployment struct {
 	SourcePath  string // tarball spool path (kind=tarball|dockerfile)
 	SourceBytes int64
 	SourceRoot  string // repository-relative build root inside SourcePath; empty = archive root
-	Handler     string // function handler (kind=tarball when type=function)
-	LogPath     string // build log spool path
+	// SourceSHA256 is the digest of the exact source archive handed to the
+	// builder. Empty is retained for deployments created before the integrity
+	// column was introduced.
+	SourceSHA256 string
+	Handler      string // function handler (kind=tarball when type=function)
+	LogPath      string // build log spool path
 	// SourceURL is the canonical upstream URL the build was triggered
 	// from (Tier 3 / issue #197 B3.10). For githubd-triggered deploys
 	// this is the repo + branch; for registry pulls it is the OCI

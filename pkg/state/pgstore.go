@@ -4718,7 +4718,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		d.TrafficPercent = 100
 	}
 	row := tx.QueryRow(ctx,
-		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, source_url, commit_sha,
+		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, source_sha256, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
 		                          override_liveness_probe,
 			                          sidecars,
@@ -4731,12 +4731,12 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
 		                          full_rootfs_allow_auto, full_rootfs_override)
-		 values (coalesce(nullif($35, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', $19, $20, $21, $22, coalesce(nullif($23, ''), 'default'),
-		         nullif($24, '')::uuid, coalesce(nullif($25, ''), 'api'), nullif($26, '')::inet, nullif($27, ''),
-		         $28, $29, $30, nullif($31, 0), $32, $33, $34)
+		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
+		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
+		         $29, $30, $31, nullif($32, 0), $33, $34, $35)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
-		nullString(d.Handler), nullString(d.LogPath),
+		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
 		nullString(d.SourceURL), nullString(d.CommitSHA),
 		d.OverrideEntrypoint, d.OverrideCmd,
 		nullJSONRaw(d.OverrideEnv), nullJSONRaw(d.OverrideEnvSecrets),
@@ -6901,7 +6901,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		return Deployment{}, fmt.Errorf("RetryDeploymentFromStage: encode stage_state seed: %w", err)
 	}
 	row := tx.QueryRow(ctx,
-		`insert into deployments (app_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, source_url, commit_sha,
+		`insert into deployments (app_id, image_digest, kind, source_path, source_root, source_bytes, source_sha256, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
 		                          override_liveness_probe,
 		                          sidecars,
@@ -6916,19 +6916,19 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
 		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', $19, $20,
-		         $21,
-		         coalesce(nullif($22, ''), 'none'), $23, $24, $25, $26,
-		         coalesce(nullif($27, ''), 'pending'), $28,
-		         coalesce(nullif($29, ''), 'default'),
-		         nullif($30, '')::uuid, coalesce(nullif($31, ''), 'api'), nullif($32, '')::inet, nullif($33, ''),
-		         $34, $35, $36, nullif($37, 0),
-		         $38,
-		         $39, $40, $41, $42)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
+		         $22,
+		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
+		         coalesce(nullif($28, ''), 'pending'), $29,
+		         coalesce(nullif($30, ''), 'default'),
+		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
+		         $35, $36, $37, nullif($38, 0),
+		         $39,
+		         $40, $41, $42, $43)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
-		nullString(newDep.Handler), nullString(newDep.LogPath),
+		nullString(newDep.SourceSHA256), nullString(newDep.Handler), nullString(newDep.LogPath),
 		nullString(newDep.SourceURL), nullString(newDep.CommitSHA),
 		newDep.OverrideEntrypoint, newDep.OverrideCmd,
 		nullJSONRaw(newDep.OverrideEnv), nullJSONRaw(newDep.OverrideEnvSecrets),
@@ -17331,7 +17331,7 @@ var _ = appsSelectColumns
 // and ListAllDeployments.
 const deploymentSelectColumnsWithRootfs = `
 	id, app_id, coalesce(build_id::text,''), image_digest, kind,
-		coalesce(source_path,''), coalesce(source_root,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+		coalesce(source_path,''), coalesce(source_root,''), coalesce(source_bytes,0), coalesce(source_sha256,''), coalesce(handler,''), coalesce(log_path,''),
 	coalesce(rootfs_path,''), coalesce(rootfs_key,''), coalesce(rootfs_bytes,0),
 	status, coalesce(error,''), coalesce(error_code,''),
 	coalesce(error_hint,''), coalesce(error_why,''), coalesce(error_fix,''),
@@ -17386,7 +17386,7 @@ var _ = deploymentSelectColumnsWithRootfs
 // the scanDeployments helper stays in lockstep across all read paths.
 const deploymentSelectColumnsQualified = `
 	d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
-		coalesce(d.source_path,''), coalesce(d.source_root,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
+		coalesce(d.source_path,''), coalesce(d.source_root,''), coalesce(d.source_bytes,0), coalesce(d.source_sha256,''), coalesce(d.handler,''), coalesce(d.log_path,''),
 	coalesce(d.rootfs_path,''), coalesce(d.rootfs_key,''), coalesce(d.rootfs_bytes,0),
 	d.status, coalesce(d.error,''), coalesce(d.error_code,''),
 	coalesce(d.error_hint,''), coalesce(d.error_why,''), coalesce(d.error_fix,''),
@@ -17492,7 +17492,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	// constraint, not on the scan side. The omitempty on the JSON
 	// tag keeps the wire clean when the value is empty.
 	if err := row.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
-		&d.SourcePath, &d.SourceRoot, &d.SourceBytes, &d.Handler, &d.LogPath,
+		&d.SourcePath, &d.SourceRoot, &d.SourceBytes, &d.SourceSHA256, &d.Handler, &d.LogPath,
 		rootfsPath, rootfsKey, rootfsBytes,
 		&statusStr, &d.Error, &d.ErrorCode,
 		&d.ErrorHint, &d.ErrorWhy, &d.ErrorFix,

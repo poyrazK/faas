@@ -320,6 +320,8 @@ func (d *VMMDriver) WaitForCompletion(ctx context.Context, h BuildHandle) (Build
 		res.FailureClass = done.FailureClass
 		res.FailureCode = done.FailureCode
 		res.FailurePkg = done.FailurePkg
+		res.BuildkitVer = done.BuildkitVersion
+		res.RailpackVer = done.RailpackVersion
 	}
 	if exitCode == 0 {
 		if h.DependencyCacheKey != "" {

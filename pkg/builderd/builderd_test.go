@@ -58,6 +58,7 @@ type fakeVM struct {
 
 var testBuildEnvironment = BuildEnvironment{
 	BuilderBaseIdentity: "sha256:test-builder-base",
+	BaseDigest:          "sha256:test-builder-image",
 	TargetPlatform:      "linux/amd64",
 }
 
@@ -1424,6 +1425,9 @@ func TestProcessOne_CacheHitPersistsProvenance(t *testing.T) {
 	if prov.SourceSHA256 != hash {
 		t.Errorf("SourceSHA256 = %q, want %q", prov.SourceSHA256, hash)
 	}
+	if prov.BaseDigest != testBuildEnvironment.BaseDigest {
+		t.Errorf("BaseDigest = %q, want %q", prov.BaseDigest, testBuildEnvironment.BaseDigest)
+	}
 	if prov.Plan != string(api.PlanPro) {
 		t.Errorf("Plan = %q, want %q", prov.Plan, api.PlanPro)
 	}
@@ -1455,7 +1459,7 @@ func TestProcessOne_FreshBuildPersistsProvenance(t *testing.T) {
 	fvm := &fakeVM{
 		// fakeVM.WaitForCompletion returns f.out; pre-set it so the
 		// spawn path produces the canned layer path.
-		out: BuildOutcome{OCIImage: layerPath, ExitCode: 0, LogTailBytes: 0},
+		out: BuildOutcome{OCIImage: layerPath, ExitCode: 0, LogTailBytes: 0, BuildkitVer: "0.32.2", RailpackVer: "0.38.0"},
 	}
 	notif := &fakeNotifier{}
 	b := New(store, notif, fvm, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -1472,6 +1476,19 @@ func TestProcessOne_FreshBuildPersistsProvenance(t *testing.T) {
 	}
 	if prov.Plan != string(api.PlanPro) {
 		t.Errorf("Plan = %q, want %q", prov.Plan, api.PlanPro)
+	}
+	if prov.BuildkitVer != "0.32.2" || prov.RailpackVer != "0.38.0" {
+		t.Errorf("toolchain = (%q, %q), want (0.32.2, 0.38.0)", prov.BuildkitVer, prov.RailpackVer)
+	}
+	if prov.BaseDigest != testBuildEnvironment.BaseDigest {
+		t.Errorf("BaseDigest = %q, want %q", prov.BaseDigest, testBuildEnvironment.BaseDigest)
+	}
+	cached, ok := c.LookupBuild(testBuildCacheRecipe(prov.SourceSHA256, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal))
+	if !ok {
+		t.Fatal("fresh build was not cached")
+	}
+	if cached.Toolchain.BuildkitVer != prov.BuildkitVer || cached.Toolchain.RailpackVer != prov.RailpackVer {
+		t.Errorf("cached toolchain = (%q, %q), want (%q, %q)", cached.Toolchain.BuildkitVer, cached.Toolchain.RailpackVer, prov.BuildkitVer, prov.RailpackVer)
 	}
 }
 

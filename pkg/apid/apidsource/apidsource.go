@@ -34,9 +34,12 @@ package apidsource
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -222,6 +225,20 @@ func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path
 	return nil
 }
 
+func hashSourceFile(path string) (string, error) {
+	//nolint:forbidigo // SourcePath is a server-created spool path.
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open source archive for hashing: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("hash source archive: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // Enqueue runs the canonical "create deployment + build + notify"
 // flow described in this file's header.
 //
@@ -281,9 +298,14 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		deploymentID, buildID = githubDeliveryIDs(p.DeliveryID, p.AppID)
 	}
 	var sourceErr error
+	sourceSHA256 := ""
 	if p.RetryOf != "" {
 		sourceErr = publishRetrySource(ctx, sourceStorage, buildID, p)
 	} else {
+		sourceSHA256, err = hashSourceFile(p.SourcePath)
+		if err != nil {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source integrity: %w", err)
+		}
 		sourceErr = publishSource(ctx, sourceStorage, buildID, p.SourcePath)
 	}
 	if err := sourceErr; err != nil {
@@ -311,17 +333,18 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	d, err := createDeployment(ctx, store, p, state.Deployment{
-		ID:          deploymentID,
-		AppID:       p.AppID,
-		Kind:        p.Kind,
-		SourcePath:  p.SourcePath,
-		SourceBytes: p.SourceBytes,
-		SourceRoot:  p.SourceRoot,
-		SourceURL:   p.SourceURL,
-		CommitSHA:   p.CommitSHA,
-		Scope:       p.Scope,
-		Handler:     p.Handler,
-		Status:      state.DeployPending,
+		ID:           deploymentID,
+		AppID:        p.AppID,
+		Kind:         p.Kind,
+		SourcePath:   p.SourcePath,
+		SourceBytes:  p.SourceBytes,
+		SourceRoot:   p.SourceRoot,
+		SourceSHA256: sourceSHA256,
+		SourceURL:    p.SourceURL,
+		CommitSHA:    p.CommitSHA,
+		Scope:        p.Scope,
+		Handler:      p.Handler,
+		Status:       state.DeployPending,
 		// Issue #606 / SAFE-RELEASES-E.1: actor columns propagated
 		// onto the deployment row at INSERT time. The pgstore
 		// nullString helper collapses "" → NULL for the nullable

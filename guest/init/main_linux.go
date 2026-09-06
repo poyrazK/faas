@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -1655,13 +1656,16 @@ func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
 	if logTail == "" && runErr != nil {
 		logTail = runErr.Error()
 	}
+	buildkitVersion, railpackVersion := builderToolchainVersions()
 	done := api.BuildDone{
-		SchemaVersion: 1,
-		BuildID:       m.BuildID,
-		ExitCode:      exitCode,
-		OCIImagePath:  m.OutDir + "/image.tar",
-		LogTail:       logTail,
-		FailureClass:  fc,
+		SchemaVersion:   1,
+		BuildID:         m.BuildID,
+		ExitCode:        exitCode,
+		OCIImagePath:    m.OutDir + "/image.tar",
+		LogTail:         logTail,
+		FailureClass:    fc,
+		BuildkitVersion: buildkitVersion,
+		RailpackVersion: railpackVersion,
 	}
 	if data, mErr := json.Marshal(done); mErr == nil {
 		if f, openErr := os.OpenFile(api.BuildDonePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); openErr != nil {
@@ -1700,6 +1704,30 @@ func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
 		return runErr
 	}
 	return nil
+}
+
+func builderToolchainVersions() (string, string) {
+	return toolVersion("/usr/local/bin/buildctl"), toolVersion("/usr/local/bin/railpack")
+}
+
+func toolVersion(path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return normalizeToolVersion(string(out))
+}
+
+var semverPattern = regexp.MustCompile(`(?:^|[^0-9])v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)`)
+
+func normalizeToolVersion(output string) string {
+	match := semverPattern.FindStringSubmatch(output)
+	if len(match) == 2 {
+		return match[1]
+	}
+	return strings.TrimSpace(output)
 }
 
 // classifyTail is a debug-only helper used to shorten long log tails in

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,8 +25,17 @@ import (
 // CacheEntry points to a cached OCI tarball and its size. Build handoffs use a
 // hard-link lease so canonical entries can be evicted without data loss.
 type CacheEntry struct {
-	Path  string
-	Bytes int64
+	Path      string
+	Bytes     int64
+	Toolchain CacheToolchain
+}
+
+// CacheToolchain records the versions observed inside the VM that produced a
+// cache artifact. It is optional so cache entries written before provenance
+// metadata was introduced remain readable.
+type CacheToolchain struct {
+	BuildkitVer string `json:"buildkit_version,omitempty"`
+	RailpackVer string `json:"railpack_version,omitempty"`
 }
 
 // Cache stores produced OCI tarballs. Deployment builds use a versioned
@@ -127,7 +137,11 @@ func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (Cache
 	if err != nil || got != strings.TrimSpace(string(digest)) {
 		return CacheEntry{}, false
 	}
-	return CacheEntry{Path: p, Bytes: st.Size()}, true
+	var toolchain CacheToolchain
+	if metadata, err := os.ReadFile(filepath.Join(filepath.Dir(p), "toolchain.json")); err == nil {
+		_ = json.Unmarshal(metadata, &toolchain)
+	}
+	return CacheEntry{Path: p, Bytes: st.Size(), Toolchain: toolchain}, true
 }
 
 // checksumPath returns the canonical sidecar path for (sourceHash, fw, plan).
@@ -176,10 +190,10 @@ func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.storeKey(sourceHash, fw, plan, layerPath, bytes)
+	return c.storeKey(sourceHash, fw, plan, layerPath, bytes, CacheToolchain{})
 }
 
-func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {
+func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64, toolchain CacheToolchain) error {
 	if c == nil || c.root == "" {
 		return errors.New("cache: not configured")
 	}
@@ -192,6 +206,11 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if _, ok := c.lookupKey(sourceHash, fw, plan); ok {
 		for _, path := range []string{dst, c.checksumPath(sourceHash, fw, plan), filepath.Join(filepath.Dir(dst), "artifact.sha256")} {
 			if err := os.Chmod(path, cacheArtifactMode); err != nil {
+				return err
+			}
+		}
+		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" {
+			if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 				return err
 			}
 		}
@@ -269,6 +288,11 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), hex.EncodeToString(digest.Sum(nil))); err != nil {
 		return err
 	}
+	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" {
+		if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
+			return err
+		}
+	}
 	return c.writeSidecar(sourceHash, fw, plan)
 }
 
@@ -321,6 +345,14 @@ func writeCacheSidecar(cs, value string) error {
 		return fmt.Errorf("cache: sidecar rename: %w", err)
 	}
 	return nil
+}
+
+func writeCacheMetadata(path string, toolchain CacheToolchain) error {
+	data, err := json.Marshal(toolchain)
+	if err != nil {
+		return fmt.Errorf("cache: marshal toolchain metadata: %w", err)
+	}
+	return writeCacheSidecar(path, string(data))
 }
 
 func (c *Cache) entryPath(sourceHash string, fw Framework, plan api.Plan) string {

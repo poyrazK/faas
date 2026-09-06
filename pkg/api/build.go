@@ -97,4 +97,8 @@ type BuildDone struct {
 	// dep_install_failed (npm / pip / go / cargo / bundler).
 	// Empty for every other code.
 	FailurePkg string `json:"failure_pkg,omitempty"`
+	// These are the exact tool versions guest-init observed in the builder
+	// image. They remain empty when the VM dies before the probes can run.
+	BuildkitVersion string `json:"buildkit_version,omitempty"`
+	RailpackVersion string `json:"railpack_version,omitempty"`
 }
