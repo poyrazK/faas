@@ -664,18 +664,17 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// next cold boot. Use the produced tarball's on-disk size — that's
 	// the truth we'll snapshot, not LogTailBytes (which only counts the
 	// in-VM build log tail).
-	st, statErr := os.Stat(out.OCIImage)
+	artifactBytes, statErr := statBuildArtifact(out.OCIImage)
 	if statErr != nil {
-		b.markFailed(ctx, build, state.FailureInfra, "stat produced layer: "+statErr.Error(), buildStart)
+		b.markFailed(ctx, build, state.FailureInfra, "validate produced layer: "+statErr.Error(), buildStart)
 		return BuildResult{}, statErr
 	}
-	artifactBytes := st.Size()
 	lim, known := api.LimitsFor(acct.Plan)
 	if !known {
 		b.markFailed(ctx, build, state.FailureInfra, "unknown plan: "+string(acct.Plan), buildStart)
 		return BuildResult{}, errors.New("builderd: unknown plan")
 	}
-	if sizeMB := (st.Size() + (1 << 20) - 1) >> 20; sizeMB > int64(lim.AppLayerMaxMB) {
+	if sizeMB := (artifactBytes + (1 << 20) - 1) >> 20; sizeMB > int64(lim.AppLayerMaxMB) {
 		msg := fmt.Sprintf("app layer %d MB exceeds plan cap %d MB", sizeMB, lim.AppLayerMaxMB)
 		b.markFailed(ctx, build, state.FailureUserError, msg, buildStart)
 		return BuildResult{}, errors.New("builderd: " + msg)
