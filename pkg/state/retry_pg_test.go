@@ -63,7 +63,7 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retry.SourcePath != original.SourcePath || retry.SourceRoot != original.SourceRoot || !retry.FullRootfsAllowAuto || retry.FullRootfsOverride == nil || !*retry.FullRootfsOverride || string(retry.Workflows) != string(original.Workflows) {
+	if retry.SourcePath != original.SourcePath || retry.SourceRoot != original.SourceRoot || !retry.FullRootfsAllowAuto || retry.FullRootfsOverride == nil || !*retry.FullRootfsOverride || !jsonEqual(retry.Workflows, original.Workflows) {
 		t.Fatalf("retry lost input settings: %+v", retry)
 	}
 	if !retry.RollbackOn5xx || retry.Reason != original.Reason || retry.Tag != original.Tag || retry.DeployedBy != original.DeployedBy || retry.PRNumber != original.PRNumber || retry.Priority != original.Priority {

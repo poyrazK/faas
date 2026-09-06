@@ -82,7 +82,7 @@ echo "Expected:"
 echo "    Opening https://$BOX/dashboard/account to connect GitHub…"
 echo "    → browser opens /dashboard/account"
 echo "    → click 'Connect GitHub' → GitHub App install → repo picker"
-echo "    → install + grant Contents:read + Checks:write (ADR-012 least-privilege)"
+echo "    → install + grant Contents:read + Checks:write + Issues:write (ADR-012 least-privilege)"
 read -rp "Press <enter> when the GitHub App is installed on $REPO… "
 
 # --- 3. Bind the repo via CLI -----------------------------------------
@@ -181,7 +181,7 @@ echo "All acceptance gates satisfied:"
 echo "  1. push to main auto-deploys              ✓ (step 4)"
 echo "  2. commit status written back via Checks  ✓ (step 4)"
 echo "  3. dashboard connect-repo → live URL e2e  ✓ (steps 2-5)"
-echo "  4. least-privilege scopes verified        ✓ (ADR-012: Contents:read + Checks:write)"
+echo "  4. least-privilege scopes verified        ✓ (ADR-012: Contents:read + Checks:write + Issues:write)"
 echo "  5. V6 — two restores share no UUID         ✓ (step 6)"
 echo "  6. Postgres unix-socket only              ✓ (step 7)"
 echo

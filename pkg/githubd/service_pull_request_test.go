@@ -122,6 +122,7 @@ type previewRecorder struct {
 	checks   []recordedCheck
 	forks    []recordedFork
 	destroys []recordedDestroyComment
+	comments []recordedPreviewComment
 }
 
 type recordedCheck struct {
@@ -140,6 +141,13 @@ type recordedDestroyComment struct {
 	prNumber   int
 }
 
+type recordedPreviewComment struct {
+	installationID int64
+	repo, marker   string
+	body           string
+	prNumber       int
+}
+
 func (p *previewRecorder) writeCheck(_ context.Context, repo, sha string, phase githubdgrpc.CheckPhase, previewURL, summary string) error {
 	p.checks = append(p.checks, recordedCheck{repo: repo, sha: sha, phase: phase, previewURL: previewURL, summary: summary})
 	return nil
@@ -152,6 +160,11 @@ func (p *previewRecorder) writeForkRefused(_ context.Context, repo, sha, summary
 
 func (p *previewRecorder) writeDestroyComment(_ context.Context, repo string, prNumber int, body string) error {
 	p.destroys = append(p.destroys, recordedDestroyComment{repo: repo, body: body, prNumber: prNumber})
+	return nil
+}
+
+func (p *previewRecorder) writePreviewComment(_ context.Context, installationID int64, repo string, prNumber int, marker, body string) error {
+	p.comments = append(p.comments, recordedPreviewComment{installationID: installationID, repo: repo, prNumber: prNumber, marker: marker, body: body})
 	return nil
 }
 
@@ -525,6 +538,28 @@ func TestHandlePullRequest_Opened_NoDestroyComment(t *testing.T) {
 	}
 	if got := len(rec.destroys); got != 0 {
 		t.Errorf("destroys after open = %d, want 0 (open-arm must not post a destroy comment)", got)
+	}
+}
+
+func TestHandlePullRequest_UpsertsStablePreviewComment(t *testing.T) {
+	rig := newPreviewRig(t)
+	svc, rec := newPreviewService(t, rig)
+	svc.WritePreviewCommentForInstallation = rec.writePreviewComment
+
+	if _, err := svc.handlePullRequest(context.Background(), pullRequestOpenedBody(42, "deadbeef00000000000000000000000000000000")); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := svc.handlePullRequest(context.Background(), pullRequestClosedBody(42, "deadbeef00000000000000000000000000000000")); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if len(rec.comments) != 2 {
+		t.Fatalf("comments = %d, want 2 (open + close)", len(rec.comments))
+	}
+	if rec.comments[0].marker != "<!-- gregale-preview:pr-42-demo-app -->" || !strings.Contains(rec.comments[0].body, "queued") {
+		t.Errorf("open comment = %+v, want stable marker + queued status", rec.comments[0])
+	}
+	if rec.comments[1].marker != rec.comments[0].marker || !strings.Contains(rec.comments[1].body, "closed") {
+		t.Errorf("close comment = %+v, want same marker + closed status", rec.comments[1])
 	}
 }
 
