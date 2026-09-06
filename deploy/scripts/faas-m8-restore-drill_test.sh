@@ -23,11 +23,14 @@
 set -euo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/faas-m8-restore-drill.sh"
+EVIDENCE_CHECK="$(cd "$(dirname "$0")" && pwd)/check-restore-drill-evidence.sh"
 TEMPLATE="$(cd "$(dirname "$0")" && pwd)/../../docs/drills/TEMPLATE-restore-drill.md"
 
 # 1. Syntax check on the drill script. Does NOT execute.
 bash -n "$SCRIPT" || { echo "FAIL: bash -n $SCRIPT"; exit 1; }
 echo "OK: bash -n"
+bash -n "$EVIDENCE_CHECK" || { echo "FAIL: bash -n $EVIDENCE_CHECK"; exit 1; }
+echo "OK: bash -n evidence freshness check"
 
 # 2. Required record labels present in the template the Go test embeds.
 #    Mirrors pkg/drills/record.go:RequiredTokens.
@@ -59,3 +62,23 @@ grep -q "5.5/7 Restore host.age into /etc/faas/secrets" "$SCRIPT" \
 grep -q "host.age.sha256" "$SCRIPT" \
   || { echo "FAIL: missing host.age SHA sidecar logic"; exit 1; }
 echo "OK: host.age preservation steps present"
+
+# 5. The nightly producer uses tar format. The drill must extract the base
+#    and WAL members; rsyncing base.tar.gz into PGDATA is not a restore.
+grep -q 'tar -xzf "\$LATEST_BB/base.tar.gz"' "$SCRIPT" \
+  || { echo "FAIL: drill does not extract base.tar.gz"; exit 1; }
+grep -q 'pg_wal.tar.gz' "$SCRIPT" \
+  || { echo "FAIL: drill does not restore pg_wal.tar.gz"; exit 1; }
+
+# 6. A failed drill must leave an audit record and clean up its recovery
+#    stanza. These markers protect the destructive operator path from future
+#    early-exit regressions.
+grep -q 'trap.*cleanup' "$SCRIPT" \
+  || { echo "FAIL: missing EXIT cleanup trap"; exit 1; }
+grep -q 'row-count invariant' "$SCRIPT" \
+  || { echo "FAIL: missing exact row-count invariant check"; exit 1; }
+grep -q 'migration-up-time' "$SCRIPT" \
+  || { echo "FAIL: missing migration-up-time evidence"; exit 1; }
+grep -q 'pg_is_in_recovery' "$SCRIPT" \
+  || { echo "FAIL: missing explicit promotion check"; exit 1; }
+echo "OK: tar restore, cleanup, migration, row-count, and promotion checks present"

@@ -9,6 +9,9 @@
 
 <!-- Replace this line with M0 / M1 / M2 / ... -->
 
+<!-- Add the `m8-done` label only when this PR includes a committed EX44
+     restore-drill PASS record from the last 30 days. CI enforces that claim. -->
+
 ## What
 
 <!-- 1-3 sentences. What changed and why? -->

@@ -359,11 +359,15 @@ backup-pg: ## Take a Postgres base backup into /var/lib/pgsql/basebackup/basebac
 
 .PHONY: backup-restore-drill
 backup-restore-drill: ## Run the M8 restore drill end-to-end (must run on EX44 as root)
-	sudo bash deploy/scripts/faas-m8-restore-drill.sh
+	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh"
 
 .PHONY: lint-drill
 lint-drill: ## Static lint of the restore drill script + record template shape (spec §14 M8)
 	bash deploy/scripts/faas-m8-restore-drill_test.sh
+
+.PHONY: m8-evidence-check
+m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
+	bash deploy/scripts/check-restore-drill-evidence.sh
 
 .PHONY: backup-push-pg
 backup-push-pg: ## Push the latest basebackup to Hetzner Storage Box (issue #250)

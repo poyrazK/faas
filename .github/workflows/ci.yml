@@ -150,6 +150,15 @@ jobs:
       - name: build
         run: make build
 
+      # M8's operator acceptance is a real EX44 run, not a unit-test fixture.
+      # Keep the shape check on every PR, and require a fresh committed PASS
+      # record whenever a PR claims completion with the `m8-done` label.
+      - name: restore-drill script contract
+        run: make lint-drill
+      - name: restore-drill evidence freshness (M8 claim)
+        if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'm8-done') }}
+        run: make m8-evidence-check
+
       # Release manifests are generated from the production topology
       # template. Keep the projection deterministic and schema-valid on every
       # PR so a release tag cannot discover template drift for the first time.
