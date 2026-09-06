@@ -34,15 +34,15 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 		{
 			name: "init-only",
 			s: Sidecar{
-				Name:      "migrator",
-				Image:     "ghcr.io/me/migrator@sha256:0000000000000000000000000000000000000000000000000000000000000001",
-				Type:      SidecarTypeInit,
-				Cmd:       []string{"--to", "head"},
-				Env:       map[string]string{"DB_URL": "postgres://x"},
-				Port:      0,
-				RamMB:     64,
+				Name:          "migrator",
+				Image:         "ghcr.io/me/migrator@sha256:0000000000000000000000000000000000000000000000000000000000000001",
+				Type:          SidecarTypeInit,
+				Cmd:           []string{"--to", "head"},
+				Env:           map[string]string{"DB_URL": "postgres://x"},
+				Port:          0,
+				RamMB:         64,
 				CPUMillicores: 250,
-				Essential: &essTrue,
+				Essential:     &essTrue,
 			},
 		},
 		{
