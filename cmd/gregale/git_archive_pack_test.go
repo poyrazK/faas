@@ -23,7 +23,7 @@ func TestPackGitArchive_RedactsAndExcludes(t *testing.T) {
 		"tail.txt":                "tail survives\n",
 	})
 
-	outPath, count, findings, err := packGitArchive(inPath, defaultZeroConfigSourceCapMB, modeSourceTree)
+	outPath, count, findings, err := packGitArchive(inPath, defaultZeroConfigSourceCapMB, modeSourceTree, nil)
 	if err != nil {
 		t.Fatalf("packGitArchive: %v", err)
 	}
@@ -54,6 +54,34 @@ func TestPackGitArchive_RedactsAndExcludes(t *testing.T) {
 	}
 	if got := string(entries["config.txt"]); !strings.Contains(got, "REDACTED secret detected") {
 		t.Errorf("config.txt was not redacted: %q", got)
+	}
+}
+
+func TestGitArchiveGoFunctionDetectionAndBuildModule(t *testing.T) {
+	inPath := writeGitArchiveFixture(t, map[string]string{
+		"README.md":                  "docs\n",
+		"services/worker/handler.go": "package main\n",
+	})
+
+	sh, runtime, handler, err := detectGitArchiveShape(inPath, "services/worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sh != shapeFunction || runtime != runtimeGo124 || handler != defaultTemplateHandler {
+		t.Fatalf("detected = (%v, %q, %q), want Go function", sh, runtime, handler)
+	}
+	buildOnly := map[string][]byte{"services/worker/go.mod": []byte(functionGoBuildModule)}
+	outPath, count, _, err := packGitArchive(inPath, defaultZeroConfigSourceCapMB, modeOff, buildOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outPath) })
+	entries := readGitArchiveFixture(t, outPath)
+	if got := string(entries["services/worker/go.mod"]); got != functionGoBuildModule {
+		t.Fatalf("generated go.mod = %q, want %q", got, functionGoBuildModule)
+	}
+	if count != 3 {
+		t.Fatalf("file count = %d, want 3 including build-only go.mod", count)
 	}
 }
 

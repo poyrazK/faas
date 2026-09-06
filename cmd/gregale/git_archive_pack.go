@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,12 +24,14 @@ const (
 // gives us a faithful snapshot of HEAD, but it does not apply the deploy
 // packer's build-artifact exclusions, .gregaleignore, or secret scan. This
 // pass keeps the HEAD-only guarantee while bringing those policies to the
-// Git-origin zero-config path.
+// Git-origin zero-config path. buildOnly contains trusted generated files that
+// exist only in the transport archive, such as a marker-free Go function's
+// build-time go.mod.
 //
 // The archive is streamed entry-by-entry. Only files small enough for the
 // source-tree scanner are held in memory; all other regular files are copied
 // directly through the tar writer.
-func packGitArchive(srcPath string, capMB int, mode secretScanMode) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
+func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
 	if capMB <= 0 {
 		return "", 0, nil, fmt.Errorf("invalid source cap %d MB", capMB)
 	}
@@ -72,6 +76,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode) (outPath str
 	capBytes := int64(capMB) * 1024 * 1024
 	var totalUncompressed int64
 	entries := 0
+	existingEntries := make(map[string]bool)
 	tr := tar.NewReader(gzIn)
 	for {
 		hdr, nextErr := tr.Next()
@@ -103,6 +108,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode) (outPath str
 		if gitArchiveShouldExclude(name, isDir, patterns) {
 			continue
 		}
+		existingEntries[name] = true
 
 		inputSize := hdr.Size
 		var (
@@ -165,6 +171,13 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode) (outPath str
 		totalUncompressed += hdr.Size
 		regularFileCount++
 	}
+	if len(buildOnly) > 0 {
+		added, addErr := writeGitArchiveBuildOnlyFiles(tw, buildOnly, existingEntries, capBytes-totalUncompressed)
+		if addErr != nil {
+			return "", 0, findings, addErr
+		}
+		regularFileCount += added
+	}
 	if mode.isStrict() && len(findings) > 0 {
 		return "", 0, findings, &StrictSecretScanError{
 			Findings: findings,
@@ -189,6 +202,126 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode) (outPath str
 	}
 	success = true
 	return outPath, regularFileCount, findings, nil
+}
+
+func writeGitArchiveBuildOnlyFiles(tw *tar.Writer, files map[string][]byte, existing map[string]bool, remaining int64) (int, error) {
+	type virtualFile struct {
+		name string
+		body []byte
+	}
+	virtual := make([]virtualFile, 0, len(files))
+	for name, body := range files {
+		name = filepath.ToSlash(name)
+		if !gitArchiveEntrySafe(name) || strings.HasSuffix(name, "/") {
+			return 0, fmt.Errorf("invalid build-only archive path %q", name)
+		}
+		if existing[name] {
+			return 0, fmt.Errorf("build-only archive path %q collides with committed source", name)
+		}
+		virtual = append(virtual, virtualFile{name: name, body: body})
+	}
+	sort.Slice(virtual, func(i, j int) bool { return virtual[i].name < virtual[j].name })
+	var writtenBytes int64
+	for _, file := range virtual {
+		size := int64(len(file.body))
+		if size > remaining-writtenBytes {
+			return 0, fmt.Errorf("uncompressed git archive plus build-only files exceeds source cap")
+		}
+		hdr := &tar.Header{Name: file.name, Mode: 0o644, Size: size, Typeflag: tar.TypeReg, ModTime: packEpoch}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return 0, fmt.Errorf("write build-only git archive header %q: %w", file.name, err)
+		}
+		if n, err := tw.Write(file.body); err != nil {
+			return 0, fmt.Errorf("write build-only git archive entry %q: %w", file.name, err)
+		} else if n != len(file.body) {
+			return 0, fmt.Errorf("short write for build-only git archive entry %q: wrote %d of %d bytes", file.name, n, len(file.body))
+		}
+		writtenBytes += size
+	}
+	return len(virtual), nil
+}
+
+// detectGitArchiveShape applies the zero-config source-root detector to the
+// committed archive. The default Git-origin path must classify the exact HEAD
+// bytes it uploads; consulting the working tree would let dirty files change
+// the app type while the archive still contains the committed version.
+func detectGitArchiveShape(srcPath, sourceRoot string) (shape, string, string, error) {
+	root := strings.Trim(filepath.ToSlash(sourceRoot), "/")
+	if root == "." {
+		root = ""
+	}
+	if root != "" && !gitArchiveEntrySafe(root) {
+		return shapeUnknown, "", "", fmt.Errorf("invalid archive source root %q", sourceRoot)
+	}
+	f, err := openCustomerFile(srcPath)
+	if err != nil {
+		return shapeUnknown, "", "", err
+	}
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return shapeUnknown, "", "", err
+	}
+	defer func() { _ = gz.Close() }()
+
+	var appMarker bool
+	var handler string
+	tr := tar.NewReader(gz)
+	for {
+		hdr, nextErr := tr.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return shapeUnknown, "", "", nextErr
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		name := strings.TrimSuffix(hdr.Name, "/")
+		if !gitArchiveEntrySafe(name) {
+			return shapeUnknown, "", "", fmt.Errorf("unsafe git archive entry %q", hdr.Name)
+		}
+		rel := name
+		if root != "" {
+			prefix := root + "/"
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			rel = strings.TrimPrefix(name, prefix)
+		}
+		if strings.Contains(rel, "/") {
+			continue
+		}
+		lower := strings.ToLower(rel)
+		if defaultExcludeFiles[rel] || strings.HasPrefix(rel, ".") || strings.HasPrefix(lower, "readme") {
+			continue
+		}
+		switch lower {
+		case "package.json", "requirements.txt", "pyproject.toml", "pipfile", "setup.py", "go.mod", "dockerfile":
+			appMarker = true
+		}
+		if functionHandlerFiles[lower] {
+			if handler != "" {
+				appMarker = true
+			} else {
+				handler = lower
+			}
+		}
+	}
+	if appMarker {
+		return shapeApp, "", "", nil
+	}
+	switch handler {
+	case "handler.js", "handler.ts":
+		return shapeFunction, runtimeNode22, defaultTemplateHandler, nil
+	case "handler.py":
+		return shapeFunction, runtimePython312, defaultTemplateHandler, nil
+	case "handler.go":
+		return shapeFunction, runtimeGo124, defaultTemplateHandler, nil
+	default:
+		return shapeUnknown, "", "", nil
+	}
 }
 
 // readGitArchiveIgnore reads the root .gregaleignore entry before the second

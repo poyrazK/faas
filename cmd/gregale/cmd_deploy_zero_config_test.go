@@ -184,6 +184,91 @@ func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 	}
 }
 
+func TestDeployZeroConfig_GitHeadGoFunctionStaysFunction(t *testing.T) {
+	repo := initZeroConfigRepo(t)
+	if err := os.Remove(filepath.Join(repo, "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "handler.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "convert to Go function"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	withCwd(t, repo)
+
+	var (
+		createReq  api.CreateAppRequest
+		sourceBody []byte
+		runtime    string
+		handler    string
+	)
+	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *zeroConfigStubServer) {
+		switch {
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			if err := json.NewDecoder(r.Body).Decode(&createReq); err != nil {
+				t.Errorf("decode create app: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "go-function"})
+		case r.URL.Path == "/v1/apps/go-function/deployments" && r.Method == http.MethodPost:
+			mr, err := r.MultipartReader()
+			if err != nil {
+				t.Errorf("multipart reader: %v", err)
+				return
+			}
+			for {
+				part, err := mr.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Errorf("next multipart part: %v", err)
+					return
+				}
+				body, _ := io.ReadAll(part)
+				switch part.FormName() {
+				case "source":
+					sourceBody = body
+				case "runtime":
+					runtime = string(body)
+				case "handler":
+					handler = string(body)
+				}
+				_ = part.Close()
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "go-function"})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	})
+	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdDeployTarball([]string{"--name", "go-function", "--no-wait"}); code != 0 {
+		t.Fatalf("Go function deploy exit = %d, want 0", code)
+	}
+	if createReq.Type != "function" || createReq.Runtime != runtimeGo124 {
+		t.Fatalf("create app shape = type %q runtime %q, want function/%s", createReq.Type, createReq.Runtime, runtimeGo124)
+	}
+	if runtime != runtimeGo124 || handler != defaultTemplateHandler {
+		t.Fatalf("deployment function fields = runtime %q handler %q", runtime, handler)
+	}
+	entries := readCapturedDeployArchive(t, sourceBody)
+	if got := string(entries["go.mod"]); got != functionGoBuildModule {
+		t.Fatalf("committed archive go.mod = %q, want %q", got, functionGoBuildModule)
+	}
+	if _, ok := entries["handler.go"]; !ok {
+		t.Fatalf("committed archive missing handler.go: %v", entries)
+	}
+	if _, ok := entries["package.json"]; ok {
+		t.Fatalf("committed archive retained removed package.json: %v", entries)
+	}
+}
+
 // TestDeployZeroConfig_PathArchivesSelectedTree pins the monorepo source-root
 // contract: --path selects a tracked subdirectory, archives its committed
 // HEAD tree as the uploaded root, and does not leak files from the repository
@@ -679,7 +764,7 @@ func TestDeployZeroConfig_ReceiptContainsProvenance(t *testing.T) {
 	if out, err := archiveCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git archive: %v\n%s", err, out)
 	}
-	filteredPath, _, _, err := packGitArchive(archivePath, defaultZeroConfigSourceCapMB, modeOff)
+	filteredPath, _, _, err := packGitArchive(archivePath, defaultZeroConfigSourceCapMB, modeOff, nil)
 	if err != nil {
 		t.Fatalf("filter expected tarball: %v", err)
 	}
