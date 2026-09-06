@@ -782,7 +782,7 @@ jobs:
         run: make spec-check
 
   # Go SDK build + test gate (issue #266, PR 2). The SDK is a nested
-  # Go module at sdk/go/ (module github.com/poyrazK/faas-go). The
+  # Go module at sdk/go/ (module github.com/poyrazK/faas/sdk/go). The
   # daemon's `make test` walks the daemon's package tree only; the
   # SDK module needs its own gate so a regression in sdk/go/internal/api/*
   # fails the PR. Decoupled from `test` for the same reasons as

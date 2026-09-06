@@ -3,7 +3,7 @@
 // Re-exports the generated client surface (services + models + core
 // helpers) and the hand-written wrapper façade (`FaaSClient` +
 // sentinels + idempotency + SSE). Customers `import { ... } from
-// 'gregale/skd-node'` and never touch `src/generated/` directly.
+// '@gregale/sdk-node'` and never touch `src/generated/` directly.
 //
 // The generated services call `OpenAPI.BASE/TOKEN/HEADERS` from
 // `src/generated/core/OpenAPI.ts` — the `FaaSClient` constructor

@@ -7,7 +7,7 @@
 This is the public import path for the Gregale platform:
 
 ```go
-import faas "github.com/poyrazK/faas-go"
+import faas "github.com/poyrazK/faas/sdk/go"
 ```
 
 The package exposes:
@@ -22,7 +22,7 @@ The package exposes:
 ## Install
 
 ```sh
-go get github.com/poyrazK/faas-go
+go get github.com/poyrazK/faas/sdk/go
 ```
 
 The SDK targets `go 1.23` (the floor of the daemon's own toolchain
@@ -42,7 +42,7 @@ import (
     "log"
     "os"
 
-    faas "github.com/poyrazK/faas-go"
+    faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func main() {

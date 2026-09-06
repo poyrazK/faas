@@ -1,16 +1,16 @@
-# gregale/skd-node
+# @gregale/sdk-node
 
 > Node 22 SDK for the Gregale platform. Generated from
 > [`api/openapi.yaml`](../../api/openapi.yaml), wrapped in a hand-written
 > façade that ships retry, RFC 7807 error sentinels, idempotency, and SSE.
 
-> **Heads-up: package name + publish state.** The manifest `name` is
-> `gregale/skd-node` (preserved literally from the original spec). The
-> likely intended name is `@gregale/sdk-node`. The package is currently
-> marked `"private": true` and is **not published to npm yet**. PR 13
-> (the first versioned release) flips `private` to `false`, renames to
-> the conventional scoped form, adds the `repository` field, and tags
-> `v0.1.0`. Until then, install via the GitHub URL.
+> **Heads-up: publish state.** The manifest name is now the conventional
+> scoped form `@gregale/sdk-node`. It was previously `gregale` + `/skd-node`
+> — a typo that npm rejects outright, since an unscoped name may not contain
+> a slash. `private` is cleared and the `repository` field is set. `publishConfig.access` stays `restricted` until the licensing
+> question in [`sdk/README-publishing.md`](../README-publishing.md) is
+> settled — the current LICENSE is proprietary and non-redistributable.
+> **Nothing is on the public npm registry yet.**
 >
 > **Heads-up: pre-1.0.** Version `0.1.0` is the pre-1.0 signal. The
 > public API may shift between `0.x` releases. Pin to an exact version
@@ -24,17 +24,31 @@
 
 ## Install
 
+Once the package is published:
+
 ```sh
-# Pre-publish (today): install directly from the monorepo
-npm install github:poyrazK/faas#v0.1.0
-# Once published (PR 13):
-# npm install @gregale/sdk-node
+npm install @gregale/sdk-node
+```
+
+**Today it is not published yet**, so install from a locally built tarball.
+npm cannot install a package from a subdirectory of a git repo, so
+`npm install github:poyrazK/faas#<tag>` does *not* work — the repo root has
+no `package.json`, and `dist/` is a build artifact that is not committed.
+
+```sh
+git clone https://github.com/poyrazK/faas.git
+cd faas/sdk/node
+npm ci && npm run build
+npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
+
+cd /path/to/your/project
+npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
 ## Quick start
 
 ```ts
-import { FaaSClient, AppsService, ErrNotFound } from 'gregale/skd-node';
+import { FaaSClient, AppsService, ErrNotFound } from '@gregale/sdk-node';
 
 const client = new FaaSClient('https://api.example.com', {
   token: process.env.FAAS_TOKEN!,
@@ -125,7 +139,7 @@ The OpenAPI spec has no SSE endpoints today, but `/v1/logs/{app_id}/tail`
 `streamSse`:
 
 ```ts
-import { streamSse } from 'gregale/skd-node';
+import { streamSse } from '@gregale/sdk-node';
 
 const resp = await fetch(`${client.baseURL}/v1/logs/hello/tail`, {
   headers: { Authorization: `Bearer ${process.env.FAAS_TOKEN}` },
