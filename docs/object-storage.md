@@ -163,6 +163,26 @@ reported upstream cost, not customer invoice rates. Every limit must be
 positive; zero is not an unlimited setting. Report freshness must be 60–86400
 seconds and the key ceiling at most one million.
 
+An optional `pricing` object can add a provider-neutral customer rate card
+without changing the safety policy:
+
+```json
+"pricing": {
+  "currency": "EUR",
+  "storage_millicents_per_gib_month": 15000,
+  "requests_millicents_per_million": 500,
+  "egress_millicents_per_gib": 90000
+}
+```
+
+`GET /v1/account/object-storage-usage` then includes `charges` with the
+storage, request, egress and total estimate for the current UTC month. Storage
+uses a 730-hour month; request and egress units are rounded up independently
+to one millicent. Omit `pricing` while qualifying providers to keep the
+existing usage-only response. This rate card is intentionally separate from
+upstream `cost_millicents`; a later billing-provider adapter must post invoice
+line items and apply any plan allowances before paid launch.
+
 Before issuing PUT, an account-serialized transaction reserves the maximum
 authorized size for its bucket/key and one key slot. Reissuing the same size
 or a smaller size does not reserve bytes again. The reservation is committed
@@ -250,9 +270,10 @@ usage exporter and explicit limits, confirm fresh observations, then enable.
 Rollback must disable signing first; old binaries bypass these guards.
 Do not drop accounting tables while serving customer storage.
 
-No customer prices, included allowances or invoice lines are introduced.
-Compute billing is unchanged. This accounting milestone is not paid-launch
-approval; see [ADR-156](adr/156-object-storage-accounting.md).
+No plan allowances or invoice lines are introduced by the accounting surface.
+The optional rate card is an estimate only; compute billing is unchanged. A
+provider billing adapter and month-end reconciliation are still required for
+paid launch; see [ADR-156](adr/156-object-storage-accounting.md).
 
 ## Provider configuration
 
@@ -393,8 +414,8 @@ tenant IAM adapter; never hand out the operator-wide credential.
   100 MiB/upload, configurable up to 100 and 5 TiB. A single signed PUT remains
   capped at 5 GiB; larger objects use multipart. These alone do **not** cap total
   bytes or costs; configure and qualify the accounting controls above. Presign
-  counts cannot meter actual usage. No object-storage prices, allowances or
-  invoice lines ship here.
+  counts cannot meter actual usage. The optional rate card is only an estimate;
+  plan allowances and invoice lines do not ship here.
 - Before paid/general availability, qualify the real provider usage exporter,
   pricing/margin policy and budget cutoffs, tenant S3 keys if needed, and a
   coordinated account-deletion workflow. Active buckets block account

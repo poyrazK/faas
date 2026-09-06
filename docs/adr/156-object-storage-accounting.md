@@ -58,9 +58,10 @@ erase the month's costs.
 - Budget overshoot is possible during report lag, polling, outstanding URL
   validity, and in-flight transfers. There is **no bounded monetary overshoot**.
   Retained data continues to cost money, and cleanup calls can incur charges.
-- No customer prices, allowances, invoice lines, or modifications to compute
-  MB-second billing ship in this milestone. Reported costs are operator cost
-  accounting, not permission to charge customers those amounts.
+- An optional provider-neutral rate card may expose a deterministic estimate in
+  the usage API, but no plan allowances or invoice lines ship in this
+  milestone. Reported costs remain operator cost accounting, not permission to
+  charge customers those amounts.
 - These records follow existing account hard-deletion semantics. They are not
   a substitute for a legally retained invoice ledger.
 

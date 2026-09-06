@@ -17,12 +17,13 @@ import (
 // Config contains only non-secret settings and environment variable names.
 // Backend IDs are permanent: retain an old entry while buckets reference it.
 type Config struct {
-	Accounting       *api.ObjectStoragePolicy `json:"accounting,omitempty"`
-	DefaultRegion    string                   `json:"default_region"`
-	Defaults         map[string]string        `json:"defaults"`
-	MaxBucketsPerApp int                      `json:"max_buckets_per_app"`
-	MaxUploadBytes   int64                    `json:"max_upload_bytes"`
-	Backends         []BackendConfig          `json:"backends"`
+	Accounting       *api.ObjectStoragePolicy  `json:"accounting,omitempty"`
+	Pricing          *api.ObjectStoragePricing `json:"pricing,omitempty"`
+	DefaultRegion    string                    `json:"default_region"`
+	Defaults         map[string]string         `json:"defaults"`
+	MaxBucketsPerApp int                       `json:"max_buckets_per_app"`
+	MaxUploadBytes   int64                     `json:"max_upload_bytes"`
+	Backends         []BackendConfig           `json:"backends"`
 }
 
 type BackendConfig struct {
@@ -46,6 +47,7 @@ type BackendConfig struct {
 type Registry struct {
 	usageReportPaths map[string]string
 	Accounting       api.ObjectStoragePolicy
+	Pricing          *api.ObjectStoragePricing
 	DefaultRegion    string
 	MaxBucketsPerApp int
 	MaxUploadBytes   int64
@@ -74,6 +76,13 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 			return nil, errors.New("object storage: invalid accounting policy")
 		}
 		r.Accounting = *c.Accounting
+	}
+	if c.Pricing != nil {
+		if !c.Pricing.Valid() {
+			return nil, errors.New("object storage: invalid pricing")
+		}
+		pricing := *c.Pricing
+		r.Pricing = &pricing
 	}
 	validID := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	for _, b := range c.Backends {
@@ -120,6 +129,21 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		return nil, errors.New("object storage: default_region is not configured")
 	}
 	return r, nil
+}
+
+// ChargeForUsage returns a customer-facing estimate when the operator has
+// configured a rate card. A nil result is intentional when pricing is absent:
+// deployments can qualify accounting and safety budgets before choosing
+// customer prices.
+func (r *Registry) ChargeForUsage(usage api.ObjectStorageUsage) (*api.ObjectStorageCharge, error) {
+	if r == nil || r.Pricing == nil {
+		return nil, nil
+	}
+	charge, err := CalculateCharge(*r.Pricing, usage)
+	if err != nil {
+		return nil, err
+	}
+	return &charge, nil
 }
 
 func Load(getenv func(string) string) (*Registry, error) {

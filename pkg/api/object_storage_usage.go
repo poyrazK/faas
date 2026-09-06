@@ -78,7 +78,50 @@ type ObjectStorageUsage struct {
 	PeriodStart     time.Time `json:"period_start"`
 }
 
+// ObjectStoragePricing is an operator-supplied customer rate card. Rates are
+// integer millicents (1000 millicents = 1 cent) and are deliberately separate
+// from ObjectStoragePolicy, which contains safety ceilings rather than prices.
+// A nil pricing configuration means that Gregale reports upstream usage/cost
+// only and does not estimate a customer charge.
+type ObjectStoragePricing struct {
+	Currency                     string `json:"currency"`
+	StorageMillicentsPerGiBMonth int64  `json:"storage_millicents_per_gib_month"`
+	RequestsMillicentsPerMillion int64  `json:"requests_millicents_per_million"`
+	EgressMillicentsPerGiB       int64  `json:"egress_millicents_per_gib"`
+}
+
+func (p ObjectStoragePricing) Valid() bool {
+	if len(p.Currency) != 3 {
+		return false
+	}
+	for i := 0; i < len(p.Currency); i++ {
+		if p.Currency[i] < 'A' || p.Currency[i] > 'Z' {
+			return false
+		}
+	}
+	for _, v := range []int64{p.StorageMillicentsPerGiBMonth, p.RequestsMillicentsPerMillion, p.EgressMillicentsPerGiB} {
+		if v < 0 || v > MaxObjectStoragePolicyValue {
+			return false
+		}
+	}
+	return true
+}
+
+// ObjectStorageCharge is the deterministic estimate for the current UTC
+// month. Components are rounded up independently to one millicent so a
+// configured non-zero rate cannot be under-collected by fractional units.
+// It is an estimate until a billing-provider adapter posts the corresponding
+// line item; it is not itself an invoice or a payment authorization.
+type ObjectStorageCharge struct {
+	Currency           string `json:"currency"`
+	StorageMillicents  int64  `json:"storage_millicents"`
+	RequestsMillicents int64  `json:"requests_millicents"`
+	EgressMillicents   int64  `json:"egress_millicents"`
+	TotalMillicents    int64  `json:"total_millicents"`
+}
+
 type ObjectStorageUsageResponse struct {
-	Usage  ObjectStorageUsage  `json:"usage"`
-	Policy ObjectStoragePolicy `json:"policy"`
+	Usage   ObjectStorageUsage   `json:"usage"`
+	Policy  ObjectStoragePolicy  `json:"policy"`
+	Charges *ObjectStorageCharge `json:"charges,omitempty"`
 }

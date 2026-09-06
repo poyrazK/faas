@@ -488,7 +488,9 @@ from .object_sign_request_method import ObjectSignRequestMethod
 from .object_signed_request import ObjectSignedRequest
 from .object_signed_request_headers import ObjectSignedRequestHeaders
 from .object_signed_request_method import ObjectSignedRequestMethod
+from .object_storage_charge import ObjectStorageCharge
 from .object_storage_policy import ObjectStoragePolicy
+from .object_storage_pricing import ObjectStoragePricing
 from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
@@ -1254,7 +1256,9 @@ __all__ = (
     "ObjectSignedRequestMethod",
     "ObjectSignRequest",
     "ObjectSignRequestMethod",
+    "ObjectStorageCharge",
     "ObjectStoragePolicy",
+    "ObjectStoragePricing",
     "ObjectStorageUsage",
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
