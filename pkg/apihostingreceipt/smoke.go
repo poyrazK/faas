@@ -53,7 +53,7 @@ func (v Verifier) Verify(ctx context.Context, slug, path string) (SmokeResult, e
 		result.Error = safeError(err)
 		return result, nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	result.StatusCode = resp.StatusCode
 	result.VerifiedAt = time.Now().UTC()
