@@ -50,6 +50,67 @@ var AllowedAppWebhookEvents = []string{
 	"deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold",
 }
 
+// DeploymentFailedWebhookPayload is the payload stored for a deployment.failed
+// delivery. Optional fields preserve the build explainer details when present.
+type DeploymentFailedWebhookPayload struct {
+	AppID        string   `json:"app_id"`
+	DeploymentID string   `json:"deployment_id"`
+	ErrorCode    string   `json:"error_code,omitempty"`
+	ErrorHint    string   `json:"error_hint,omitempty"`
+	ErrorWhy     string   `json:"error_why,omitempty"`
+	ErrorFix     string   `json:"error_fix,omitempty"`
+	RelevantLogs []string `json:"relevant_logs,omitempty"`
+}
+
+// RolloutAbortedWebhookPayload is the payload stored for a rollout.aborted
+// delivery.
+type RolloutAbortedWebhookPayload struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	Reason       string `json:"reason"`
+	AbortedAt    string `json:"aborted_at,omitempty"`
+}
+
+// ErrorNewWebhookPayload is the payload stored for an error.new delivery.
+type ErrorNewWebhookPayload struct {
+	AppID       string `json:"app_id"`
+	Fingerprint string `json:"fingerprint"`
+	Route       string `json:"route,omitempty"`
+	Class       string `json:"class,omitempty"`
+	Sample      string `json:"sample,omitempty"`
+	FirstSeenAt string `json:"first_seen_at,omitempty"`
+}
+
+// JobFinishedWebhookPayload is the payload stored for a job.finished delivery.
+type JobFinishedWebhookPayload struct {
+	JobID      string `json:"job_id,omitempty"`
+	RunID      string `json:"run_id,omitempty"`
+	Status     string `json:"status"`
+	FinishedAt string `json:"finished_at,omitempty"`
+	AccountID  string `json:"account_id,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+// PreviewCreatedWebhookPayload is the payload stored for a preview.created
+// delivery.
+type PreviewCreatedWebhookPayload struct {
+	AppID       string `json:"app_id,omitempty"`
+	URL         string `json:"url"`
+	PullRequest int    `json:"pull_request,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+// BudgetThresholdWebhookPayload is the payload stored for a budget.threshold
+// delivery.
+type BudgetThresholdWebhookPayload struct {
+	AppID         string  `json:"app_id,omitempty"`
+	Pct           float64 `json:"pct"`
+	Cap           int64   `json:"cap"`
+	Metric        string  `json:"metric,omitempty"`
+	ObservedCents int64   `json:"observed_cents,omitempty"`
+	Period        string  `json:"period,omitempty"`
+}
+
 // AppWebhookEventFilterLenMax bounds the number of distinct events a
 // single webhook can subscribe to. 32 covers the full closed-set today
 // and leaves headroom for future expansion.

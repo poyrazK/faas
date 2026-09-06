@@ -52,7 +52,6 @@ export type { AppUsageSummaryResponse } from './AppUsageSummaryResponse.js';
 export type { AppWakeTimelineResponse } from './AppWakeTimelineResponse.js';
 export type { AppWebhookDeliveryListResponse } from './AppWebhookDeliveryListResponse.js';
 export type { AppWebhookDeliveryResponse } from './AppWebhookDeliveryResponse.js';
-export type { AppWebhookEvent } from './AppWebhookEvent.js';
 export type { AppWebhookResponse } from './AppWebhookResponse.js';
 export type { AppWebhookRetryDeliveryResponse } from './AppWebhookRetryDeliveryResponse.js';
 export type { AppliedBuild } from './AppliedBuild.js';

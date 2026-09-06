@@ -61,7 +61,6 @@ export type { AppUsageSummaryResponse } from './models/AppUsageSummaryResponse.j
 export type { AppWakeTimelineResponse } from './models/AppWakeTimelineResponse.js';
 export type { AppWebhookDeliveryListResponse } from './models/AppWebhookDeliveryListResponse.js';
 export type { AppWebhookDeliveryResponse } from './models/AppWebhookDeliveryResponse.js';
-export type { AppWebhookEvent } from './models/AppWebhookEvent.js';
 export type { AppWebhookResponse } from './models/AppWebhookResponse.js';
 export type { AppWebhookRetryDeliveryResponse } from './models/AppWebhookRetryDeliveryResponse.js';
 export type { AsyncInvokeResponse } from './models/AsyncInvokeResponse.js';

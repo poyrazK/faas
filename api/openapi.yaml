@@ -22236,27 +22236,6 @@ components:
           additionalProperties: { type: string }
 
     # ─── Outbound webhooks (issue #476 / ADR-076) ──────────────────────────────
-    AppWebhookEvent:
-      type: string
-      description: Closed vocabulary of events emitted to app webhook subscribers.
-      enum:
-        - cron.fired
-        - cron.fired.manually
-        - app.created
-        - app.deleted
-        - app.deployed
-        - app.scaled
-        - app.parked
-        - app.woken
-        - build.succeeded
-        - build.failed
-        - deployment.failed
-        - rollout.aborted
-        - error.new
-        - job.finished
-        - preview.created
-        - budget.threshold
-
     DeploymentFailedWebhookPayload:
       type: object
       description: Deployment failure details delivered with deployment.failed.
@@ -22346,7 +22325,9 @@ components:
         webhook_secret_sealed_masked: { type: string, enum: ["***"] }
         event_filter:
           type: array
-          items: { $ref: '#/components/schemas/AppWebhookEvent' }
+          items:
+            type: string
+            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         enabled: { type: boolean }
@@ -22377,7 +22358,9 @@ components:
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
           type: array
-          items: { $ref: '#/components/schemas/AppWebhookEvent' }
+          items:
+            type: string
+            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         enabled: { type: boolean, default: true }
@@ -22399,7 +22382,9 @@ components:
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
           type: array
-          items: { $ref: '#/components/schemas/AppWebhookEvent' }
+          items:
+            type: string
+            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         enabled: { type: boolean }
@@ -22436,7 +22421,9 @@ components:
         webhook_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         account_id: { type: string, format: uuid }
-        event: { $ref: '#/components/schemas/AppWebhookEvent' }
+        event:
+          type: string
+          enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold"]
         payload:
           type: object
           additionalProperties: true

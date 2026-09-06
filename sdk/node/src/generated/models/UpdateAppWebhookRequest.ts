@@ -2,7 +2,6 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { AppWebhookEvent } from './AppWebhookEvent.js';
 /**
  * Partial update of an existing webhook subscription. Every
  * field is optional — the handler merges the supplied fields
@@ -12,7 +11,7 @@ import type { AppWebhookEvent } from './AppWebhookEvent.js';
 export type UpdateAppWebhookRequest = {
   target_url?: string;
   webhook_secret?: string;
-  event_filter?: Array<AppWebhookEvent>;
+  event_filter?: Array<'cron.fired' | 'cron.fired.manually' | 'app.created' | 'app.deleted' | 'app.deployed' | 'app.scaled' | 'app.parked' | 'app.woken' | 'build.succeeded' | 'build.failed' | 'deployment.failed' | 'rollout.aborted' | 'error.new' | 'job.finished' | 'preview.created' | 'budget.threshold'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
   enabled?: boolean;
 };
