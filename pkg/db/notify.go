@@ -71,7 +71,8 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 // Payload contracts (JSON, all optional fields may be omitted):
 //
 //	NotifyAppChanged        {"app_id":uuid,
-//	                         "kind":"updated|parked|...",
+//	                         "kind":"updated|parked|woken|restart|...",
+//	                         "wake_id":uuid           // restart correlation id
 //	                         "lifecycle_changed":bool} // lifecycle fields changed
 //	NotifyDeploymentChanged {"kind":"image|tarball|dockerfile|function|
 //	                         rollback|superseded",

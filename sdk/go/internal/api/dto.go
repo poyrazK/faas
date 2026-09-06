@@ -27,6 +27,11 @@ type ResourceProfileSpec struct {
 	CPUMillicores int
 }
 
+// AppRestartResponse is returned when a customer restart request is accepted.
+type AppRestartResponse struct {
+	WakeID string `json:"wake_id"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug            string `json:"slug"`

@@ -482,6 +482,13 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// restartMu/restartInFlight coalesce duplicate restart notifications for
+	// one app. The notification is a best-effort hint and can be delivered
+	// more than once, so a second caller waits for the first park+fresh-wake
+	// operation and receives the same outcome.
+	restartMu        sync.Mutex
+	restartInFlight  map[string]*restartCall
+	restartCompleted map[string]string
 	// serviceAppMu serialises service replica allocation across all live
 	// deployments for an app. It is distinct from appMu because replica
 	// reconciliation invokes admission, which acquires appMu itself, and
@@ -678,23 +685,25 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		log = slog.Default()
 	}
 	e := &Engine{
-		store:           store,
-		ledger:          ledger,
-		vmm:             vmm,
-		notif:           notif,
-		fcVer:           fcVer,
-		log:             log,
-		jobContext:      ctx,
-		appMu:           map[string]*sync.Mutex{},
-		serviceAppMu:    map[string]*sync.Mutex{},
-		serviceMu:       map[string]*sync.Mutex{},
-		wakeCoord:       newWakeCoord(),
-		warmBroadcaster: newWarmHintBroadcaster(),
-		capacityTable:   newNodeCapacityTable(),
-		telemetryCache:  NewNodeTelemetryCache(),
-		nodePresence:    newNodePresenceTracker(),
-		usageCache:      NewNodeUsageCache(),
-		now:             time.Now, // tests override post-construction
+		store:            store,
+		ledger:           ledger,
+		vmm:              vmm,
+		notif:            notif,
+		fcVer:            fcVer,
+		log:              log,
+		jobContext:       ctx,
+		appMu:            map[string]*sync.Mutex{},
+		restartInFlight:  map[string]*restartCall{},
+		restartCompleted: map[string]string{},
+		serviceAppMu:     map[string]*sync.Mutex{},
+		serviceMu:        map[string]*sync.Mutex{},
+		wakeCoord:        newWakeCoord(),
+		warmBroadcaster:  newWarmHintBroadcaster(),
+		capacityTable:    newNodeCapacityTable(),
+		telemetryCache:   NewNodeTelemetryCache(),
+		nodePresence:     newNodePresenceTracker(),
+		usageCache:       NewNodeUsageCache(),
+		now:              time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB
 	// doesn't block the daemon's boot forever — the watchdog goroutine
@@ -1483,6 +1492,155 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	return e.admitAndDispatch(ctx, appID, trigger, false)
 }
 
+// requestedWakeIDKey carries an API-minted wake correlation id through the
+// restart notification. Ordinary wakes continue to mint their UUIDv7 inside
+// the admission window; restarts use this key so the 202 response can expose
+// the same id that schedd stamps on the new instance and wake events.
+type requestedWakeIDKey struct{}
+
+type restartCall struct {
+	done chan struct{}
+	out  CoordOutcome
+	err  error
+}
+
+func withRequestedWakeID(ctx context.Context, wakeID string) context.Context {
+	if wakeID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestedWakeIDKey{}, wakeID)
+}
+
+func requestedWakeID(ctx context.Context) string {
+	wakeID, _ := ctx.Value(requestedWakeIDKey{}).(string)
+	return wakeID
+}
+
+// RestartApp parks every live instance for an app, then ensures one fresh
+// instance is awake from the snapshot just captured. The app-level lock
+// serializes the park phase with normal wake/reaper work; EnsureWake provides
+// the existing per-app single-flight and wake-rate-limit behavior for the
+// replacement instance.
+//
+// This is invoked by schedd after apid emits app_changed{kind:"restart"}.
+// Apid writes the initial park intent; schedd owns instance transitions and
+// snapshot/VM operations, then reactivates the app before the replacement wake.
+func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (out CoordOutcome, err error) {
+	if e == nil || appID == "" {
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: empty app id")
+	}
+	// app_changed is delivered through pg_notify, so retries and duplicate
+	// notifications are expected. Coalesce them before doing any VM work.
+	e.restartMu.Lock()
+	if e.restartInFlight == nil {
+		e.restartInFlight = make(map[string]*restartCall)
+	}
+	if e.restartCompleted == nil {
+		e.restartCompleted = make(map[string]string)
+	}
+	if wakeID != "" && e.restartCompleted[appID] == wakeID {
+		e.restartMu.Unlock()
+		return CoordOutcome{}, nil
+	}
+	if call, ok := e.restartInFlight[appID]; ok {
+		e.restartMu.Unlock()
+		select {
+		case <-call.done:
+			return call.out, call.err
+		case <-ctx.Done():
+			return CoordOutcome{}, ctx.Err()
+		}
+	}
+	call := &restartCall{done: make(chan struct{})}
+	e.restartInFlight[appID] = call
+	e.restartMu.Unlock()
+	defer func() {
+		e.restartMu.Lock()
+		call.out, call.err = out, err
+		if err == nil && out.Instance != nil && wakeID != "" {
+			e.restartCompleted[appID] = out.Instance.WakeID
+		}
+		close(call.done)
+		delete(e.restartInFlight, appID)
+		e.restartMu.Unlock()
+	}()
+
+	// The owner gate mirrors EnsureWake/ParkApp in split-node deployments.
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: load app %s: %w", appID, err)
+	}
+	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+		return CoordOutcome{}, nil
+	}
+	if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
+		// Deleted or otherwise non-live apps cannot be restarted.
+		return CoordOutcome{}, nil
+	}
+
+	release := e.lockApp(appID)
+	app, err = e.store.AppByID(ctx, appID)
+	if err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: reload app %s: %w", appID, err)
+	}
+	if app.Status == state.AppActive {
+		parked := state.AppEvictedCold
+		if _, err := e.store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &parked}); err != nil {
+			release()
+			return CoordOutcome{}, fmt.Errorf("sched: restart app: park app %s: %w", appID, err)
+		}
+	} else if app.Status != state.AppEvictedCold {
+		release()
+		return CoordOutcome{}, nil
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: list instances %s: %w", appID, err)
+	}
+	for _, candidate := range instances {
+		fresh, readErr := e.store.InstanceByID(ctx, candidate.ID)
+		if readErr != nil {
+			if errors.Is(readErr, state.ErrNotFound) {
+				continue
+			}
+			release()
+			return CoordOutcome{}, fmt.Errorf("sched: restart app: reload instance %s: %w", candidate.ID, readErr)
+		}
+		switch state.State(fresh.State) {
+		case state.StateRunning:
+			if parkErr := e.snapshotAndPark(ctx, fresh); parkErr != nil {
+				release()
+				return CoordOutcome{}, fmt.Errorf("sched: restart app: park instance %s: %w", fresh.ID, parkErr)
+			}
+		case state.StateWaking, state.StateColdBooting:
+			if destroyErr := e.timedDestroy(ctx, fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
+				release()
+				return CoordOutcome{}, fmt.Errorf("sched: restart app: destroy instance %s: %w", fresh.ID, destroyErr)
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		}
+	}
+	active := state.AppActive
+	if _, err := e.store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &active}); err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: reactivate app %s: %w", appID, err)
+	}
+	release()
+
+	out, err = e.EnsureWake(withRequestedWakeID(ctx, wakeID), appID, TriggerAppRestart)
+	if err == nil && out.Instance != nil && e.audit != nil {
+		e.audit.Emit(ctx, "app.restarted", &app.AccountID, map[string]any{
+			"app_id":  appID,
+			"slug":    app.Slug,
+			"wake_id": out.Instance.WakeID,
+		})
+	}
+	return out, err
+}
+
 func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, ins state.Instance) bool {
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
@@ -1580,6 +1738,9 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	// goroutine detach.
 	leaderCtx, cancel := context.WithTimeout(context.Background(), e.wakeCoord.TTL())
 	defer cancel()
+	// The coordinator deliberately detaches from the triggering request, but
+	// preserves the restart correlation id while doing so.
+	leaderCtx = withRequestedWakeID(leaderCtx, requestedWakeID(ctx))
 	out := CoordOutcome{}
 	defer func() {
 		call.Complete(out)
@@ -2114,22 +2275,28 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// in practice but the code carries the surface — on the
 	// essentially-zero error path we fall back to a v4 so a wake is
 	// never refused for ID-generation reasons.
-	wakeUUID, err := uuid.NewV7()
-	if err != nil {
-		// crypto/rand failure should be impossible in practice but
-		// the surface exists; fall back to v4 so a wake is never
-		// refused for ID-generation reasons. v4 breaks the
-		// time-ordering invariant the partial index is built on, so
-		// log + counter (review finding #6, gaps analysis
-		// 2026-07-23). Any non-zero rate is an alertable condition.
-		wakeUUID = uuid.New()
-		if e.ops != nil {
-			e.ops.WakeIDV4Fallback().Inc()
-		}
-		e.log.Warn("wake: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
-			"app", appID, "err", err)
+	wakeID := requestedWakeID(ctx)
+	if _, parseErr := uuid.Parse(wakeID); parseErr != nil {
+		wakeID = ""
 	}
-	wakeID := wakeUUID.String()
+	if wakeID == "" {
+		wakeUUID, err := uuid.NewV7()
+		if err != nil {
+			// crypto/rand failure should be impossible in practice but
+			// the surface exists; fall back to v4 so a wake is never
+			// refused for ID-generation reasons. v4 breaks the
+			// time-ordering invariant the partial index is built on, so
+			// log + counter (review finding #6, gaps analysis
+			// 2026-07-23). Any non-zero rate is an alertable condition.
+			wakeUUID = uuid.New()
+			if e.ops != nil {
+				e.ops.WakeIDV4Fallback().Inc()
+			}
+			e.log.Warn("wake: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
+				"app", appID, "err", err)
+		}
+		wakeID = wakeUUID.String()
+	}
 
 	// Consult the per-deployment snapshot-miss backoff before touching the
 	// snapshot cache. Repeated cache misses must be visible as bounded 503s;

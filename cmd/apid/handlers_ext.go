@@ -1788,6 +1788,43 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// restartApp queues a park followed by a fresh wake from the newly captured
+// snapshot. The request is asynchronous because snapshot/VM work belongs to
+// schedd; the returned wake_id is propagated through the notification so the
+// caller can correlate the replacement wake with its timeline and audit row.
+func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	if app.Status != state.AppActive {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"App is not active", "only an active app can be restarted"))
+		return
+	}
+	parked := state.AppEvictedCold
+	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not restart app"))
+		return
+	}
+	wakeUUID, err := uuid.NewV7()
+	if err != nil {
+		wakeUUID = uuid.New()
+		s.log.Warn("app restart: uuid.NewV7 failed, fell back to v4", "app", app.ID, "err", err)
+	}
+	wakeID := wakeUUID.String()
+	if err := s.notif.Notify(r.Context(), db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"restart","slug":"%s","app_id":"%s","wake_id":"%s"}`,
+			app.Slug, app.ID, wakeID)); err != nil {
+		// pg_notify is a hint like the existing park/wake endpoints. The
+		// app remains safely parked and the reaper reconciles that state;
+		// preserve the accepted response and log the transient failure.
+		s.log.Warn("app restart: notify schedd failed", "app", app.ID, "err", err)
+	}
+	s.log.Info("app restart requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
+	writeJSON(w, http.StatusAccepted, api.AppRestartResponse{WakeID: wakeID})
+}
+
 // renameApp swaps an app's slug atomically (issue #63). Body is
 // {"new_slug": "<slug>"}; the handler validates the new slug with the
 // same validSlug regex CreateApp uses, then delegates to

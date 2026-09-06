@@ -45,6 +45,7 @@ export type { AppOpenAPIImportResponse } from './models/AppOpenAPIImportResponse
 export type { AppRegistryCredentialListResponse } from './models/AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './models/AppRegistryCredentialResponse.js';
 export type { AppResponse } from './models/AppResponse.js';
+export type { AppRestartResponse } from './models/AppRestartResponse.js';
 export type { AppRoutesResponse } from './models/AppRoutesResponse.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';

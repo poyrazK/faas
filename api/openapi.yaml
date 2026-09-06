@@ -3941,6 +3941,33 @@ paths:
         # parsing prose.
         '402': { $ref: '#/components/responses/AdmissionRefused' }
 
+  /v1/apps/{slug}/restart:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: restartApp
+      summary: Restart an app from a fresh snapshot.
+      description: |
+        Parks every live instance, captures a fresh snapshot, and queues one
+        replacement wake. Requests are single-flight per app; the returned
+        wake_id identifies the replacement wake in the wake timeline.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Restart accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppRestartResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '402': { $ref: '#/components/responses/AdmissionRefused' }
+
   /v1/apps/{slug}/cache:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -13245,6 +13272,13 @@ components:
           type: string
           enum: [http1, http2, grpc]
           example: http1
+
+    AppRestartResponse:
+      description: "Correlation handle for an accepted app restart."
+      type: object
+      required: [wake_id]
+      properties:
+        wake_id: { type: string, format: uuid, description: "Wake id stamped on the replacement instance and wake timeline." }
 
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
