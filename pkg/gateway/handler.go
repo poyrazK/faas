@@ -628,6 +628,15 @@ type Handler struct {
 	// this gateway process and deliberately separate from scraped
 	// metrics, which arrive too late to protect a cold burst.
 	burstPressure *burstPressure
+	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
+	// picker selects a concrete instance. It is intentionally gateway-local:
+	// the guest listener remains runtime-agnostic while the edge can account
+	// for the complete bridge lifetime, including streams and upgrades.
+	vmConcurrency *vmConcurrencyManager
+	// vmConcurrencyAudit emits vm.inflight_threshold_reached when a request
+	// observes a full instance slot set. It shares the gateway audit sink so
+	// operators can correlate saturation with wake and reaper events.
+	vmConcurrencyAudit RequireAuthnAuditor
 	// metrics may be nil; nil-guarded everywhere it is read.
 	metrics *Metrics
 	// mirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the
@@ -1012,6 +1021,11 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// flight" (admit → round-trip complete), not "admit attempts".
 		MirrorMaxConcurrentPerRule: api.MirrorMaxConcurrentPerRule,
 	}
+	h.vmConcurrency = newVMConcurrencyManager(func(plan string, delta int64) {
+		if m != nil {
+			m.ObserveVMInflightDelta(plan, delta)
+		}
+	})
 	// piApps is a value-typed sync.Map wrapper; its zero value is valid
 	// and no init is required (avoiding a lazy-init write that would
 	// race with parallel ServeHTTP readers — the load test under -race
@@ -1194,6 +1208,15 @@ func (h *Handler) WithAccountLimiter(l *Limiter) *Handler {
 // in tests and on installations that do not enable the audit stream.
 func (h *Handler) WithWakePageAudit(audit RequireAuthnAuditor) *Handler {
 	h.wakePageAudit = audit
+	return h
+}
+
+// WithVMConcurrencyAudit installs the best-effort sink for per-instance
+// concurrency saturation events. Production points this at the shared
+// gateway audit writer; nil keeps the limiter useful in tests and on boxes
+// without event persistence.
+func (h *Handler) WithVMConcurrencyAudit(audit RequireAuthnAuditor) *Handler {
+	h.vmConcurrencyAudit = audit
 	return h
 }
 
@@ -5387,6 +5410,22 @@ haveApp:
 	// The wake admission result is now known. Replace the hot default before
 	// any response body is committed by the proxy.
 	w.Header().Set(wire.WakeHeader, wakeResponseValue(cold, wakeMethod))
+	// Enforce the plan's per-instance request bound only after a concrete
+	// target exists. A saturated target first gives the picker a chance to
+	// place the request on another warm VM; when every routable VM is full,
+	// the request waits on the selected VM until its own budget expires.
+	var vmRelease func()
+	var vmWaited bool
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(r.Context(), app, pick, limits.ConcurrencyPerVMBound)
+	if vmWaited {
+		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, limits.ConcurrencyPerVMBound)
+	}
+	if err != nil {
+		writeBurstCapacityError(w, r, err)
+		h.observe(r, rec.status, app.ID, string(app.Plan), cold, pick.Target)
+		return
+	}
+	defer vmRelease()
 	target := pick.Target
 	// A coalesced wake can return several VMs. Correlate this newly woken
 	// request with the selected VM, while keeping ordinary warm responses
