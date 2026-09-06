@@ -574,6 +574,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
+		go srv.runManagedPostgresUsageCollector(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -1215,11 +1216,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, err := loadManagedPostgres(deps.pool, deps.getenv, log)
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log)
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
-	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler)
+	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector)
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the

@@ -24,6 +24,7 @@ type ServiceOptions struct {
 	Now                 func() time.Time
 	NewID               func() string
 	NewLeaseToken       func() string
+	Admit               func(context.Context, string) error
 }
 
 type Service struct {
@@ -36,6 +37,7 @@ type Service struct {
 	now                 func() time.Time
 	newID               func() string
 	newLeaseToken       func() string
+	admit               func(context.Context, string) error
 }
 
 type CreateRequest struct {
@@ -82,6 +84,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		now:                 options.Now,
 		newID:               options.NewID,
 		newLeaseToken:       options.NewLeaseToken,
+		admit:               options.Admit,
 	}, nil
 }
 
@@ -107,6 +110,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, err
+	}
+	if s.admit != nil {
+		if err := s.admit(ctx, request.AccountID); err != nil {
+			return Database{}, err
+		}
 	}
 	backend, err := s.registry.Default(request.Spec.Region)
 	if err != nil {

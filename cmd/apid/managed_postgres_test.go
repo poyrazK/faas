@@ -12,7 +12,8 @@ import (
 )
 
 func TestLoadManagedPostgresIsDarkWhenUnconfigured(t *testing.T) {
-	service, reconciler, bindingService, bindingReconciler, err := loadManagedPostgres(nil, func(string) string { return "" }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service, reconciler, bindingService, bindingReconciler, usageCollector, err := loadManagedPostgres(nil, func(string) string { return "" }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_ = usageCollector
 	if err != nil || service != nil || reconciler != nil || bindingService != nil || bindingReconciler != nil {
 		t.Fatalf("unconfigured load = %v, %v, %v, %v, %v", service, reconciler, bindingService, bindingReconciler, err)
 	}
@@ -61,7 +62,8 @@ func TestLoadManagedPostgresRegistersNeonDriver(t *testing.T) {
 			return ""
 		}
 	}
-	service, reconciler, bindingService, bindingReconciler, err := loadManagedPostgres(pool, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service, reconciler, bindingService, bindingReconciler, usageCollector, err := loadManagedPostgres(pool, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_ = usageCollector
 	if err != nil || service == nil || reconciler == nil || bindingService == nil || bindingReconciler == nil {
 		t.Fatalf("configured load = %v, %v, %v, %v, %v", service, reconciler, bindingService, bindingReconciler, err)
 	}

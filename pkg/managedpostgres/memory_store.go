@@ -15,6 +15,7 @@ type MemoryStore struct {
 	names     map[string]string
 	bindings  map[string]Binding
 	targets   map[string]string
+	usage     map[usageKey]UsageRecord
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -23,6 +24,7 @@ func NewMemoryStore() *MemoryStore {
 		names:     map[string]string{},
 		bindings:  map[string]Binding{},
 		targets:   map[string]string{},
+		usage:     map[usageKey]UsageRecord{},
 	}
 }
 
