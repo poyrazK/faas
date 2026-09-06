@@ -272,8 +272,12 @@ Do not drop accounting tables while serving customer storage.
 
 No plan allowances or invoice lines are introduced by the accounting surface.
 The optional rate card is an estimate only; compute billing is unchanged. A
-provider billing adapter and month-end reconciliation are still required for
-paid launch; see [ADR-156](adr/156-object-storage-accounting.md).
+`apid` closes the prior UTC month once per deployment period and stores an
+immutable per-account billing snapshot. A billing provider may implement the
+optional line-item sink to publish that snapshot idempotently; without one,
+the snapshot remains an internal preview ledger. Provider usage exporters,
+plan allowances, invoice lines, and month-end reconciliation are still
+required for paid launch; see [ADR-156](adr/156-object-storage-accounting.md).
 
 ## Provider configuration
 
