@@ -6770,9 +6770,19 @@ type DebugTelemetryRequestItem struct {
 	Method       string  `json:"method"`
 	Status       int     `json:"status"`
 	LatencyMS    int     `json:"latency_ms"`
+	Count        int     `json:"count"`
 	ColdBoot     bool    `json:"cold_boot"`
 	TraceID      *string `json:"trace_id"`
 	ReceivedAt   string  `json:"received_at"`
+}
+
+// DebugTelemetryListOptions controls the server-side filters for a request
+// telemetry list. Zero values preserve the endpoint defaults. Limit is
+// bounded by the API to 1..200 when supplied.
+type DebugTelemetryListOptions struct {
+	Since string
+	Route string
+	Limit int
 }
 
 // DebugTelemetryListResponse is the wire envelope for the debug

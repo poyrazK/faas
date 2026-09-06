@@ -3191,8 +3191,9 @@ paths:
       operationId: listAppDebugRequests
       summary: Per-app request telemetry (ADR-127 / PR-A).
       description: |
-        Recent request rows for an app — status, latency_ms, route,
-        method, deployment_id, cold_boot, trace_id, received_at.
+        Recent request telemetry rows for an app — status, latency_ms, route,
+        method, deployment_id, cold_boot, trace_id, received_at, and the
+        number of original requests represented by each collapsed row.
         PR-A ships the read endpoint only; the write-side (publisher
         → gRPC IncrementRequestTelemetry → apid receiver → sqlc
         INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -3215,6 +3216,11 @@ paths:
           required: false
           schema: { type: [integer, 'null'], minimum: 1, maximum: 200, default: 20 }
           description: "Page size, default 20, max 200."
+        - name: route
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 256 }
+          description: "Exact route-template filter."
       responses:
         '200':
           description: Page of recent request telemetry rows.
@@ -3222,6 +3228,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DebugTelemetryListResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -22771,7 +22778,7 @@ components:
     DebugTelemetryRequestItem:
       type: object
       description: "One row per gateway-served request, persisted by the recorder (PR-A)."
-      required: [id, deployment_id, route, method, status, latency_ms, cold_boot, received_at]
+      required: [id, deployment_id, route, method, status, latency_ms, count, cold_boot, received_at]
       properties:
         id: { type: string, format: uuid }
         deployment_id: { type: string, format: uuid }
@@ -22779,6 +22786,7 @@ components:
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
         status: { type: integer, minimum: 100, maximum: 599 }
         latency_ms: { type: integer, minimum: 0 }
+        count: { type: integer, minimum: 1, description: "Number of original requests represented by this collapsed telemetry row." }
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
         received_at: { type: string, format: date-time }

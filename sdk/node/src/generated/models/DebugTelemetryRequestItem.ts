@@ -15,6 +15,10 @@ export type DebugTelemetryRequestItem = {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
   status: number;
   latency_ms: number;
+  /**
+   * Number of original requests represented by this collapsed telemetry row.
+   */
+  count: number;
   cold_boot: boolean;
   /**
    * W3C trace-id hex (32 chars), null when unset.

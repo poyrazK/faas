@@ -2024,7 +2024,7 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 }
 
 const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
-SELECT id, deployment_id, route, method, status, latency_ms,
+SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at
 FROM request_telemetry
 WHERE app_id = $1
@@ -2048,6 +2048,7 @@ type GetRequestTelemetryByAppAndIDRow struct {
 	Method       string
 	Status       int32
 	LatencyMs    int32
+	Count        int32
 	ColdBoot     bool
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
@@ -2071,6 +2072,7 @@ func (q *Queries) GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, ar
 		&i.Method,
 		&i.Status,
 		&i.LatencyMs,
+		&i.Count,
 		&i.ColdBoot,
 		&i.TraceID,
 		&i.ReceivedAt,
@@ -4426,12 +4428,13 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 }
 
 const listRequestTelemetryByApp = `-- name: ListRequestTelemetryByApp :many
-SELECT id, deployment_id, route, method, status, latency_ms,
+SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
   AND received_at <  $3
+  AND ($5::text = '' OR route = $5::text)
 ORDER BY received_at DESC
 LIMIT $4
 `
@@ -4441,6 +4444,7 @@ type ListRequestTelemetryByAppParams struct {
 	ReceivedAt   pgtype.Timestamptz
 	ReceivedAt_2 pgtype.Timestamptz
 	Limit        int32
+	Route        string
 }
 
 type ListRequestTelemetryByAppRow struct {
@@ -4450,6 +4454,7 @@ type ListRequestTelemetryByAppRow struct {
 	Method       string
 	Status       int32
 	LatencyMs    int32
+	Count        int32
 	ColdBoot     bool
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
@@ -4466,6 +4471,7 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 		arg.ReceivedAt,
 		arg.ReceivedAt_2,
 		arg.Limit,
+		arg.Route,
 	)
 	if err != nil {
 		return nil, err
@@ -4481,6 +4487,7 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 			&i.Method,
 			&i.Status,
 			&i.LatencyMs,
+			&i.Count,
 			&i.ColdBoot,
 			&i.TraceID,
 			&i.ReceivedAt,

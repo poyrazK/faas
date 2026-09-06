@@ -37,6 +37,26 @@ func TestMetricsWakeQueueWaitNilSafe(t *testing.T) {
 	m.ObserveWakeQueueWait(50 * time.Millisecond) // must not panic
 }
 
+func TestRequestTelemetryMetricsExposition(t *testing.T) {
+	m := NewMetrics()
+	m.IncRequestTelemetryOverwritten()
+	m.AddRequestTelemetryDropped(3)
+	m.AddRequestTelemetryShipped(7)
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		"gateway_request_telemetry_overwritten_total 1",
+		"gateway_request_telemetry_dropped_total 3",
+		"gateway_request_telemetry_shipped_total 7",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %q:\n%s", want, body)
+		}
+	}
+}
+
 // TestMetricsIssue273Exposition pins the new histogram + the cold
 // rename (issue #273 / ADR-042). Catches a rename that the existing
 // cold-wake test would have missed because it reads the Go field

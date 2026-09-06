@@ -358,6 +358,9 @@ var dtoExclude = map[string]bool{
 	// reference it by name. Mirrors the inline query shape
 	// pattern at handlers_alerts.go.
 	"CorsPresetListFilter": true,
+	// ADR-127: debug request filters are represented as inline query
+	// parameters rather than a standalone OpenAPI schema.
+	"DebugTelemetryListOptions": true,
 }
 
 // codeExclude lists Code* constants that are intentionally not in the
