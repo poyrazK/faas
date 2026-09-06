@@ -2444,6 +2444,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/secrets", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/rotate", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateSecret))))
+	// G6 / issue #1397 — app instance lifecycle controls. The GET page
+	// mints a named CSRF envelope; this form adapter verifies it before
+	// applying the same app-scoped park/wake/restart transitions as the
+	// v1 endpoints.
+	mux.Handle("POST /dashboard/apps/{slug}/instances/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardInstanceAction))))
 	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
 	// named CSRF cookie and the same rollback core as the REST endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollback))))
