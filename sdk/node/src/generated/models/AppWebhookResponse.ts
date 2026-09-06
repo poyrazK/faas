@@ -13,7 +13,7 @@ export type AppWebhookResponse = {
   account_id: string;
   target_url: string;
   webhook_secret_sealed_masked: '***';
-  event_filter: Array<string>;
+  event_filter: Array<'cron.fired' | 'cron.fired.manually' | 'app.created' | 'app.deleted' | 'app.deployed' | 'app.scaled' | 'app.parked' | 'app.woken' | 'build.succeeded' | 'build.failed' | 'deployment.failed' | 'rollout.aborted' | 'error.new' | 'job.finished' | 'preview.created' | 'budget.threshold'>;
   retry_policy: 'default' | 'aggressive' | 'none';
   enabled: boolean;
   created_at: string;

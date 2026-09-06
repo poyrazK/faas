@@ -38,20 +38,77 @@ const AppWebhookSecretMasked = "***"
 var AllowedAppWebhookRetryPolicies = []string{"default", "aggressive", "none"}
 
 // AllowedAppWebhookEvents is the closed set for the events a webhook
-// can subscribe to. Issue #476 ships the cron.fired surface; the
-// other entries are placeholders for future event sources (app
-// lifecycle, build status, etc.) and the apid CreateAppWebhook handler
-// rejects requests for events not in this set.
+// can subscribe to. It mirrors the SQL CHECK and the CLI vocabulary.
 //
-// Each entry matches the audit `kind` the upstream emitter writes,
-// so the dispatcher can route without a second lookup.
+// Each entry is the event name persisted in the delivery ledger, so the
+// dispatcher can route without a second lookup. Producers may add the row
+// directly or use pkg/webhook.Emit after their source mutation commits.
 var AllowedAppWebhookEvents = []string{
-	"cron.fired",
-	"cron.fired.manually", // issue #791 PR-D / ADR-090 §"Sub-decision 7" — manual cron run events.
-	"app.created",
-	"app.deleted",
-	"build.succeeded",
-	"build.failed",
+	"cron.fired", "cron.fired.manually",
+	"app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken",
+	"build.succeeded", "build.failed",
+	"deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold",
+}
+
+// DeploymentFailedWebhookPayload is the payload stored for a deployment.failed
+// delivery. Optional fields preserve the build explainer details when present.
+type DeploymentFailedWebhookPayload struct {
+	AppID        string   `json:"app_id"`
+	DeploymentID string   `json:"deployment_id"`
+	ErrorCode    string   `json:"error_code,omitempty"`
+	ErrorHint    string   `json:"error_hint,omitempty"`
+	ErrorWhy     string   `json:"error_why,omitempty"`
+	ErrorFix     string   `json:"error_fix,omitempty"`
+	RelevantLogs []string `json:"relevant_logs,omitempty"`
+}
+
+// RolloutAbortedWebhookPayload is the payload stored for a rollout.aborted
+// delivery.
+type RolloutAbortedWebhookPayload struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	Reason       string `json:"reason"`
+	AbortedAt    string `json:"aborted_at,omitempty"`
+}
+
+// ErrorNewWebhookPayload is the payload stored for an error.new delivery.
+type ErrorNewWebhookPayload struct {
+	AppID       string `json:"app_id"`
+	Fingerprint string `json:"fingerprint"`
+	Route       string `json:"route,omitempty"`
+	Class       string `json:"class,omitempty"`
+	Sample      string `json:"sample,omitempty"`
+	FirstSeenAt string `json:"first_seen_at,omitempty"`
+}
+
+// JobFinishedWebhookPayload is the payload stored for a job.finished delivery.
+type JobFinishedWebhookPayload struct {
+	JobID      string `json:"job_id,omitempty"`
+	RunID      string `json:"run_id,omitempty"`
+	Status     string `json:"status"`
+	FinishedAt string `json:"finished_at,omitempty"`
+	AccountID  string `json:"account_id,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+// PreviewCreatedWebhookPayload is the payload stored for a preview.created
+// delivery.
+type PreviewCreatedWebhookPayload struct {
+	AppID       string `json:"app_id,omitempty"`
+	URL         string `json:"url"`
+	PullRequest int    `json:"pull_request,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+// BudgetThresholdWebhookPayload is the payload stored for a budget.threshold
+// delivery.
+type BudgetThresholdWebhookPayload struct {
+	AppID         string  `json:"app_id,omitempty"`
+	Pct           float64 `json:"pct"`
+	Cap           int64   `json:"cap"`
+	Metric        string  `json:"metric,omitempty"`
+	ObservedCents int64   `json:"observed_cents,omitempty"`
+	Period        string  `json:"period,omitempty"`
 }
 
 // AppWebhookEventFilterLenMax bounds the number of distinct events a
