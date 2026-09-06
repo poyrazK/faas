@@ -179,6 +179,9 @@ func (h *Handler) emitWakePageVisit(ctx context.Context, appID, wakeID string, v
 	if h == nil || h.wakePageAudit == nil || wakeID == "" {
 		return
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// The page event is often flushed after the original HTTP request has
 	// returned, so callers pass a detached context. Keep the best-effort audit
 	// write bounded rather than allowing a stalled database to pin the wake
