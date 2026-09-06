@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -3789,6 +3790,36 @@ func TestStampRequestBudget_DoesNotCancelImmediately(t *testing.T) {
 	cancelStampedRequestBudget(req.Context())
 	if err := req.Context().Err(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelStampedRequestBudget error = %v, want context.Canceled", err)
+	}
+}
+
+func TestApplyEdgeRuleBudget_UsesAppTypeDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		typ  AppType
+		want time.Duration
+	}{
+		{name: "request-mode app", typ: AppTypeApp, want: api.RequestBudgetAppDefault},
+		{name: "function", typ: AppTypeFunction, want: api.RequestBudgetDefault},
+		{name: "legacy empty type", typ: "", want: api.RequestBudgetDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := (&Handler{metrics: NewMetrics()}).WithEdgeRules(stubEdgeRuleMatcher{}, nil, nil)
+			app := App{ID: "app-1", AccountID: "acct-1", Type: tc.typ, Plan: api.PlanPro}
+			req := httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil)
+			rec := httptest.NewRecorder()
+
+			if blocked := h.applyEdgeRuleBudget(rec, req, app); blocked {
+				t.Fatal("budget applier unexpectedly blocked request")
+			}
+			budget, ok := reqbudget.FromContext(req.Context())
+			if !ok {
+				t.Fatal("budget was not attached to request context")
+			}
+			if budget.Total != tc.want {
+				t.Fatalf("budget total = %s, want %s", budget.Total, tc.want)
+			}
+		})
 	}
 }
 

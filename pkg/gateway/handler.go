@@ -50,11 +50,24 @@ import (
 // enumeration oracle on the loopback surface).
 type ResolveSlugFn func(slug string) (appID string, ok bool)
 
+// AppType distinguishes a request-mode App from a Function at the gateway
+// boundary. The values mirror state.AppType without importing pkg/state into
+// this package.
+type AppType string
+
+const (
+	AppTypeApp      AppType = "app"
+	AppTypeFunction AppType = "function"
+)
+
 // App is the routing target for a hostname.
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
-	Plan      api.Plan
+	// Type is populated from apps.type. Empty is treated as the legacy
+	// Function/default budget posture by limits.RequestBudgetForType.
+	Type AppType
+	Plan api.Plan
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
 	// Slug is the customer-facing app slug (lowercased at apid

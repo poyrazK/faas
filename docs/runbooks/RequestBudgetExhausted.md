@@ -11,8 +11,8 @@ Severity: **ticket** (per-app; sustained spikes are **page**).
 ## What this is
 
 ADR-093 ships an end-to-end request budget for every customer request
-that flows through `gatewayd-public` (default 3 s) and every apid
-admin request (default 5 s). The budget is a hard wall-clock
+that flows through `gatewayd-public` (30 s for request-mode Apps, 3 s
+for Functions) and every apid admin request (default 5 s). The budget is a hard wall-clock
 deadline installed at the edge; downstream hops (DB, gRPC, HTTP)
 tighten themselves against it via `reqbudget.WithCeiling` /
 `WithOverhead`. When the budget fires, the customer sees a 504 RFC
@@ -25,13 +25,15 @@ The budget is sourced from:
   1. `edge_rules.kind = budget` — per-(hostname, path, method) rule
      that pins the budget (e.g. "POST /payment → 3 s"). This is
      the documented customer-facing surface.
-  2. `Plan.RequestBudgetMs` — per-plan default fallback. Zero =
-     fall back to `RequestBudgetDefault` (3 s).
-  3. `RequestBudgetDefault` (3 s) — the last-resort fallback when
-     neither rule nor per-plan override is set.
+  2. `Plan.RequestBudgetMs` — per-plan default fallback. A non-zero
+     value applies to both app types.
+  3. `RequestBudgetForType(app.type)` — the last-resort fallback when
+     neither rule nor per-plan override is set: `RequestBudgetAppDefault`
+     (30 s) for request-mode Apps, `RequestBudgetDefault` (3 s) for
+     Functions and legacy/unknown types.
 
-Per-app overrides win over per-plan defaults; per-plan defaults
-win over the platform default.
+Per-route overrides win over per-plan defaults; per-plan defaults win
+over the type-aware platform default.
 
 **Where the budget is stamped matters** (ADR-093 amendment,
 2026-09-03). `gatewayd-public` stamps only `RequestBudgetMax` (30 s)
@@ -193,6 +195,7 @@ git log for the merge that dropped the wrap.
   - `pkg/gateway/handler_apply_edge_rule_budget.go` — the hot-path
     applier.
   - `pkg/reqbudget/` — the library.
-  - `pkg/api/limits.go::RequestBudgetDefault` /
+  - `pkg/api/limits.go::RequestBudgetForType` /
+    `RequestBudgetDefault` / `RequestBudgetAppDefault` /
     `RequestBudgetMax` / `RequestBudgetApidDefault` — the limits
     table entries.

@@ -40,12 +40,15 @@ Defaults in `pkg/api/limits.go`:
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `RequestBudgetDefault` | 3s | gatewayd-public default budget |
+| `RequestBudgetDefault` | 3s | Function / legacy gateway fallback |
+| `RequestBudgetAppDefault` | 30s | request-mode App fallback when the plan has no explicit budget |
 | `RequestBudgetMax` | 30s | absolute upper bound on any per-request budget |
 | `RequestBudgetApidDefault` | 5s | apid default budget |
 | `Limits.RequestBudgetMs` / `Limits.RequestBudgetMaxMs` | 0 → fall back | per-plan overrides |
 
 When the inbound `r.Context()` carries an earlier deadline (stdlib `http.Server.WriteTimeout`), `WithRemaining` honors it — the tighter one wins. When no `Budget` is attached to the inbound ctx (internal goroutine, admin path), `WithOverhead` and `WithCeiling` are identity no-ops — call-sites without a budget don't change behavior.
+
+The gateway's no-rule baseline is type-aware. Request-mode Apps (`apps.type = app`) use `RequestBudgetAppDefault` (30 s); Functions use `RequestBudgetDefault` (3 s). An explicit `Limits.RequestBudgetMs` plan value still applies to both types, and a matching `kind=budget` edge rule still wins at request time. The app type is carried from the state/control-plane record into the gateway routing model so the effective limit shown by `apid` matches the budget stamped on the data-plane request. Empty or unknown type values retain the legacy Function posture.
 
 ## Consequences
 
@@ -100,7 +103,7 @@ Three stacked PRs (mirrors `tier-a7 PR-cluster strategy` from memory):
 - `pkg/reqbudget/middleware.go` — `BudgetMiddleware`, RFC 7807 envelope
 - `pkg/reqbudget/metrics.go` — Prometheus registration (namespace = "gateway" or "apid")
 - `pkg/reqbudget/overhead.go` — 5 `DefaultOverhead*` constants
-- `pkg/api/limits.go` — `RequestBudgetDefault`, `RequestBudgetMax`, `RequestBudgetApidDefault`, `DefaultOverheadDB/GRPC/HTTP/Stream/Queue`, `Limits.RequestBudgetMs/MaxMs` accessors
+- `pkg/api/limits.go` — `RequestBudgetDefault`, `RequestBudgetAppDefault`, `RequestBudgetMax`, `RequestBudgetApidDefault`, `DefaultOverheadDB/GRPC/HTTP/Stream/Queue`, `Limits.RequestBudgetForType` and `RequestBudgetMs/MaxMs` accessors
 - ADR-091 — `kind=validate` / `kind=ip` / `kind=geo` edge-rule surface (the precedent for `kind=budget`)
 - spec §6.3 — wake latency budget (cold-boot, **not** this ADR's domain)
 - spec §4.1 — `WakeQueueCap=512`, `WakeQueueTTLSeconds=30`
@@ -168,7 +171,21 @@ now applies where it can be overridden.
 
 ### Not changed
 
-The platform default stays `RequestBudgetDefault = 3 s` and the
-ceiling stays `RequestBudgetMax = 30 s`. This amendment moves *where*
-the default is enforced, not its value. A customer who sets no
-`kind=budget` rule still gets 3 s, stamped by `gatewayd-internal`.
+The Function/legacy platform default stays `RequestBudgetDefault = 3 s`
+and the ceiling stays `RequestBudgetMax = 30 s`. This amendment moves
+*where* the default is enforced, not the Function value. A Function that
+sets no `kind=budget` rule still gets 3 s, stamped by
+`gatewayd-internal`; request-mode Apps use the type-aware 30 s fallback
+described below.
+
+## Amendment (2026-09-06): request-mode Apps use an explicit liveness default
+
+The original 3 s fallback was written for short-lived Function
+invocations, but the same value was also applied to ordinary request-mode
+Apps. That made a normal HTTP service time out at the Function invocation
+budget unless every route carried an override. The gateway now resolves the
+fallback through `Limits.RequestBudgetForType`: request-mode Apps get 30 s,
+Functions keep 3 s, and an explicit plan `RequestBudgetMs` or matching
+`kind=budget` rule remains authoritative. This changes the default only at
+the type-aware resolution point; the 30 s platform ceiling and the public
+edge backstop are unchanged.

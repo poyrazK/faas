@@ -213,6 +213,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	return gateway.App{
 		ID:               app.ID,
 		AccountID:        acct.ID,
+		Type:             gateway.AppType(app.Type),
 		Plan:             acct.Plan,
 		MaxConcurrency:   app.MaxConcurrency,
 		Slug:             app.Slug,

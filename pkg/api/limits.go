@@ -291,11 +291,12 @@ type Limits struct {
 
 	// End-to-end request budget (ADR-093). Per-plan overrides for
 	// the platform's wall-clock deadline on every customer-facing
-	// request. 0 falls back to RequestBudgetDefault /
-	// RequestBudgetMax in the limits.go const block. Per-route
+	// request. 0 falls back to the type-aware defaults
+	// (RequestBudgetAppDefault for Apps, RequestBudgetDefault for
+	// Functions) and RequestBudgetMax in the limits.go const block. Per-route
 	// overrides via edge-rule kind=budget take precedence at
 	// request time.
-	RequestBudgetMs    int // 0 → RequestBudgetDefault; non-zero clamped to [1, RequestBudgetMaxMs]
+	RequestBudgetMs    int // 0 → type-aware default; non-zero plan override
 	RequestBudgetMaxMs int // 0 → RequestBudgetMax; non-zero must be ≥ RequestBudgetMs
 
 	// CPU fairness (issue #301 / ADR-044). The 3-level cgroup hierarchy
@@ -6197,13 +6198,16 @@ const (
 // so call-sites can use one import.
 const (
 	// RequestBudgetDefault is the per-request wall-clock budget the
-	// gatewayd-public BudgetMiddleware installs when no edge-rule
-	// kind=budget matches. 3 s matches the example in the user's
-	// feature ask ("POST /payment → 3 s"). A misconfigured
-	// deployment that wants a tighter or looser default can override
-	// per-route via kind=budget, or per-plan via the
+	// gateway uses for Functions when no edge-rule kind=budget matches.
+	// A misconfigured deployment that wants a tighter or looser default
+	// can override per-route via kind=budget, or per-plan via the
 	// Limits.RequestBudgetMs accessor.
 	RequestBudgetDefault = 3 * time.Second
+	// RequestBudgetAppDefault is the request-mode App wall-clock budget
+	// when no edge-rule kind=budget matches and the plan has no explicit
+	// RequestBudgetMs override. Apps are ordinary HTTP services and need
+	// a less surprising default than the short Function invocation budget.
+	RequestBudgetAppDefault = 30 * time.Second
 	// RequestBudgetMax is the absolute upper bound on any per-request
 	// budget. Defends against a misconfiguration that would re-pin a
 	// 300 s stdlib WriteTimeout as the request budget. Per-plan max
@@ -6270,6 +6274,33 @@ func (l Limits) RequestBudget() time.Duration {
 	}
 	if d > RequestBudgetMax {
 		d = RequestBudgetMax
+	}
+	return d
+}
+
+// RequestBudgetForType returns the effective baseline for an app type.
+//
+// The existing RequestBudget accessor intentionally remains the Function /
+// legacy baseline so control-plane callers and older clients keep their
+// established 3-second contract. Request-mode Apps use the longer default
+// unless the plan carries an explicit RequestBudgetMs override. The returned
+// value is bounded by the plan's effective ceiling, preserving the existing
+// RequestBudgetMaxDuration invariant that an invalid ceiling cannot undercut
+// an explicit plan default.
+func (l Limits) RequestBudgetForType(appType string) time.Duration {
+	d := time.Duration(l.RequestBudgetMs) * time.Millisecond
+	if d <= 0 {
+		if appType == "app" {
+			d = RequestBudgetAppDefault
+		} else {
+			d = RequestBudgetDefault
+		}
+	}
+	if d > RequestBudgetMax {
+		d = RequestBudgetMax
+	}
+	if max := l.RequestBudgetMaxDuration(); max > 0 && d > max {
+		d = max
 	}
 	return d
 }

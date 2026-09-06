@@ -636,4 +636,7 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	if got.MaxConcurrency != 1 {
 		t.Fatalf("app ceiling = %d, want 1", got.MaxConcurrency)
 	}
+	if got.Type != gateway.AppTypeApp {
+		t.Fatalf("app type = %q, want %q", got.Type, gateway.AppTypeApp)
+	}
 }
