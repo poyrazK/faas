@@ -12,6 +12,8 @@ out to many control-plane nodes without a code rewrite (see
 
 - **Spec (source of truth):** [`docs/faas_implementation_spec.md`](docs/faas_implementation_spec.md)
 - **UX spec:** [`docs/faas_ux_spec.md`](docs/faas_ux_spec.md)
+- **API hosting product roadmap:** [`docs/api-hosting-roadmap.md`](docs/api-hosting-roadmap.md)
+- **API hosting capability matrix:** [`docs/capabilities.md`](docs/capabilities.md)
 - **Scale-out & workload classes (forward plan):** [`docs/scale_out_and_workload_classes.md`](docs/scale_out_and_workload_classes.md)
 - **Decisions:** [`docs/adr/`](docs/adr/) (ADR-001–010 inline in spec §3; ADR-011–023 filed separately)
 - **Status / what's next:** [`docs/STATUS.md`](docs/STATUS.md)

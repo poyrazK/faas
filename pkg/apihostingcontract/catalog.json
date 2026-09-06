@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "django",
+      "description": "Django application with manage.py and requirements.",
+      "files": {"requirements.txt": "Django==5.2\ngunicorn\n", "manage.py": "#!/usr/bin/env python\n"},
+      "expected": {"framework": "django", "port": 8000, "start_command": "gunicorn app.wsgi:application --bind 0.0.0.0:$PORT", "inferred": true}
+    },
+    {
+      "id": "docker-oci",
+      "description": "Arbitrary OCI application with an explicit exposed port.",
+      "files": {"Dockerfile": "FROM node:22\nEXPOSE 9000\nCMD [\"node\",\"server.js\"]\n"},
+      "expected": {"framework": "oci", "port": 9000, "start_command": "", "inferred": false}
+    },
+    {
+      "id": "express",
+      "description": "Express API with an npm start script.",
+      "files": {"package.json": "{\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "app.listen(process.env.PORT);\n"},
+      "expected": {"framework": "express", "port": 3000, "start_command": "npm run start", "inferred": true}
+    },
+    {
+      "id": "fastapi",
+      "description": "FastAPI application with a conventional app module.",
+      "files": {"requirements.txt": "fastapi==0.116.0\nuvicorn\n", "app.py": "from fastapi import FastAPI\napp=FastAPI()\n"},
+      "expected": {"framework": "fastapi", "port": 8000, "start_command": "uvicorn app:app --host 0.0.0.0 --port $PORT", "inferred": true}
+    },
+    {
+      "id": "flask",
+      "description": "Flask API with a conventional app module.",
+      "files": {"requirements.txt": "Flask==3.1\ngunicorn\n", "app.py": "from flask import Flask\napp=Flask(__name__)\n"},
+      "expected": {"framework": "flask", "port": 8000, "start_command": "gunicorn app:app --bind 0.0.0.0:$PORT", "inferred": true}
+    },
+    {
+      "id": "go-gin",
+      "description": "Go API importing Gin.",
+      "files": {"go.mod": "module example.com/api\ngo 1.24\nrequire github.com/gin-gonic/gin v1.10.0\n", "main.go": "package main\nimport _ \"github.com/gin-gonic/gin\"\n"},
+      "expected": {"framework": "gin", "port": 8080, "start_command": "go run .", "inferred": true}
+    },
+    {
+      "id": "go-net-http",
+      "description": "Standard-library Go HTTP API.",
+      "files": {"go.mod": "module example.com/api\ngo 1.24\n", "main.go": "package main\nimport \"net/http\"\nfunc main(){ http.ListenAndServe(\":8080\", nil) }\n"},
+      "expected": {"framework": "go-net-http", "port": 8080, "start_command": "go run .", "inferred": true}
+    },
+    {
+      "id": "hono",
+      "description": "Hono API with an npm start script.",
+      "files": {"package.json": "{\"dependencies\":{\"hono\":\"^4\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "export default { fetch(){ return new Response('ok') } }\n"},
+      "expected": {"framework": "hono", "port": 3000, "start_command": "npm run start", "inferred": true}
+    },
+    {
+      "id": "nestjs",
+      "description": "NestJS API using its production start script.",
+      "files": {"package.json": "{\"dependencies\":{\"@nestjs/core\":\"^11\"},\"scripts\":{\"start:prod\":\"node dist/main.js\"}}", "src/main.ts": "import { NestFactory } from '@nestjs/core';\n"},
+      "expected": {"framework": "nestjs", "port": 3000, "start_command": "npm run start:prod", "inferred": true}
+    }
+  ]
+}

@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "capabilities": [
+    {
+      "id": "custom-domains",
+      "name": "Custom domains",
+      "category": "edge",
+      "description": "Serve an API on a customer-owned domain with managed TLS.",
+      "maturity": "beta",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/custom-domains",
+      "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
+    },
+    {
+      "id": "firecracker-isolation",
+      "name": "Firecracker isolation",
+      "category": "runtime",
+      "description": "Run each workload in an isolated Firecracker microVM.",
+      "maturity": "beta",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/security",
+      "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal"
+    },
+    {
+      "id": "framework-profiles",
+      "name": "Framework profiles",
+      "category": "delivery",
+      "description": "Detect common API frameworks and suggest a start command, port, and health path.",
+      "maturity": "preview",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/deploy-from-source",
+      "acceptance_test": "pkg/apihostingcontract/catalog_test.go::TestCatalogProfiles"
+    },
+    {
+      "id": "github-deploys",
+      "name": "GitHub deployments",
+      "category": "delivery",
+      "description": "Deploy an API from a connected GitHub repository and ref.",
+      "maturity": "beta",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/deploy-from-github",
+      "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"
+    },
+    {
+      "id": "managed-postgres",
+      "name": "Managed PostgreSQL",
+      "category": "data",
+      "description": "Provision and bind a managed PostgreSQL database to an API.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/managed-postgres",
+      "operator_flag": "FAAS_MANAGED_POSTGRES_CONFIG",
+      "acceptance_test": "pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement"
+    },
+    {
+      "id": "object-storage",
+      "name": "Private object storage",
+      "category": "data",
+      "description": "Use private S3-backed buckets and signed URLs from an API.",
+      "maturity": "preview",
+      "plans": ["hobby", "pro", "scale"],
+      "docs_url": "/docs/object-storage",
+      "operator_flag": "s3_enabled",
+      "acceptance_test": "pkg/objectstorage/s3_test.go::TestS3ProtocolAndErrors"
+    },
+    {
+      "id": "pr-previews",
+      "name": "Pull-request previews",
+      "category": "delivery",
+      "description": "Create an isolated, reviewable API URL for a pull request.",
+      "maturity": "beta",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "/docs/preview-environments",
+      "acceptance_test": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"
+    },
+    {
+      "id": "scale-to-zero",
+      "name": "Scale to zero",
+      "category": "runtime",
+      "description": "Park idle APIs and wake them on the next request.",
+      "maturity": "beta",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/scale-to-zero",
+      "acceptance_test": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"
+    },
+    {
+      "id": "source-deploy",
+      "name": "Source deploys",
+      "category": "delivery",
+      "description": "Deploy an API from a local source tree, tarball, Dockerfile, or OCI image.",
+      "maturity": "beta",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/deploy-from-source",
+      "acceptance_test": "cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball"
+    },
+    {
+      "id": "streaming-and-grpc",
+      "name": "Streaming and gRPC",
+      "category": "edge",
+      "description": "Serve streaming HTTP responses, SSE, and gRPC APIs.",
+      "maturity": "beta",
+      "plans": ["hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/runtime-node",
+      "acceptance_test": "pkg/gateway/handler_test.go::TestRawStreamReverseProxy_RemoteWakeNode"
+    },
+    {
+      "id": "workflows-and-jobs",
+      "name": "Jobs and workflows",
+      "category": "async",
+      "description": "Run asynchronous jobs and durable workflows alongside an API.",
+      "maturity": "preview",
+      "plans": ["hobby", "pro", "scale"],
+      "docs_url": "/docs/faas_openapi_spec",
+      "acceptance_test": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"
+    }
+  ]
+}
