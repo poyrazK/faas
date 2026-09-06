@@ -527,39 +527,16 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.EvictInstance(p.AppID, p.InstanceID)
 		}
 	case db.NotifyAppChanged:
-		// ADR-091 amendment / §4.1.2.0: a per-app column flip
-		// (e.g. apps.maintenance_mode) fires apps_maintenance_mode_notify
-		// which emits 'app_changed' with NEW.id as the payload.
-		// Drop ONLY that app from the apps LRU — not the route
-		// cache — because the next Backend.Lookup will re-read
-		// the apps row and pick up the new column value. This
-		// arm is also the load-bearing destination of any future
-		// per-app column triggers (e.g. apps.streaming_enabled
-		// flips, apps.public_auth_mode rotations). Until those
-		// land, the only fired trigger is apps_maintenance_mode_notify.
-		// Wholesale FlushRoutes() used to be the only behaviour;
-		// we keep that for NotifyDomainChanged because a custom
-		// domain's host→app mapping change affects the route
-		// resolver wholesale, not per-app.
-		if n.Payload != "" {
-			inv.ResetApp(n.Payload)
-			// ADR-122 §Decision: drop kind=cache entries for
-			// the affected app. A deploy or a per-app column
-			// flip must not let the previous release's body
-			// serve under the new release's URL — the cache
-			// key's DeploymentID is empty in v1, so the only
-			// way to fence deploys is a per-app drop. Per-app
-			// (not wholesale) so an isolated app flip doesn't
-			// evict every other app's entries.
-			inv.InvalidateResponseCacheByApp(n.Payload)
+		// APID publishes a JSON envelope, while the maintenance-mode
+		// database trigger publishes a bare app ID. Decode both before
+		// touching caches; a JSON document is never an app-cache key.
+		if appID := appChangedID(n.Payload); appID != "" {
+			inv.ResetApp(appID)
+			inv.InvalidateResponseCacheByApp(appID)
 		} else {
-			// Defensive: a missing payload on the existing
-			// channel (e.g. a row delete or a future trigger
-			// without a NEW.id payload) falls back to wholesale
-			// FlushRoutes — same posture as the legacy arm.
+			// Preserve the conservative fallback when no app can be
+			// identified, including malformed or incomplete envelopes.
 			inv.FlushRoutes()
-			// Wholesale cache drop on a malformed payload —
-			// safer than guessing the affected app.
 			inv.InvalidateResponseCacheAll()
 		}
 	case db.NotifyDomainChanged:
