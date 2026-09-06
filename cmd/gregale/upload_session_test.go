@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,6 +46,7 @@ func TestCanUseResumableUpload_PreservesRolloutFallback(t *testing.T) {
 }
 
 func TestDeployResumableTarball_StreamsAndHashes(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	path := filepath.Join(dir, "source.tar.gz")
 	contents := []byte("abcdefg")
@@ -103,6 +105,96 @@ func TestDeployResumableTarball_StreamsAndHashes(t *testing.T) {
 	}
 	if got, want := fmt.Sprint(progress), "[3 6 7]"; got != want {
 		t.Fatalf("progress = %s, want %s", got, want)
+	}
+}
+
+func TestDeployResumableTarball_ResumesPersistedSession(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.tar.gz")
+	contents := []byte("abcdefg")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat source: %v", err)
+	}
+	digest := sha256.Sum256(contents)
+	digestHex := hex.EncodeToString(digest[:])
+	optionsHash, err := deployOptionsFingerprint(nil)
+	if err != nil {
+		t.Fatalf("fingerprint options: %v", err)
+	}
+	statePath, err := uploadStatePath("demo", path)
+	if err != nil {
+		t.Fatalf("state path: %v", err)
+	}
+	if err := saveResumableUploadState(statePath, resumableUploadState{
+		Version: resumableUploadStateVersion, UploadID: "upload-resume", AppSlug: "demo",
+		APIBase:     apiBase(),
+		ArchivePath: path, ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
+		ArchiveModTimeUnixNano: info.ModTime().UnixNano(), DeployOptionsSHA256: optionsHash,
+		TotalSize: info.Size(), ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	var offsets []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/uploads/upload-resume":
+			_ = json.NewEncoder(w).Encode(api.UploadSessionResponse{
+				UploadID: "upload-resume", AppSlug: "demo", ChunkSize: 3,
+				TotalSize: int64(len(contents)), ReceivedBytes: 3, Status: "open",
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/uploads/upload-resume":
+			off := r.Header.Get("Upload-Offset")
+			offsets = append(offsets, off)
+			body, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				t.Errorf("read resumed chunk: %v", readErr)
+			}
+			wantBody := map[string]string{"3": "def", "6": "g"}[off]
+			if got := string(body); got != wantBody {
+				t.Errorf("resumed body at offset %s = %q, want %q", off, got, wantBody)
+			}
+			w.Header().Set("Upload-Offset", strconv.Itoa(atoiForTest(t, off)+len(body)))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads/upload-resume/commit":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-resume", AppID: "demo", Status: "pending"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads":
+			t.Errorf("started a new upload instead of resuming")
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	var progress []int64
+	dep, gotDigest, supported, err := DeployResumableTarball(
+		api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil),
+		context.Background(), "demo", path,
+		func(uploaded, _ int64) { progress = append(progress, uploaded) },
+	)
+	if err != nil {
+		t.Fatalf("DeployResumableTarball: %v", err)
+	}
+	if !supported || dep.ID != "dep-resume" {
+		t.Fatalf("supported=%v deployment=%+v", supported, dep)
+	}
+	if gotDigest != digestHex {
+		t.Fatalf("digest = %q, want %q", gotDigest, digestHex)
+	}
+	if got, want := fmt.Sprint(offsets), "[3 6]"; got != want {
+		t.Fatalf("offsets = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(progress), "[3 6 7]"; got != want {
+		t.Fatalf("progress = %s, want %s", got, want)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state file still exists, stat error = %v", err)
 	}
 }
 
