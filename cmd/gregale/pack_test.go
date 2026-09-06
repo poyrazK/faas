@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
 // writeFile is a tiny helper: create parent dirs + write content.
@@ -318,6 +320,74 @@ func TestInferFunctionRuntime(t *testing.T) {
 				t.Errorf("handler = %q, want %q", hnd, tc.wantHnd)
 			}
 		})
+	}
+}
+
+func TestFunctionGoTemplateIsDetectedAsFunctionAfterInit(t *testing.T) {
+	dir := t.TempDir()
+	if err := templates.Materialize("function-go", dir); err != nil {
+		t.Fatalf("materialize function-go: %v", err)
+	}
+	if got := detectShape(dir); got != shapeFunction {
+		t.Fatalf("detectShape(function-go template) = %v, want function", got)
+	}
+	runtime, handler, ok := inferFunctionRuntime(dir)
+	if !ok || runtime != runtimeGo124 || handler != defaultTemplateHandler {
+		t.Fatalf("inferFunctionRuntime(function-go template) = (%q, %q, %t), want (%q, %q, true)",
+			runtime, handler, ok, runtimeGo124, defaultTemplateHandler)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); !os.IsNotExist(err) {
+		t.Fatalf("materialized function-go go.mod error = %v, want file absent", err)
+	}
+
+	archive, _, n, err := autoPackCwd(dir, defaultZeroConfigSourceCapMB, nil)
+	if err != nil {
+		t.Fatalf("pack materialized function-go: %v", err)
+	}
+	defer func() { _ = os.Remove(archive) }()
+	if n != 3 {
+		t.Fatalf("packed function-go fileCount = %d, want 3 including build-only go.mod", n)
+	}
+	entries := tarEntries(t, archive)
+	if want := filepath.Base(dir) + "/go.mod"; !entries[want] {
+		t.Fatalf("packed function-go archive missing %q; entries: %v", want, entries)
+	}
+	if got := string(tarEntryBody(t, archive, "go.mod")); got != functionGoBuildModule {
+		t.Fatalf("packed function-go go.mod = %q, want %q", got, functionGoBuildModule)
+	}
+
+	directArchive := filepath.Join(t.TempDir(), "function-go.tar.gz")
+	if err := templates.TarGz("function-go", directArchive); err != nil {
+		t.Fatalf("pack direct function-go template: %v", err)
+	}
+	if entries := tarEntries(t, directArchive); !entries["function-go/go.mod"] {
+		t.Fatalf("direct function-go template archive missing build go.mod; entries: %v", entries)
+	}
+}
+
+func TestFunctionGoTemplateWorkspaceArchivePlacesBuildModuleBesideHandler(t *testing.T) {
+	root := t.TempDir()
+	functionDir := filepath.Join(root, "services", "worker")
+	if err := os.MkdirAll(functionDir, 0o755); err != nil {
+		t.Fatalf("mkdir function dir: %v", err)
+	}
+	if err := templates.Materialize("function-go", functionDir); err != nil {
+		t.Fatalf("materialize function-go: %v", err)
+	}
+
+	archive, _, n, err := autoPackSource(functionDir, root, true, defaultZeroConfigSourceCapMB, nil)
+	if err != nil {
+		t.Fatalf("pack workspace function-go: %v", err)
+	}
+	defer func() { _ = os.Remove(archive) }()
+	if n != 3 {
+		t.Fatalf("workspace function-go fileCount = %d, want 3 including build-only go.mod", n)
+	}
+	entries := tarEntries(t, archive)
+	for _, want := range []string{"services/worker/handler.go", "services/worker/README.md", "services/worker/go.mod"} {
+		if !entries[want] {
+			t.Errorf("workspace function-go archive missing %q; entries: %v", want, entries)
+		}
 	}
 }
 

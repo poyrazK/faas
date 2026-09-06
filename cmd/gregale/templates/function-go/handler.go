@@ -15,9 +15,9 @@
 //     work in between.
 //
 // No go.mod is shipped on purpose: Go's //go:embed refuses to descend
-// into a directory that contains one. imaged auto-creates a go.mod at
-// build time, so the missing file is invisible to the customer. See
-// the hello-go template for the full rationale.
+// into a directory that contains one, and a local go.mod would make a later
+// zero-config deploy classify this project as an app. The CLI adds a generated
+// go.mod to the upload archive without changing the customer's directory.
 
 package main
 

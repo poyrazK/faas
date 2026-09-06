@@ -1631,7 +1631,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// no Git archive was selected. This covers the existing
 		// non-git/non-origin fallback and the explicit --worktree mode.
 		if *tarball == "" {
-			detected, rt, hnd, err := resolveDeployShape(sourceDir, *function, *app, jsonOutput)
+			detected, rt, hnd, err := resolveDeployShape(sourceDir, *function, *app, jsonOutput, *runtime, *handler)
 			if err != nil {
 				return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 			}

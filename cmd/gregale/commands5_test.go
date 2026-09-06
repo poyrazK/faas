@@ -1702,7 +1702,7 @@ func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 		"cron-example":       {"handler.js", "package.json", "README.md"},
 		"function-node":      {"handler.js", "package.json", "README.md"},
 		"function-python":    {"handler.py", "requirements.txt", "README.md"},
-		"function-go":        {"main.go", "README.md"},
+		"function-go":        {"handler.go", "README.md"},
 		"function-node24":    {"handler.js", "package.json", "README.md"},
 		"function-python313": {"handler.py", "requirements.txt", "README.md"},
 	}
