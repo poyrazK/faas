@@ -5043,7 +5043,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeploymentResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","image_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","kind":"tarball","status":"active","traffic_percent":100,"created_at":"2026-08-29T11:25:00Z"}
+                example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","image_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","kind":"tarball","status":"live","traffic_percent":100,"created_at":"2026-08-29T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -13732,7 +13732,20 @@ components:
         build_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$' }
         image_digest: { type: string }
         kind: { type: string }
-        status: { type: string , example: "active"}
+        status:
+          type: string
+          # The closed set enforced by the deployments_status_check CHECK
+          # constraint (migrations/00491) and by state.DeploymentStatus.
+          # Was a bare string whose example was "active" — a value the API
+          # has never emitted, which consumers copied.
+          enum: [pending, building, imaging, snapshotting, live, failed, superseded, cancelled]
+          description: |
+            Deployment lifecycle status. `pending`, `building`, `imaging` and
+            `snapshotting` are in flight; `live` is serving traffic;
+            `superseded` shipped and was replaced by a newer deployment;
+            `failed` and `cancelled` are terminal exits (cancel is the
+            user-driven retract of a non-live row, ADR-124).
+          example: live
         error: { type: [string, "null"] }
         error_code: { type: [string, "null"] }
         # Error-explanations cluster (spec §6.4 amendment 1). The
