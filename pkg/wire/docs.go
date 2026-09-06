@@ -20,22 +20,38 @@
 package wire
 
 const (
-	// DocsHost is the canonical documentation host embedded in
-	// every Problem.DocsURL / ErrorInfo.Metadata["docs_url"] the
-	// platform emits. The TLS cert for this host must be renewed
-	// in lock-step with any rotation; see deploy/ansible/roles/
-	// docs-tls/ for the operator-side runbook.
+	// DocsHost is the LEGACY documentation host. It is NOT a
+	// deployed site: DNS resolves (Cloudflare) but every path
+	// answers 404, and the deploy/ansible/roles/docs-tls/ runbook
+	// this comment used to cite was never written.
 	//
-	// Used by:
-	//   - pkg/vmmdgrpc/{proto.go, server.go} (gRPC problem envelope)
-	//   - pkg/auth/middleware/middleware.go (apid REST 402 Detail)
-	//   - cmd/gregale/output.go (CLI error footer)
+	// Do not introduce new uses. Documentation lives at
+	// DocsBaseURL (https://gregale.dev/docs). Anything that still
+	// composes against DocsHost is repaired at the emission
+	// boundary by api.NormalizeDocsURL, which WithDocs() applies —
+	// so a stale link degrades to the docs index rather than a
+	// dead host. The constant is retained only so that normalizer
+	// can recognise and rewrite the legacy form.
 	//
-	// The pkg/grpcerr/grpcerr_test.go round-trip assertions pin the
-	// literal https://docs.gregale.dev/... form (not the constant)
-	// so a future host rotation that forgets to update the test
-	// trips CI.
+	// Remaining composers (all normalized on the way out, tracked
+	// for a follow-up sweep):
+	//   - pkg/vmmdgrpc/{proto.go, server.go, migration_handlers.go}
+	//     (~30 sites, internal daemon-to-daemon /vmmd#* anchors)
+	//   - cmd/gregalectl/{main.go, output.go} (operator CLI)
 	DocsHost = "docs.gregale.dev"
+
+	// DocsBaseURL is where the documentation actually lives. The
+	// site is a SPA that answers HTTP 200 on every path and
+	// renders its 404 client-side, so only the slugs in
+	// api.NormalizeDocsURL's allowlist resolve to real content —
+	// a link checker cannot tell the difference.
+	DocsBaseURL = "https://" + PlatformHost + "/docs"
+
+	// DashboardBillingURL is where a customer resolves a past-due
+	// balance. The 402 "Account suspended" path points here rather
+	// than at documentation: a suspended customer needs the page
+	// that takes payment, not a page that explains billing.
+	DashboardBillingURL = "https://" + PlatformHost + "/dashboard/billing"
 
 	// PlatformHost is the platform contact host used in outbound
 	// User-Agent headers (OCI registry traffic — ghcr.io, ECR,

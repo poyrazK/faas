@@ -484,7 +484,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if !acct.Active() {
 					if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
-							"Account suspended", "resolve billing to continue: https://"+wire.DocsHost+"/billing"))
+							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
 					}
 				}
@@ -538,7 +538,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if !acct.Active() {
 					if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
-							"Account suspended", "resolve billing to continue: https://"+wire.DocsHost+"/billing"))
+							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
 					}
 				}
@@ -597,7 +597,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						if !acct.Active() {
 							if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
-									"Account suspended", "resolve billing to continue: https://"+wire.DocsHost+"/billing"))
+									"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 								return
 							}
 						}
