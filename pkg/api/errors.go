@@ -10,23 +10,39 @@ import (
 	"github.com/onebox-faas/faas/pkg/api/canary"
 )
 
-// docsBase is the canonical documentation URL prefix sourced
-// from pkg/wire.DocsHost. Every WithDocs() / Type: / example
-// value in this file composes against this constant so a future
-// host rotation only edits pkg/wire/docs.go + this constant, not
-// every call site.
+// docsBase is the documentation URL prefix every WithDocs() /
+// Type: / example value in this file composes against.
 //
-// Duplication note: pkg/wire.DocsHost and this constant must
-// stay in lock-step — pkg/api cannot import pkg/wire (pkg/wire
-// imports pkg/api for api.Plans, creating a cycle). The
-// TestLintTripwire_NoLiteralDocsDomainEverywhere tripwire in
-// cmd/gregale/lint_tripwires_test.go enforces the invariant via
-// an explicit "docs.gregale.dev must appear in pkg/wire/docs.go
-// AND pkg/api/errors.go (and nowhere else)" check (see the
-// host-mirror assertion added in PR-BC).
+// Historical note: this used to be "https://docs.gregale.dev".
+// That host resolves (Cloudflare) but serves 404 on every path —
+// it was never deployed, and the `deploy/ansible/roles/docs-tls/`
+// runbook that pkg/wire/docs.go cites does not exist. The
+// documentation actually lives at https://gregale.dev/docs, which
+// cmd/gregale/urls.go had already independently concluded ("Keep
+// CLI links on the platform host because docs.gregale.dev is not
+// a deployed site"). The CLI repaired those links at render time;
+// the API, the SDKs, and the dashboard did not, so every non-CLI
+// consumer got dead links.
 //
-// Mirrors cmd/gregale/output.go:118's docsURLBase precedent.
-const docsBase = "https://docs.gregale.dev"
+// Known remaining gap: this repoints the HOST, not the content.
+// The docs site currently publishes 14 guides, and of the 27
+// topics this file links to, only /storage is among them. The
+// other 26 (/plans — 44 uses, /apps — 17, /deploys — 14, /orgs —
+// 12, /jobs, /env, /event-driven, /secrets, /auth, /domains,
+// /billing, /crons, …) render the site's client-side 404 until
+// someone writes those pages. That is strictly better than the
+// previous state — same-origin, branded, navigable, and correct
+// the moment a page ships — but it is not "the link works".
+// Tracked in docs/docs-content-gap.md.
+//
+// Note the site answers HTTP 200 for every path and renders its
+// 404 in JavaScript, so neither curl nor a link checker nor CI can
+// detect a missing page. Only a real browser can.
+//
+// Duplication note: pkg/wire.DocsHost and this constant must stay
+// in lock-step — pkg/api cannot import pkg/wire (pkg/wire imports
+// pkg/api for api.Plans, creating a cycle).
+const docsBase = "https://gregale.dev/docs"
 
 // AsProblem walks err's chain and returns the first *Problem. Returns nil
 // if none of the wrapped errors is a *Problem. Used by gRPC handlers in
