@@ -1668,9 +1668,12 @@ func (x *PauseAndSnapshotRequest) GetVmstateStorageKey() string {
 }
 
 type SnapshotResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	MemBytes      int64                  `protobuf:"varint,1,opt,name=mem_bytes,json=memBytes,proto3" json:"mem_bytes,omitempty"`
-	VmstateBytes  int64                  `protobuf:"varint,2,opt,name=vmstate_bytes,json=vmstateBytes,proto3" json:"vmstate_bytes,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	MemBytes     int64                  `protobuf:"varint,1,opt,name=mem_bytes,json=memBytes,proto3" json:"mem_bytes,omitempty"`
+	VmstateBytes int64                  `protobuf:"varint,2,opt,name=vmstate_bytes,json=vmstateBytes,proto3" json:"vmstate_bytes,omitempty"`
+	// Filesystem allocation consumed by the published mem + vmstate blobs.
+	// Zero means an older vmmd did not report the additive field.
+	StoredBytes   int64 `protobuf:"varint,3,opt,name=stored_bytes,json=storedBytes,proto3" json:"stored_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1715,6 +1718,13 @@ func (x *SnapshotResponse) GetMemBytes() int64 {
 func (x *SnapshotResponse) GetVmstateBytes() int64 {
 	if x != nil {
 		return x.VmstateBytes
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetStoredBytes() int64 {
+	if x != nil {
+		return x.StoredBytes
 	}
 	return 0
 }
@@ -5194,10 +5204,11 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1f\n" +
 	"\vstorage_key\x18\x04 \x01(\tR\n" +
 	"storageKey\x12.\n" +
-	"\x13vmstate_storage_key\x18\x05 \x01(\tR\x11vmstateStorageKeyJ\x04\b\x02\x10\x03\"T\n" +
+	"\x13vmstate_storage_key\x18\x05 \x01(\tR\x11vmstateStorageKeyJ\x04\b\x02\x10\x03\"w\n" +
 	"\x10SnapshotResponse\x12\x1b\n" +
 	"\tmem_bytes\x18\x01 \x01(\x03R\bmemBytes\x12#\n" +
-	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\"\x82\x01\n" +
+	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\x12!\n" +
+	"\fstored_bytes\x18\x03 \x01(\x03R\vstoredBytes\"\x82\x01\n" +
 	"\x13WarmSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1f\n" +
 	"\vstorage_key\x18\x02 \x01(\tR\n" +

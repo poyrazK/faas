@@ -1543,6 +1543,7 @@ type Snapshot struct {
 	FcVersion    string
 	MemBytes     int64
 	DiskBytes    int64
+	StoredBytes  int64
 	Stale        bool
 	CreatedAt    pgtype.Timestamptz
 	StorageKey   string

@@ -4355,6 +4355,9 @@ type Snapshot struct {
 	FCVersion    string
 	MemBytes     int64
 	DiskBytes    int64
+	// StoredBytes is the physical filesystem allocation of the published
+	// mem + vmstate artifacts. Zero identifies legacy snapshot writers.
+	StoredBytes int64
 	// Tier (issue #470 / ADR-055) is which snapshot tier this row
 	// belongs to: "init" (taken right after guest-init signals
 	// :8080 bound; restore pays framework warmup) or "warm"
