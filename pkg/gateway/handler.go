@@ -6416,7 +6416,10 @@ func (h *Handler) preInstantiateAppRoute(appID, routeLabel string) {
 // 200 ms) AND bytes-since-last-flush > 0. The first flush after
 // WriteHeader unconditionally fires (to set the per-flush write
 // deadline via http.ResponseController) and is the onFlush hook's
-// caller-side gate for the per-flush tx_bytes increment.
+// caller-side gate for the per-flush tx_bytes increment. Event-stream
+// and NDJSON responses bypass the byte/time window and flush after
+// every non-empty write so token-sized messages are not held for the
+// full interval.
 //
 // `streaming` is the boolean the gateway sets when it has decided
 // to take the streaming path (operator flag + per-app flag +
@@ -6634,6 +6637,10 @@ func (s *statusRecorder) maybeFlush() {
 		return
 	}
 	bytesDelta := s.Bytes - s.lastFlushedBytes
+	if bytesDelta > 0 && flushEveryWrite(s.contentTypeOrHeader()) {
+		s.doFlush()
+		return
+	}
 	if bytesDelta >= s.flushBytes {
 		s.doFlush()
 		return
@@ -6641,6 +6648,38 @@ func (s *statusRecorder) maybeFlush() {
 	if bytesDelta > 0 && time.Since(s.lastFlushAt) >= s.flushInterval {
 		s.doFlush()
 		return
+	}
+}
+
+// contentTypeOrHeader returns the response content type captured at header
+// commit, falling back to the underlying header map for writers that commit
+// their implicit 200 status from Write.
+func (s *statusRecorder) contentTypeOrHeader() string {
+	if s == nil {
+		return ""
+	}
+	if s.ContentType != "" {
+		return s.ContentType
+	}
+	if s.ResponseWriter == nil {
+		return ""
+	}
+	return s.ResponseWriter.Header().Get("Content-Type")
+}
+
+// flushEveryWrite identifies protocols where buffering individual writes is
+// user-visible latency. The normal byte/time window remains in place for all
+// other streaming content, including binary responses.
+func flushEveryWrite(contentType string) bool {
+	mediaType := strings.TrimSpace(strings.ToLower(contentType))
+	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
+		mediaType = strings.TrimSpace(mediaType[:i])
+	}
+	switch mediaType {
+	case "text/event-stream", "application/x-ndjson":
+		return true
+	default:
+		return false
 	}
 }
 
