@@ -42,6 +42,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -89,9 +91,10 @@ func acquireUploadSessionLock(uploadID string) *sync.Mutex {
 // provenance audit row records it, but server does not
 // re-verify — ADR-115 trust boundary).
 type startUploadRequest struct {
-	AppSlug   string `json:"app_slug"`
-	TotalSize int64  `json:"total_size"`
-	Sha256Hex string `json:"sha256_hex,omitempty"`
+	AppSlug       string                   `json:"app_slug"`
+	TotalSize     int64                    `json:"total_size"`
+	Sha256Hex     string                   `json:"sha256_hex,omitempty"`
+	DeployOptions *api.UploadDeployOptions `json:"deploy_options,omitempty"`
 }
 
 // startUploadResponse is the JSON body POST /v1/uploads returns.
@@ -241,14 +244,24 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 
+	deployOptions := []byte("{}")
+	if req.DeployOptions != nil {
+		deployOptions, err = json.Marshal(req.DeployOptions)
+		if err != nil || len(deployOptions) > 1<<20 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid deploy_options", "deploy_options must be valid JSON smaller than 1 MiB"))
+			return
+		}
+	}
 	row, err := s.store.CreateUploadSession(r.Context(), sqlc.CreateUploadSessionParams{
-		ID:        uploadID,
-		AccountID: acctUUID,
-		AppSlug:   req.AppSlug,
-		TotalSize: req.TotalSize,
-		ChunkSize: chunkSize,
-		Sha256Hex: pgtype.Text{String: req.Sha256Hex, Valid: req.Sha256Hex != ""},
-		PartPath:  partPath,
+		ID:            uploadID,
+		AccountID:     acctUUID,
+		AppSlug:       req.AppSlug,
+		TotalSize:     req.TotalSize,
+		ChunkSize:     chunkSize,
+		Sha256Hex:     pgtype.Text{String: req.Sha256Hex, Valid: req.Sha256Hex != ""},
+		PartPath:      partPath,
+		DeployOptions: deployOptions,
 	})
 	if err != nil {
 		_ = os.Remove(partPath)
@@ -269,6 +282,38 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		ChunkSize: row.ChunkSize,
 		TotalSize: row.TotalSize,
 		ExpiresAt: row.ExpiresAt.Time.UTC().Format("2006-01-02T15:04:05Z"),
+	})
+}
+
+// handleGetUpload is GET /v1/uploads/{id}. It deliberately returns only
+// resumable protocol state, never the spool path or persisted deployment
+// metadata. This is the discovery seam for clients resuming after restart.
+func (s *server) handleGetUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	uploadID := r.PathValue("id")
+	row, err := s.store.GetUploadSession(r.Context(), uploadID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Get session failed", err.Error()))
+		return
+	}
+	if row.AccountID != pgtypeFromUUIDString(acct.ID) {
+		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+		return
+	}
+	var deploymentID *string
+	if row.DeploymentID.Valid {
+		value := row.DeploymentID.String
+		deploymentID = &value
+	}
+	writeJSON(w, http.StatusOK, api.UploadSessionResponse{
+		UploadID: row.ID, AppSlug: row.AppSlug, ChunkSize: row.ChunkSize,
+		TotalSize: row.TotalSize, ReceivedBytes: row.ReceivedBytes,
+		Status: row.Status, ExpiresAt: row.ExpiresAt.Time.UTC().Format(time.RFC3339),
+		DeploymentID: deploymentID,
 	})
 }
 
@@ -506,12 +551,62 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 		return
 	}
+	var opts api.UploadDeployOptions
+	if len(row.DeployOptions) > 0 && string(row.DeployOptions) != "{}" {
+		if err := json.Unmarshal(row.DeployOptions, &opts); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+				"Invalid persisted deploy options", err.Error()))
+			return
+		}
+	}
+	if opts.SourceRoot != "" {
+		root, rootErr := sourcecontext.StorageRoot(opts.SourceRoot)
+		if rootErr != nil {
+			api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
+			return
+		}
+		opts.SourceRoot = root
+		present, rootErr := archiveHasSourceRoot(row.PartPath, opts.SourceRoot)
+		if rootErr != nil || !present {
+			if rootErr != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error()))
+			} else {
+				api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", opts.SourceRoot)))
+			}
+			return
+		}
+	}
+	if app.Type == state.AppTypeFunction {
+		if opts.Dockerfile {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Dockerfile functions unsupported", "function deploys use the platform runtime scaffold; remove dockerfile=true"))
+			return
+		}
+		if opts.Runtime != "" && opts.Runtime != app.Runtime {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Runtime mismatch", "function deploys must match the app's runtime"))
+			return
+		}
+		if opts.Handler == "" {
+			api.WriteProblem(w, api.ErrHandlerMissing())
+			return
+		}
+	}
+	ann := annotationForm{Reason: opts.Reason, Tag: opts.Tag, DeployedBy: opts.DeployedBy, PRNumber: opts.PRNumber}
+	if prob := validateAnnotationForm(ann); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := validateWorkflowDefinitionsAgainstPlan(opts.Workflows, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 
 	if prob := validateTarballShape(row.PartPath); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := scanForStatefulShape(row.PartPath, false); prob != nil {
+	if prob := scanForStatefulShapeAtRoot(row.PartPath, opts.Dockerfile, opts.SourceRoot); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -522,11 +617,17 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	// builderd reads it. We leave the .part in place; the reaper
 	// sweeps committed/cancelled/expired .part files older than 1h
 	// to bound the spool leak while giving builderd time to consume.
+	kind := state.DeploymentKindTarball
+	if opts.Dockerfile {
+		kind = state.DeploymentKindDockerfile
+	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 		AppID:            app.ID,
-		Kind:             state.DeploymentKindTarball,
+		Kind:             kind,
 		SourcePath:       row.PartPath,
 		SourceBytes:      row.ReceivedBytes,
+		SourceRoot:       opts.SourceRoot,
+		Handler:          opts.Handler,
 		SourceURL:        "local-tar://upload-session/" + uploadID,
 		Source:           "upload-session:" + uploadID,
 		LogSpool:         spoolRoot(),
@@ -535,7 +636,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		ActorVia:         routeKindForRequest(r),
 		ActorFromIP:      middleware.ClientIP(r),
 		ActorPusherLogin: "",
-		DeployedBy:       acct.ID,
+		Reason:           opts.Reason,
+		Tag:              opts.Tag,
+		DeployedBy:       opts.DeployedBy,
+		PRNumber:         opts.PRNumber,
+		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))

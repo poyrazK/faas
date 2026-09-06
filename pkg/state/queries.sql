@@ -2021,13 +2021,13 @@ WHERE id = $1
 -- 1-GiB hard ceiling in the SQL CHECK is the worst-case spool size,
 -- not the customer-facing quota.
 INSERT INTO upload_sessions (
-    id, account_id, app_slug, total_size, chunk_size, sha256_hex, part_path
+    id, account_id, app_slug, total_size, chunk_size, sha256_hex, part_path, deploy_options
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 RETURNING id, account_id, app_slug, total_size, received_bytes, chunk_size,
           sha256_hex, part_path, status, created_at, last_patched_at, expires_at,
-          deployment_id;
+          deployment_id, deploy_options;
 
 -- name: GetUploadSession :one
 -- Reads a single upload_sessions row by id. Used by:
@@ -2043,7 +2043,7 @@ RETURNING id, account_id, app_slug, total_size, received_bytes, chunk_size,
 -- force-close), add a separate GetUploadSessionForUpdate :one.
 SELECT id, account_id, app_slug, total_size, received_bytes, chunk_size,
        sha256_hex, part_path, status, created_at, last_patched_at, expires_at,
-       deployment_id
+       deployment_id, deploy_options
 FROM upload_sessions
 WHERE id = $1;
 

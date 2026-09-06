@@ -1562,6 +1562,7 @@ type UploadSession struct {
 	LastPatchedAt pgtype.Timestamptz
 	ExpiresAt     pgtype.Timestamptz
 	DeploymentID  pgtype.Text
+	DeployOptions []byte
 }
 
 // Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-048. Informational — not billed.

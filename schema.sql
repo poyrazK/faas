@@ -7958,6 +7958,7 @@ CREATE TABLE public.upload_sessions (
     last_patched_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone DEFAULT (now() + '00:24:00'::interval) NOT NULL,
     deployment_id text,
+    deploy_options jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT upload_sessions_chunk_size_check CHECK ((chunk_size > 0) AND (chunk_size <= 67108864)),
     CONSTRAINT upload_sessions_received_bytes_check CHECK ((received_bytes >= 0) AND (received_bytes <= total_size)),
     CONSTRAINT upload_sessions_status_check CHECK ((status = ANY (ARRAY['open'::text, 'committed'::text, 'cancelled'::text, 'expired'::text]))),

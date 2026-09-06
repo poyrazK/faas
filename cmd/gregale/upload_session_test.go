@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func TestCanUseResumableUpload_PreservesUnsupportedOptions(t *testing.T) {
+func TestCanUseResumableUpload_PreservesRolloutFallback(t *testing.T) {
 	cases := []struct {
 		name           string
 		runtime        string
@@ -28,11 +28,11 @@ func TestCanUseResumableUpload_PreservesUnsupportedOptions(t *testing.T) {
 		want           bool
 	}{
 		{name: "plain app tarball", trafficPercent: -1, want: true},
-		{name: "function runtime", runtime: "node22", trafficPercent: -1},
-		{name: "dockerfile", dockerfile: true, trafficPercent: -1},
+		{name: "function runtime", runtime: "node22", trafficPercent: -1, want: true},
+		{name: "dockerfile", dockerfile: true, trafficPercent: -1, want: true},
 		{name: "traffic split", trafficPercent: 50},
-		{name: "annotation", annotations: api.DeployAnnotations{Reason: "release"}, trafficPercent: -1},
-		{name: "workspace source root", sourceRoot: "apps/api", trafficPercent: -1},
+		{name: "annotation", annotations: api.DeployAnnotations{Reason: "release"}, trafficPercent: -1, want: true},
+		{name: "workspace source root", sourceRoot: "apps/api", trafficPercent: -1, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

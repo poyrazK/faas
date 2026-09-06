@@ -1252,6 +1252,7 @@ func (s *server) handler() http.Handler {
 	// here — it would short-circuit a *new* session creation
 	// that should otherwise succeed.
 	mux.HandleFunc("POST /v1/uploads", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleStartUpload))))
+	mux.HandleFunc("GET /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleGetUpload))))
 	mux.HandleFunc("PATCH /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleAppendUpload))))
 	mux.HandleFunc("POST /v1/uploads/{id}/commit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleCommitUpload))))
 	mux.HandleFunc("DELETE /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleCancelUpload))))

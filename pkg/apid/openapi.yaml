@@ -2770,6 +2770,17 @@ paths:
         required: true
         schema: { type: string }
         description: Upload session id (returned by POST /v1/uploads).
+    get:
+      tags: [uploads]
+      operationId: getUploadSession
+      summary: Discover resumable session state and current offset.
+      responses:
+        '200':
+          description: Current session state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSessionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
     patch:
       tags: [uploads]
       operationId: appendUpload
@@ -13059,6 +13070,25 @@ components:
           { type: integer, minimum: 1, maximum: 1073741824, description: "Total tarball bytes after gzip. Hard ceiling is 1 GiB; per-plan cap is enforced by the handler." }
         sha256_hex:
           { type: [string, "null"], pattern: '^[a-f0-9]{64}$', description: "Optional sha256 of the tarball for build_provenance. Server does not verify." }
+        deploy_options:
+          { $ref: '#/components/schemas/UploadDeployOptions' }
+
+    UploadDeployOptions:
+      type: object
+      additionalProperties: false
+      description: "Deployment metadata persisted with the upload session and applied at commit."
+      properties:
+        runtime: { type: string }
+        handler: { type: string }
+        dockerfile: { type: boolean }
+        source_root: { type: string }
+        reason: { type: string, maxLength: 280 }
+        tag: { type: string }
+        deployed_by: { type: string }
+        pr_number: { type: integer, minimum: 1 }
+        workflows:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowSpec' }
 
     UploadStartResponse:
       description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
@@ -13073,6 +13103,20 @@ components:
           { type: integer, description: "Echo of the requested total_size for client confirmation." }
         expires_at:
           { type: string, format: date-time, description: "ISO 8601 UTC timestamp; PATCH after this returns 410 Gone." }
+
+    UploadSessionResponse:
+      description: "Current resumable upload state. The received_bytes value is the next Upload-Offset a client should use."
+      type: object
+      required: [upload_id, app_slug, chunk_size, total_size, received_bytes, status, expires_at]
+      properties:
+        upload_id: { type: string }
+        app_slug: { type: string }
+        chunk_size: { type: integer, minimum: 1 }
+        total_size: { type: integer, minimum: 1 }
+        received_bytes: { type: integer, minimum: 0 }
+        status: { type: string, enum: [open, committed, cancelled, expired] }
+        expires_at: { type: string, format: date-time }
+        deployment_id: { type: [string, "null"] }
 
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."

@@ -1780,7 +1780,12 @@ func cmdDeployTarball(args []string) int {
 			sourceSHA256  string
 			usedResumable bool
 		)
-		if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+			uploadOptions := api.UploadDeployOptions{
+				Runtime: *runtime, Handler: *handler, Dockerfile: *dockerfile,
+				SourceRoot: sourceRoot, Reason: ann.Reason, Tag: ann.Tag,
+				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
+			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
 				lastPercent := -1
@@ -1794,7 +1799,7 @@ func cmdDeployTarball(args []string) int {
 				}
 			}
 			var uploadErr error
-			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress)
+			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress, uploadOptions)
 			if uploadErr == nil && !usedResumable {
 				dep, uploadErr = DeployTarballWithSourceRoot(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
 			}

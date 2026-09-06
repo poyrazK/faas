@@ -17585,6 +17585,7 @@ func (m *MemStore) CreateUploadSession(_ context.Context, in sqlc.CreateUploadSe
 		ChunkSize:     in.ChunkSize,
 		Sha256Hex:     in.Sha256Hex,
 		PartPath:      in.PartPath,
+		DeployOptions: append([]byte(nil), in.DeployOptions...),
 		Status:        "open",
 		CreatedAt:     pgtype.Timestamptz{Time: now, Valid: true},
 		LastPatchedAt: pgtype.Timestamptz{Time: now, Valid: true},

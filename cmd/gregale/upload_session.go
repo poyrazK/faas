@@ -37,19 +37,12 @@ var resumableOffsetRE = regexp.MustCompile(`server is at ([0-9]+)`)
 // request is retried or the server has to resume from a CAS conflict.
 type resumableUploadProgress func(uploaded, total int64)
 
-// canUseResumableUpload reports whether the PR-1 server commit surface can
-// represent this deploy without dropping options. Runtime/handler,
-// Dockerfile mode, canaries, traffic weights, and deployment annotations are
-// intentionally left on the multipart path until the upload commit request
-// carries those fields too. A non-empty source root also stays on multipart
-// because the resumable commit protocol has no source-context field.
+// canUseResumableUpload reports whether the resumable session can represent
+// this deploy. Metadata is persisted with the session; traffic/canary remain
+// on the legacy path until the rollout mutation is made transactional with
+// upload commit.
 func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
-	return sh == shapeApp &&
-		runtime == "" &&
-		handler == "" &&
-		!dockerfile &&
-		sourceRoot == "" &&
-		ann.Reason == "" && ann.Tag == "" && ann.DeployedBy == "" && ann.PRNumber == 0 && len(ann.Workflows) == 0 &&
+	return (sh == shapeApp || sh == shapeFunction) &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&
 		canaryStages == ""
@@ -59,7 +52,7 @@ func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, s
 // protocol. supported=false means the API is an older server and the caller
 // should use the legacy multipart endpoint. The archive is never buffered in
 // memory; only the server-selected chunk and the SHA-256 state are retained.
-func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
+func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress, options ...api.UploadDeployOptions) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
 	f, err := openCustomerFile(path)
 	if err != nil {
 		return api.DeploymentResponse{}, "", true, err
@@ -83,7 +76,7 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			}
 		}
 
-		session, err := c.StartUpload(ctx, slug, info.Size(), "")
+		session, err := c.StartUpload(ctx, slug, info.Size(), "", options...)
 		if err != nil {
 			if errors.Is(err, api.ErrResumableUploadUnsupported) {
 				return api.DeploymentResponse{}, "", false, nil

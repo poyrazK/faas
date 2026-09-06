@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
+import type { UploadSessionResponse } from '../models/UploadSessionResponse.js';
 import type { UploadStartRequest } from '../models/UploadStartRequest.js';
 import type { UploadStartResponse } from '../models/UploadStartResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -33,6 +34,30 @@ export class UploadsService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+      },
+    });
+  }
+  /**
+   * Discover resumable session state and current offset.
+   * @returns UploadSessionResponse Current session state.
+   * @throws ApiError
+   */
+  public static getUploadSession({
+    id,
+  }: {
+    /**
+     * Upload session id (returned by POST /v1/uploads).
+     */
+    id: string,
+  }): CancelablePromise<UploadSessionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/uploads/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
       },
     });
   }
