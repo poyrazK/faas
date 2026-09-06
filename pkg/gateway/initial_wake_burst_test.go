@@ -81,7 +81,7 @@ func TestInitialCapacityGenerationPreventsDuplicateExpansion(t *testing.T) {
 	b.AddTarget(Target{NodeID: "node", InstanceID: "first"}) // First RUNNING notify arrives before batch completion.
 	waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Millisecond)
 	defer waitCancel()
-	if err := h.maybeBurstCapacity(waitCtx, b.app, 3, 80); err == nil {
+	if _, err := h.maybeBurstCapacity(waitCtx, b.app, 3, 80); err == nil {
 		t.Error("capacity waiter did not join initial generation")
 	}
 	select {
@@ -94,7 +94,7 @@ func TestInitialCapacityGenerationPreventsDuplicateExpansion(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if err := h.maybeBurstCapacity(ctx, b.app, 3, 80); err != nil {
+	if _, err := h.maybeBurstCapacity(ctx, b.app, 3, 80); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -200,7 +200,13 @@ func (b *fakeBackend) Admit(_ context.Context, _, _, _, _ string, maxConcurrency
 	b.running = true // legacy-mode flag — also seeded via setLegacyHot in tests
 	// Mint a fresh per-admit Target so the round-robin fans out
 	// across admits (issue #168).
-	t := Target{NodeID: b.upstream, InstanceID: "i-" + itoa(uint64(seq)), WakeID: "fake-wake-id"}
+	wakeID := b.wakeIDOut
+	if wakeID == "" {
+		wakeID = "fake-wake-id"
+	}
+	// Match the production contract: the cached VM and admission result
+	// refer to the same wake, including when a test pins a UUID.
+	t := Target{NodeID: b.upstream, InstanceID: "i-" + itoa(uint64(seq)), WakeID: wakeID}
 	b.targets = append(b.targets, t)
 	// Pick the WakeMethod the test pinned (zero value = ColdBoot, so
 	// every existing test continues to drive the cold-boot chokepoint).
@@ -208,10 +214,7 @@ func (b *fakeBackend) Admit(_ context.Context, _, _, _, _ string, maxConcurrency
 	if method == WakeMethodUnspecified {
 		method = WakeMethodColdBoot
 	}
-	if b.wakeIDOut != "" {
-		return b.wakeIDOut, method, false, nil
-	}
-	return "fake-wake-id", method, false, nil
+	return wakeID, method, false, nil
 }
 
 // Admits returns the AdmitInstance() call count (test assertion hook).
