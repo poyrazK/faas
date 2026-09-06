@@ -1267,7 +1267,10 @@ func (s *server) handler() http.Handler {
 	// fetch. See docs/adr/0XX-local-tarball-deploy-trust-root.md.
 	// Parallel to source-ref, not a replacement — that gate stays
 	// load-bearing for `--repo X --ref SHA` semantics.
-	mux.HandleFunc("POST /v1/apps/{slug}/deployments/source-tarball", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.handleSourceTarballDeploy))))))
+	// The legacy multipart path remains available during the resumable-upload
+	// migration, but advertise the successor on every response (including
+	// auth failures) so older clients can move to POST /v1/uploads.
+	mux.Handle("POST /v1/apps/{slug}/deployments/source-tarball", s.withDeprecationHTTP(`</v1/uploads>; rel="successor-version"`, s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.handleSourceTarballDeploy)))))))
 	// PR-1 of the deploy-diff cluster — server-side pre-deploy
 	// preview. Read-only (no DB writes, no audit row, no deployment
 	// row), so the auth chain matches GET /v1/apps/{slug}/metrics
