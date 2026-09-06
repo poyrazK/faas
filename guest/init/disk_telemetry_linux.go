@@ -29,7 +29,7 @@ type diskTelemetryWire struct {
 // and bounded so telemetry can never delay workload startup or shutdown.
 func startDiskTelemetry(ctx context.Context) {
 	if ctx == nil {
-		ctx = context.Background()
+		return
 	}
 	go func() {
 		send := func() {
