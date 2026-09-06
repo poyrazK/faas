@@ -367,6 +367,9 @@ type runDeps struct {
 	// exercise the violation branch inject a func returning a
 	// non-nil error.
 	capCheck func() error
+	// prepareJailHelper moves the release helper copy onto daemon startup.
+	// nil lets orchestration tests avoid writing the production chroot.
+	prepareJailHelper func(*fcvm.JailerVMM) error
 }
 
 func defaultDeps() runDeps {
@@ -387,6 +390,9 @@ func defaultDeps() runDeps {
 		startEgressPoll:     nil, // defaultDeps() leaves nil so the runtime branch can detect "use production"
 		scheddTarget:        envOr("FAAS_VMMD_SCHEDD_TARGET", "unix:///run/faas/schedd.sock"),
 		capacityInterval:    durationPtr(CapacityInterval),
+		prepareJailHelper: func(jailer *fcvm.JailerVMM) error {
+			return jailer.PrepareJailHelper()
+		},
 		// residentFn left nil; runWithDeps fills it with
 		// leakcheck.ResidentBytes once the resolver runs.
 		// startCapacityPublish left nil; the runtime branch
@@ -790,6 +796,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithSlowSubscriberCallback(func() {
 			ops.IncLogDropped("slow_subscriber")
 		})
+	if deps.prepareJailHelper != nil {
+		if err := deps.prepareJailHelper(jailer); err != nil {
+			return fmt.Errorf("vmmd: prepare jail helper: %w", err)
+		}
+	}
 	if archiveSink != nil {
 		jailer.WithLogEvictionCallback(archiveSink.Enqueue)
 	}
