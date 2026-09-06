@@ -405,6 +405,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				webhookSvc.WritePreviewCheckForInstallation = checks.WritePreviewCheckForInstallation
 				webhookSvc.WritePreviewCheckForkRefused = checks.WritePreviewCheckForkRefused
 				webhookSvc.WritePreviewCheckForkRefusedForInstallation = checks.WritePreviewCheckForkRefusedForInstallation
+				webhookSvc.WritePreviewCommentForInstallation = checks.UpsertPreviewComment
 				log.Info("githubd: OAuth + Checks wired", "app_id", appID)
 			}
 		}

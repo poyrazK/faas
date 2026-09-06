@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/githubd"
@@ -18,11 +20,12 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return fmt.Errorf("githubd: deployment check: empty deployment id")
 	}
 	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope string
+	var previewPRNumber int
 	var installationID int64
 	err := pool.QueryRow(ctx, `
 		select coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''), coalesce(d.scope, 'default'),
 		       coalesce(parent.github_repo_full_name, a.github_repo_full_name, p.repo_full_name, ''),
-		       a.slug, coalesce(a.preview_of_slug, ''),
+		       a.slug, coalesce(a.preview_of_slug, ''), coalesce(a.preview_pr_number, 0),
 		       coalesce(parent.github_install_id, a.github_install_id, 0)
 		from deployments d
 		join apps a on a.id = d.app_id
@@ -32,7 +35,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		 and parent.slug = a.preview_of_slug
 		 and parent.deleted_at is null
 		where d.id = $1`, deploymentID).Scan(
-		&commitSHA, &kind, &status, &failure, &scope, &repo, &appSlug, &previewOf, &installationID)
+		&commitSHA, &kind, &status, &failure, &scope, &repo, &appSlug, &previewOf, &previewPRNumber, &installationID)
 	if err != nil {
 		return fmt.Errorf("githubd: deployment check lookup %s: %w", deploymentID, err)
 	}
@@ -51,8 +54,25 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		summary += " " + failure
 	}
 	if kind == string(state.DeploymentKindPreview) || previewOf != "" {
-		return checks.WritePreviewCheckForInstallation(ctx, installationID, repo, commitSHA, phase,
-			"https://"+appSlug+".gregale.dev", summary)
+		if err := checks.WritePreviewCheckForInstallation(ctx, installationID, repo, commitSHA, phase,
+			"https://"+appSlug+".gregale.dev", summary); err != nil {
+			return err
+		}
+		if previewPRNumber > 0 {
+			// Check Runs are the durable status source. The comment is a
+			// best-effort companion: a missing Issues:write grant must not
+			// prevent the Check Run worker from making progress.
+			domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
+			if domain == "" {
+				domain = "gregale.dev"
+			}
+			previewURL := "https://" + appSlug + "." + domain
+			dashboardBase := "https://" + domain
+			marker := "<!-- gregale-preview:" + appSlug + " -->"
+			body := fmt.Sprintf("%s\n### Gregale preview — %s\n\nPreview status: **%s**.\n\n[Open preview](%s) · [Deployment details](%s/dashboard/apps/%s/deployments/%s) · [Deployment logs](%s/v1/deployments/%s/logs) · [Destroy preview](%s/dashboard/apps/%s/preview/%s/destroy)\n\nCommit: `%s`", marker, status, status, previewURL, dashboardBase, appSlug, deploymentID, dashboardBase, deploymentID, dashboardBase, previewOf, appSlug, commitSHA)
+			_ = checks.UpsertPreviewComment(ctx, installationID, repo, previewPRNumber, marker, body)
+		}
+		return nil
 	}
 	return checks.WriteScopedAppCheck(ctx, installationID, repo, commitSHA, appSlug, scope, phase, "", summary)
 }

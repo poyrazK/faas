@@ -60,8 +60,9 @@ PRs from forks are **refused**. The webhook posts a
 `text: "Preview skipped for fork PR (security policy)"`. No
 app row is provisioned. This is deliberate: we cannot
 guarantee that untrusted code from a fork will not reach the
-build VM without a per-install override, which ADR-012 defers
-behind a future `Pull Requests:write` permission grant.
+build VM without a per-install override. The GitHub App needs
+`Issues:write` to maintain the single preview status comment on
+the PR's issue thread; it does not need `Pull requests:write`.
 
 ## Dashboard
 
@@ -71,6 +72,15 @@ number, current state (chip), the preview URL, and a Copy
 URL button (writes to clipboard). A preview row on the apps
 list (`/dashboard/apps`) is indented and tagged with a
 `preview` chip.
+
+## Pull request feedback
+
+Gregale maintains one bot comment per preview PR. The comment is
+updated on `opened`, `synchronize`, `reopened`, and `closed` events,
+and includes the preview URL, current lifecycle status, commit SHA,
+and one-click destroy link. A hidden marker makes webhook retries and
+repeated synchronize events idempotent instead of creating duplicate
+comments. The Check Run remains the source of build-stage status.
 
 ## Operational notes
 

@@ -559,6 +559,111 @@ func (c *ChecksAPI) WritePreviewDestroyComment(ctx context.Context, repoFullName
 	return nil
 }
 
+// previewIssueComment is the small response shape needed by the issue
+// comments API. Pull requests use the issue-comment endpoint in GitHub, so
+// this works for PR threads without requiring a second API surface.
+type previewIssueComment struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+}
+
+// UpsertPreviewComment keeps one customer-facing preview status comment per
+// PR. marker must be stable for the preview (for example,
+// "<!-- gregale-preview:pr-42-demo-app -->"). The marker is intentionally
+// hidden so a retry can find and PATCH the existing comment instead of
+// spamming the thread with another bot message.
+func (c *ChecksAPI) UpsertPreviewComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string) error {
+	if installationID <= 0 || repoFullName == "" || prNumber <= 0 || marker == "" || body == "" {
+		return fmt.Errorf("githubd: installation, repo, pr_number, marker, and body are required for preview comment")
+	}
+	if !strings.Contains(body, marker) {
+		body = marker + "\n" + body
+	}
+	token, err := c.installationToken(ctx, installationID)
+	if err != nil {
+		return err
+	}
+	comments, err := c.listPreviewComments(ctx, token, repoFullName, prNumber)
+	if err != nil {
+		return err
+	}
+	for _, comment := range comments {
+		if comment.ID == 0 || !strings.Contains(comment.Body, marker) {
+			continue
+		}
+		return c.writePreviewComment(ctx, token, http.MethodPatch,
+			fmt.Sprintf("%s/repos/%s/issues/comments/%d", GitHubAPI, repoFullName, comment.ID), body, http.StatusOK)
+	}
+	return c.writePreviewComment(ctx, token, http.MethodPost,
+		fmt.Sprintf("%s/repos/%s/issues/%d/comments", GitHubAPI, repoFullName, prNumber), body, http.StatusCreated)
+}
+
+func (c *ChecksAPI) installationToken(ctx context.Context, installationID int64) (string, error) {
+	if c.Tokens == nil || installationID <= 0 {
+		return "", fmt.Errorf("githubd: installation-scoped GitHub token is not configured")
+	}
+	token, err := c.Tokens.Token(ctx, installationID)
+	if err != nil {
+		return "", fmt.Errorf("githubd: get install token (install=%d): %w", installationID, err)
+	}
+	return token, nil
+}
+
+func (c *ChecksAPI) listPreviewComments(ctx context.Context, token, repoFullName string, prNumber int) ([]previewIssueComment, error) {
+	endpoint := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=100", GitHubAPI, repoFullName, prNumber)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	setGitHubHeaders(req, token)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("githubd: list preview comments: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return nil, fmt.Errorf("githubd: list preview comments: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var comments []previewIssueComment
+	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
+		return nil, fmt.Errorf("githubd: decode preview comments: %w", err)
+	}
+	return comments, nil
+}
+
+func (c *ChecksAPI) writePreviewComment(ctx context.Context, token, method, endpoint, body string, wantStatus int) error {
+	payload, err := json.Marshal(struct {
+		Body string `json:"body"`
+	}{Body: body})
+	if err != nil {
+		return fmt.Errorf("githubd: marshal preview comment: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	setGitHubHeaders(req, token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("githubd: write preview comment: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != wantStatus {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return fmt.Errorf("githubd: write preview comment: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+func setGitHubHeaders(req *http.Request, token string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "faas-githubd/1.0")
+}
+
 // WriteCheckCoalesced is the rate-limit defensive wrapper around
 // ChecksAPI.WriteCheck (PR-D / ADR-012 §6 closure). GitHub's
 // Checks API caps each install at 1000 calls/hour (100 req/min
