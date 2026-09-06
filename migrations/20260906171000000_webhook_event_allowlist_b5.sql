@@ -1,4 +1,4 @@
--- filename: 20260906170000000_webhook_event_allowlist_b5.sql
+-- filename: 20260906171000000_webhook_event_allowlist_b5.sql
 -- +goose Up
 -- +goose StatementBegin
 

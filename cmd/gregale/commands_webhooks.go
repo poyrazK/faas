@@ -394,7 +394,7 @@ var webhookIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-
 
 // validAppWebhookEvents is the closed vocabulary accepted by the
 // --event flag. Mirrors the CHECK constraint at
-// migrations/20260906170000000_webhook_event_allowlist_b5.sql and the
+// migrations/20260906171000000_webhook_event_allowlist_b5.sql and the
 // `app_webhook_deliveries_event_chk` migration tests.
 var validAppWebhookEvents = map[string]struct{}{
 	"cron.fired":          {},
