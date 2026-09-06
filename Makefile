@@ -10,6 +10,7 @@ GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)
 GOARCH  ?= $(shell $(GO) env GOARCH)
 export GOOS GOARCH
+TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
 DAEMONS := apid gatewayd-public gatewayd-internal schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-stream-bridge builderd imaged meterd githubd hostage-gen
@@ -362,8 +363,9 @@ backup-restore-drill: ## Run the M8 restore drill end-to-end (must run on EX44 a
 	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh"
 
 .PHONY: lint-drill
-lint-drill: ## Static lint of the restore drill script + record template shape (spec §14 M8)
+lint-drill: ## Static lint of the M8 restore and TLS cutover drill scripts
 	bash deploy/scripts/faas-m8-restore-drill_test.sh
+	bash deploy/scripts/faas-tls-cutover-drill_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -372,6 +374,14 @@ m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing 
 .PHONY: eviction-dryrun
 eviction-dryrun: ## Issue #255: deterministic RAM-pressure eviction drill + evidence record
 	$(GO) run ./cmd/eviction-dryrun
+
+.PHONY: tls-cutover-drill
+tls-cutover-drill: ## Issue #252: current-edge TLS cutover drill (dry-run by default)
+	@case "$(TLS_CUTOVER_MODE)" in \
+	  dry-run|execute) ;; \
+	  *) echo "TLS_CUTOVER_MODE must be dry-run or execute" >&2; exit 2 ;; \
+	esac
+	bash deploy/scripts/faas-tls-cutover-drill.sh --$(TLS_CUTOVER_MODE)
 
 .PHONY: backup-push-pg
 backup-push-pg: ## Push the latest basebackup to Hetzner Storage Box (issue #250)

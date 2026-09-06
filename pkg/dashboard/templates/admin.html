@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    .banner { padding: 1rem; border: 1px solid #d9a441; background: #fff8c5; margin: 1rem 0; }
+    .ok { border-color: #2d7a46; background: #e6ffed; }
+    .muted { color: #777; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/dashboard/">Home</a>
+      <a href="/dashboard/safe-releases">Safe releases</a>
+      <strong>Admin</strong>
+    </nav>
+    <span><code>{{.Account.Email}}</code></span>
+  </header>
+
+  <main>
+    <h1>{{.Title}}</h1>
+    {{if .Data.TLSCutoverPresent}}
+      {{if eq .Data.TLSCutover.State "rolled_back"}}
+        <aside class="banner ok" role="status">
+          <strong>TLS cutover drill rolled back successfully.</strong>
+          The banner is durable and remains visible after rollback.
+        </aside>
+      {{else}}
+        <aside class="banner" role="status">
+          <strong>TLS cutover state: {{.Data.TLSCutover.State}}.</strong>
+          {{.Data.TLSCutover.Message}}
+        </aside>
+      {{end}}
+      <table>
+        <tr><th>Run ID</th><td><code>{{.Data.TLSCutover.RunID}}</code></td></tr>
+        <tr><th>Updated</th><td>{{.Data.TLSCutover.UpdatedAt}}</td></tr>
+        <tr><th>Operator</th><td>{{.Data.TLSCutover.Operator}}</td></tr>
+        <tr><th>State file</th><td><code>{{.Data.TLSCutoverStateFile}}</code></td></tr>
+      </table>
+    {{else}}
+      <p class="muted">No TLS cutover drill state has been recorded.</p>
+      <p>Run <code>make tls-cutover-drill</code> to create a dry-run record.</p>
+    {{end}}
+  </main>
+
+  <footer>Operator-only dashboard · TLS cutover drill · issue #252.</footer>
+</body>
+</html>
