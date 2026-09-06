@@ -37,8 +37,13 @@ surface observable in billing.
 starts the moment they configure `min_instances > 0`, including
 the reaper's first-minute warm-up window. Matches the Hobby
 break-even row in PR-A's financial-model addendum ("customer pays
-for the warm slot from the moment they configure it"). Sampler
-emits unconditionally — no opt-out flag in v1.
+for the warm slot from the moment they configure it"). The floor
+continues while a deployment is live or progressing toward live.
+Once no live replacement exists and the latest deployment is terminal
+(`failed | superseded | cancelled`), schedd cannot provide the configured
+capacity and synthetic billing stops.
+Sampler emits unconditionally for serviceable/in-flight deployments — no
+opt-out flag in v1.
 
 **2. Synthetic rows go through the existing `AppendUsage` path.**
 Storage shape is unchanged: `usage_minutes` carries one row per
@@ -114,6 +119,7 @@ defense-in-depth — the floor branch is reachable only when
 | Scenario | Behaviour |
 |---|---|
 | Cold-start with live = 0 and stamped floor | Floor emits `MinInstances` synthetic rows for that minute. Customer pays for the warm slot from t=0. |
+| No live replacement and latest deployment is terminal | Floor emits no synthetic rows. Unserviceable capacity is neither retried nor billed. |
 | Redelivered minute (AppendUsage with same `(instance_id, minute)`) | `mb_seconds` is `DO NOTHING` on the PK — second write is a no-op. The `cpu_usec / tx_bytes / ...` columns are additive, but synthetic rows carry zeros there. |
 | Free PATCHes `min_instances=1` | `CodePlanMinInstancesNotAllowed` 4xx (PR-A's gate). Floor never fires for Free. |
 | Legacy Free app with `min_instances=0` | Floor silent (zero policy). |

@@ -225,6 +225,114 @@ func TestSampler_AppliesMinInstancesFloor(t *testing.T) {
 	}
 }
 
+func TestSampler_MinInstancesFloorSkipsTerminalDeployment(t *testing.T) {
+	statuses := []state.DeploymentStatus{
+		state.DeployFailed,
+		state.DeploySuperseded,
+		state.DeployCancelled,
+	}
+	for _, status := range statuses {
+		t.Run(string(status), func(t *testing.T) {
+			store := state.NewMemStore()
+			ctx := context.Background()
+			acct, err := store.CreateAccount(ctx, "floor-no-live-"+string(status)+"@example.com", api.PlanHobby)
+			if err != nil {
+				t.Fatalf("CreateAccount: %v", err)
+			}
+			app, err := store.CreateApp(ctx, state.App{
+				AccountID: acct.ID,
+				Slug:      "floor-no-live-" + string(status),
+				RAMMB:     256,
+				Type:      state.AppTypeApp,
+			})
+			if err != nil {
+				t.Fatalf("CreateApp: %v", err)
+			}
+			// A stale in-flight row must not keep billing alive after a newer
+			// terminal deployment becomes the app's current outcome.
+			if _, err := store.CreateDeployment(ctx, state.Deployment{
+				AppID:  app.ID,
+				Status: state.DeployBuilding,
+				Kind:   state.DeploymentKindImage,
+			}); err != nil {
+				t.Fatalf("CreateDeployment(stale building): %v", err)
+			}
+			if _, err := store.CreateDeployment(ctx, state.Deployment{
+				AppID:  app.ID,
+				Status: status,
+				Kind:   state.DeploymentKindImage,
+			}); err != nil {
+				t.Fatalf("CreateDeployment: %v", err)
+			}
+			setPolicy(t, store, app.ID, state.ScalingPolicy{MinInstances: 1})
+
+			rows, err := NewSampler(store, nil, func() time.Time {
+				return time.Date(2026, 9, 6, 20, 0, 0, 0, time.UTC)
+			}).SampleAndRoll(ctx)
+			if err != nil {
+				t.Fatalf("SampleAndRoll: %v", err)
+			}
+			for _, row := range rows {
+				if row.AppID == app.ID && row.SyntheticFloor {
+					t.Fatalf("unexpected synthetic floor usage for deployment status %q: %+v", status, row)
+				}
+			}
+		})
+	}
+}
+
+func TestSampler_MinInstancesFloorBillsDuringDeploymentStartup(t *testing.T) {
+	statuses := []state.DeploymentStatus{
+		state.DeployPending,
+		state.DeployBuilding,
+		state.DeployImaging,
+		state.DeploySnapshotting,
+	}
+	for _, status := range statuses {
+		t.Run(string(status), func(t *testing.T) {
+			store := state.NewMemStore()
+			ctx := context.Background()
+			acct, err := store.CreateAccount(ctx, "floor-starting-"+string(status)+"@example.com", api.PlanHobby)
+			if err != nil {
+				t.Fatalf("CreateAccount: %v", err)
+			}
+			app, err := store.CreateApp(ctx, state.App{
+				AccountID: acct.ID,
+				Slug:      "floor-starting-" + string(status),
+				RAMMB:     256,
+				Type:      state.AppTypeApp,
+			})
+			if err != nil {
+				t.Fatalf("CreateApp: %v", err)
+			}
+			if _, err := store.CreateDeployment(ctx, state.Deployment{
+				AppID:  app.ID,
+				Status: status,
+				Kind:   state.DeploymentKindImage,
+			}); err != nil {
+				t.Fatalf("CreateDeployment: %v", err)
+			}
+			setPolicy(t, store, app.ID, state.ScalingPolicy{MinInstances: 1})
+
+			rows, err := NewSampler(store, nil, func() time.Time {
+				return time.Date(2026, 9, 6, 20, 0, 0, 0, time.UTC)
+			}).SampleAndRoll(ctx)
+			if err != nil {
+				t.Fatalf("SampleAndRoll: %v", err)
+			}
+			var synthetic int
+			for _, row := range rows {
+				if row.AppID == app.ID && row.SyntheticFloor {
+					synthetic++
+				}
+			}
+			if synthetic != 1 {
+				t.Fatalf("synthetic rows = %d, want 1 while deployment status is %q", synthetic, status)
+			}
+		})
+	}
+}
+
 // TestSampler_FloorAppliedAcrossMinuteBoundary pins the
 // first-write-wins idempotency contract across redelivered
 // minutes and minute boundaries. Three sequential ticks: T →

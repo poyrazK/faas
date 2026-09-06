@@ -2,6 +2,7 @@ package meter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -566,6 +567,19 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			}
 		}
 		if floor > 0 && liveCount < floor {
+			// The floor is a promise to provide capacity. Preserve ADR-060's
+			// billed-from-t=0 contract while a deployment is starting, but
+			// stop synthetic billing once every deployment is terminal. At
+			// that point schedd cannot fulfil the floor. Real CountsForRAM
+			// instances above remain billable because they consume memory
+			// regardless of deployment metadata.
+			floorAvailable, billableErr := s.billableFloorDeployment(ctx, app.ID)
+			if billableErr != nil {
+				return out, billableErr
+			}
+			if !floorAvailable {
+				continue
+			}
 			gap := floor - liveCount
 			billable := api.BillableRAMMB(app.RAMMB)
 			floorTotal := int64(gap) * MBSecondsPerMinute(billable)
@@ -600,6 +614,25 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 		}
 	}
 	return out, nil
+}
+
+// billableFloorDeployment reports whether an app has capacity that is live or
+// its latest deployment is still being provisioned. A terminal latest
+// deployment without a live fallback cannot satisfy a min-instances promise
+// and therefore cannot justify synthetic floor usage. Older abandoned pipeline
+// rows do not keep billing alive.
+func (s *Sampler) billableFloorDeployment(ctx context.Context, appID string) (bool, error) {
+	if _, err := s.store.LiveDeployment(ctx, appID); err == nil {
+		return true, nil
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return false, fmt.Errorf("meter: resolve live deployment for floor %s: %w", appID, err)
+	}
+
+	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 1, 0)
+	if err != nil {
+		return false, fmt.Errorf("meter: list deployments for floor %s: %w", appID, err)
+	}
+	return len(deployments) == 1 && !deployments[0].Status.IsTerminal(), nil
 }
 
 // cpuDeltaForMinute computes the per-minute CPU-µs delta for the
