@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
 // Validity tags the freshness of a single signal on an InstanceStat
@@ -166,6 +168,9 @@ type InstanceStat struct {
 	DiskUsedBytes     int64
 	DiskCapacityBytes int64
 	DiskValid         bool
+	// DiskPressure is the bounded enforcement signal derived from the latest
+	// valid writable-filesystem sample. Unknown means no valid sample exists.
+	DiskPressure fcvm.DiskPressure
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is
 	// the per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Nil/empty = legacy

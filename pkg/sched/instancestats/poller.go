@@ -6,8 +6,10 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -45,6 +47,12 @@ func (f DialerFunc) Dial(ctx context.Context, targetURL string, tlsCfg *tls.Conf
 	return f(ctx, targetURL, tlsCfg)
 }
 
+// DiskPressureHandler is called once when an instance first reaches the full
+// writable-filesystem threshold. The handler owns the lifecycle action (for
+// example, destroy and cold-replace); returning an error leaves the pressure
+// unacknowledged so the next sample retries it.
+type DiskPressureHandler func(context.Context, InstanceStat, fcvm.DiskPressure) error
+
 // Poller is the periodic instance-stats worker. Mirrors
 // pkg/sched.Heartbeat in shape: Tick does one full sweep; Run
 // loops Tick on a fixed interval until ctx is done. Per-instance
@@ -66,6 +74,11 @@ type Poller struct {
 	// NodeRegistry is the same notification-backed active-node snapshot used
 	// by placement and heartbeat. Nil preserves the legacy store lookup.
 	NodeRegistry *sched.NodeRegistry
+	// DiskPressureHandler turns a full guest writable filesystem into an
+	// explicit lifecycle action. Nil keeps the poller observation-only.
+	DiskPressureHandler DiskPressureHandler
+	diskPressureMu      sync.Mutex
+	diskPressureSeen    map[string]fcvm.DiskPressure
 }
 
 // WithTelemetry switches the poller to the persistent node telemetry stream.
@@ -81,6 +94,16 @@ func (p *Poller) WithTelemetry(cache *sched.NodeTelemetryCache) *Poller {
 func (p *Poller) WithNodeRegistry(reg *sched.NodeRegistry) *Poller {
 	if p != nil {
 		p.NodeRegistry = reg
+	}
+	return p
+}
+
+// WithDiskPressureHandler enables full-disk enforcement. The callback is
+// invoked outside the reader's snapshot publication path and is retried when
+// it returns an error.
+func (p *Poller) WithDiskPressureHandler(handler DiskPressureHandler) *Poller {
+	if p != nil {
+		p.DiskPressureHandler = handler
 	}
 	return p
 }
@@ -203,6 +226,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		rows, rolled := p.decodeTelemetrySnapshot(
 			p.Telemetry.Snapshot(p.now()), instances, sidecarByDeploy)
 		p.Reader.Replace(rows)
+		p.enforceDiskPressure(ctx, rows)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -218,6 +242,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// Replace is atomic; readers see either the previous snapshot
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
+	p.enforceDiskPressure(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
 	// (app, node). The wire side collapses NaN for absent
 	// values; instancestats passes NaN through so the rollup
@@ -226,6 +251,54 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 	}
 	return nil
+}
+
+// enforceDiskPressure emits one action per transition into Full. It keeps the
+// state in the poller rather than durable instance rows because pressure is a
+// live guest signal and must be re-evaluated after a schedd restart.
+func (p *Poller) enforceDiskPressure(ctx context.Context, rows []InstanceStat) {
+	if p == nil || p.DiskPressureHandler == nil {
+		return
+	}
+	p.diskPressureMu.Lock()
+	if p.diskPressureSeen == nil {
+		p.diskPressureSeen = make(map[string]fcvm.DiskPressure, len(rows))
+	}
+	seen := make(map[string]struct{}, len(rows))
+	actions := make([]InstanceStat, 0)
+	for _, row := range rows {
+		if !row.DiskValid || row.InstanceID == "" {
+			continue
+		}
+		pressure := row.DiskPressure
+		if pressure == fcvm.DiskPressureUnknown {
+			pressure = fcvm.ClassifyDiskPressure(row.DiskUsedBytes, row.DiskCapacityBytes)
+		}
+		seen[row.InstanceID] = struct{}{}
+		previous := p.diskPressureSeen[row.InstanceID]
+		if pressure != fcvm.DiskPressureFull || previous == fcvm.DiskPressureFull {
+			p.diskPressureSeen[row.InstanceID] = pressure
+			continue
+		}
+		actions = append(actions, row)
+	}
+	for instanceID := range p.diskPressureSeen {
+		if _, ok := seen[instanceID]; !ok {
+			delete(p.diskPressureSeen, instanceID)
+		}
+	}
+	p.diskPressureMu.Unlock()
+	for _, row := range actions {
+		if err := p.DiskPressureHandler(ctx, row, fcvm.DiskPressureFull); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("instance stats: disk pressure handler failed", "instance_id", row.InstanceID, "pressure", fcvm.DiskPressureFull.String(), "err", err)
+			}
+			continue
+		}
+		p.diskPressureMu.Lock()
+		p.diskPressureSeen[row.InstanceID] = fcvm.DiskPressureFull
+		p.diskPressureMu.Unlock()
+	}
 }
 
 // decodeTelemetrySnapshot joins a persistent node batch with durable instance
@@ -304,6 +377,7 @@ func (p *Poller) decodeTelemetrySnapshot(
 			row.DiskUsedBytes = *in.DiskUsedBytes
 			row.DiskCapacityBytes = *in.DiskCapacityBytes
 			row.DiskValid = true
+			row.DiskPressure = fcvm.ClassifyDiskPressure(row.DiskUsedBytes, row.DiskCapacityBytes)
 		}
 		if in.ResidentBytes != nil {
 			mib := float64(*in.ResidentBytes) / float64(1024*1024)
@@ -494,6 +568,7 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 			row.DiskUsedBytes = *in.DiskUsedBytes
 			row.DiskCapacityBytes = *in.DiskCapacityBytes
 			row.DiskValid = true
+			row.DiskPressure = fcvm.ClassifyDiskPressure(row.DiskUsedBytes, row.DiskCapacityBytes)
 		}
 		// RSS: wire sends *int64. nil → Unknown; non-nil →
 		// convert bytes → MiB.

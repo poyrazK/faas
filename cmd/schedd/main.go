@@ -1238,7 +1238,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		reader,
 		ops,
 		log,
-	).WithTelemetry(engine.NodeTelemetryCache()).WithNodeRegistry(nodeRegistry)
+	).WithTelemetry(engine.NodeTelemetryCache()).
+		WithNodeRegistry(nodeRegistry).
+		WithDiskPressureHandler(func(ctx context.Context, row instancestats.InstanceStat, _ fcvm.DiskPressure) error {
+			return engine.RecycleForDiskPressure(ctx, row.InstanceID, row.DiskUsedBytes, row.DiskCapacityBytes)
+		})
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
 	// per-instance CPU-µs snapshot to meterd. The reader is
