@@ -1167,6 +1167,26 @@ type ObjectStorageAuthorization struct {
 	Count       int64
 }
 
+type ObjectStorageBillingPeriod struct {
+	ID                           pgtype.UUID
+	AccountID                    pgtype.UUID
+	PeriodStart                  pgtype.Timestamptz
+	PeriodEnd                    pgtype.Timestamptz
+	Currency                     string
+	StoredByteHours              int64
+	RequestCount                 int64
+	EgressBytes                  int64
+	ProviderCostMillicents       int64
+	StorageMillicentsPerGibMonth int64
+	RequestsMillicentsPerMillion int64
+	EgressMillicentsPerGib       int64
+	StorageMillicents            int64
+	RequestsMillicents           int64
+	EgressMillicents             int64
+	TotalMillicents              int64
+	FinalizedAt                  pgtype.Timestamptz
+}
+
 type ObjectStorageBucketUsage struct {
 	BucketID      pgtype.UUID
 	BaselineBytes int64

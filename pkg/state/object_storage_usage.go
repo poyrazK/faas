@@ -12,9 +12,12 @@ import (
 )
 
 var (
-	ErrObjectUsageStale = errors.New("object storage usage is unavailable or stale")
-	ErrObjectBudget     = errors.New("object storage budget reached")
-	ErrObjectCapacity   = errors.New("object storage capacity reserved")
+	ErrObjectUsageStale        = errors.New("object storage usage is unavailable or stale")
+	ErrObjectBudget            = errors.New("object storage budget reached")
+	ErrObjectCapacity          = errors.New("object storage capacity reserved")
+	ErrObjectBillingOpen       = errors.New("object storage billing period is not closed")
+	ErrObjectBillingIncomplete = errors.New("object storage billing period is incomplete")
+	ErrObjectBillingConflict   = errors.New("object storage billing period conflicts with an existing finalization")
 )
 
 type ObjectStorageLimitError struct {
@@ -47,6 +50,15 @@ type ObjectStorageAccountingStore interface {
 	DueObjectInventories(context.Context, int32) ([]ObjectBucket, error)
 	ClaimObjectInventory(context.Context, string, string) error
 	FinishObjectInventory(context.Context, string, string, int64, int64) error
+}
+
+// ObjectStorageBillingStore is the persistence seam for month-close billing.
+// It is deliberately separate from ObjectStorageAccountingStore so existing
+// accounting test doubles and deployments can adopt billing independently.
+type ObjectStorageBillingStore interface {
+	ObjectUsageForPeriod(context.Context, string, time.Time) (ObjectUsageSnapshot, error)
+	GetObjectStorageBillingPeriod(context.Context, string, time.Time) (ObjectStorageBillingRecord, error)
+	RecordObjectStorageBillingPeriod(context.Context, ObjectStorageBillingRecord) (ObjectStorageBillingRecord, error)
 }
 
 func ObjectStoragePeriod(now time.Time) time.Time {
@@ -107,6 +119,64 @@ func SummarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 		u.Fresh = false
 	}
 	return u
+}
+
+// SummarizeObjectStorageBillingUsage reduces the authoritative provider
+// reports for one UTC calendar month without applying the live admission
+// policy's freshness window. Month-close runs after the period ends, so a
+// report observed near the end of the month is valid even when it is older
+// than the current admission window. It still requires one report for every
+// backend that existed during the period and fails closed when the counters
+// cannot be represented safely.
+func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.Time) (api.ObjectStorageUsage, error) {
+	periodStart = ObjectStoragePeriod(periodStart)
+	u := api.ObjectStorageUsage{Fresh: true, PeriodStart: periodStart, Authorizations: s.Authorizations}
+	periodEnd := periodStart.AddDate(0, 1, 0)
+	required := map[string]string{}
+	for _, b := range s.Buckets {
+		if !b.Bucket.CreatedAt.IsZero() && !b.Bucket.CreatedAt.Before(periodEnd) {
+			continue
+		}
+		if b.Bucket.State == "deleted" && !b.Bucket.UpdatedAt.IsZero() && !b.Bucket.UpdatedAt.After(periodStart) {
+			continue
+		}
+		if b.Bucket.BackendID != "" {
+			required[b.Bucket.BackendID] = b.Bucket.BackendFingerprint
+		}
+	}
+	latest := map[string]api.ObjectStorageUsageReport{}
+	for _, r := range s.Reports {
+		if !r.PeriodStart.Equal(periodStart) {
+			continue
+		}
+		if old, ok := latest[r.BackendID]; !ok || r.ObservedAt.After(old.ObservedAt) {
+			latest[r.BackendID] = r
+		}
+	}
+	for backendID, r := range latest {
+		if fp, ok := required[backendID]; ok {
+			if fp != r.BackendFingerprint {
+				return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
+			}
+			delete(required, backendID)
+		}
+		for _, v := range []int64{r.StoredByteHours, r.RequestCount, r.EgressBytes, r.CostMillicents} {
+			if v < 0 {
+				return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
+			}
+		}
+		u.StoredByteHours = boundedObjectAdd(u.StoredByteHours, r.StoredByteHours)
+		u.RequestCount = boundedObjectAdd(u.RequestCount, r.RequestCount)
+		u.EgressBytes = boundedObjectAdd(u.EgressBytes, r.EgressBytes)
+		u.CostMillicents = boundedObjectAdd(u.CostMillicents, r.CostMillicents)
+		if u.StoredByteHours > api.MaxObjectStoragePolicyValue || u.RequestCount > api.MaxObjectStoragePolicyValue || u.EgressBytes > api.MaxObjectStoragePolicyValue || u.CostMillicents > api.MaxObjectStoragePolicyValue {
+			return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
+		}
+	}
+	if len(required) != 0 {
+		return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
+	}
+	return u, nil
 }
 
 func checkObjectAdmission(s ObjectUsageSnapshot, bucketID string, size, oldSize int64, exists, put bool, p api.ObjectStoragePolicy, now time.Time) (int64, int64, error) {
