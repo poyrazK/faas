@@ -144,7 +144,9 @@ type PushEvent struct {
 	Ref          string              `json:"ref"`        // "refs/heads/main"
 	Before       string              `json:"before"`     // commit SHA the branch was at before the push; empty for the first push on a branch (0000...0000)
 	After        string              `json:"after"`      // commit SHA the head now points at
+	Created      bool                `json:"created"`    // true when this push created the ref
 	Deleted      bool                `json:"deleted"`    // true when GitHub deletes a branch or tag
+	Forced       bool                `json:"forced"`     // true when the ref was force-updated
 	Repository   PushRepository      `json:"repository"` // repo identity
 	Installation InstallationPayload `json:"installation"`
 	Pusher       PushPusher          `json:"pusher"` // optional audit

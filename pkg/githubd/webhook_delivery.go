@@ -210,8 +210,8 @@ func (s *PGWebhookStore) SaveCheckRunID(ctx context.Context, repoFullName, commi
 
 // RunWebhookDeliveryWorker drains authenticated deliveries until ctx is
 // cancelled. Business errors are retried with bounded exponential backoff;
-// ignored/unbound events are successful deliveries and are retained for
-// idempotency until the retention prune.
+// ignored/unbound/rejected events are successful deliveries and are retained
+// for idempotency until the retention prune.
 func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, service *Service, log *slog.Logger) {
 	if store == nil || service == nil {
 		return
@@ -235,7 +235,7 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 				break
 			}
 			dispatchErr := service.HandleWebhookDelivery(ctx, delivery)
-			if dispatchErr == nil || IsNoBinding(dispatchErr) || IsIgnored(dispatchErr) {
+			if dispatchErr == nil || IsNoBinding(dispatchErr) || IsIgnored(dispatchErr) || isReleaseTagRejected(dispatchErr) {
 				if err := store.Complete(ctx, delivery.DeliveryID); err != nil {
 					log.Error("githubd: complete webhook delivery", "delivery_id", delivery.DeliveryID, "err", err)
 				}

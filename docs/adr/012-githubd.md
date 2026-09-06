@@ -19,6 +19,19 @@
   - `pkg/githubd/webhook.go` reuses the HMAC primitives from `pkg/stripex/webhook.go:90-104` (`hmac.Equal` + `hmac.New(sha256.New, …)`); only the header parse differs.
   - PR-preview environments deferred to v1.1 (UX spec §5.3 + spec §17 G8). The GitHub App scopes do not include `Pull Requests:write`; webhook events we accept are `push` only.
   - `cmd/builderd/main.go` gains a `LISTEN build_queued` (or whichever notify channel the slice-7 commit picks) so webhook-induced deploys are picked up identically to CLI-induced ones.
+
+## §9 Release-tag promotion policy
+
+Production tag pushes are accepted only when the tag is a valid SemVer with
+the conventional `v` prefix (for example `v1.2.3` or `v1.2.3-rc.1`), GitHub
+marks the ref as `created`, and the `before` SHA is the all-zero creation
+sentinel. A tag update or force-push is acknowledged but ignored with the
+reason `release_tag_moved`;
+an invalid tag is acknowledged with `invalid_release_tag`. Both decisions
+happen before binding lookup, source fetch, or reconcile. This makes a release
+tag a one-way promotion boundary without adding customer state or a database
+migration; a new version must use a new tag.
+
 - **Rejected alternatives:**
   - **githubd as a module inside apid.** Rejected: apid's responsibility is customer-intent CRUD; outbound api.github.com traffic + Checks token refresh would dilute that, and any apid hot-path regression would now have a third-party-API dependency.
   - **githubd terminates the webhook itself (own public listener).** Rejected: violates the §11 single-public-listener invariant. githubd is loopback-only; gatewayd already has CertMagic + the canonical request-ID injection + rate-limit observability — splitting the public surface doubles the §11 attack surface.
