@@ -211,6 +211,46 @@ func TestCmdAppMinInstances_HobbyRejects(t *testing.T) {
 // adding a flag-by-flag emit doesn't accidentally drop basic_user
 // or basic_pass from the JSON body.
 func TestCmdAppPublicAuth_ParsesAndForwards(t *testing.T) {
+	t.Run("no_require_authn_opens_public_url", func(t *testing.T) {
+		var seen api.UpdateAppRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+				http.Error(w, "bad json", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug})
+		}))
+		defer srv.Close()
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+		if code := cmdApp([]string{constSlug, "--no-require-authn"}); code != 0 {
+			t.Fatalf("cmdApp --no-require-authn exit = %d; want 0", code)
+		}
+		if seen.RequireAuthn == nil || *seen.RequireAuthn {
+			t.Fatalf("RequireAuthn = %v; want pointer to false", seen.RequireAuthn)
+		}
+		if seen.PublicAuth == nil || seen.PublicAuth.Mode != api.AppPublicAuthModeOpen {
+			t.Fatalf("PublicAuth = %+v; want mode=open", seen.PublicAuth)
+		}
+	})
+	t.Run("explicit_public_auth_wins", func(t *testing.T) {
+		var seen api.UpdateAppRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&seen)
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug})
+		}))
+		defer srv.Close()
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+		if code := cmdApp([]string{constSlug, "--no-require-authn", "--public-auth", "bearer"}); code != 0 {
+			t.Fatalf("cmdApp explicit public auth exit = %d; want 0", code)
+		}
+		if seen.PublicAuth == nil || seen.PublicAuth.Mode != api.AppPublicAuthModeBearer {
+			t.Fatalf("PublicAuth = %+v; want explicit mode=bearer", seen.PublicAuth)
+		}
+	})
 	t.Run("unknown_mode_rejected_locally", func(t *testing.T) {
 		called := false
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2001,7 +2041,7 @@ func TestCreateOrFetchApp_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	c := NewClient(srv.URL, "fp_live_x")
-	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "ok-app"}, nil, nil); err != nil {
+	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "ok-app"}, nil, nil, nil); err != nil {
 		t.Fatalf("createOrFetchApp happy path = %v, want nil", err)
 	}
 	if sawGet {
@@ -2043,7 +2083,7 @@ func TestCreateOrFetchApp_409SameAccount_PATCHes(t *testing.T) {
 	c := NewClient(srv.URL, "fp_live_x")
 	requireAuthn := true
 	appProto := "http2"
-	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "existing"}, &requireAuthn, &appProto); err != nil {
+	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "existing"}, &requireAuthn, &appProto, nil); err != nil {
 		t.Fatalf("createOrFetchApp same-account = %v, want nil", err)
 	}
 	if !sawGet {
@@ -2081,7 +2121,7 @@ func TestCreateOrFetchApp_409SameAccount_NoFlagsNoPATCH(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	c := NewClient(srv.URL, "fp_live_x")
-	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "existing"}, nil, nil); err != nil {
+	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "existing"}, nil, nil, nil); err != nil {
 		t.Fatalf("createOrFetchApp same-account no-flags = %v, want nil", err)
 	}
 	if sawPatch {
@@ -2112,7 +2152,7 @@ func TestCreateOrFetchApp_409OtherAccount_FailsHard(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	c := NewClient(srv.URL, "fp_live_x")
-	err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "taken"}, nil, nil)
+	err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "taken"}, nil, nil, nil)
 	if err == nil {
 		t.Fatalf("createOrFetchApp on 409→404 should fail hard, got nil")
 	}
@@ -2147,7 +2187,7 @@ func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	c := NewClient(srv.URL, "fp_live_x")
-	err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "x"}, nil, nil)
+	err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "x"}, nil, nil, nil)
 	if err == nil {
 		t.Fatalf("non-409 error should propagate, got nil")
 	}

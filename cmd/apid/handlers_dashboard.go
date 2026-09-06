@@ -1681,7 +1681,7 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 			"On %s the default for newly-created apps changed to require authentication. "+
 				"Your existing %d app(s) were not affected and continue to serve anonymous traffic. "+
 				"New apps now require \"Authorization: Bearer <token>\" by default; "+
-				"run \"gregale app <slug> --no-require-authn --public-auth=open\" to opt out any pre-flip app.",
+				"run \"gregale app <slug> --no-require-authn\" to opt out any pre-flip app.",
 			cutover, n)
 	}
 	// Issue #696 / ADR-082 dashboard follow-up PR — best-effort

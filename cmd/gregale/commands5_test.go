@@ -1075,6 +1075,9 @@ func TestCmdAppScale_RequireAuthnFalse(t *testing.T) {
 	if req.RequireAuthn == nil || *req.RequireAuthn != false {
 		t.Errorf("require_authn = %v, want pointer to false", req.RequireAuthn)
 	}
+	if req.PublicAuth == nil || req.PublicAuth.Mode != api.AppPublicAuthModeOpen {
+		t.Errorf("public_auth = %+v, want mode=open", req.PublicAuth)
+	}
 }
 
 // TestCmdAppScale_RequireAuthnMutex pins that passing both
