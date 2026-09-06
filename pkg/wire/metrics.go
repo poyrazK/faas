@@ -400,6 +400,10 @@ type OpsMetrics struct {
 	// counter after every successful park (idle / aggressive /
 	// RAM-pressure).
 	evictedPriority *prometheus.CounterVec
+	// evictionFiredTotal (issue #255) counts every successful reaper
+	// eviction/park, labelled by tenant plan and reaper reason. The closed
+	// label sets keep the operator-facing series bounded.
+	evictionFiredTotal *prometheus.CounterVec
 	// bridgeFramingTotal (ADR-127 §D3, Layer 7) — closed-set
 	// counter for the per-request framing decision at the bridge.
 	// Labels:
@@ -2170,6 +2174,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	evictedPriority.WithLabelValues("reserved", "idle")
 	evictedPriority.WithLabelValues("reserved", "eviction_aggressive")
 	evictedPriority.WithLabelValues("reserved", "eviction_ram")
+	evictionFiredTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_eviction_fired_total",
+		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,unknown}.",
+	}, []string{"tenant_tier", "reason"})
+	for _, tier := range []string{"free", "hobby", "pro", "scale", "unknown"} {
+		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "unknown"} {
+			evictionFiredTotal.WithLabelValues(tier, reason)
+		}
+	}
 	rebalanceDecisions := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_rebalance_decisions_total",
 		Help: "Count of per-app decisions the Tier A4 cross-node rebalancer made on a drain event (ADR-064), labelled by outcome ∈ {migrated, conflict, no_headroom, cooldown, no_eligibility}. The migrated counter is the §12 rebalance-rate panel.",
@@ -3175,7 +3188,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, residentGBPerCustomer, billingCapExceededTotal,
@@ -4377,6 +4390,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude:                   planGateRescuedByExclude,
 		tailCapReached:                             tailCapReached,
 		evictedPriority:                            evictedPriority,
+		evictionFiredTotal:                         evictionFiredTotal,
 		eventsWriteFail:                            eventsWriteFail,
 		auditWriteFail:                             auditWriteFail,
 		auditWriteDur:                              auditWriteDur,
@@ -5171,6 +5185,26 @@ func (m *OpsMetrics) EvictedPriority(priority, reason string) prometheus.Counter
 		return nil
 	}
 	return m.evictedPriority.WithLabelValues(priority, reason)
+}
+
+// EvictionFired returns the bounded (tenant_tier, reason) counter for a
+// successful reaper eviction or park (issue #255). Unknown values collapse to
+// the explicit "unknown" bucket so callers cannot create unbounded series.
+func (m *OpsMetrics) EvictionFired(tenantTier, reason string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	switch tenantTier {
+	case "free", "hobby", "pro", "scale":
+	default:
+		tenantTier = "unknown"
+	}
+	switch reason {
+	case "idle", "eviction_aggressive", "ram_pressure":
+	default:
+		reason = "unknown"
+	}
+	return m.evictionFiredTotal.WithLabelValues(tenantTier, reason)
 }
 
 // GuestTailSeconds returns the per-(plan, runtime, outcome)

@@ -1937,6 +1937,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 				counter.Inc()
 			}
 		}
+		if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if counter := l.ops.EvictionFired(tier, "idle"); counter != nil {
+				counter.Inc()
+			}
+		}
 		// O(1) lookup via the hoisted instance→app map.
 		if appID, ok := instanceToApp[id]; ok {
 			idleParkByApp[appID] = struct{}{}
@@ -2005,6 +2010,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// non-zero rate over a 5-minute window.
 		if tier, ok := resolvePriority(snapshot, id); ok {
 			if counter := l.ops.EvictedPriority(tier, "eviction_ram"); counter != nil {
+				counter.Inc()
+			}
+		}
+		if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if counter := l.ops.EvictionFired(tier, "ram_pressure"); counter != nil {
 				counter.Inc()
 			}
 		}
@@ -2119,6 +2129,24 @@ func resolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) 
 			continue
 		}
 		return state.EvictionPriorityOrBestEffort(s.EvictionPriority), true
+	}
+	return "", false
+}
+
+// resolveTenantTier returns the plan label carried by an instance snapshot.
+// The boolean is false when the instance disappeared between snapshot and
+// park, which keeps metric counts tied to successful, identifiable operations.
+func resolveTenantTier(snapshot []InstanceInfo, instanceID string) (string, bool) {
+	for _, s := range snapshot {
+		if s.Instance != instanceID {
+			continue
+		}
+		switch s.Plan {
+		case api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale:
+			return string(s.Plan), true
+		default:
+			return "unknown", true
+		}
 	}
 	return "", false
 }
@@ -2281,6 +2309,11 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 			// the metric increments once per parked instance.
 			if tier, ok := resolvePriority(snapshot, id); ok {
 				if counter := l.ops.EvictedPriority(tier, "eviction_aggressive"); counter != nil {
+					counter.Inc()
+				}
+			}
+			if tier, ok := resolveTenantTier(snapshot, id); ok {
+				if counter := l.ops.EvictionFired(tier, "eviction_aggressive"); counter != nil {
 					counter.Inc()
 				}
 			}

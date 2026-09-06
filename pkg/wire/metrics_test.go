@@ -82,6 +82,18 @@ func TestOpsMetrics_IndependentRegistries(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_EvictionFired(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.EvictionFired("pro", "ram_pressure").Inc()
+	body := render(t, m)
+	if !strings.Contains(body, `schedd_eviction_fired_total{reason="ram_pressure",tenant_tier="pro"} 1`) {
+		t.Errorf("missing eviction counter:\n%s", body)
+	}
+	if !strings.Contains(body, `schedd_eviction_fired_total{reason="unknown",tenant_tier="unknown"} 0`) {
+		t.Errorf("missing pre-instantiated unknown eviction counter:\n%s", body)
+	}
+}
+
 func render(t *testing.T, m *wire.OpsMetrics) string {
 	t.Helper()
 	srv := httptest.NewServer(m.Handler())
