@@ -515,6 +515,11 @@ message AppSpec {
   // Sustained app CPU allowance enforced with cgroup v2 cpu.max.
   // 0 preserves the plan-derived quota for legacy callers.
   int32 cpu_millicores = 16;
+  // Per-app wire protocol used by the persistent stream bridge. vmmd uses
+  // this during wake to start the correctly framed bridge before the first
+  // customer request reaches the restored instance. Empty preserves the
+  // legacy HTTP/1 default.
+  string app_protocol = 17;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

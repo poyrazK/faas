@@ -12,6 +12,7 @@ package vmmdgrpc
 import (
 	"context"
 	"net/netip"
+	"os"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -140,6 +141,40 @@ func (vmmStubBase) UmountOverlayParent(_ context.Context, _ string) error {
 }
 func (vmmStubBase) MarkInstanceFrameworkReady(_ context.Context, _ string, _ int64) (bool, string, string, error) {
 	return false, "", "", nil
+}
+
+type vmmWithNetworkReady struct {
+	vmmStubBase
+}
+
+func (vmmWithNetworkReady) WakeWithNetworkReady(_ context.Context, req fcvm.WakeRequest, hook fcvm.WakeNetworkReadyHook) (*fcvm.Instance, error) {
+	hook(fcvm.WakeNetworkReady{Instance: req.Instance, Netns: "fc-" + req.Instance})
+	return &fcvm.Instance{}, nil
+}
+
+func TestWakeWithBridgePrewarmUsesWakeProtocolAndPort(t *testing.T) {
+	bridgePath, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(streamBridgePathEnv, bridgePath)
+	server := New(vmmWithNetworkReady{}, nil, "1.10.0", nil)
+	server.streamBridges = newTestStreamBridgeManager(t, func() {})
+
+	if _, err := server.wakeWithBridgePrewarm(context.Background(), fcvm.WakeRequest{
+		Instance: "prewarm", Port: 9090,
+	}, "grpc"); err != nil {
+		t.Fatal(err)
+	}
+	server.streamBridges.mu.Lock()
+	entry := server.streamBridges.entries["prewarm"]
+	server.streamBridges.mu.Unlock()
+	if entry == nil {
+		t.Fatal("prewarm did not publish a bridge entry")
+	}
+	if entry.netns != "fc-prewarm" || entry.port != 9090 || entry.protocol != "h2c" {
+		t.Fatalf("prewarm entry = netns %q port %d protocol %q", entry.netns, entry.port, entry.protocol)
+	}
 }
 
 // vmmWithExportDir implements VmmdAPI + ExportDirFor. The Server

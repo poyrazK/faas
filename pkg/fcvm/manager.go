@@ -2684,6 +2684,20 @@ type WakeRequest struct {
 	Sidecars []WorkloadSpec
 }
 
+// WakeNetworkReady describes the network namespace that has been prepared for
+// a wake. The callback runs after network policy is installed and before
+// Firecracker restore or cold boot begins, which lets host-side helpers start
+// in parallel without weakening guest readiness or isolation gates.
+type WakeNetworkReady struct {
+	Instance string
+	Netns    string
+}
+
+// WakeNetworkReadyHook must return promptly. Manager invokes it synchronously
+// at the network/restore boundary so callers can publish asynchronous work in
+// a deterministic order.
+type WakeNetworkReadyHook func(WakeNetworkReady)
+
 // SealedEnvEntry is one (key, ciphertext) pair as stored in app_secrets. The
 // key is the env-var name; the ciphertext is sealed under the host age
 // recipient by apid. vmmd merges all entries into the single envelope file.
@@ -3005,6 +3019,17 @@ type JobBootRequest struct {
 // cold boot. On any terminal error it unwinds every resource it acquired — the
 // caller sees no half-built instance and the box leaks nothing (§6.2-4/5).
 func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err error) {
+	return m.wake(ctx, req, nil)
+}
+
+// WakeWithNetworkReady is Wake with a host-side callback at the point where
+// the isolated network namespace is usable. vmmd uses this optional seam to
+// start its per-instance stream bridge while Firecracker restores the guest.
+func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hook WakeNetworkReadyHook) (_ *Instance, err error) {
+	return m.wake(ctx, req, hook)
+}
+
+func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
 	// Phase timing (see wakePhases). Reported on EVERY failure and on
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
@@ -3259,6 +3284,9 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
 	}
 	timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
+	if networkReady != nil {
+		networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
+	}
 	if m.preparedNetworks != nil {
 		m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
 		defer func() {

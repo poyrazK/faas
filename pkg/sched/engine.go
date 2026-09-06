@@ -2461,7 +2461,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// buildAppSpec (engine.go:1757) for the same field
 		// wired on the (re)build path. Empty falls back to
 		// "unknown" in the histogram observer.
-		Runtime: app.Runtime,
+		Runtime:     app.Runtime,
+		AppProtocol: app.AppProtocol,
 	}
 
 	// Capture the boot inputs we need across the unlocked window. These
@@ -4009,7 +4010,8 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// path can label
 		// vmmd_guest_framework_warmup_seconds by runner. Empty
 		// falls back to "unknown" in the histogram observer.
-		Runtime: app.Runtime,
+		Runtime:     app.Runtime,
+		AppProtocol: app.AppProtocol,
 	}, nil
 }
 
@@ -4642,7 +4644,8 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// buildAppSpec (engine.go:1757) for the same field
 		// wired on the (re)build path. Empty falls back to
 		// "unknown" in the histogram observer.
-		Runtime: app.Runtime,
+		Runtime:     app.Runtime,
+		AppProtocol: app.AppProtocol,
 	}
 	// ADR-038 / Tier 3 phase 3: same verify path as Wake. Prime
 	// is the deploy-pipeline first boot; a tampered layer here

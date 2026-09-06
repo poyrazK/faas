@@ -34,6 +34,8 @@ type streamBridgeSpawnFunc func(context.Context, string, string, string, string,
 type streamBridgeEntry struct {
 	instance  string
 	netns     string
+	port      uint32
+	protocol  string
 	socket    string
 	cmd       *exec.Cmd
 	stderr    *bytes.Buffer
@@ -125,12 +127,19 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 		}
 		entry := m.entries[req.GetInstance()]
 		if entry == nil {
+			port := req.GetPort()
+			if port == 0 {
+				port = netns.AppPort
+			}
 			entry = &streamBridgeEntry{
 				instance: req.GetInstance(),
 				netns:    netnsName,
+				port:     port,
+				protocol: streamBridgeProtocol(req),
 				socket:   streamBridgeSockPath(req.GetInstance()),
 				ready:    make(chan struct{}),
 				starting: true,
+				lastUsed: m.now(),
 			}
 			m.entries[entry.instance] = entry
 			m.starts.Add(1)
@@ -160,7 +169,11 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 			m.mu.Unlock()
 			continue
 		}
-		if entry.netns != netnsName {
+		port := req.GetPort()
+		if port == 0 {
+			port = netns.AppPort
+		}
+		if entry.netns != netnsName || entry.port != port || entry.protocol != streamBridgeProtocol(req) {
 			// An instance ID can be reused after park/destroy and wake. Never
 			// send a new request through a bridge that is attached to the old
 			// network namespace, even if its child has not exited yet.
@@ -184,6 +197,76 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 	}
 }
 
+// prewarm publishes a starting entry before returning, then performs the
+// process/socket startup in the background. A first request racing the startup
+// joins the same ready channel in acquire instead of spawning a second bridge.
+func (m *streamBridgeManager) prewarm(req *vmmdpb.ForwardHTTPRequestInit, netnsName string) {
+	if m == nil || req == nil || req.GetInstance() == "" || netnsName == "" {
+		return
+	}
+	m.startReaper()
+	port := req.GetPort()
+	if port == 0 {
+		port = netns.AppPort
+	}
+	protocol := streamBridgeProtocol(req)
+	req = &vmmdpb.ForwardHTTPRequestInit{
+		Instance:    req.GetInstance(),
+		Port:        port,
+		AppProtocol: req.GetAppProtocol(),
+	}
+	m.mu.Lock()
+	if m.closed || m.entries[req.GetInstance()] != nil {
+		m.mu.Unlock()
+		return
+	}
+	entry := &streamBridgeEntry{
+		instance: req.GetInstance(),
+		netns:    netnsName,
+		port:     port,
+		protocol: protocol,
+		socket:   streamBridgeSockPath(req.GetInstance()),
+		ready:    make(chan struct{}),
+		starting: true,
+		lastUsed: m.now(),
+	}
+	m.entries[entry.instance] = entry
+	bridgeCtx := m.reaperCtx
+	m.starts.Add(1)
+	m.mu.Unlock()
+	go func() {
+		defer m.starts.Done()
+		if err := m.startEntry(bridgeCtx, entry, req); err != nil {
+			m.log.Warn("vmmd: stream bridge prewarm failed", "instance", entry.instance, "netns", entry.netns, "err", err)
+		}
+	}()
+}
+
+// forget removes an instance bridge after park/destroy or a failed wake. It is
+// safe while prewarm is still starting: startEntry observes entry.closed and
+// tears down any child it managed to create.
+func (m *streamBridgeManager) forget(ctx context.Context, instance string) {
+	if m == nil || instance == "" {
+		return
+	}
+	m.mu.Lock()
+	entry := m.entries[instance]
+	if entry == nil {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.entries, instance)
+	entry.closed = true
+	starting := entry.starting
+	m.mu.Unlock()
+	if starting {
+		// startEntry owns cleanup after it publishes the startup result. Reading
+		// cmd/transport here would race their initialization.
+		return
+	}
+	m.closeEntry(ctx, entry)
+}
+
 func (m *streamBridgeManager) startEntry(ctx context.Context, entry *streamBridgeEntry, req *vmmdpb.ForwardHTTPRequestInit) error {
 	err := m.startEntryProcess(ctx, entry, req)
 	m.mu.Lock()
@@ -193,9 +276,10 @@ func (m *streamBridgeManager) startEntry(ctx context.Context, entry *streamBridg
 		delete(m.entries, entry.instance)
 		entry.closed = true
 	}
+	shouldClose := err != nil || entry.closed
 	close(entry.ready)
 	m.mu.Unlock()
-	if err != nil || entry.closed {
+	if shouldClose {
 		m.closeEntry(context.WithoutCancel(ctx), entry)
 	}
 	return err

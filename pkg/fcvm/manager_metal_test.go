@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -132,34 +133,54 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detect firecracker version: %v", err)
 	}
-	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 30*time.Second),
+	store, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatalf("create snapshot storage: %v", err)
+	}
+	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 30*time.Second).WithStorage(store),
 		Paths{Kernel: kernel}, fcVersion, nil, nil)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	ctx := context.Background()
 	snapDir := t.TempDir()
 	snap := &Snapshot{
-		FCVersion:   fcVersion,
-		StorageKey:  "snap/cycle/mem",
-		VMStatePath: snapDir + "/vmstate",
+		FCVersion:         fcVersion,
+		StorageKey:        "snap/cycle/mem",
+		VMStateStorageKey: "snap/cycle/vmstate",
+		VMStatePath:       snapDir + "/vmstate",
 	}
 
 	// Prime: cold boot once, then park to produce the first snapshot.
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
-		Instance: "cycle", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
+		Instance: "cycle", Plan: "pro", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
-	if _, err := m.Park(ctx, "cycle", SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey}); err != nil {
+	if _, err := m.Park(ctx, "cycle", SnapshotSpec{
+		VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey, VMStateStorageKey: snap.VMStateStorageKey,
+	}); err != nil {
 		t.Fatalf("prime park: %v", err)
 	}
 
 	const cycles = 100
 	latencies := make([]time.Duration, 0, cycles)
+	hookCalls := 0
 	for i := 0; i < cycles; i++ {
 		start := time.Now()
-		inst, err := m.Wake(ctx, WakeRequest{
-			Instance: "cycle", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
+		inst, err := m.WakeWithNetworkReady(ctx, WakeRequest{
+			Instance: "cycle", Plan: "pro", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
+		}, func(ready WakeNetworkReady) {
+			hookCalls++
+			if ready.Instance != "cycle" {
+				t.Errorf("network-ready instance = %q, want cycle", ready.Instance)
+			}
+			if ready.Netns == "" {
+				t.Error("network-ready hook received an empty namespace")
+				return
+			}
+			if _, statErr := os.Stat(filepath.Join("/var/run/netns", ready.Netns)); statErr != nil {
+				t.Errorf("network-ready namespace %q is not published: %v", ready.Netns, statErr)
+			}
 		})
 		if err != nil {
 			t.Fatalf("wake cycle %d: %v", i, err)
@@ -168,7 +189,9 @@ func TestMetalParkWakeCycle(t *testing.T) {
 		if inst.Method != WakeRestore {
 			t.Errorf("cycle %d fell back to %s — snapshot restore regressed", i, inst.Method)
 		}
-		if _, err := m.Park(ctx, "cycle", SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey}); err != nil {
+		if _, err := m.Park(ctx, "cycle", SnapshotSpec{
+			VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey, VMStateStorageKey: snap.VMStateStorageKey,
+		}); err != nil {
 			t.Fatalf("park cycle %d: %v", i, err)
 		}
 	}
@@ -185,6 +208,9 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	}
 	if m.LeasedCount() != 0 {
 		t.Errorf("leaked leases after cycles: %d", m.LeasedCount())
+	}
+	if hookCalls != cycles {
+		t.Errorf("network-ready hook calls = %d, want %d", hookCalls, cycles)
 	}
 }
 

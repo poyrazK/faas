@@ -873,6 +873,41 @@ func TestColdBootSuccessTracksInstance(t *testing.T) {
 	}
 }
 
+func TestWakeWithNetworkReadyRunsHookBeforeRestore(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	hookCalls := 0
+	inst, err := m.WakeWithNetworkReady(context.Background(), WakeRequest{
+		Instance: "i-prewarm", BaseKey: "/b.ext4", LayerKey: "/l.ext4",
+		VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby,
+		Snapshot: usableSnapshot(),
+	}, func(ready WakeNetworkReady) {
+		hookCalls++
+		if ready.Instance != "i-prewarm" || ready.Netns != "fc-i-prewarm" {
+			t.Errorf("network ready = %+v", ready)
+		}
+		if !run.ran("netns add fc-i-prewarm") {
+			t.Error("hook ran before network setup")
+		}
+		vmm.mu.Lock()
+		restoreCalls := len(vmm.restored)
+		vmm.mu.Unlock()
+		if restoreCalls != 0 {
+			t.Errorf("restore calls at hook = %d, want zero", restoreCalls)
+		}
+	})
+	if err != nil {
+		t.Fatalf("WakeWithNetworkReady: %v", err)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("hook calls = %d, want one", hookCalls)
+	}
+	if inst.Method != WakeRestore {
+		t.Fatalf("wake method = %s, want restore", inst.Method)
+	}
+}
+
 // TestColdBootSuccessStampsInstancePort pins issue #460 / ADR-053
 // (PR-C): when ColdBootRequest carries a per-deployment override
 // port, the live Instance must carry that port so the vmmdgrpc
