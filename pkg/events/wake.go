@@ -322,6 +322,7 @@ type BootStarted struct {
 	InstanceID         string
 	NodeID             string
 	Method             string
+	Tier               string // warm, init, or cold_boot_fallback
 	RequestedAt        time.Time
 	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
 	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
@@ -400,6 +401,9 @@ func (e BootStarted) Payload() map[string]any {
 	if e.Trigger != "" {
 		p["trigger"] = e.Trigger
 	}
+	if e.Tier != "" {
+		p["tier"] = e.Tier
+	}
 	return p
 }
 
@@ -421,6 +425,7 @@ type BootCompleted struct {
 	InstanceID         string
 	NodeID             string
 	Method             string
+	Tier               string // warm, init, or cold_boot_fallback
 	StartedAt          time.Time
 	CompletedAt        time.Time
 	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
@@ -445,6 +450,9 @@ func (e BootCompleted) Payload() map[string]any {
 	}
 	if e.Trigger != "" {
 		p["trigger"] = e.Trigger
+	}
+	if e.Tier != "" {
+		p["tier"] = e.Tier
 	}
 	return p
 }

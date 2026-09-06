@@ -30,9 +30,21 @@ export type WakeTimelineJSONRow = {
    */
   at?: string;
   /**
+   * Wake-attempt correlation ID.
+   */
+  wake_id?: string;
+  /**
    * Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on pre-PR-A fleet rows.
    */
   trigger?: string;
+  /**
+   * Wake method (restore or cold_boot), when telemetry is available.
+   */
+  method?: string;
+  /**
+   * Snapshot tier selected for the wake.
+   */
+  tier?: 'warm' | 'init' | 'cold_boot_fallback';
   /**
    * ledger.Concurrency at admit. 0 when absent.
    */

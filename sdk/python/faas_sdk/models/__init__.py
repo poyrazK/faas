@@ -227,6 +227,9 @@ from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
+from .data_upstream_history_bucket import DataUpstreamHistoryBucket
+from .data_upstream_history_response import DataUpstreamHistoryResponse
+from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
 from .data_upstream_list_response import DataUpstreamListResponse
 from .data_upstream_response import DataUpstreamResponse
 from .data_upstream_response_kind import DataUpstreamResponseKind
@@ -377,7 +380,9 @@ from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
 from .install_bind_request import InstallBindRequest
+from .install_bind_request_deploy_branches import InstallBindRequestDeployBranches
 from .install_bind_response import InstallBindResponse
+from .install_bind_response_deploy_branches import InstallBindResponseDeployBranches
 from .instance_response import InstanceResponse
 from .instance_response_execution_mode_type_1 import InstanceResponseExecutionModeType1
 from .instance_response_execution_mode_type_2_type_1 import InstanceResponseExecutionModeType2Type1
@@ -999,6 +1004,9 @@ __all__ = (
     "DailyUsageListResponse",
     "DailyUsagePoint",
     "DailyUsageResponse",
+    "DataUpstreamHistoryBucket",
+    "DataUpstreamHistoryResponse",
+    "DataUpstreamHistoryResponseKind",
     "DataUpstreamListResponse",
     "DataUpstreamResponse",
     "DataUpstreamResponseKind",
@@ -1145,7 +1153,9 @@ __all__ = (
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
     "InstallBindRequest",
+    "InstallBindRequestDeployBranches",
     "InstallBindResponse",
+    "InstallBindResponseDeployBranches",
     "InstanceResponse",
     "InstanceResponseExecutionModeType1",
     "InstanceResponseExecutionModeType2Type1",

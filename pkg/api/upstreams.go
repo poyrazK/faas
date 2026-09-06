@@ -301,3 +301,26 @@ type DataUpstreamListResponse struct {
 	Quota     int                    `json:"quota_max"`
 	Count     int                    `json:"count"`
 }
+
+// DataUpstreamHistoryBucket is one server-side aggregation bucket from
+// data_upstream_probes. SampleCount includes failed probes; percentile fields
+// are omitted when the bucket contains no successful RTT sample.
+type DataUpstreamHistoryBucket struct {
+	SampledAt   string `json:"sampled_at"`
+	P50Ms       *int   `json:"p50_ms,omitempty"`
+	P95Ms       *int   `json:"p95_ms,omitempty"`
+	SampleCount int    `json:"sample_count"`
+}
+
+// DataUpstreamHistoryResponse is one upstream/region time series returned by
+// GET /v1/apps/{slug}/upstreams/history. The host is represented only by its
+// redacted hash; plaintext host values never cross the API boundary.
+type DataUpstreamHistoryResponse struct {
+	HostRedactedHash string                      `json:"host_redacted_hash"`
+	Kind             DataUpstreamKind            `json:"kind"`
+	Port             int                         `json:"port"`
+	Scope            string                      `json:"scope,omitempty"`
+	DeploymentScope  string                      `json:"deployment_scope,omitempty"`
+	Region           string                      `json:"region"`
+	Buckets          []DataUpstreamHistoryBucket `json:"buckets"`
+}

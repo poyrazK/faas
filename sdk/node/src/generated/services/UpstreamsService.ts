@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DataUpstreamHistoryResponse } from '../models/DataUpstreamHistoryResponse.js';
 import type { DataUpstreamListResponse } from '../models/DataUpstreamListResponse.js';
 import type { DataUpstreamResponse } from '../models/DataUpstreamResponse.js';
 import type { PutDataUpstreamRequest } from '../models/PutDataUpstreamRequest.js';
@@ -118,6 +119,74 @@ export class UpstreamsService {
         401: `code: unauthorized`,
         402: `402 — plan_data_upstreams_not_allowed (Free plan).`,
         403: `403 — plan_limit_data_upstreams (per-app cap exceeded).`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get historical data-upstream probe metrics.
+   * Returns one time series per captured upstream and probe region.
+   * Each bucket contains p50/p95 successful RTTs and the total number
+   * of probes, including failures. The query is bounded to the probe
+   * retention window and is aggregated server-side; raw probe rows and
+   * plaintext hosts are never returned.
+   *
+   * @returns DataUpstreamHistoryResponse Bucketed upstream probe history.
+   * @throws ApiError
+   */
+  public static getAppDataUpstreamHistory({
+    slug,
+    from,
+    to,
+    bucket = '5m',
+    region,
+    deploymentScope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Inclusive RFC3339 window start. Defaults to 24 hours before `to`; the maximum window is 30 days.
+     */
+    from?: string,
+    /**
+     * Exclusive RFC3339 window end. Defaults to the current time.
+     */
+    to?: string,
+    /**
+     * Aggregation bucket duration, from 1m through 24h. The result is capped at 1000 buckets.
+     */
+    bucket?: string,
+    /**
+     * Optional probe region filter. Omitted returns every region with samples.
+     */
+    region?: string,
+    /**
+     * Optional deployment scope filter from the ADR-098 issue #954 overlay.
+     */
+    deploymentScope?: string,
+  }): CancelablePromise<Array<DataUpstreamHistoryResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/upstreams/history',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'from': from,
+        'to': to,
+        'bucket': bucket,
+        'region': region,
+        'deployment_scope': deploymentScope,
+      },
+      errors: {
+        400: `Invalid time window, bucket, or region filter.`,
+        401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).

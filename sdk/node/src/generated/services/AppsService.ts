@@ -277,17 +277,31 @@ export class AppsService {
    */
   public static getAppWakeTimeline({
     slug,
+    since,
+    until,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Inclusive RFC3339 lower bound; defaults to 24 hours before until.
+     */
+    since?: string,
+    /**
+     * Inclusive RFC3339 upper bound; defaults to now.
+     */
+    until?: string,
   }): CancelablePromise<AppWakeTimelineResponse> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/wake-timeline',
       path: {
         'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
       },
       errors: {
         401: `code: unauthorized`,

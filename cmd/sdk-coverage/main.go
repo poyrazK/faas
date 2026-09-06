@@ -430,6 +430,7 @@ var methodRouteMap = map[string]string{
 	// port) tuple, with the response carrying the persisted id).
 	"GET /v1/apps/{slug}/upstreams":                                                            "ListAppDataUpstreams",
 	"GET /v1/apps/{slug}/upstreams/{id}":                                                       "GetAppDataUpstream",
+	"GET /v1/apps/{slug}/upstreams/history":                                                    "GetAppDataUpstreamHistory",
 	"PUT /v1/apps/{slug}/upstreams":                                                            "CreateAppDataUpstream",
 	"DELETE /v1/apps/{slug}/upstreams/{id}":                                                    "DeleteAppDataUpstream",
 	"GET /v1/keys":                                                                             "ListKeys",

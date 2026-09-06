@@ -2092,6 +2092,7 @@ func (s *server) handler() http.Handler {
 	// (PUT/DELETE) use ScopesUpstreamWriteSurface, mirroring the env
 	// surface's split.
 	mux.HandleFunc("GET /v1/apps/{slug}/upstreams", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listUpstreams)))
+	mux.HandleFunc("GET /v1/apps/{slug}/upstreams/history", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getUpstreamHistory)))
 	mux.HandleFunc("GET /v1/apps/{slug}/upstreams/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getUpstream)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/upstreams", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.createUpstream)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/upstreams/{id}", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.deleteUpstream)))
