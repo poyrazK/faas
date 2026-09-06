@@ -2461,6 +2461,30 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 		App:        dashboard.AppListItem{Slug: app.Slug},
 		Deployment: dashboardDeploymentItem(dep),
 	}
+	// A superseded deployment is a valid rollback target. Surface the
+	// same app-scoped rollback action that already exists on the app
+	// detail page so the operator can recover from the deployment
+	// page without navigating back to a long deployment table.
+	if dep.Status == state.DeploySuperseded {
+		data.CanRollback = true
+		if tok, err := middleware.IssueForAuthenticatedNamed(
+			s.sessions, dashboardRollbackAction, acct.ID, dashboardRollbackCSRFCookie,
+		); err == nil {
+			data.RollbackConfirmToken = tok
+			http.SetCookie(w, &http.Cookie{
+				Name:     dashboardRollbackCSRFCookie,
+				Value:    tok,
+				Path:     "/",
+				HttpOnly: true,
+				Secure:   s.domain != "",
+				SameSite: http.SameSiteLaxMode,
+				MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+			})
+		} else {
+			log.Warn("dashboard renderDeploymentDetail: csrf issue rollback",
+				"deployment_id", dep.ID, "app_id", app.ID, "err", err)
+		}
+	}
 	if dep.ScanStatus != "" {
 		payload := dashboardScanPayload(s.scanResponse(dep))
 		data.Scan = &payload

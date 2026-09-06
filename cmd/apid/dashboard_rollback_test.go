@@ -114,6 +114,39 @@ func TestDashboardRollback_HappyPath(t *testing.T) {
 	}
 }
 
+func TestDashboardDeploymentDetail_RendersRollbackAction(t *testing.T) {
+	h, sid, _, _, prior, _, _ := seedDashboardRollback(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet,
+		"/dashboard/apps/rollbackapp/deployments/"+prior.ID, nil)
+	req.AddCookie(sid)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET deployment detail: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="deploy-rollback-form"`) {
+		t.Fatalf("superseded deployment detail missing rollback form\nbody=%s", body)
+	}
+	token := extractInputValue(body, middleware.FormFieldName, "/dashboard/apps/rollbackapp/rollback")
+	if token == "" {
+		t.Fatal("deployment detail rollback form missing csrf token")
+	}
+	var rollbackCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == dashboardRollbackCSRFCookie {
+			rollbackCookie = c
+			break
+		}
+	}
+	if rollbackCookie == nil || rollbackCookie.Value != token {
+		t.Fatalf("rollback token/cookie mismatch: token=%q cookie=%v", token, rollbackCookie)
+	}
+	if !strings.Contains(body, `name="deployment_id" value="`+prior.ID+`"`) {
+		t.Fatalf("rollback form must bind the superseded deployment id %q\nbody=%s", prior.ID, body)
+	}
+}
+
 func TestDashboardRollback_RejectsInvalidCSRF(t *testing.T) {
 	h, sid, _, _, prior, csrfCookie, _ := seedDashboardRollback(t)
 	rec := dashboardPOST(t, h, sid, "/dashboard/apps/rollbackapp/rollback", map[string]string{
