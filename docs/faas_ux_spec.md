@@ -195,11 +195,16 @@ $ faas deploy --repo jane/api    # or pick in dashboard
 - **On push to the production branch** (default `main`, configurable): the GitHub App webhook → `apid` creates a deployment from that commit → normal build pipeline (implementation spec §9). Same path as `faas deploy`, different trigger.
 - **Build status** is written back to the commit (GitHub Checks API): queued → building → live/failed, with a link to logs.
 - **Rollback** stays one command / one button (previous deployment kept — implementation spec §9.6).
-- **Least privilege:** the GitHub App requests only Contents:read + Checks:write + webhook on push. No org-wide access, per-repo selection honoured.
+- **Least privilege:** the GitHub App requests Contents:read + Checks:write + Issues:write + webhook. Issues:write is used only to maintain the single idempotent PR preview comment; no org-wide access, per-repo selection honoured.
 
-### 5.3 PR preview environments — **v1.1, not launch**
+### 5.3 PR preview environments
 
-Tempting and on-brand (a preview app per PR), but each preview is a deployed app consuming a disk slot, so it interacts with the per-box customer ceiling (founding whitepaper §6). Gate it behind Pro, cap previews per account, auto-park aggressively, and ship it after launch telemetry confirms snapshot sizes (validation V1). Noted here so it isn't reinvented ad hoc.
+Every same-repository pull request gets an isolated preview app and
+`gregale-preview` Check Run. Gregale maintains one updatable PR comment
+with the preview URL, lifecycle/build status, commit SHA, deployment
+details, logs, and a destroy link. Fork PRs are refused by default; the
+preview app still consumes the account's normal deployed-app quota and is
+reaped after close/TTL.
 
 ---
 

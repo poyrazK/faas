@@ -469,3 +469,67 @@ func TestWritePreviewDestroyComment_HTTPErrorReturnsErr(t *testing.T) {
 		t.Errorf("path = %v, want /repos/octo/api/issues/42/comments", p)
 	}
 }
+
+func TestUpsertPreviewComment_CreatesThenPatchesMarkedComment(t *testing.T) {
+	var calls []string
+	var bodies []string
+	marker := "<!-- gregale-preview:pr-42-demo-app -->"
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		payload, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(payload))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			if len(calls) == 1 {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{"id":987,"body":"` + marker + `\nold"}]`))
+		case http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":987}`))
+		case http.MethodPatch:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":987}`))
+		default:
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(fake.Close)
+	tokens := NewTokenCache(fakeFetcher(func(_ context.Context, _ int64) (string, time.Time, error) {
+		return "ghs_preview_token", time.Now().Add(time.Hour), nil
+	}), time.Minute)
+	c, err := NewChecksAPI(tokens, &singleHostClient{base: fake.Client(), api: fake.URL}, &fakeBindings{id: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpsertPreviewComment(context.Background(), 99, "octo/api", 42, marker, "new status"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := c.UpsertPreviewComment(context.Background(), 99, "octo/api", 42, marker, "updated status"); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	wantCalls := []string{
+		"GET /repos/octo/api/issues/42/comments",
+		"POST /repos/octo/api/issues/42/comments",
+		"GET /repos/octo/api/issues/42/comments",
+		"PATCH /repos/octo/api/issues/comments/987",
+	}
+	if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
+		t.Fatalf("calls = %v, want %v", calls, wantCalls)
+	}
+	if !strings.Contains(bodies[1], "new status") || !strings.Contains(bodies[3], "updated status") {
+		t.Fatalf("bodies = %v, want create and updated bodies", bodies)
+	}
+}
+
+func TestUpsertPreviewComment_RejectsMissingArgs(t *testing.T) {
+	c := &ChecksAPI{HTTP: http.DefaultClient}
+	if err := c.UpsertPreviewComment(context.Background(), 0, "owner/repo", 1, "m", "b"); err == nil {
+		t.Error("zero installation should error")
+	}
+	if err := c.UpsertPreviewComment(context.Background(), 1, "", 1, "m", "b"); err == nil {
+		t.Error("empty repo should error")
+	}
+}
