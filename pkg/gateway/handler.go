@@ -5303,13 +5303,16 @@ haveApp:
 	// that re-seeds the cache.
 	if !pick.OK && pick.ColdBucket != "" {
 		//nolint:contextcheck // request ctx at handler boundary; this is the wake-fan-out retry branch.
-		if _, _, _, err := h.backend.Admit(r.Context(), app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency); err != nil {
+		bucketWakeID, bucketMethod, _, bucketErr := h.backend.Admit(r.Context(), app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency)
+		if bucketErr != nil {
 			// Log-and-continue: the existing "warmest bucket"
 			// fallback inside Pick already handled the
 			// fallback path. Failure here means the cold
 			// bucket won't wake this request — the next
 			// notify will refresh weights.
-			h.log.Warn("apid: wake-fan-out admit failed", "err", err, "deployment_id", pick.ColdBucket)
+			h.log.Warn("apid: wake-fan-out admit failed", "err", bucketErr, "deployment_id", pick.ColdBucket)
+		} else if bucketWakeID != "" {
+			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}
 		pick = h.backend.Pick(app.ID)
 	}
@@ -5323,6 +5326,10 @@ haveApp:
 		return
 	}
 	target := pick.Target
+	// The cached target retains the VM's original wake ID. Only this
+	// request's admission belongs in a wake timeline; warm traffic must not
+	// append synchronous wake events for the rest of the VM's lifetime.
+	target.WakeID = wakeID
 
 	// Mirror fan-out (issue #72 / ADR-124 / ADR-125 PR-A3). After
 	// the customer request has been routed, fan out one goroutine
@@ -5383,6 +5390,7 @@ haveApp:
 	// x-faas-instance so an attacker can't steer the proxy to an
 	// arbitrary instance by setting the header (issue #168 trust model).
 	r.Header.Set("x-faas-instance", target.InstanceID)
+	r.Header.Set("x-faas-app", app.ID)
 
 	// Per-request wake-timing recorder (spec §6.3) installed AFTER
 	// upstream stamping so the trace sees only the proxy hop, not the
