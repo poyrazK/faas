@@ -999,6 +999,9 @@ message EnsureWakeRequest {
   // wake.boot_completed events. See WakeRequest.trigger for the
   // closed-enum contract. Additive per ADR-016.
   string trigger = 2;
+  // Desired app capacity for this coalesced initial burst. Zero means one.
+  // This is a hint; schedd bounds the batch and enforces every admission gate.
+  int32 desired_instances = 3;
 }
 
 // EnsureWakeResponse (ADR-098) is the typed result of
@@ -1038,4 +1041,6 @@ message EnsureWakeResponse {
   // existing instance was admitted for). Mirrors
   // AdmitInstanceResponse.deployment_id. Empty on failure.
   string deployment_id = 7;
+  // Independently ready siblings. Old clients retain the primary fields.
+  repeated AdmitInstanceResponse additional_instances = 8;
 }

@@ -300,7 +300,8 @@ func TestBurstCapacityUsesExistingTargetsWhenExpansionStalls(t *testing.T) {
 	}{
 		{name: "host full with ready target", healthy: true},
 		{name: "no ready target", wantErr: errBurstCapacityStalled},
-		{name: "real scheduler failure", healthy: true, admitErr: backendErr, wantErr: backendErr},
+		{name: "scheduler failure with ready target", healthy: true, admitErr: backendErr},
+		{name: "scheduler failure without ready target", admitErr: backendErr, wantErr: backendErr},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &cappedBurstBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}}, burstErr: tt.admitErr}
