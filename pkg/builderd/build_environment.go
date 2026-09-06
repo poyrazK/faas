@@ -15,6 +15,7 @@ import (
 // injected guest-init digest.
 type BuildEnvironment struct {
 	BuilderBaseIdentity string `json:"builder_base_identity"`
+	BaseDigest          string `json:"base_digest"`
 	TargetPlatform      string `json:"target_platform"`
 }
 
@@ -32,6 +33,7 @@ func currentBuildEnvironment(vm VM) (BuildEnvironment, error) {
 		return BuildEnvironment{}, err
 	}
 	environment.BuilderBaseIdentity = strings.TrimSpace(environment.BuilderBaseIdentity)
+	environment.BaseDigest = strings.TrimSpace(environment.BaseDigest)
 	environment.TargetPlatform = strings.TrimSpace(environment.TargetPlatform)
 	if environment.BuilderBaseIdentity == "" {
 		return BuildEnvironment{}, errors.New("VM driver returned an empty builder base identity")
@@ -89,6 +91,7 @@ func readBuildEnvironment(builderBase, platform string) (BuildEnvironment, error
 	sum := sha256.Sum256([]byte(identitySource))
 	return BuildEnvironment{
 		BuilderBaseIdentity: "sha256:" + hex.EncodeToString(sum[:]),
+		BaseDigest:          strings.TrimSpace(lines[0]),
 		TargetPlatform:      platform,
 	}, nil
 }

@@ -78,6 +78,17 @@ func (c *Cache) LookupBuild(recipe BuildCacheRecipe) (CacheEntry, bool) {
 
 // StoreBuild publishes under the same normalized recipe used by LookupBuild.
 func (c *Cache) StoreBuild(recipe BuildCacheRecipe, layerPath string, bytes int64) error {
+	return c.storeBuild(recipe, layerPath, bytes, CacheToolchain{})
+}
+
+// StoreBuildWithToolchain publishes a cache artifact together with the
+// toolchain versions observed by guest-init. The metadata is advisory; the
+// artifact integrity sidecars remain the cache-hit gate.
+func (c *Cache) StoreBuildWithToolchain(recipe BuildCacheRecipe, layerPath string, bytes int64, toolchain CacheToolchain) error {
+	return c.storeBuild(recipe, layerPath, bytes, toolchain)
+}
+
+func (c *Cache) storeBuild(recipe BuildCacheRecipe, layerPath string, bytes int64, toolchain CacheToolchain) error {
 	key, err := recipe.key()
 	if err != nil {
 		return err
@@ -87,5 +98,5 @@ func (c *Cache) StoreBuild(recipe BuildCacheRecipe, layerPath string, bytes int6
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.storeKey(key, recipe.Framework, recipe.Plan, layerPath, bytes)
+	return c.storeKey(key, recipe.Framework, recipe.Plan, layerPath, bytes, toolchain)
 }

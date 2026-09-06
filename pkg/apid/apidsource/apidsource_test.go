@@ -144,6 +144,16 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	if res.DeploymentID == "" || res.BuildID == "" {
 		t.Fatalf("expected non-empty ids, got %+v", res)
 	}
+	dep, err := st.DeploymentByID(context.Background(), res.DeploymentID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if dep.SourceSHA256 == "" {
+		t.Fatal("source digest was not persisted")
+	}
+	if got, err := hashSourceFile(srcPath); err != nil || dep.SourceSHA256 != got {
+		t.Fatalf("source digest = %q err %v, want %q", dep.SourceSHA256, err, got)
+	}
 
 	// First deploy: only the build_queued notify fires, no
 	// supersede (no prev).

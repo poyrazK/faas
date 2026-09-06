@@ -236,10 +236,13 @@ func (b *Builderd) withSlotDecider(f func(ResidencyProbe, int) SlotDecision) *Bu
 
 // BuildResult is the outcome of one queued build.
 type BuildResult struct {
-	BuildID    string
-	LayerPath  string
-	LayerBytes int64
-	CacheHit   bool
+	BuildID           string
+	LayerPath         string
+	LayerBytes        int64
+	CacheHit          bool
+	BuildkitVer       string
+	RailpackVer       string
+	BuilderBaseDigest string
 }
 
 // ProcessOne claims the next queued build (or processes the buildID passed in
@@ -422,6 +425,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
 	}
+	srcHash, err := hashAndVerifySource(dep.SourcePath, dep.SourceSHA256)
+	if err != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "source integrity: "+err.Error(), buildStart)
+		return BuildResult{}, err
+	}
 
 	fw, ver, err := b.detector.DetectWithVersionAtRoot(dep.SourcePath, dep.SourceRoot)
 	if err != nil {
@@ -447,11 +455,6 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// The cache recipe includes the selected member as well as the complete
 	// source context. Sibling apps can share archive bytes without sharing
 	// their produced artifact. Keep srcHash itself for source provenance.
-	srcHash, err := hashFile(dep.SourcePath)
-	if err != nil {
-		b.markFailed(ctx, build, state.FailureInfra, "source hash: "+err.Error(), buildStart)
-		return BuildResult{}, err
-	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
 	}
@@ -479,7 +482,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("cache hit (%s, %d bytes) — skipping vm spawn\n", cached.Path, cached.Bytes))
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
-			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, buildStart)
+			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
+				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
+				BuilderBaseDigest: buildEnvironment.BaseDigest}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
 		}
@@ -680,7 +685,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
-		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes}, buildStart)
+		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
+			BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
+			BuilderBaseDigest: buildEnvironment.BaseDigest}, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
@@ -688,7 +695,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.
 	if cacheAvailable && b.buildEnvironmentStillCurrent(buildEnvironment) {
-		if err := b.cache.StoreBuild(recipe, out.OCIImage, artifactBytes); err != nil {
+		if err := b.cache.StoreBuildWithToolchain(recipe, out.OCIImage, artifactBytes, CacheToolchain{
+			BuildkitVer: result.BuildkitVer,
+			RailpackVer: result.RailpackVer,
+		}); err != nil {
 			b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 		}
 	}
@@ -963,7 +973,9 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 	prov := state.BuildProvenance{
 		BuildID: build.ID, SourceSHA256: srcSHA, SourceURL: dep.SourceURL,
 		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,
-		StartedAt: build.StartedAt, FinishedAt: time.Now(), FrameworkVer: frameworkVer,
+		BuildkitVer: result.BuildkitVer, RailpackVer: result.RailpackVer,
+		BaseDigest: result.BuilderBaseDigest,
+		StartedAt:  build.StartedAt, FinishedAt: time.Now(), FrameworkVer: frameworkVer,
 	}
 	if err := retryStateMutation(ctx, func() error {
 		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)

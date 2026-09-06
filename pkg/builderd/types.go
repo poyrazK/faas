@@ -93,6 +93,10 @@ type BuildOutcome struct {
 	// every other code; the orchestrator templates this into
 	// the whycopy Observed renderer's Fix field.
 	FailurePkg string
+	// Toolchain versions are reported by guest-init from the binaries that
+	// actually ran inside the builder VM.
+	BuildkitVer string
+	RailpackVer string
 	// Dependency-cache publication is best-effort and never changes the build
 	// result. The orchestrator surfaces a warning when the next sync will be cold.
 	DependencyCacheStored     bool

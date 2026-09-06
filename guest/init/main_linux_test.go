@@ -36,6 +36,19 @@ func TestDecideMode_BuildBeatsApp(t *testing.T) {
 	}
 }
 
+func TestToolVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tool")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' 'tool 1.2.3'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := toolVersion(path); got != "1.2.3" {
+		t.Fatalf("toolVersion = %q, want %q", got, "1.2.3")
+	}
+	if got := toolVersion(filepath.Join(t.TempDir(), "missing")); got != "" {
+		t.Fatalf("missing toolVersion = %q, want empty", got)
+	}
+}
+
 func TestDecideMode_AppOnly(t *testing.T) {
 	fsys := fstest.MapFS{
 		"etc/faas/app.json": &fstest.MapFile{Data: []byte(`{}`)},

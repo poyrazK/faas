@@ -72,8 +72,9 @@ func TestReadBuildEnvironment(t *testing.T) {
 	}
 	sum := sha256.Sum256([]byte(sidecar))
 	wantIdentity := "sha256:" + hex.EncodeToString(sum[:])
-	if got.BuilderBaseIdentity != wantIdentity || got.TargetPlatform != "linux/amd64" {
-		t.Fatalf("environment=%+v want identity=%q platform=linux/amd64", got, wantIdentity)
+	wantBaseDigest := "sha256:" + strings.Repeat("a", sha256.Size*2)
+	if got.BuilderBaseIdentity != wantIdentity || got.BaseDigest != wantBaseDigest || got.TargetPlatform != "linux/amd64" {
+		t.Fatalf("environment=%+v want identity=%q base=%q platform=linux/amd64", got, wantIdentity, wantBaseDigest)
 	}
 }
 

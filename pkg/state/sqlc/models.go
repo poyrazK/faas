@@ -645,6 +645,7 @@ type Deployment struct {
 	SourcePath               pgtype.Text
 	SourceRoot               pgtype.Text
 	SourceBytes              pgtype.Int8
+	SourceSha256             pgtype.Text
 	Handler                  pgtype.Text
 	LogPath                  pgtype.Text
 	ErrorCode                pgtype.Text
