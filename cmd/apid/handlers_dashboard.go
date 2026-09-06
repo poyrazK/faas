@@ -62,6 +62,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}       → app detail
 //	GET /dashboard/apps/{slug}/logs  → live + archived app logs
 //	GET /dashboard/apps/{slug}/env|secrets → environment + secrets editor
+//	GET /dashboard/apps/{slug}/errors → grouped errors + drill-down
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
@@ -100,6 +101,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G3 / issue #1397 — grouped application errors with
+			// fingerprint drill-down and the oldest redacted sample.
+			if eslug, ok := parseAppErrorsPath(slug); ok {
+				s.renderAppErrors(w, r, log, acct, eslug)
+				return
+			}
 			// G2 / issue #1397 — combined environment and write-only
 			// secrets editor. Both /env and /secrets are aliases for
 			// the same scope-aware page.
