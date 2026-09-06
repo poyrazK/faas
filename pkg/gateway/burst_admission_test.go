@@ -173,7 +173,8 @@ func TestMaybeBurstCapacityWaitsForReadyTarget(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		result <- h.maybeBurstCapacity(context.Background(), b.app, 20, 80)
+		_, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80)
+		result <- err
 	}()
 
 	select {
@@ -310,7 +311,7 @@ func TestBurstCapacityUsesExistingTargetsWhenExpansionStalls(t *testing.T) {
 			h.burstPressure.state(b.app.ID).inflight.Store(100)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			if err := h.maybeBurstCapacity(ctx, b.app, 20, 80); !errors.Is(err, tt.wantErr) {
+			if _, err := h.maybeBurstCapacity(ctx, b.app, 20, 80); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("maybeBurstCapacity = %v, want %v", err, tt.wantErr)
 			}
 			if got := b.burstCalls.Load(); got != 1 {
@@ -327,7 +328,7 @@ func TestBurstCapacityClampsAppCeilingToPlan(t *testing.T) {
 			b.AddTarget(Target{NodeID: "node-1", InstanceID: "ready"})
 			h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 			h.burstPressure.state(b.app.ID).inflight.Store(100)
-			if err := h.maybeBurstCapacity(context.Background(), b.app, 1, 80); err != nil {
+			if _, err := h.maybeBurstCapacity(context.Background(), b.app, 1, 80); err != nil {
 				t.Fatal(err)
 			}
 			if b.burstCalls.Load() != 0 {
