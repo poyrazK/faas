@@ -49,6 +49,10 @@ origins permit browser PUTs. Downloads are attachments. No customer gets the
 provider-wide key. This is a Gregale bucket-management API, not a Gregale-hosted
 S3 protocol endpoint or a native S3 access-key service.
 
+[ADR-158](158-provider-neutral-multipart-uploads.md) extends that provider
+contract with durable, resumable multipart sessions while keeping provider
+upload identifiers private and preserving immutable bucket placement.
+
 ## Financial and launch boundaries
 
 Extended by [ADR-156](156-object-storage-accounting.md): durable capacity

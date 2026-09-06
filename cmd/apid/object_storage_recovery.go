@@ -119,8 +119,58 @@ func (s *server) reconcileObjectBuckets(ctx context.Context, observe func(string
 	return nil
 }
 
+func (s *server) reconcileObjectMultipartUploads(ctx context.Context, observe func(string, string)) error {
+	store, ok := s.store.(state.ObjectMultipartUploadStore)
+	if !ok || s.objectStorage == nil {
+		return nil
+	}
+	rows, err := store.DueObjectMultipartUploads(ctx, 20)
+	if err != nil {
+		return err
+	}
+	buckets, ok := s.store.(state.ObjectBucketStore)
+	if !ok {
+		return nil
+	}
+	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// A recent initiating intent pauses with the hot flag. Once it expires,
+		// ensure/recover its provider identity so the following sweep can abort
+		// it; cleanup must remain possible while new signing is disabled.
+		if row.State == state.ObjectMultipartInitiating && !s.objectStorageEnabled() && row.ExpiresAt.After(time.Now()) {
+			continue
+		}
+		operation := row.State
+		if row.State == state.ObjectMultipartActive {
+			operation = state.ObjectMultipartAborting
+		}
+		claimed, claimErr := store.ClaimObjectMultipartUpload(ctx, row.AccountID, row.AppID, row.BucketID, row.ID, uuid.NewString(), operation, row.Parts, true)
+		if errors.Is(claimErr, state.ErrConflict) || errors.Is(claimErr, state.ErrNotFound) {
+			continue
+		}
+		if claimErr != nil {
+			return claimErr
+		}
+		bucket, bucketErr := buckets.GetObjectBucket(ctx, row.AccountID, row.AppID, row.BucketID)
+		if bucketErr != nil {
+			return bucketErr
+		}
+		execErr := s.executeObjectMultipartOperation(ctx, store, bucket, claimed)
+		outcome := "success"
+		if execErr != nil {
+			outcome = "deferred"
+		}
+		if observe != nil {
+			observe("multipart_"+operation, outcome)
+		}
+	}
+	return nil
+}
+
 func (s *server) runObjectStorageRecovery(ctx context.Context) {
-	attempts := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_recovery_attempts_total", Help: "Claimed bucket recovery attempts by operation and outcome."}, []string{"operation", "outcome"})
+	attempts := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_recovery_attempts_total", Help: "Claimed object-storage recovery attempts by operation and outcome."}, []string{"operation", "outcome"})
 	if s.ops != nil {
 		s.ops.Registry().MustRegister(attempts)
 	}
@@ -130,6 +180,9 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 	for {
 		if err := s.reconcileObjectBuckets(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object storage recovery sweep failed")
+		}
+		if err := s.reconcileObjectMultipartUploads(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object storage multipart recovery sweep failed")
 		}
 		ticker.Reset(objectRecoveryInterval)
 		select {

@@ -2259,10 +2259,15 @@ ORDER BY b.created_at, b.id;
 UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now(),
 attempt_count = CASE WHEN state <> $1 THEN 1 ELSE least(attempt_count + 1, 30) END,
 last_error_code = CASE WHEN state <> $1 THEN '' ELSE last_error_code END, retry_at = now()
-WHERE account_id = $4 AND app_id = $5 AND id = $6 AND state <> 'deleted' AND (lease_until IS NULL OR lease_until < now())
-AND ($1 = 'deleting' OR state = 'provisioning')
-AND (NOT sqlc.arg(recovery)::boolean OR state = $1)
-AND (retry_at <= now() OR state <> $1) RETURNING *;
+WHERE object_buckets.account_id = $4 AND object_buckets.app_id = $5 AND object_buckets.id = $6
+AND object_buckets.state <> 'deleted' AND (object_buckets.lease_until IS NULL OR object_buckets.lease_until < now())
+AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
+  AND m.state IN ('initiating','active','completing','aborting')
+))
+AND (NOT sqlc.arg(recovery)::boolean OR object_buckets.state = $1)
+AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING *;
 
 -- name: ObjectBucketFinish :execrows
 UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now(),
@@ -2356,3 +2361,71 @@ AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready');
 -- name: ObjectInventorySample :exec
 INSERT INTO object_storage_inventory_samples (token,bucket_id,observed_at,bytes,objects)
 SELECT $2,u.bucket_id,u.observed_at,u.observed_bytes,u.observed_keys FROM object_storage_bucket_usage u WHERE u.bucket_id=$1;
+
+-- name: ObjectMultipartByKey :one
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
+AND state IN ('initiating','active','completing','aborting');
+
+-- name: ObjectMultipartLockBucket :one
+SELECT id FROM object_buckets
+WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE;
+
+-- name: ObjectMultipartCount :one
+SELECT count(*) FROM object_storage_multipart_uploads
+WHERE bucket_id=$1 AND state IN ('initiating','active','completing','aborting');
+
+-- name: ObjectMultipartInsert :one
+INSERT INTO object_storage_multipart_uploads
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *;
+
+-- name: ObjectMultipartGet :one
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4;
+
+-- name: ObjectMultipartClaim :one
+UPDATE object_storage_multipart_uploads SET
+state=sqlc.arg(operation), lease_token=sqlc.arg(token),
+lease_until=now()+(sqlc.arg(lease_seconds)::int * interval '1 second'),
+completion_parts=CASE WHEN state='active' AND sqlc.arg(operation)::text='completing'
+  THEN sqlc.arg(completion_parts)::jsonb ELSE completion_parts END,
+attempt_count=CASE WHEN state<>sqlc.arg(operation)::text THEN 1 ELSE least(attempt_count+1,30) END,
+last_error_code=CASE WHEN state<>sqlc.arg(operation)::text THEN '' ELSE last_error_code END,
+retry_at=now(), updated_at=now()
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
+AND bucket_id=sqlc.arg(bucket_id) AND id=sqlc.arg(id)
+AND (lease_until IS NULL OR lease_until<now())
+AND (retry_at<=now() OR state<>sqlc.arg(operation)::text)
+AND (NOT sqlc.arg(recovery)::boolean OR state=sqlc.arg(operation)::text
+  OR (state='active' AND sqlc.arg(operation)::text='aborting'))
+AND (
+  (sqlc.arg(operation)::text='initiating' AND state='initiating' AND provider_upload_id='') OR
+  (sqlc.arg(operation)::text='completing' AND state IN ('active','completing')
+    AND (state<>'active' OR expires_at>now())
+    AND (state<>'active' OR jsonb_array_length(sqlc.arg(completion_parts)::jsonb)>0)) OR
+  (sqlc.arg(operation)::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
+) RETURNING *;
+
+-- name: ObjectMultipartActivate :execrows
+UPDATE object_storage_multipart_uploads SET state='active',provider_upload_id=$3,
+lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='initiating' AND $3<>'';
+
+-- name: ObjectMultipartFinish :execrows
+UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND
+((state='completing' AND $3='completed') OR (state='aborting' AND $3='aborted'));
+
+-- name: ObjectMultipartRetry :execrows
+UPDATE object_storage_multipart_uploads SET lease_token=NULL,lease_until=NULL,last_error_code=$3,
+retry_at=now()+($4::int * interval '1 second'),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state IN ('initiating','completing','aborting');
+
+-- name: ObjectMultipartDue :many
+SELECT * FROM object_storage_multipart_uploads
+WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
+  OR (state='active' AND expires_at<=now()))
+AND (lease_until IS NULL OR lease_until<now())
+ORDER BY retry_at,id LIMIT sqlc.arg(batch_limit)::int;

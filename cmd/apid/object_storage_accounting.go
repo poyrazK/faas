@@ -25,6 +25,17 @@ func (s *server) admitObjectURL(ctx context.Context, b state.ObjectBucket, r obj
 	return st.AdmitObjectURL(ctx, b.AccountID, b.ID, r.Key, size, r.Method == http.MethodPut, s.objectStorage.Accounting)
 }
 
+func (s *server) admitObjectMultipartPartURL(ctx context.Context, b state.ObjectBucket, key string) error {
+	st, ok := s.store.(state.ObjectStorageAccountingStore)
+	if !ok || s.objectStorage == nil {
+		return state.ErrObjectUsageStale
+	}
+	// The complete object size is reserved at session creation. Every part URL
+	// still consumes the monthly authorization budget and rechecks freshness,
+	// provider spend, request, and egress ceilings before a capability escapes.
+	return st.AdmitObjectURL(ctx, b.AccountID, b.ID, key, 0, false, s.objectStorage.Accounting)
+}
+
 func (s *server) getObjectStorageUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	st, ok := s.store.(state.ObjectStorageAccountingStore)

@@ -85,6 +85,13 @@ func (m *MemStore) claimObjectBucket(accountID, appID, id, token, next string, r
 	if token == "" || (next != "provisioning" && next != "deleting") {
 		return ObjectBucket{}, ErrConflict
 	}
+	if next == "deleting" {
+		for _, upload := range m.objectMultipartUploads {
+			if upload.BucketID == id && objectMultipartLive(upload.State) {
+				return ObjectBucket{}, ErrConflict
+			}
+		}
+	}
 	if (recovery && b.State != next) || (b.State == next && b.RetryAt.After(time.Now())) {
 		return ObjectBucket{}, ErrConflict
 	}
@@ -118,6 +125,11 @@ func (m *MemStore) FinishObjectBucket(_ context.Context, id, token, next string)
 		for key, grant := range m.objectAccessGrants {
 			if grant.BucketID == id {
 				delete(m.objectAccessGrants, key)
+			}
+		}
+		for uploadID, upload := range m.objectMultipartUploads {
+			if upload.BucketID == id {
+				delete(m.objectMultipartUploads, uploadID)
 			}
 		}
 	}

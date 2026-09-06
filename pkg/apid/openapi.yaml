@@ -496,6 +496,141 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads:
+    parameters:
+      - { name: slug, description: App containing the multipart upload target., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the bucket receiving the multipart object., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: createObjectMultipartUpload
+      summary: Start or recover a resumable multipart upload
+      description: |
+        Requires storage:write or admin and a matching bucket grant. Gregale
+        reserves the complete declared size before creating billable provider
+        parts. A retry with the same live bucket/key, size, and content type
+        returns the existing session; conflicting parameters return 409. The
+        provider upload ID remains private. Sessions expire after 24 hours.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateObjectMultipartUploadRequest' }
+      responses:
+        '201':
+          description: Multipart upload initiated; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        '200':
+          description: Existing compatible live session returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Invalid request, stale accounting, capacity limit, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}:
+    parameters:
+      - { name: slug, description: App containing the durable upload session., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket containing the multipart session., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier; this is not the provider upload ID., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectMultipartUpload
+      summary: Read resumable upload state and part layout
+      description: Requires storage:write or admin and a matching bucket grant. Provider credentials and upload IDs are never returned.
+      tags: [storage]
+      responses:
+        '200':
+          description: Durable session state; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Session missing, access denied, or backend placement unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: abortObjectMultipartUpload
+      summary: Abort a multipart upload and release provider-side parts
+      description: Requires storage:write or admin and a matching bucket grant. Repeating an already-finished abort is safe. Failed aborts are retried by the recovery worker.
+      tags: [storage]
+      responses:
+        '204': { description: Upload aborted or was already aborted }
+        default:
+          description: Session busy/completed, access denied, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url:
+    parameters:
+      - { name: slug, description: App authorizing the multipart part capability., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket receiving this upload part., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: part, description: One-based part number from the session layout., in: path, required: true, schema: { type: integer, minimum: 1, maximum: 10000 } }
+    post:
+      operationId: signObjectMultipartPart
+      summary: Issue an exact-length direct upload URL for one part
+      description: |
+        Requires storage:write or admin and a matching bucket grant. The URL
+        binds the server-calculated byte length for this part and expires within
+        15 minutes. Upload it without Gregale credentials and retain the ETag
+        response header for completion. Every issued part URL consumes the
+        authorization safety budget.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectMultipartPartSignRequest' }
+      responses:
+        '200':
+          description: Temporary provider capability; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectSignedRequest' }
+        default:
+          description: Invalid part, expired session, stale accounting, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete:
+    parameters:
+      - { name: slug, description: App finalizing the multipart upload., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket receiving the completed object., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier to complete., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: completeObjectMultipartUpload
+      summary: Assemble all uploaded parts into the final object
+      description: |
+        Requires storage:write or admin and a matching bucket grant. Supply one
+        ETag for every part in ascending order. Completion intent is persisted
+        before contacting the provider and recovered after crashes. An identical
+        retry after completion returns the completed session without repeating
+        the provider operation.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteObjectMultipartUploadRequest' }
+      responses:
+        '200':
+          description: Object completed; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Invalid/missing parts, expired or conflicting session, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/account/object-storage-usage:
     get:
       operationId: getObjectStorageUsage
@@ -11852,6 +11987,55 @@ components:
         method: { type: string, enum: [GET, PUT] }
         headers: { type: object, additionalProperties: { type: string } }
         expires_at: { type: string, format: date-time }
+
+    ObjectMultipartUpload:
+      description: Durable provider-neutral resumable upload session. The provider upload ID is private.
+      type: object
+      required: [id, key, size_bytes, part_size_bytes, part_count, content_type, state, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
+        part_size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5368709120 }
+        part_count: { type: integer, minimum: 1, maximum: 10000 }
+        content_type: { type: string, maxLength: 255 }
+        state: { type: string, enum: [initiating, active, completing, aborting, completed, aborted] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    CreateObjectMultipartUploadRequest:
+      description: Final object identity and total size for a resumable upload.
+      type: object
+      additionalProperties: false
+      required: [key, size_bytes]
+      properties:
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
+        content_type: { type: string, maxLength: 255 }
+    ObjectMultipartPartSignRequest:
+      description: Requested lifetime for one exact-length part capability.
+      type: object
+      additionalProperties: false
+      properties:
+        expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
+    ObjectMultipartCompletedPart:
+      description: Provider ETag returned after uploading one numbered part.
+      type: object
+      additionalProperties: false
+      required: [part_number, etag]
+      properties:
+        part_number: { type: integer, minimum: 1, maximum: 10000 }
+        etag: { type: string, minLength: 1, maxLength: 256 }
+    CompleteObjectMultipartUploadRequest:
+      description: Complete ordered ETag manifest for every part in the session.
+      type: object
+      additionalProperties: false
+      required: [parts]
+      properties:
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items: { $ref: '#/components/schemas/ObjectMultipartCompletedPart' }
 
     OperatorRuntimeConfig:
       description: "One entry from the closed operator runtime-configuration catalog."

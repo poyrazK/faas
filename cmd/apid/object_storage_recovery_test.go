@@ -153,6 +153,47 @@ func TestObjectStorageRecoveryPersistsCooldown(t *testing.T) {
 	}
 }
 
+func TestObjectStorageMultipartRecoveryAbortsExpiredUploadWhileDisabled(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	provider := &fakeObjectProvider{}
+	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	setS3Flag(t, e, true)
+	bucket := reserveRecoveryBucket(t, e)
+	ctx := context.Background()
+	if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	uploads := e.s.store.(state.ObjectMultipartUploadStore)
+	upload, err := uploads.ReserveObjectMultipartUpload(ctx, state.ObjectMultipartUpload{
+		ID: uuid.NewString(), AccountID: bucket.AccountID, AppID: bucket.AppID, BucketID: bucket.ID,
+		Key: "expired.bin", SizeBytes: 10, PartSizeBytes: api.DefaultMultipartPartBytes, PartCount: 1,
+		ExpiresAt: time.Now().Add(-time.Minute),
+	}, api.MaxActiveMultipartUploadsPerBucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload, err = uploads.ClaimObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, upload.ID, "init", state.ObjectMultipartInitiating, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = uploads.ActivateObjectMultipartUpload(ctx, upload.ID, upload.LeaseToken, "provider-expired"); err != nil {
+		t.Fatal(err)
+	}
+
+	setS3Flag(t, e, false)
+	if err = e.s.reconcileObjectMultipartUploads(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := uploads.GetObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, upload.ID)
+	if err != nil || got.State != state.ObjectMultipartAborted {
+		t.Fatal(got, err)
+	}
+	if len(provider.multipartAborted) != 1 || provider.multipartAborted[0] != "provider-expired" {
+		t.Fatal("expired provider upload was not aborted", provider.multipartAborted)
+	}
+}
+
 func TestObjectStorageRetryPolicy(t *testing.T) {
 	for _, tt := range []struct {
 		err     error

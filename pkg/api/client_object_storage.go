@@ -94,3 +94,34 @@ func (c *Client) SignBucketObject(ctx context.Context, slug, bucket string, req 
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/signed-url", req, &out)
 	return out, err
 }
+
+func (c *Client) CreateObjectMultipartUpload(ctx context.Context, slug, bucket string, req CreateObjectMultipartUploadRequest) (ObjectMultipartUpload, error) {
+	var out ObjectMultipartUpload
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/multipart-uploads", req, &out)
+	return out, err
+}
+
+func (c *Client) GetObjectMultipartUpload(ctx context.Context, slug, bucket, upload string) (ObjectMultipartUpload, error) {
+	var out ObjectMultipartUpload
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/multipart-uploads/"+url.PathEscape(upload), nil, &out)
+	return out, err
+}
+
+func (c *Client) SignObjectMultipartPart(ctx context.Context, slug, bucket, upload string, part int, req ObjectMultipartPartSignRequest) (ObjectSignedRequest, error) {
+	var out ObjectSignedRequest
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/multipart-uploads/" + url.PathEscape(upload) + "/parts/" + strconv.Itoa(part) + "/signed-url"
+	err := c.do(ctx, http.MethodPost, path, req, &out)
+	return out, err
+}
+
+func (c *Client) CompleteObjectMultipartUpload(ctx context.Context, slug, bucket, upload string, req CompleteObjectMultipartUploadRequest) (ObjectMultipartUpload, error) {
+	var out ObjectMultipartUpload
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/multipart-uploads/" + url.PathEscape(upload) + "/complete"
+	err := c.do(ctx, http.MethodPost, path, req, &out)
+	return out, err
+}
+
+func (c *Client) AbortObjectMultipartUpload(ctx context.Context, slug, bucket, upload string) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/multipart-uploads/" + url.PathEscape(upload)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}

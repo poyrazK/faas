@@ -674,6 +674,16 @@ type Querier interface {
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
+	ObjectMultipartActivate(ctx context.Context, db DBTX, arg ObjectMultipartActivateParams) (int64, error)
+	ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectMultipartByKeyParams) (ObjectStorageMultipartUpload, error)
+	ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectMultipartClaimParams) (ObjectStorageMultipartUpload, error)
+	ObjectMultipartCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error)
+	ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit int32) ([]ObjectStorageMultipartUpload, error)
+	ObjectMultipartFinish(ctx context.Context, db DBTX, arg ObjectMultipartFinishParams) (int64, error)
+	ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMultipartGetParams) (ObjectStorageMultipartUpload, error)
+	ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error)
+	ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg ObjectMultipartLockBucketParams) (pgtype.UUID, error)
+	ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectMultipartRetryParams) (int64, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)
 	ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error
 	ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)

@@ -31,7 +31,13 @@ const (
 	DefaultObjectBucketsPerApp                = 10
 	MaxObjectBucketsPerApp                    = 100
 	DefaultObjectUploadBytes            int64 = 100 << 20
-	MaxObjectUploadBytes                int64 = 5 << 30
+	MaxObjectSinglePutBytes             int64 = 5 << 30
+	MaxObjectUploadBytes                int64 = 5 << 40
+	DefaultMultipartPartBytes           int64 = 64 << 20
+	MinMultipartPartBytes               int64 = 5 << 20
+	MaxMultipartParts                         = 10000
+	MaxActiveMultipartUploadsPerBucket        = 100
+	ObjectMultipartUploadTTL                  = 24 * time.Hour
 	// SourceArchiveMaxEntries is shared by ordinary source validation and
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.

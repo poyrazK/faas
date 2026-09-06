@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 158 | [Provider-neutral resumable multipart object uploads](158-provider-neutral-multipart-uploads.md) | accepted | Large-object and interrupted-upload hardening for S3 preview |
 | 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting milestone; live usage feed and paid pricing remain launch gates |
 | 157 | [Developer config parity](157-developer-config-parity.md): explicit `gregale dev --env-file` secret sync with key-only output and archive exclusion | accepted | `gregale dev` DX follow-up to ADR-156 |
 | 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |
