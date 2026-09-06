@@ -20,7 +20,7 @@ export type DataUpstreamResponse = {
    */
   host_redacted_hash: string;
   /**
-   * First 8 hex chars of host_redacted_hash; safe for log/scrape correlation (8 chars = ~4B capacity).
+   * Compatibility field name. First 8 hex chars of host_redacted_hash; safe for operator correlation (8 chars = ~4B capacity).
    */
   host_last4?: string;
   port: number;
@@ -47,4 +47,3 @@ export type DataUpstreamResponse = {
   created_at: string;
   last_seen_at: string;
 };
-
