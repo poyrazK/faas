@@ -100,7 +100,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APID_REQUEST_WRITE_TIMEOUT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_ROLE", Owners: []string{"apid", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_API_CONTRACT_DIFF_ENABLED", Owners: []string{"shared"}, Source: EnvSourceDefault},
-	{Name: "FAAS_APPS_DOMAIN", Owners: []string{"apid", "gatewayd-internal", "shared"}, Source: EnvSourceEnvFile},
+	{Name: "FAAS_APPS_DOMAIN", Owners: []string{"apid", "gatewayd-internal", "githubd", "shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_APPS_ROOT", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APP_ERRORS_ENABLED", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_ARTIFACT_REPLICATOR", Owners: []string{"imaged"}, Source: EnvSourceEnvFile},
