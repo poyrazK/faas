@@ -108,20 +108,6 @@ func parseWakeTimelineWindow(w http.ResponseWriter, r *http.Request) (time.Time,
 // Returns the response with AsOf set to the caller's local
 // time.Now().UTC(); the handler stamps that as the JSON envelope's
 // authoritative "as of" instant.
-func buildAppWakeTimeline(
-	ctx context.Context,
-	store interface {
-		ListLatestInstancesForApp(ctx context.Context, appID string, limit int) ([]state.Instance, error)
-		LookupBootStartedForWakes(ctx context.Context, wakeIDs []string) (map[string]state.WakeBootMeta, error)
-	},
-	app state.App,
-	log *slog.Logger,
-	acct state.Account,
-) (api.AppWakeTimelineResponse, error) {
-	now := time.Now().UTC()
-	return buildAppWakeTimelineWindow(ctx, store, app, log, acct, now.Add(-24*time.Hour), now)
-}
-
 func buildAppWakeTimelineWindow(
 	ctx context.Context,
 	store interface {

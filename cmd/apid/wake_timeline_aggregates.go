@@ -130,33 +130,3 @@ func aggregateWakeTimeline(instances []state.Instance, bootMetas map[string]stat
 	}
 	return agg
 }
-
-// wakeTimelineCutoff returns the post-cutoff prefix of the
-// DESC-ordered instances slice — the rows that fall inside the
-// trailing-24h window. Exists so row-build loops that mirror the
-// helper's aggregation (the JSON mirror at
-// handlers_app_wake_timeline_json.go:120) don't have to
-// re-implement the descending-break. Before this helper, the JSON
-// row-build loop ran its own `started_at < cutoff` check that had
-// to stay in lockstep with the helper's; a one-line break
-// semantics change in either site silently broke the other.
-//
-// The HTML page at handlers_dashboard.go::renderAppWakeTimeline is
-// unchanged — its inline loop has its own failing-test barrier
-// (PR-A review-cluster precedent: don't refactor working code
-// without a failing test) and the helper extraction here is
-// scoped to the JSON caller that the review-finding flagged.
-//
-// Same nil/empty-slice posture as aggregateWakeTimeline: nil input
-// returns nil; empty input returns an empty (non-nil) slice.
-func wakeTimelineCutoff(instances []state.Instance, cutoff time.Time) []state.Instance {
-	if len(instances) == 0 {
-		return instances
-	}
-	for i, ins := range instances {
-		if !ins.StartedAt.IsZero() && ins.StartedAt.UTC().Before(cutoff) {
-			return instances[:i]
-		}
-	}
-	return instances
-}
