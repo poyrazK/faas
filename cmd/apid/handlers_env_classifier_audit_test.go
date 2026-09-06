@@ -18,7 +18,7 @@
 //
 //       (a) 200 partial-success contract preserved.
 //       (b) env row persisted.
-//       (c) env.classifier_failed audit row fires with
+//       (c) data_upstream.classifier_failed audit row fires with
 //           error_class=host_hash_failed, silent_skip=true
 //           (silent_skip=true because no INSERT was attempted).
 //       (d) env.set also fires (no double-emit / no missing emit).
@@ -46,6 +46,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -111,12 +112,12 @@ func listAllAuditKinds(t *testing.T, e testEnv) []string {
 //
 //   - 200 partial-success preserved.
 //   - env row persisted.
-//   - env.classifier_failed audit row emitted with the right
+//   - data_upstream.classifier_failed audit row emitted with the right
 //     payload (error_class, silent_skip, app_id, scope, name).
 //   - env.set row also fires (no double-emit / no missing emit).
 //   - data_upstream.inferred MUST NOT fire (host-hash stub means
 //     the classifier silently skipped before the inferred emit).
-//   - env.classifier_failed's Subject is the account UUID
+//   - data_upstream.classifier_failed's Subject is the account UUID
 //     (account-attribution invariant).
 func TestSetEnv_ClassifierFailure_HostHashFailed_EmitsAuditEvent(t *testing.T) {
 	e := setup(t, api.PlanPro)
@@ -140,10 +141,10 @@ func TestSetEnv_ClassifierFailure_HostHashFailed_EmitsAuditEvent(t *testing.T) {
 		t.Fatalf("env rows = %+v, want one DATABASE_URL row", envs)
 	}
 
-	// env.classifier_failed row with the right payload.
-	failed := findAuditEventByKind(t, e, "env.classifier_failed")
+	// data_upstream.classifier_failed row with the right payload.
+	failed := findAuditEventByKind(t, e, "data_upstream.classifier_failed")
 	if failed == nil {
-		t.Fatalf("env.classifier_failed audit row missing; events = %v", listAllAuditKinds(t, e))
+		t.Fatalf("data_upstream.classifier_failed audit row missing; events = %v", listAllAuditKinds(t, e))
 	}
 	var payload map[string]any
 	decodeEventPayload(t, failed, &payload)
@@ -163,13 +164,20 @@ func TestSetEnv_ClassifierFailure_HostHashFailed_EmitsAuditEvent(t *testing.T) {
 		t.Errorf("payload silent_skip = %v, want true", payload["silent_skip"])
 	}
 
+	// The precise audit class is normalized to the bounded Prometheus
+	// reason vocabulary: host_hash_failed → salt_missing.
+	metrics := scrapeOpsMetrics(t, e.ops)
+	if !strings.Contains(metrics, `apid_test_data_upstream_classifier_failures_total{reason="salt_missing"} 1`) {
+		t.Fatalf("classifier failure metric missing salt_missing sample:\n%s", metrics)
+	}
+
 	// Account-attribution invariant.
 	if failed.Subject == nil {
-		t.Fatalf("env.classifier_failed Subject is nil; account attribution lost")
+		t.Fatalf("data_upstream.classifier_failed Subject is nil; account attribution lost")
 	}
 	wantSubj := uuid.MustParse(e.acct.ID)
 	if *failed.Subject != wantSubj {
-		t.Errorf("env.classifier_failed Subject = %s, want %s", failed.Subject, wantSubj)
+		t.Errorf("data_upstream.classifier_failed Subject = %s, want %s", failed.Subject, wantSubj)
 	}
 
 	// env.set row also fires (no missing emit on the success-side

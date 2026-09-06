@@ -128,6 +128,7 @@ tests:
             exp_annotations:
               summary: "Data-placement p95 RTT < 5ms for postgres/eu-fra"
               description: "The chooser bias for postgres upstreams in eu-fra is observing p95 RTT < 5ms for 10m — the connection-aware placement is operating within the spec's healthy envelope. This is informational; no action required."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUpstreamRttDegraded.md"
 
   # ──────────────────────────────────────────────────────────────
   # Test 3 — negative case: degraded pair fires the page but
@@ -315,3 +316,38 @@ tests:
               summary: "Data-placement probe loop silent for 30m"
               description: "Zero ok-probes landed over 30m. The probe loop has gone silent — typically a stalled meterd poller, a missing upstream manifest, or a complete outbound network partition. Per-(kind, region) localization is not possible here because the counter is fleet-wide (the canonical cardinality-bounded shape — pkg/wire/metrics.go:2554). To localize, cross-reference `FaasUpstreamRttDegraded` for the per-(kind, region) connectivity view (the histogram carries the labels the counter doesn't). This is informational (severity info) until the silent condition chains with `FaasUpstreamRttDegraded`; at that point the degradation is connectivity-bound rather than poller-bound. Runbook at docs/runbooks/FaasUpstreamProbeOutcomeSilent.md."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUpstreamProbeOutcomeSilent.md"
+
+  # ──────────────────────────────────────────────────────────────────
+  # issue #957 — classifier failures are partial-success env writes,
+  # so the alert must fire only when the apid counter keeps moving.
+  # The reason label is a closed set; this fixture exercises the
+  # salt_missing path and asserts the page metadata.
+  # ──────────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "classifier failures sustained for 25m → FaasUpstreamClassifierFailure fires"
+    input_series:
+      - series: 'apid_data_upstream_classifier_failures_total{reason="salt_missing"}'
+        values: '0+1x50'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasUpstreamClassifierFailure
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: apid
+              family: data_placement
+              reason: salt_missing
+            exp_annotations:
+              summary: "Data-placement env classifier failures sustained for 10m (reason=salt_missing)"
+              description: "apid is failing to derive data_upstreams hints after environment mutations. Customer env writes still return success, but connection-aware placement may use its legacy fallback. Inspect the data_upstream.classifier_failed audit events and remediate the reason-specific host configuration or apid/Postgres failure."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUpstreamClassifierFailure.md"
+
+  - interval: 30s
+    name: "no classifier failures → FaasUpstreamClassifierFailure stays quiet"
+    input_series:
+      - series: 'apid_data_upstream_classifier_failures_total{reason="salt_missing"}'
+        values: '0x50'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasUpstreamClassifierFailure
+        # No exp_alerts → zero failure rate must not page.
