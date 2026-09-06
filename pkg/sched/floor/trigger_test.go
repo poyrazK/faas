@@ -810,6 +810,40 @@ func TestTickPerDeployment_FreePlanDisabled(t *testing.T) {
 	}
 }
 
+func TestTickPerDeployment_NonLiveDeploymentDisabled(t *testing.T) {
+	statuses := []state.DeploymentStatus{
+		state.DeployPending,
+		state.DeployBuilding,
+		state.DeployImaging,
+		state.DeploySnapshotting,
+		state.DeployFailed,
+		state.DeploySuperseded,
+		state.DeployCancelled,
+	}
+	for _, status := range statuses {
+		t.Run(string(status), func(t *testing.T) {
+			app := floorApp("app1", api.PlanHobby, 1)
+			engine := &fakeEngine{}
+			dep := floorDeployment("d1", app.ID, 1)
+			dep.Status = status
+			tr := withDeploymentStore(t,
+				&fakeStore{apps: []state.App{app}},
+				&fakeDeploymentStore{deps: []state.Deployment{dep}, apps: map[string]state.App{app.ID: app}},
+				&fakeLedger{depConc: map[string]int{app.ID + "\x00" + dep.ID: 0}, headroom: 47_600},
+				engine,
+				Options{PlanResolver: &fakePlanResolver{plans: map[string]api.Plan{app.AccountID: api.PlanHobby}}},
+			)
+
+			if err := tr.Tick(context.Background()); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			if len(engine.calls) != 0 {
+				t.Fatalf("engine.calls = %v, want none for deployment status %q", engine.calls, status)
+			}
+		})
+	}
+}
+
 // TestTickPerDeployment_AppByIDErrorObservesError exercises the
 // defensive branch at tickPerDeployment:435-439. If the parent app
 // lookup fails, the trigger MUST observe the OutcomeError metric
