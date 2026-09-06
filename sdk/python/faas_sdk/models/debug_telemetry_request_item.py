@@ -19,7 +19,7 @@ T = TypeVar("T", bound="DebugTelemetryRequestItem")
 
 @_attrs_define
 class DebugTelemetryRequestItem:
-    """One row per gateway-served request, persisted by the recorder (PR-A)."""
+    """One collapsed telemetry row persisted by the recorder; count is the number of gateway-served requests represented by it."""
 
     id: UUID
     deployment_id: UUID
@@ -28,6 +28,7 @@ class DebugTelemetryRequestItem:
     method: DebugTelemetryRequestItemMethod
     status: int
     latency_ms: int
+    count: int
     cold_boot: bool
     received_at: datetime.datetime
     trace_id: None | str | Unset = UNSET
@@ -46,6 +47,8 @@ class DebugTelemetryRequestItem:
         status = self.status
 
         latency_ms = self.latency_ms
+
+        count = self.count
 
         cold_boot = self.cold_boot
 
@@ -67,6 +70,7 @@ class DebugTelemetryRequestItem:
                 "method": method,
                 "status": status,
                 "latency_ms": latency_ms,
+                "count": count,
                 "cold_boot": cold_boot,
                 "received_at": received_at,
             }
@@ -91,6 +95,8 @@ class DebugTelemetryRequestItem:
 
         latency_ms = d.pop("latency_ms")
 
+        count = d.pop("count")
+
         cold_boot = d.pop("cold_boot")
 
         received_at = datetime.datetime.fromisoformat(d.pop("received_at"))
@@ -111,6 +117,7 @@ class DebugTelemetryRequestItem:
             method=method,
             status=status,
             latency_ms=latency_ms,
+            count=count,
             cold_boot=cold_boot,
             received_at=received_at,
             trace_id=trace_id,
