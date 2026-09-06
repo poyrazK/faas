@@ -1317,6 +1317,11 @@ const (
 	CodeAppRuntimeOOM          = "app_runtime_oom"
 	CodeDepInstallFailed       = "dep_install_failed"
 	CodeAppStartupTimeout      = "app_startup_timeout"
+	// CodeDeploymentSmokeFailed means the public post-readiness health
+	// request did not complete successfully. It is distinct from guest boot
+	// failures so operators can tell serving-path regressions from image
+	// startup regressions.
+	CodeDeploymentSmokeFailed = "deployment_smoke_failed"
 
 	// CLI auth (spec §2.2 device-code flow). Pending is the "user has
 	// not yet approved" signal the CLI's poll loop keys off; the CLI
@@ -1688,7 +1693,8 @@ func StatusForCode(code string) int {
 		CodeAppHealthzUnauthorized,
 		CodeAppRuntimeOOM,
 		CodeDepInstallFailed,
-		CodeAppStartupTimeout:
+		CodeAppStartupTimeout,
+		CodeDeploymentSmokeFailed:
 		// 422 — error-explanations cluster (spec §6.4 amendment 1).
 		// Same family as CodeStatelessOnlyViolation / CodeDeployFailed:
 		// well-formed request, content policy refuses. The Detail

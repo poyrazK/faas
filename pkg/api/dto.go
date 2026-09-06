@@ -1750,6 +1750,10 @@ type DeploymentResponse struct {
 	// String fields only because pkg/api cannot import pkg/state
 	// (the App.Type enum lives in pkg/state/types.go).
 	BuildPlan *BuildPlan `json:"build_plan,omitempty"`
+	// APIHostingReceipt is the non-secret evidence captured when imaged
+	// promoted this deployment to live. It is intentionally free-form on the
+	// API surface so future receipt schema versions remain additive.
+	APIHostingReceipt json.RawMessage `json:"hosting_receipt,omitempty"`
 	// Issue #606 / SAFE-RELEASES-E.1: structured deployer
 	// attribution. All four fields are server-stamped from the
 	// HTTP request context (never client-supplied) and use

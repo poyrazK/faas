@@ -7218,6 +7218,17 @@ func (s *PgStore) UpsertDeploymentSecretFindings(ctx context.Context, deployment
 	return nil
 }
 
+// UpsertDeploymentHostingReceipt stores the immutable deployment evidence
+// produced by imaged after readiness. The UPDATE is idempotent so notification
+// redelivery cannot create a second receipt.
+func (s *PgStore) UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error) {
+	return scanDeploymentWithRootfs(s.pool.QueryRow(ctx,
+		`update deployments
+		    set api_hosting_receipt = $2::jsonb
+		  where id = $1
+		  returning `+deploymentSelectColumnsWithRootfs, deploymentID, receipt))
+}
+
 // RecordRestart (issue #586 / ADR-129 / cluster C commit 12)
 // bumps the persisted deployments.liveness_restart_count column
 // by 1 in a single statement. Mirrors
@@ -17371,7 +17382,8 @@ const deploymentSelectColumnsWithRootfs = `
 	cancelled_at, coalesce(cancelled_by_principal, ''), coalesce(cancel_reason, ''),
 	deleted_at, coalesce(deleted_by_principal, ''),
 	coalesce(workflows, '[]'::jsonb),
-	coalesce(full_rootfs_allow_auto, false), full_rootfs_override`
+	coalesce(full_rootfs_allow_auto, false), full_rootfs_override,
+	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb)`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -17423,7 +17435,8 @@ const deploymentSelectColumnsQualified = `
 	d.cancelled_at, coalesce(d.cancelled_by_principal, ''), coalesce(d.cancel_reason, ''),
 	d.deleted_at, coalesce(d.deleted_by_principal, ''),
 	coalesce(d.workflows, '[]'::jsonb),
-	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override`
+	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override,
+	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb)`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -17533,6 +17546,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.CancelledAt, &d.CancelledByPrincipal, &d.CancelReason,
 		&d.DeletedAt, &d.DeletedByPrincipal, &d.Workflows,
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
+		&d.APIHostingReceipt,
 	); err != nil {
 		return mapErr(err)
 	}

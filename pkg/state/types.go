@@ -1805,6 +1805,10 @@ type Deployment struct {
 	// RFC 7231 Retry-After header set to the remaining seconds.
 	// Capped exponential: 5s base, 300s max.
 	SnapshotMissBackoffUntil *time.Time `json:"snapshot_miss_backoff_until,omitempty"`
+	// APIHostingReceipt is durable, non-secret deployment evidence captured
+	// after the readiness probe. Raw JSON keeps state independent of the API
+	// hosting receipt package.
+	APIHostingReceipt json.RawMessage `json:"api_hosting_receipt,omitempty"`
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot

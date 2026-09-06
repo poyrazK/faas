@@ -260,6 +260,7 @@ from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
 from .deployment_response_deployed_via_type_1 import DeploymentResponseDeployedViaType1
 from .deployment_response_deployed_via_type_2_type_1 import DeploymentResponseDeployedViaType2Type1
 from .deployment_response_deployed_via_type_3_type_1 import DeploymentResponseDeployedViaType3Type1
+from .deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
 from .deployment_response_last_auto_rollback_reason_type_1 import DeploymentResponseLastAutoRollbackReasonType1
 from .deployment_response_last_auto_rollback_reason_type_2_type_1 import (
     DeploymentResponseLastAutoRollbackReasonType2Type1,
@@ -377,7 +378,9 @@ from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
 from .install_bind_request import InstallBindRequest
+from .install_bind_request_deploy_branches import InstallBindRequestDeployBranches
 from .install_bind_response import InstallBindResponse
+from .install_bind_response_deploy_branches import InstallBindResponseDeployBranches
 from .instance_response import InstanceResponse
 from .instance_response_execution_mode_type_1 import InstanceResponseExecutionModeType1
 from .instance_response_execution_mode_type_2_type_1 import InstanceResponseExecutionModeType2Type1
@@ -1030,6 +1033,7 @@ __all__ = (
     "DeploymentResponseDeployedViaType1",
     "DeploymentResponseDeployedViaType2Type1",
     "DeploymentResponseDeployedViaType3Type1",
+    "DeploymentResponseHostingReceiptType0",
     "DeploymentResponseLastAutoRollbackReasonType1",
     "DeploymentResponseLastAutoRollbackReasonType2Type1",
     "DeploymentResponseLastAutoRollbackReasonType3Type1",
@@ -1143,7 +1147,9 @@ __all__ = (
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
     "InstallBindRequest",
+    "InstallBindRequestDeployBranches",
     "InstallBindResponse",
+    "InstallBindResponseDeployBranches",
     "InstanceResponse",
     "InstanceResponseExecutionModeType1",
     "InstanceResponseExecutionModeType2Type1",

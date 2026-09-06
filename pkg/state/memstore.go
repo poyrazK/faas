@@ -4560,6 +4560,18 @@ func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, err
 	return d, nil
 }
 
+func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentID string, receipt []byte) (Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[deploymentID]
+	if !ok {
+		return Deployment{}, ErrNotFound
+	}
+	d.APIHostingReceipt = append([]byte(nil), receipt...)
+	m.deployments[deploymentID] = d
+	return d, nil
+}
+
 func (m *MemStore) DeploymentOrdinal(_ context.Context, appID, deploymentID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

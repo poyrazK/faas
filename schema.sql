@@ -2047,6 +2047,7 @@ CREATE TABLE public.deployments (
     snapshot_miss_count integer DEFAULT 0 NOT NULL,
     snapshot_miss_last_at timestamp with time zone,
     snapshot_miss_backoff_until timestamp with time zone,
+    api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),

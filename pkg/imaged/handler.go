@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/buildcache"
 	"github.com/onebox-faas/faas/pkg/cosign"
@@ -91,6 +92,9 @@ type Handler struct {
 	oci     oci.Puller
 	builder LayerBuilder
 	log     *slog.Logger
+	// hostingSmoke is optional in single-box and offline deployments. When
+	// configured, it must pass before the deployment is promoted to live.
+	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -533,6 +537,12 @@ func (h *Handler) WithFunctionRunnerNode22(p string) *Handler {
 // the identity used by builderd when it emits snapshot_boot.
 func (h *Handler) WithNodeName(name string) *Handler {
 	h.nodeName = strings.TrimSpace(name)
+	return h
+}
+
+// WithHostingSmoke installs the post-readiness public HTTP verifier.
+func (h *Handler) WithHostingSmoke(fn func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)) *Handler {
+	h.hostingSmoke = fn
 	return h
 }
 
@@ -2516,6 +2526,36 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 				// compute_nodes row or a transient DB issue blocks it.
 				h.log.Warn("imaged: record snapshot origin failed", "snapshot_id", stored.ID, "node_id", p.NodeID, "err", originErr)
 			}
+		}
+	}
+
+	// The public smoke is the last readiness gate. Persist its evidence before
+	// flipping the deployment live so a live row always has an auditable receipt.
+	if h.hostingSmoke != nil || func() bool { _, ok := h.store.(state.DeploymentHostingReceiptStore); return ok }() {
+		app, appErr := h.store.AppByID(ctx, dep.AppID)
+		if appErr != nil {
+			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
+		}
+		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: app.Manifest.Healthz, ErrorCode: "smoke_not_configured"}
+		if smoke.Path == "" {
+			smoke.Path = defaultHealthzPath
+		}
+		if h.hostingSmoke != nil {
+			var smokeErr error
+			smoke, smokeErr = h.hostingSmoke(ctx, app, dep)
+			if smokeErr != nil {
+				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
+				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
+				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
+			}
+			if smokeErr = hostingSmokeFailure(smoke); smokeErr != nil {
+				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
+				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
+				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
+			}
+		}
+		if err := h.persistHostingReceipt(ctx, app, dep, smoke); err != nil {
+			return fmt.Errorf("imaged: hosting receipt: %w", err)
 		}
 	}
 
