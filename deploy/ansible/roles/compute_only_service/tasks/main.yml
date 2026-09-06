@@ -409,7 +409,7 @@
     state: directory
     owner: root
     group: faas
-    mode: "0770"
+    mode: "{{ '2770' if item == '/srv/fc/snap' else '0770' }}"
   loop:
     - /srv/fc/snap
     - /srv/fc/base
@@ -420,6 +420,14 @@
     - /var/spool/faas
     - /var/spool/faas/builds
     - /dev/shm/faas-base-staging
+
+# vmmd writes snapshots as root while imaged reclaims them as faas-imaged.
+# Normalize directories created before the shared-group contract and retain
+# setgid on descendants so both daemons keep the same group on future writes.
+- name: compute_only_service — normalize snapshot directory ownership for GC
+  ansible.builtin.command:
+    cmd: "find /srv/fc/snap -mindepth 1 -type d -exec chown root:faas {} + -exec chmod 2770 {} +"
+  changed_when: false
 
 # The compute daemons share selected subdirectories below /var/lib/faas.
 # postgres creates this parent as root-only on control-plane images; compute

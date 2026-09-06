@@ -366,9 +366,9 @@ func TestDiskDrift_SoftDeletedAppExcluded(t *testing.T) {
 	}
 	// Order: create the dep + snapshot first (MemStore rejects new
 	// deployments on a deleted app), THEN soft-delete the app. The
-	// resulting DB row is filtered out by ListSnapshotsForGC's
-	// apps.status='deleted' filter — the on-disk files are now
-	// orphans from the sweep's perspective.
+	// resulting DB row is returned to consumers with AppDeleted status.
+	// DiskDrift omits cleanup-eligible rows from its expected set, so the
+	// on-disk files are orphans from the sweep's perspective.
 	dep, err := f.store.CreateDeployment(ctx, state.Deployment{
 		ID:          "softdel-dep",
 		AppID:       app.ID,
@@ -389,8 +389,8 @@ func TestDiskDrift_SoftDeletedAppExcluded(t *testing.T) {
 	if err := f.store.DeleteApp(ctx, app.ID); err != nil {
 		t.Fatalf("delete app (sets AppDeleted status): %v", err)
 	}
-	// Files on disk — but the app is soft-deleted, so ListSnapshotsForGC
-	// returns no row for this dep. The sweep sees the orphan dir and
+	// Files on disk — but the app is soft-deleted, so the sweep omits its
+	// row from the expected set. It sees the orphan dir and
 	// increments drift; it does NOT inspect files inside.
 	f.writeFile(t, dep.ID, "mem", make([]byte, 100))
 	f.writeFile(t, dep.ID, "vmstate", make([]byte, 200))

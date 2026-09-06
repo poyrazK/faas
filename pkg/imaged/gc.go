@@ -56,18 +56,24 @@ type deleteTarget struct {
 // wrong one when a rollback-and-redeploy lands in the same
 // nanosecond".
 //
-// Soft-deleted apps (status='deleted') are filtered out by the SQL
-// layer in Store.ListSnapshotsForGC, so we don't have to handle
-// them here. Same for stale rows.
+// Deleted apps and unusable terminal deployments are returned by the store
+// specifically so this function can evict them without letting them consume
+// a retention-floor slot. Stale rows are handled by the retention sweep.
 //
 // Replaces the legacy perAppKeepCurrentPrevious (spec §4.6 current +
 // previous) which ignored tier entirely.
 func perAppKeepTierFloor(rows []state.SnapshotForGC) []deleteTarget {
 	byApp := make(map[string][]state.SnapshotForGC, len(rows))
+	var drop []deleteTarget
 	for _, r := range rows {
+		if r.AppStatus == state.AppDeleted ||
+			r.DeploymentStatus == state.DeployFailed ||
+			r.DeploymentStatus == state.DeployCancelled {
+			drop = append(drop, targetForSnapshot(r))
+			continue
+		}
 		byApp[r.AppID] = append(byApp[r.AppID], r)
 	}
-	var drop []deleteTarget
 	for _, appRows := range byApp {
 		// Pick the warm-tier policy from the first row's
 		// AppWarmSnapshotEnabled (denormalised into the JOIN
@@ -90,19 +96,21 @@ func perAppKeepTierFloor(rows []state.SnapshotForGC) []deleteTarget {
 				initKept++
 				continue
 			default:
-				drop = append(drop, deleteTarget{
-					ID:           r.ID,
-					DeploymentID: r.DeploymentID,
-					StorageKey:   r.StorageKey,
-					// B1.1: AppSlug is on SnapshotForGC (issue #195);
-					// no per-eviction re-resolve needed.
-					AppSlug: r.AppSlug,
-					Tier:    r.Tier,
-				})
+				drop = append(drop, targetForSnapshot(r))
 			}
 		}
 	}
 	return drop
+}
+
+func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
+	return deleteTarget{
+		ID:           r.ID,
+		DeploymentID: r.DeploymentID,
+		StorageKey:   r.StorageKey,
+		AppSlug:      r.AppSlug,
+		Tier:         r.Tier,
+	}
 }
 
 // perAppKeepCurrentPrevious returns the snapshot IDs that fall outside the

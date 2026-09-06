@@ -2078,6 +2078,13 @@ func TestPg_DeleteSnapshotsStaleOlderThan_OnlyRemovesStalePastRetention(t *testi
 	if _, err := pool.Exec(ctx, `update snapshots set created_at = now() - interval '30 days' where id = $1`, oldID); err != nil {
 		t.Fatalf("backdate old: %v", err)
 	}
+	expired, err := s.ListSnapshotsStaleOlderThan(ctx, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("ListSnapshotsStaleOlderThan: %v", err)
+	}
+	if len(expired) != 1 || expired[0].ID != oldID || expired[0].AppSlug == "" || expired[0].DeploymentStatus != state.DeployLive {
+		t.Fatalf("expired stale projection = %+v, want old row with artifact metadata", expired)
+	}
 
 	// DeleteSnapshotsStaleOlderThan(7d) → only `old` qualifies.
 	n, err := s.DeleteSnapshotsStaleOlderThan(ctx, 7*24*time.Hour)

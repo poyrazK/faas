@@ -9457,8 +9457,9 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 	return ErrNotFound
 }
 
-// ListSnapshotsForGC joins snapshots → deployments → apps in-memory and
-// filters out snapshots belonging to soft-deleted apps (apps.status='deleted').
+// ListSnapshotsForGC joins snapshots → deployments → apps in-memory.
+// Deleted apps and terminal deployments remain visible so imaged can reclaim
+// their rows and storage artifacts.
 // MemStore doesn't index the join; the O(N×M) scan is fine for the test
 // harness, which seeds at most a few dozen rows. The slice is sorted
 // newest-first to match PgStore.
@@ -9483,7 +9484,7 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			continue
 		}
 		app, ok := appByID[dep.AppID]
-		if !ok || app.Status == AppDeleted {
+		if !ok {
 			continue
 		}
 		out = append(out, SnapshotForGC{
@@ -9493,10 +9494,12 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			AccountID:    app.AccountID,
 			// B1.1: forward the slug so imaged's GC doesn't have to
 			// re-resolve it per eviction (was O(2N) extra SQL).
-			AppSlug:   app.Slug,
-			FCVersion: s.FCVersion,
-			MemBytes:  s.MemBytes,
-			DiskBytes: s.DiskBytes,
+			AppSlug:          app.Slug,
+			AppStatus:        app.Status,
+			DeploymentStatus: dep.Status,
+			FCVersion:        s.FCVersion,
+			MemBytes:         s.MemBytes,
+			DiskBytes:        s.DiskBytes,
 			// Issue #470 / ADR-055: forward the tier so the GC loop's
 			// perAppKeepCurrentPrevious can keep (current warm +
 			// previous init) per warm-tier app and (current init +
@@ -9519,6 +9522,63 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
+	return out, nil
+}
+
+// ListSnapshotsStaleOlderThan mirrors the stale-retention selector used by
+// PgStore while preserving the metadata imaged needs for artifact deletion.
+func (m *MemStore) ListSnapshotsStaleOlderThan(_ context.Context, retention time.Duration) ([]SnapshotForGC, error) {
+	cutoff := time.Now().Add(-retention)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	appByID := make(map[string]App, len(m.apps))
+	for _, a := range m.apps {
+		appByID[a.ID] = a
+	}
+	depByID := make(map[string]Deployment, len(m.deployments))
+	for _, d := range m.deployments {
+		depByID[d.ID] = d
+	}
+	var out []SnapshotForGC
+	for _, s := range m.snapshots {
+		if !s.Stale || !s.CreatedAt.Before(cutoff) {
+			continue
+		}
+		dep, ok := depByID[s.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := appByID[dep.AppID]
+		if !ok {
+			continue
+		}
+		out = append(out, SnapshotForGC{
+			ID: s.ID, DeploymentID: s.DeploymentID, AppID: app.ID,
+			AccountID: app.AccountID, AppSlug: app.Slug, AppStatus: app.Status,
+			DeploymentStatus: dep.Status, FCVersion: s.FCVersion,
+			MemBytes: s.MemBytes, DiskBytes: s.DiskBytes, Tier: s.Tier,
+			StorageKey: s.StorageKey, Stale: true, CreatedAt: s.CreatedAt,
+			AppWarmSnapshotEnabled: app.WarmSnapshotEnabled,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+// ListSnapshotDeploymentIDs mirrors the compact PgStore projection and keeps
+// stale rows visible until their retention cleanup removes them.
+func (m *MemStore) ListSnapshotDeploymentIDs(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seen := make(map[string]struct{}, len(m.snapshots))
+	for _, snapshot := range m.snapshots {
+		seen[snapshot.DeploymentID] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for deploymentID := range seen {
+		out = append(out, deploymentID)
+	}
+	sort.Strings(out)
 	return out, nil
 }
 

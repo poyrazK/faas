@@ -4394,9 +4394,9 @@ const (
 // It denormalises snapshot → deployment → app → account into one row so
 // the GC algorithm doesn't have to round-trip per row.
 //
-// Snapshots for soft-deleted apps (apps.status = 'deleted') are filtered
-// at the SQL layer; they have no in-flight wake target and keeping them
-// would leak the 452 GB budget indefinitely.
+// AppStatus and DeploymentStatus let the GC discard snapshots that cannot
+// participate in a future wake. In particular, deleted apps and
+// failed/cancelled deployments must not consume the per-app retention floor.
 type SnapshotForGC struct {
 	ID           string
 	DeploymentID string
@@ -4409,10 +4409,12 @@ type SnapshotForGC struct {
 	// An empty AppSlug after the projection runs is an invariant
 	// violation — call sites should log + skip, never silently fall
 	// back to a slow path.
-	AppSlug   string
-	FCVersion string
-	MemBytes  int64
-	DiskBytes int64
+	AppSlug          string
+	AppStatus        AppStatus
+	DeploymentStatus DeploymentStatus
+	FCVersion        string
+	MemBytes         int64
+	DiskBytes        int64
 	// Tier (issue #470 / ADR-055) is the snapshot tier — see
 	// Snapshot.Tier for the semantics. The GC projection carries
 	// it so the perAppKeepCurrentPrevious policy can keep

@@ -70,6 +70,26 @@ func sortedStringsEqual(a, b []string) bool {
 	return true
 }
 
+func TestPerAppKeepTierFloor_DropsUnusableSnapshotsBeforeFloor(t *testing.T) {
+	now := time.Now()
+	failed := row("failed", "app", "dep-failed", "acct", "slug", state.SnapshotTierInit, false, now, 1, 1)
+	failed.DeploymentStatus = state.DeployFailed
+	cancelled := row("cancelled", "app", "dep-cancelled", "acct", "slug", state.SnapshotTierInit, false, now, 1, 1)
+	cancelled.DeploymentStatus = state.DeployCancelled
+	deleted := row("deleted", "deleted-app", "dep-deleted", "acct", "deleted-slug", state.SnapshotTierInit, false, now, 1, 1)
+	deleted.AppStatus = state.AppDeleted
+	live := row("live", "app", "dep-live", "acct", "slug", state.SnapshotTierInit, false, now.Add(-time.Minute), 1, 1)
+	live.DeploymentStatus = state.DeployLive
+	previous := row("previous", "app", "dep-previous", "acct", "slug", state.SnapshotTierInit, false, now.Add(-2*time.Minute), 1, 1)
+	previous.DeploymentStatus = state.DeploySuperseded
+
+	got := collectIDs(perAppKeepTierFloor([]state.SnapshotForGC{failed, cancelled, deleted, live, previous}))
+	want := []string{"failed", "cancelled", "deleted"}
+	if !sortedStringsEqual(got, want) {
+		t.Fatalf("drop IDs = %v, want %v", got, want)
+	}
+}
+
 // sortStrings is a tiny inlined helper to avoid importing "sort" just
 // for a single ascending sort in tests.
 func sortStrings(s []string) {

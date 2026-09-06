@@ -227,10 +227,24 @@ func TestPg_ListSnapshotsForGC_ProjectsTier(t *testing.T) {
 		if r.ID == "" {
 			continue
 		}
+		if r.AppStatus != state.AppActive || r.DeploymentStatus != state.DeployLive {
+			t.Errorf("GC status projection = app:%q deployment:%q, want active/live", r.AppStatus, r.DeploymentStatus)
+		}
 		tiers[r.Tier] = true
 	}
 	if !tiers[state.SnapshotTierInit] || !tiers[state.SnapshotTierWarm] {
 		t.Errorf("GC projection tiers = %v, want both init + warm", tiers)
+	}
+
+	if _, err := pool.Exec(ctx, `update apps set status = 'deleted' where id = '00000000-0000-0000-0000-0000000000d1'`); err != nil {
+		t.Fatalf("soft-delete app: %v", err)
+	}
+	got, err = s.ListSnapshotsForGC(ctx)
+	if err != nil {
+		t.Fatalf("ListSnapshotsForGC after delete: %v", err)
+	}
+	if len(got) != 2 || got[0].AppStatus != state.AppDeleted || got[1].AppStatus != state.AppDeleted {
+		t.Fatalf("deleted app cleanup projection = %+v, want two deleted-app rows", got)
 	}
 }
 
