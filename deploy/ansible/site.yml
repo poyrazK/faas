@@ -33,3 +33,21 @@
       run_once: true
   roles:
     - role: promtail
+
+# Keep the M8 restore-drill prerequisites converged when operators run the
+# observability overlay after bootstrap. `bootstrap.yml` remains the canonical
+# host bootstrap and runs this role in the control-plane play; repeating the
+# role here is safe because every task is idempotent and gives the documented
+# `site.yml` entrypoint an explicit restore-drill wiring.
+- name: Converge Postgres backup for the M8 restore drill
+  hosts: control_plane
+  gather_facts: true
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  vars_files:
+    - group_vars/control_plane/off_host_backup.yml
+  roles:
+    - role: postgres_backup
+      tags: [postgres_backup, restore-drill]
+      when: not (faas_image_seed | default(false) | bool)

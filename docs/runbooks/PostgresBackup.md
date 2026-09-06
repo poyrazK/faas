@@ -74,6 +74,15 @@ cluster within 5%.
 sudo make backup-restore-drill
 ```
 
+This is destructive: it deliberately stops the FaaS daemons, wipes the live
+PostgreSQL data directory, extracts the tar-format `base.tar.gz` and
+`pg_wal.tar.gz` members, replays archived WAL, checks promotion and schema
+migrations, compares the `accounts`, `apps`, and healthy-instance row counts
+with the pre-crash values, and wakes the fixture app. The script writes a
+dated PASS or FAIL record under `docs/drills/`; an M8 sign-off PR must carry
+the `m8-done` label only when that record is a committed PASS from the last 30
+days.
+
 ## Validation matrix
 
 | Signal | Healthy value | How to read |
