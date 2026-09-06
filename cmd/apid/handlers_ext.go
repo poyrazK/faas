@@ -1655,22 +1655,11 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	if !ok {
 		return
 	}
-	current, err := s.store.LatestDeployment(r.Context(), app.ID)
-	if err != nil {
-		s.notFound(w, "no deployments")
-		return
-	}
-
 	// SAFE-RELEASES-G: optionally target a specific deployment by id.
 	// Body is optional (legacy callers POST without a body); decodeJSON
 	// returns an error on malformed input which we treat as 400, but an
 	// empty body is fine (Decodable zero-value + no error).
 	var req api.RollbackRequest
-	// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): declared up
-	// front so the AlertRuleID parse below can assign into it.
-	var (
-		alertRuleID uuid.UUID
-	)
 	if r.ContentLength != 0 {
 		if err := decodeJSON(r, &req); err != nil {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -1678,158 +1667,90 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
-	// SAFE-RELEASES-OBS PR-D: when the body's AlertRuleID parses as a
-	// UUID, capture it so the audit row stamp below can attribute the
-	// rollback to a fired alert rule. A malformed string is treated as
-	// nil (legacy operator-driven path) — fail-soft so an upstream
-	// caller can't break the rollback just by sending a bad UUID.
+	target, problem := s.rollbackAppCore(r.Context(), acct, app, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
+}
+
+// rollbackAppCore performs the shared rollback state transition for the REST
+// and dashboard surfaces. The caller owns authentication and app lookup;
+// this helper owns target selection, notifications, and audit records so the
+// two entry points cannot drift.
+func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
+	current, err := s.store.LatestDeployment(ctx, app.ID)
+	if err != nil {
+		return state.Deployment{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no deployments")
+	}
+	alertRuleID := uuid.Nil
 	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
-		if parsed, err := uuid.Parse(*req.AlertRuleID); err == nil {
+		if parsed, parseErr := uuid.Parse(*req.AlertRuleID); parseErr == nil {
 			alertRuleID = parsed
 		}
 	}
-
-	var (
-		target state.Deployment
-		mode   = "latest_superseded"
-	)
+	var target state.Deployment
+	mode := "latest_superseded"
 	if req.TargetDeploymentID != nil && *req.TargetDeploymentID != "" {
 		mode = "explicit"
-		t, err := s.store.GetDeploymentByIDScopedToSuperseded(r.Context(), app.ID, *req.TargetDeploymentID)
+		target, err = s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, *req.TargetDeploymentID)
 		if err != nil {
 			switch {
 			case errors.Is(err, state.ErrNoRollbackTarget):
-				api.WriteProblem(w, api.ErrRollbackTargetNotFound(
-					fmt.Sprintf("no superseded deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID)))
+				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no superseded deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
 			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
-				api.WriteProblem(w, api.ErrRollbackTargetAlreadyLive(
-					fmt.Sprintf("deployment %q exists but is not in 'superseded' state; rollback to current live deployment is rejected", *req.TargetDeploymentID)))
+				return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q exists but is not in 'superseded' state; rollback to current live deployment is rejected", *req.TargetDeploymentID))
 			default:
-				api.WriteProblem(w, api.ErrCapacity(fmt.Sprintf("lookup rollback target: %v", err)))
+				return state.Deployment{}, api.ErrCapacity(fmt.Sprintf("lookup rollback target: %v", err))
 			}
-			return
 		}
-		target = t
 	} else {
-		// Legacy path: most-recent superseded deployment.
-		t, err := s.store.LatestSupersededDeployment(r.Context(), app.ID)
+		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
-			api.WriteProblem(w, api.ErrNoRollbackTarget())
-			return
+			return state.Deployment{}, api.ErrNoRollbackTarget()
 		}
-		target = t
 	}
-
-	// NOTE: SAFE-RELEASES-G deliberately does NOT add a "snapshot must
-	// exist" gate here. Per ADR-005 "cold boot must always work": if the
-	// rollback target's snapshot is missing (e.g. retention sweep ran,
-	// FC upgrade marked it stale, or it never had one), the wake path
-	// will cold-boot from the deployment's rootfs. Rejecting the
-	// rollback up-front would block a valid operator action and
-	// contradict the spec invariant "An app always has a live snapshot
-	// OR a cold-bootable rootfs — never neither" (CLAUDE.md §Invariants).
-	//
-	// The early-PR draft of this code did gate on HasSnapshotHistory +
-	// LatestSnapshot; /code-review medium (PR #979) flagged that the
-	// gate conflates "all snapshots stale (FC upgrade per ADR-005)" with
-	// "snapshot GC'd", wrongly blocking the rollback on stale scenarios
-	// where cold-boot is the intended fallback.
-
-	if err := s.store.MarkDeploymentSuperseded(r.Context(), current.ID); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not supersede current"))
-		return
+	if err := s.store.MarkDeploymentSuperseded(ctx, current.ID); err != nil {
+		return state.Deployment{}, api.ErrCapacity("could not supersede current")
 	}
-	if err := s.store.MarkDeploymentLive(r.Context(), target.ID); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not activate rollback target"))
-		return
+	if err := s.store.MarkDeploymentLive(ctx, target.ID); err != nil {
+		return state.Deployment{}, api.ErrCapacity("could not activate rollback target")
 	}
-	// Re-read target so the response carries post-promotion status=Live,
-	// not the pre-promotion Superseded we snapshotted into the local
-	// struct above. Listeners downstream branch on this field — fix
-	// surfaced by PR #117 review (finding F3).
-	fresh, err := s.store.DeploymentByID(r.Context(), target.ID)
-	if err == nil {
+	if fresh, readErr := s.store.DeploymentByID(ctx, target.ID); readErr == nil {
 		target = fresh
 	}
-	// F-03: rollback emit now carries status="live" (the freshly-restored
-	// deployment is live) and a deployment_id for listeners that switch on
-	// the field. imaged's handleDeployment ignores this emit (the rollback
-	// target already has a prepared ext4 + snap from the prior supersede),
-	// but the symmetry lets future listeners branch on status without
-	// a decode change.
-	_ = s.notif.Notify(r.Context(), db.NotifyDeploymentChanged,
+	_ = s.notif.Notify(ctx, db.NotifyDeploymentChanged,
 		fmt.Sprintf(`{"kind":"rollback","status":"live","app_id":"%s","deployment_id":"%s","from":"%s","to":"%s"}`,
 			app.ID, target.ID, current.ID, target.ID))
-	// F-03: emit the supersede transition for the deployment being
-	// retired. Prior code did not announce the supersede at all, so imaged's
-	// (F5) cleanupDeploymentFiles(p.To, true /* keepSnap */) branch never
-	// fired. status="superseded" makes the transition observable.
-	_ = s.notif.Notify(r.Context(), db.NotifyDeploymentChanged,
+	_ = s.notif.Notify(ctx, db.NotifyDeploymentChanged,
 		fmt.Sprintf(`{"kind":"superseded","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`,
 			app.ID, current.ID, current.ID))
 	s.log.Info("app rolled back", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
-	// IAM-4 (issue #291): record the rollback so an operator can
-	// answer "when did this app get rolled back, and to which
-	// deployment?" without joining the gdpr ledger. data.from
-	// is the deployment_id just superseded; data.to is the
-	// deployment_id promoted to live. The pg_notify emit above
-	// (lines 460+) carries the same ids for the live-system
-	// listener; the audit row is the read-only counterpart.
-	// SAFE-RELEASES-G: `mode` is the selector ("latest_superseded" vs
-	// "explicit") so a future audit filter can distinguish "operator
-	// accepted the auto-rollback to most-recent" from "operator pinned
-	// to a specific historical deployment".
-	s.audit.Emit(r.Context(), "app.rolled_back", &acct.ID, map[string]any{
-		"app_id": app.ID,
-		"from":   current.ID,
-		"to":     target.ID,
-		"mode":   mode,
+	s.audit.Emit(ctx, "app.rolled_back", &acct.ID, map[string]any{
+		"app_id": app.ID, "from": current.ID, "to": target.ID, "mode": mode,
 	})
-	// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): emit a
-	// deployment_audit row for the rollback so the operator's audit
-	// timeline surfaces the auto-rollback with kind=deploy.rolled_back.
-	// alert_rule_id is stamped ONLY when the meterd alert-rule path
-	// supplied a parseable UUID (alertRuleID != uuid.Nil); the
-	// operator-driven path leaves it nil — same shape as RecoverRollout
-	// (pkg/state/pgstore.go:5583). The actor sentinel
-	// "apid:rollback" distinguishes this from the meterd-driven
-	// orchestrator path (which stamps actor="meterd:safedeploy" via
-	// cmd/meterd/canary_progression_ticks.go) and the operator CLI
-	// recover path (actor="operator:cli:recover_rollout"). Errors
-	// are logged-and-continued so a transient audit-write failure
-	// doesn't roll back the supersede/live transition above.
-	// Convert string → uuid.UUID once; types.Deployment.ID and
-	// types.Account.ID are both string in pkg/state.
-	depUUID, depErr := uuid.Parse(current.ID)
-	if depErr != nil {
-		// Should be unreachable — IDs come from Postgres identity
-		// columns. Render the audit row with a zero UUID + warn so
-		// the operator sees the anomaly instead of a silent skip.
-		s.log.Warn("rollback: parse current deployment_id failed",
-			"deployment", current.ID, "err", depErr.Error())
+	depUUID, parseErr := uuid.Parse(current.ID)
+	if parseErr != nil {
+		s.log.Warn("rollback: parse current deployment_id failed", "deployment", current.ID, "err", parseErr.Error())
 		depUUID = uuid.Nil
 	}
 	var acctUUID *uuid.UUID
-	if parsed, err := uuid.Parse(acct.ID); err == nil {
+	if parsed, parseErr := uuid.Parse(acct.ID); parseErr == nil {
 		acctUUID = &parsed
 	}
 	auditEntry := state.DeploymentAudit{
-		DeploymentID: depUUID,
-		AccountID:    acctUUID,
-		Kind:         state.DeployRolledBack,
-		Actor:        "apid:rollback",
-		At:           time.Now().UTC(),
-		Data:         json.RawMessage(fmt.Sprintf(`{"from":%q,"to":%q,"mode":%q}`, current.ID, target.ID, mode)),
+		DeploymentID: depUUID, AccountID: acctUUID, Kind: state.DeployRolledBack,
+		Actor: "apid:rollback", At: time.Now().UTC(),
+		Data: json.RawMessage(fmt.Sprintf(`{"from":%q,"to":%q,"mode":%q}`, current.ID, target.ID, mode)),
 	}
 	if alertRuleID != uuid.Nil {
-		rid := alertRuleID
-		auditEntry.AlertRuleID = &rid
+		auditEntry.AlertRuleID = &alertRuleID
 	}
-	if _, err := s.store.AppendDeploymentAudit(r.Context(), auditEntry); err != nil {
-		s.log.Warn("rollback: append deployment_audit failed",
-			"app", app.ID, "deployment", target.ID, "err", err.Error())
+	if _, err := s.store.AppendDeploymentAudit(ctx, auditEntry); err != nil {
+		s.log.Warn("rollback: append deployment_audit failed", "app", app.ID, "deployment", target.ID, "err", err.Error())
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
+	return target, nil
 }
 
 // parkApp marks the app evicted_cold; schedd reacts and tears down live
