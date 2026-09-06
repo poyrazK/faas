@@ -18,7 +18,8 @@ import (
 const postgresDatabaseColumns = `id::text, account_id::text, name, region,
 postgres_major, service_class, availability, scale_to_zero,
 storage_limit_bytes, restore_window_seconds, backend_id,
-backend_fingerprint, provider_resource_id, state, desired_generation,
+backend_fingerprint, provider_resource_id, restore_source_database_id::text,
+restore_source_resource_id, restore_point_in_time, state, desired_generation,
 observed_generation, last_error_code, lease_token, lease_until,
 attempt_count, retry_at, created_at, updated_at, deleted_at`
 
@@ -99,15 +100,17 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 		`INSERT INTO managed_postgres_databases (
 			id, account_id, name, region, postgres_major, service_class,
 			availability, scale_to_zero, storage_limit_bytes,
-			restore_window_seconds, backend_id, backend_fingerprint, state,
+			restore_window_seconds, backend_id, backend_fingerprint,
+			restore_source_database_id, restore_source_resource_id, restore_point_in_time, state,
 			desired_generation, observed_generation, retry_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		RETURNING `+postgresDatabaseColumns,
 		databaseID, accountID, database.Name, database.Spec.Region,
 		database.Spec.PostgresMajor, string(database.Spec.Class), string(database.Spec.Availability),
 		database.Spec.ScaleToZero, database.Spec.StorageLimitBytes,
 		database.Spec.RestoreWindowSeconds, database.BackendID,
-		database.BackendFingerprint, string(database.State), database.DesiredGeneration,
+		database.BackendFingerprint, nullableUUID(database.RestoreSourceDatabaseID), nullableText(database.RestoreSourceResourceID), nullableTime(database.RestorePointInTime),
+		string(database.State), database.DesiredGeneration,
 		database.ObservedGeneration, database.RetryAt, database.CreatedAt, database.UpdatedAt,
 	)
 	if err != nil {
@@ -356,13 +359,16 @@ func queryDatabase(ctx context.Context, queryer databaseQueryer, query string, a
 func scanDatabase(row databaseScanner) (Database, error) {
 	var database Database
 	var providerResourceID, lastErrorCode, leaseToken pgtype.Text
+	var restoreSourceDatabaseID, restoreSourceResourceID pgtype.Text
+	var restorePointInTime pgtype.Timestamptz
 	var leaseUntil, deletedAt pgtype.Timestamptz
 	if err := row.Scan(
 		&database.ID, &database.AccountID, &database.Name, &database.Spec.Region,
 		&database.Spec.PostgresMajor, &database.Spec.Class, &database.Spec.Availability,
 		&database.Spec.ScaleToZero, &database.Spec.StorageLimitBytes,
 		&database.Spec.RestoreWindowSeconds, &database.BackendID,
-		&database.BackendFingerprint, &providerResourceID, &database.State,
+		&database.BackendFingerprint, &providerResourceID, &restoreSourceDatabaseID,
+		&restoreSourceResourceID, &restorePointInTime, &database.State,
 		&database.DesiredGeneration, &database.ObservedGeneration, &lastErrorCode,
 		&leaseToken, &leaseUntil, &database.AttemptCount, &database.RetryAt,
 		&database.CreatedAt, &database.UpdatedAt, &deletedAt,
@@ -371,6 +377,15 @@ func scanDatabase(row databaseScanner) (Database, error) {
 	}
 	if providerResourceID.Valid {
 		database.ProviderResourceID = providerResourceID.String
+	}
+	if restoreSourceDatabaseID.Valid {
+		database.RestoreSourceDatabaseID = restoreSourceDatabaseID.String
+	}
+	if restoreSourceResourceID.Valid {
+		database.RestoreSourceResourceID = restoreSourceResourceID.String
+	}
+	if restorePointInTime.Valid {
+		database.RestorePointInTime = restorePointInTime.Time
 	}
 	if lastErrorCode.Valid {
 		database.LastErrorCode = lastErrorCode.String
@@ -387,6 +402,31 @@ func scanDatabase(row databaseScanner) (Database, error) {
 	return database, nil
 }
 
+func nullableUUID(value string) any {
+	if value == "" {
+		return nil
+	}
+	parsed, err := postgresUUID(value)
+	if err != nil {
+		return nil
+	}
+	return parsed
+}
+
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullableTime(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value
+}
+
 func validateReservation(database Database, limit int) error {
 	validFingerprint := regexp.MustCompile(`^[a-f0-9]{64}$`)
 	if limit < 1 || limit > 100 || database.ID == "" || database.AccountID == "" ||
@@ -397,6 +437,15 @@ func validateReservation(database Database, limit int) error {
 		database.CreatedAt.IsZero() || database.UpdatedAt.IsZero() ||
 		database.ProviderResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil {
 		return ErrInvalid
+	}
+	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {
+		return nil
+	}
+	if database.RestoreSourceDatabaseID == "" || database.RestoreSourceResourceID == "" || database.RestorePointInTime.IsZero() {
+		return ErrInvalid
+	}
+	if _, err := postgresUUID(database.RestoreSourceDatabaseID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -426,7 +475,7 @@ func mapPostgresError(err error) error {
 	case pgerrcode.ForeignKeyViolation:
 		return ErrNotFound
 	case pgerrcode.CheckViolation:
-		if postgresError.ConstraintName == "managed_postgres_database_has_bindings" {
+		if postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
 			return ErrConflict
 		}
 		return fmt.Errorf("%w: %s", ErrInvalid, postgresError.ConstraintName)

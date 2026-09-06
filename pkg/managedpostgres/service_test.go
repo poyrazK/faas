@@ -19,6 +19,8 @@ type fakeProvider struct {
 	inspectCalls    int
 	deleteCalls     int
 	lastDelete      DeleteRequest
+	restoreCalls    int
+	lastRestore     RestoreRequest
 }
 
 func (p *fakeProvider) Capabilities() Capabilities { return p.capabilities }
@@ -33,6 +35,16 @@ func (p *fakeProvider) Provision(_ context.Context, request ProvisionRequest) (O
 		Status:             p.provisionStatus,
 		Spec:               request.Spec,
 	}, nil
+}
+
+func (p *fakeProvider) Restore(_ context.Context, request RestoreRequest) (ObservedDatabase, error) {
+	p.restoreCalls++
+	p.lastRestore = request
+	p.provisionCalls++
+	if p.provisionErr != nil {
+		return ObservedDatabase{}, p.provisionErr
+	}
+	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, Status: p.provisionStatus, Spec: request.Spec}, nil
 }
 
 func (p *fakeProvider) Inspect(_ context.Context, providerResourceID string) (ObservedDatabase, error) {
@@ -70,6 +82,7 @@ func testCapabilities() Capabilities {
 		ScaleToZero:             true,
 		PooledConnections:       true,
 		PointInTimeRestore:      true,
+		RestoreUsageIsolated:    true,
 		MaxRestoreWindowSeconds: 7 * 24 * 60 * 60,
 		MaxStorageBytes:         100 << 30,
 		UsageMeters:             []Meter{MeterActiveSeconds, MeterStorageByteSeconds, MeterEgressBytes},
@@ -205,6 +218,48 @@ func TestCreateIsIdempotentAndPersistsPlacement(t *testing.T) {
 	}
 	if first.BackendID != backend.ID || first.BackendFingerprint != backend.Fingerprint || first.ProviderResourceID == "" {
 		t.Fatalf("placement was not persisted: %+v", first)
+	}
+}
+
+func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	service := testService(t, testRegistry(t, provider, nil), NewMemoryStore())
+	source, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatalf("source Create: %v", err)
+	}
+	pointInTime := time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)
+	request := RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "orders-restore", PointInTime: pointInTime}
+	restored, err := service.Restore(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if restored.State != StateReady || restored.ID == source.ID || restored.ProviderResourceID == source.ProviderResourceID || restored.RestoreSourceDatabaseID != source.ID || restored.RestoreSourceResourceID != source.ProviderResourceID || !restored.RestorePointInTime.Equal(pointInTime) {
+		t.Fatalf("restore target = %+v, source = %+v", restored, source)
+	}
+	if provider.restoreCalls != 1 || provider.lastRestore.SourceResourceID != source.ProviderResourceID || !provider.lastRestore.PointInTime.Equal(pointInTime) {
+		t.Fatalf("restore provider request = %+v, calls = %d", provider.lastRestore, provider.restoreCalls)
+	}
+	repeated, err := service.Restore(context.Background(), request)
+	if err != nil {
+		t.Fatalf("idempotent Restore: %v", err)
+	}
+	if repeated.ID != restored.ID || provider.restoreCalls != 1 {
+		t.Fatalf("restore idempotency = %+v/%+v, calls = %d", restored, repeated, provider.restoreCalls)
+	}
+	unchanged, err := service.Get(context.Background(), "account-a", source.ID)
+	if err != nil || unchanged.State != StateReady || unchanged.ProviderResourceID != source.ProviderResourceID {
+		t.Fatalf("source changed by restore: %+v, %v", unchanged, err)
+	}
+	provider.deleteDone = true
+	if _, err := service.Delete(context.Background(), "account-a", source.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("source delete with active restore = %v, want conflict", err)
+	}
+	if _, err := service.Delete(context.Background(), "account-a", restored.ID); err != nil {
+		t.Fatalf("restore target delete: %v", err)
+	}
+	if _, err := service.Delete(context.Background(), "account-a", source.ID); err != nil {
+		t.Fatalf("source delete after target cleanup: %v", err)
 	}
 }
 

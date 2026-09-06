@@ -49,22 +49,36 @@ func (p *Provider) IssueCredentials(ctx context.Context, request managedpostgres
 	if request.Access != managedpostgres.CredentialReadWrite {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
-	branchID, err := p.defaultBranch(ctx, request.ProviderResourceID)
+	ref, err := parseResourceRef(request.ProviderResourceID)
+	if err != nil {
+		return managedpostgres.CredentialMaterial{}, err
+	}
+	branchID := ref.branchID
+	if branchID == "" {
+		branchID, err = p.defaultBranch(ctx, ref.projectID)
+	}
 	if err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
 	roleName := p.roleName(request.ProviderResourceID, request.IdentityKey)
-	if err := p.ensureRole(ctx, request.ProviderResourceID, branchID, roleName); err != nil {
+	if err := p.ensureRole(ctx, ref.projectID, branchID, roleName); err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	return p.credentialMaterial(ctx, request.ProviderResourceID, branchID, roleName)
+	return p.credentialMaterial(ctx, ref.projectID, branchID, roleName)
 }
 
 func (p *Provider) RevokeCredentials(ctx context.Context, request managedpostgres.CredentialRequest) error {
 	if err := validateCredentialRequest(request); err != nil {
 		return err
 	}
-	branchID, err := p.defaultBranch(ctx, request.ProviderResourceID)
+	ref, err := parseResourceRef(request.ProviderResourceID)
+	if err != nil {
+		return err
+	}
+	branchID := ref.branchID
+	if branchID == "" {
+		branchID, err = p.defaultBranch(ctx, ref.projectID)
+	}
 	if err != nil {
 		if errors.Is(err, managedpostgres.ErrNotFound) {
 			return nil
@@ -72,7 +86,7 @@ func (p *Provider) RevokeCredentials(ctx context.Context, request managedpostgre
 		return err
 	}
 	roleName := p.roleName(request.ProviderResourceID, request.IdentityKey)
-	path := "/projects/" + url.PathEscape(request.ProviderResourceID) + "/branches/" + url.PathEscape(branchID) + "/roles/" + url.PathEscape(roleName)
+	path := "/projects/" + url.PathEscape(ref.projectID) + "/branches/" + url.PathEscape(branchID) + "/roles/" + url.PathEscape(roleName)
 	var response roleResponse
 	err = p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, http.StatusOK, http.StatusNoContent)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
@@ -81,11 +95,11 @@ func (p *Provider) RevokeCredentials(ctx context.Context, request managedpostgre
 	if err != nil {
 		return err
 	}
-	return p.waitForOperations(ctx, request.ProviderResourceID, response.Operations)
+	return p.waitForOperations(ctx, ref.projectID, response.Operations)
 }
 
 func validateCredentialRequest(request managedpostgres.CredentialRequest) error {
-	if !validProviderID.MatchString(request.ProviderResourceID) || request.IdentityKey == "" || len(request.IdentityKey) > 1024 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 {
+	if _, err := parseResourceRef(request.ProviderResourceID); err != nil || request.IdentityKey == "" || len(request.IdentityKey) > 1024 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 {
 		return managedpostgres.ErrInvalid
 	}
 	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly {

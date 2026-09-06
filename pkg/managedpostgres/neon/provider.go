@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -45,6 +46,8 @@ type operation struct {
 
 type branch struct {
 	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ParentID     string `json:"parent_id"`
 	CurrentState string `json:"current_state"`
 	Default      bool   `json:"default"`
 }
@@ -73,6 +76,23 @@ type projectsResponse struct {
 
 type branchesResponse struct {
 	Branches []branch `json:"branches"`
+}
+
+type createBranchRequest struct {
+	Endpoints []struct {
+		Type string `json:"type"`
+	} `json:"endpoints,omitempty"`
+	Branch struct {
+		Name            string `json:"name"`
+		ParentID        string `json:"parent_id"`
+		ParentTimestamp string `json:"parent_timestamp"`
+	} `json:"branch"`
+}
+
+type createdBranchResponse struct {
+	Branch     branch      `json:"branch"`
+	Endpoints  []endpoint  `json:"endpoints"`
+	Operations []operation `json:"operations"`
 }
 
 type endpointsResponse struct {
@@ -178,11 +198,65 @@ func (p *Provider) Provision(ctx context.Context, request managedpostgres.Provis
 	}, nil
 }
 
-func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
-	if !validProviderID.MatchString(providerResourceID) {
+func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	if request.ResourceID == "" || len(request.ResourceID) > 255 || request.SourceResourceID == "" || len(request.SourceResourceID) > 255 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 || request.PointInTime.IsZero() {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
 	}
-	projectPath := "/projects/" + url.PathEscape(providerResourceID)
+	if err := p.Capabilities().Supports(request.Spec); err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	source, err := parseResourceRef(request.SourceResourceID)
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	parentID := source.branchID
+	if parentID == "" {
+		parentID, err = p.defaultBranch(ctx, source.projectID)
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+	}
+	branchName := p.restoreBranchName(request.ResourceID)
+	existing, err := p.findBranch(ctx, source.projectID, branchName)
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	if existing.ID != "" {
+		return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: existing.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+	}
+	payload := createBranchRequest{}
+	payload.Branch.Name = branchName
+	payload.Branch.ParentID = parentID
+	payload.Branch.ParentTimestamp = request.PointInTime.UTC().Format(time.RFC3339Nano)
+	payload.Endpoints = []struct {
+		Type string `json:"type"`
+	}{{Type: "read_write"}}
+	var created createdBranchResponse
+	path := "/projects/" + url.PathEscape(source.projectID) + "/branches"
+	if err := p.doJSON(ctx, http.MethodPost, path, nil, payload, &created, http.StatusCreated); err != nil {
+		if errors.Is(err, managedpostgres.ErrUnavailable) && ctx.Err() == nil {
+			recovered, recoveryErr := p.findBranch(ctx, source.projectID, branchName)
+			if recoveryErr != nil {
+				return managedpostgres.ObservedDatabase{}, recoveryErr
+			}
+			if recovered.ID != "" {
+				return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: recovered.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+			}
+		}
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	if !validProviderID.MatchString(created.Branch.ID) || created.Branch.Name != branchName {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+	}
+	return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: created.Branch.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+}
+
+func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
+	ref, err := parseResourceRef(providerResourceID)
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	projectPath := "/projects/" + url.PathEscape(ref.projectID)
 	var projectResult projectResponse
 	var branchesResult branchesResponse
 	var endpointsResult endpointsResponse
@@ -204,13 +278,13 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	if err := group.Wait(); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if projectResult.Project.ID != providerResourceID || operationsResult.Pagination.Cursor != "" {
+	if projectResult.Project.ID != ref.projectID || operationsResult.Pagination.Cursor != "" {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
 	}
-	defaultBranch, primaryEndpoint, resourcesReady := selectPrimary(branchesResult.Branches, endpointsResult.Endpoints)
+	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(branchesResult.Branches, endpointsResult.Endpoints, ref.branchID)
 	status := operationStatus(operationsResult.Operations, resourcesReady)
 	observedSpec := p.observedSpec(projectResult.Project, primaryEndpoint)
-	if defaultBranch.ID == "" {
+	if selectedBranch.ID == "" {
 		status = managedpostgres.ProviderStatusPending
 	}
 	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, Spec: observedSpec}, nil
@@ -229,6 +303,22 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	}
 	providerResourceID := request.ProviderResourceID
 	if providerResourceID == "" {
+		if request.RestoreSourceResourceID != "" {
+			source, sourceErr := parseResourceRef(request.RestoreSourceResourceID)
+			if sourceErr != nil {
+				return managedpostgres.DeleteResult{}, sourceErr
+			}
+			candidate, findErr := p.findBranch(ctx, source.projectID, p.restoreBranchName(request.ResourceID))
+			if findErr != nil {
+				return managedpostgres.DeleteResult{}, findErr
+			}
+			if candidate.ID == "" {
+				return managedpostgres.DeleteResult{Done: true}, nil
+			}
+			providerResourceID = (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String()
+		}
+	}
+	if providerResourceID == "" {
 		if len(request.ResourceID) > 255 {
 			return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
 		}
@@ -241,12 +331,17 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 			return managedpostgres.DeleteResult{Done: true}, nil
 		}
 	}
-	if !validProviderID.MatchString(providerResourceID) {
-		return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
+	ref, err := parseResourceRef(providerResourceID)
+	if err != nil {
+		return managedpostgres.DeleteResult{}, err
 	}
-	path := "/projects/" + url.PathEscape(providerResourceID)
+	path := "/projects/" + url.PathEscape(ref.projectID)
+	if ref.branchID != "" {
+		path += "/branches/" + url.PathEscape(ref.branchID)
+	}
 	var response projectResponse
-	err := p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, http.StatusOK)
+	accepted := []int{http.StatusOK, http.StatusNoContent}
+	err = p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, accepted...)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
 		return managedpostgres.DeleteResult{Done: true}, nil
 	}
@@ -282,6 +377,30 @@ func (p *Provider) projectName(resourceID string) string {
 	return "gregale-" + hex.EncodeToString(sum[:20])
 }
 
+func (p *Provider) restoreBranchName(resourceID string) string {
+	sum := sha256.Sum256([]byte(p.organizationID + "\x00restore\x00" + resourceID))
+	return "gregale-restore-" + hex.EncodeToString(sum[:16])
+}
+
+func (p *Provider) findBranch(ctx context.Context, projectID, name string) (branch, error) {
+	path := "/projects/" + url.PathEscape(projectID) + "/branches"
+	var response branchesResponse
+	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+		return branch{}, err
+	}
+	var match branch
+	for _, candidate := range response.Branches {
+		if candidate.Name != name {
+			continue
+		}
+		if match.ID != "" || !validProviderID.MatchString(candidate.ID) {
+			return branch{}, managedpostgres.ErrConflict
+		}
+		match = candidate
+	}
+	return match, nil
+}
+
 func (p *Provider) findProject(ctx context.Context, name string) (string, error) {
 	cursor := ""
 	match := ""
@@ -314,10 +433,10 @@ func (p *Provider) findProject(ctx context.Context, name string) (string, error)
 	return "", managedpostgres.ErrUnavailable
 }
 
-func selectPrimary(branches []branch, endpoints []endpoint) (branch, endpoint, bool) {
+func selectBranch(branches []branch, endpoints []endpoint, branchID string) (branch, endpoint, bool) {
 	var primaryBranch branch
 	for _, candidate := range branches {
-		if !candidate.Default {
+		if (branchID == "" && !candidate.Default) || (branchID != "" && candidate.ID != branchID) {
 			continue
 		}
 		if primaryBranch.ID != "" {

@@ -114,3 +114,27 @@ The adapter contract is based on Neon's maintained
 [v2 OpenAPI specification](https://neon.com/api_spec/release/v2.json). A live
 qualification run against an isolated organization is still required before
 enabling provisioning.
+
+## Restore-to-new-database safety
+
+The control plane exposes restore as a new logical database intent. A restore
+requires a ready source, a point in time inside its configured restore window,
+and a new target name. The source database and its bindings are never changed;
+the target receives its own provider resource and can be bound explicitly
+after it is ready. The source database ID, provider resource identity, and
+requested timestamp are written before provider I/O so an expired worker lease
+can resume the same restore instead of creating a second target.
+
+Neon's adapter implements this using a deterministic point-in-time branch in
+the source project. The opaque target ID is encoded inside the adapter as
+`project_id/branch_id`; the provider-neutral catalog never interprets that
+format. Credentials, inspection, usage, and deletion route to the branch.
+Because Neon reports compute and consumption at project scope, the adapter
+does not claim per-target usage isolation for these shared-project restores;
+the control plane keeps them unavailable while usage guardrails are enabled
+until an allocation model is qualified.
+If a create response is lost, branch-name discovery recovers the accepted
+branch without a second POST. Deleting a source is rejected while an active
+restore descendant exists, and deleting a restore target removes only its
+branch. Cutover remains an explicit binding operation; restore never silently
+rewires an app.
