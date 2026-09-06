@@ -2559,11 +2559,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	sealedEnv, err := e.loadSealedEnvFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_sealed_env_invalid")
+		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load sealed env: %w", err)
 	}
 	sidecars, err := e.sidecarsForDeployment(ctx, dep)
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_sidecars_invalid")
+		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load sidecars: %w", err)
 	}
 	spec := AppSpec{
