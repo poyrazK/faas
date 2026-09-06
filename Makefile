@@ -369,6 +369,10 @@ lint-drill: ## Static lint of the restore drill script + record template shape (
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
 	bash deploy/scripts/check-restore-drill-evidence.sh
 
+.PHONY: eviction-dryrun
+eviction-dryrun: ## Issue #255: deterministic RAM-pressure eviction drill + evidence record
+	$(GO) run ./cmd/eviction-dryrun
+
 .PHONY: backup-push-pg
 backup-push-pg: ## Push the latest basebackup to Hetzner Storage Box (issue #250)
 	@sudo systemctl start faas-pg-basebackup-push.service

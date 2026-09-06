@@ -26,6 +26,8 @@ func TestSweep_MetricsCounters(t *testing.T) {
 	_ = m.WarmSnapshotErrors("")
 	_ = m.EvictedPriority("normal", "scale_down")
 	_ = m.EvictedPriority("", "")
+	_ = m.EvictionFired("pro", "ram_pressure")
+	_ = m.EvictionFired("", "")
 	_ = m.RebalanceDecisions("noop")
 	_ = m.LiveMigrationDecisions("started")
 	_ = m.MigratingReconcileDecisions("drift")

@@ -29,6 +29,28 @@ systemctl status schedd vmmd
 journalctl -u schedd -u vmmd --since '-15m' --no-pager | grep -E 'admit|reject'
 ```
 
+Prometheus views for the same incident:
+
+```promql
+max(fcvm_resident_ram_pct)
+sum by (tenant_tier) (rate(schedd_eviction_fired_total{reason="ram_pressure"}[5m]))
+```
+
+If the gateway rejection series is enabled, correlate rejected wakes with
+pressure:
+
+```promql
+rate(gateway_wake_rejections_total{reason="ram_pressure"}[5m])
+```
+
+For a database-side sum of the admission charge (`ram_mb + 8 MB`):
+
+```sql
+SELECT sum(ram_mb + 8) AS resident_mb
+  FROM instances
+ WHERE state IN ('running', 'waking', 'cold_booting');
+```
+
 The most common cause is a single Scale-tier app pinned at max
 concurrency; the second most common is the watchdog failing to park
 parked_at=now apps because their instance rows leaked past the cleanup
@@ -50,5 +72,5 @@ amtool silence add \
 
 The invariant §6.2/2 (Σ(ram_mb+8) ≤ 47,600 MB) is hard-enforced; the
 alert is the operator's leading indicator that a wake will start
-failing admission. Eviction policy is per-tenant — see `docs/ops/`
-for the eviction runbook.
+failing admission. Eviction policy is per-tenant — see the
+[eviction runbook](../ops/eviction.md) for the ordering and dry run.
