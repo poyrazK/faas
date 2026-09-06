@@ -1377,6 +1377,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// resolvedShape via this variable in the same branch.
 	var resolvedShape = shapeApp
 	var gitArchivePath string
+	var gitArchiveBuildOnlyFiles map[string][]byte
 	// sourceRoot is persisted only for workspace-context deploys. An empty
 	// value means the uploaded archive root and preserves the legacy wire shape.
 	var sourceRoot string
@@ -1571,11 +1572,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if *deployedBy == "" && provVal.DeployedBy != "" {
 				*deployedBy = provVal.DeployedBy
 			}
-			// resolvedShape stays shapeApp — `git archive HEAD` ships
-			// the committed tree and the server-side builder detects
-			// the framework from there (same as a --tarball upload).
-			// The source-directory detector below runs when --worktree is
-			// set or when the selected source has no GitHub origin.
+			// Keep the default shape until the filtered archive is ready.
+			// The archive detector below classifies the exact committed
+			// bytes, while --worktree and repositories without an origin
+			// use the source-directory detector.
 		} else if !errors.Is(perr, ErrNotInGitRepo) && !errors.Is(perr, ErrNoGitRemote) {
 			return printErr("Could not resolve git metadata", perr)
 		}
@@ -1614,7 +1614,37 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintWarn(osStderr, "authed client for Whoami round-trip failed (%v); using %d MB Free/Hobby floor", werr, planCapMB)
 		}
 		if gitArchivePath != "" {
-			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode)
+			if !*function && !*app {
+				detected, rt, hnd, detectErr := detectGitArchiveShape(gitArchivePath, sourceRoot)
+				if detectErr != nil {
+					return printErr("Could not detect committed deploy source", detectErr)
+				}
+				if detected == shapeFunction {
+					resolvedShape = shapeFunction
+					displayRuntime, displayHandler := rt, hnd
+					if *runtime != "" {
+						displayRuntime = *runtime
+					} else {
+						*runtime = rt
+					}
+					if *handler != "" {
+						displayHandler = *handler
+					} else {
+						*handler = hnd
+					}
+					if !jsonOutput {
+						PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", displayRuntime, displayHandler)
+					}
+				}
+			}
+			buildOnlyFiles, buildOnlyErr := gitArchiveGoBuildOnlyFiles(
+				gitArchivePath, sourceRoot, resolvedShape, *runtime,
+			)
+			if buildOnlyErr != nil {
+				return printErr("Could not prepare committed deploy source", buildOnlyErr)
+			}
+			gitArchiveBuildOnlyFiles = buildOnlyFiles
+			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles)
 			if packErr != nil {
 				return printErr("Could not pack committed HEAD", packErr)
 			}
@@ -1631,7 +1661,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// no Git archive was selected. This covers the existing
 		// non-git/non-origin fallback and the explicit --worktree mode.
 		if *tarball == "" {
-			detected, rt, hnd, err := resolveDeployShape(sourceDir, *function, *app, jsonOutput)
+			detected, rt, hnd, err := resolveDeployShape(sourceDir, *function, *app, jsonOutput, *runtime, *handler)
 			if err != nil {
 				return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 			}

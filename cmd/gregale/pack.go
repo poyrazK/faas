@@ -948,7 +948,7 @@ const defaultZeroConfigSourceCapMB = 100
 //
 // The gzip→tar→walk shape mirrors cmd/gregale/templates/embed.go:TarGz.
 func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
-	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, filepath.Base(srcDir), extraExcludes...)
+	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, filepath.Base(srcDir), nil, extraExcludes...)
 }
 
 // packDirToTarGzFlat writes the directory contents relative to the archive
@@ -956,12 +956,14 @@ func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][
 // deploys use this shape so source_root is stable across Git HEAD archives and
 // working-tree archives: both describe paths from the repository root.
 func packDirToTarGzFlat(srcDir, destPath string, capMB int, envOverride map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
-	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, "", extraExcludes...)
+	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, "", nil, extraExcludes...)
 }
 
 // packDirToTarGzWithRoot is the implementation shared by the legacy wrapped
-// packer and the flat repository-context packer.
-func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string, extraExcludes ...string) (regularFileCount int, err error) {
+// packer and the flat repository-context packer. buildOnlyFiles contains
+// generated regular files keyed relative to srcDir. They are written only to
+// the archive and never materialized in the customer's source directory.
+func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string, buildOnlyFiles map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
 
 	// Load .gregaleignore once (before the walk) so shouldExclude sees
 	// the same patterns for every entry. Missing file → nil → no
@@ -1037,6 +1039,10 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
 	capBytes := int64(capMB) * 1024 * 1024
 	var totalUncompressed int64
+	existingEntries := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		existingEntries[e.rel] = true
+	}
 
 	for _, e := range entries {
 		hdr, herr := tar.FileInfoHeader(e.info, "")
@@ -1100,6 +1106,48 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 		if totalUncompressed > capBytes {
 			return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
 		}
+		regularFileCount++
+	}
+
+	// Generated build markers belong in the transport archive but not in the
+	// customer's project. Go function templates use this path for go.mod: a
+	// local module marker would make the next zero-config deploy look like an
+	// app, while the remote framework detector requires it to select Go.
+	virtualNames := make([]string, 0, len(buildOnlyFiles))
+	for rel := range buildOnlyFiles {
+		rel = filepath.ToSlash(rel)
+		if rel == "." || rel == "" || filepath.IsAbs(rel) || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
+			return 0, fmt.Errorf("invalid build-only archive path %q", rel)
+		}
+		if existingEntries[rel] {
+			return 0, fmt.Errorf("build-only archive path %q collides with source file", rel)
+		}
+		virtualNames = append(virtualNames, rel)
+	}
+	sort.Strings(virtualNames)
+	for _, rel := range virtualNames {
+		data := buildOnlyFiles[rel]
+		if int64(len(data)) > capBytes-totalUncompressed {
+			return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
+		}
+		name := rel
+		if archiveRoot != "" {
+			name = archiveRoot + "/" + rel
+		}
+		hdr := &tar.Header{
+			Name:     name,
+			Mode:     0o644,
+			Size:     int64(len(data)),
+			Typeflag: tar.TypeReg,
+			ModTime:  packEpoch,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return 0, fmt.Errorf("write header %s: %w", hdr.Name, err)
+		}
+		if _, err := tw.Write(data); err != nil {
+			return 0, fmt.Errorf("write body %s: %w", hdr.Name, err)
+		}
+		totalUncompressed += hdr.Size
 		regularFileCount++
 	}
 	// Final size check. Close gzip→tar before statting so the on-disk size
@@ -1184,7 +1232,7 @@ func copyRegular(tw *tar.Writer, abs string, capMB int) (int64, error) {
 // a freeform "Detected: …" line would corrupt `gregale deploy --json
 // | jq`. The shape is still resolved (the wire shape is the same
 // either way); only the customer-visible banner is gated.
-func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput bool) (shape, string, string, error) {
+func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput bool, displayOverride ...string) (shape, string, string, error) {
 	detected := detectShape(srcDir)
 	if explicitFunction {
 		detected = shapeFunction
@@ -1236,14 +1284,22 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 					"found zero or ambiguous handler files in %s.%s",
 				filepath.Base(srcDir), suggestion)
 		}
-		// Print uses the inferred values — the caller may still
-		// override them via an explicit --runtime / --handler (out of
-		// scope here, but the CLI does it just after this returns).
+		// The return values stay inferred so callers can fill only flags the
+		// customer omitted. The optional display values let cmdDeploy show an
+		// explicit --runtime / --handler in the banner, matching the values it
+		// will actually send on the wire.
+		displayRuntime, displayHandler := rt, hnd
+		if len(displayOverride) > 0 && displayOverride[0] != "" {
+			displayRuntime = displayOverride[0]
+		}
+		if len(displayOverride) > 1 && displayOverride[1] != "" {
+			displayHandler = displayOverride[1]
+		}
 		// Issue #961 / Mega-A PR-2: surface the class (function/app)
 		// alongside the runtime + handler so the banner matches the
 		// BuildPlan field on the DeploymentResponse.
 		if !jsonOutput {
-			PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", rt, hnd)
+			PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", displayRuntime, displayHandler)
 		}
 		return shapeFunction, rt, hnd, nil
 	case shapeApp:
@@ -1312,17 +1368,48 @@ func autoPackSource(detectDir, packDir string, flat bool, capMB int, envOverride
 	path := f.Name()
 	_ = f.Close()
 
+	buildOnlyFiles, err := functionGoBuildOnlyFiles(detectDir, packDir)
+	if err != nil {
+		_ = os.Remove(path)
+		return "", fwUnknown, 0, err
+	}
+
 	var n int
 	if flat {
-		n, err = packDirToTarGzFlat(packDir, path, capMB, envOverride, extraExcludes...)
+		n, err = packDirToTarGzWithRoot(packDir, path, capMB, envOverride, "", buildOnlyFiles, extraExcludes...)
 	} else {
-		n, err = packDirToTarGz(packDir, path, capMB, envOverride, extraExcludes...)
+		n, err = packDirToTarGzWithRoot(packDir, path, capMB, envOverride, filepath.Base(packDir), buildOnlyFiles, extraExcludes...)
 	}
 	if err != nil {
 		_ = os.Remove(path)
 		return "", fwUnknown, 0, err
 	}
 	return path, detectFramework(detectDir), n, nil
+}
+
+const functionGoBuildModule = "module gregale-function\n\ngo 1.24\n"
+
+// functionGoBuildOnlyFiles returns the framework marker required by the remote
+// Go builder when detectDir is a marker-free Go function. The path is relative
+// to packDir so workspace deployments place go.mod beside the selected
+// handler.go while retaining the full repository as build context.
+func functionGoBuildOnlyFiles(detectDir, packDir string) (map[string][]byte, error) {
+	if detectShape(detectDir) != shapeFunction {
+		return nil, nil
+	}
+	runtime, _, ok := inferFunctionRuntime(detectDir)
+	if !ok || runtime != runtimeGo124 {
+		return nil, nil
+	}
+	rel, err := filepath.Rel(packDir, filepath.Join(detectDir, "go.mod"))
+	if err != nil {
+		return nil, fmt.Errorf("resolve Go function build module path: %w", err)
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return nil, fmt.Errorf("go function source %s is outside pack root %s", detectDir, packDir)
+	}
+	return map[string][]byte{rel: []byte(functionGoBuildModule)}, nil
 }
 
 // runPackPreflight scans the cwd for the 2 source-side failure modes

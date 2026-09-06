@@ -15,6 +15,10 @@ Functions differ from apps in two ways:
 The handler compiles to a static binary (Railpack's go plan defaults
 to `CGO_ENABLED=0`); no interpreter is involved at request time.
 
+The starter directory intentionally has no `go.mod`: that keeps a later plain
+`gregale deploy` detectable as a function. The CLI adds a minimal module file
+to the upload archive without changing your local files.
+
 ## Deploy
 
 ```
@@ -35,7 +39,7 @@ test is:
 
 ```
 echo '{"method":"GET","path":"/hello","headers":{},"query":"","body_b64":""}' \
-  | go run main.go
+  | go run handler.go
 ```
 
 You'll see a JSON object on stdout with the same shape the runner

@@ -9,11 +9,12 @@
 // file when needed, and a README that points at the next gregale CLI
 // command the customer will run.
 //
-// Note on hello-go: the template ships WITHOUT a go.mod because Go's
+// Note on Go templates: the templates ship WITHOUT a go.mod because Go's
 // //go:embed refuses to descend into a directory that contains one —
-// it treats the file as a module boundary. imaged auto-creates a
-// go.mod at build time, so the missing file is invisible to the
-// customer. See hello-go/README.md for the full rationale.
+// it treats the file as a module boundary. Materialize writes one for the
+// hello-go app because it is also the local app-shape marker. function-go must
+// remain marker-free so a later zero-config deploy sees handler.go as a
+// function; the CLI adds its module file only to the upload archive.
 package templates
 
 import (
@@ -98,7 +99,10 @@ func Materialize(name, dest string) error {
 	if err := os.CopyFS(dest, subFS); err != nil {
 		return err
 	}
-	if name == "hello-go" || name == "function-go" {
+	// hello-go is an HTTP app and needs its module marker. function-go stays
+	// marker-free so a later zero-config deploy detects handler.go as a
+	// function; the packer adds its build module to the upload archive.
+	if name == "hello-go" {
 		modPath := filepath.Join(dest, "go.mod")
 		if _, err := os.Stat(modPath); os.IsNotExist(err) {
 			_ = os.WriteFile(modPath, []byte("module "+name+"\n\ngo 1.24\n"), 0o644)

@@ -56,6 +56,28 @@ func TestResolveDeployShape_Function(t *testing.T) {
 	}
 }
 
+func TestResolveDeployShape_FunctionBannerUsesExplicitRuntime(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "handler.go", "package main")
+
+	var buf bytes.Buffer
+	oldOut := osStdout
+	osStdout = &buf
+	defer func() { osStdout = oldOut }()
+
+	sh, rt, hnd, err := resolveDeployShape(dir, false, false, false, "go124-alpine", "custom.handler")
+	if err != nil {
+		t.Fatalf("resolveDeployShape: %v", err)
+	}
+	if sh != shapeFunction || rt != runtimeGo124 || hnd != defaultTemplateHandler {
+		t.Fatalf("inferred shape = (%v, %q, %q), want function defaults", sh, rt, hnd)
+	}
+	want := "Detected: function, runtime=go124-alpine, handler=custom.handler, class=function"
+	if !strings.Contains(buf.String(), want) {
+		t.Fatalf("stdout missing %q; got %q", want, buf.String())
+	}
+}
+
 // TestResolveDeployShape_JSONSuppressesPrint pins the §3.2 --json
 // contract: when a customer runs `gregale deploy --json` on a
 // handler.js-only cwd, stdout must remain a parseable JSON stream.
