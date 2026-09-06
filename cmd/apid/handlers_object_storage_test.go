@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,9 @@ type fakeObjectProvider struct {
 	created              []string
 	accessed             []string
 	createErr, deleteErr error
+	multipartErr         error
+	multipartCompleted   []string
+	multipartAborted     []string
 }
 
 func (p *fakeObjectProvider) CreateBucket(_ context.Context, b string) error {
@@ -38,6 +42,34 @@ func (p *fakeObjectProvider) DeleteObject(_ context.Context, b, key string) erro
 func (p *fakeObjectProvider) Presign(_ context.Context, b string, r objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
 	p.accessed = append(p.accessed, b)
 	return objectstorage.SignedRequest{URL: "https://storage.example.test/signed", Method: r.Method, Headers: map[string]string{}, ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+func (p *fakeObjectProvider) EnsureMultipartUpload(_ context.Context, b string, r objectstorage.MultipartCreateRequest) (string, error) {
+	p.accessed = append(p.accessed, b)
+	if p.multipartErr != nil {
+		return "", p.multipartErr
+	}
+	return "provider-" + r.SessionID, nil
+}
+func (p *fakeObjectProvider) PresignMultipartPart(_ context.Context, b string, r objectstorage.MultipartPartRequest) (objectstorage.SignedRequest, error) {
+	p.accessed = append(p.accessed, b)
+	if p.multipartErr != nil {
+		return objectstorage.SignedRequest{}, p.multipartErr
+	}
+	return objectstorage.SignedRequest{URL: "https://storage.example.test/part", Method: "PUT", Headers: map[string]string{"Content-Length": strconv.FormatInt(r.SizeBytes, 10)}, ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+func (p *fakeObjectProvider) CompleteMultipartUpload(_ context.Context, b string, r objectstorage.MultipartCompleteRequest) error {
+	p.accessed = append(p.accessed, b)
+	if p.multipartErr == nil {
+		p.multipartCompleted = append(p.multipartCompleted, r.SessionID)
+	}
+	return p.multipartErr
+}
+func (p *fakeObjectProvider) AbortMultipartUpload(_ context.Context, b string, r objectstorage.MultipartAbortRequest) error {
+	p.accessed = append(p.accessed, b)
+	if p.multipartErr == nil {
+		p.multipartAborted = append(p.multipartAborted, r.ProviderUploadID)
+	}
+	return p.multipartErr
 }
 
 func objectRegistry(t *testing.T, a, b *fakeObjectProvider, defaultID string) *objectstorage.Registry {

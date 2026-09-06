@@ -4,6 +4,7 @@ Gregale can manage private S3-backed object buckets without operating storage
 nodes. Compute remains stateless: these are not VM volumes. The dashboard's
 Storage page keeps object buckets separate from snapshot/image-layer usage.
 Architecture and launch boundaries: [ADR-151](adr/151-provider-neutral-object-storage.md).
+Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
 
 ## Enable a qualified backend
 
@@ -41,26 +42,33 @@ The existing database notification subscriber propagates changes across API
 replicas, with a five-second repair poll for missed notifications while the DB
 is reachable. This is not a synchronous global revocation barrier. In-flight
 operations can finish, and already-issued URLs remain usable until expiration.
-Disabling blocks new bucket provisioning and both GET/PUT URL issuance, and
-pauses background provisioning. Bucket metadata, object listing, object deletion,
-and empty-bucket deletion remain available under their existing authorization
-rules. Background deletion also continues. Keep the provider config/credentials
-loaded for cleanup. `GET /v1/apps/{slug}/buckets` reports `enabled: false` while
-still returning metadata and configured limits. Enabling without a loaded
-registry does not make storage usable.
+Disabling blocks new bucket provisioning, GET/PUT URL issuance, multipart
+initiation and part-URL issuance, and pauses background provisioning. Bucket
+metadata, object listing, object deletion, empty-bucket deletion, multipart
+completion/abort, and expired-upload cleanup remain available under their
+existing authorization rules. Background deletion also continues. Keep the
+provider config/credentials loaded for cleanup. The bucket-list endpoint reports
+`enabled: false` while still returning metadata and configured limits. Enabling
+without a loaded registry does not make storage usable.
 
 Rollout: apply the recovery migration, then update every apid replica before
 relying on this flag. Older binaries treat a loaded registry as enabled and do
 not honor `s3_enabled`; keep customer storage traffic disabled during a mixed-
-version rollout. Stop recovery workers before rolling the schema back.
+version rollout. Before rollback, disable signing, abort or finish every live
+multipart session, wait out issued URLs, restore `max_upload_bytes` to at most
+5 GiB, and verify no capacity grant exceeds 5 GiB. Then stop recovery workers
+before rolling the schema back; the down migration deliberately refuses to
+discard a larger safety reservation silently.
 
 ## Recovery and operator attention
 
 Each production apid runs a recovery sweep at startup and every 15 seconds after
 the preceding sweep completes. Each batch selects at most 20 due operations;
 replicas atomically claim the persisted two-minute leases before upstream I/O.
-Each operation has a 45-second deadline. The worker only retries catalogued
-`provisioning`/`deleting` intents, never discovers or deletes unknown buckets.
+Bucket operations have a 45-second deadline and multipart operations a 90-second
+deadline. The worker only retries catalogued bucket/upload intents, never
+discovers or deletes an unknown bucket or an upload without a durable Gregale
+session.
 
 Failed requests and background attempts persist `attempt_count`, `retry_at`, and
 a bounded `last_error_code`. Transient failures back off from 30 seconds to 15
@@ -90,13 +98,16 @@ the persisted retry time. Do not bypass placement fencing or mutate lease tokens
 to force recovery. The first release does not include a manual force-retry API,
 ready-bucket inventory/orphan reconciliation, or automatic data migration.
 
-The identity needs bucket creation/deletion and CORS configuration plus object
-list/get/put/delete for Gregale buckets. Restrict it to `gregale-*` where supported;
-otherwise isolate the upstream project. Enable provider/account public-access
-blocking where available. The driver creates buckets without public ACLs, but
-does not manage provider-specific account policies, encryption keys, residency
-controls, retention, or replication. Keep versioning and object lock off for
-this preview; the UI does not manage historical versions or retention locks.
+The identity needs bucket creation/deletion and CORS configuration; object
+list/get/put/delete; and multipart list/create/upload-part/complete/abort/head for
+Gregale buckets. Restrict it to `gregale-*` where supported; otherwise isolate
+the upstream project. Configure the provider's abort-incomplete-multipart
+lifecycle rule as a backup with a window longer than Gregale's 24-hour session
+TTL. Enable provider/account public-access blocking where available. The driver
+creates buckets without public ACLs, but does not manage provider-specific
+account policies, lifecycle rules, encryption keys, residency controls,
+retention, or replication. Keep versioning and object lock off for this preview;
+the UI does not manage historical versions or retention locks.
 
 Bucket names in Gregale are logical and app/scope-local. Physical names are
 UUID-based to avoid leaking customer identifiers or colliding across providers.
@@ -283,6 +294,19 @@ its granted buckets in the bucket list; a management principal sees all buckets.
   "size_bytes": 5, "content_type": "text/plain", "expires_in": 300 }`.
   Use returned `url`, `method`, `headers` with the exact five-byte body. For
   download request `{ "method": "GET", "key": "hello.txt" }` (read scope).
+- `POST /{bucket-id}/multipart-uploads`: create or recover one upload for a key
+  with `{ "key": "large.bin", "size_bytes": 73400320,
+  "content_type": "application/octet-stream" }`. The response gives Gregale's
+  opaque upload `id`, exact `part_size_bytes`, `part_count`, and 24-hour expiry.
+- `POST /{bucket-id}/multipart-uploads/{upload-id}/parts/{part}/signed-url`:
+  `{ "expires_in": 300 }`. Upload that numbered part using the returned headers
+  and record the provider's response `ETag`. Parts may be retried and uploaded
+  concurrently. Every non-final part has the advertised fixed size; the final
+  part may be smaller.
+- `POST /{bucket-id}/multipart-uploads/{upload-id}/complete`: send every ETag in
+  ascending order as `{ "parts": [{"part_number":1,"etag":"..."}] }`.
+  `GET /{bucket-id}/multipart-uploads/{upload-id}` recovers session state after a
+  lost API response. `DELETE` on that path aborts an unfinished session.
 
 Use ordinary fetch/HTTP for signed URLs, **not** the authenticated Gregale client.
 Never forward Gregale Authorization/cookies. Browsers set Content-Length from
@@ -290,6 +314,16 @@ the File body; preserve other returned headers, including Content-MD5 for empty
 uploads. URLs default to five minutes and allow at most fifteen; they may be
 reused until expiry and PUT replaces an existing key. Do not log or persist them.
 Changing app permissions does not revoke previously issued URLs.
+
+Multipart sessions reserve the declared final size before upstream initiation
+and use the same `storage:write` scope plus bucket write grant as ordinary PUT.
+Only one live session exists per bucket/key; retry creation with the same key,
+size and content type to recover its Gregale ID. A different shape conflicts.
+Gregale never exposes the provider upload ID. Completion ETags are durably stored
+before the upstream call, making completion restart-safe. Sessions expire after
+24 hours; the recovery worker aborts expired upstream parts even while new S3
+operations are disabled. The upstream lifecycle rule is still required as a
+defense against control-plane outages.
 
 Key rotation copies bucket grants to the successor so applications can switch
 credentials during the normal grace window. Store the resulting narrowly scoped
@@ -320,6 +354,10 @@ tenant IAM adapter; never hand out the operator-wide credential.
   cannot list, sign, delete, or guess access to this bucket.
 - Upload/download a Unicode/spaced key, an empty object, and a file near the
   configured limit from the actual console origin. Verify exact contents.
+- Upload a multipart object larger than 64 MiB with concurrent parts. Retry a
+  part, resume by Gregale upload ID, interrupt apid before and after upstream
+  completion, verify exact bytes/metadata, abort a session, and verify an expired
+  session is removed upstream while `s3_enabled=false`.
 - Tamper with a nonempty signed upload's Content-Length and an empty upload's
   body: both must fail. Verify wrong key/method and expired URLs fail.
 - Test CORS preflight, pagination, deletion of objects, nonempty bucket rejection,
@@ -329,15 +367,16 @@ tenant IAM adapter; never hand out the operator-wide credential.
 - Add a second backend and switch the default. Old/new buckets must use their
   respective backends; removing the old config must fail closed.
 - Keep operator monitoring/budgets in place. Defaults are 10 buckets/app and
-  100 MiB/upload, configurable up to 100 and 5 GiB. These alone do **not** cap
-  total bytes or costs; configure and qualify the accounting controls above.
-  Presign counts cannot meter actual usage. No object-storage prices,
-  allowances or invoice lines ship here.
+  100 MiB/upload, configurable up to 100 and 5 TiB. A single signed PUT remains
+  capped at 5 GiB; larger objects use multipart. These alone do **not** cap total
+  bytes or costs; configure and qualify the accounting controls above. Presign
+  counts cannot meter actual usage. No object-storage prices, allowances or
+  invoice lines ship here.
 - Before paid/general availability, qualify the real provider usage exporter,
   pricing/margin policy and budget cutoffs, tenant S3 keys if needed, and a
   coordinated account-deletion workflow. Active buckets block account
   hard-deletion; confirmed-deleted bucket metadata is purged with the account.
   Do not bypass these guards and orphan customer data.
 
-Deferred: native S3 credentials/endpoint, multipart uploads, public hosting,
-lifecycle/version management, non-destructive capacity reclamation and automatic migrations.
+Deferred: native S3 credentials/endpoint, public hosting, lifecycle/version
+management, non-destructive capacity reclamation and automatic migrations.

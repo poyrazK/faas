@@ -151,6 +151,7 @@ from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .cors_preset_list_response import CorsPresetListResponse
@@ -198,6 +199,7 @@ from .create_key_request import CreateKeyRequest
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
+from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
@@ -471,6 +473,10 @@ from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
 from .object_bucket_list import ObjectBucketList
 from .object_bucket_state import ObjectBucketState
+from .object_multipart_completed_part import ObjectMultipartCompletedPart
+from .object_multipart_part_sign_request import ObjectMultipartPartSignRequest
+from .object_multipart_upload import ObjectMultipartUpload
+from .object_multipart_upload_state import ObjectMultipartUploadState
 from .object_sign_request import ObjectSignRequest
 from .object_sign_request_method import ObjectSignRequestMethod
 from .object_signed_request import ObjectSignedRequest
@@ -907,6 +913,7 @@ __all__ = (
     "ChangePlanRequestPlan",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CompleteObjectMultipartUploadRequest",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "CorsPresetListResponse",
@@ -954,6 +961,7 @@ __all__ = (
     "CreateKeyRequestScopesItem",
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
+    "CreateObjectMultipartUploadRequest",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
@@ -1219,6 +1227,10 @@ __all__ = (
     "ObjectBucketAccessGrantPermission",
     "ObjectBucketList",
     "ObjectBucketState",
+    "ObjectMultipartCompletedPart",
+    "ObjectMultipartPartSignRequest",
+    "ObjectMultipartUpload",
+    "ObjectMultipartUploadState",
     "ObjectSignedRequest",
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",

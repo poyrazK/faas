@@ -1190,6 +1190,29 @@ type ObjectStorageKeyGrant struct {
 	MaxBytes int64
 }
 
+type ObjectStorageMultipartUpload struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	BucketID         pgtype.UUID
+	ObjectKey        string
+	SizeBytes        int64
+	PartSizeBytes    int64
+	PartCount        int32
+	ContentType      string
+	ProviderUploadID string
+	CompletionParts  []byte
+	State            string
+	ExpiresAt        pgtype.Timestamptz
+	LeaseToken       pgtype.Text
+	LeaseUntil       pgtype.Timestamptz
+	AttemptCount     int32
+	RetryAt          pgtype.Timestamptz
+	LastErrorCode    string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type ObjectStorageUsageHead struct {
 	AccountID   pgtype.UUID
 	BackendID   string

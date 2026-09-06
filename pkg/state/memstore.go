@@ -100,17 +100,18 @@ type auditEventOutboxRow struct {
 // (unique email, unique slug, unique key hash) so tests exercise real error
 // paths. It is NOT durable — production uses the Postgres store.
 type MemStore struct {
-	objectBuckets        map[string]ObjectBucket
-	objectUsage          map[string]ObjectBucketUsage
-	objectGrants         map[string]map[string]int64
-	objectReports        []api.ObjectStorageUsageReport
-	objectAuthorizations map[string]int64
-	objectAccessGrants   map[string]ObjectBucketAccessGrant
-	mu                   sync.Mutex
-	accounts             map[string]Account
-	keys                 map[string]APIKey
-	keyByHash            map[string]APIKey
-	apps                 map[string]App
+	objectBuckets          map[string]ObjectBucket
+	objectUsage            map[string]ObjectBucketUsage
+	objectGrants           map[string]map[string]int64
+	objectReports          []api.ObjectStorageUsageReport
+	objectAuthorizations   map[string]int64
+	objectAccessGrants     map[string]ObjectBucketAccessGrant
+	objectMultipartUploads map[string]ObjectMultipartUpload
+	mu                     sync.Mutex
+	accounts               map[string]Account
+	keys                   map[string]APIKey
+	keyByHash              map[string]APIKey
+	apps                   map[string]App
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -697,13 +698,14 @@ type builderUsageRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		objectAccessGrants: map[string]ObjectBucketAccessGrant{},
-		accounts:           map[string]Account{},
-		keys:               map[string]APIKey{},
-		keyByHash:          map[string]APIKey{},
-		apps:               map[string]App{},
-		githubBindings:     map[string]GitHubBinding{},
-		githubInstalls:     map[string]GitHubInstall{},
+		objectAccessGrants:     map[string]ObjectBucketAccessGrant{},
+		objectMultipartUploads: map[string]ObjectMultipartUpload{},
+		accounts:               map[string]Account{},
+		keys:                   map[string]APIKey{},
+		keyByHash:              map[string]APIKey{},
+		apps:                   map[string]App{},
+		githubBindings:         map[string]GitHubBinding{},
+		githubInstalls:         map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
@@ -13695,6 +13697,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for grantKey, grant := range m.objectAccessGrants {
 		if grant.AccountID == id {
 			delete(m.objectAccessGrants, grantKey)
+		}
+	}
+	for uploadID, upload := range m.objectMultipartUploads {
+		if upload.AccountID == id {
+			delete(m.objectMultipartUploads, uploadID)
 		}
 	}
 	reports := m.objectReports[:0]
