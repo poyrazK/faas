@@ -3637,6 +3637,16 @@ func ErrSecretNotFound(key string) *Problem {
 		WithDocs(docsBase + "/secrets")
 }
 
+// ErrManagedSecretConflict protects an environment key owned by an active
+// managed PostgreSQL binding. CodeConflict is intentional until the managed
+// database API introduces its own stable public error vocabulary.
+func ErrManagedSecretConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict,
+		"Secret is managed",
+		"This environment key is controlled by an active managed PostgreSQL binding. Delete the binding before changing the secret.").
+		WithDocs(docsBase + "/postgres#bindings")
+}
+
 // ErrPlanLimitEnvVars is returned when an env PUT would exceed the plan's
 // per-app env-var count (issue #395 / ADR-045). Observed is the post-write
 // count. The 403 mirrors ErrPlanLimitSecrets so the SDK's error decoder can

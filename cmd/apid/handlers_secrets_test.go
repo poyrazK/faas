@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -428,6 +429,58 @@ func TestSecrets_RoundTripSurvivesRealSealThenOpen(t *testing.T) {
 	}
 	if env["PLAIN"] != want {
 		t.Errorf("round-trip mismatch: got %q", env["PLAIN"])
+	}
+}
+
+func TestSecrets_ManagedPostgresTargetReturnsConflict(t *testing.T) {
+	e := setupSecrets(t, api.PlanScale)
+	app := createApp(t, e, "managed-database")
+	if err := e.store.PutManagedPostgresSecret(context.Background(), state.AppSecret{
+		AccountID:                   e.acct.ID,
+		AppID:                       app.ID,
+		Scope:                       state.DefaultEnvScope,
+		Key:                         "DATABASE_URL",
+		Ciphertext:                  []byte("sealed-managed-credential"),
+		Kid:                         "age1managed",
+		ManagedPostgresBindingID:    "binding-a",
+		ManagedCredentialRef:        "credential-a",
+		ManagedCredentialGeneration: 1,
+	}); err != nil {
+		t.Fatalf("put managed secret: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{
+			name:   "put",
+			method: "PUT",
+			path:   "/v1/apps/managed-database/secrets/DATABASE_URL",
+			body:   api.PutAppSecretRequest{Value: "customer-value"},
+		},
+		{
+			name:   "rotate",
+			method: "POST",
+			path:   "/v1/apps/managed-database/secrets/DATABASE_URL/rotate",
+			body:   api.RotateAppSecretRequest{Value: "rotated-customer-value"},
+		},
+		{
+			name:   "delete",
+			method: "DELETE",
+			path:   "/v1/apps/managed-database/secrets/DATABASE_URL",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := e.do(t, testCase.method, testCase.path, testCase.body, nil)
+			assertProblem(t, recorder, http.StatusConflict, api.CodeConflict)
+		})
+	}
+	if _, err := e.store.GetAppSecret(context.Background(), e.acct.ID, app.ID, "DATABASE_URL"); err != nil {
+		t.Fatalf("managed secret was mutated or deleted: %v", err)
 	}
 }
 

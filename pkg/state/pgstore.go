@@ -15876,13 +15876,17 @@ func (s *PgStore) GetAppSecret(ctx context.Context, accountID, appID, key string
 // widening to (app_id, scope, key) means the conflict target is
 // now a 3-column tuple.
 func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, scope, key string, ciphertext []byte) error {
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
 		`insert into app_secrets (account_id, app_id, scope, key, ciphertext)
 		 values ($1, $2, $3, $4, $5)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
-		       updated_at = now()`,
+		       updated_at = now()
+		 where app_secrets.managed_postgres_binding_id is null`,
 		accountID, appID, scope, key, ciphertext)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
 	return err
 }
 
@@ -15890,14 +15894,18 @@ func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, 
 // sibling (ADR-092 PR-A). Mirrors UpsertAppSecretInScope but
 // stamps kid alongside ciphertext.
 func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
 		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid)
 		 values ($1, $2, $3, $4, $5, $6)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
-		       updated_at = now()`,
+		       updated_at = now()
+		 where app_secrets.managed_postgres_binding_id is null`,
 		accountID, appID, scope, key, ciphertext, kid)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
 	return err
 }
 
@@ -15918,16 +15926,132 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 // NULLIF($7, ”) preserves the "empty string = NULL" semantic
 // so an unconfigured handler surface as NULL on the column.
 func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
 		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash)
 		 values ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       value_hash = excluded.value_hash,
-		       updated_at = now()`,
+		       updated_at = now()
+		 where app_secrets.managed_postgres_binding_id is null`,
 		accountID, appID, scope, key, ciphertext, kid, valueHash)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
 	return err
+}
+
+// ResealAppSecretWithKidAndValueHashInScope is the maintenance-only sibling
+// used by the host-key replayer. It preserves managed ownership metadata while
+// replacing the encrypted envelope. Callers must have obtained the row from
+// ListAppSecretsForRekey; this method never inserts a missing secret.
+func (s *PgStore) ResealAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockAppSecretTarget(ctx, tx, appID, scope, key); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
+		`update app_secrets
+		 set ciphertext = $5, kid = $6, value_hash = NULLIF($7, ''), updated_at = now()
+		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
+		accountID, appID, scope, key, ciphertext, kid, valueHash)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return mapErr(tx.Commit(ctx))
+}
+
+// PutManagedPostgresSecret stores an encrypted credential under the target
+// reserved by its binding. The schema trigger verifies the account, app,
+// scope, key, and generation against that active binding.
+func (s *PgStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret) error {
+	if secret.AccountID == "" || secret.AppID == "" || secret.Scope == "" || secret.Key == "" ||
+		len(secret.Ciphertext) == 0 || secret.ManagedPostgresBindingID == "" ||
+		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
+		return ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockAppSecretTarget(ctx, tx, secret.AppID, secret.Scope, secret.Key); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
+		`insert into app_secrets (
+			account_id, app_id, scope, key, ciphertext, kid, value_hash,
+			managed_postgres_binding_id, managed_credential_ref,
+			managed_credential_generation
+		) values ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10)
+		 on conflict (app_id, scope, key) do update set
+			ciphertext = excluded.ciphertext,
+			kid = excluded.kid,
+			value_hash = excluded.value_hash,
+			managed_credential_ref = excluded.managed_credential_ref,
+			managed_credential_generation = excluded.managed_credential_generation,
+			updated_at = now()
+		 where app_secrets.managed_postgres_binding_id = excluded.managed_postgres_binding_id
+		   and (
+			app_secrets.managed_credential_generation < excluded.managed_credential_generation
+			or (
+				app_secrets.managed_credential_generation = excluded.managed_credential_generation
+				and app_secrets.managed_credential_ref = excluded.managed_credential_ref
+			)
+		   )`,
+		secret.AccountID, secret.AppID, secret.Scope, secret.Key,
+		secret.Ciphertext, secret.Kid, secret.ValueHash,
+		secret.ManagedPostgresBindingID, secret.ManagedCredentialRef,
+		secret.ManagedCredentialGeneration)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return mapErr(tx.Commit(ctx))
+}
+
+// DeleteManagedPostgresSecret removes the row addressed by its opaque
+// credential reference. Absence is success: provider and local deletion are
+// retried independently after crashes.
+func (s *PgStore) DeleteManagedPostgresSecret(ctx context.Context, credentialRef string) error {
+	if credentialRef == "" {
+		return ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	var appID, scope, key string
+	err = tx.QueryRow(ctx,
+		`select app_id::text, scope, key from app_secrets
+		 where managed_credential_ref = $1`,
+		credentialRef).Scan(&appID, &scope, &key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return mapErr(tx.Commit(ctx))
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	if err := lockAppSecretTarget(ctx, tx, appID, scope, key); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`delete from app_secrets where managed_credential_ref = $1`,
+		credentialRef); err != nil {
+		return mapErr(err)
+	}
+	return mapErr(tx.Commit(ctx))
 }
 
 // GetAppSecretInScope is the scope-aware sibling of GetAppSecret
@@ -15937,11 +16061,15 @@ func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context,
 func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) (*AppSecret, error) {
 	var out AppSecret
 	err := s.pool.QueryRow(ctx,
-		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''), created_at, updated_at
+		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
+		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
+		        COALESCE(managed_credential_generation, 0), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
-		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash, &out.CreatedAt, &out.UpdatedAt)
+		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash,
+		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration,
+		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -16000,7 +16128,9 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 	// as scope='default'.
 	if cursor == "" {
 		rows, err := s.pool.Query(ctx,
-			`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''), created_at, updated_at
+			`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
+			        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
+			        COALESCE(managed_credential_generation, 0), created_at, updated_at
 			 from app_secrets
 			 order by account_id asc, app_id asc, scope asc, key asc
 			 limit $1`,
@@ -16012,7 +16142,11 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 		var out []AppSecret
 		for rows.Next() {
 			var r AppSecret
-			if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			if err := rows.Scan(
+				&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
+				&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+				&r.CreatedAt, &r.UpdatedAt,
+			); err != nil {
 				return nil, err
 			}
 			out = append(out, r)
@@ -16032,7 +16166,9 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 		return nil, fmt.Errorf("pgstore: malformed rekey cursor %q", cursor)
 	}
 	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''), created_at, updated_at
+		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
+		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
+		        COALESCE(managed_credential_generation, 0), created_at, updated_at
 		 from app_secrets
 		 where (account_id, app_id, scope, key) >= ($1::uuid, $2::uuid, $3, $4)
 		 order by account_id asc, app_id asc, scope asc, key asc
@@ -16045,7 +16181,11 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 	var out []AppSecret
 	for rows.Next() {
 		var r AppSecret
-		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -16067,8 +16207,10 @@ func (s *PgStore) DeleteAppSecret(ctx context.Context, accountID, appID, key str
 // (app_id, scope, key) means the WHERE clause gains a `scope = $3`
 // predicate.
 func (s *PgStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) error {
-	tag, err := s.pool.Exec(ctx,
-		`delete from app_secrets where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
+	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
+		`delete from app_secrets
+		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+		   and managed_postgres_binding_id is null`,
 		accountID, appID, scope, key)
 	if err != nil {
 		return err
@@ -16079,6 +16221,49 @@ func (s *PgStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, 
 	return nil
 }
 
+// mutateCustomerAppSecret serializes customer mutations with managed binding
+// reservations. The advisory lock is transaction-scoped, so every return path
+// releases it automatically. A provisioning, ready, failed, or deleting
+// binding continues to own its target until it reaches the deleted tombstone.
+func (s *PgStore) mutateCustomerAppSecret(ctx context.Context, appID, scope, key, query string, arguments ...any) (pgconn.CommandTag, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return pgconn.CommandTag{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockAppSecretTarget(ctx, tx, appID, scope, key); err != nil {
+		return pgconn.CommandTag{}, err
+	}
+	var claimed bool
+	if err := tx.QueryRow(ctx,
+		`select exists(
+			select 1 from managed_postgres_bindings
+			where app_id = $1 and scope = $2 and environment_key = $3 and state <> 'deleted'
+		)`,
+		appID, scope, key,
+	).Scan(&claimed); err != nil {
+		return pgconn.CommandTag{}, mapErr(err)
+	}
+	if claimed {
+		return pgconn.CommandTag{}, ErrConflict
+	}
+	tag, err := tx.Exec(ctx, query, arguments...)
+	if err != nil {
+		return pgconn.CommandTag{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return pgconn.CommandTag{}, mapErr(err)
+	}
+	return tag, nil
+}
+
+func lockAppSecretTarget(ctx context.Context, tx pgx.Tx, appID, scope, key string) error {
+	_, err := tx.Exec(ctx,
+		`select pg_advisory_xact_lock(managed_secret_target_lock_key($1, $2, $3))`,
+		appID, scope, key)
+	return mapErr(err)
+}
+
 // ListAppSecretsInScope is the scope-aware sibling of
 // ListAppSecrets (ADR-092 PR-A). Returns every (key, ciphertext,
 // kid, timestamps) row on the app where scope matches the
@@ -16086,7 +16271,9 @@ func (s *PgStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, 
 // ASC, key ASC for deterministic wake staging.
 func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, scope string) ([]AppSecret, error) {
 	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash, created_at, updated_at
+		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
+		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
+		        coalesce(managed_credential_generation, 0), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -16098,7 +16285,11 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 	var out []AppSecret
 	for rows.Next() {
 		var r AppSecret
-		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -16122,7 +16313,9 @@ func (s *PgStore) ListAppSecrets(ctx context.Context, accountID, appID string) (
 // key ASC.
 func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string) ([]AppSecret, error) {
 	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash, created_at, updated_at
+		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
+		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
+		        coalesce(managed_credential_generation, 0), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -16134,7 +16327,11 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 	var out []AppSecret
 	for rows.Next() {
 		var r AppSecret
-		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -17674,7 +17871,8 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:
-			if pgErr.ConstraintName == "app_has_object_buckets" {
+			if pgErr.ConstraintName == "app_has_object_buckets" ||
+				pgErr.ConstraintName == "app_secret_managed_postgres_owner" {
 				return ErrConflict
 			}
 			// CHECK violations surface as ErrInvalidArgument ONLY

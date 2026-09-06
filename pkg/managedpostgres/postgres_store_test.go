@@ -51,6 +51,26 @@ func postgresTestDatabase(accountID, name string, at time.Time) Database {
 	}
 }
 
+func postgresReadyDatabase(t *testing.T, store *PostgresStore, accountID, name string, at time.Time) Database {
+	t.Helper()
+	database, created, err := store.Reserve(context.Background(), postgresTestDatabase(accountID, name, at), 10)
+	if err != nil || !created {
+		t.Fatalf("reserve ready database: created=%v database=%+v err=%v", created, database, err)
+	}
+	claimed, err := store.Claim(context.Background(), accountID, database.ID, uuid.NewString(), StateProvisioning, at, at.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("claim ready database: %v", err)
+	}
+	if err := store.RecordProviderResource(context.Background(), database.ID, claimed.LeaseToken, "provider-"+database.ID, at.Add(time.Second)); err != nil {
+		t.Fatalf("record ready database: %v", err)
+	}
+	database, err = store.FinishProvision(context.Background(), database.ID, claimed.LeaseToken, at.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("finish ready database: %v", err)
+	}
+	return database
+}
+
 func TestPostgresStoreReservationIsIdempotentAndQuotaIsAtomic(t *testing.T) {
 	store, _, ctx, accountID := postgresStoreFixture(t)
 	at := time.Date(2026, 9, 5, 20, 0, 0, 0, time.UTC)
@@ -276,5 +296,146 @@ func TestPostgresStoreConcurrentReconcilersContactProviderOnce(t *testing.T) {
 	ready, err := store.Get(ctx, accountID, database.ID)
 	if err != nil || ready.State != StateReady {
 		t.Fatalf("ready database: %+v %v", ready, err)
+	}
+}
+
+func TestPostgresBindingStoreOwnsSecretTargetAndFencesLifecycle(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	stateStore := state.NewPgStore(pool)
+	app, err := stateStore.CreateApp(ctx, state.App{
+		AccountID: accountID,
+		Slug:      "binding-" + uuid.NewString(),
+		Type:      state.AppTypeApp,
+		RAMMB:     256,
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	start := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
+	database := postgresReadyDatabase(t, store, accountID, "binding-db", start)
+	input := testBinding(accountID, database.ID, app.ID, uuid.NewString(), start.Add(3*time.Second))
+
+	// A customer secret write and a binding reservation share one advisory
+	// lock. Whichever transaction commits first owns the target; the other
+	// must receive a stable conflict rather than overwriting it.
+	startRace := make(chan struct{})
+	secretResult := make(chan error, 1)
+	bindResult := make(chan error, 1)
+	go func() {
+		<-startRace
+		secretResult <- stateStore.UpsertAppSecretInScope(ctx, accountID, app.ID, input.Scope, input.EnvironmentKey, []byte("customer-ciphertext"))
+	}()
+	go func() {
+		<-startRace
+		_, _, reserveErr := store.ReserveBinding(ctx, input)
+		bindResult <- reserveErr
+	}()
+	close(startRace)
+	secretErr, bindingErr := <-secretResult, <-bindResult
+	if (secretErr == nil) == (bindingErr == nil) {
+		t.Fatalf("exactly one target claimant must win: secret=%v binding=%v", secretErr, bindingErr)
+	}
+	if secretErr != nil && !errors.Is(secretErr, state.ErrConflict) {
+		t.Fatalf("secret race error = %v, want state.ErrConflict", secretErr)
+	}
+	if bindingErr != nil && !errors.Is(bindingErr, ErrConflict) {
+		t.Fatalf("binding race error = %v, want ErrConflict", bindingErr)
+	}
+	if secretErr == nil {
+		if err := stateStore.DeleteAppSecretInScope(ctx, accountID, app.ID, input.Scope, input.EnvironmentKey); err != nil {
+			t.Fatalf("remove winning customer secret: %v", err)
+		}
+		if _, created, err := store.ReserveBinding(ctx, input); err != nil || !created {
+			t.Fatalf("reserve after customer delete: created=%v err=%v", created, err)
+		}
+	}
+
+	binding, err := store.GetBinding(ctx, accountID, input.ID)
+	if err != nil {
+		t.Fatalf("get binding: %v", err)
+	}
+	if _, created, err := store.ReserveBinding(ctx, testBinding(accountID, database.ID, app.ID, uuid.NewString(), start.Add(4*time.Second))); err != nil || created {
+		t.Fatalf("idempotent target reservation: created=%v err=%v", created, err)
+	}
+	if err := stateStore.UpsertAppSecretInScope(ctx, accountID, app.ID, input.Scope, input.EnvironmentKey, []byte("replacement")); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("customer overwrite of claimed target = %v, want state.ErrConflict", err)
+	}
+
+	claimAt := start.Add(5 * time.Second)
+	claimed, err := store.ClaimBinding(ctx, accountID, binding.ID, "binding-worker", BindingStateProvisioning, claimAt, claimAt.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("claim binding: %v", err)
+	}
+	credentialRef := "managed-secret-" + binding.ID
+	managedSecret := state.AppSecret{
+		AccountID:                   accountID,
+		AppID:                       app.ID,
+		Scope:                       input.Scope,
+		Key:                         input.EnvironmentKey,
+		Ciphertext:                  []byte("managed-ciphertext"),
+		Kid:                         "age1test",
+		ManagedPostgresBindingID:    binding.ID,
+		ManagedCredentialRef:        credentialRef,
+		ManagedCredentialGeneration: binding.CredentialGeneration,
+	}
+	if err := stateStore.PutManagedPostgresSecret(ctx, managedSecret); err != nil {
+		t.Fatalf("insert managed secret: %v", err)
+	}
+	if err := stateStore.PutManagedPostgresSecret(ctx, managedSecret); err != nil {
+		t.Fatalf("idempotent managed secret write: %v", err)
+	}
+	conflictingSecret := managedSecret
+	conflictingSecret.ManagedCredentialRef = credentialRef + "-other"
+	if err := stateStore.PutManagedPostgresSecret(ctx, conflictingSecret); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("same-generation credential replacement = %v, want state.ErrConflict", err)
+	}
+	ownedSecret, err := stateStore.GetAppSecretInScope(ctx, accountID, app.ID, input.Scope, input.EnvironmentKey)
+	if err != nil || ownedSecret.ManagedPostgresBindingID != binding.ID || ownedSecret.ManagedCredentialRef != credentialRef {
+		t.Fatalf("managed secret ownership did not round-trip: secret=%+v err=%v", ownedSecret, err)
+	}
+	for name, list := range map[string]func() ([]state.AppSecret, error){
+		"scope": func() ([]state.AppSecret, error) {
+			return stateStore.ListAppSecretsInScope(ctx, accountID, app.ID, input.Scope)
+		},
+		"all": func() ([]state.AppSecret, error) {
+			return stateStore.ListAllAppSecrets(ctx, accountID, app.ID)
+		},
+		"rekey": func() ([]state.AppSecret, error) {
+			return stateStore.ListAppSecretsForRekey(ctx, 100, "")
+		},
+	} {
+		secrets, listErr := list()
+		if listErr != nil || len(secrets) != 1 || secrets[0].ManagedPostgresBindingID != binding.ID {
+			t.Fatalf("%s managed ownership list: secrets=%+v err=%v", name, secrets, listErr)
+		}
+	}
+	ready, err := store.FinishBindingProvision(ctx, binding.ID, claimed.LeaseToken, "provider-role-1", credentialRef, claimAt.Add(time.Second))
+	if err != nil || ready.State != BindingStateReady || ready.CredentialRef != credentialRef {
+		t.Fatalf("finish binding: binding=%+v err=%v", ready, err)
+	}
+	if err := stateStore.DeleteAppSecretInScope(ctx, accountID, app.ID, input.Scope, input.EnvironmentKey); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("customer delete of managed secret = %v, want state.ErrConflict", err)
+	}
+	if err := stateStore.ResealAppSecretWithKidAndValueHashInScope(ctx, accountID, app.ID, input.Scope, input.EnvironmentKey, "age1rotated", "0123456789abcdef", []byte("resealed")); err != nil {
+		t.Fatalf("maintenance reseal of managed secret: %v", err)
+	}
+
+	deleteAt := claimAt.Add(2 * time.Second)
+	deleting, err := store.ClaimBinding(ctx, accountID, binding.ID, "delete-worker", BindingStateDeleting, deleteAt, deleteAt.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("claim binding delete: %v", err)
+	}
+	if _, err := store.FinishBindingDelete(ctx, binding.ID, deleting.LeaseToken, deleteAt.Add(time.Second)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("delete with managed secret present = %v, want ErrConflict", err)
+	}
+	if err := stateStore.DeleteManagedPostgresSecret(ctx, credentialRef); err != nil {
+		t.Fatalf("delete managed secret: %v", err)
+	}
+	deleted, err := store.FinishBindingDelete(ctx, binding.ID, deleting.LeaseToken, deleteAt.Add(time.Second))
+	if err != nil || deleted.State != BindingStateDeleted || deleted.DeletedAt == nil {
+		t.Fatalf("finish binding delete: binding=%+v err=%v", deleted, err)
+	}
+	if err := stateStore.UpsertAppSecretInScope(ctx, accountID, app.ID, input.Scope, input.EnvironmentKey, []byte("customer-after-unbind")); err != nil {
+		t.Fatalf("customer write after target release: %v", err)
 	}
 }

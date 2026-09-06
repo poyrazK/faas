@@ -13,10 +13,17 @@ type MemoryStore struct {
 	mu        sync.Mutex
 	databases map[string]Database
 	names     map[string]string
+	bindings  map[string]Binding
+	targets   map[string]string
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{databases: map[string]Database{}, names: map[string]string{}}
+	return &MemoryStore{
+		databases: map[string]Database{},
+		names:     map[string]string{},
+		bindings:  map[string]Binding{},
+		targets:   map[string]string{},
+	}
 }
 
 func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (Database, bool, error) {

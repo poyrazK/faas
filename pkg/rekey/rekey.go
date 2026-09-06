@@ -133,7 +133,7 @@ type Replayer struct {
 
 // Store is the narrow interface pkg/rekey needs from the
 // platform-wide state.Store. Two methods: ListAppSecretsForRekey
-// (paginated global walk) and UpsertAppSecretWithKidAndValueHashInScope
+// (paginated global walk) and ResealAppSecretWithKidAndValueHashInScope
 // (re-seal + kid + value_hash stamp at the row's actual scope).
 // Implemented by both pkg/state/pgstore.PgStore and pkg/state/memstore.MemStore — see
 // ADR-089 PR-A for the rationale. Defined as an interface here so unit
@@ -141,8 +141,8 @@ type Replayer struct {
 // full state.Store surface (which is ~hundreds of methods).
 //
 // ADR-092 PR-B: the rekey path must use the scope-aware sibling
-// UpsertAppSecretWithKidInScope (not the legacy UpsertAppSecretWithKid
-// which delegates to DefaultEnvScope — see pgstore.go:11236). After
+// ResealAppSecretWithKidAndValueHashInScope (not a customer upsert that
+// could claim the wrong scope). After
 // PR-A widened the PK to (app_id, scope, key), every prod/staging row
 // has a unique address; re-sealing at the wrong scope would either
 // (a) insert a brand-new default-scope row of the same key (leaving
@@ -151,9 +151,8 @@ type Replayer struct {
 // row.Scope thread from ListAppSecretsForRekey is the only correct
 // write target.
 //
-// ADR-117 PR-C: the upsert sibling widens to
-// UpsertAppSecretWithKidAndValueHashInScope (the value_hash is
-// computed off the re-Seal plaintext, NOT the new ciphertext). The
+// ADR-117 PR-C: the maintenance sibling carries the value_hash, which is
+// computed off the re-Seal plaintext, NOT the new ciphertext. The
 // rekey pass is the only path that can reliably backfill
 // value_hash for pre-PR-C rows — a one-shot backfill sweep at PR-C
 // merge time would require unsealing every row, which is a hot
@@ -161,7 +160,7 @@ type Replayer struct {
 // the documented ADR posture.
 type Store interface {
 	ListAppSecretsForRekey(ctx context.Context, limit int, cursor string) ([]state.AppSecret, error)
-	UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
+	ResealAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
 }
 
 // New constructs a Replayer. identities is the OpenMulti slice
@@ -412,7 +411,7 @@ func (r *Replayer) Run(
 			// pre-PR-C empty value_hash only persists for
 			// rows the rekey pass skipped (kid == currentKid
 			// or OpenMulti failed).
-			if err := r.store.UpsertAppSecretWithKidAndValueHashInScope(ctx, row.AccountID, row.AppID, row.Scope, row.Key, r.currentKid, valueHash, sealed); err != nil {
+			if err := r.store.ResealAppSecretWithKidAndValueHashInScope(ctx, row.AccountID, row.AppID, row.Scope, row.Key, r.currentKid, valueHash, sealed); err != nil {
 				p.Failed++
 				if pinnedCursor == "" {
 					pinnedCursor = rowCursor
