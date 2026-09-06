@@ -2392,6 +2392,9 @@ func (s *server) handler() http.Handler {
 	// (Go 1.22+ mux needs concrete segment counts; the
 	// /crons/{id}/fire-now suffix is the path tail).
 	mux.Handle("POST /dashboard/apps/{slug}/crons/{id}/fire-now", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardFireCron))))
+	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
+	// named CSRF cookie and the same rollback core as the REST endpoint.
+	mux.Handle("POST /dashboard/apps/{slug}/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollback))))
 	// ADR-117 §Production-ready follow-on, C4 — dashboard-side
 	// retry form handler. The form is <form method="POST"> (not
 	// XHR), so the endpoint takes the CSRF sealed-envelope path

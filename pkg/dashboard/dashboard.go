@@ -363,6 +363,12 @@ type AppDetailData struct {
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
 	FiredFlash string
+	// RollbackConfirmToken is the named CSRF token shared by the
+	// deployment rollback forms on the app detail page.
+	RollbackConfirmToken string
+	// RollbackFlash is the post-redirect banner for the app rollback form.
+	// Values are "ok", "error", or empty.
+	RollbackFlash string
 	// RecentInstances is the most recent N wake rows for this app
 	// (parked → waking → running → …). Each carries its WakeID so
 	// operators can paste the ID from a gateway response header

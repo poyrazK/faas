@@ -486,6 +486,22 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 		})
 	}
+	rollbackCSRFToken, err := middleware.IssueForAuthenticatedNamed(
+		s.sessions, dashboardRollbackAction, acct.ID, dashboardRollbackCSRFCookie)
+	if err != nil {
+		log.Error("dashboard renderAppDetail: csrf issue rollback", "app_id", app.ID, "err", err)
+		rollbackCSRFToken = ""
+	} else {
+		http.SetCookie(w, &http.Cookie{
+			Name:     dashboardRollbackCSRFCookie,
+			Value:    rollbackCSRFToken,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   s.domain != "",
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+		})
+	}
 	cronItems := make([]dashboard.CronItem, 0, len(crons))
 	for _, c := range crons {
 		item := dashboard.CronItem{
@@ -631,7 +647,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// forwards through to the template's flash block.
 		// Anything other than the canonical values collapses to
 		// empty so a stale "?fired=" doesn't render an empty banner.
-		FiredFlash: firedFlash(r),
+		FiredFlash:           firedFlash(r),
+		RollbackConfirmToken: rollbackCSRFToken,
+		RollbackFlash:        rollbackFlash(r),
 		// Issue #273 / ADR-042 — best-effort metrics snapshot.
 		// Failure is non-fatal: Prometheus being down renders the
 		// "degraded" empty state rather than blocking the whole
@@ -752,6 +770,17 @@ func dashboardWorkflowError(err *string) string {
 // Issue #791 PR-E / ADR-090.
 func firedFlash(r *http.Request) string {
 	switch r.URL.Query().Get("fired") {
+	case "1":
+		return "ok"
+	case "error":
+		return "error"
+	default:
+		return ""
+	}
+}
+
+func rollbackFlash(r *http.Request) string {
+	switch r.URL.Query().Get("rollback") {
 	case "1":
 		return "ok"
 	case "error":

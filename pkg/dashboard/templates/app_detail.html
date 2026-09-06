@@ -183,6 +183,7 @@
          "did the click do anything?" operator loop without a
          full page reload. */}}
     {{if .Data.FiredFlash}}{{if eq .Data.FiredFlash "ok"}}<div class="cron-flash-ok" role="status">Fire-now enqueued. The run will appear below within a few seconds.</div>{{else}}<div class="cron-flash-error" role="alert">Fire-now failed. Check the cron's path and try again, or use <code>gregale crons info &lt;id&gt;</code> for diagnostics.</div>{{end}}{{end}}
+    {{if .Data.RollbackFlash}}{{if eq .Data.RollbackFlash "ok"}}<div class="cron-flash-ok" role="status">Rollback completed. The selected deployment is live.</div>{{else}}<div class="cron-flash-error" role="alert">Rollback failed. Refresh the page and choose a superseded deployment.</div>{{end}}{{end}}
     {{if .Data}}
       <h1>App: <code>{{.Data.App.Slug}}</code></h1>
       <p>
@@ -268,10 +269,13 @@
                 </td>
                 <td><code>{{.Error}}</code></td>
                 <td>
-                  <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/rollback" style="display:inline">
-                    <input type="hidden" name="deployment_id" value="{{.ID}}">
-                    <button type="submit">Rollback</button>
-                  </form>
+                  {{if eq .Status "superseded"}}
+                    <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/rollback" style="display:inline">
+                      <input type="hidden" name="csrf_token" value="{{$.Data.RollbackConfirmToken}}">
+                      <input type="hidden" name="deployment_id" value="{{.ID}}" required>
+                      <button type="submit">Rollback</button>
+                    </form>
+                  {{end}}
                 </td>
               </tr>
             {{end}}
