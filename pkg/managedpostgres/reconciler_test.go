@@ -17,18 +17,19 @@ func TestReconcilerRecoversProvisionAndDeletionWhileDisabled(t *testing.T) {
 	}
 	store := NewMemoryStore()
 	now := time.Date(2026, 9, 5, 22, 0, 0, 0, time.UTC)
+	enabled := true
 	service, err := NewService(testRegistry(t, provider, nil), store, ServiceOptions{
-		LeaseDuration:   2 * time.Minute,
-		ProviderTimeout: time.Second,
-		PollInterval:    time.Second,
-		Now:             func() time.Time { return now },
-		NewID:           uuid.NewString,
-		NewLeaseToken:   uuid.NewString,
+		LeaseDuration:       2 * time.Minute,
+		ProviderTimeout:     time.Second,
+		PollInterval:        time.Second,
+		ProvisioningEnabled: func() bool { return enabled },
+		Now:                 func() time.Time { return now },
+		NewID:               uuid.NewString,
+		NewLeaseToken:       uuid.NewString,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	enabled := false
 	var observations []ReconcileObservation
 	reconciler, err := NewReconciler(service, ReconcilerOptions{
 		Interval:            time.Second,
@@ -44,6 +45,7 @@ func TestReconcilerRecoversProvisionAndDeletionWhileDisabled(t *testing.T) {
 	if err != nil || created.ProviderResourceID == "" || created.State != StateProvisioning {
 		t.Fatalf("create pending database: %+v %v", created, err)
 	}
+	enabled = false
 	now = now.Add(time.Second)
 	summary, err := reconciler.Sweep(context.Background())
 	if err != nil || summary.Discovered != 0 || provider.inspectCalls != 0 {
@@ -90,11 +92,12 @@ func TestReconcilerPersistsExponentialProviderCooldown(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Date(2026, 9, 5, 22, 30, 0, 0, time.UTC)
 	service, err := NewService(testRegistry(t, provider, nil), store, ServiceOptions{
-		Now:             func() time.Time { return now },
-		NewID:           uuid.NewString,
-		NewLeaseToken:   uuid.NewString,
-		LeaseDuration:   2 * time.Minute,
-		ProviderTimeout: time.Second,
+		Now:                 func() time.Time { return now },
+		NewID:               uuid.NewString,
+		NewLeaseToken:       uuid.NewString,
+		LeaseDuration:       2 * time.Minute,
+		ProviderTimeout:     time.Second,
+		ProvisioningEnabled: func() bool { return true },
 	})
 	if err != nil {
 		t.Fatal(err)

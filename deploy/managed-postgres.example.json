@@ -1,0 +1,25 @@
+{
+  "default_region": "eu-central-1",
+  "defaults": {
+    "eu-central-1": "neon-eu"
+  },
+  "max_databases_per_account": 3,
+  "provisioning_enabled": false,
+  "backends": [
+    {
+      "id": "neon-eu",
+      "driver": "neon",
+      "region": "eu-central-1",
+      "namespace": "org-replace-with-neon-org-id",
+      "settings": {
+        "region_id": "aws-eu-central-1",
+        "database_name": "gregale",
+        "max_storage_bytes": "107374182400",
+        "max_restore_window_seconds": "604800"
+      },
+      "secret_env": {
+        "api-key": "FAAS_NEON_API_KEY"
+      }
+    }
+  ]
+}

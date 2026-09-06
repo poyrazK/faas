@@ -104,6 +104,10 @@ type ObservedDatabase struct {
 }
 
 type DeleteRequest struct {
+	// ResourceID is Gregale's stable logical identity. Providers use it to
+	// discover an upstream resource when creation may have succeeded before
+	// its opaque provider ID could be persisted.
+	ResourceID         string
 	ProviderResourceID string
 	IdempotencyKey     string
 }
@@ -174,9 +178,12 @@ func (c CredentialMaterial) Validate() error {
 
 type CredentialRequest struct {
 	ProviderResourceID string
-	IdentityKey        string
-	Access             CredentialAccess
-	IdempotencyKey     string
+	// IdentityKey is a stable, non-secret identity for one credential
+	// generation. Rotation uses a new key; revocation repeats the key that
+	// created the credential.
+	IdentityKey    string
+	Access         CredentialAccess
+	IdempotencyKey string
 }
 
 type Meter string
@@ -288,9 +295,9 @@ func (c Capabilities) Supports(spec Spec) error {
 	return nil
 }
 
-// Provider is the complete vendor boundary. Methods must be idempotent for
-// their supplied key, return opaque resource IDs, normalize errors to the
-// package sentinels, and never include credentials in an error.
+// Provider is the complete vendor boundary. Mutating methods must be
+// idempotent for their supplied key, return opaque resource IDs, normalize
+// errors to the package sentinels, and never include credentials in an error.
 type Provider interface {
 	Capabilities() Capabilities
 	Provision(context.Context, ProvisionRequest) (ObservedDatabase, error)
@@ -298,6 +305,7 @@ type Provider interface {
 	Update(context.Context, UpdateRequest) (ObservedDatabase, error)
 	Delete(context.Context, DeleteRequest) (DeleteResult, error)
 	IssueCredentials(context.Context, CredentialRequest) (CredentialMaterial, error)
+	RevokeCredentials(context.Context, CredentialRequest) error
 	Usage(context.Context, string, UsageWindow) (Usage, error)
 }
 
