@@ -221,6 +221,28 @@ func TestCreateIsIdempotentAndPersistsPlacement(t *testing.T) {
 	}
 }
 
+func TestCreateUsesCustomerReservationLimit(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	registry := testRegistry(t, provider, nil)
+	store := NewMemoryStore()
+	service, err := NewService(registry, store, ServiceOptions{
+		PollInterval:        time.Second,
+		ProvisioningEnabled: func() bool { return true },
+		MaxDatabasesPerAccount: func(context.Context, string) (int, error) {
+			return 1, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "one", Spec: testSpec()}); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "two", Spec: testSpec()}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("second create error = %v, want ErrQuotaExceeded", err)
+	}
+}
+
 func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
 	service := testService(t, testRegistry(t, provider, nil), NewMemoryStore())

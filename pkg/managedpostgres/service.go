@@ -25,19 +25,24 @@ type ServiceOptions struct {
 	NewID               func() string
 	NewLeaseToken       func() string
 	Admit               func(context.Context, string) error
+	// MaxDatabasesPerAccount supplies the customer-specific reservation limit.
+	// It is evaluated immediately before the store's atomic reservation so
+	// plan entitlements remain race-safe while the service stays provider-neutral.
+	MaxDatabasesPerAccount func(context.Context, string) (int, error)
 }
 
 type Service struct {
-	registry            *Registry
-	store               Store
-	leaseDuration       time.Duration
-	providerTimeout     time.Duration
-	pollInterval        time.Duration
-	provisioningEnabled func() bool
-	now                 func() time.Time
-	newID               func() string
-	newLeaseToken       func() string
-	admit               func(context.Context, string) error
+	registry               *Registry
+	store                  Store
+	leaseDuration          time.Duration
+	providerTimeout        time.Duration
+	pollInterval           time.Duration
+	provisioningEnabled    func() bool
+	now                    func() time.Time
+	newID                  func() string
+	newLeaseToken          func() string
+	admit                  func(context.Context, string) error
+	maxDatabasesPerAccount func(context.Context, string) (int, error)
 }
 
 type CreateRequest struct {
@@ -81,18 +86,35 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 	if options.NewLeaseToken == nil {
 		options.NewLeaseToken = uuid.NewString
 	}
+	if options.MaxDatabasesPerAccount == nil {
+		options.MaxDatabasesPerAccount = func(context.Context, string) (int, error) {
+			return registry.MaxDatabasesPerAccount, nil
+		}
+	}
 	return &Service{
-		registry:            registry,
-		store:               store,
-		leaseDuration:       options.LeaseDuration,
-		providerTimeout:     options.ProviderTimeout,
-		pollInterval:        options.PollInterval,
-		provisioningEnabled: options.ProvisioningEnabled,
-		now:                 options.Now,
-		newID:               options.NewID,
-		newLeaseToken:       options.NewLeaseToken,
-		admit:               options.Admit,
+		registry:               registry,
+		store:                  store,
+		leaseDuration:          options.LeaseDuration,
+		providerTimeout:        options.ProviderTimeout,
+		pollInterval:           options.PollInterval,
+		provisioningEnabled:    options.ProvisioningEnabled,
+		now:                    options.Now,
+		newID:                  options.NewID,
+		newLeaseToken:          options.NewLeaseToken,
+		admit:                  options.Admit,
+		maxDatabasesPerAccount: options.MaxDatabasesPerAccount,
 	}, nil
+}
+
+func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, error) {
+	limit, err := s.maxDatabasesPerAccount(ctx, accountID)
+	if err != nil {
+		return 0, err
+	}
+	if limit < 1 || limit > 100 {
+		return 0, ErrInvalid
+	}
+	return limit, nil
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, error) {
@@ -131,6 +153,10 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 		return Database{}, err
 	}
 	now := s.now()
+	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
+	if err != nil {
+		return Database{}, err
+	}
 	database, _, err := s.store.Reserve(ctx, Database{
 		ID:                 s.newID(),
 		AccountID:          request.AccountID,
@@ -142,7 +168,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 		DesiredGeneration:  1,
 		CreatedAt:          now,
 		UpdatedAt:          now,
-	}, s.registry.MaxDatabasesPerAccount)
+	}, reservationLimit)
 	if err != nil {
 		return Database{}, err
 	}
@@ -208,6 +234,10 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 	if err := backend.Capabilities.Supports(source.Spec); err != nil {
 		return Database{}, err
 	}
+	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
+	if err != nil {
+		return Database{}, err
+	}
 	database, _, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
@@ -222,7 +252,7 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 		DesiredGeneration:       1,
 		CreatedAt:               now,
 		UpdatedAt:               now,
-	}, s.registry.MaxDatabasesPerAccount)
+	}, reservationLimit)
 	if err != nil {
 		return Database{}, err
 	}
