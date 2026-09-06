@@ -353,14 +353,30 @@ func TestHotPathDoesNotWakeOrTagCold(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if rec.Header().Get(wire.WakeHeader) != "" {
-		t.Error("warm request must not carry the cold header")
+	if got := rec.Header().Get(wire.WakeHeader); got != wire.HotWakeValue {
+		t.Errorf("warm request wake tier = %q, want %q", got, wire.HotWakeValue)
 	}
 	if got := rec.Header().Get("x-faas-wake-id"); got != "" {
 		t.Errorf("warm request must not carry x-faas-wake-id, got %q", got)
 	}
 	if atomic.LoadInt32(b.Admits()) != 0 {
 		t.Errorf("hot path must not trigger an admit, got %d", atomic.LoadInt32(b.Admits()))
+	}
+}
+
+func TestSnapshotRestoreWakeCarriesRestoredHeader(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.wakeMethodOut = WakeMethodSnapshotRestore
+
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get(wire.WakeHeader); got != wire.RestoredWakeValue {
+		t.Fatalf("wake tier = %q, want %q", got, wire.RestoredWakeValue)
 	}
 }
 

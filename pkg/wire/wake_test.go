@@ -1,4 +1,4 @@
-// wake_test.go — fill pkg/wire coverage of the cold-wake wire
+// wake_test.go — fill pkg/wire coverage of the wake-tier wire
 // header constants in wake.go. The constants themselves are at 0%
 // on the baseline because every production reference to them goes
 // through the gatewayd-internal / schedd path (covered indirectly
@@ -6,17 +6,16 @@
 // literal to assert it stays stable.
 //
 // These two constants are load-bearing:
-//   - WakeHeader is the response header the gateway stamps on a
-//     cold wake so the CLI's `gregale open` probe can render the
-//     "Waking app" status line. The header name is part of the
+//   - WakeHeader is the response header the gateway stamps on every
+//     routed app response so clients can distinguish hot, restored,
+//     and cold traffic. The header name is part of the
 //     published customer contract (docs/cold-wake.md,
 //     docs/faas_ux_spec.md) and tested in pkg/gateway/handler_test.go
 //     and cmd/gregale/wake_probe_test.go. Renaming it would break
 //     the tripwire TestLintTripwire_NoLiteralWakeHeaderOutsidePkgWire
 //     in cmd/gregale/lint_tripwires_test.go.
-//   - ColdWakeValue is the only value WakeHeader carries that
-//     means cold. Exact-match only — "Cold", "cold-start", "true"
-//     all resolve to "warm" by probeWakeState.
+//   - the three values form the closed wire vocabulary. ColdWakeValue
+//     remains byte-for-byte compatible with the existing CLI probe.
 
 package wire_test
 
@@ -42,5 +41,14 @@ func TestWakeHeader_Stable(t *testing.T) {
 func TestColdWakeValue_Stable(t *testing.T) {
 	if got := wire.ColdWakeValue; got != "cold" {
 		t.Errorf("ColdWakeValue = %q, want cold", got)
+	}
+}
+
+func TestWakeTierValues_Stable(t *testing.T) {
+	if got := wire.HotWakeValue; got != "hot" {
+		t.Errorf("HotWakeValue = %q, want hot", got)
+	}
+	if got := wire.RestoredWakeValue; got != "restored" {
+		t.Errorf("RestoredWakeValue = %q, want restored", got)
 	}
 }

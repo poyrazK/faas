@@ -351,7 +351,7 @@ staged deletion per ADR-021; V6 vsock resume hook per ADR-022;
 G7 flow-aware reaper in `pkg/sched/flowcount`; `AuthLimit` shared
 per-IP bucket across `/v1/*` per §11 "10/min/IP"; per-VM cgroup
 scope via jailer `--cgroup cpu.weight`; cold-wake UX surfaces
-3+4+5 with `x-faas-wake: cold|cache|ready` and dashboard N+1
+3+4+5 with `x-faas-wake: hot|restored|cold` and dashboard N+1
 spinner) and PR #51 (the closeout batch):
 
 - **§11 IPv6 egress** — `pkg/netns/policy.go` and

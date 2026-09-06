@@ -210,7 +210,7 @@ Scale-to-zero is the economic engine (founding whitepaper §2.3) and the single 
 1. **Deploy output** — the honest sentence in §2.5.
 2. **Docs** — a "How scaling to zero works" page linked from onboarding: idle → snapshot → wake ≈ 0.3–0.8 s → warm. Framed as a feature (you don't pay for idle).
 3. **Dashboard app view** — a state badge: `● running` (green) / `◌ sleeping` (dim) / `⟳ waking`. Users seeing "sleeping" understand the next hit wakes it.
-4. **Response header** — `x-faas-wake: cold` on the wake request so developers can see it in devtools and stop guessing. Warm requests carry no penalty header.
+4. **Response header** — `x-faas-wake` is present on every routed response: `hot` for an already-running instance, `restored` for a snapshot restore, and `cold` for a fresh boot. Developers can see the wake cost in devtools without guessing.
 5. **Configurable floor** — Pro/Scale can set `min_instances: 1` (keep one warm) via `faas app scale --min 1`, honestly priced as always-resident GB-h. The default stays 0 because that's the deal.
 
 Acceptance: a usability read of the deploy output + docs page by someone who's never used scale-to-zero should leave them expecting the first-request delay, not surprised by it.

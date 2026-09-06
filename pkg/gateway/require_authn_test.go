@@ -330,7 +330,7 @@ func TestRequireAuthn_AllowsWakesBeforeAuthz(t *testing.T) {
 	}
 	// The target was pre-warmed by the fixture, so this request must not
 	// advertise a cold wake.
-	if got := rec.Header().Get(wire.WakeHeader); got != "" {
-		t.Errorf("%s = %q, want empty for a warm request", wire.WakeHeader, got)
+	if got := rec.Header().Get(wire.WakeHeader); got != wire.HotWakeValue {
+		t.Errorf("%s = %q, want %q for a warm request", wire.WakeHeader, got, wire.HotWakeValue)
 	}
 }
