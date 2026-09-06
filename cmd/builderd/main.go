@@ -323,6 +323,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	go builderdpkg.CacheGCSweepLoop(ctx, cache, gcInterval, cfg.CacheMaxBytes, cfg.CacheMaxAge, log)
 
+	// Split-box source retention. apid publishes sources/<build>.tar.gz
+	// before it creates the durable build row, so an apid crash can leave a
+	// remote object with no database owner. The sweep preserves queued and
+	// running builds and removes terminal/orphaned objects after the bounded
+	// retention window. Local single-box deployments have no sourceStorage,
+	// so this loop is a no-op there.
+	if sourceStorage != nil {
+		sourceGCInterval := cfg.SourceGCSweepInterval
+		if sourceGCInterval <= 0 {
+			sourceGCInterval = 24 * time.Hour
+		}
+		sourceMaxAge := cfg.SourceMaxAge
+		if sourceMaxAge <= 0 {
+			sourceMaxAge = 24 * time.Hour
+		}
+		go builderdpkg.SourceGCSweepLoop(ctx, sourceStorage, store, sourceGCInterval, sourceMaxAge, log)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():

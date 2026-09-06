@@ -123,6 +123,14 @@ type Config struct {
 	// Zero falls back to 24 hours in main.go — daily is the right
 	// frequency for a slow disk-bleed control.
 	CacheGCSweepInterval time.Duration `toml:"cache_gc_sweep_interval"`
+	// SourceMaxAge is the retention window for split-box source archives
+	// under the remote sources/ namespace. Queued and running builds are
+	// always protected; this age only governs terminal rows and orphaned
+	// uploads. Zero falls back to 24 hours in main.go.
+	SourceMaxAge time.Duration `toml:"source_max_age"`
+	// SourceGCSweepInterval is the cadence of remote source retention.
+	// Zero falls back to 24 hours in main.go.
+	SourceGCSweepInterval time.Duration `toml:"source_gc_sweep_interval"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// build_provenance row (ADR-038, Tier 3 / issue #197 B3.1).
 	// Defaults to "default-local" in LoadConfig — the synthetic
@@ -233,9 +241,11 @@ func LoadConfig(path string) (*Config, error) {
 		// fleet budget. 30-day TTL matches the only other retention
 		// constant the platform has (api.DefaultInstanceRetention).
 		// 24h sweep cadence is the right frequency for a slow bleed.
-		CacheMaxBytes:        50 << 30, // 50 GiB
-		CacheMaxAge:          30 * 24 * time.Hour,
-		CacheGCSweepInterval: 24 * time.Hour,
+		CacheMaxBytes:         50 << 30, // 50 GiB
+		CacheMaxAge:           30 * 24 * time.Hour,
+		CacheGCSweepInterval:  24 * time.Hour,
+		SourceMaxAge:          24 * time.Hour,
+		SourceGCSweepInterval: 24 * time.Hour,
 		// ADR-038: default compute_node name stamped on provenance
 		// rows. "default-local" matches the synthetic node seeded by
 		// migrations/00024 + NewMemStore, so a MemStore-backed test

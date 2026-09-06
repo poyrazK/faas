@@ -494,6 +494,44 @@ func TestLocalCacheBackend_ListRecoversOriginalKey(t *testing.T) {
 	}
 }
 
+// listedFakeBackend models a remote backend whose authoritative namespace is
+// larger than the objects this node has warmed into its read-through cache.
+type listedFakeBackend struct {
+	*fakeBackend
+	keys []string
+}
+
+func (f *listedFakeBackend) List(_ context.Context, prefix string) ([]string, error) {
+	var out []string
+	for _, key := range f.keys {
+		if prefix == "" || strings.HasPrefix(key, prefix) {
+			out = append(out, key)
+		}
+	}
+	return out, nil
+}
+
+func TestLocalCacheBackend_ListUsesAuthoritativeParent(t *testing.T) {
+	parent := &listedFakeBackend{
+		fakeBackend: newFakeBackend(),
+		keys:        []string{"sources/remote-only.tar.gz"},
+	}
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(t.TempDir(), "cache"), 0)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	if err := cache.Put(context.Background(), "sources/warm.tar.gz", strings.NewReader("warm")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := cache.List(context.Background(), "sources/")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if !equalSlices(got, []string{"sources/remote-only.tar.gz"}) {
+		t.Fatalf("List = %v, want authoritative parent keys", got)
+	}
+}
+
 // TestLocalCacheBackend_LRUEvictsOldest pins the byte-budgeted
 // eviction policy: when total size exceeds maxBytes, the oldest
 // entries by mtime are evicted first. The test seeds three blobs,

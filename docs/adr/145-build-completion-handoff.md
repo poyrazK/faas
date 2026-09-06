@@ -80,7 +80,17 @@ fresh build non-reproducible without dependency lockfiles.
 Recovery covers the committed build-to-imaged handoff before imaging starts,
 including cache hits whose canonical cache entry is evicted. It does not resume
 an imaged process that crashes partway through conversion.
-Uploaded but unqueued source objects and deployment rows left by an apid crash
-still need retention/reconciliation. Export retention, full log delivery,
-incremental caching, CI/release gates, and release-tag ordering remain separate
-follow-ups to the build pipeline audit.
+
+Builderd now runs a daily source-object sweep when split-box storage is enabled.
+It enumerates the authoritative `sources/` namespace, derives the creation time
+from the UUIDv7 build ID, preserves queued and running builds, and removes
+terminal or unqueued objects after the configured 24-hour default retention.
+The apid upload still precedes `CreateBuildWithID`, so an apid crash can leave
+an orphan; the UUID age fence makes that orphan eligible without deleting a
+newly uploaded object. Unknown or legacy non-UUIDv7 source names are retained
+for manual inspection. The read-through storage cache delegates List to its
+parent when available so the sweep sees remote objects that are not warm on the
+builder node.
+
+Export retention, full log delivery, incremental caching, CI/release gates, and
+release-tag ordering remain separate follow-ups to the build pipeline audit.
