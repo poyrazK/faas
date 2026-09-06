@@ -613,6 +613,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// because production-run holds the *pgxpool.Pool and the test
 		// seam in runWithDeps doesn't.
 		go sseFanIn(ctx, log, pool, srv.events, nil)
+		// I1 / issue #1397: deployments.status='failed' is the durable
+		// trigger for the deployer notification. The database trigger
+		// emits deployment_changed after commit, and this subscriber
+		// performs the account lookup, hourly app cooldown claim, and
+		// redacted email send.
+		go func() {
+			if err := runDeployFailedEmailSubscriber(ctx, pool, srv, log); err != nil && ctx.Err() == nil {
+				log.Error("deploy_failed_email: subscriber exited", "err", err)
+			}
+		}()
 		startDNSPoller(ctx, srv, log)
 		// ADR-127 PR-B: regression detector. Mirrors the dns_poller's
 		// shape — first-pass-immediate + ticker + ctx-cancel. The
