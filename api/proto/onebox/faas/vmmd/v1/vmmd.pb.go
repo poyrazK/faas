@@ -221,6 +221,11 @@ type AppSpec struct {
 	// Sustained app CPU allowance enforced with cgroup v2 cpu.max.
 	// 0 preserves the plan-derived quota for legacy callers.
 	CpuMillicores int32 `protobuf:"varint,16,opt,name=cpu_millicores,json=cpuMillicores,proto3" json:"cpu_millicores,omitempty"`
+	// Per-app wire protocol used by the persistent stream bridge. vmmd uses
+	// this during wake to start the correctly framed bridge before the first
+	// customer request reaches the restored instance. Empty preserves the
+	// legacy HTTP/1 default.
+	AppProtocol   string `protobuf:"bytes,17,opt,name=app_protocol,json=appProtocol,proto3" json:"app_protocol,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -365,6 +370,13 @@ func (x *AppSpec) GetCpuMillicores() int32 {
 		return x.CpuMillicores
 	}
 	return 0
+}
+
+func (x *AppSpec) GetAppProtocol() string {
+	if x != nil {
+		return x.AppProtocol
+	}
+	return ""
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -5040,7 +5052,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xf8\x04\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x9b\x05\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -5062,7 +5074,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\bsidecars\x18\r \x03(\v2 .onebox.faas.vmmd.v1.SidecarSpecR\bsidecars\x12(\n" +
 	"\x10static_egress_ip\x18\x0e \x01(\tR\x0estaticEgressIp\x12,\n" +
 	"\x12startup_deadline_s\x18\x0f \x01(\x05R\x10startupDeadlineS\x12%\n" +
-	"\x0ecpu_millicores\x18\x10 \x01(\x05R\rcpuMillicores\"\x85\x03\n" +
+	"\x0ecpu_millicores\x18\x10 \x01(\x05R\rcpuMillicores\x12!\n" +
+	"\fapp_protocol\x18\x11 \x01(\tR\vappProtocol\"\x85\x03\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
