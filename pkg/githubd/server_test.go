@@ -271,6 +271,33 @@ func TestServerWebhook_IgnoredResponseShape(t *testing.T) {
 	_ = strings.HasPrefix // keep imports stable for downstream slices
 }
 
+func TestServerWebhook_ReleaseTagRejectionResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tagErr error
+		reason string
+	}{
+		{name: "invalid", tagErr: releaseTagRejection{reason: releaseTagReasonInvalid, tag: "latest"}, reason: releaseTagReasonInvalid},
+		{name: "moved", tagErr: releaseTagRejection{reason: releaseTagReasonMoved, tag: "v1.2.3"}, reason: releaseTagReasonMoved},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			s := &Server{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			s.writeWebhookResult(rr, reconcile.Result{}, tc.tagErr, func(error) {})
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rr.Code)
+			}
+			var got map[string]string
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if got["status"] != "ignored" || got["reason"] != tc.reason {
+				t.Fatalf("response = %v, want ignored/%s", got, tc.reason)
+			}
+		})
+	}
+}
+
 // scrape returns the /metrics body served by s.Ops (the per-test
 // registry, prefix "githubd_test"). Mirrors the scrapeMetrics helper in
 // pkg/builderd/builderd_test.go.

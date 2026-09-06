@@ -287,7 +287,7 @@ func TestHandlePushRequest_TagDeploysAgainstDefaultBranch(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
 	svc := newServiceForRig(t, rig)
-	body := []byte(`{"ref":"refs/tags/v1.0","after":"x","repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"pusher":{"name":"alice"}}`)
+	body := []byte(`{"ref":"refs/tags/v1.0.0","before":"0000000000000000000000000000000000000000","after":"x","created":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"pusher":{"name":"alice"}}`)
 	result, err := svc.HandlePushRequest(context.Background(), body)
 	if err != nil {
 		t.Fatalf("tag push: %v", err)
@@ -305,7 +305,7 @@ func TestHandlePushRequest_TagUsesConfiguredProductionBranch(t *testing.T) {
 	// configured production branch instead of silently ignoring the
 	// release tag.
 	svc.Bindings = &stubBindings{byRepo: map[string]state.GitHubBinding{}}
-	body := []byte(`{"ref":"refs/tags/v1.1","after":"x","repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
+	body := []byte(`{"ref":"refs/tags/v1.1.0","before":"0000000000000000000000000000000000000000","after":"x","created":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
 	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
 		t.Fatalf("tag push on configured branch: %v", err)
 	}
@@ -319,6 +319,54 @@ func TestHandlePushRequest_TagDeletionIsIgnored(t *testing.T) {
 	_, err := svc.HandlePushRequest(context.Background(), body)
 	if !IsNoBinding(err) {
 		t.Errorf("tag deletion → err = %v, want ErrNoBinding", err)
+	}
+}
+
+func TestValidateReleaseTag(t *testing.T) {
+	const zero = "0000000000000000000000000000000000000000"
+	tests := []struct {
+		name    string
+		tag     string
+		before  string
+		created bool
+		forced  bool
+		reason  string
+	}{
+		{name: "stable", tag: "v1.2.3", before: zero, created: true},
+		{name: "prerelease", tag: "v2.0.0-rc.1", before: zero, created: true},
+		{name: "build metadata", tag: "v2.0.0+build.7", before: zero, created: true},
+		{name: "missing patch", tag: "v1.2", before: zero, created: true, reason: releaseTagReasonInvalid},
+		{name: "missing v prefix", tag: "1.2.3", before: zero, created: true, reason: releaseTagReasonInvalid},
+		{name: "leading zero", tag: "v01.2.3", before: zero, created: true, reason: releaseTagReasonInvalid},
+		{name: "moved tag", tag: "v1.2.3", before: "0123456789abcdef0123456789abcdef01234567", reason: releaseTagReasonMoved},
+		{name: "missing created flag", tag: "v1.2.3", before: zero, reason: releaseTagReasonMoved},
+		{name: "forced tag", tag: "v1.2.3", before: zero, created: true, forced: true, reason: releaseTagReasonMoved},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateReleaseTag(tt.tag, tt.before, tt.created, tt.forced)
+			if tt.reason == "" {
+				if err != nil {
+					t.Fatalf("validateReleaseTag() = %v, want nil", err)
+				}
+				return
+			}
+			if !isReleaseTagRejected(err) || releaseTagRejectReason(err) != tt.reason {
+				t.Fatalf("validateReleaseTag() = %v, want rejection %q", err, tt.reason)
+			}
+		})
+	}
+}
+
+func TestHandlePushRequest_MovedTagIsIgnoredBeforeBindingLookup(t *testing.T) {
+	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// A moved tag must be rejected before any binding or source dependency
+	// is touched. Leaving those dependencies unset makes that ordering
+	// observable: the result must still be the typed policy rejection.
+	body := []byte(`{"ref":"refs/tags/v1.2.3","before":"0123456789abcdef0123456789abcdef01234567","after":"fedcba98","created":false,"forced":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42}}`)
+	_, err := svc.HandlePushRequest(context.Background(), body)
+	if !isReleaseTagRejected(err) || releaseTagRejectReason(err) != releaseTagReasonMoved {
+		t.Fatalf("HandlePushRequest() = %v, want moved-tag rejection", err)
 	}
 }
 

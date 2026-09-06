@@ -295,10 +295,18 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	branch := refToBranch(ev.Ref)
 	isTag := false
 	if branch == "" {
-		if refToTag(ev.Ref) == "" {
+		tag := refToTag(ev.Ref)
+		if tag == "" {
 			// Pull requests and other Git refs are not production
 			// deployment triggers.
 			return reconcile.Result{}, ErrNoBinding
+		}
+		if err := validateReleaseTag(tag, ev.Before, ev.Created, ev.Forced); err != nil {
+			// Release tags are a one-way promotion boundary. Reject
+			// malformed tags and moved tags before binding lookup,
+			// source fetch, or reconcile so an ignored delivery cannot
+			// cause any customer-side work.
+			return reconcile.Result{}, err
 		}
 		// A tag has no branch binding of its own. Resolve it against
 		// the repository's default branch; the normal reconcile guard
