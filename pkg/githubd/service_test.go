@@ -283,13 +283,53 @@ func TestHandlePushRequest_ReconcileErrorBubbles(t *testing.T) {
 	}
 }
 
-func TestHandlePushRequest_TagIsIgnored(t *testing.T) {
+func TestHandlePushRequest_TagDeploysAgainstDefaultBranch(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
 	svc := newServiceForRig(t, rig)
-	body := []byte(`{"ref":"refs/tags/v1.0","after":"x","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	body := []byte(`{"ref":"refs/tags/v1.0","after":"x","repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"pusher":{"name":"alice"}}`)
+	result, err := svc.HandlePushRequest(context.Background(), body)
+	if err != nil {
+		t.Fatalf("tag push: %v", err)
+	}
+	if len(result.Added) != 1 {
+		t.Errorf("tag result.Added = %d, want 1", len(result.Added))
+	}
+}
+
+func TestHandlePushRequest_TagUsesConfiguredProductionBranch(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "release")
+	svc := newServiceForRig(t, rig)
+	// No default-branch binding: the project row must supply the
+	// configured production branch instead of silently ignoring the
+	// release tag.
+	svc.Bindings = &stubBindings{byRepo: map[string]state.GitHubBinding{}}
+	body := []byte(`{"ref":"refs/tags/v1.1","after":"x","repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
+	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
+		t.Fatalf("tag push on configured branch: %v", err)
+	}
+}
+
+func TestHandlePushRequest_TagDeletionIsIgnored(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	body := []byte(`{"ref":"refs/tags/v1.0","after":"0000000000000000000000000000000000000000","deleted":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"pusher":{"name":"alice"}}`)
 	_, err := svc.HandlePushRequest(context.Background(), body)
 	if !IsNoBinding(err) {
-		t.Errorf("tag push → err = %v, want ErrNoBinding", err)
+		t.Errorf("tag deletion → err = %v, want ErrNoBinding", err)
+	}
+}
+
+func TestHandlePushRequest_BranchDeletionIsIgnored(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	body := []byte(`{"ref":"refs/heads/main","after":"0000000000000000000000000000000000000000","deleted":true,"repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	_, err := svc.HandlePushRequest(context.Background(), body)
+	if !IsNoBinding(err) {
+		t.Errorf("branch deletion → err = %v, want ErrNoBinding", err)
 	}
 }
 

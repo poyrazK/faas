@@ -107,6 +107,17 @@ See [`docs/source-ref.md`](../source-ref.md) for the
 `--repo OWNER/NAME --ref $SHA` shape and the install-token trust
 boundary.
 
+## GitHub release tags
+
+After an app is connected to GitHub, a push to the configured production
+branch still deploys as before. A newly-created or updated Git tag also
+deploys through GitHub's normal `push` webhook: githubd uses the tag's
+immutable `after` SHA and applies the repository's production binding.
+The repository default branch is the initial lookup key, with the
+project's configured production branch as the authoritative fallback.
+Tag deletion webhooks are ignored, so deleting a release tag cannot
+enqueue an all-zero commit.
+
 ## Reproducibility note
 
 Three flavors of "what was deployed", pinned differently:

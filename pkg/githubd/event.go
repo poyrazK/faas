@@ -144,6 +144,7 @@ type PushEvent struct {
 	Ref          string              `json:"ref"`        // "refs/heads/main"
 	Before       string              `json:"before"`     // commit SHA the branch was at before the push; empty for the first push on a branch (0000...0000)
 	After        string              `json:"after"`      // commit SHA the head now points at
+	Deleted      bool                `json:"deleted"`    // true when GitHub deletes a branch or tag
 	Repository   PushRepository      `json:"repository"` // repo identity
 	Installation InstallationPayload `json:"installation"`
 	Pusher       PushPusher          `json:"pusher"` // optional audit
@@ -156,6 +157,10 @@ type PushRepository struct {
 	FullName string `json:"full_name"`
 	Name     string `json:"name"`
 	HTMLURL  string `json:"html_url"`
+	// DefaultBranch is the binding key used for tag deployments. A tag
+	// has no branch of its own, so githubd resolves it against the
+	// repository's configured default production branch.
+	DefaultBranch string `json:"default_branch"`
 }
 
 // PushPusher is the actor who triggered the push. Captured for the

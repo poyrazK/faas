@@ -286,17 +286,53 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	branch := refToBranch(ev.Ref)
-	if branch == "" {
-		// Non-branch ref (tag push, etc.) — slice 7 only handles
-		// branch pushes. Tag pushes arrive in a future slice.
+	if ev.Deleted {
+		// GitHub represents a deleted branch or tag with an all-zero
+		// `after` SHA. Never feed that sentinel into source fetch or
+		// reconcile; deletion is not a deploy trigger.
 		return reconcile.Result{}, ErrNoBinding
+	}
+	branch := refToBranch(ev.Ref)
+	isTag := false
+	if branch == "" {
+		if refToTag(ev.Ref) == "" {
+			// Pull requests and other Git refs are not production
+			// deployment triggers.
+			return reconcile.Result{}, ErrNoBinding
+		}
+		// A tag has no branch binding of its own. Resolve it against
+		// the repository's default branch; the normal reconcile guard
+		// still verifies that this is the configured production branch.
+		branch = ev.Repository.DefaultBranch
+		if branch == "" {
+			branch = defaultProductionBranch
+		}
+		isTag = true
 	}
 
 	// 1. Resolve the (repo, branch) binding. An empty BindingID
 	// is the canonical "no row" shape; ErrNoBinding covers both
 	// "store said not-found" and "store returned an empty row".
 	binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, branch, ev.Installation.ID)
+	if (err != nil || binding.BindingID == "") && isTag && s.Reconcile != nil && s.Reconcile.Store != nil {
+		// A repository may intentionally deploy from a non-default
+		// production branch. The project row is the authoritative
+		// (installation, repository, production_branch) mapping, so
+		// use it as a tag fallback when the default-branch binding
+		// lookup cannot match.
+		project, projectErr := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		if projectErr == nil && project.AccountID != "" && project.ProductionBranch != "" {
+			binding = state.GitHubBinding{
+				BindingID:        "project-" + project.ID,
+				AccountID:        project.AccountID,
+				InstallID:        project.InstallID,
+				RepoFullName:     project.RepoFullName,
+				ProductionBranch: project.ProductionBranch,
+			}
+			branch = project.ProductionBranch
+			err = nil
+		}
+	}
 	if err != nil {
 		return reconcile.Result{}, ErrNoBinding
 	}
@@ -548,6 +584,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 
 	s.Log.Info("githubd push → reconcile",
 		"repo", ev.Repository.FullName, "branch", branch,
+		"tag", isTag,
 		"sha", ev.After, "binding", binding.BindingID,
 		"added", len(result.Added), "changed", len(result.Changed),
 		"removed", len(result.Removed),
@@ -1321,14 +1358,25 @@ func IsIgnored(err error) bool {
 }
 
 // refToBranch converts "refs/heads/main" → "main". Returns "" for
-// refs that aren't a branch (e.g. refs/tags/v1.0 — slice 7 only
-// handles branch pushes; tag pushes arrive in a future slice).
+// refs that aren't a branch.
 func refToBranch(ref string) string {
 	const prefix = "refs/heads/"
 	if len(ref) <= len(prefix) {
 		return ""
 	}
 	if ref[:len(prefix)] != prefix {
+		return ""
+	}
+	return ref[len(prefix):]
+}
+
+// refToTag converts "refs/tags/v1.0.0" → "v1.0.0". GitHub sends
+// tag creation, update, and deletion through the same push webhook
+// shape as branch pushes. The caller decides whether a tag event is
+// deployable; an empty result means the ref is not a tag.
+func refToTag(ref string) string {
+	const prefix = "refs/tags/"
+	if len(ref) <= len(prefix) || !strings.HasPrefix(ref, prefix) {
 		return ""
 	}
 	return ref[len(prefix):]
