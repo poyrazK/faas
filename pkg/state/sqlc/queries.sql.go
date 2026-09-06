@@ -7530,6 +7530,30 @@ func (q *Queries) SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 p
 	return items, nil
 }
 
+const snapshotStorageKeys = `-- name: SnapshotStorageKeys :many
+SELECT storage_key FROM snapshots WHERE deployment_id = $1
+`
+
+func (q *Queries) SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error) {
+	rows, err := db.Query(ctx, snapshotStorageKeys, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var storage_key string
+		if err := rows.Scan(&storage_key); err != nil {
+			return nil, err
+		}
+		items = append(items, storage_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const softDeleteOrg = `-- name: SoftDeleteOrg :exec
 update orgs set deleted_pending = true, status = 'deleted_pending', updated_at = now() where id = $1
 `

@@ -1,5 +1,7 @@
 package state
 
+import "strings"
+
 // StorageBackend key shape for snapshot mem blobs (issue #96, ADR-025
 // axis 2). Lives in pkg/state because state owns the snapshots table's
 // storage_key column; sched/paths.go's SnapshotMemKey wraps this for
@@ -82,4 +84,36 @@ func WarmSnapMemKey(deploymentID string) string {
 // single wildcard GC predicate covers both blobs.
 func WarmSnapVMStateKey(deploymentID string) string {
 	return "snap/" + deploymentID + "/warm/vmstate"
+}
+
+// SnapshotCaptureMemKey gives a capture its own immutable object namespace.
+// The row is published only after both objects have been written successfully.
+func SnapshotCaptureMemKey(deploymentID, tier, captureID string) string {
+	prefix := "snap/" + deploymentID + "/"
+	if tier == SnapshotTierWarm {
+		prefix += "warm/"
+	}
+	return prefix + "captures/" + captureID + "/mem"
+}
+
+// SnapshotVMStateKey derives the paired device state from the memory key.
+// Legacy rows with noncanonical keys retain the deployment/tier fallback.
+func SnapshotVMStateKey(s Snapshot) string {
+	if strings.HasPrefix(s.StorageKey, "snap/") && strings.HasSuffix(s.StorageKey, "/mem") {
+		return strings.TrimSuffix(s.StorageKey, "/mem") + "/vmstate"
+	}
+	if s.Tier == SnapshotTierWarm {
+		return WarmSnapVMStateKey(s.DeploymentID)
+	}
+	return SnapVMStateKey(s.DeploymentID)
+}
+
+// IsSnapshotCaptureKey distinguishes immutable capture objects from legacy
+// mutable deployment keys. Cleanup must never remove a legacy shared pair.
+func IsSnapshotCaptureKey(key string) bool {
+	parts := strings.Split(key, "/")
+	if len(parts) == 6 && parts[2] == "warm" {
+		parts = append(parts[:2:2], parts[3:]...)
+	}
+	return len(parts) == 5 && parts[0] == "snap" && parts[1] != "" && parts[2] == "captures" && parts[3] != "" && parts[4] == "mem"
 }

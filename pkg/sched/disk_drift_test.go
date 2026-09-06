@@ -10,6 +10,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -819,5 +821,44 @@ func seedDriftRow(ctx context.Context, t *testing.T, store *state.MemStore, depI
 	})
 	if err != nil {
 		t.Fatalf("create snapshot: %v", err)
+	}
+}
+
+func TestDiskDriftSnapshotCaptureDirectory(t *testing.T) {
+	for _, useBackend := range []bool{false, true} {
+		t.Run(fmt.Sprint(useBackend), func(t *testing.T) {
+			f := newDriftFixture(t)
+			defer f.cleanup()
+			if useBackend {
+				root := t.TempDir()
+				be, err := storage.NewLocalStorageBackend(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.root = filepath.Join(root, "snap")
+				SetSnapDirForTesting(f.root)
+				f.dd.WithStorage(be)
+			}
+			f.seedSnapshot(t, "generation-dep", 10, 20)
+			old, err := f.store.LatestSnapshot(context.Background(), "generation-dep")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.store.MarkSnapshotStale(context.Background(), old.ID); err != nil {
+				t.Fatal(err)
+			}
+			key := state.SnapshotCaptureMemKey("generation-dep", "init", "first")
+			old.ID = ""
+			old.StorageKey = key
+			if _, err := f.store.CreateSnapshot(context.Background(), old); err != nil {
+				t.Fatal(err)
+			}
+			directory := strings.TrimSuffix(strings.TrimPrefix(key, "snap/"), "/mem")
+			f.writeFile(t, directory, "mem", make([]byte, 10))
+			f.writeFile(t, directory, "vmstate", make([]byte, 20))
+			if drift, err := f.dd.Tick(context.Background()); err != nil || drift != 0 {
+				t.Fatalf("capture drift=%d err=%v", drift, err)
+			}
+		})
 	}
 }

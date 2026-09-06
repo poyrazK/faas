@@ -28,6 +28,7 @@ import (
 // SnapVMStateKey. Per-app ext4 is always deleted (it's shared across
 // tiers for a given (app, deployment) pair — see sched.AppLayerKey).
 type deleteTarget struct {
+	StorageKey   string
 	ID           string
 	DeploymentID string
 	AppSlug      string
@@ -92,6 +93,7 @@ func perAppKeepTierFloor(rows []state.SnapshotForGC) []deleteTarget {
 				drop = append(drop, deleteTarget{
 					ID:           r.ID,
 					DeploymentID: r.DeploymentID,
+					StorageKey:   r.StorageKey,
 					// B1.1: AppSlug is on SnapshotForGC (issue #195);
 					// no per-eviction re-resolve needed.
 					AppSlug: r.AppSlug,
@@ -220,6 +222,7 @@ func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
 	return []deleteTarget{{
 		ID:           oldest.ID,
 		DeploymentID: oldest.DeploymentID,
+		StorageKey:   oldest.StorageKey,
 		AppSlug:      oldest.AppSlug,
 		Tier:         oldestTier,
 	}}
