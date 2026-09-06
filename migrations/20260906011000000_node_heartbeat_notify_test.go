@@ -5,9 +5,11 @@ package migrations_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
@@ -81,6 +83,31 @@ func TestComputeNodeNotify_HeartbeatKeepsClients(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := pool.Exec(ctx, tc.sql, nodeID); err != nil {
+				t.Fatal(err)
+			}
+			check(t, tc.want)
+		})
+	}
+	// Execute the actual down/up SQL against the migrated schema to ensure
+	// rollback restores the old contract and reapplication is safe.
+	source, err := migrations.FS.ReadFile("20260906011000000_node_heartbeat_notify.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, down, ok := strings.Cut(string(source), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing down migration")
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+		want int
+	}{{"rollback", down, 1}, {"reapply", up, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, tc.sql); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, "UPDATE compute_nodes SET last_heartbeat_at = now() WHERE id = $1", nodeID); err != nil {
 				t.Fatal(err)
 			}
 			check(t, tc.want)
