@@ -128,3 +128,16 @@ groups:
           summary: "Data-placement probe loop silent for 30m"
           description: "Zero ok-probes landed over 30m. The probe loop has gone silent — typically a stalled meterd poller, a missing upstream manifest, or a complete outbound network partition. Per-(kind, region) localization is not possible here because the counter is fleet-wide (the canonical cardinality-bounded shape — pkg/wire/metrics.go:2554). To localize, cross-reference `FaasUpstreamRttDegraded` for the per-(kind, region) connectivity view (the histogram carries the labels the counter doesn't). This is informational (severity info) until the silent condition chains with `FaasUpstreamRttDegraded`; at that point the degradation is connectivity-bound rather than poller-bound. Runbook at docs/runbooks/FaasUpstreamProbeOutcomeSilent.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUpstreamProbeOutcomeSilent.md"
+
+      - alert: FaasUpstreamClassifierFailure
+        expr: |
+          sum by (reason) (rate(apid_data_upstream_classifier_failures_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: apid
+          family: data_placement
+        annotations:
+          summary: "Data-placement env classifier failures sustained for 10m (reason={{ $labels.reason }})"
+          description: "apid is failing to derive data_upstreams hints after environment mutations. Customer env writes still return success, but connection-aware placement may use its legacy fallback. Inspect the data_upstream.classifier_failed audit events and remediate the reason-specific host configuration or apid/Postgres failure."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUpstreamClassifierFailure.md"

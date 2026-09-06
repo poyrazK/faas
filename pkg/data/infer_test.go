@@ -281,7 +281,7 @@ func TestClassifier_DefaultPortStamps(t *testing.T) {
 // empty), but it MUST surface a row with HostHashOK=false so the
 // apid handler (handlers_env.go::runEnvClassifier) can route the
 // failure through the silent-skip branch and emit the SOC 2
-// CC7.2 env.classifier_failed audit row (issue #957).
+// CC7.2 data_upstream.classifier_failed audit row (issue #957).
 //
 // Pre-#957 behaviour was: classifyOne returned nil, result.Rows
 // stayed empty, result.Skipped was incremented, and the failure

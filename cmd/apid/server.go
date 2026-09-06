@@ -606,7 +606,7 @@ func boolJSON(value bool) []byte {
 // falls through to the canonical secretbox.HashHost (cmd/apid/
 // handlers_env.go). The seam exists so handlers_env_classifier
 // _audit_test.go can force the silent-skip branch
-// (host_hash_failed) and assert that env.classifier_failed
+// (host_hash_failed) and assert that data_upstream.classifier_failed
 // fires, without touching /etc/faas/host_hash_salt on disk.
 func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server {
 	s.hostHashFunc = fn

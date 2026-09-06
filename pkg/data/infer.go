@@ -274,7 +274,7 @@ func (c *Classifier) classifyOne(envKey, kind, host string, port int, scope stri
 		// handler (handlers_env.go::runEnvClassifier)
 		// inspects HostHashOK and surfaces the typed
 		// errClassifierHostHashFailed sentinel — which
-		// setEnv maps to an env.classifier_failed audit
+		// setEnv maps to an data_upstream.classifier_failed audit
 		// row (issue #957, SOC 2 CC7.2). Returning nil
 		// here would skip the row silently and lose the
 		// audit trail. Host stays empty (no plaintext

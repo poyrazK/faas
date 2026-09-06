@@ -657,6 +657,12 @@ type OpsMetrics struct {
 	// dataUpstreamProbeDuration (ADR-098 PR-C) — wall-clock
 	// duration of each probe (TCP+TLS handshake).
 	dataUpstreamProbeDuration prometheus.Histogram
+	// dataUpstreamClassifierFailures (issue #957) — counter for
+	// apid env-classifier failures after the env row has already been
+	// persisted. The reason vocabulary is intentionally closed so a
+	// malformed customer value cannot create an unbounded label set.
+	// Only apid increments this shared-registry metric.
+	dataUpstreamClassifierFailures *prometheus.CounterVec
 	// accountLabels: the bounded admission set shared by the
 	// account_id-labelled metrics above. See accountLabelSet docs
 	// for the fixed-capacity, non-evicting contract — an evicting
@@ -3562,9 +3568,16 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help:    "Per-probe wall-clock duration (TCP+TLS handshake). Buckets cover the 1ms..3s range — a healthy TLS handshake completes in <100ms; the 1s+ tail catches TCP retries. §12 data-placement panel.",
 		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 3},
 	})
-	commonCollectors = append(commonCollectors, dataUpstreamRTT, dataUpstreamProbes, dataUpstreamProbeDuration)
+	dataUpstreamClassifierFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_data_upstream_classifier_failures_total",
+		Help: "Env-classifier failures after the env row was persisted (issue #957), labelled by reason ∈ {salt_missing, port_out_of_range, unknown_kind, internal_error}. Only apid increments this counter; the closed vocabulary keeps the metric cardinality bounded.",
+	}, []string{"reason"})
+	commonCollectors = append(commonCollectors, dataUpstreamRTT, dataUpstreamProbes, dataUpstreamProbeDuration, dataUpstreamClassifierFailures)
 	for _, o := range []string{"ok", "timeout", "refused", "tls_handshake", "dns", "unreachable"} {
 		dataUpstreamProbes.WithLabelValues(o)
+	}
+	for _, reason := range []string{"salt_missing", "port_out_of_range", "unknown_kind", "internal_error"} {
+		dataUpstreamClassifierFailures.WithLabelValues(reason)
 	}
 	// Pre-instantiate the outcome set so /metrics surfaces the
 	// rows from a fresh process (Prometheus skips zero-valued
@@ -4426,6 +4439,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dataUpstreamRTT:                            dataUpstreamRTT,
 		dataUpstreamProbes:                         dataUpstreamProbes,
 		dataUpstreamProbeDuration:                  dataUpstreamProbeDuration,
+		dataUpstreamClassifierFailures:             dataUpstreamClassifierFailures,
 		accountLabels:                              newAccountLabelSet(maxAccountLabelValues),
 		failedLoginTotal:                           failedLoginTotal,
 		failedLoginDropped:                         failedLoginDropped,
@@ -6430,6 +6444,18 @@ func (m *OpsMetrics) MetricPrefix() string {
 		return ""
 	}
 	return m.metricPrefix
+}
+
+// ObserveDataUpstreamClassifierFailure records one env-classifier failure.
+// reason must come from the closed set {salt_missing, port_out_of_range,
+// unknown_kind, internal_error}; callers should normalize their typed error
+// before calling this method. Nil receivers are safe so apid's optional
+// metrics wiring does not change the customer-facing partial-success path.
+func (m *OpsMetrics) ObserveDataUpstreamClassifierFailure(reason string) {
+	if m == nil || m.dataUpstreamClassifierFailures == nil {
+		return
+	}
+	m.dataUpstreamClassifierFailures.WithLabelValues(reason).Inc()
 }
 
 // Observe records one operation outcome. err == nil codes OK; any error
