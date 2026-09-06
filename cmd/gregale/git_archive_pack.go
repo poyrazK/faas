@@ -241,6 +241,54 @@ func writeGitArchiveBuildOnlyFiles(tw *tar.Writer, files map[string][]byte, exis
 	return len(virtual), nil
 }
 
+func gitArchiveGoBuildOnlyFiles(srcPath, sourceRoot string, deployShape shape, runtime string) (map[string][]byte, error) {
+	if deployShape != shapeFunction || (runtime != runtimeGo124 && runtime != "go124-alpine") {
+		return nil, nil
+	}
+	modulePath := "go.mod"
+	if sourceRoot != "" {
+		modulePath = strings.TrimSuffix(filepath.ToSlash(sourceRoot), "/") + "/go.mod"
+	}
+	present, err := gitArchiveHasRegularFile(srcPath, modulePath)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		return nil, nil
+	}
+	return map[string][]byte{modulePath: []byte(functionGoBuildModule)}, nil
+}
+
+func gitArchiveHasRegularFile(srcPath, wanted string) (bool, error) {
+	if !gitArchiveEntrySafe(wanted) || strings.HasSuffix(wanted, "/") {
+		return false, fmt.Errorf("invalid committed archive path %q", wanted)
+	}
+	f, err := openCustomerFile(srcPath)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, nextErr := tr.Next()
+		if errors.Is(nextErr, io.EOF) {
+			return false, nil
+		}
+		if nextErr != nil {
+			return false, nextErr
+		}
+		name := strings.TrimPrefix(hdr.Name, "./")
+		if name == wanted && hdr.FileInfo().Mode().IsRegular() {
+			return true, nil
+		}
+	}
+}
+
 // detectGitArchiveShape applies the zero-config source-root detector to the
 // committed archive. The default Git-origin path must classify the exact HEAD
 // bytes it uploads; consulting the working tree would let dirty files change

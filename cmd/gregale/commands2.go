@@ -1635,15 +1635,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					if !jsonOutput {
 						PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", displayRuntime, displayHandler)
 					}
-					if rt == runtimeGo124 {
-						modulePath := "go.mod"
-						if sourceRoot != "" {
-							modulePath = strings.TrimSuffix(filepath.ToSlash(sourceRoot), "/") + "/go.mod"
-						}
-						gitArchiveBuildOnlyFiles = map[string][]byte{modulePath: []byte(functionGoBuildModule)}
-					}
 				}
 			}
+			buildOnlyFiles, buildOnlyErr := gitArchiveGoBuildOnlyFiles(
+				gitArchivePath, sourceRoot, resolvedShape, *runtime,
+			)
+			if buildOnlyErr != nil {
+				return printErr("Could not prepare committed deploy source", buildOnlyErr)
+			}
+			gitArchiveBuildOnlyFiles = buildOnlyFiles
 			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles)
 			if packErr != nil {
 				return printErr("Could not pack committed HEAD", packErr)

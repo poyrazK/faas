@@ -85,6 +85,40 @@ func TestGitArchiveGoFunctionDetectionAndBuildModule(t *testing.T) {
 	}
 }
 
+func TestGitArchiveGoBuildModuleForDetectedAndExplicitFunctions(t *testing.T) {
+	withoutModule := writeGitArchiveFixture(t, map[string]string{
+		"services/worker/handler.go": "package main\n",
+	})
+	withModule := writeGitArchiveFixture(t, map[string]string{
+		"services/worker/handler.go": "package main\n",
+		"services/worker/go.mod":     "module customer\n",
+	})
+	for _, tc := range []struct {
+		name    string
+		archive string
+		shape   shape
+		runtime string
+		want    bool
+	}{
+		{"detected Go", withoutModule, shapeFunction, runtimeGo124, true},
+		{"explicit Go Alpine", withoutModule, shapeFunction, "go124-alpine", true},
+		{"committed module", withModule, shapeFunction, runtimeGo124, false},
+		{"app", withoutModule, shapeApp, runtimeGo124, false},
+		{"Node function", withoutModule, shapeFunction, runtimeNode22, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files, err := gitArchiveGoBuildOnlyFiles(tc.archive, "services/worker", tc.shape, tc.runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, ok := files["services/worker/go.mod"]
+			if ok != tc.want {
+				t.Fatalf("generated module present=%v, want %v: %v", ok, tc.want, files)
+			}
+		})
+	}
+}
+
 func writeGitArchiveFixture(t *testing.T, files map[string]string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "input.tar.gz")
