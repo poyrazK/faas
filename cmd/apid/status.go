@@ -70,6 +70,17 @@ func (s *server) statusHandler(w http.ResponseWriter, r *http.Request) {
 // is configured via WithStatusCache (see server.go).
 func (s *server) statusJSONHandler(w http.ResponseWriter, r *http.Request) {
 	snap, err := s.statusCache.Get(r.Context())
+	if err == nil {
+		var body []byte
+		body, err = json.Marshal(snap)
+		if err == nil {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			_, _ = w.Write(append(body, '\n'))
+			return
+		}
+		err = fmt.Errorf("encode status snapshot: %w", err)
+	}
 	if err != nil {
 		// Even on error, return 200 with the last cached snapshot so a
 		// transient Prometheus hiccup doesn't make the status page 5xx.
@@ -79,12 +90,10 @@ func (s *server) statusJSONHandler(w http.ResponseWriter, r *http.Request) {
 			AsOf:   time.Now().UTC(),
 			Source: appmetrics.SourceDegradedPrefix + err.Error(),
 		}
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		writeJSON(w, http.StatusOK, fallback)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	_ = json.NewEncoder(w).Encode(snap)
 }
 
 // statusCache is a 30s in-process cache around the Prometheus query.
@@ -173,7 +182,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	// 1. API availability over last 5m: 2xx / total.
 	availQ := `sum(rate(gateway_requests_total{code=~"2.."}[5m])) / sum(rate(gateway_requests_total[5m])) * 100`
 	if pct, err := c.client.QueryScalar(ctx, availQ); err == nil {
-		snap.APIAvailabilityPct = pct
+		snap.APIAvailabilityPct = appmetrics.SafePercent(pct)
 		okCount++
 	} else {
 		c.log.Warn("status: api_availability query failed", "err", err)
@@ -185,7 +194,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	// 2. Wake p95 (seconds → ms).
 	wakeQ := `histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000`
 	if ms, err := c.client.QueryScalar(ctx, wakeQ); err == nil {
-		snap.WakeP95MS = ms
+		snap.WakeP95MS = appmetrics.SafeFloat(ms)
 		okCount++
 	} else {
 		c.log.Warn("status: wake_p95 query failed", "err", err)
@@ -201,7 +210,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	// measured a different thing entirely (wake success, not build).
 	buildQ := `sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) / sum(rate(builderd_ops_total{op="build"}[5m])) * 100`
 	if pct, err := c.client.QueryScalar(ctx, buildQ); err == nil {
-		snap.BuildSuccessPct = pct
+		snap.BuildSuccessPct = appmetrics.SafePercent(pct)
 		okCount++
 	} else {
 		c.log.Warn("status: build_success query failed", "err", err)
