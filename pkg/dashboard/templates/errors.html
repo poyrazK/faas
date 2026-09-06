@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    h2 { border-top: 1px solid #eee; padding-top: 1rem; margin-top: 1.5rem; }
+    .muted { color: #6b7280; }
+    .notice { padding: 0.55rem 0.75rem; border-radius: 4px; background: #fef3c7; color: #92400e; }
+    .error { padding: 0.55rem 0.75rem; border-radius: 4px; background: #fee2e2; color: #991b1b; }
+    .toolbar { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; padding: 0.75rem; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; background: #e5e7eb; color: #374151; }
+    .badge.open { background: #dbeafe; color: #1e40af; }
+    .sample { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .detail { padding: 0.75rem; border: 1px solid #e5e7eb; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/pricing">Pricing</a>
+      <a href="/dashboard/invoices">Invoices</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p class="muted"><a href="/dashboard/apps/{{.Data.AppSlug}}">Apps / {{.Data.AppSlug}}</a></p>
+    <h1>Errors: <code>{{.Data.AppSlug}}</code></h1>
+    <p>Grouped application errors from the last request window. Messages and headers are redacted before storage.</p>
+
+    {{if not .Data.PlanAllowed}}
+      <p class="notice">{{.Data.ErrorMessage}} <a href="/dashboard/pricing">View plans →</a></p>
+    {{else}}
+      <div class="toolbar">
+        <strong>Window</strong>
+        <a href="{{.Data.Window24hURL}}">last 24 hours</a>
+        <a href="{{.Data.Window7dURL}}">last 7 days</a>
+        <span class="muted">{{.Data.WindowStart}} → {{.Data.WindowEnd}}</span>
+        {{if .Data.WindowClamped}}<span class="notice">Window reduced to your plan's retention limit.</span>{{end}}
+      </div>
+      {{if .Data.ErrorMessage}}<p class="error">{{.Data.ErrorMessage}}</p>{{end}}
+
+      <h2>Grouped errors</h2>
+      {{if .Data.Items}}
+        <table aria-label="Grouped application errors">
+          <thead><tr><th>Error</th><th>Route</th><th>Status</th><th>Count</th><th>First seen</th><th>Last seen</th><th>Triage</th></tr></thead>
+          <tbody>
+            {{range .Data.Items}}
+              <tr>
+                <td><a href="{{.DetailURL}}"><code>{{.ErrorClass}}</code></a><br><small class="muted">{{.Fingerprint}}</small><br><span class="sample">{{.SampleMessage}}</span></td>
+                <td><code>{{.Route}}</code></td>
+                <td>{{.HTTPStatus}}</td>
+                <td>{{.Count}} issues<br><small class="muted">{{.RequestCount}} requests</small></td>
+                <td>{{.FirstSeenAt}}</td>
+                <td>{{.LastSeenAt}}</td>
+                <td><span class="badge open">{{.TriageState}}</span></td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{if .Data.NextSummaryURL}}<p><a href="{{.Data.NextSummaryURL}}">Next page →</a></p>{{end}}
+      {{else}}
+        <p class="muted">No grouped errors in this window.</p>
+      {{end}}
+
+      {{if .Data.Detail}}
+        <h2 id="detail">Error detail</h2>
+        <div class="detail">
+          <p><a href="{{.Data.SummaryURL}}">← Back to summary</a></p>
+          <p><code>{{.Data.Detail.Fingerprint}}</code> · <code>{{.Data.Detail.ErrorClass}}</code> · <code>{{.Data.Detail.Route}}</code> · HTTP {{.Data.Detail.HTTPStatus}} · <span class="badge open">{{.Data.Detail.TriageState}}</span></p>
+          {{if .Data.Detail.Sample}}
+            <h3>First occurrence</h3>
+            <p><code>{{.Data.Detail.Sample.ReceivedAt}}</code> · request <code>{{.Data.Detail.Sample.RequestID}}</code></p>
+            <p class="sample">{{.Data.Detail.Sample.SampleMessage}}</p>
+            {{if .Data.Detail.Sample.HeadersSample}}
+              <h4>Redacted headers</h4>
+              <table aria-label="Redacted headers"><tbody>{{range $name, $value := .Data.Detail.Sample.HeadersSample}}<tr><td><code>{{$name}}</code></td><td><code>{{$value}}</code></td></tr>{{end}}</tbody></table>
+            {{else}}<p class="muted">No headers captured.</p>{{end}}
+            {{if .Data.Detail.Sample.RedactionsApplied}}<p class="muted">Redactions: {{range .Data.Detail.Sample.RedactionsApplied}}<code>{{.}}</code> {{end}}</p>{{end}}
+          {{end}}
+          <h3>Recent requests</h3>
+          {{if .Data.Detail.Requests}}
+            <table aria-label="Requests for error fingerprint">
+              <thead><tr><th>Received</th><th>Request</th><th>Route</th><th>Status</th><th>Message</th></tr></thead>
+              <tbody>{{range .Data.Detail.Requests}}<tr><td>{{.ReceivedAt}}</td><td><code>{{.RequestID}}</code></td><td><code>{{.Route}}</code></td><td>{{.HTTPStatus}}</td><td class="sample">{{.SampleMessage}}</td></tr>{{end}}</tbody>
+            </table>
+            {{if .Data.Detail.NextRequestsURL}}<p><a href="{{.Data.Detail.NextRequestsURL}}">Next requests →</a></p>{{end}}
+          {{else}}
+            <p class="muted">No request rows remain for this fingerprint; it may have aged out of retention.</p>
+          {{end}}
+        </div>
+      {{end}}
+    {{end}}
+  </main>
+  <footer>onebox faas · automatic error grouping</footer>
+</body>
+</html>
