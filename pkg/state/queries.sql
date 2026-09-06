@@ -2384,6 +2384,11 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *;
 SELECT * FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4;
 
+-- name: ObjectMultipartList :many
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
+ORDER BY id LIMIT sqlc.arg(page_limit)::int;
+
 -- name: ObjectMultipartClaim :one
 UPDATE object_storage_multipart_uploads SET
 state=sqlc.arg(operation), lease_token=sqlc.arg(token),

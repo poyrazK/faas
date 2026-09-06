@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -254,6 +255,42 @@ func (p *S3) PresignMultipartPart(ctx context.Context, bucket string, r Multipar
 		}
 	}
 	return result, nil
+}
+
+func (p *S3) ListMultipartParts(ctx context.Context, bucket string, r MultipartListPartsRequest) (MultipartPartsPage, error) {
+	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumberMarker < 0 || r.PartNumberMarker > 10000 || r.Limit < 1 || r.Limit > 1000 {
+		return MultipartPartsPage{}, ErrInvalid
+	}
+	out, err := p.client.ListParts(ctx, &s3.ListPartsInput{
+		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),
+		PartNumberMarker: aws.String(strconv.FormatInt(int64(r.PartNumberMarker), 10)), MaxParts: aws.Int32(r.Limit),
+	})
+	if err != nil {
+		return MultipartPartsPage{}, normalize(err)
+	}
+	page := MultipartPartsPage{Items: make([]MultipartPart, 0, len(out.Parts))}
+	for _, part := range out.Parts {
+		partNumber := aws.ToInt32(part.PartNumber)
+		etag := aws.ToString(part.ETag)
+		size := aws.ToInt64(part.Size)
+		if partNumber < 1 || partNumber > 10000 || etag == "" || len(etag) > 256 || size < 1 || size > api.MaxObjectSinglePutBytes {
+			return MultipartPartsPage{}, ErrUnavailable
+		}
+		page.Items = append(page.Items, MultipartPart{
+			PartNumber: partNumber, ETag: etag, SizeBytes: size, LastModified: aws.ToTime(part.LastModified),
+		})
+	}
+	if aws.ToBool(out.IsTruncated) {
+		next, parseErr := strconv.ParseInt(aws.ToString(out.NextPartNumberMarker), 10, 32)
+		if parseErr != nil || next < 1 || next > 10000 {
+			return MultipartPartsPage{}, ErrUnavailable
+		}
+		page.NextPartNumberMarker = int32(next)
+		if page.NextPartNumberMarker <= r.PartNumberMarker {
+			return MultipartPartsPage{}, ErrUnavailable
+		}
+	}
+	return page, nil
 }
 
 func (p *S3) CompleteMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest) error {

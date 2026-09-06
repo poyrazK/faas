@@ -8,8 +8,10 @@ import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
+import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
 import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
+import type { ObjectMultipartUploadList } from '../models/ObjectMultipartUploadList.js';
 import type { ObjectSignedRequest } from '../models/ObjectSignedRequest.js';
 import type { ObjectSignRequest } from '../models/ObjectSignRequest.js';
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
@@ -342,6 +344,49 @@ export class StorageService {
     });
   }
   /**
+   * List durable resumable upload sessions
+   * Requires storage:write or admin and a matching bucket grant. The provider upload ID is never returned. Use cursor to recover sessions after a client loses its local session identifier.
+   * @returns ObjectMultipartUploadList Durable upload sessions; Cache-Control no-store
+   * @returns Problem Invalid cursor, access denial, or backend placement unavailable
+   * @throws ApiError
+   */
+  public static listObjectMultipartUploads({
+    slug,
+    bucket,
+    limit = 100,
+    cursor,
+  }: {
+    /**
+     * App containing the multipart upload target.
+     */
+    slug: string,
+    /**
+     * Identifier of the bucket receiving the multipart object.
+     */
+    bucket: string,
+    /**
+     * Maximum number of sessions to return.
+     */
+    limit?: number,
+    /**
+     * UUID cursor returned by the previous page.
+     */
+    cursor?: string,
+  }): CancelablePromise<ObjectMultipartUploadList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+      },
+    });
+  }
+  /**
    * Start or recover a resumable multipart upload
    * Requires storage:write or admin and a matching bucket grant. Gregale
    * reserves the complete declared size before creating billable provider
@@ -377,6 +422,55 @@ export class StorageService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * List parts confirmed by the storage provider
+   * Requires storage:write or admin and a matching bucket grant. Returns provider-confirmed ETags so an interrupted client can resume completion without exposing provider credentials or upload IDs.
+   * @returns ObjectMultipartPartList Provider-confirmed uploaded parts; Cache-Control no-store
+   * @returns Problem Session missing, not recoverable, access denial, or provider failure
+   * @throws ApiError
+   */
+  public static listObjectMultipartParts({
+    slug,
+    bucket,
+    upload,
+    partNumberMarker,
+    limit = 1000,
+  }: {
+    /**
+     * App authorizing multipart recovery.
+     */
+    slug: string,
+    /**
+     * Bucket containing the provider-confirmed parts.
+     */
+    bucket: string,
+    /**
+     * Gregale session whose provider parts are being recovered.
+     */
+    upload: string,
+    /**
+     * Return parts after this part number.
+     */
+    partNumberMarker?: number,
+    /**
+     * Maximum number of provider parts to return.
+     */
+    limit?: number,
+  }): CancelablePromise<ObjectMultipartPartList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'upload': upload,
+      },
+      query: {
+        'part_number_marker': partNumberMarker,
+        'limit': limit,
+      },
     });
   }
   /**

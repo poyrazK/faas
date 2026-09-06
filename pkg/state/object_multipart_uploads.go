@@ -36,6 +36,7 @@ type ObjectMultipartUpload struct {
 
 type ObjectMultipartUploadStore interface {
 	ReserveObjectMultipartUpload(context.Context, ObjectMultipartUpload, int) (ObjectMultipartUpload, error)
+	ListObjectMultipartUploads(context.Context, string, string, string, int32, string) ([]ObjectMultipartUpload, string, error)
 	GetObjectMultipartUpload(context.Context, string, string, string, string) (ObjectMultipartUpload, error)
 	ClaimObjectMultipartUpload(context.Context, string, string, string, string, string, string, []api.ObjectMultipartCompletedPart, bool) (ObjectMultipartUpload, error)
 	ActivateObjectMultipartUpload(context.Context, string, string, string) error

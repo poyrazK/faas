@@ -241,8 +241,11 @@ export type { ObjectBucketAccessGrant } from './models/ObjectBucketAccessGrant.j
 export type { ObjectBucketAccessGrantList } from './models/ObjectBucketAccessGrantList.js';
 export type { ObjectBucketList } from './models/ObjectBucketList.js';
 export type { ObjectMultipartCompletedPart } from './models/ObjectMultipartCompletedPart.js';
+export type { ObjectMultipartPart } from './models/ObjectMultipartPart.js';
+export type { ObjectMultipartPartList } from './models/ObjectMultipartPartList.js';
 export type { ObjectMultipartPartSignRequest } from './models/ObjectMultipartPartSignRequest.js';
 export type { ObjectMultipartUpload } from './models/ObjectMultipartUpload.js';
+export type { ObjectMultipartUploadList } from './models/ObjectMultipartUploadList.js';
 export type { ObjectSignedRequest } from './models/ObjectSignedRequest.js';
 export type { ObjectSignRequest } from './models/ObjectSignRequest.js';
 export type { ObjectStoragePolicy } from './models/ObjectStoragePolicy.js';

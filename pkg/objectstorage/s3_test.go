@@ -152,6 +152,11 @@ func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
 			completeCalls++
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `<Error><Code>NoSuchUpload</Code></Error>`)
+		case r.Method == http.MethodGet && r.URL.Query().Get("uploadId") == "provider-id":
+			if r.URL.Query().Get("part-number-marker") != "1" || r.URL.Query().Get("max-parts") != "2" {
+				t.Errorf("list parts pagination missing: %s", r.URL.RequestURI())
+			}
+			_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>true</IsTruncated><NextPartNumberMarker>3</NextPartNumberMarker><Part><PartNumber>2</PartNumber><ETag>&quot;etag-2&quot;</ETag><Size>10</Size><LastModified>2026-09-05T00:00:00Z</LastModified></Part></ListPartsResult>`)
 		case r.Method == http.MethodHead:
 			w.Header().Set("Content-Length", "10")
 			w.Header().Set("X-Amz-Meta-Gregale-Upload-Id", "session-1")
@@ -181,6 +186,10 @@ func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
 	partURL, _ := url.Parse(part.URL)
 	if partURL.Query().Get("uploadId") != providerID || partURL.Query().Get("partNumber") != "1" || !strings.Contains(partURL.Query().Get("X-Amz-SignedHeaders"), "content-length") {
 		t.Fatal("invalid part capability", part.URL, part.Headers)
+	}
+	page, err := provider.ListMultipartParts(context.Background(), "gregale-test", MultipartListPartsRequest{Key: "large.bin", ProviderUploadID: providerID, PartNumberMarker: 1, Limit: 2})
+	if err != nil || len(page.Items) != 1 || page.Items[0].PartNumber != 2 || page.Items[0].ETag != `"etag-2"` || page.NextPartNumberMarker != 3 {
+		t.Fatal("list parts", page, err)
 	}
 	if err = provider.CompleteMultipartUpload(context.Background(), "gregale-test", MultipartCompleteRequest{
 		SessionID: "session-1", Key: "large.bin", ProviderUploadID: providerID, SizeBytes: 10,

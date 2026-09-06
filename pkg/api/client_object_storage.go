@@ -101,6 +101,33 @@ func (c *Client) CreateObjectMultipartUpload(ctx context.Context, slug, bucket s
 	return out, err
 }
 
+// ListObjectMultipartUploads lists durable upload sessions so clients can
+// recover an upload after losing their local session identifier.
+func (c *Client) ListObjectMultipartUploads(ctx context.Context, slug, bucket string, limit int, cursor string) (ObjectMultipartUploadList, error) {
+	query := url.Values{"cursor": {cursor}}
+	if limit != 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	var out ObjectMultipartUploadList
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/multipart-uploads?"+query.Encode(), nil, &out)
+	return out, err
+}
+
+// ListObjectMultipartParts lists provider-confirmed parts for a resumable
+// upload so clients can reconstruct the completion request after a retry.
+func (c *Client) ListObjectMultipartParts(ctx context.Context, slug, bucket, upload string, partNumberMarker, limit int) (ObjectMultipartPartList, error) {
+	query := url.Values{}
+	if partNumberMarker != 0 {
+		query.Set("part_number_marker", strconv.Itoa(partNumberMarker))
+	}
+	if limit != 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	var out ObjectMultipartPartList
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/multipart-uploads/"+url.PathEscape(upload)+"/parts?"+query.Encode(), nil, &out)
+	return out, err
+}
+
 func (c *Client) GetObjectMultipartUpload(ctx context.Context, slug, bucket, upload string) (ObjectMultipartUpload, error) {
 	var out ObjectMultipartUpload
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/multipart-uploads/"+url.PathEscape(upload), nil, &out)

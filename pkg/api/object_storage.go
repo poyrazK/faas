@@ -51,6 +51,11 @@ type ObjectMultipartUpload struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type ObjectMultipartUploadList struct {
+	Items      []ObjectMultipartUpload `json:"items"`
+	NextCursor string                  `json:"next_cursor,omitempty"`
+}
+
 type CreateObjectMultipartUploadRequest struct {
 	Key         string `json:"key"`
 	SizeBytes   int64  `json:"size_bytes"`
@@ -64,6 +69,21 @@ type ObjectMultipartPartSignRequest struct {
 type ObjectMultipartCompletedPart struct {
 	PartNumber int32  `json:"part_number"`
 	ETag       string `json:"etag"`
+}
+
+// ObjectMultipartPart is provider-confirmed state for an in-progress upload.
+// The provider upload ID remains private; clients use the ETag when completing
+// the Gregale session.
+type ObjectMultipartPart struct {
+	PartNumber   int32     `json:"part_number"`
+	ETag         string    `json:"etag"`
+	SizeBytes    int64     `json:"size_bytes"`
+	LastModified time.Time `json:"last_modified"`
+}
+
+type ObjectMultipartPartList struct {
+	Items                []ObjectMultipartPart `json:"items"`
+	NextPartNumberMarker int32                 `json:"next_part_number_marker,omitempty"`
 }
 
 type CompleteObjectMultipartUploadRequest struct {

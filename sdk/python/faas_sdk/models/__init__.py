@@ -474,8 +474,11 @@ from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermis
 from .object_bucket_list import ObjectBucketList
 from .object_bucket_state import ObjectBucketState
 from .object_multipart_completed_part import ObjectMultipartCompletedPart
+from .object_multipart_part import ObjectMultipartPart
+from .object_multipart_part_list import ObjectMultipartPartList
 from .object_multipart_part_sign_request import ObjectMultipartPartSignRequest
 from .object_multipart_upload import ObjectMultipartUpload
+from .object_multipart_upload_list import ObjectMultipartUploadList
 from .object_multipart_upload_state import ObjectMultipartUploadState
 from .object_sign_request import ObjectSignRequest
 from .object_sign_request_method import ObjectSignRequestMethod
@@ -638,6 +641,7 @@ from .set_object_bucket_access_grant_request_permission import SetObjectBucketAc
 from .set_password_request import SetPasswordRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
+from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_env import SidecarEnv
 from .sidecar_type import SidecarType
 from .slo_duration import SLODuration
@@ -1228,8 +1232,11 @@ __all__ = (
     "ObjectBucketList",
     "ObjectBucketState",
     "ObjectMultipartCompletedPart",
+    "ObjectMultipartPart",
+    "ObjectMultipartPartList",
     "ObjectMultipartPartSignRequest",
     "ObjectMultipartUpload",
+    "ObjectMultipartUploadList",
     "ObjectMultipartUploadState",
     "ObjectSignedRequest",
     "ObjectSignedRequestHeaders",
@@ -1388,6 +1395,7 @@ __all__ = (
     "SetPasswordRequest",
     "SeverityCounts",
     "Sidecar",
+    "SidecarCpuMillicores",
     "SidecarEnv",
     "SidecarType",
     "SLODuration",

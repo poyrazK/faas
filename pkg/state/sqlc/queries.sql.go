@@ -6180,6 +6180,67 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 	return i, err
 }
 
+const objectMultipartList = `-- name: ObjectMultipartList :many
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
+ORDER BY id LIMIT $5::int
+`
+
+type ObjectMultipartListParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+	ID        pgtype.UUID
+	PageLimit int32
+}
+
+func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMultipartListParams) ([]ObjectStorageMultipartUpload, error) {
+	rows, err := db.Query(ctx, objectMultipartList,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.ID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageMultipartUpload{}
+	for rows.Next() {
+		var i ObjectStorageMultipartUpload
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.ObjectKey,
+			&i.SizeBytes,
+			&i.PartSizeBytes,
+			&i.PartCount,
+			&i.ContentType,
+			&i.ProviderUploadID,
+			&i.CompletionParts,
+			&i.State,
+			&i.ExpiresAt,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectMultipartLockBucket = `-- name: ObjectMultipartLockBucket :one
 SELECT id FROM object_buckets
 WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE
