@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -17,6 +18,67 @@ import (
 // billing integration to support object-storage line items at once.
 type ObjectStorageLineItemSink interface {
 	PublishObjectStorageLineItem(context.Context, state.ObjectStorageBillingRecord) error
+}
+
+// ObjectStorageAccountSource is the narrow account-walk seam used by the
+// month-close runner. It is kept separate from state.Store so billing tests
+// and future billing daemons do not need to depend on the full control-plane
+// store interface.
+type ObjectStorageAccountSource interface {
+	ListAllAccounts(context.Context) ([]state.Account, error)
+}
+
+// FinalizeObjectStoragePeriods closes the completed UTC month for every
+// account that had object-storage activity and optionally publishes each
+// immutable record to the configured billing provider. The ledger write
+// happens before publication; a later retry therefore reuses the same record
+// ID and lets the sink deduplicate an ambiguous provider response.
+//
+// Accounts without buckets, reports, or authorizations are skipped so a
+// deployment does not manufacture zero-value invoice rows for every compute
+// account. Missing provider reports for an account that did use storage still
+// fail closed through FinalizeObjectStoragePeriod.
+func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAccountSource, store state.ObjectStorageBillingStore, pricing api.ObjectStoragePricing, periodStart, now time.Time, sink ObjectStorageLineItemSink) ([]state.ObjectStorageBillingRecord, error) {
+	if accounts == nil || store == nil || !pricing.Valid() {
+		return nil, errors.New("billing: invalid object storage period runner")
+	}
+	periodStart = state.ObjectStoragePeriod(periodStart)
+	now = now.UTC()
+	if !periodStart.Before(state.ObjectStoragePeriod(now)) {
+		return nil, state.ErrObjectBillingOpen
+	}
+	all, err := accounts.ListAllAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var finalized []state.ObjectStorageBillingRecord
+	var failures []error
+	for _, account := range all {
+		if err := ctx.Err(); err != nil {
+			return finalized, err
+		}
+		snapshot, err := store.ObjectUsageForPeriod(ctx, account.ID, periodStart)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("account %s: read object usage: %w", account.ID, err))
+			continue
+		}
+		if len(snapshot.Buckets) == 0 && len(snapshot.Reports) == 0 && snapshot.Authorizations == 0 {
+			continue
+		}
+		record, err := FinalizeObjectStoragePeriod(ctx, store, account.ID, pricing, periodStart, now)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("account %s: finalize object usage: %w", account.ID, err))
+			continue
+		}
+		if sink != nil {
+			if err := sink.PublishObjectStorageLineItem(ctx, record); err != nil {
+				failures = append(failures, fmt.Errorf("account %s: publish object usage: %w", account.ID, err))
+				continue
+			}
+		}
+		finalized = append(finalized, record)
+	}
+	return finalized, errors.Join(failures...)
 }
 
 // FinalizeObjectStoragePeriod closes one completed UTC month and records the
