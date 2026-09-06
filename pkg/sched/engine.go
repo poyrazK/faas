@@ -5232,9 +5232,6 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 // Service replicas use the normal RUNNING→STOPPED transition, which schedules
 // the existing deployment reconciler to admit a replacement.
 func (e *Engine) RecycleForDiskPressure(ctx context.Context, instanceID string, usedBytes, capacityBytes int64) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ins, err := e.lockedRunning(ctx, instanceID)
 	if err != nil || ins == nil {
 		return err
