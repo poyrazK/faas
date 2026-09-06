@@ -25,6 +25,15 @@ The scheduler allocates a fresh capture UUID and emits the exact memory key only
 after both writes succeed. Restore, prepositioning and garbage collection derive
 the device-state sibling from that key. Legacy keys remain readable.
 
+The OCI driver keeps repository `snap-<deployment>` and encodes capture keys
+as tags `[warm-]captures-<uuid>-{mem,vmstate}`. Legacy init tags remain `mem`
+and `vmstate`; legacy warm keys use `warm-mem` and `warm-vmstate`. The inverse
+mapping used by listing preserves the exact tier, capture UUID, and part.
+Capture UUID validation prevents ambiguous or colliding tag encodings.
+Each capture manifest carries `dev.gregale.snapshot.key` with its exact storage
+key. Registry deletion addresses manifest digests, so this annotation prevents
+identical payloads from aliasing a retained capture. Blob layers still deduplicate.
+
 Retain an existing non-stale snapshot of the same Firecracker version and tier.
 Idle park then destroys the live guest and releases its resources without
 recapturing that tier. Missing or stale snapshots are rebuilt normally. Warm
