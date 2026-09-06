@@ -806,6 +806,21 @@ jobs:
       - name: product capability registry and generated matrix
         run: make capabilities-check
 
+  # Metal-free API-hosting contract gate (roadmap Phase 0 / PR 2). These
+  # production-shaped fixtures exercise framework inference locally; the
+  # reference-node job remains the authority for Firecracker boot and wake.
+  api-hosting-contract-check:
+    name: api-hosting-contract-check (framework fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: framework fixture matrix
+        run: make api-hosting-contract-check
+
   # Go SDK build + test gate (issue #266, PR 2). The SDK is a nested
   # Go module at sdk/go/ (module github.com/poyrazK/faas/sdk/go). The
   # daemon's `make test` walks the daemon's package tree only; the

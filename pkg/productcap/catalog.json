@@ -22,6 +22,16 @@
       "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal"
     },
     {
+      "id": "framework-profiles",
+      "name": "Framework profiles",
+      "category": "delivery",
+      "description": "Detect common API frameworks and suggest a start command, port, and health path.",
+      "maturity": "preview",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/deploy-from-source",
+      "acceptance_test": "pkg/apihostingcontract/catalog_test.go::TestCatalogProfiles"
+    },
+    {
       "id": "github-deploys",
       "name": "GitHub deployments",
       "category": "delivery",

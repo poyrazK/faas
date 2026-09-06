@@ -50,6 +50,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
@@ -73,9 +74,10 @@ type doctorCheck struct {
 // "checks" array even when empty so script consumers can grep on
 // `length(checks) == 0` as the "all green" signal.
 type doctorReport struct {
-	Path   string        `json:"path,omitempty"`
-	Image  *doctorImage  `json:"image,omitempty"`
-	Checks []doctorCheck `json:"checks"`
+	Path    string                    `json:"path,omitempty"`
+	Image   *doctorImage              `json:"image,omitempty"`
+	Profile *frameworkprofile.Profile `json:"profile,omitempty"`
+	Checks  []doctorCheck             `json:"checks"`
 }
 
 // HasErrors reports whether any check returned status="error".
@@ -181,6 +183,9 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 // here would block the deploy on infrastructure noise.
 func runDoctorChecks(path string) doctorReport {
 	rep := doctorReport{Path: path}
+	if profile, err := frameworkprofile.AnalyzeDir(path); err == nil {
+		rep.Profile = &profile
+	}
 	rep.Checks = append(rep.Checks, doctorCheckPortBind())
 	rep.Checks = append(rep.Checks, doctorCheckLoopbackBind(path))
 	rep.Checks = append(rep.Checks, doctorCheckArch(path))
@@ -593,6 +598,16 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 		renderDoctorImage(w, rep.Image)
 	} else {
 		_, _ = fmt.Fprintf(w, "gregale doctor — %s\n", rep.Path)
+		if rep.Profile != nil {
+			_, _ = fmt.Fprintf(w, "  profile: %s", rep.Profile.Framework)
+			if rep.Profile.FrameworkVer != "" {
+				_, _ = fmt.Fprintf(w, " %s", rep.Profile.FrameworkVer)
+			}
+			if rep.Profile.StartCommand != "" {
+				_, _ = fmt.Fprintf(w, " · start=%s", rep.Profile.StartCommand)
+			}
+			_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
+		}
 	}
 	_, _ = fmt.Fprintln(w, strings.Repeat("─", 60))
 	hasFinding := false

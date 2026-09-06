@@ -944,6 +944,10 @@ capabilities-check: ## Verify the product capability registry and generated matr
 	@cmp -s /tmp/faas-capabilities.md docs/capabilities.md || (echo "docs/capabilities.md is stale; run 'make capabilities-md'"; diff -u docs/capabilities.md /tmp/faas-capabilities.md || true; exit 1)
 	@echo "capabilities-check: OK"
 
+.PHONY: api-hosting-contract-check
+api-hosting-contract-check: ## Run the metal-free API framework fixture contract
+	@$(GO) run ./cmd/api-hosting-contract
+
 .PHONY: sdk-check
 sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Client
 	# Pure-read AST/YAML diff (no I/O, no goroutines), so the recipe
@@ -1021,6 +1025,8 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@echo "==> pre-pr: capabilities-check (product registry ↔ generated matrix)"
 	@$(MAKE) capabilities-check
+	@echo "==> pre-pr: api-hosting-contract-check (metal-free fixture matrix)"
+	@$(MAKE) api-hosting-contract-check
 	@echo "==> pre-pr: spec-check (api/openapi.yaml ↔ pkg/apid/openapi.yaml)"
 	@$(MAKE) spec-check
 	@echo "==> pre-pr: proto-check (checked-in *.pb.go matches protoc)"
