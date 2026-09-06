@@ -12,7 +12,7 @@ import "log/slog"
 // startFrameworkReadyProxy is a no-op on non-linux platforms. The
 // platform contract is "no signal" not "won't boot", so the
 // boot() caller logs at Warn and continues.
-func startFrameworkReadyProxy(_ *slog.Logger) error {
+func startFrameworkReadyProxy(_ *slog.Logger, _ int) error {
 	return nil
 }
 

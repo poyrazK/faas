@@ -37,7 +37,7 @@ func newMetalVMM(t *testing.T, timeout time.Duration) *JailerVMM {
 	// Retain rings before failure cleanup unregisters them; report the bounded
 	// console tail when a metal test fails instead of losing the boot diagnosis.
 	stop, stopped := make(chan struct{}), make(chan struct{})
-	seen := make(map[string]*logbuf.Ring)
+	seen := make(map[*logbuf.Ring]string)
 	go func() {
 		defer close(stopped)
 		tick := time.NewTicker(10 * time.Millisecond)
@@ -49,7 +49,7 @@ func newMetalVMM(t *testing.T, timeout time.Duration) *JailerVMM {
 			case <-tick.C:
 				v.mu.Lock()
 				for id, ring := range v.rings {
-					seen[id] = ring
+					seen[ring] = id
 				}
 				v.mu.Unlock()
 			}
@@ -59,7 +59,7 @@ func newMetalVMM(t *testing.T, timeout time.Duration) *JailerVMM {
 		close(stop)
 		<-stopped
 		if t.Failed() {
-			for id, ring := range seen {
+			for ring, id := range seen {
 				lines := ring.Snapshot(1)
 				if len(lines) > 100 {
 					lines = lines[len(lines)-100:]

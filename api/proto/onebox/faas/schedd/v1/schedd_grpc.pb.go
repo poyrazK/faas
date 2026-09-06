@@ -31,6 +31,7 @@ const (
 	Schedd_Wake_FullMethodName                  = "/onebox.faas.schedd.v1.Schedd/Wake"
 	Schedd_AdmitInstance_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/AdmitInstance"
 	Schedd_ReportActivity_FullMethodName        = "/onebox.faas.schedd.v1.Schedd/ReportActivity"
+	Schedd_ReportFrameworkReady_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportFrameworkReady"
 	Schedd_ParkInstance_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ParkInstance"
 	Schedd_ForceColdBootNextWake_FullMethodName = "/onebox.faas.schedd.v1.Schedd/ForceColdBootNextWake"
 	Schedd_ForceRestartInstance_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ForceRestartInstance"
@@ -86,6 +87,9 @@ type ScheddClient interface {
 	// schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
 	// the gateway keeps the batch in memory between flushes (ADR-018).
 	ReportActivity(ctx context.Context, in *ReportActivityRequest, opts ...grpc.CallOption) (*ReportActivityResponse, error)
+	// VMMD reports readiness observed on an instance-bound guest channel.
+	// Schedd owns the persisted timestamp and serializes it against park/destroy.
+	ReportFrameworkReady(ctx context.Context, in *FrameworkReadyReport, opts ...grpc.CallOption) (*FrameworkReadyAck, error)
 	// ParkInstance forces an instance to its parked state. Added in M7 so
 	// meterd's Free-tier hard-stop can park every live instance on a
 	// suspended account (spec §4.7). Reason is for audit logs ("quota_
@@ -362,6 +366,16 @@ func (c *scheddClient) ReportActivity(ctx context.Context, in *ReportActivityReq
 	return out, nil
 }
 
+func (c *scheddClient) ReportFrameworkReady(ctx context.Context, in *FrameworkReadyReport, opts ...grpc.CallOption) (*FrameworkReadyAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrameworkReadyAck)
+	err := c.cc.Invoke(ctx, Schedd_ReportFrameworkReady_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *scheddClient) ParkInstance(ctx context.Context, in *ParkInstanceRequest, opts ...grpc.CallOption) (*ParkInstanceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ParkInstanceResponse)
@@ -526,6 +540,9 @@ type ScheddServer interface {
 	// schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
 	// the gateway keeps the batch in memory between flushes (ADR-018).
 	ReportActivity(context.Context, *ReportActivityRequest) (*ReportActivityResponse, error)
+	// VMMD reports readiness observed on an instance-bound guest channel.
+	// Schedd owns the persisted timestamp and serializes it against park/destroy.
+	ReportFrameworkReady(context.Context, *FrameworkReadyReport) (*FrameworkReadyAck, error)
 	// ParkInstance forces an instance to its parked state. Added in M7 so
 	// meterd's Free-tier hard-stop can park every live instance on a
 	// suspended account (spec §4.7). Reason is for audit logs ("quota_
@@ -781,6 +798,9 @@ func (UnimplementedScheddServer) AdmitInstance(context.Context, *AdmitInstanceRe
 func (UnimplementedScheddServer) ReportActivity(context.Context, *ReportActivityRequest) (*ReportActivityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportActivity not implemented")
 }
+func (UnimplementedScheddServer) ReportFrameworkReady(context.Context, *FrameworkReadyReport) (*FrameworkReadyAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportFrameworkReady not implemented")
+}
 func (UnimplementedScheddServer) ParkInstance(context.Context, *ParkInstanceRequest) (*ParkInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ParkInstance not implemented")
 }
@@ -882,6 +902,24 @@ func _Schedd_ReportActivity_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ScheddServer).ReportActivity(ctx, req.(*ReportActivityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_ReportFrameworkReady_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrameworkReadyReport)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ReportFrameworkReady(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ReportFrameworkReady_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ReportFrameworkReady(ctx, req.(*FrameworkReadyReport))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1059,6 +1097,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportActivity",
 			Handler:    _Schedd_ReportActivity_Handler,
+		},
+		{
+			MethodName: "ReportFrameworkReady",
+			Handler:    _Schedd_ReportFrameworkReady_Handler,
 		},
 		{
 			MethodName: "ParkInstance",

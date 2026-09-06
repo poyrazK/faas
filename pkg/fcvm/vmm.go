@@ -1051,6 +1051,12 @@ func readConnectAck(conn net.Conn) (string, error) {
 // shared entropy is exactly the failure mode V6 rejects, so we refuse
 // to declare it ready.
 func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
+	return retryResumeTransport(ctx, func(callCtx context.Context) error {
+		return v.triggerResumeHookOnce(callCtx, l, hostTimeUnixNano)
+	})
+}
+
+func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
 	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
 	// Without this guard, a refactor that passes an uninitialised JailerVMM
 	// (test seam, future caller) would dial a malformed UDS path and return a
@@ -1078,7 +1084,7 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	var lastErr error
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return fmt.Errorf("vmm: dial vsock uds %s: %w", sock, ctx.Err())
 		}
 		var c net.Conn
 		var err error
@@ -1106,7 +1112,7 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 		lastErr = err
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("vmm: dial vsock uds %s: %w", sock, ctx.Err())
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
@@ -1116,7 +1122,13 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	connected := time.Now()
 	defer func() { _ = conn.Close() }()
 
-	_ = conn.SetDeadline(time.Now().Add(resumeHookDialDeadline))
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(resumeHookDialDeadline)
+	}
+	_ = conn.SetDeadline(deadline)
 
 	// Step 3: write the resume-hook payload. 4-byte BE msg type + 4-byte BE
 	// body length + JSON body. The length prefix lets the guest read exactly
