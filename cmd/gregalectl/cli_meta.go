@@ -456,7 +456,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release",
 		DocSlug: "release",
-		Short:   "Cluster-shipped release bundle (release bundle|install|kgv --git-sha SHA; PR-3 / ADR-110, PR-B / ADR-113)",
+		Short:   "Cluster-shipped release bundle (release bundle|install|kgv|history|inspect; PR-3 / ADR-110, operator ledger)",
 		Subcommands: []cliSub{
 			{
 				Name:  subReleaseBundle,
@@ -477,6 +477,23 @@ var cliCommands = []cliCommand{
 					{Name: "node", Short: "compute_nodes.name to stamp (default: FAAS_NODE_NAME, then hostname; compute-only uses NAME.faas)"},
 					{Name: "role", Short: "box role: control-plane|compute-only (ADR-112); empty = no role templating. Reads /etc/faas/first-boot.env's FAAS_BOX_ROLE when unset.", ClosedSet: []string{"", "control-plane", "compute-only"}},
 					{Name: "defer-activation", Short: "keep a compute row drained until readiness gates pass"},
+					{Name: "reason", Short: "operator reason recorded in the platform release ledger"},
+				},
+			},
+			{
+				Name:  subReleaseHistory,
+				Short: "Show durable daemon deployment history from PostgreSQL",
+				Flags: []cliFlag{
+					{Name: "daemon", Short: "filter to one daemon"},
+					{Name: "limit", Short: "maximum rows (default 50, maximum 500)"},
+					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
+				},
+			},
+			{
+				Name:  subReleaseInspect,
+				Short: "Inspect a release bundle and reconcile it with the current symlink",
+				Flags: []cliFlag{
+					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
 				},
 			},
 			{
