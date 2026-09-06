@@ -24127,7 +24127,11 @@ func (s *PgStore) CreateUploadSession(ctx context.Context, in sqlc.CreateUploadS
 
 // GetUploadSession reads a single upload_sessions row by id.
 func (s *PgStore) GetUploadSession(ctx context.Context, id string) (sqlc.UploadSession, error) {
-	return s.uploadSessionQueries().GetUploadSession(ctx, s.pool, id)
+	row, err := s.uploadSessionQueries().GetUploadSession(ctx, s.pool, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sqlc.UploadSession{}, ErrNotFound
+	}
+	return row, err
 }
 
 // AppendUploadBytes is the atomic CAS. sqlc maps the UPDATE's
@@ -24210,7 +24214,11 @@ func (s *PgStore) RecordUploadCommitOutcome(ctx context.Context, in sqlc.RecordU
 
 // GetUploadCommitOutcome reads the dedupe row for a retry.
 func (s *PgStore) GetUploadCommitOutcome(ctx context.Context, uploadID string) (sqlc.UploadCommitOutcome, error) {
-	return s.uploadSessionQueries().GetUploadCommitOutcome(ctx, s.pool, uploadID)
+	row, err := s.uploadSessionQueries().GetUploadCommitOutcome(ctx, s.pool, uploadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sqlc.UploadCommitOutcome{}, ErrNotFound
+	}
+	return row, err
 }
 
 // CountOpenUploadSessionsByAccountApp backs the per-(account, app)

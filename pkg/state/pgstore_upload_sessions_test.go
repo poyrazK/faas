@@ -30,6 +30,12 @@ func TestPgUploadSessionAppendUsesExpectedAndNewOffsets(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateUploadSession: %v", err)
 	}
+	if _, err := s.GetUploadSession(ctx, "missing-upload-session"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("GetUploadSession missing error = %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetUploadCommitOutcome(ctx, sessionID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("GetUploadCommitOutcome missing error = %v, want ErrNotFound", err)
+	}
 
 	appendAt := func(expected, next int64) (sqlc.AppendUploadBytesRow, error) {
 		return s.AppendUploadBytes(ctx, sqlc.AppendUploadBytesParams{
