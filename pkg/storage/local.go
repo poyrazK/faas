@@ -338,6 +338,7 @@ func (l *LocalStorageBackend) List(ctx context.Context, prefix string) ([]string
 // correctness, only for cancellation responsiveness — 256 KiB strikes
 // a balance between syscall overhead and wakeup latency.
 func copyContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	dst = boundedFileWrites(dst)
 	const copyQuantum = 256 * 1024
 	buf := make([]byte, copyQuantum)
 	var written int64

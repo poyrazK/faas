@@ -127,9 +127,12 @@ durable multi-step update state machine.
 Binding credentials map to deterministic Neon roles. The neutral provider
 contract includes explicit revocation so deleting a binding can remove its
 upstream login rather than only deleting Gregale's sealed secret. Usage maps
-compute-unit seconds and public plus private network transfer. Neon storage is
-reported in byte-months, so it is not exposed as Gregale storage byte-seconds
-until a reviewed canonical conversion and accounting checkpoint exist.
+compute-unit seconds and public plus private network transfer. Neon storage
+line items are reported as byte-hours under billing-oriented `*_bytes_month`
+names; the adapter converts root/child storage to `storage_byte_seconds` and
+instant-restore/snapshot storage to `history_byte_seconds` after summing each
+complete provider window. The conversion is overflow-checked and remains an
+internal canonical meter until commercial rates and caps are approved.
 
 `apid` loads the registry and recovery worker when
 `FAAS_MANAGED_POSTGRES_CONFIG` is present. The config-level

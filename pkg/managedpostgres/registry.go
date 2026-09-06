@@ -26,8 +26,8 @@ type Config struct {
 }
 
 // UsageConfig is the JSON-safe form of UsagePolicy. Prices are integer
-// millicents per CU-hour and GiB of egress so operators never configure
-// floating-point money.
+// millicents per CU-hour and GiB-hour of storage/history or GiB of egress so
+// operators never configure floating-point money.
 type UsageConfig struct {
 	Enabled                      bool  `json:"enabled"`
 	CollectionIntervalSeconds    int64 `json:"collection_interval_seconds"`
@@ -35,8 +35,12 @@ type UsageConfig struct {
 	StaleAfterSeconds            int64 `json:"stale_after_seconds"`
 	MaxMonthlyCostMillicents     int64 `json:"max_monthly_cost_millicents"`
 	MaxMonthlyComputeUnitSeconds int64 `json:"max_monthly_compute_unit_seconds"`
+	MaxMonthlyStorageByteSeconds int64 `json:"max_monthly_storage_byte_seconds"`
+	MaxMonthlyHistoryByteSeconds int64 `json:"max_monthly_history_byte_seconds"`
 	MaxMonthlyEgressBytes        int64 `json:"max_monthly_egress_bytes"`
 	ComputeUnitHourMillicents    int64 `json:"compute_unit_hour_millicents"`
+	StorageGiBHourMillicents     int64 `json:"storage_gib_hour_millicents"`
+	HistoryGiBHourMillicents     int64 `json:"history_gib_hour_millicents"`
 	EgressGiBMillicents          int64 `json:"egress_gib_millicents"`
 }
 
@@ -48,8 +52,12 @@ func (c UsageConfig) policy() (UsagePolicy, error) {
 		StaleAfter:                   time.Duration(c.StaleAfterSeconds) * time.Second,
 		MaxMonthlyCostMillicents:     c.MaxMonthlyCostMillicents,
 		MaxMonthlyComputeUnitSeconds: c.MaxMonthlyComputeUnitSeconds,
+		MaxMonthlyStorageByteSeconds: c.MaxMonthlyStorageByteSeconds,
+		MaxMonthlyHistoryByteSeconds: c.MaxMonthlyHistoryByteSeconds,
 		MaxMonthlyEgressBytes:        c.MaxMonthlyEgressBytes,
 		ComputeUnitHourMillicents:    c.ComputeUnitHourMillicents,
+		StorageGiBHourMillicents:     c.StorageGiBHourMillicents,
+		HistoryGiBHourMillicents:     c.HistoryGiBHourMillicents,
 		EgressGiBMillicents:          c.EgressGiBMillicents,
 	}
 	if err := policy.Validate(); err != nil {

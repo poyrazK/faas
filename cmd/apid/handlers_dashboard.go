@@ -155,6 +155,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// (in-flight rollouts / recent audit / active alerts);
 			// bounded by safedeploy_in_flight_rollouts gauge.
 			s.renderSafeReleasesDashboard(w, r, log, acct)
+		case path == "/dashboard/admin":
+			s.renderAdminDashboard(w, r, log, acct)
 		case strings.HasPrefix(path, "/dashboard/alerts/"):
 			// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122):
 			// per-alert-rule drill-down. URL shape:
