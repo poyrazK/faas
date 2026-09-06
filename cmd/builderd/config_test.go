@@ -34,6 +34,9 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.BuildExportDir != "/srv/fc/builder/out" {
 		t.Errorf("BuildExportDir = %q, want split-box staging default", cfg.BuildExportDir)
 	}
+	if cfg.SourceMaxAge != 24*time.Hour || cfg.SourceGCSweepInterval != 24*time.Hour {
+		t.Errorf("source retention defaults = (%v, %v), want (24h, 24h)", cfg.SourceMaxAge, cfg.SourceGCSweepInterval)
+	}
 	if cfg.MetricsAddr != "127.0.0.1:9105" {
 		t.Errorf("MetricsAddr = %q, want canonical loopback metrics default", cfg.MetricsAddr)
 	}

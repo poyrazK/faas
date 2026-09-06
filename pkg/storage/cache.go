@@ -544,16 +544,19 @@ func (c *LocalCacheBackend) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// List implements LocalArtifactLister by reading the sidecar
-// metadata files alongside each cached blob. Returns the
-// original storage keys (not the hash-derived filenames) so
-// callers can correlate by content. No parent round-trip —
-// only what the cache holds is visible.
+// List implements LocalArtifactLister. When the parent exposes List, it is
+// authoritative: callers such as imaged and builderd GC must see remote
+// objects that have not been fetched into this node's read-through cache.
+// Backends without list support retain the historical cache-only fallback so
+// wrapping a simple StorageBackend does not make local cache inspection fail.
 func (c *LocalCacheBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	if prefix != "" {
 		if err := validateKey(strings.TrimSuffix(prefix, "/")); err != nil {
 			return nil, err
 		}
+	}
+	if parentLister, ok := c.parent.(LocalArtifactLister); ok {
+		return parentLister.List(ctx, prefix)
 	}
 	c.mu.Lock()
 	entries, err := c.snapshotCacheLocked()
