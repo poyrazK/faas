@@ -100,6 +100,19 @@ func NewReader(runner Runner, opts ...Option) *Reader {
 // after the veth is up. Worst case: one tick (~10 s) of stale
 // LastRequest-only reaping for a freshly-waking instance.
 func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
+	// With no live instances there is nothing to attribute. Clear prior state
+	// so a later wake takes a fresh snapshot, and avoid invoking conntrack at
+	// all while a scale-to-zero host is idle.
+	if len(instances) == 0 {
+		r.mu.Lock()
+		r.hostIndex = map[string]string{}
+		r.counts = map[string]int64{}
+		r.cacheAt = time.Time{}
+		r.cachedOut = nil
+		r.failed = false
+		r.mu.Unlock()
+		return nil
+	}
 	r.mu.Lock()
 	cacheFresh := !r.failed && !r.cacheAt.IsZero() && time.Since(r.cacheAt) < r.ttl
 	var out []byte
