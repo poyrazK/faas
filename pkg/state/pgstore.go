@@ -12155,10 +12155,10 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 		tier = SnapshotTierInit
 	}
 	row := s.pool.QueryRow(ctx,
-		`insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, storage_key, stale, tier)
-		 values ($1, $2, $3, $4, $5, $6, $7)
-		 returning id, deployment_id::text, fc_version, mem_bytes, disk_bytes, storage_key, stale, created_at, tier`,
-		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.StorageKey, snap.Stale, tier)
+		`insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, tier)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8)
+		 returning id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier`,
+		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.StoredBytes, snap.StorageKey, snap.Stale, tier)
 	out, err := scanSnapshot(row)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -12180,7 +12180,7 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 // (dashboard queries, snapshot dashboards, manual SQL ops).
 func (s *PgStore) LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, storage_key, stale, created_at, tier
+		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
 		 from snapshots where deployment_id = $1 and stale = false
 		 order by (tier = 'warm') desc, created_at desc limit 1`, deploymentID)
 	return scanSnapshot(row)
@@ -12199,7 +12199,7 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 		tier = SnapshotTierInit
 	}
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, storage_key, stale, created_at, tier
+		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
 		 from snapshots where deployment_id = $1 and tier = $2 and stale = false
 		 order by created_at desc limit 1`, deploymentID, tier)
 	return scanSnapshot(row)
@@ -12402,9 +12402,11 @@ func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention t
 	return tag.RowsAffected(), nil
 }
 
-// ListLiveSnapshotStats returns mem_bytes + disk_bytes for every non-stale
-// snapshot. Feeds the §12 dashboard gauge `fcvm_snapshot_fleet_avg_bytes`
-// (and the p95 sibling). One round-trip; the dashboard wrapper caches
+// ListLiveSnapshotStats returns the physical snapshot allocation plus app
+// layer content bytes for every non-stale snapshot. New writers populate
+// stored_bytes from st_blocks; legacy zero rows conservatively fall back to
+// mem_bytes + disk_bytes. Feeds the §12 dashboard gauge
+// `fcvm_snapshot_fleet_avg_bytes` (and the p95 sibling). One round-trip; the dashboard wrapper caches
 // the result for 5 s so this isn't on the hot scrape path. The "live"
 // filter matches the dashboard's notion of "parked apps taking up
 // disk": stale snapshots are GC'd by imaged nightly (spec §4.6) and
@@ -12417,7 +12419,13 @@ func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention t
 // 5 s otherwise). Raise this when the dashboard gains per-app panels.
 func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, error) {
 	rows, err := s.pool.Query(ctx,
-		`select mem_bytes, disk_bytes from snapshots where stale = false order by mem_bytes desc limit 10000`)
+		`select case when s.stored_bytes > 0 then s.stored_bytes else s.mem_bytes + s.disk_bytes end,
+		        coalesce(d.rootfs_bytes, 0)
+		   from snapshots s
+		   join deployments d on d.id = s.deployment_id
+		  where s.stale = false
+		  order by 1 desc
+		  limit 10000`)
 	if err != nil {
 		return nil, err
 	}
@@ -12425,7 +12433,7 @@ func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, er
 	var out []SnapshotSize
 	for rows.Next() {
 		var sz SnapshotSize
-		if err := rows.Scan(&sz.MemBytes, &sz.DiskBytes); err != nil {
+		if err := rows.Scan(&sz.SnapshotBytes, &sz.LayerBytes); err != nil {
 			return nil, err
 		}
 		out = append(out, sz)
@@ -12433,15 +12441,12 @@ func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, er
 	return out, rows.Err()
 }
 
-// SnapshotSize is the per-row projection used by the dashboard gauge.
-// VMStateBytes is folded into MemBytes today (the `snapshots` table
-// stores a single bytes value for the parked footprint); a future
-// migration splitting the columns can add the field without breaking
-// callers. Keeping it here (not in pkg/fcvm) so the SQL → struct
-// mapping stays in the package that owns the schema.
+// SnapshotSize is the per-row projection used by the dashboard gauge. The
+// two fields form the spec §8 parked footprint: sparse snapshot allocation
+// plus the deployment's above-base app-layer content.
 type SnapshotSize struct {
-	MemBytes  int64
-	DiskBytes int64
+	SnapshotBytes int64
+	LayerBytes    int64
 }
 
 // --- compute nodes (issue #97 / ADR-025 axis 3) -----------------------------
@@ -17932,12 +17937,12 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	s := Snapshot{}
-	// The 9th column is tier (issue #470 / ADR-055). Every query
+	// The 10th column is tier (issue #470 / ADR-055). Every query
 	// in this file now selects the tier column explicitly; the
 	// scan returns "init" if the column is NULL (legacy rows from
 	// before migration 00110 applied).
 	var tier *string
-	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.MemBytes, &s.DiskBytes, &s.StorageKey, &s.Stale, &s.CreatedAt, &tier); err != nil {
+	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.MemBytes, &s.DiskBytes, &s.StoredBytes, &s.StorageKey, &s.Stale, &s.CreatedAt, &tier); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Snapshot{}, ErrNotFound
 		}

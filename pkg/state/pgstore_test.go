@@ -2112,12 +2112,9 @@ func TestPg_DeleteSnapshotsStaleOlderThan_OnlyRemovesStalePastRetention(t *testi
 	}
 }
 
-func TestPg_ListLiveSnapshotStats_ExcludesStaleAndOrdersByMemBytesDesc(t *testing.T) {
-	// Open the pool directly so the test can update mem/disk_bytes
-	// on the inserted rows to assert the projection shape. The public
-	// CreateSnapshot surface takes MemBytes/DiskBytes but the table
-	// stores the value as-is — we want a non-zero value here to pin
-	// the scan field, not the round-trip.
+func TestPg_ListLiveSnapshotStats_UsesStoredBytesAndLayerWithLegacyFallback(t *testing.T) {
+	// Open the pool directly so the test can stamp rootfs_bytes and verify
+	// both new physical-byte rows and the legacy logical-byte fallback.
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -2130,21 +2127,25 @@ func TestPg_ListLiveSnapshotStats_ExcludesStaleAndOrdersByMemBytesDesc(t *testin
 	// only one live init-tier row is allowed per deployment. Seed three
 	// separate deployments — one per snapshot — so we get three rows
 	// (one stale, two live) without colliding on the partial index.
-	mkSnap := func(suffix string, stale bool) string {
+	mkSnap := func(suffix string, stale bool, storedBytes, layerBytes int64) string {
 		_, _, depID := seedLiveDeploy(t, s, ctx, "-"+suffix, suffix)
+		if _, err := pool.Exec(ctx, `update deployments set rootfs_bytes = $1 where id = $2`, layerBytes, depID); err != nil {
+			t.Fatalf("set rootfs bytes (%s): %v", suffix, err)
+		}
 		snap, err := s.CreateSnapshot(ctx, state.Snapshot{
 			DeploymentID: depID, FCVersion: "1.8.0", MemBytes: 100, DiskBytes: 100,
-			StorageKey: state.SnapMemKey(depID) + "/" + suffix,
-			Stale:      stale,
+			StoredBytes: storedBytes,
+			StorageKey:  state.SnapMemKey(depID) + "/" + suffix,
+			Stale:       stale,
 		})
 		if err != nil {
 			t.Fatalf("CreateSnapshot(%s): %v", suffix, err)
 		}
 		return snap.ID
 	}
-	_ = mkSnap("stale", true)
-	live1 := mkSnap("live1", false)
-	live2 := mkSnap("live2", false)
+	_ = mkSnap("stale", true, 9999, 9999)
+	live1 := mkSnap("live1", false, 2048, 512)
+	live2 := mkSnap("live2", false, 0, 1024)
 
 	// Update mem_bytes/disk_bytes on the live rows so we can assert
 	// the projection shape (the 100/100 from CreateSnapshot is fine
@@ -2162,15 +2163,16 @@ func TestPg_ListLiveSnapshotStats_ExcludesStaleAndOrdersByMemBytesDesc(t *testin
 	if len(stats) != 2 {
 		t.Fatalf("got %d stats, want 2 (stale row must be filtered)", len(stats))
 	}
+	got := map[int64]int64{}
 	for _, sz := range stats {
-		if sz.MemBytes != 2048 || sz.DiskBytes != 4096 {
-			t.Errorf("SnapshotSize=%+v, want {MemBytes:2048 DiskBytes:4096}", sz)
-		}
+		got[sz.SnapshotBytes] = sz.LayerBytes
 	}
-
-	// Order: by mem_bytes desc. Both rows have the same mem_bytes so
-	// the relative order is undefined; the set check above is the
-	// contract.
+	if got[2048] != 512 {
+		t.Errorf("physical snapshot row = %v, want snapshot=2048 layer=512", got)
+	}
+	if got[2048+4096] != 1024 {
+		t.Errorf("legacy fallback row = %v, want snapshot=6144 layer=1024", got)
+	}
 }
 
 // mustCreateSnap is a tiny test helper for the GC suite — keeps the

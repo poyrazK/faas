@@ -1350,6 +1350,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// systemd PrivateTmp namespace making the intermediate file invisible to
 	// operators. Remote backends keep the streaming temp-file path below.
 	var memTmpPath string
+	var memPublishedPath string
 	var memBytes int64
 	var err error
 	memPublishedLocally := false
@@ -1369,6 +1370,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 					return SnapshotInfo{}, fmt.Errorf("vmm: publish local snapshot mem: %w", moveErr)
 				}
 				memPublishedLocally = true
+				memPublishedPath = localPath
 			}
 		}
 	}
@@ -1439,13 +1441,64 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		}
 	}
 
+	// Logical snapshot lengths are required for Firecracker compatibility,
+	// but they are not the disk footprint of a sparse memory image. Resolve
+	// the just-published local/cache files and record their allocated blocks.
+	// A backend without a local representation falls back to logical bytes,
+	// which is conservative and keeps mixed-version rollouts truthful.
+	if memPublishedPath == "" {
+		memPublishedPath = v.publishedLocalPath(spec.StorageKey, memTmpPath)
+	}
+	statePublishedPath := spec.VMStatePath
+	if spec.VMStateStorageKey != "" {
+		statePublishedPath = v.publishedLocalPath(spec.VMStateStorageKey, vmstateSrcInChroot)
+	}
+	storedBytes := allocatedBytesOrLogical(memPublishedPath, memBytes) +
+		allocatedBytesOrLogical(statePublishedPath, stateBytes)
+
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
 	// warm-tier capture keeps the VM paused until the engine's
 	// pre-existing snapshotAndPark (init-tier capture) finishes
 	// and the legacy Snapshot() wrapper releases the chroot. The
 	// responsible caller (Manager.WarmSnapshot → vmm.WarmSnapshot
 	// → vmmdgrpc.WarmSnapshot) MUST fire ResumeVM on success.
-	return SnapshotInfo{MemBytes: memBytes, VMStateBytes: stateBytes}, nil
+	return SnapshotInfo{MemBytes: memBytes, VMStateBytes: stateBytes, StoredBytes: storedBytes}, nil
+}
+
+// publishedLocalPath returns the backend's local representation of key after a
+// successful Put. OCI production wraps the remote backend in LocalCacheBackend,
+// so this resolves the sparse cache file; pure remote backends use fallback.
+func (v *JailerVMM) publishedLocalPath(key, fallback string) string {
+	if key == "" || v.storage == nil {
+		return fallback
+	}
+	resolver, ok := v.storage.(storage.LocalPathResolver)
+	if !ok {
+		return fallback
+	}
+	path, local, err := resolver.LocalPath(key)
+	if err != nil || !local {
+		return fallback
+	}
+	return path
+}
+
+// allocatedBytesOrLogical reads POSIX st_blocks (512-byte units). It falls
+// back to the logical length when the path cannot be inspected so telemetry
+// never understates an unknown backend during a rolling deployment.
+func allocatedBytesOrLogical(path string, logical int64) int64 {
+	if path == "" {
+		return logical
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return logical
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Blocks < 0 {
+		return logical
+	}
+	return st.Blocks * 512
 }
 
 // ResumeVM (issue #470 / PR #470-FU-A) is the host-side resume

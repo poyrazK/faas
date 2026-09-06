@@ -687,6 +687,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 	return &vmmdpb.SnapshotResponse{
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
+		StoredBytes:  info.StoredBytes,
 	}, nil
 }
 
@@ -735,6 +736,7 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 	return &vmmdpb.SnapshotResponse{
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
+		StoredBytes:  info.StoredBytes,
 	}, nil
 }
 

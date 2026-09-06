@@ -58,20 +58,12 @@ import (
 // repeated string literals ≥ 3×).
 const metricLabelUnknown = "unknown"
 
-// SnapshotStat is the minimum surface area the dashboard needs. schedd's
-// `snapshots` table row gives us MemBytes + DiskBytes + a Path; we
-// compute the parked footprint as MemBytes+VMStateBytes+disk (the sum
-// that drives the 130 MB/sandbox financial-model target — spec §1, §8).
-//
-// VMStateBytes is reported separately because the `snapshots` table
-// currently stores it via the same column family the vmmclient
-// returns. If a future migration splits MemBytes and VMStateBytes
-// into two columns, this struct reflects that without touching
-// callers.
+// SnapshotStat is the minimum surface area the dashboard needs. SnapshotBytes
+// is the physical allocation of mem + vmstate; LayerBytes is the above-base
+// app content. Their sum is the 130 MB/sandbox target from spec §1 and §8.
 type SnapshotStat struct {
-	MemBytes     int64
-	VMStateBytes int64
-	DiskBytes    int64
+	SnapshotBytes int64
+	LayerBytes    int64
 }
 
 // DashboardMetrics is the input surface schedd passes in. Each field is
@@ -489,11 +481,11 @@ func NewDashboardGauges(src DashboardMetrics) *DashboardGauges {
 	g.reg.MustRegister(
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "fcvm_snapshot_fleet_avg_bytes",
-			Help: "Plan-weighted average parked snapshot footprint (mem + vmstate + disk) in bytes; 130 MB/sandbox is the financial-model target.",
+			Help: "Average parked footprint (allocated snapshot blocks + above-base app content) in bytes; 130 MB/sandbox is the financial-model target.",
 		}, g.avgFleet),
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "fcvm_snapshot_fleet_p95_bytes",
-			Help: "p95 parked snapshot footprint in bytes; spec §1 alert at > 300 MB.",
+			Help: "p95 parked footprint (allocated snapshot blocks + above-base app content) in bytes; spec §1 acceptance at 300 MB.",
 		}, g.p95Fleet),
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "fcvm_resident_ram_pct",
@@ -554,7 +546,7 @@ func (g *DashboardGauges) refresh(ctx context.Context) {
 			footprints := make([]int64, 0, len(stats))
 			var sum int64
 			for _, s := range stats {
-				foot := s.MemBytes + s.VMStateBytes + s.DiskBytes
+				foot := s.SnapshotBytes + s.LayerBytes
 				footprints = append(footprints, foot)
 				sum += foot
 			}

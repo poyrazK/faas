@@ -1352,6 +1352,7 @@ type snapshotWrittenPayload struct {
 	StorageKey   string `json:"storage_key"`
 	MemBytes     int64  `json:"mem_bytes"`
 	VMStateBytes int64  `json:"vmstate_bytes"`
+	StoredBytes  int64  `json:"stored_bytes"`
 	FCVersion    string `json:"fc_version"`
 	// Tier (issue #470 / PR #470-FU-B) is the snapshot tier this
 	// row belongs to: "init" (taken right after guest-init binds
@@ -2485,6 +2486,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		StorageKey:   p.StorageKey, // see snapshotWrittenPayload.StorageKey
 		MemBytes:     p.MemBytes,
 		DiskBytes:    p.VMStateBytes,
+		StoredBytes:  p.StoredBytes,
 		// Tier (issue #470 / PR #470-FU-B). Empty payload falls
 		// back to "init" (the DB column default and the legacy
 		// pre-#470 behaviour); warm-tier rows are only ever
