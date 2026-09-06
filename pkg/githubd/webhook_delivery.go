@@ -28,6 +28,20 @@ type WebhookDelivery struct {
 	Attempts   int
 }
 
+// WebhookDeliveryRecord is the operator-safe delivery view. Payload is
+// deliberately omitted because webhook bodies can contain customer metadata.
+type WebhookDeliveryRecord struct {
+	DeliveryID  string     `json:"delivery_id"`
+	EventType   string     `json:"event_type"`
+	Status      string     `json:"status"`
+	Attempts    int        `json:"attempts"`
+	NextAttempt time.Time  `json:"next_attempt_at"`
+	LastError   string     `json:"last_error,omitempty"`
+	ReceivedAt  time.Time  `json:"received_at"`
+	ProcessedAt *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
 // WebhookDeliveryStore is the durable inbox contract. Enqueue returns false
 // for a GitHub redelivery that is already present.
 type WebhookDeliveryStore interface {
@@ -121,6 +135,51 @@ func (s *PGWebhookStore) Prune(ctx context.Context, before time.Time) error {
 	return nil
 }
 
+func (s *PGWebhookStore) ListWebhookDeliveries(ctx context.Context, status string, limit int) ([]WebhookDeliveryRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if status != "" && status != "pending" && status != "processing" && status != "succeeded" && status != "dead" {
+		return nil, fmt.Errorf("githubd: invalid webhook delivery status %q", status)
+	}
+	rows, err := s.pool.Query(ctx, `
+		select delivery_id, event_type, status, attempts, next_attempt_at,
+		       last_error, received_at, processed_at, updated_at
+		from github_webhook_deliveries
+		where ($1 = '' or status = $1)
+		order by received_at desc
+		limit $2`, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("githubd: list webhook deliveries: %w", err)
+	}
+	defer rows.Close()
+	out := make([]WebhookDeliveryRecord, 0)
+	for rows.Next() {
+		var record WebhookDeliveryRecord
+		if err := rows.Scan(&record.DeliveryID, &record.EventType, &record.Status,
+			&record.Attempts, &record.NextAttempt, &record.LastError,
+			&record.ReceivedAt, &record.ProcessedAt, &record.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("githubd: scan webhook delivery: %w", err)
+		}
+		out = append(out, record)
+	}
+	return out, rows.Err()
+}
+
+// RetryWebhookDelivery moves one dead delivery back to the pending queue.
+// The operation is a CAS so an active or already-retried delivery is untouched.
+func (s *PGWebhookStore) RetryWebhookDelivery(ctx context.Context, deliveryID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		update github_webhook_deliveries
+		set status = 'pending', attempts = 0, next_attempt_at = now(),
+		    last_error = '', processed_at = null, updated_at = now()
+		where delivery_id = $1 and status = 'dead'`, deliveryID)
+	if err != nil {
+		return false, fmt.Errorf("githubd: retry webhook delivery: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 func (s *PGWebhookStore) CheckRunID(ctx context.Context, repoFullName, commitSHA, checkName string) (int64, error) {
 	var id int64
 	err := s.pool.QueryRow(ctx, `
@@ -175,7 +234,7 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 				log.Error("githubd: claim webhook delivery", "err", err)
 				break
 			}
-			dispatchErr := service.HandleWebhookEvent(ctx, delivery.EventType, delivery.Payload)
+			dispatchErr := service.HandleWebhookDelivery(ctx, delivery)
 			if dispatchErr == nil || IsNoBinding(dispatchErr) || IsIgnored(dispatchErr) {
 				if err := store.Complete(ctx, delivery.DeliveryID); err != nil {
 					log.Error("githubd: complete webhook delivery", "delivery_id", delivery.DeliveryID, "err", err)

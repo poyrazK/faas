@@ -1328,7 +1328,12 @@ type EnqueueBuildRequest struct {
 	// on push events). For pull_request events sender_login is the
 	// PR opener; apid prefers it over pusher as deployed_by. Empty
 	// when the githubd dispatcher doesn't have it.
-	SenderLogin   string `protobuf:"bytes,13,opt,name=sender_login,json=senderLogin,proto3" json:"sender_login,omitempty"`
+	SenderLogin string `protobuf:"bytes,13,opt,name=sender_login,json=senderLogin,proto3" json:"sender_login,omitempty"`
+	// delivery_id is the authenticated X-GitHub-Delivery value. apid uses it
+	// with app_id to derive stable deployment/build IDs, so retrying a durable
+	// inbox item cannot enqueue duplicate customer work. Empty preserves the
+	// non-webhook and legacy caller behavior.
+	DeliveryId    string `protobuf:"bytes,14,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1450,6 +1455,13 @@ func (x *EnqueueBuildRequest) GetPullRequestNumber() int32 {
 func (x *EnqueueBuildRequest) GetSenderLogin() string {
 	if x != nil {
 		return x.SenderLogin
+	}
+	return ""
+}
+
+func (x *EnqueueBuildRequest) GetDeliveryId() string {
+	if x != nil {
+		return x.DeliveryId
 	}
 	return ""
 }
@@ -1895,7 +1907,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x05phase\x18\x03 \x01(\x0e2\".onebox.faas.githubd.v1.CheckPhaseR\x05phase\x12\x19\n" +
 	"\blogs_url\x18\x04 \x01(\tR\alogsUrl\x12\x18\n" +
 	"\asummary\x18\x05 \x01(\tR\asummary\"\x14\n" +
-	"\x12WriteCheckResponse\"\xd6\x03\n" +
+	"\x12WriteCheckResponse\"\xf7\x03\n" +
 	"\x13EnqueueBuildRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -1915,7 +1927,9 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\n" +
 	"event_kind\x18\v \x01(\x0e2-.onebox.faas.githubd.v1.EnqueueBuildEventKindR\teventKind\x12.\n" +
 	"\x13pull_request_number\x18\f \x01(\x05R\x11pullRequestNumber\x12!\n" +
-	"\fsender_login\x18\r \x01(\tR\vsenderLogin\"m\n" +
+	"\fsender_login\x18\r \x01(\tR\vsenderLogin\x12\x1f\n" +
+	"\vdelivery_id\x18\x0e \x01(\tR\n" +
+	"deliveryId\"m\n" +
 	"\x14EnqueueBuildResponse\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x15\n" +

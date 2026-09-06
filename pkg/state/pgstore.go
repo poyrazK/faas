@@ -4523,6 +4523,10 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // concurrent CreateDeployment against the same app serialises behind
 // the row lock (Step 2.5 below); if our subsequent INSERT fails the
 // defer tx.Rollback reverts both writes together.
+//
+// A non-empty d.ID is inserted verbatim. GitHub delivery dispatch uses this
+// to supply a deterministic UUID; all other callers keep the database-generated
+// UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -4690,7 +4694,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		d.TrafficPercent = 100
 	}
 	row := tx.QueryRow(ctx,
-		`insert into deployments (app_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, source_url, commit_sha,
+		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
 		                          override_liveness_probe,
 			                          sidecars,
@@ -4703,7 +4707,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
 		                          full_rootfs_allow_auto, full_rootfs_override)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', $19, $20, $21, $22, coalesce(nullif($23, ''), 'default'),
+		 values (coalesce(nullif($35, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', $19, $20, $21, $22, coalesce(nullif($23, ''), 'default'),
 		         nullif($24, '')::uuid, coalesce(nullif($25, ''), 'api'), nullif($26, '')::inet, nullif($27, ''),
 		         $28, $29, $30, nullif($31, 0), $32, $33, $34)
 		 returning `+deploymentSelectColumnsWithRootfs,
@@ -4745,7 +4749,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
-		d.FullRootfsAllowAuto, d.FullRootfsOverride)
+		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err

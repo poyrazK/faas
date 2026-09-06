@@ -1481,6 +1481,54 @@ groups:
           description: "githubd_path_filter_total{mode=error|breaker_open} has been ticking for 5m. The page-tier alert (FaasGithubdPathFilterDegraded) fires at 10m; this warn-tier gives you a head start. Run the verify steps in the runbook before the page lands."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubdPathFilterDegraded.md"
 
+      - alert: FaasGithubWebhookDeliveryDead
+        expr: githubd_recovery_queue_items{queue="webhook_delivery",status="dead"} > 0
+        for: 5m
+        labels:
+          severity: page
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd has dead webhook deliveries"
+          description: "At least one authenticated GitHub delivery exhausted its retry budget, so customer deployment work may be missing. Inspect and retry with gregalectl github status / retry-delivery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
+      - alert: FaasGithubCheckUpdateDead
+        expr: githubd_recovery_queue_items{queue="check_update",status="dead"} > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd has dead Check Run updates"
+          description: "At least one GitHub Check Run projection exhausted its retry budget. Deployments continue, but customer GitHub status may be stale. Inspect and retry with gregalectl github status / retry-check."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
+      - alert: FaasGithubRecoveryQueueStalled
+        expr: githubd_recovery_oldest_actionable_seconds{status=~"pending|processing"} > 900
+        for: 5m
+        labels:
+          severity: page
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd {{ $labels.queue }} queue has stalled"
+          description: "The oldest {{ $labels.status }} item has been actionable for more than 15 minutes. Check githubd/apid reachability and GitHub API health before manually retrying dead work."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
+      - alert: FaasGithubRecoveryMetricsFailed
+        expr: githubd_recovery_collect_error == 1
+        for: 5m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd cannot inspect its durable recovery queues"
+          description: "The recovery collector cannot query Postgres, so dead or stalled GitHub work may be hidden. Check database reachability and confirm the github_check_updates migration is applied."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
   # Billing drift detector (ADR-049 §B.1). The reconciler
   # (pkg/billing/reconciler) computes abs(local-pushed) / max(local,
   # pushed) over a rolling window per (account, provider) and
