@@ -349,17 +349,18 @@ type UpdateDeploymentTrafficRequest struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
-	ID               string        `json:"id"`
-	Email            string        `json:"email"`
-	Plan             string        `json:"plan"`
-	Status           string        `json:"status"`
-	Limits           AccountLimits `json:"limits"`
-	UsageGBHours     float64       `json:"usage_gb_hours"`
-	AppCount         int           `json:"app_count"`
-	GitHubInstall    string        `json:"github_install_id,omitempty"`
-	PlanChangeStatus string        `json:"plan_change_status,omitempty"`
-	RequestedPlan    string        `json:"requested_plan,omitempty"`
-	EffectiveAt      *time.Time    `json:"effective_at,omitempty"`
+	ID                string        `json:"id"`
+	Email             string        `json:"email"`
+	Plan              string        `json:"plan"`
+	Status            string        `json:"status"`
+	Limits            AccountLimits `json:"limits"`
+	UsageGBHours      float64       `json:"usage_gb_hours"`
+	AppCount          int           `json:"app_count"`
+	DeveloperAppCount int           `json:"developer_app_count"`
+	GitHubInstall     string        `json:"github_install_id,omitempty"`
+	PlanChangeStatus  string        `json:"plan_change_status,omitempty"`
+	RequestedPlan     string        `json:"requested_plan,omitempty"`
+	EffectiveAt       *time.Time    `json:"effective_at,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
@@ -370,6 +371,7 @@ type AccountLimits struct {
 	RAMMB              int    `json:"ram_mb"`
 	MaxConcurrency     int    `json:"max_concurrency"`
 	DeployedApps       int    `json:"deployed_apps"`
+	DeveloperApps      int    `json:"developer_apps"`
 	IncludedGBHours    int64  `json:"included_gb_hours"`
 	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
 	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`

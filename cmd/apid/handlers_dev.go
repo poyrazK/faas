@@ -118,7 +118,11 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		var quotaErr *state.QuotaError
 		switch {
 		case errors.As(err, &quotaErr):
-			api.WriteProblem(w, api.ErrPlanLimitApps(limits, quotaErr.Observed))
+			if quotaErr.Kind == state.QuotaErrorKindDeveloperApps {
+				api.WriteProblem(w, api.ErrPlanLimitDeveloperApps(limits, quotaErr.Observed))
+			} else {
+				api.WriteProblem(w, api.ErrPlanLimitApps(limits, quotaErr.Observed))
+			}
 		case errors.Is(err, state.ErrConflict):
 			// A concurrent PUT may have inserted the same deterministic row
 			// after our initial lookup. Fold that race into the idempotent

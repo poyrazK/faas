@@ -81,7 +81,8 @@ select id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(idle_
 from apps where account_id = $1 order by created_at desc;
 
 -- name: CountDeployedApps :one
-select count(*) from apps where account_id = $1 and status in ('active', 'evicted_cold');
+select count(*) from apps where account_id = $1 and status in ('active', 'evicted_cold')
+  and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0);
 
 -- name: UpdateApp :one
 update apps set

@@ -38,6 +38,7 @@
     {{if .Account}}
       <p>Signed in as <code>{{.Account.Email}}</code> ({{.Account.Plan}} plan).</p>
       <p>Deployed apps: <strong>{{.Account.AppCount}}</strong>.</p>
+      {{if .Data}}<p>Developer environments: <strong>{{.Data.DeveloperAppCount}}/{{.Data.DeveloperAppsLimit}}</strong>. Use <code>gregale dev status</code> for the same budget in the CLI.</p>{{end}}
       <p>This is a slice-2 stub. Slice 4 fills in real data.</p>
     {{else}}
       <p>Dashboard is up. <a href="/login">Sign in</a> to continue.</p>

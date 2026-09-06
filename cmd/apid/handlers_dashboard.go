@@ -250,10 +250,18 @@ func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.L
 		log.Warn("dashboard renderIndex: count deployed apps", "account_id", acct.ID, "err", err)
 		appCount = 0
 	}
+	developerAppCount, err := s.store.CountDeveloperApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderIndex: count developer apps", "account_id", acct.ID, "err", err)
+		developerAppCount = 0
+	}
+	limits := api.MustLimitsFor(acct.Plan)
 	av := dashboardAccountView(view, appCount)
 	page := dashboard.Page{Title: "Overview", Body: "index", Account: av, Data: dashboard.IndexData{
-		DeployedAppCount: av.AppCount,
-		Plan:             string(acct.Plan),
+		DeployedAppCount:   av.AppCount,
+		DeveloperAppCount:  developerAppCount,
+		DeveloperAppsLimit: limits.DeveloperApps,
+		Plan:               string(acct.Plan),
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)

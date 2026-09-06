@@ -1095,6 +1095,13 @@ type App struct {
 	CreatedAt          time.Time
 }
 
+// IsDeveloperApp reports whether an app is the expiring environment created
+// by `gregale dev`. Developer sessions reuse preview storage, but PR previews
+// have a positive PR number and remain on the normal deployed-app quota.
+func IsDeveloperApp(app App) bool {
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0
+}
+
 // EvictionPriorityOrBestEffort (issue #475) snaps the empty Go zero
 // to the schema DEFAULT 'best_effort' so the INSERT path never trips
 // the CHECK constraint apps_eviction_priority_chk on a missing column.

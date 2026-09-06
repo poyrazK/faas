@@ -22,6 +22,8 @@ class AccountLimits:
     ram_mb: int
     max_concurrency: int
     deployed_apps: int
+    developer_apps: int
+    """Maximum live `gregale dev` environments for this plan."""
     included_gb_hours: int
     app_layer_max_mb: int
     ephemeral_disk_max_mb: int
@@ -38,6 +40,8 @@ class AccountLimits:
 
         deployed_apps = self.deployed_apps
 
+        developer_apps = self.developer_apps
+
         included_gb_hours = self.included_gb_hours
 
         app_layer_max_mb = self.app_layer_max_mb
@@ -52,6 +56,7 @@ class AccountLimits:
                 "ram_mb": ram_mb,
                 "max_concurrency": max_concurrency,
                 "deployed_apps": deployed_apps,
+                "developer_apps": developer_apps,
                 "included_gb_hours": included_gb_hours,
                 "app_layer_max_mb": app_layer_max_mb,
                 "ephemeral_disk_max_mb": ephemeral_disk_max_mb,
@@ -71,6 +76,8 @@ class AccountLimits:
 
         deployed_apps = d.pop("deployed_apps")
 
+        developer_apps = d.pop("developer_apps")
+
         included_gb_hours = d.pop("included_gb_hours")
 
         app_layer_max_mb = d.pop("app_layer_max_mb")
@@ -82,6 +89,7 @@ class AccountLimits:
             ram_mb=ram_mb,
             max_concurrency=max_concurrency,
             deployed_apps=deployed_apps,
+            developer_apps=developer_apps,
             included_gb_hours=included_gb_hours,
             app_layer_max_mb=app_layer_max_mb,
             ephemeral_disk_max_mb=ephemeral_disk_max_mb,

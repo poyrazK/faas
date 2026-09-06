@@ -224,7 +224,10 @@ type Limits struct {
 	Plan Plan
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
-	DeployedApps       int // max apps in state active|evicted_cold
+	DeployedApps int // max apps in state active|evicted_cold
+	// DeveloperApps is the separate cap for expiring `gregale dev`
+	// environments. These sessions do not consume DeployedApps slots.
+	DeveloperApps      int
 	MaxConcurrency     int // max instances of one app in {WAKING,COLD_BOOTING,RUNNING}
 	RAMMB              int // max ram_mb per app (memory.max = RAMMB + PerVMOverheadMB)
 	AppLayerMaxMB      int // drive1 ext4 cap (spec §4.6)
@@ -1564,6 +1567,7 @@ var planLimits = map[Plan]Limits{
 	PlanFree: {
 		Plan:           PlanFree,
 		DeployedApps:   1,
+		DeveloperApps:  1,
 		MaxConcurrency: 1,
 		RAMMB:          128,
 		// ConcurrencyPerVMBound (issue #559): Free is the
@@ -1918,6 +1922,7 @@ var planLimits = map[Plan]Limits{
 	PlanHobby: {
 		Plan:                  PlanHobby,
 		DeployedApps:          5,
+		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 256,
 		AppLayerMaxMB:         512,
@@ -2286,6 +2291,7 @@ var planLimits = map[Plan]Limits{
 	PlanPro: {
 		Plan:                  PlanPro,
 		DeployedApps:          25,
+		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 512,
 		AppLayerMaxMB:         1024,
@@ -2627,6 +2633,7 @@ var planLimits = map[Plan]Limits{
 	PlanScale: {
 		Plan:                  PlanScale,
 		DeployedApps:          100,
+		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 1024,
 		AppLayerMaxMB:         2048,
