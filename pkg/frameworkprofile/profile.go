@@ -149,7 +149,10 @@ func inferGo(fsys fs.FS, profile *Profile) {
 	profile.Framework = "go-net-http"
 	var files []string
 	_ = fs.WalkDir(fsys, ".", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || len(files) >= 128 {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || len(files) >= 128 {
 			return nil
 		}
 		if strings.HasSuffix(path, ".go") {
@@ -181,7 +184,10 @@ func loopbackWarnings(fsys fs.FS) []Warning {
 	var warnings []Warning
 	var files []string
 	_ = fs.WalkDir(fsys, ".", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || len(files) >= 256 {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || len(files) >= 256 {
 			return nil
 		}
 		base := filepath.Base(path)
