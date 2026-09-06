@@ -60,6 +60,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/                  → index
 //	GET /dashboard/apps              → apps list
 //	GET /dashboard/apps/{slug}       → app detail
+//	GET /dashboard/apps/{slug}/logs  → live + archived app logs
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
@@ -98,6 +99,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G1 / issue #1397 — live application logs with server-side
+			// filters and plan-gated archive access.
+			if lslug, ok := parseAppLogsPath(slug); ok {
+				s.renderAppLogs(w, r, log, acct, lslug)
+				return
+			}
 			// Per-deploy drill-down (issue #464 / ADR-075):
 			// /dashboard/apps/{slug}/deployments/{id} renders the
 			// full grype CVE list for one deployment. Falls through
@@ -409,8 +416,7 @@ func attachSLOBadges(items []dashboard.AppListItem, badges map[string]views.SLOB
 
 // renderAppDetail renders /dashboard/apps/{slug} — the app's plan
 // settings, recent deployments (with rollback forms), and the
-// deployment list view. Deployments tab is the primary one slice 4
-// ships; logs tab is a placeholder until slice 5 lands.
+// deployment list view. Logs have a dedicated /logs drill-down page.
 func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)

@@ -240,6 +240,40 @@ type DeploymentItem struct {
 	ErrorRelevantLogs []api.LogExcerpt
 }
 
+// LogsData is the dashboard-facing payload for /dashboard/apps/{slug}/logs.
+// The page consumes the existing gateway SSE endpoint directly; the handler
+// keeps the URL and selector options together so templates remain render-only.
+type LogsData struct {
+	AppSlug           string
+	AppStatus         string
+	StreamURL         string
+	ArchiveBase       string
+	ArchiveURL        string
+	ArchiveDate       string
+	ArchiveInstanceID string
+	ArchiveEnabled    bool
+	Level             string
+	Grep              string
+	Since             string
+	Deployment        string
+	Deployments       []LogDeploymentItem
+	Instances         []LogInstanceItem
+}
+
+// LogDeploymentItem is one deployment option in the logs filter.
+type LogDeploymentItem struct {
+	ID        string
+	Status    string
+	CreatedAt string
+}
+
+// LogInstanceItem is one instance option in the archived-log selector.
+type LogInstanceItem struct {
+	ID        string
+	State     string
+	StartedAt string
+}
+
 // ScanSummary is the per-deploy grype scan summary
 // (issue #464 / ADR-055). The full typed payload lives on
 // the deployments row (state.Deployment.ScanResult +

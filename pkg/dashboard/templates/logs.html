@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1000px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    code, pre { font-family: ui-monospace, Menlo, monospace; }
+    .breadcrumb { color: #6b7280; font-size: 0.9rem; }
+    .filters { display: flex; gap: 0.75rem; align-items: end; flex-wrap: wrap; padding: 0.75rem; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .filters label { display: inline-flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
+    .filters input, .filters select, .filters button { font: inherit; padding: 0.3rem 0.45rem; }
+    .filters button { cursor: pointer; }
+    .filters a { padding-bottom: 0.35rem; }
+    .status { color: #6b7280; font-size: 0.9rem; }
+    .log-output { min-height: 18rem; max-height: 38rem; overflow: auto; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; background: #111827; color: #e5e7eb; white-space: pre-wrap; word-break: break-word; }
+    .log-line { padding: 0.08rem 0; }
+    .archive { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #e5e7eb; }
+    .archive-controls { display: flex; gap: 0.75rem; align-items: end; flex-wrap: wrap; }
+    .archive-controls label { display: inline-flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
+    .archive-controls input, .archive-controls select { font: inherit; padding: 0.3rem 0.45rem; }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/pricing">Pricing</a>
+      <a href="/dashboard/invoices">Invoices</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main id="logs-page" data-stream-url="{{.Data.StreamURL}}" data-archive-base="{{.Data.ArchiveBase}}">
+    {{template "email-verification-banner" .}}
+    <p class="breadcrumb"><a href="/dashboard/apps/{{.Data.AppSlug}}">Apps / {{.Data.AppSlug}}</a></p>
+    <h1>Logs: <code>{{.Data.AppSlug}}</code></h1>
+    <p>Lifecycle: <strong>{{.Data.AppStatus}}</strong> · <span id="stream-status" class="status" role="status">Connecting to the live stream…</span></p>
+
+    <form method="get" action="/dashboard/apps/{{.Data.AppSlug}}/logs" class="filters">
+      <label>Level
+        <select name="level">
+          <option value="">All levels</option>
+          <option value="info" {{if eq .Data.Level "info"}}selected{{end}}>info</option>
+          <option value="warn" {{if eq .Data.Level "warn"}}selected{{end}}>warn</option>
+          <option value="error" {{if eq .Data.Level "error"}}selected{{end}}>error</option>
+        </select>
+      </label>
+      <label>Grep
+        <input type="text" name="grep" value="{{.Data.Grep}}" placeholder="substring or regex">
+      </label>
+      <label>Since
+        <input type="text" name="since" value="{{.Data.Since}}" placeholder="RFC3339 timestamp">
+      </label>
+      <label>Deployment
+        <select name="deployment">
+          <option value="">All deployments</option>
+          {{range .Data.Deployments}}
+            <option value="{{.ID}}" {{if eq .ID $.Data.Deployment}}selected{{end}}>{{.ID}} · {{.Status}} · {{.CreatedAt}}</option>
+          {{end}}
+        </select>
+      </label>
+      <button type="submit">Apply filters</button>
+      {{if or .Data.Level .Data.Grep .Data.Since .Data.Deployment}}<a href="/dashboard/apps/{{.Data.AppSlug}}/logs">Clear</a>{{end}}
+    </form>
+
+    <h2>Live stream</h2>
+    <div id="log-output" class="log-output" role="log" aria-live="polite"><span class="muted">Waiting for log lines…</span></div>
+
+    {{if .Data.ArchiveEnabled}}
+      <section class="archive" aria-labelledby="archive-heading">
+        <h2 id="archive-heading">Archived logs</h2>
+        {{if .Data.Instances}}
+          <p class="muted">Select an instance and day to open its retained log archive.</p>
+          <div class="archive-controls">
+            <label>Instance
+              <select id="archive-instance">
+                {{range .Data.Instances}}
+                  <option value="{{.ID}}" {{if eq .ID $.Data.ArchiveInstanceID}}selected{{end}}>{{.ID}} · {{.State}} · {{.StartedAt}}</option>
+                {{end}}
+              </select>
+            </label>
+            <label>Date
+              <input id="archive-date" type="date" value="{{.Data.ArchiveDate}}">
+            </label>
+            <a id="archive-link" href="{{.Data.ArchiveURL}}" target="_blank" rel="noopener">Open archived logs</a>
+          </div>
+        {{else}}
+          <p class="muted">No instance history is available for this app yet.</p>
+        {{end}}
+      </section>
+    {{end}}
+  </main>
+  <footer>onebox faas · application logs</footer>
+
+  <script nonce="{{.Nonce}}">
+    (function () {
+      const page = document.getElementById("logs-page");
+      const output = document.getElementById("log-output");
+      const status = document.getElementById("stream-status");
+      const source = new EventSource(page.dataset.streamUrl);
+      let lineCount = 0;
+
+      function appendLine(text) {
+        if (lineCount === 0) output.textContent = "";
+        const row = document.createElement("div");
+        row.className = "log-line";
+        row.textContent = text;
+        output.appendChild(row);
+        lineCount += 1;
+        while (lineCount > 500 && output.firstElementChild) {
+          output.removeChild(output.firstElementChild);
+          lineCount -= 1;
+        }
+        output.scrollTop = output.scrollHeight;
+      }
+
+      source.addEventListener("log", function (event) {
+        let payload = {};
+        try { payload = JSON.parse(event.data); } catch (_) { payload.line = event.data; }
+        const prefix = [payload.written_at, payload.instance, payload.stream].filter(Boolean).join(" ");
+        appendLine(prefix ? prefix + " " + (payload.line || "") : (payload.line || event.data));
+        status.textContent = "Live";
+      });
+      source.addEventListener("status", function (event) {
+        status.textContent = event.data ? "Stream status: " + event.data : "Stream status changed";
+      });
+      source.addEventListener("end", function () {
+        status.textContent = "Stream ended";
+        source.close();
+      });
+      source.addEventListener("error", function (event) {
+        if (event.data) appendLine("stream error: " + event.data);
+        status.textContent = "Stream reconnecting…";
+      });
+      window.addEventListener("beforeunload", function () { source.close(); }, { once: true });
+
+      const archiveLink = document.getElementById("archive-link");
+      const archiveInstance = document.getElementById("archive-instance");
+      const archiveDate = document.getElementById("archive-date");
+      if (archiveLink && archiveInstance && archiveDate) {
+        function updateArchiveLink() {
+          const params = new URLSearchParams({ archive: "1", instance: archiveInstance.value, date: archiveDate.value });
+          archiveLink.href = page.dataset.archiveBase + "?" + params.toString();
+        }
+        archiveInstance.addEventListener("change", updateArchiveLink);
+        archiveDate.addEventListener("change", updateArchiveLink);
+        updateArchiveLink();
+      }
+    })();
+  </script>
+</body>
+</html>
