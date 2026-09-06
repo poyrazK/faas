@@ -25,10 +25,28 @@ func NewNodeAwareFlowCounter(telemetry *NodeTelemetryCache, fallback FlowCounter
 	return &NodeAwareFlowCounter{telemetry: telemetry, fallback: fallback, now: time.Now}
 }
 
-// Warm forwards the local reader's bulk snapshot when it supports Warm. The
-// remote cache is populated by ReportCapacity and does not need warming here.
+// Warm primes the local reader only for instances that lack fresh compute-side
+// telemetry. Split-box deployments normally have a complete ReportCapacity
+// batch, so they avoid an unnecessary conntrack walk on the control plane.
 func (c *NodeAwareFlowCounter) Warm(ctx context.Context, instances []state.Instance) error {
 	if c == nil || c.fallback == nil {
+		return nil
+	}
+	now := time.Now()
+	if c.now != nil {
+		now = c.now()
+	}
+	covered := make(map[string]struct{})
+	for _, row := range c.telemetry.Snapshot(now) {
+		covered[row.Telemetry.InstanceID] = struct{}{}
+	}
+	missing := make([]state.Instance, 0, len(instances))
+	for _, instance := range instances {
+		if _, ok := covered[instance.ID]; !ok {
+			missing = append(missing, instance)
+		}
+	}
+	if len(missing) == 0 {
 		return nil
 	}
 	warmer, ok := c.fallback.(interface {
@@ -37,7 +55,7 @@ func (c *NodeAwareFlowCounter) Warm(ctx context.Context, instances []state.Insta
 	if !ok {
 		return nil
 	}
-	return warmer.Warm(ctx, instances)
+	return warmer.Warm(ctx, missing)
 }
 
 // Open returns remote compute telemetry when fresh, then delegates to the

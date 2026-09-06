@@ -167,6 +167,20 @@ func TestReader_OpenReturnsCountAfterWarm(t *testing.T) {
 	}
 }
 
+func TestReader_WarmEmptyFleetDoesNotReadConntrack(t *testing.T) {
+	runner := &fakeRunner{err: errors.New("conntrack must not run")}
+	r := NewReader(runner)
+	if err := r.Warm(context.Background(), nil); err != nil {
+		t.Fatalf("Warm(empty): %v", err)
+	}
+	if calls := runner.calls.Load(); calls != 0 {
+		t.Fatalf("runner calls = %d, want 0", calls)
+	}
+	if got, err := r.Open(context.Background(), "absent"); err != nil || got != 0 {
+		t.Fatalf("Open after empty Warm = (%d, %v), want (0, nil)", got, err)
+	}
+}
+
 func TestReader_OpenOnUnknownInstanceReturnsZero(t *testing.T) {
 	runner := &fakeRunner{out: []byte(cannedConntrack)}
 	r := NewReader(runner, WithTTL(time.Hour))
