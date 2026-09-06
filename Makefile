@@ -967,6 +967,10 @@ sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Cli
 	# ahead of spec work isn't blocked.
 	@$(GO) run ./cmd/sdk-coverage
 
+.PHONY: object-storage-qualify
+object-storage-qualify: ## Operator-only: run the opt-in live S3-compatible provider qualification
+	@FAAS_OBJECT_STORAGE_LIVE_TEST=1 $(GO) test ./pkg/objectstorage -run '^TestLiveProviderQualification$$' -count=1 -v
+
 .PHONY: sdk-gen-node
 sdk-gen-node: ## Regenerate sdk/node/src/generated from api/openapi.yaml
 	@cd sdk/node && npm run gen
