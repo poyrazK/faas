@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"golang.org/x/sync/singleflight"
 )
 
 // ResolveSlugFn (ADR-093) is the (slug → appID) resolver the
@@ -803,6 +804,10 @@ type Handler struct {
 	// / InvalidateAll) and is wired by the db.Notify handler in
 	// commit 14.
 	responseCache *ResponseCache
+	// cacheRefresh coalesces detached stale-while-waking refreshes by
+	// response-cache key. The customer request returns the stale body while
+	// one background wake + origin fetch repopulates the entry.
+	cacheRefresh singleflight.Group
 	// publicAuthUnsealer turns an APP_BASIC_AUTH secretbox
 	// sealed blob into the username/password pair the
 	// request header carries. nil = unseal disabled (unit
@@ -5056,10 +5061,26 @@ haveApp:
 	// preflight OPTIONS) so preflight responses are never
 	// cached — an OPTIONS cached against the wrong Origin is a
 	// real CORS bypass.
-	cacheRule := (*EdgeRuleCacheResolved)(nil)
 	if served, rule := h.applyEdgeRuleCache(w, r, app, rec); served {
 		return
 	} else if rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
+		// Stash the matched rule before installing the cache writer so a
+		// follower can replay an eligible stale entry without creating a
+		// store-skipped capture. The wake leader continues to the origin;
+		// its normal cache writer refreshes this entry after the instance is
+		// ready.
+		r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
+		wakeInFlight := h.gate != nil && h.gate.Inflight(app.ID)
+		if wakeInFlight {
+			if served, _ := h.tryServeStaleWhileWaking(w, r, app, rec); served {
+				h.startStaleWhileWakingRefresh(r, app, rule)
+				return
+			}
+		} else if h.backend != nil && h.backend.HealthyCount(app.ID) == 0 {
+			if served, _ := h.tryServeStaleAndStartWake(w, r, app, rec, rule); served {
+				return
+			}
+		}
 		// Miss path — install the cacheWriter tee so the
 		// upstream response populates the cache. The rule
 		// non-nil + auth-bypass-clear + method-in-vocab
@@ -5070,7 +5091,6 @@ haveApp:
 		// itself short-circuited to a miss.
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
 		w = cw
-		cacheRule = rule
 		defer func() {
 			if cw.shouldStore() {
 				key := CacheKey{
@@ -5107,10 +5127,6 @@ haveApp:
 		// stash, the gate-failure path would have to
 		// re-run the matcher (the rule was already
 		// resolved above, no point doing it twice).
-		if rule != nil {
-			r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
-		}
-		_ = cacheRule
 	}
 
 	// Issue #463 / ADR-069 / ADR-071 / PR-C §5: resolve the
