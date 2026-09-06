@@ -47,3 +47,4 @@ export type DataUpstreamResponse = {
   created_at: string;
   last_seen_at: string;
 };
+
