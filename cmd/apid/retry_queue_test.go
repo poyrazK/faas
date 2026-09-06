@@ -27,6 +27,14 @@ func TestRetryDeployment_QueuesSourceBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	r := e.do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
+	if r.Code != http.StatusConflict {
+		t.Fatalf("pending deployment retry: status=%d body=%s", r.Code, r.Body.String())
+	}
+	latest, err := e.store.LatestDeployment(t.Context(), app.ID)
+	if err != nil || latest.ID != dep.ID {
+		t.Fatalf("pending retry created a deployment: latest=%s err=%v", latest.ID, err)
+	}
 	if err := e.store.FailSourceDeployment(t.Context(), dep.ID, "test failure"); err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +60,14 @@ func TestRetryDeployment_QueuesSourceBuild(t *testing.T) {
 			}
 		})
 	}
-	latest, err := e.store.LatestDeployment(t.Context(), app.ID)
+	latest, err = e.store.LatestDeployment(t.Context(), app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(source); err != nil {
 		t.Fatal(err)
 	}
-	r := e.do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
+	r = e.do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
 	if r.Code != http.StatusConflict {
 		t.Fatalf("missing source: status=%d body=%s", r.Code, r.Body.String())
 	}

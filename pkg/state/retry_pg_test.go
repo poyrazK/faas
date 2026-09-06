@@ -5,6 +5,7 @@ package state_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
-	s, ctx := pgStore(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acct, err := s.CreateAccount(ctx, "retry-pg@example.com", api.PlanScale)
 	if err != nil {
 		t.Fatal(err)
@@ -29,12 +30,49 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 	if err := s.FailSourceDeployment(ctx, original.ID, "test failure"); err != nil {
 		t.Fatal(err)
 	}
+	customStages := json.RawMessage(`[{"percent":5,"duration":"1m"},{"percent":50,"duration":"1m"},{"percent":100,"duration":"0s"}]`)
+	oldStarted := time.Now().UTC().Add(-time.Hour)
+	if _, err := pool.Exec(ctx, `
+		update deployments
+		   set rollback_on_5xx = true,
+		       reason = 'retry after dependency recovery',
+		       tag = 'hotfix',
+		       deployed_by = 'Release Operator',
+		       pr_number = 1419,
+		       priority = 7,
+		       canary_preset = 'custom',
+		       canary_step = 2,
+		       canary_total_steps = 3,
+		       canary_step_started_at = $2,
+		       canary_stages = $3,
+		       rollout_state = 'rolling_out',
+		       rollout_started_at = $2,
+		       traffic_percent = 50
+		 where id = $1`, original.ID, oldStarted, customStages); err != nil {
+		t.Fatal(err)
+	}
+	original, err = s.DeploymentByID(ctx, original.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(original.CanaryStages) != string(customStages) {
+		t.Fatalf("deployment projection lost custom canary stages: %s", original.CanaryStages)
+	}
 	retry, err := s.RetryDeploymentFromStage(ctx, original.ID, state.StageSecurityScan)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if retry.SourcePath != original.SourcePath || retry.SourceRoot != original.SourceRoot || !retry.FullRootfsAllowAuto || retry.FullRootfsOverride == nil || !*retry.FullRootfsOverride || string(retry.Workflows) != string(original.Workflows) {
 		t.Fatalf("retry lost input settings: %+v", retry)
+	}
+	if !retry.RollbackOn5xx || retry.Reason != original.Reason || retry.Tag != original.Tag || retry.DeployedBy != original.DeployedBy || retry.PRNumber != original.PRNumber || retry.Priority != original.Priority {
+		t.Fatalf("retry lost policy or annotation metadata: %+v", retry)
+	}
+	if retry.CanaryPreset != "custom" || retry.CanaryStep != 0 || retry.CanaryTotalSteps != 3 || retry.TrafficPercent != 5 || string(retry.CanaryStages) != string(customStages) {
+		t.Fatalf("retry did not restart custom canary: %+v", retry)
+	}
+	if retry.CanaryStepStartedAt == nil || !retry.CanaryStepStartedAt.After(oldStarted) || retry.RolloutState != "pending" || retry.RolloutStartedAt != nil {
+		t.Fatalf("retry did not reset execution timers: %+v", retry)
 	}
 	var stages state.StageState
 	if err := json.Unmarshal(retry.StageState, &stages); err != nil {

@@ -5726,56 +5726,12 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	if app, ok := m.apps[src.AppID]; !ok || app.Status != AppActive {
 		return Deployment{}, ErrNotFound
 	}
-	// Build a new row. The Status field stays DeployPending so
-	// imaged's transition chokepoint picks it up the same way as a
-	// fresh CLI-driven deploy. The id is fresh; every input
-	// primitive from the source row carries over so the new
-	// attempt is byte-equivalent to re-running the same pipeline.
-	//
-	// Code-review finding #3: actor attribution columns
-	// (DeployedVia / DeployedByUserID / DeployedFromIP /
-	// PusherLogin) must also carry over — they describe WHO
-	// triggered the original deploy, and the SOC 2 / GDPR audit
-	// trail ("who deployed v3 at 14:32?") is keyed on these
-	// columns. A retry that strips them produces a row whose
-	// deployer chips are blank, breaking audit-trail queries that
-	// walk from the failed row back to the operator. The columns
-	// here describe the *retry's* triggering actor in the new
-	// row's terms — copying the source primitives reflects
-	// "this row was created from the same intent as that row",
-	// which is the same posture that the input-primitive copy
-	// above takes for non-actor fields.
-	newDep := Deployment{
-		ID:                    newID(),
-		AppID:                 src.AppID,
-		ImageDigest:           src.ImageDigest,
-		Kind:                  src.Kind,
-		SourcePath:            src.SourcePath,
-		SourceBytes:           src.SourceBytes,
-		SourceRoot:            src.SourceRoot,
-		Handler:               src.Handler,
-		SourceURL:             src.SourceURL,
-		CommitSHA:             src.CommitSHA,
-		OverrideEntrypoint:    src.OverrideEntrypoint,
-		OverrideCmd:           src.OverrideCmd,
-		OverrideEnv:           src.OverrideEnv,
-		OverrideEnvSecrets:    src.OverrideEnvSecrets,
-		OverridePort:          src.OverridePort,
-		OverrideHealthcheck:   src.OverrideHealthcheck,
-		OverrideLivenessProbe: src.OverrideLivenessProbe,
-		Sidecars:              src.Sidecars,
-		Workflows:             append(json.RawMessage(nil), src.Workflows...),
-		FullRootfsAllowAuto:   src.FullRootfsAllowAuto,
-		FullRootfsOverride:    src.FullRootfsOverride,
-		MinInstances:          src.MinInstances,
-		TrafficPercent:        src.TrafficPercent,
-		Scope:                 src.Scope,
-		DeployedVia:           src.DeployedVia,
-		DeployedByUserID:      src.DeployedByUserID,
-		DeployedFromIP:        src.DeployedFromIP,
-		PusherLogin:           src.PusherLogin,
-		Status:                DeployPending,
+	now := time.Now()
+	newDep, err := retryDeploymentInput(src, now)
+	if err != nil {
+		return Deployment{}, err
 	}
+	newDep.ID = newID()
 	// Seed stage_state: the new row starts at fromStage with an
 	// empty history. imaged's transitionWithStage will append
 	// the first row (fromStage → next) the same way it does on
@@ -5785,7 +5741,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 		return Deployment{}, fmt.Errorf("RetryDeploymentFromStage: encode stage_state seed: %w", err)
 	}
 	newDep.StageState = seed
-	newDep.CreatedAt = time.Now()
+	newDep.CreatedAt = now
 	m.deployments[newDep.ID] = newDep
 	return newDep, nil
 }

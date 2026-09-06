@@ -6883,48 +6883,14 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status='active' for update`, src.AppID).Scan(&active); err != nil {
 		return Deployment{}, mapErr(err)
 	}
-	// Step 3 — build the new Deployment. The id is fresh; the
-	// actor attribution columns (DeployedVia / DeployedByUserID /
-	// DeployedFromIP / PusherLogin) carry over from the source
-	// row. The retry represents the same deploy intent — the
-	// operator who triggered the original failure also triggered
-	// the retry (via the dashboard form or `gregale deploys
-	// retry`), and the SOC 2 / GDPR audit-trail queries walk from
-	// the failed row back to the deployer; stripping these
-	// columns would break that linkage. See memstore mirror for
-	// the code-review finding rationale.
-	newDep := Deployment{
-		ID:                    uuid.NewString(),
-		AppID:                 src.AppID,
-		BuildID:               "",
-		ImageDigest:           src.ImageDigest,
-		Kind:                  src.Kind,
-		SourcePath:            src.SourcePath,
-		SourceRoot:            src.SourceRoot,
-		SourceBytes:           src.SourceBytes,
-		Handler:               src.Handler,
-		LogPath:               "",
-		SourceURL:             src.SourceURL,
-		CommitSHA:             src.CommitSHA,
-		OverrideEntrypoint:    src.OverrideEntrypoint,
-		OverrideCmd:           src.OverrideCmd,
-		OverrideEnv:           src.OverrideEnv,
-		OverrideEnvSecrets:    src.OverrideEnvSecrets,
-		OverridePort:          src.OverridePort,
-		OverrideHealthcheck:   src.OverrideHealthcheck,
-		OverrideLivenessProbe: src.OverrideLivenessProbe,
-		Sidecars:              src.Sidecars,
-		Workflows:             append(json.RawMessage(nil), src.Workflows...),
-		FullRootfsAllowAuto:   src.FullRootfsAllowAuto,
-		FullRootfsOverride:    src.FullRootfsOverride,
-		MinInstances:          src.MinInstances,
-		TrafficPercent:        src.TrafficPercent,
-		Scope:                 src.Scope,
-		DeployedVia:           src.DeployedVia,
-		DeployedByUserID:      src.DeployedByUserID,
-		DeployedFromIP:        src.DeployedFromIP,
-		PusherLogin:           src.PusherLogin,
+	// Step 3 — rebuild the immutable intent while resetting mutable execution
+	// state. The helper is shared with MemStore so canary/service-rollout and
+	// annotation semantics cannot drift between production and tests.
+	newDep, err := retryDeploymentInput(src, time.Now())
+	if err != nil {
+		return Deployment{}, err
 	}
+	newDep.ID = uuid.NewString()
 	// Step 4 — INSERT with stage_state seeded to the requested
 	// fromStage. We do not call CreateDeployment because that path
 	// supersedes the prior live row (a retry is independent of
@@ -6942,13 +6908,23 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          status,
 		                          min_instances,
 		                          traffic_percent,
+		                          rollback_on_5xx,
+		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
+		                          rollout_state, rollout_started_at,
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
+		                          reason, tag, deployed_by, pr_number,
+		                          priority,
 		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', $19, $20,
-		         coalesce(nullif($21, ''), 'default'),
-		         nullif($22, '')::uuid, coalesce(nullif($23, ''), 'api'), nullif($24, '')::inet, nullif($25, ''),
-		         $26, $27, $28, $29)
+		         $21,
+		         coalesce(nullif($22, ''), 'none'), $23, $24, $25, $26,
+		         coalesce(nullif($27, ''), 'pending'), $28,
+		         coalesce(nullif($29, ''), 'default'),
+		         nullif($30, '')::uuid, coalesce(nullif($31, ''), 'api'), nullif($32, '')::inet, nullif($33, ''),
+		         $34, $35, $36, nullif($37, 0),
+		         $38,
+		         $39, $40, $41, $42)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -6961,6 +6937,10 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		notNullEmptyJSONRaw(newDep.Sidecars),
 		newDep.MinInstances,
 		newDep.TrafficPercent,
+		newDep.RollbackOn5xx,
+		newDep.CanaryPreset, newDep.CanaryStep, newDep.CanaryTotalSteps,
+		newDep.CanaryStepStartedAt, nullJSONRaw(newDep.CanaryStages),
+		newDep.RolloutState, newDep.RolloutStartedAt,
 		newDep.Scope,
 		// Code-review finding #3: actor attribution columns mirror
 		// the CreateDeployment nullif/coalesce pattern (see
@@ -6969,6 +6949,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		// audit-trail linkage from failed row → deployer chips
 		// survives a retry.
 		newDep.DeployedByUserID, newDep.DeployedVia, newDep.DeployedFromIP, newDep.PusherLogin,
+		nullString(newDep.Reason), nullString(newDep.Tag), nullString(newDep.DeployedBy), newDep.PRNumber,
+		newDep.Priority,
 		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride)
 	created, err := scanDeployment(row)
 	if err != nil {
@@ -17376,7 +17358,7 @@ const deploymentSelectColumnsWithRootfs = `
 	first_wake_at, first_5xx_window_ends_at, first_5xx_count,
 	last_auto_rollback_at, coalesce(last_auto_rollback_reason,''),
 	coalesce(canary_preset, 'none'), canary_step, canary_total_steps,
-	canary_step_started_at, coalesce(rollout_state, 'pending'),
+	canary_step_started_at, canary_stages, coalesce(rollout_state, 'pending'),
 	rollout_started_at, rollout_completed_at, rollout_aborted_at,
 	coalesce(rollout_aborted_reason, ''),
 	-- ADR-124 deployment queue controls (migration 00391/00491). priority
@@ -17431,7 +17413,7 @@ const deploymentSelectColumnsQualified = `
 	d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count,
 	d.last_auto_rollback_at, coalesce(d.last_auto_rollback_reason,''),
 	coalesce(d.canary_preset, 'none'), d.canary_step, d.canary_total_steps,
-	d.canary_step_started_at, coalesce(d.rollout_state, 'pending'),
+	d.canary_step_started_at, d.canary_stages, coalesce(d.rollout_state, 'pending'),
 	d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at,
 	coalesce(d.rollout_aborted_reason, ''),
 	-- ADR-124 deployment queue controls (migration 00391/00491). See the
@@ -17540,7 +17522,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&firstWakeAt, &first5xxWindowEndsAt, &d.First5xxCount,
 		&lastAutoRollbackAt, &d.LastAutoRollbackReason,
 		&d.CanaryPreset, &d.CanaryStep, &d.CanaryTotalSteps,
-		&canaryStepStartedAt, &d.RolloutState,
+		&canaryStepStartedAt, &d.CanaryStages, &d.RolloutState,
 		&rolloutStartedAt, &rolloutCompletedAt, &rolloutAbortedAt,
 		&d.RolloutAbortedReason,
 		// ADR-124 deployment queue controls (migration 00391/00491). The

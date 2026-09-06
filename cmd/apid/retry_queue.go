@@ -18,6 +18,11 @@ import (
 // alone does not start builderd; source retries need the same durable build
 // and source publication ordering as an initial upload.
 func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Deployment, from state.StageName) (state.Deployment, error) {
+	if dep.Status != state.DeployFailed {
+		return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Deployment cannot be retried",
+			fmt.Sprintf("Deployment %s has status %s; only failed deployments can be retried.", dep.ID, dep.Status))
+	}
 	if app.Status != state.AppActive {
 		return state.Deployment{}, api.ErrSourceInvalid("Retry requires an active app.")
 	}
