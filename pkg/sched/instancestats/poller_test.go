@@ -40,6 +40,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -372,6 +373,63 @@ func TestPoller_PersistentTelemetryAvoidsPerNodeDials(t *testing.T) {
 	}
 	if !rows[0].SampledAt.Equal(now) {
 		t.Fatalf("row SampledAt = %v, want telemetry sample time %v", rows[0].SampledAt, now)
+	}
+}
+
+// TestPoller_DiskPressureHandlerRunsOncePerFullTransition pins the enforcement
+// edge: a full sample invokes the lifecycle handler once, repeated full
+// samples do not duplicate destroys, and recovery to normal arms the next
+// full transition again.
+func TestPoller_DiskPressureHandlerRunsOncePerFullTransition(t *testing.T) {
+	store := state.NewMemStore()
+	_, node := seedTwoNodes(t, store)
+	ins := seedInstance(t, store, "app1", node.ID)
+	dialer := &statsFakeDialer{stats: map[string]*sched.StatsSnapshot{
+		node.TargetURL: {Instances: []sched.VMInstanceStat{{
+			InstanceID: ins.ID, DiskUsedBytes: ptrI64(95), DiskCapacityBytes: ptrI64(100),
+		}}},
+	}}
+	var pressures []fcvm.DiskPressure
+	p := NewPoller(store, dialer, nil, NewReader(), nil, nilLogger()).
+		WithDiskPressureHandler(func(_ context.Context, row InstanceStat, pressure fcvm.DiskPressure) error {
+			wantUsed := int64(95)
+			if len(pressures) > 0 {
+				wantUsed = 96
+			}
+			if row.DiskUsedBytes != wantUsed || row.DiskCapacityBytes != 100 {
+				t.Fatalf("handler row disk=(%d,%d), want (%d,100)", row.DiskUsedBytes, row.DiskCapacityBytes, wantUsed)
+			}
+			pressures = append(pressures, pressure)
+			return nil
+		})
+	if err := p.Tick(context.Background()); err != nil {
+		t.Fatalf("first full Tick: %v", err)
+	}
+	if err := p.Tick(context.Background()); err != nil {
+		t.Fatalf("repeated full Tick: %v", err)
+	}
+	if len(pressures) != 1 || pressures[0] != fcvm.DiskPressureFull {
+		t.Fatalf("pressures after repeated full samples = %v, want [full]", pressures)
+	}
+
+	dialer.mu.Lock()
+	dialer.stats[node.TargetURL] = &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{
+		InstanceID: ins.ID, DiskUsedBytes: ptrI64(70), DiskCapacityBytes: ptrI64(100),
+	}}}
+	dialer.mu.Unlock()
+	if err := p.Tick(context.Background()); err != nil {
+		t.Fatalf("recovery Tick: %v", err)
+	}
+	dialer.mu.Lock()
+	dialer.stats[node.TargetURL] = &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{
+		InstanceID: ins.ID, DiskUsedBytes: ptrI64(96), DiskCapacityBytes: ptrI64(100),
+	}}}
+	dialer.mu.Unlock()
+	if err := p.Tick(context.Background()); err != nil {
+		t.Fatalf("second full Tick: %v", err)
+	}
+	if len(pressures) != 2 {
+		t.Fatalf("pressures after recovery/full = %v, want two full transitions", pressures)
 	}
 }
 

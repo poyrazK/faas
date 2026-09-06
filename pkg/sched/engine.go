@@ -5233,6 +5233,44 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	return nil
 }
 
+// RecycleForDiskPressure destroys a running instance whose guest writable
+// filesystem reached the full threshold. The snapshot is marked stale before
+// teardown so a subsequent wake cannot restore the same exhausted filesystem.
+// Service replicas use the normal RUNNING→STOPPED transition, which schedules
+// the existing deployment reconciler to admit a replacement.
+func (e *Engine) RecycleForDiskPressure(ctx context.Context, instanceID string, usedBytes, capacityBytes int64) error {
+	ins, err := e.lockedRunning(ctx, instanceID)
+	if err != nil || ins == nil {
+		return err
+	}
+	defer e.unlockApp(ins.AppID)
+
+	// A full writable root must never be carried forward in a deployment
+	// snapshot. Mark both tiers stale; plans that do not use one of the tiers
+	// simply have no snapshot to update.
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		snap, snapErr := e.store.LatestSnapshotForTier(ctx, ins.DeploymentID, tier)
+		if snapErr != nil || snap.ID == "" {
+			continue
+		}
+		if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
+			e.log.Warn("disk pressure: mark snapshot stale", "instance", instanceID, "snap_id", snap.ID, "tier", tier, "err", markErr)
+		}
+	}
+
+	// Release admission before destroy so a service replacement can be
+	// admitted as soon as the lifecycle transition is visible.
+	e.ledger.Release(instanceID)
+	destroyCtx := context.WithoutCancel(ctx)
+	if err := e.timedDestroy(destroyCtx, ins.NodeID, instanceID, DestroyTimeout); err != nil {
+		return fmt.Errorf("sched: disk pressure: destroy %s: %w", instanceID, err)
+	}
+
+	reason := fmt.Sprintf("disk_full used_bytes=%d capacity_bytes=%d", usedBytes, capacityBytes)
+	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, "disk_full", reason)
+	return nil
+}
+
 // StopInstance (M-2 / ADR-138 §Decision 1) is the engine-side
 // graceful stop sequence. Distinct from Park (snapshot+park,
 // preserves snapshot cache) and Evict (hard destroy, RAM

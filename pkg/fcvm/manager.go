@@ -625,6 +625,14 @@ func diskPressure(used, capacity int64) DiskPressure {
 	}
 }
 
+// ClassifyDiskPressure converts a guest writable-filesystem sample into the
+// bounded pressure signal used by vmmd and schedd. Keeping the threshold
+// calculation here gives every consumer the same 80% near-full and 95% full
+// semantics while preserving Unknown for malformed samples.
+func ClassifyDiskPressure(used, capacity int64) DiskPressure {
+	return diskPressure(used, capacity)
+}
+
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {

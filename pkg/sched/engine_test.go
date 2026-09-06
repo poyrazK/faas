@@ -2036,6 +2036,40 @@ func TestEngineEvict_Destroys(t *testing.T) {
 	}
 }
 
+func TestEngineRecycleForDiskPressure_DestroysAndInvalidatesSnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: dep.ID, Tier: state.SnapshotTierWarm, FCVersion: "1.10.0", StorageKey: "snap/" + dep.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if err := e.RecycleForDiskPressure(context.Background(), res.InstanceID, 95, 100); err != nil {
+		t.Fatalf("RecycleForDiskPressure: %v", err)
+	}
+	if vmm.destroys != 1 {
+		t.Errorf("destroys = %d, want 1", vmm.destroys)
+	}
+	ins, _ := store.InstanceByID(context.Background(), res.InstanceID)
+	if ins.State != string(state.StateStopped) {
+		t.Errorf("state = %q, want stopped", ins.State)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0 after disk-pressure recycle", got)
+	}
+	if _, err := store.LatestSnapshotForTier(context.Background(), dep.ID, state.SnapshotTierWarm); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("LatestSnapshotForTier after recycle = %v, want ErrNotFound", err)
+	}
+}
+
 // TestEngineParkAppSnapshotsRunningInstance pins the app-level park contract:
 // once apid has changed the app to evicted_cold, schedd must perform the
 // instance lifecycle work instead of leaving a RUNNING row behind. The
