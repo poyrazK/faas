@@ -226,6 +226,7 @@ export type { MFAVerifyRequest } from './MFAVerifyRequest.js';
 export type { MFAVerifyResponse } from './MFAVerifyResponse.js';
 export type { MagicLinkSignupRequest } from './MagicLinkSignupRequest.js';
 export type { MemberListResponse } from './MemberListResponse.js';
+export type { MirrorCleanCondition } from './MirrorCleanCondition.js';
 export type { MirrorRuleListResponse } from './MirrorRuleListResponse.js';
 export type { MirrorRuleResponse } from './MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './MirrorSummaryResponse.js';

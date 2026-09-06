@@ -15198,6 +15198,27 @@ components:
           type: string
           description: "Wall-clock dwell at this stage, in time.ParseDuration form (e.g. '30s', '2m'). '0s' for the terminal hop."
           example: "2m"
+        mirror_clean:
+          oneOf:
+            - $ref: '#/components/schemas/MirrorCleanCondition'
+            - type: 'null'
+          description: "Require a clean traffic-mirror window before advancing out of this stage. Any status, schema, body, or crash diff aborts the rollout."
+
+    MirrorCleanCondition:
+      description: "Mirror quality gate for a canary stage (issue #1395 B1)."
+      type: object
+      required: [min_invocations, window_s]
+      properties:
+        min_invocations:
+          type: integer
+          minimum: 1
+          description: "Minimum completed mirror comparisons required in the window."
+          example: 100
+        window_s:
+          type: integer
+          minimum: 1
+          description: "Trailing mirror-summary window in seconds."
+          example: 300
 
     CanaryPresetSpec:
       description: |

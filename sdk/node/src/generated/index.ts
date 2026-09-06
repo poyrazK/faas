@@ -232,6 +232,7 @@ export type { MFARecoverRequest } from './models/MFARecoverRequest.js';
 export type { MFARecoverResponse } from './models/MFARecoverResponse.js';
 export type { MFAVerifyRequest } from './models/MFAVerifyRequest.js';
 export type { MFAVerifyResponse } from './models/MFAVerifyResponse.js';
+export type { MirrorCleanCondition } from './models/MirrorCleanCondition.js';
 export type { MirrorRuleListResponse } from './models/MirrorRuleListResponse.js';
 export type { MirrorRuleResponse } from './models/MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './models/MirrorSummaryResponse.js';
