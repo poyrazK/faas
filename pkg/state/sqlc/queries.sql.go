@@ -1334,23 +1334,24 @@ func (q *Queries) CreateTrigger(ctx context.Context, db DBTX, arg CreateTriggerP
 const createUploadSession = `-- name: CreateUploadSession :one
 
 INSERT INTO upload_sessions (
-    id, account_id, app_slug, total_size, chunk_size, sha256_hex, part_path
+    id, account_id, app_slug, total_size, chunk_size, sha256_hex, part_path, deploy_options
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 RETURNING id, account_id, app_slug, total_size, received_bytes, chunk_size,
           sha256_hex, part_path, status, created_at, last_patched_at, expires_at,
-          deployment_id
+          deployment_id, deploy_options
 `
 
 type CreateUploadSessionParams struct {
-	ID        string
-	AccountID pgtype.UUID
-	AppSlug   string
-	TotalSize int64
-	ChunkSize int32
-	Sha256Hex pgtype.Text
-	PartPath  string
+	ID            string
+	AccountID     pgtype.UUID
+	AppSlug       string
+	TotalSize     int64
+	ChunkSize     int32
+	Sha256Hex     pgtype.Text
+	PartPath      string
+	DeployOptions []byte
 }
 
 // =====================================================================
@@ -1385,6 +1386,7 @@ func (q *Queries) CreateUploadSession(ctx context.Context, db DBTX, arg CreateUp
 		arg.ChunkSize,
 		arg.Sha256Hex,
 		arg.PartPath,
+		arg.DeployOptions,
 	)
 	var i UploadSession
 	err := row.Scan(
@@ -1401,6 +1403,7 @@ func (q *Queries) CreateUploadSession(ctx context.Context, db DBTX, arg CreateUp
 		&i.LastPatchedAt,
 		&i.ExpiresAt,
 		&i.DeploymentID,
+		&i.DeployOptions,
 	)
 	return i, err
 }
@@ -2096,7 +2099,7 @@ func (q *Queries) GetUploadCommitOutcome(ctx context.Context, db DBTX, uploadID 
 const getUploadSession = `-- name: GetUploadSession :one
 SELECT id, account_id, app_slug, total_size, received_bytes, chunk_size,
        sha256_hex, part_path, status, created_at, last_patched_at, expires_at,
-       deployment_id
+       deployment_id, deploy_options
 FROM upload_sessions
 WHERE id = $1
 `
@@ -2131,6 +2134,7 @@ func (q *Queries) GetUploadSession(ctx context.Context, db DBTX, id string) (Upl
 		&i.LastPatchedAt,
 		&i.ExpiresAt,
 		&i.DeploymentID,
+		&i.DeployOptions,
 	)
 	return i, err
 }

@@ -356,6 +356,8 @@ export type { UpdateEdgeRuleRequest } from './models/UpdateEdgeRuleRequest.js';
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';
 export type { UpdateTriggerRequest } from './models/UpdateTriggerRequest.js';
+export type { UploadDeployOptions } from './models/UploadDeployOptions.js';
+export type { UploadSessionResponse } from './models/UploadSessionResponse.js';
 export type { UploadStartRequest } from './models/UploadStartRequest.js';
 export type { UploadStartResponse } from './models/UploadStartResponse.js';
 export type { UsageExportResponse } from './models/UsageExportResponse.js';
