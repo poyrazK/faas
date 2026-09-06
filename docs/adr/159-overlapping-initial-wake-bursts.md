@@ -40,6 +40,12 @@ uses the existing scheduler paths. The gateway caches all returned targets and
 marks the initial batch as its active capacity generation, preventing a partial
 RUNNING notification from launching duplicate local expansion.
 
+A batch RPC timeout or later expansion error does not invalidate a healthy
+target already published through the normal routing cache. An active request
+continues through the ordinary picker and forwarding limits using that capacity.
+If no healthy target exists, the original failure is retained. Request
+cancellation is never converted into a successful wake by this fallback.
+
 The request/response fields are additive. Old servers return one target and old
 clients ignore siblings. Non-capacity-aware adapters and preview-scope wakes keep
 their existing paths. Every VM is still scheduler-owned and billed normally.

@@ -123,10 +123,13 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 		waited = true
 		select {
 		case <-generation.done:
+			if err := ctx.Err(); err != nil {
+				return waited, err
+			}
 			// A scheduler refusal to expand does not invalidate targets that
 			// already exist. Let the normal forwarding limits and request
 			// budget bound their work instead of failing the whole burst.
-			if errors.Is(generation.err, errBurstCapacityStalled) && h.backend.HealthyCount(app.ID) > 0 {
+			if generation.err != nil && h.backend.HealthyCount(app.ID) > 0 {
 				return waited, nil
 			}
 			if generation.err != nil {

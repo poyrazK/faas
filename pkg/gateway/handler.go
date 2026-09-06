@@ -6791,6 +6791,13 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		},
 	)
 	if werr != nil {
+		// A batch RPC can fail while a primary restore has already published
+		// a healthy target. Expansion failure must not discard that capacity.
+		// Reuse only the ordinary target cache; the picker and forwarding
+		// limits below still decide whether this request can be served.
+		if ctx.Err() == nil && h.backend.HealthyCount(appID) > 0 {
+			return true, "", WakeMethodUnspecified, nil
+		}
 		return false, "", WakeMethodUnspecified, werr
 	}
 	return cold, admittedWakeID, method, nil
