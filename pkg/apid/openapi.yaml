@@ -22236,6 +22236,102 @@ components:
           additionalProperties: { type: string }
 
     # ─── Outbound webhooks (issue #476 / ADR-076) ──────────────────────────────
+    AppWebhookEvent:
+      type: string
+      description: Closed vocabulary of events emitted to app webhook subscribers.
+      enum:
+        - cron.fired
+        - cron.fired.manually
+        - app.created
+        - app.deleted
+        - app.deployed
+        - app.scaled
+        - app.parked
+        - app.woken
+        - build.succeeded
+        - build.failed
+        - deployment.failed
+        - rollout.aborted
+        - error.new
+        - job.finished
+        - preview.created
+        - budget.threshold
+
+    DeploymentFailedWebhookPayload:
+      type: object
+      description: Deployment failure details delivered with deployment.failed.
+      required: [app_id, deployment_id]
+      properties:
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        deployment_id: { type: string }
+        error_code: { type: string }
+        error_hint: { type: string }
+        error_why: { type: string }
+        error_fix: { type: string }
+        relevant_logs: { type: array, items: { type: string } }
+      additionalProperties: true
+
+    RolloutAbortedWebhookPayload:
+      type: object
+      description: Rollout abort details delivered with rollout.aborted.
+      required: [app_id, deployment_id, reason]
+      properties:
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        deployment_id: { type: string }
+        reason: { type: string }
+        aborted_at: { type: string, format: date-time }
+      additionalProperties: true
+
+    ErrorNewWebhookPayload:
+      type: object
+      description: First-observation details delivered with error.new.
+      required: [app_id, fingerprint]
+      properties:
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        fingerprint: { type: string }
+        route: { type: string }
+        class: { type: string }
+        sample: { type: string }
+        first_seen_at: { type: string, format: date-time }
+      additionalProperties: true
+
+    JobFinishedWebhookPayload:
+      type: object
+      description: Terminal job details delivered with job.finished.
+      required: [status, duration_ms]
+      properties:
+        job_id: { type: string }
+        run_id: { type: string }
+        status: { type: string }
+        finished_at: { type: string, format: date-time }
+        account_id: { type: string, format: uuid }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+      additionalProperties: true
+
+    PreviewCreatedWebhookPayload:
+      type: object
+      description: Preview URL details delivered with preview.created.
+      required: [url]
+      properties:
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        url: { type: string, format: uri }
+        pull_request: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+      additionalProperties: true
+
+    BudgetThresholdWebhookPayload:
+      type: object
+      description: Budget observation delivered with budget.threshold.
+      required: [pct, cap]
+      properties:
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        pct: { type: number, minimum: 0, maximum: 100 }
+        cap: { type: integer, format: int64, minimum: 0 }
+        metric: { type: string }
+        observed_cents: { type: integer, format: int64, minimum: 0 }
+        period: { type: string }
+      additionalProperties: true
+
     AppWebhookResponse:
       description: |
         An outbound webhook subscription. Carries the masked HMAC secret;
@@ -22250,7 +22346,7 @@ components:
         webhook_secret_sealed_masked: { type: string, enum: ["***"] }
         event_filter:
           type: array
-          items: { type: string }
+          items: { $ref: '#/components/schemas/AppWebhookEvent' }
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         enabled: { type: boolean }
@@ -22281,7 +22377,7 @@ components:
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
           type: array
-          items: { type: string, enum: ["cron.fired", "app.created", "app.deleted", "build.succeeded", "build.failed"] }
+          items: { $ref: '#/components/schemas/AppWebhookEvent' }
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         enabled: { type: boolean, default: true }
@@ -22303,7 +22399,7 @@ components:
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
           type: array
-          items: { type: string, enum: ["cron.fired", "app.created", "app.deleted", "build.succeeded", "build.failed"] }
+          items: { $ref: '#/components/schemas/AppWebhookEvent' }
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         enabled: { type: boolean }
@@ -22340,7 +22436,7 @@ components:
         webhook_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         account_id: { type: string, format: uuid }
-        event: { type: string }
+        event: { $ref: '#/components/schemas/AppWebhookEvent' }
         payload:
           type: object
           additionalProperties: true

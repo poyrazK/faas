@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppWebhookEvent } from './AppWebhookEvent.js';
 /**
  * An outbound webhook subscription. Carries the masked HMAC secret;
  * the sealed ciphertext is server-side only.
@@ -13,7 +14,7 @@ export type AppWebhookResponse = {
   account_id: string;
   target_url: string;
   webhook_secret_sealed_masked: '***';
-  event_filter: Array<string>;
+  event_filter: Array<AppWebhookEvent>;
   retry_policy: 'default' | 'aggressive' | 'none';
   enabled: boolean;
   created_at: string;

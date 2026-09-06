@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppWebhookEvent } from './AppWebhookEvent.js';
 /**
  * One row per (event × target) emission. The dispatcher mutates
  * this row in place as attempts progress; the GET /deliveries
@@ -15,7 +16,7 @@ export type AppWebhookDeliveryResponse = {
   webhook_id: string;
   app_id: string;
   account_id: string;
-  event: string;
+  event: AppWebhookEvent;
   /**
    * The original event payload (omitted on rows past the first attempt; the customer has already seen it).
    */

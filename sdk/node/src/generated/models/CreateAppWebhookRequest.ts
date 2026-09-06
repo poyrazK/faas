@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppWebhookEvent } from './AppWebhookEvent.js';
 /**
  * Subscribe a target URL to events emitted by the app. The
  * webhook_secret is HMAC-SHA256 sealed at rest with the host
@@ -12,7 +13,7 @@
 export type CreateAppWebhookRequest = {
   target_url: string;
   webhook_secret: string;
-  event_filter?: Array<'cron.fired' | 'app.created' | 'app.deleted' | 'build.succeeded' | 'build.failed'>;
+  event_filter?: Array<AppWebhookEvent>;
   retry_policy?: 'default' | 'aggressive' | 'none';
   enabled?: boolean;
 };

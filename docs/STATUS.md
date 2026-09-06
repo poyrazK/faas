@@ -692,6 +692,16 @@ ADR-075 / issue #475 / migration 00138.
   (per-app / per-account → 422 `plan_webhook_quota`). Closed enum
   drift on `retry_policy` and `event_filter` surfaces as 400
   `app_webhook_invalid` BEFORE the row is created.
+- **Event vocabulary (issue #1395 B5)** — the closed event set is shared by
+  state, API/OpenAPI, CLI, SDK, and the delivery-ledger CHECK: `cron.fired`,
+  `cron.fired.manually`, `app.created`, `app.deleted`, `app.deployed`,
+  `app.scaled`, `app.parked`, `app.woken`, `build.succeeded`,
+  `build.failed`, `deployment.failed`, `rollout.aborted`, `error.new`,
+  `job.finished`, `preview.created`, and `budget.threshold`. Producers call
+  `pkg/webhook.Emit` after their source mutation commits; it stores the raw
+  JSON payload in one durable row per enabled matching subscription, so the
+  existing retry endpoint can replay every event. OpenAPI carries a payload
+  schema for each B5 event.
 - **CLI** — `gregale webhooks <list|add|update|rm|deliveries|retry>`
   (mirrors `gregale crons`). Closed-set drift on `--retry-policy`
   surfaces locally before the round-trip (same posture as

@@ -38,20 +38,16 @@ const AppWebhookSecretMasked = "***"
 var AllowedAppWebhookRetryPolicies = []string{"default", "aggressive", "none"}
 
 // AllowedAppWebhookEvents is the closed set for the events a webhook
-// can subscribe to. Issue #476 ships the cron.fired surface; the
-// other entries are placeholders for future event sources (app
-// lifecycle, build status, etc.) and the apid CreateAppWebhook handler
-// rejects requests for events not in this set.
+// can subscribe to. It mirrors the SQL CHECK and the CLI vocabulary.
 //
-// Each entry matches the audit `kind` the upstream emitter writes,
-// so the dispatcher can route without a second lookup.
+// Each entry is the event name persisted in the delivery ledger, so the
+// dispatcher can route without a second lookup. Producers may add the row
+// directly or use pkg/webhook.Emit after their source mutation commits.
 var AllowedAppWebhookEvents = []string{
-	"cron.fired",
-	"cron.fired.manually", // issue #791 PR-D / ADR-090 §"Sub-decision 7" — manual cron run events.
-	"app.created",
-	"app.deleted",
-	"build.succeeded",
-	"build.failed",
+	"cron.fired", "cron.fired.manually",
+	"app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken",
+	"build.succeeded", "build.failed",
+	"deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold",
 }
 
 // AppWebhookEventFilterLenMax bounds the number of distinct events a
