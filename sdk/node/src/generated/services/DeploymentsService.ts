@@ -239,8 +239,13 @@ export class DeploymentsService {
     });
   }
   /**
+   * @deprecated
    * Create a deployment from a CLI-uploaded local tarball (zero-config).
    * Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+   * This multipart endpoint is deprecated for new clients. Use the
+   * resumable upload session endpoints under `/v1/uploads` for progress,
+   * retry-safe chunking, and commit deduplication; this route remains
+   * available during the migration window.
    * The CLI uploads a gzipped tar via the `tarball` form field and
    * an optional informational `{repo, ref}` JSON sidecar. The CLI
    * binary is the trust root: apid does NOT consult
