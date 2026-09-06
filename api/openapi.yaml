@@ -14463,6 +14463,10 @@ components:
             - $ref: '#/components/schemas/BuildPlan'
             - type: 'null'
           description: "Auto-detected build plan (issue #961 / Mega-A PR-2). One-line summary the CLI prints after `gregale deploy`. nil for image deploys."
+        hosting_receipt:
+          type: [object, "null"]
+          additionalProperties: true
+          description: "Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result."
         # Issue #606 / SAFE-RELEASES-E.1: structured deployer
         # attribution. All four fields are server-stamped from
         # the HTTP request context (never client-supplied) and

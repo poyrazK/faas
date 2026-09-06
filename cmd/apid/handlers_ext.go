@@ -4020,6 +4020,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		RolloutCompletedAt:   d.RolloutCompletedAt,
 		RolloutAbortedAt:     d.RolloutAbortedAt,
 		RolloutAbortedReason: d.RolloutAbortedReason,
+		APIHostingReceipt:    d.APIHostingReceipt,
 	}
 	if len(d.OverrideEntrypoint) > 0 {
 		resp.OverrideEntrypoint = d.OverrideEntrypoint

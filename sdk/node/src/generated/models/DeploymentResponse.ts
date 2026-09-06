@@ -128,6 +128,10 @@ export type DeploymentResponse = {
    */
   build_plan?: (BuildPlan | null);
   /**
+   * Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result.
+   */
+  hosting_receipt?: any | null;
+  /**
    * UUID of the deploying local account (FK → accounts.id, ON DELETE SET NULL). Empty when the deploy came from a non-local source (e.g. a githubd pusher not bound to a local account).
    */
   deployed_by_user_id?: string | null;
