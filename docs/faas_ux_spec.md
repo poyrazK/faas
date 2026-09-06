@@ -195,7 +195,7 @@ $ faas deploy --repo jane/api    # or pick in dashboard
 - **On push to the production branch** (default `main`, configurable): the GitHub App webhook → `apid` creates a deployment from that commit → normal build pipeline (implementation spec §9). Same path as `faas deploy`, different trigger.
 - **Build status** is written back to the commit (GitHub Checks API): queued → building → live/failed, with a link to logs.
 - **Rollback** stays one command / one button (previous deployment kept — implementation spec §9.6).
-- **Least privilege:** the GitHub App requests Contents:read + Checks:write + Issues:write + webhook. Issues:write is used only to maintain the single idempotent PR preview comment; no org-wide access, per-repo selection honoured.
+- **Least privilege:** the GitHub App requests Contents:read + Checks:write + Deployments:write + Issues:write + webhook. Deployments:write is used only for the deployment lifecycle projection; Issues:write is used only to maintain the single idempotent PR preview comment; no org-wide access, per-repo selection honoured.
 
 ### 5.3 PR preview environments
 

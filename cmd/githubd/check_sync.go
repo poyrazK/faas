@@ -49,23 +49,44 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if !ok {
 		return nil
 	}
+	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
+	if domain == "" {
+		domain = "gregale.dev"
+	}
+	deploymentURL := fmt.Sprintf("https://%s/dashboard/apps/%s/deployments/%s", domain, appSlug, deploymentID)
+	logsURL := fmt.Sprintf("https://%s/v1/deployments/%s/logs", domain, deploymentID)
+	environmentURL := fmt.Sprintf("https://%s.%s", appSlug, domain)
+	environment := githubDeploymentEnvironment(kind, scope, appSlug)
+	if err := checks.WriteGitHubDeploymentStatus(ctx, githubd.GitHubDeploymentUpdate{
+		LocalDeploymentID:     deploymentID,
+		InstallationID:        installationID,
+		RepoFullName:          repo,
+		CommitSHA:             commitSHA,
+		Ref:                   commitSHA,
+		Environment:           environment,
+		Status:                status,
+		Description:           fmt.Sprintf("Gregale deployment %s for %s", deploymentID, appSlug),
+		TargetURL:             deploymentURL,
+		EnvironmentURL:        environmentURL,
+		LogURL:                logsURL,
+		TransientEnvironment:  kind == string(state.DeploymentKindPreview) || previewOf != "",
+		ProductionEnvironment: kind == string(state.DeploymentKindGitHub) && scope == string(state.DefaultEnvScope),
+	}); err != nil {
+		return err
+	}
 	summary := fmt.Sprintf("Gregale deployment %s is %s.", deploymentID, status)
 	if failure != "" {
 		summary += " " + failure
 	}
 	if kind == string(state.DeploymentKindPreview) || previewOf != "" {
 		if err := checks.WritePreviewCheckForInstallation(ctx, installationID, repo, commitSHA, phase,
-			"https://"+appSlug+".gregale.dev", summary); err != nil {
+			environmentURL, summary); err != nil {
 			return err
 		}
 		if previewPRNumber > 0 {
 			// Check Runs are the durable status source. The comment is a
 			// best-effort companion: a missing Issues:write grant must not
 			// prevent the Check Run worker from making progress.
-			domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-			if domain == "" {
-				domain = "gregale.dev"
-			}
 			previewURL := "https://" + appSlug + "." + domain
 			dashboardBase := "https://" + domain
 			marker := "<!-- gregale-preview:" + appSlug + " -->"
@@ -75,6 +96,16 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return nil
 	}
 	return checks.WriteScopedAppCheck(ctx, installationID, repo, commitSHA, appSlug, scope, phase, "", summary)
+}
+
+func githubDeploymentEnvironment(kind, scope, appSlug string) string {
+	prefix := "production"
+	if kind == string(state.DeploymentKindPreview) {
+		prefix = "preview"
+	} else if scope != "" && scope != string(state.DefaultEnvScope) {
+		prefix = scope
+	}
+	return prefix + "/" + appSlug
 }
 
 func checkPhaseForDeploymentStatus(status string) (githubdgrpc.CheckPhase, bool) {

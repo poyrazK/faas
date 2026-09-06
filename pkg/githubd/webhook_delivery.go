@@ -208,6 +208,36 @@ func (s *PGWebhookStore) SaveCheckRunID(ctx context.Context, repoFullName, commi
 	return nil
 }
 
+func (s *PGWebhookStore) GitHubDeploymentID(ctx context.Context, deploymentID string) (int64, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		select github_deployment_id from github_deployments
+		where deployment_id = $1`, deploymentID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrGitHubDeploymentNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("githubd: load github deployment id: %w", err)
+	}
+	return id, nil
+}
+
+func (s *PGWebhookStore) SaveGitHubDeploymentID(ctx context.Context, deploymentID string, githubDeploymentID int64) error {
+	if deploymentID == "" || githubDeploymentID <= 0 {
+		return fmt.Errorf("githubd: deployment ids must be non-empty and positive")
+	}
+	_, err := s.pool.Exec(ctx, `
+		insert into github_deployments (deployment_id, github_deployment_id)
+		values ($1, $2)
+		on conflict (deployment_id) do update
+		set github_deployment_id = excluded.github_deployment_id, updated_at = now()`,
+		deploymentID, githubDeploymentID)
+	if err != nil {
+		return fmt.Errorf("githubd: save github deployment id: %w", err)
+	}
+	return nil
+}
+
 // RunWebhookDeliveryWorker drains authenticated deliveries until ctx is
 // cancelled. Business errors are retried with bounded exponential backoff;
 // ignored/unbound/rejected events are successful deliveries and are retained
