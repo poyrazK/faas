@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,6 +76,40 @@ func TestStaleWhileWaking_NoInflightWakeNoServe(t *testing.T) {
 	if served || outcome != "" {
 		t.Fatalf("served=%v outcome=%q, want false/empty when helper is not gated", served, outcome)
 	}
+}
+
+func TestStaleWhileWaking_StartsWakeAndRefreshes(t *testing.T) {
+	now := time.Now()
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+	h, b, _ := newTestHandler(t)
+	h.WithResponseCache(cache)
+	rule := EdgeRuleCacheResolved{ID: "rule-1", PathGlob: "/catalog", MaxAgeSeconds: 60, StaleIfErrorSeconds: 300}
+	app := b.app
+	key := CacheKey{AppID: app.ID, RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")}
+	cache.Put(key, 200, http.Header{"Content-Type": []string{"text/plain"}}, []byte("stale"), now.Add(-time.Second), now.Add(time.Minute), rule.toStateEdgeRuleCacheAction())
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/catalog", nil)
+	req = req.WithContext(withCacheRuleContext(req.Context(), &rule, app.ID, "GET", "/catalog", "", hashStable("")))
+	w := httptest.NewRecorder()
+	rec := newTestStatusRecorder(w)
+	served, outcome := h.tryServeStaleAndStartWake(w, req, app, rec, &rule)
+	if !served || outcome != "stale_while_waking" {
+		t.Fatalf("served=%v outcome=%q, want true/stale_while_waking", served, outcome)
+	}
+	if got := w.Body.String(); got != "stale" {
+		t.Fatalf("body = %q, want stale response", got)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		state, entry := cache.Get(key)
+		if state == "fresh" && entry != nil && string(entry.body) == "hello from app" {
+			if got := atomic.LoadInt32(&b.admits); got != 1 {
+				t.Fatalf("wake admits = %d, want 1", got)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("cache was not refreshed from the woken instance")
 }
 
 // TestStaleOnError_NoRuleNoServe verifies the no-rule path

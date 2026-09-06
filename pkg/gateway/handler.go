@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"golang.org/x/sync/singleflight"
 )
 
 // ResolveSlugFn (ADR-093) is the (slug → appID) resolver the
@@ -803,6 +804,10 @@ type Handler struct {
 	// / InvalidateAll) and is wired by the db.Notify handler in
 	// commit 14.
 	responseCache *ResponseCache
+	// cacheRefresh coalesces detached stale-while-waking refreshes by
+	// response-cache key. The customer request returns the stale body while
+	// one background wake + origin fetch repopulates the entry.
+	cacheRefresh singleflight.Group
 	// publicAuthUnsealer turns an APP_BASIC_AUTH secretbox
 	// sealed blob into the username/password pair the
 	// request header carries. nil = unseal disabled (unit
@@ -5065,8 +5070,14 @@ haveApp:
 		// its normal cache writer refreshes this entry after the instance is
 		// ready.
 		r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
-		if h.gate != nil && h.gate.Inflight(app.ID) {
+		wakeInFlight := h.gate != nil && h.gate.Inflight(app.ID)
+		if wakeInFlight {
 			if served, _ := h.tryServeStaleWhileWaking(w, r, app, rec); served {
+				h.startStaleWhileWakingRefresh(r, app, rule)
+				return
+			}
+		} else if h.backend != nil && h.backend.HealthyCount(app.ID) == 0 {
+			if served, _ := h.tryServeStaleAndStartWake(w, r, app, rec, rule); served {
 				return
 			}
 		}
