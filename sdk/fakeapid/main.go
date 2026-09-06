@@ -32,14 +32,14 @@ var healthzBody = mustJSON(map[string]bool{"ok": true})
 // Only the canonical required fields are populated; GitHubInstall is
 // omitted (omitempty) so the test sees a clean body.
 var accountResponse = mustJSON(map[string]any{
-	"id":             "0123456789abcdef0123456789abcdef",
-	"email":          "ops@example.com",
-	"email_verified": true,
-	"plan":           "hobby",
-	"status":         "active",
-	"limits":         accountLimits(),
-	"usage_gb_hours": 1.234,
-	"app_count":      3,
+	"id":                  "0123456789abcdef0123456789abcdef",
+	"email":               "ops@example.com",
+	"email_verified":      true,
+	"plan":                "hobby",
+	"status":              "active",
+	"limits":              accountLimits(),
+	"usage_gb_hours":      1.234,
+	"app_count":           3,
 	"developer_app_count": 1,
 })
 
