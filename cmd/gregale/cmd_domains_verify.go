@@ -73,6 +73,48 @@ func cmdDomainsShow(args []string) int {
 	return 0
 }
 
+// cmdDomainsStatus renders the durable certificate lifecycle for every
+// custom-domain binding. Unlike `show`, this command never performs a live
+// TLS dial; it is safe for scripts and remains useful during an outage.
+func cmdDomainsStatus(args []string) int {
+	if len(args) != 0 {
+		fmt.Fprintf(os.Stderr, "usage: gregale domains status\n")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	domains, err := client.ListDomains(ctx)
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeNDJSON(domains))
+	}
+	for _, d := range domains {
+		status := d.CertStatus
+		if status == "" {
+			status = "pending"
+		}
+		expires := d.CertExpiresAt
+		if expires == "" {
+			expires = d.CertNotAfter
+		}
+		if expires == "" {
+			expires = "—"
+		}
+		fmt.Printf("%-40s %-10s %-25s", d.Domain, status, expires)
+		if d.CertLastError != "" {
+			fmt.Printf(" %s", d.CertLastError)
+		}
+		fmt.Fprintln(os.Stdout)
+	}
+	return 0
+}
+
 // printDomainRow is the shared printer for both verify + show.
 // When verbose is true, it also prints the cert NotAfter + SANs.
 func printDomainRow(d api.CustomDomainResponse, verbose bool) {

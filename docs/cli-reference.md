@@ -753,6 +753,10 @@ Re-verify DNS + cert for a domain
 
 Show a domain&#39;s cert details
 
+### domains status
+
+Show durable TLS status for all domains
+
 ### domains doctor
 
 5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)

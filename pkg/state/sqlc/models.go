@@ -565,12 +565,16 @@ type CronFireNowRequest struct {
 }
 
 type CustomDomain struct {
-	Domain         interface{}
-	AppID          pgtype.UUID
-	VerifiedAt     pgtype.Timestamptz
-	ChallengeToken string
-	AppIDRedirect  pgtype.UUID
-	OrgID          pgtype.UUID
+	Domain           interface{}
+	AppID            pgtype.UUID
+	VerifiedAt       pgtype.Timestamptz
+	ChallengeToken   string
+	AppIDRedirect    pgtype.UUID
+	OrgID            pgtype.UUID
+	CertStatus       string
+	CertExpiresAt    pgtype.Timestamptz
+	CertLastError    pgtype.Text
+	DnsLastCheckedAt pgtype.Timestamptz
 }
 
 type DataUpstream struct {

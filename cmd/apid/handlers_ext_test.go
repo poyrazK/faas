@@ -1727,6 +1727,10 @@ func TestListDomains_HappyPath(t *testing.T) {
 	if _, err := e.store.CreateCustomDomain(context.Background(), "y.example.com", appID, "tok"); err != nil {
 		t.Fatal(err)
 	}
+	expires := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := e.store.UpdateCustomDomainCertStatus(context.Background(), "y.example.com", state.CustomDomainCertIssued, expires, "", expires.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	rec := e.do(t, "GET", "/v1/domains", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -1735,7 +1739,7 @@ func TestListDomains_HappyPath(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(out) != 1 || out[0].Domain != "y.example.com" {
+	if len(out) != 1 || out[0].Domain != "y.example.com" || out[0].CertStatus != "issued" || out[0].CertExpiresAt == "" || out[0].DNSLastCheckedAt == "" {
 		t.Errorf("got %+v", out)
 	}
 }

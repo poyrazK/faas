@@ -287,6 +287,18 @@ type PreviewItem struct {
 	StateClass string // CSS class matching PrState for the chip
 }
 
+// DomainItem is the compact durable custom-domain projection rendered on an
+// app detail page. The cert fields come from custom_domains, so a dashboard
+// refresh does not block on a live TLS handshake.
+type DomainItem struct {
+	Domain           string
+	Verified         bool
+	CertStatus       string
+	CertExpiresAt    string
+	CertLastError    string
+	DNSLastCheckedAt string
+}
+
 // CronItem is one row on the app detail page's crons tab
 // (issue #791 PR-E / ADR-090 §"Sub-decision 7"). The inline runs
 // panel + fire-now form are projected into the same struct so the
@@ -355,6 +367,9 @@ type AppDetailData struct {
 	// surfaces its previews) so a preview-of-preview loop can't
 	// occur.
 	Previews []PreviewItem
+	// Domains carries the app's legacy custom-domain bindings and their
+	// durable certificate lifecycle (issue #1397 / F1).
+	Domains []DomainItem
 	// FiredFlash is the post-redirect banner surfaced after a
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1

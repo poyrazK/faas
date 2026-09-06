@@ -6944,7 +6944,7 @@ func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token st
 	if _, dup := m.domains[domain]; dup {
 		return CustomDomain{}, fmt.Errorf("state: domain %q already exists", domain)
 	}
-	d := CustomDomain{Domain: domain, AppID: appID, ChallengeToken: token}
+	d := CustomDomain{Domain: domain, AppID: appID, ChallengeToken: token, CertStatus: CustomDomainCertPending}
 	m.domains[domain] = d
 	return d, nil
 }
@@ -7001,6 +7001,21 @@ func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 	return nil
 }
 
+func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.domains[domain]
+	if !ok {
+		return ErrNotFound
+	}
+	d.CertStatus = status
+	d.CertExpiresAt = expiresAt
+	d.CertLastError = lastError
+	d.DNSLastCheckedAt = dnsCheckedAt
+	m.domains[domain] = d
+	return nil
+}
+
 func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -7048,6 +7063,22 @@ func (m *MemStore) ListAllCustomDomainsForDoctor(_ context.Context) ([]string, e
 			out = append(out, h.Hostname)
 		}
 	}
+	return out, nil
+}
+
+// ListUnverifiedCustomDomains is the bounded poller's read seam. It is kept
+// outside Store for compatibility with narrow test doubles; production PgStore
+// and MemStore both expose it for the optional type assertion in dns_poller.
+func (m *MemStore) ListUnverifiedCustomDomains(_ context.Context) ([]CustomDomain, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]CustomDomain, 0)
+	for _, d := range m.domains {
+		if !d.Verified() {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
 	return out, nil
 }
 

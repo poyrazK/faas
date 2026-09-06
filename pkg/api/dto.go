@@ -2339,19 +2339,15 @@ type CustomDomainResponse struct {
 	Default        bool     `json:"default,omitempty"`    // true when this domain is the app's default (issue #961 / Mega-A PR-3)
 	CertNotAfter   string   `json:"cert_not_after,omitempty"`
 	CertSANs       []string `json:"cert_sans,omitempty"`
-	// CertStatus summarises the live cert dial (issue #961 / Mega-A PR-3
-	// code-review round, MED-4). One of:
-	//   ""           — cert dial was not attempted (domain unverified, or
-	//                  dialCert not called because the cert is already known).
-	//   "issued"     — port-443 handshake succeeded and the leaf cert
-	//                  covers this domain (sanContains matched).
-	//   "pending"    — domain is verified but the cert dial has not yet
-	//                  succeeded (DNS propagated but cert not yet minted).
-	//   "dial_failed:<reason>" — TCP dial, TLS handshake, or cert parse
-	//                  failed. <reason> is one of: dial_refused,
-	//                  dial_timeout, handshake_failed, no_peer_certs,
-	//                  parse_failed. omitempty so legacy rows / pre-PR-3
-	//                  clients see bit-identical payloads.
+	// Durable legacy custom-domain TLS state (issue #1397 / F1). These
+	// fields are populated by the DNS/cert poller and remain available when
+	// the live cert endpoint is temporarily unreachable.
+	CertExpiresAt    string `json:"cert_expires_at,omitempty"`
+	CertLastError    string `json:"cert_last_error,omitempty"`
+	DNSLastCheckedAt string `json:"dns_last_checked_at,omitempty"`
+	// CertStatus is the durable TLS lifecycle (pending, issued, renewing, or
+	// failed). The per-domain show endpoint may temporarily override it with
+	// a live "dial_failed:<reason>" probe result; list/status remain durable.
 	CertStatus string `json:"cert_status,omitempty"`
 }
 

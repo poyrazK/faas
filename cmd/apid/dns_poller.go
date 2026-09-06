@@ -70,16 +70,22 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 		return
 	}
 	for _, d := range pending {
+		checkedAt := time.Now().UTC()
 		if checkTXT(ctx, d.Domain, d.ChallengeToken) {
 			if err := s.store.MarkDomainVerified(ctx, d.Domain); err != nil {
 				log.Warn("dns_poller: mark verified failed", "domain", d.Domain, "err", err)
 				continue
+			}
+			if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+				log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
 			}
 			// Use the canonical channel constant (no LISTEN consumer yet —
 			// recorded here so the next dns_poller→imaged LISTEN path picks up
 			// the right name without a find/replace).
 			_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
 			log.Info("domain verified", "domain", d.Domain)
+		} else if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+			log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
 		}
 	}
 	// ADR-100 / issue #879: poll tenant hostnames alongside
@@ -163,15 +169,25 @@ func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainR
 	// which works fine at M5 scale (one-box, single-digit accounts). The
 	// Store interface grows a dedicated method when this matters.
 	var out []pendingDomainRow
-	// Fast path: if the Store exposes ListAllUnverifiedDomains (PgStore),
-	// use it; otherwise fall back to the per-account walk.
+	// Fast path: PgStore and MemStore expose the full row through this
+	// optional interface. Keeping it optional preserves compatibility with
+	// narrow test doubles that only implement the historical Store surface.
 	type listUnverified interface {
-		ListAllUnverifiedDomains(ctx context.Context) ([]pendingDomainRow, error)
+		ListUnverifiedCustomDomains(ctx context.Context) ([]state.CustomDomain, error)
 	}
 	if lu, ok := s.store.(listUnverified); ok {
-		return lu.ListAllUnverifiedDomains(ctx)
+		domains, err := lu.ListUnverifiedCustomDomains(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out = make([]pendingDomainRow, 0, len(domains))
+		for _, d := range domains {
+			out = append(out, pendingDomainRow{Domain: d.Domain, ChallengeToken: d.ChallengeToken})
+		}
+		return out, nil
 	}
-	// Fallback: not implemented for MemStore in tests; return empty.
+	// No compatible enumeration seam: leave the pass empty rather than
+	// issuing an unbounded account/app walk from the poller goroutine.
 	return out, nil
 }
 
@@ -345,9 +361,35 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		}
 	}
 	if obs.CertState == "" {
-		// Legacy custom_domains path: live dial.
-		obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, domain)
-		obs.CertCheckedAt = time.Now().UTC()
+		// Legacy custom_domains path. An unverified row is still waiting
+		// on the TXT challenge, so keep it pending and avoid a misleading
+		// port-443 failure while DNS ownership is being established.
+		legacy, legacyErr := s.store.DomainByName(ctx, domain)
+		if legacyErr == nil && !legacy.Verified() {
+			obs.CertState = certStatusPending
+		} else {
+			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, domain)
+			obs.CertCheckedAt = time.Now().UTC()
+		}
+		// F1: mirror the doctor's live cert observation onto the legacy
+		// custom_domains row. This makes list/show/status useful without a
+		// live dial and keeps the cert error text available for remediation.
+		status := state.CustomDomainCertStatus(obs.CertState)
+		switch obs.CertState {
+		case certStatusCDN, certStatusDialFailed:
+			status = state.CustomDomainCertFailed
+		case certStatusPending:
+			status = state.CustomDomainCertPending
+		case certStatusIssued:
+			status = state.CustomDomainCertIssued
+		}
+		dnsCheckedAt := obs.DNSCheckedAt
+		if dnsCheckedAt.IsZero() {
+			dnsCheckedAt = time.Now().UTC()
+		}
+		if err := s.store.UpdateCustomDomainCertStatus(ctx, domain, status, obs.CertNotAfter, obs.LastError, dnsCheckedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+			log.Warn("dns_poller: update custom-domain cert status failed", "domain", domain, "err", err)
+		}
 	}
 	if err := s.store.UpsertDoctorObservation(ctx, obs); err != nil {
 		log.Warn("dns_poller: upsert doctor observation failed", "domain", domain, "err", err)
