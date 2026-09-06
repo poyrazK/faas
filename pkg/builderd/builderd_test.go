@@ -661,6 +661,48 @@ func TestProcessOne_AppLayerUnderCapSucceeds(t *testing.T) {
 	}
 }
 
+// TestProcessOne_EmptyArtifactFailsClaim pins the completion boundary. A
+// successful guest exit with an empty export must fail the build through the
+// normal terminal path; CompleteBuild must never be the first place that
+// rejects the artifact, because that would leave the claim running.
+func TestProcessOne_EmptyArtifactFailsClaim(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+	emptyPath := filepath.Join(t.TempDir(), "empty.tar")
+	if err := os.WriteFile(emptyPath, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: emptyPath, ExitCode: 0}}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err == nil || !contains(err.Error(), "artifact is empty") {
+		t.Fatalf("ProcessOne error = %v, want empty-artifact failure", err)
+	}
+	build, err := store.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.Status != state.BuildFailed || build.FailureClass != state.FailureInfra {
+		t.Fatalf("build = %+v, want failed infra", build)
+	}
+	dep, err := store.DeploymentByID(context.Background(), depID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dep.Status != state.DeployFailed || dep.RootfsPath != "" {
+		t.Fatalf("deployment = %+v, want failed without rootfs", dep)
+	}
+	for _, call := range notif.calls {
+		if call.channel == db.NotifySnapshotBoot {
+			t.Fatalf("snapshot_boot notification = %+v, want none", call)
+		}
+	}
+}
+
 // writeSparse creates a file of size bytes without allocating the full
 // range — we only stat the file, not read it, so a sparse hole is fine
 // and saves 600 MB of disk in the cap test above.
