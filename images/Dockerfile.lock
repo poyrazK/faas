@@ -62,6 +62,17 @@
     {
       "dockerfile": "images/base-minimal.Dockerfile",
       "instruction": "FROM",
+      "alias": "busybox:1.37.0-musl",
+      "resolved_repo": "docker.io/library/busybox",
+      "resolved_tag": "1.37.0-musl",
+      "platform": "linux/amd64",
+      "multi_arch": true,
+      "digest": "sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23",
+      "pinned_in_dockerfile": "FROM busybox:1.37.0-musl@sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23 AS busybox"
+    },
+    {
+      "dockerfile": "images/base-minimal.Dockerfile",
+      "instruction": "FROM",
       "alias": "debian:12-slim",
       "resolved_repo": "docker.io/library/debian",
       "resolved_tag": "12-slim",
