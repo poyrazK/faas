@@ -19425,7 +19425,7 @@ components:
           description: "SHA-256 hex of (HostHashSalt||host). 64 lowercase hex chars, matching the schema CHECK constraint."
         host_last4:
           type: string
-          description: "First 8 hex chars of host_redacted_hash; safe for log/scrape correlation (8 chars = ~4B capacity)."
+          description: "Compatibility field name. First 8 hex chars of host_redacted_hash; safe for operator correlation (8 chars = ~4B capacity)."
         port:
           type: integer
           minimum: 1

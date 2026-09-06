@@ -18,12 +18,10 @@
 // logsanitize.HashShort). The plaintext host NEVER appears on the
 // wire — neither in the POST body, nor in the GET response, nor in
 // the audit kind. The dashboard's "you pinned this" badge works off
-// the host_redacted_hash + the last 4 chars of the host, which the
-// apid-side writer derives via fmt.Sprintf("%.4s", host) and stamps
-// into a separate `host_last4` field (NOT the host itself). The
-// derived last4 is the only operator-visible fragment of the host;
-// it survives a hash table reverse-lookup and is enough to render
-// "neon-tech" / "aws-rds" in the UI.
+// the host_redacted_hash and its first 8 hex characters, surfaced in
+// the compatibility field `host_last4`. The fragment is derived
+// from the hash (NOT the plaintext host), giving operator views a
+// consistent 32-bit identifier without exposing the host.
 
 package api
 
@@ -181,13 +179,11 @@ func ValidateUpstreamPort(port int) *Problem {
 // invoking the regex.
 const MaxUpstreamHostLength = 253
 
-// DataUpstreamHostLast4 is the per-row helper that returns the
-// last 4 characters of the plaintext host. The apid handler
-// stamps the value into the response's `host_last4` field so the
-// dashboard can render "neon-tech" / "aws-rds" without revealing
-// the full plaintext host. The fragment survives a hash table
-// reverse-lookup and is small enough to not be a privacy issue on
-// its own (a known host suffix is not a credential).
+// DataUpstreamHostLast4 returns the last 4 characters of a plaintext
+// host for callers that explicitly need that local display helper.
+// Customer-facing DataUpstreamResponse values do not use this
+// helper: the wire field is a first-8-hex hash fragment, derived
+// without exposing the plaintext host.
 //
 // Less-than-4-char hosts return the host verbatim (the cap is
 // for visual sanity, not a security boundary — the full plaintext
@@ -270,12 +266,10 @@ func (r PutDataUpstreamRequest) Validate() *Problem {
 // host is NEVER on the wire — neither in this struct's fields,
 // nor in the JSON output, nor in the audit kind.
 //
-// HostLast4 is the operator-visible fragment (4 chars, enough
-// to render "neon-tech" / "aws-rds" in the UI without revealing
-// the full host). Computed at the apid handler via
-// DataUpstreamHostLast4; not stored on the row (the storage
-// is the hash, not the fragment — the fragment is the response
-// surface, not a database field).
+// HostLast4 is a compatibility field name for the operator-visible
+// first-8-hex hash fragment. It is not stored on the row; the
+// response derives it from HostRedactedHash without exposing the
+// plaintext host.
 //
 // DeploymentScope (ADR-098 amendment issue #954) surfaces on
 // the response so the dashboard / CLI can render the staging

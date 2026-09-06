@@ -358,7 +358,8 @@ before any scheduling behavior changes.
   and lives in `cmd/gregale/commands_inspect.go` (verb dispatcher)
   + `commands_inspect_upstreams.go` (leaf); the §11 invariant is
   enforced end-to-end (wire DTO carries only `host_redacted_hash`
-  + `host_last4`, the CLI renderer references only those two
+  + `host_last4` (the first 8 hex chars of the redacted hash), the
+    CLI renderer references only those two
   fields).
 - **Multi-node payoff.** On a fleet with two regions and an app
   whose `DATABASE_URL` points to one of them, the wake picks the

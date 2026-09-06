@@ -71,9 +71,9 @@ func TestCmdInspectUpstreams_HappyPath(t *testing.T) {
 		gotQuery = r.URL.RawQuery
 		rtt := 12
 		rows := []api.DataUpstreamResponse{
-			makeUpstreamRow("11111111-1111-1111-1111-111111111111", "postgres", "primary", "a1b2", 5432, &rtt, "2026-08-18T12:34:56Z"),
-			makeUpstreamRow("22222222-2222-2222-2222-222222222222", "redis", "cache", "c3d4", 6379, nil, ""),
-			makeUpstreamRow("33333333-3333-3333-3333-333333333333", "minio", "primary", "e5f6", 9000, &rtt, "2026-08-18T12:00:00Z"),
+			makeUpstreamRow("11111111-1111-1111-1111-111111111111", "postgres", "primary", "a1b2c3d4", 5432, &rtt, "2026-08-18T12:34:56Z"),
+			makeUpstreamRow("22222222-2222-2222-2222-222222222222", "redis", "cache", "c3d4e5f6", 6379, nil, ""),
+			makeUpstreamRow("33333333-3333-3333-3333-333333333333", "minio", "primary", "e5f6a7b8", 9000, &rtt, "2026-08-18T12:00:00Z"),
 		}
 		_, _ = w.Write(encodeUpstreamsList(t, rows))
 	}))
@@ -102,9 +102,9 @@ func TestCmdInspectUpstreams_HappyPath(t *testing.T) {
 	for _, want := range []string{
 		inspectSlug + ": 3/8 upstreams",
 		"KIND", "SCOPE", "HOST_LAST4", "PORT", "SOURCE", "LAST_RTT_MS", "LAST_PROBED_AT",
-		"postgres", "primary", "a1b2", "5432", "inferred", "12", "2026-08-18T12:34:56Z",
-		"redis", "cache", "c3d4", "6379",
-		"minio", "primary", "e5f6", "9000",
+		"postgres", "primary", "a1b2c3d4", "5432", "inferred", "12", "2026-08-18T12:34:56Z",
+		"redis", "cache", "c3d4e5f6", "6379",
+		"minio", "primary", "e5f6a7b8", "9000",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q; got:\n%s", want, body)
@@ -146,7 +146,7 @@ func TestCmdInspectUpstreams_JSON_Envelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		rtt := 12
 		rows := []api.DataUpstreamResponse{
-			makeUpstreamRow("11111111-1111-1111-1111-111111111111", "postgres", "primary", "a1b2", 5432, &rtt, "2026-08-18T12:34:56Z"),
+			makeUpstreamRow("11111111-1111-1111-1111-111111111111", "postgres", "primary", "a1b2c3d4", 5432, &rtt, "2026-08-18T12:34:56Z"),
 		}
 		_, _ = w.Write(encodeUpstreamsList(t, rows))
 	}))
@@ -188,7 +188,7 @@ func TestCmdInspectUpstreams_JSON_Envelope(t *testing.T) {
 	}
 	if env.Upstreams[0].Kind != api.DataUpstreamKindPostgres ||
 		env.Upstreams[0].Scope != "primary" ||
-		env.Upstreams[0].HostLast4 != "a1b2" ||
+		env.Upstreams[0].HostLast4 != "a1b2c3d4" ||
 		env.Upstreams[0].Port != 5432 {
 		t.Errorf("upstreams[0] drift: %+v", env.Upstreams[0])
 	}

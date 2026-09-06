@@ -383,9 +383,13 @@ func dataUpstreamResponseFromState(r state.DataUpstream) api.DataUpstreamRespons
 		Source:           api.DataUpstreamSource(r.Source),
 		Kind:             api.DataUpstreamKind(r.Kind),
 		HostRedactedHash: r.HostRedactedHash,
-		HostLast4:        api.DataUpstreamHostLast4(deriveLast4FromHash(r.HostRedactedHash)),
-		Port:             r.Port,
-		Scope:            r.Scope,
+		// host_last4 is a compatibility name; the value is the first
+		// eight hex characters of the redacted hash. Keep this aligned
+		// with the classifier and the audit/log surfaces so operator
+		// views have enough entropy to distinguish upstreams.
+		HostLast4: deriveLast4FromHash(r.HostRedactedHash),
+		Port:      r.Port,
+		Scope:     r.Scope,
 		// DeploymentScope widens the dedupe key in ADR-098
 		// amendment (issue #954). Surfaces on the response so the
 		// dashboard / CLI can render staging-vs-prod. The SQL
@@ -400,17 +404,16 @@ func dataUpstreamResponseFromState(r state.DataUpstream) api.DataUpstreamRespons
 	}
 }
 
-// deriveLast4FromHash returns the first 4 lowercase hex chars of
-// the hash. Used to populate the response's `host_last4` field
-// when the plaintext host isn't available (which is always — the
-// response never carries the plaintext). Mirrors
-// pkg/data/infer.go::hostLast4FromHash but takes 4 chars instead
-// of 8 to align with the dashboard's rendering space.
+// deriveLast4FromHash returns the first 8 lowercase hex chars of
+// the hash. The function name is retained for source compatibility
+// with the original four-character response field; host_last4 is
+// now a canonical operator-visible hash fragment, matching
+// pkg/data/infer.go::hostLast4FromHash and the audit/log surfaces.
 func deriveLast4FromHash(hash string) string {
-	if len(hash) < 4 {
+	if len(hash) < 8 {
 		return hash
 	}
-	return hash[:4]
+	return hash[:8]
 }
 
 // parseUpstreamID parses the {id} path segment. Returns *Problem
