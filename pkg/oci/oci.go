@@ -35,13 +35,14 @@ type rawConfig struct {
 	Architecture string `json:"architecture"`
 	Variant      string `json:"variant"`
 	// Flat fields (Docker v2 schema).
-	Cmd         []string        `json:"Cmd"`
-	Env         []string        `json:"Env"`
-	WorkingDir  string          `json:"WorkingDir"`
-	Entrypoint  []string        `json:"Entrypoint"`
-	User        string          `json:"User"`
-	StopSignal  string          `json:"StopSignal"`
-	Healthcheck *rawHealthcheck `json:"Healthcheck"`
+	Cmd          []string            `json:"Cmd"`
+	Env          []string            `json:"Env"`
+	WorkingDir   string              `json:"WorkingDir"`
+	Entrypoint   []string            `json:"Entrypoint"`
+	User         string              `json:"User"`
+	ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+	StopSignal   string              `json:"StopSignal"`
+	Healthcheck  *rawHealthcheck     `json:"Healthcheck"`
 
 	// Nested `config` envelope (OCI image-config). Optional — many
 	// registry implementations omit it entirely.
@@ -94,11 +95,12 @@ type rawHealthcheck struct {
 // the flat value if non-empty, otherwise the nested-`config` value if
 // present, otherwise zero.
 type rawFields struct {
-	Cmd        []string
-	Env        []string
-	WorkingDir string
-	Entrypoint []string
-	User       string
+	Cmd          []string
+	Env          []string
+	WorkingDir   string
+	Entrypoint   []string
+	User         string
+	ExposedPorts map[string]struct{}
 }
 
 // resolved applies the flat-then-nested precedence rule. Preserves the
@@ -106,11 +108,12 @@ type rawFields struct {
 // change shape; ADR-136 §Decision 1 records the rationale.
 func (r *rawConfig) resolved() rawFields {
 	f := rawFields{
-		Cmd:        r.Cmd,
-		Env:        r.Env,
-		WorkingDir: r.WorkingDir,
-		Entrypoint: r.Entrypoint,
-		User:       r.User,
+		Cmd:          r.Cmd,
+		Env:          r.Env,
+		WorkingDir:   r.WorkingDir,
+		Entrypoint:   r.Entrypoint,
+		User:         r.User,
+		ExposedPorts: r.ExposedPorts,
 	}
 	if r.Config != nil {
 		if len(f.Cmd) == 0 {
@@ -127,6 +130,9 @@ func (r *rawConfig) resolved() rawFields {
 		}
 		if f.User == "" {
 			f.User = r.Config.User
+		}
+		if len(f.ExposedPorts) == 0 {
+			f.ExposedPorts = r.Config.ExposedPorts
 		}
 	}
 	return f

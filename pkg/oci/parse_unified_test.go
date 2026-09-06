@@ -72,6 +72,26 @@ func TestParseConfig_NestedOCIOnly(t *testing.T) {
 	}
 }
 
+func TestParseConfig_ExposedPortsFromNestedConfig(t *testing.T) {
+	b := []byte(`{"config":{"Cmd":["/app/server"],"ExposedPorts":{"3000/tcp":{},"53/udp":{}}},"rootfs":{"type":"layers"}}`)
+
+	cfg, err := ParseConfig(bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if _, ok := cfg.ExposedPorts["3000/tcp"]; !ok {
+		t.Fatalf("Config.ExposedPorts = %v; want 3000/tcp", cfg.ExposedPorts)
+	}
+
+	img, err := parseImageConfig(b)
+	if err != nil {
+		t.Fatalf("parseImageConfig: %v", err)
+	}
+	if _, ok := img.ExposedPorts["53/udp"]; !ok {
+		t.Fatalf("ImageConfig.ExposedPorts = %v; want 53/udp", img.ExposedPorts)
+	}
+}
+
 // TestParseConfig_BothPreferFlat asserts the precedence rule documented
 // in ADR-136 §Decision 1: flat fields win when both envelopes are
 // present; nested fields fill gaps only when the flat is empty/absent.
