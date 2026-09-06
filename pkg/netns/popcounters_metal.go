@@ -39,7 +39,21 @@ import (
 // invokes this every 15s; a slow nft (e.g. nftd recompiling) would
 // otherwise pile up goroutines.
 func PopCounters(ctx context.Context) (map[string]uint64, error) {
-	out, err := exec.CommandContext(ctx, "nft", "-j", "list", "counters").Output()
+	return popCountersCommand(ctx, "nft", "-j", "list", "counters")
+}
+
+// PopCountersInNetns reads the named counters from one live instance's
+// namespace. Counter names are local to each nft table, so this is the only
+// way to retain the app/instance association needed by C1.
+func PopCountersInNetns(ctx context.Context, netnsName string) (map[string]uint64, error) {
+	if netnsName == "" {
+		return nil, fmt.Errorf("nft list counters: empty netns")
+	}
+	return popCountersCommand(ctx, "ip", "netns", "exec", netnsName, "nft", "-j", "list", "counters")
+}
+
+func popCountersCommand(ctx context.Context, argv ...string) (map[string]uint64, error) {
+	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("nft list counters: %w", err)
 	}
@@ -70,7 +84,9 @@ func PopCounters(ctx context.Context) (map[string]uint64, error) {
 		if c.Counter.Name == "" {
 			continue
 		}
-		if !strings.HasPrefix(c.Counter.Name, "drop_v4_") && !strings.HasPrefix(c.Counter.Name, "drop_v6_") {
+		if !strings.HasPrefix(c.Counter.Name, "drop_v4_") &&
+			!strings.HasPrefix(c.Counter.Name, "drop_v6_") &&
+			!strings.HasPrefix(c.Counter.Name, "deny_") {
 			continue
 		}
 		m[c.Counter.Name] = c.Counter.Packets

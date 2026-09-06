@@ -1505,6 +1505,7 @@ Every catalog CIDR (spec §11) carries a stable nftables named counter (`drop_v4
 | Surface | Metric name | Labels | Producer |
 |---|---|---|---|
 | Host nftables | `vmmd_egress_deny_total` | `cidr`, `family` | `cmd/vmmd/poller.go` reads `nft -j list counters` every 15 s and emits the per-counter delta |
+| Per-app namespace roll-up | `vmmd_egress_denied_total` | `app`, `class` | `cmd/vmmd/egress_denied_poller.go` reads each live namespace every 15 s; `class` is `smtp`, `rfc1918`, `metadata`, or `allowlist` |
 | Per-netns nftables | (not exported) | — | per-VM cardinality is unbounded; available via `nft list counters` on the operator box for debugging |
 | OCI user-space dialer | `imaged_oci_egress_deny_total` | `cidr`, `family` | `pkg/oci/egress.go::EgressDenyHook` invoked from `EgressDialContext` on denial; `cmd/imaged/main.go` wires the hook |
 
@@ -1517,6 +1518,12 @@ The `cidr` label is the canonical `DenyEntry.CounterName` (single source of trut
 **Reset semantics**: nftables counters reset on table flush or snapshot resume (existing `faas_cap` precedent, spec §4.6). The poll adapter detects `curr < prev` and re-seeds `lastSeen` to `curr` without emitting a negative delta (Prometheus counters are monotonic — `Add(-N)` would panic).
 
 **Sampling rate**: 15 s scrape interval matches the conventional Prometheus cadence and keeps per-tenant alert latency under one minute (alert rule uses `rate()` over `1m`).
+
+`gregale inspect <slug> --upstreams` adds a `DENIED_EGRESS` block for
+observed SMTP upstreams, retaining the existing redacted host fragment and
+port on the customer-facing surface. A remediation can be applied with
+`gregale app <slug> egress-allowlist add <cidr>`; the existing apid plan gate
+and CIDR/quota validation remain authoritative.
 
 ### 12.3 Traffic anomaly detection (issue #303, ADR-039)
 

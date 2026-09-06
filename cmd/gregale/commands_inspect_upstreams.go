@@ -18,6 +18,10 @@
 //	  postgres    primary          a1b2c3d4    5432  inferred   12           2026-08-18T12:34:56Z
 //	  redis       cache            c3d4e5f6    6379  explicit   —            —
 //
+//	When an observed upstream uses a platform-denied SMTP port, a
+//	DENIED_EGRESS block follows the table with the redacted destination
+//	fragment, port, and class.
+//
 //	$ gregale inspect myapp --upstreams --scope=primary --json
 //	{"upstreams":[...],"count":3,"quota_max":8,"scope":"primary"}
 //
@@ -60,11 +64,12 @@ func cmdInspectUpstreams(slug, scope string) int {
 		// DataUpstreamListResponse.Quota is the single source of
 		// truth, so the test pins the round-trip verbatim.
 		envelope := struct {
-			Upstreams []api.DataUpstreamResponse `json:"upstreams"`
-			Count     int                        `json:"count"`
-			Quota     int                        `json:"quota_max"`
-			Scope     string                     `json:"scope,omitempty"`
-		}{Upstreams: rows, Count: count, Quota: quota, Scope: scope}
+			Upstreams    []api.DataUpstreamResponse `json:"upstreams"`
+			DeniedEgress []deniedEgressView         `json:"denied_egress,omitempty"`
+			Count        int                        `json:"count"`
+			Quota        int                        `json:"quota_max"`
+			Scope        string                     `json:"scope,omitempty"`
+		}{Upstreams: rows, DeniedEgress: deniedEgressViews(rows), Count: count, Quota: quota, Scope: scope}
 		return jsonOut(writeJSON(envelope))
 	}
 	renderUpstreamsList(osStdout, slug, rows, count, quota)
@@ -104,4 +109,41 @@ func renderUpstreamsList(w io.Writer, slug string, rows []api.DataUpstreamRespon
 		_, _ = fmt.Fprintf(w, "  %-12s %-16s %-12s %-6s %-10s %-12s %s\n",
 			r.Kind, r.Scope, last4, port, r.Source, rtt, probed)
 	}
+	denied := deniedEgressViews(rows)
+	if len(denied) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "\n  DENIED_EGRESS")
+	_, _ = fmt.Fprintf(w, "  %-24s %s\n", "DESTINATION", "CLASS")
+	for _, row := range denied {
+		_, _ = fmt.Fprintf(w, "  %-24s %s\n", row.Destination, row.Class)
+	}
+}
+
+type deniedEgressView struct {
+	Destination string `json:"destination"`
+	Class       string `json:"class"`
+}
+
+// deniedEgressViews is intentionally conservative: SMTP is the only deny
+// class that can be identified from the redacted upstream DTO alone. The
+// destination remains the safe host fragment already exposed by upstreams.
+// Runtime counters add the per-app totals separately on the metrics surface.
+func deniedEgressViews(rows []api.DataUpstreamResponse) []deniedEgressView {
+	const smtp25, smtp465, smtp587 = 25, 465, 587
+	var out []deniedEgressView
+	for _, row := range rows {
+		if row.Port != smtp25 && row.Port != smtp465 && row.Port != smtp587 {
+			continue
+		}
+		host := row.HostLast4
+		if host == "" {
+			host = GlyphEmDash
+		}
+		out = append(out, deniedEgressView{
+			Destination: fmt.Sprintf("%s:%d", host, row.Port),
+			Class:       "smtp",
+		})
+	}
+	return out
 }

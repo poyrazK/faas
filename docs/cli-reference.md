@@ -256,6 +256,10 @@ Park and wake from a fresh snapshot
 
 Toggle require_signed on deploys
 
+### app egress-allowlist
+
+Inspect or update the outbound CIDR allowlist
+
 ### app routes
 
 List admitted per-route labels for one app (ADR-093)
