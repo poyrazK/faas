@@ -9,5 +9,6 @@ export type InstallBindResponse = {
   binding_id: string;
   repo_full_name: string;
   production_branch: string;
+  deploy_branches?: Record<string, string>;
 };
 

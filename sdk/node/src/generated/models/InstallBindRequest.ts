@@ -15,5 +15,9 @@ export type InstallBindRequest = {
   installation_id: number;
   repo_full_name: string;
   production_branch?: string;
+  /**
+   * GitHub branch names mapped to deployment environment scopes. An empty object clears existing rules.
+   */
+  deploy_branches?: Record<string, string>;
 };
 
