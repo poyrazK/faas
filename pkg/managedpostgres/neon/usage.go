@@ -38,15 +38,23 @@ type consumptionResponse struct {
 }
 
 func (p *Provider) Usage(ctx context.Context, providerResourceID string, window managedpostgres.UsageWindow) (managedpostgres.Usage, error) {
-	if !validProviderID.MatchString(providerResourceID) || window.From.IsZero() || !window.To.After(window.From) {
+	ref, err := parseResourceRef(providerResourceID)
+	if err != nil || window.From.IsZero() || !window.To.After(window.From) {
 		return managedpostgres.Usage{}, managedpostgres.ErrInvalid
+	}
+	// Neon exposes consumption at project scope. A restored target is a
+	// branch inside its source project, so returning the project total here
+	// would double-count it alongside the source database. Keep the target
+	// unmetered until Neon exposes an allocatable branch-level breakdown.
+	if ref.branchID != "" {
+		return managedpostgres.Usage{}, managedpostgres.ErrUnsupported
 	}
 	granularity, err := usageGranularity(window)
 	if err != nil {
 		return managedpostgres.Usage{}, err
 	}
 	query := url.Values{
-		"project_ids": {providerResourceID},
+		"project_ids": {ref.projectID},
 		"from":        {window.From.UTC().Format(time.RFC3339)},
 		"to":          {window.To.UTC().Format(time.RFC3339)},
 		"granularity": {granularity},
@@ -58,7 +66,7 @@ func (p *Provider) Usage(ctx context.Context, providerResourceID string, window 
 	if err := p.doJSON(ctx, http.MethodGet, "/consumption_history/v2/projects", query, nil, &response, http.StatusOK); err != nil {
 		return managedpostgres.Usage{}, err
 	}
-	if response.Pagination.Cursor != "" || len(response.Projects) != 1 || response.Projects[0].ProjectID != providerResourceID {
+	if response.Pagination.Cursor != "" || len(response.Projects) != 1 || response.Projects[0].ProjectID != ref.projectID {
 		if len(response.Projects) == 0 {
 			return managedpostgres.Usage{}, managedpostgres.ErrNotFound
 		}

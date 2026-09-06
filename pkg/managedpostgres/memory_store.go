@@ -245,6 +245,11 @@ func (s *MemoryStore) FinishDelete(_ context.Context, databaseID, leaseToken str
 	if database.State != StateDeleting || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return Database{}, ErrConflict
 	}
+	for _, candidate := range s.databases {
+		if candidate.RestoreSourceDatabaseID == database.ID && candidate.State != StateDeleted {
+			return Database{}, ErrConflict
+		}
+	}
 	database.State = StateDeleted
 	database.LastErrorCode = ""
 	database.AttemptCount = 0

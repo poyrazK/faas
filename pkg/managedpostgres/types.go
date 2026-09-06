@@ -110,7 +110,21 @@ type DeleteRequest struct {
 	// its opaque provider ID could be persisted.
 	ResourceID         string
 	ProviderResourceID string
-	IdempotencyKey     string
+	// RestoreSourceResourceID lets an adapter recover a restore branch when
+	// the target provider ID was not persisted before a worker crashed.
+	RestoreSourceResourceID string
+	IdempotencyKey          string
+}
+
+// RestoreRequest creates a new logical database from a source provider
+// resource at a point in time. The source is never mutated and the target
+// receives its own provider resource identity and credential bindings.
+type RestoreRequest struct {
+	ResourceID       string
+	SourceResourceID string
+	Spec             Spec
+	PointInTime      time.Time
+	IdempotencyKey   string
 }
 
 type DeleteResult struct {
@@ -327,12 +341,16 @@ func (s UsageSnapshot) Exceeds(policy UsagePolicy) bool {
 }
 
 type Capabilities struct {
-	PostgresMajors          []int
-	ServiceClasses          []ServiceClass
-	Availability            []Availability
-	ScaleToZero             bool
-	PooledConnections       bool
-	PointInTimeRestore      bool
+	PostgresMajors     []int
+	ServiceClasses     []ServiceClass
+	Availability       []Availability
+	ScaleToZero        bool
+	PooledConnections  bool
+	PointInTimeRestore bool
+	// RestoreUsageIsolated means a provider can meter a restored target
+	// independently. Providers that implement restore with a shared project
+	// or cluster must keep this false until usage allocation is qualified.
+	RestoreUsageIsolated    bool
 	MaxRestoreWindowSeconds int64
 	MaxStorageBytes         int64
 	UsageMeters             []Meter
@@ -396,6 +414,7 @@ func (c Capabilities) Supports(spec Spec) error {
 type Provider interface {
 	Capabilities() Capabilities
 	Provision(context.Context, ProvisionRequest) (ObservedDatabase, error)
+	Restore(context.Context, RestoreRequest) (ObservedDatabase, error)
 	Inspect(context.Context, string) (ObservedDatabase, error)
 	Update(context.Context, UpdateRequest) (ObservedDatabase, error)
 	Delete(context.Context, DeleteRequest) (DeleteResult, error)
@@ -405,24 +424,27 @@ type Provider interface {
 }
 
 type Database struct {
-	ID                 string
-	AccountID          string
-	Name               string
-	Spec               Spec
-	BackendID          string
-	BackendFingerprint string
-	ProviderResourceID string
-	State              State
-	DesiredGeneration  int64
-	ObservedGeneration int64
-	LastErrorCode      string
-	LeaseToken         string
-	LeaseUntil         time.Time
-	AttemptCount       int32
-	RetryAt            time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	DeletedAt          *time.Time
+	ID                      string
+	AccountID               string
+	Name                    string
+	Spec                    Spec
+	BackendID               string
+	BackendFingerprint      string
+	ProviderResourceID      string
+	RestoreSourceDatabaseID string
+	RestoreSourceResourceID string
+	RestorePointInTime      time.Time
+	State                   State
+	DesiredGeneration       int64
+	ObservedGeneration      int64
+	LastErrorCode           string
+	LeaseToken              string
+	LeaseUntil              time.Time
+	AttemptCount            int32
+	RetryAt                 time.Time
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+	DeletedAt               *time.Time
 }
 
 type BindingState string

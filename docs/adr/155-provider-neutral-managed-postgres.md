@@ -36,7 +36,7 @@ app the owner of the database and permits credentials to be rotated or revoked
 per binding.
 
 `managedpostgres.Provider` is the vendor boundary. It covers capabilities,
-provision/inspect/update/delete, credential issuance and revocation, and usage. Resource IDs
+provision/restore/inspect/update/delete, credential issuance and revocation, and usage. Resource IDs
 are opaque. Provision and delete operations use stable idempotency keys and may
 complete asynchronously. Provider errors are normalized and sanitized.
 Adapters must never return a secret in an error.
@@ -170,6 +170,27 @@ remains. This makes the future provider-call → sealed-secret-write → catalog
 transition a recoverable saga rather than pretending the external provider and
 Gregale PostgreSQL share a transaction. This follow-up still makes no provider
 credential call and exposes no customer route.
+
+## Restore safety follow-up
+
+Restore is a provider-neutral operation that creates a new logical database
+from a ready source at a point in time inside the source restore window. The
+target catalog row persists the source logical ID, source provider resource,
+and timestamp before the adapter is called. The normal lease/retry loop then
+invokes the same deterministic restore intent after a crash, records the new
+opaque provider resource before readiness polling, and never mutates the
+source or its bindings. Source deletion is fenced while an active restore
+descendant exists.
+
+Neon maps this operation to a named point-in-time branch with a read-write
+endpoint. Restored Neon resource IDs are adapter-owned `project/branch` values;
+the catalog and public API treat them as opaque. Credential issuance, usage,
+inspection, and deletion all resolve the branch, while binding cutover remains
+explicit. This is a restore-to-new-database primitive, not an automatic
+failover or application cutover promise. Neon consumption metrics are
+project-scoped, so the adapter leaves `RestoreUsageIsolated` false and the
+service rejects these restores while usage guardrails are enabled; no
+unallocated restore branch can silently bypass COGS ceilings.
 
 ## Binding reconciler follow-up
 

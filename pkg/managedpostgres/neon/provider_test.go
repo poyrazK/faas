@@ -145,6 +145,72 @@ func TestProvisionCreatesDeterministicProjectAndPersistsIDBeforePolling(t *testi
 	}
 }
 
+func TestRestoreCreatesPointInTimeBranchWithOwnOpaqueResource(t *testing.T) {
+	pointInTime := time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)
+	provider := testProvider(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v2/projects/quiet-river-12345678/branches" {
+			t.Errorf("unexpected restore request: %s %s", request.Method, request.URL.String())
+			writeResponse(t, writer, http.StatusNotFound, nil)
+			return
+		}
+		switch request.Method {
+		case http.MethodGet:
+			writeResponse(t, writer, http.StatusOK, map[string]any{"branches": []map[string]any{{"id": "br-main-123", "name": "main", "default": true, "current_state": "ready"}}})
+		case http.MethodPost:
+			var payload createBranchRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode restore branch: %v", err)
+			}
+			if payload.Branch.ParentID != "br-main-123" || payload.Branch.ParentTimestamp != pointInTime.Format(time.RFC3339) || len(payload.Endpoints) != 1 || payload.Endpoints[0].Type != "read_write" {
+				t.Fatalf("restore payload = %+v", payload)
+			}
+			writeResponse(t, writer, http.StatusCreated, map[string]any{"branch": map[string]any{"id": "br-restore-123", "name": payload.Branch.Name, "current_state": "init"}, "operations": []map[string]any{{"id": "op-restore", "status": "running"}}})
+		default:
+			t.Errorf("unexpected restore method: %s", request.Method)
+			writeResponse(t, writer, http.StatusMethodNotAllowed, nil)
+		}
+	}))
+	request := managedpostgres.RestoreRequest{
+		ResourceID: "44444444-4444-4444-4444-444444444444", SourceResourceID: "quiet-river-12345678",
+		Spec: testDatabaseSpec(), PointInTime: pointInTime, IdempotencyKey: "restore-44444444-4444-4444-4444-444444444444",
+	}
+	observed, err := provider.Restore(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if observed.ProviderResourceID != "quiet-river-12345678/br-restore-123" || observed.Status != managedpostgres.ProviderStatusPending || observed.Spec != request.Spec {
+		t.Fatalf("restore observed = %+v", observed)
+	}
+}
+
+func TestInspectRoutesRestoredResourceToBranch(t *testing.T) {
+	provider := testProvider(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v2/projects/quiet-river-12345678":
+			writeResponse(t, writer, http.StatusOK, map[string]any{"project": map[string]any{
+				"id": "quiet-river-12345678", "region_id": "aws-eu-central-1", "pg_version": 17,
+				"history_retention_seconds": 86400, "settings": map[string]any{"quota": map[string]any{"logical_size_bytes": 10 << 30}},
+			}})
+		case "/api/v2/projects/quiet-river-12345678/branches":
+			writeResponse(t, writer, http.StatusOK, map[string]any{"branches": []map[string]any{{"id": "br-restore-123", "name": "restore", "current_state": "ready"}}})
+		case "/api/v2/projects/quiet-river-12345678/endpoints":
+			writeResponse(t, writer, http.StatusOK, map[string]any{"endpoints": []map[string]any{{"id": "ep-restore-123", "branch_id": "br-restore-123", "type": "read_write", "current_state": "idle", "autoscaling_limit_min_cu": 0.25, "autoscaling_limit_max_cu": 2, "suspend_timeout_seconds": 300}}})
+		case "/api/v2/projects/quiet-river-12345678/operations":
+			writeResponse(t, writer, http.StatusOK, map[string]any{"operations": []map[string]any{{"id": "op-restore", "status": "finished"}}, "pagination": map[string]any{}})
+		default:
+			t.Errorf("unexpected inspect request: %s %s", request.Method, request.URL.String())
+			writeResponse(t, writer, http.StatusNotFound, nil)
+		}
+	}))
+	observed, err := provider.Inspect(context.Background(), "quiet-river-12345678/br-restore-123")
+	if err != nil {
+		t.Fatalf("Inspect restored resource: %v", err)
+	}
+	if observed.Status != managedpostgres.ProviderStatusReady || observed.ProviderResourceID != "quiet-river-12345678/br-restore-123" || observed.Spec != testDatabaseSpec() {
+		t.Fatalf("inspected restored resource = %+v", observed)
+	}
+}
+
 func TestProvisionRecoversAcceptedProjectWithoutSecondCreate(t *testing.T) {
 	var postCount atomic.Int32
 	provider := testProvider(t, readyProjectHandler(t, &postCount))
@@ -425,6 +491,9 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 	}
 	if requests.Load() != 1 {
 		t.Fatalf("unsupported window contacted provider %d times", requests.Load())
+	}
+	if _, err := provider.Usage(context.Background(), "quiet-river-123/br-restore-123", managedpostgres.UsageWindow{From: time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC), To: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)}); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("branch usage error = %v", err)
 	}
 }
 

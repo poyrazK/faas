@@ -209,6 +209,11 @@ func (p *concurrentReadyProvider) Provision(_ context.Context, request Provision
 	}, nil
 }
 
+func (p *concurrentReadyProvider) Restore(_ context.Context, request RestoreRequest) (ObservedDatabase, error) {
+	p.provisionCalls.Add(1)
+	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, Status: ProviderStatusReady, Spec: request.Spec}, nil
+}
+
 func (*concurrentReadyProvider) Inspect(_ context.Context, providerResourceID string) (ObservedDatabase, error) {
 	return ObservedDatabase{ProviderResourceID: providerResourceID, Status: ProviderStatusReady, Spec: testSpec()}, nil
 }
