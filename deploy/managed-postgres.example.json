@@ -12,8 +12,12 @@
     "stale_after_seconds": 10800,
     "max_monthly_cost_millicents": 0,
     "max_monthly_compute_unit_seconds": 0,
+    "max_monthly_storage_byte_seconds": 0,
+    "max_monthly_history_byte_seconds": 0,
     "max_monthly_egress_bytes": 0,
     "compute_unit_hour_millicents": 0,
+    "storage_gib_hour_millicents": 0,
+    "history_gib_hour_millicents": 0,
     "egress_gib_millicents": 0
   },
   "backends": [

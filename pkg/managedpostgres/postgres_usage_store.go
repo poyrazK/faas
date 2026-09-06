@@ -105,6 +105,8 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 		`SELECT
 			count(DISTINCT d.id) FILTER (WHERE d.state = 'ready')::int,
 			COALESCE(sum(u.quantity) FILTER (WHERE u.meter = 'compute_unit_seconds'), 0)::bigint,
+			COALESCE(sum(u.quantity) FILTER (WHERE u.meter = 'storage_byte_seconds'), 0)::bigint,
+			COALESCE(sum(u.quantity) FILTER (WHERE u.meter = 'history_byte_seconds'), 0)::bigint,
 			COALESCE(sum(u.quantity) FILTER (WHERE u.meter = 'egress_bytes'), 0)::bigint,
 			COALESCE(sum(u.cost_millicents), 0)::bigint,
 			max(u.observed_at)
@@ -113,7 +115,7 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 			 ON u.database_id = d.id AND u.window_from >= $2 AND u.window_from < $3
 		 WHERE d.account_id = $1 AND d.state <> 'deleted'`,
 		account, periodStart, periodEnd,
-	).Scan(&snapshot.ReadyDatabases, &snapshot.ComputeUnitSeconds, &snapshot.EgressBytes, &snapshot.CostMillicents, &lastObserved); err != nil {
+	).Scan(&snapshot.ReadyDatabases, &snapshot.ComputeUnitSeconds, &snapshot.StorageByteSeconds, &snapshot.HistoryByteSeconds, &snapshot.EgressBytes, &snapshot.CostMillicents, &lastObserved); err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
 	snapshot.PeriodStart = periodStart

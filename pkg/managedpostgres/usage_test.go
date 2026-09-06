@@ -11,8 +11,11 @@ func enabledUsagePolicy() UsagePolicy {
 	return UsagePolicy{
 		Enabled: true, CollectionInterval: 5 * time.Minute, Window: time.Hour,
 		StaleAfter: 3 * time.Hour, MaxMonthlyCostMillicents: 100,
-		MaxMonthlyComputeUnitSeconds: 1000, MaxMonthlyEgressBytes: 1 << 20,
-		ComputeUnitHourMillicents: 3600, EgressGiBMillicents: 1000,
+		MaxMonthlyComputeUnitSeconds: 1000, MaxMonthlyStorageByteSeconds: 1 << 50,
+		MaxMonthlyHistoryByteSeconds: 1 << 50,
+		MaxMonthlyEgressBytes:        1 << 20,
+		ComputeUnitHourMillicents:    3600, StorageGiBHourMillicents: 2500,
+		HistoryGiBHourMillicents: 500, EgressGiBMillicents: 1000,
 	}
 }
 
@@ -26,8 +29,28 @@ func TestUsagePolicyCostRoundsUpWithoutOverflow(t *testing.T) {
 	if err != nil || cost != 1 {
 		t.Fatalf("one egress byte cost = %d, %v", cost, err)
 	}
+	cost, err = policy.Cost(MeterReading{Meter: MeterStorageByteSeconds, Quantity: bytesPerGiB * secondsPerHour})
+	if err != nil || cost != 2500 {
+		t.Fatalf("one storage GiB-hour cost = %d, %v", cost, err)
+	}
+	cost, err = policy.Cost(MeterReading{Meter: MeterHistoryByteSeconds, Quantity: bytesPerGiB * secondsPerHour})
+	if err != nil || cost != 500 {
+		t.Fatalf("one history GiB-hour cost = %d, %v", cost, err)
+	}
 	if _, err := policy.Cost(MeterReading{Meter: MeterComputeUnitSeconds, Quantity: 1 << 62}); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("overflow cost = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestUsageSnapshotExceedsStorageAndHistoryCaps(t *testing.T) {
+	policy := enabledUsagePolicy()
+	snapshot := UsageSnapshot{CostMillicents: 1, StorageByteSeconds: policy.MaxMonthlyStorageByteSeconds}
+	if !snapshot.Exceeds(policy) {
+		t.Fatal("storage cap was not enforced")
+	}
+	snapshot = UsageSnapshot{CostMillicents: 1, HistoryByteSeconds: policy.MaxMonthlyHistoryByteSeconds}
+	if !snapshot.Exceeds(policy) {
+		t.Fatal("history cap was not enforced")
 	}
 }
 
@@ -117,6 +140,8 @@ func TestUsageCollectorRecordsCompleteProviderWindows(t *testing.T) {
 		fakeProvider: &fakeProvider{capabilities: testCapabilities()},
 		readings: []MeterReading{
 			{Meter: MeterComputeUnitSeconds, Quantity: 3600},
+			{Meter: MeterStorageByteSeconds, Quantity: bytesPerGiB * secondsPerHour},
+			{Meter: MeterHistoryByteSeconds, Quantity: bytesPerGiB * secondsPerHour},
 			{Meter: MeterEgressBytes, Quantity: 1 << 30},
 		},
 	}
@@ -125,8 +150,10 @@ func TestUsageCollectorRecordsCompleteProviderWindows(t *testing.T) {
 		config.Usage = UsageConfig{
 			Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
 			StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 100000,
-			MaxMonthlyComputeUnitSeconds: 100000, MaxMonthlyEgressBytes: 1 << 40,
-			ComputeUnitHourMillicents: 3600, EgressGiBMillicents: 1000,
+			MaxMonthlyComputeUnitSeconds: 100000, MaxMonthlyStorageByteSeconds: 1 << 50,
+			MaxMonthlyHistoryByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 40,
+			ComputeUnitHourMillicents: 3600, StorageGiBHourMillicents: 2500,
+			HistoryGiBHourMillicents: 500, EgressGiBMillicents: 1000,
 		}
 	})
 	backend, err := registry.Default("us-east-1")
@@ -151,14 +178,14 @@ func TestUsageCollectorRecordsCompleteProviderWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ComputeUnitSeconds != 3600 || snapshot.EgressBytes != 1<<30 || snapshot.CostMillicents != 4600 {
+	if snapshot.ComputeUnitSeconds != 3600 || snapshot.StorageByteSeconds != bytesPerGiB*secondsPerHour || snapshot.HistoryByteSeconds != bytesPerGiB*secondsPerHour || snapshot.EgressBytes != 1<<30 || snapshot.CostMillicents != 7600 {
 		t.Fatalf("usage snapshot = %+v", snapshot)
 	}
 	if _, err := collector.Collect(context.Background()); err != nil {
 		t.Fatalf("idempotent collection: %v", err)
 	}
 	snapshot, err = store.UsageSnapshot(context.Background(), "account-1", now)
-	if err != nil || snapshot.CostMillicents != 4600 {
+	if err != nil || snapshot.CostMillicents != 7600 {
 		t.Fatalf("repeated snapshot = %+v, %v", snapshot, err)
 	}
 }

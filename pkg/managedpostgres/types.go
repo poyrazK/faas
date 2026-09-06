@@ -247,8 +247,12 @@ type UsagePolicy struct {
 	StaleAfter                   time.Duration
 	MaxMonthlyCostMillicents     int64
 	MaxMonthlyComputeUnitSeconds int64
+	MaxMonthlyStorageByteSeconds int64
+	MaxMonthlyHistoryByteSeconds int64
 	MaxMonthlyEgressBytes        int64
 	ComputeUnitHourMillicents    int64
+	StorageGiBHourMillicents     int64
+	HistoryGiBHourMillicents     int64
 	EgressGiBMillicents          int64
 }
 
@@ -259,10 +263,10 @@ func (p UsagePolicy) Validate() error {
 	if p.CollectionInterval < time.Minute || p.Window < time.Hour || p.Window > 24*time.Hour || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
 		return ErrInvalid
 	}
-	if p.MaxMonthlyCostMillicents <= 0 || p.MaxMonthlyComputeUnitSeconds <= 0 || p.MaxMonthlyEgressBytes <= 0 {
+	if p.MaxMonthlyCostMillicents <= 0 || p.MaxMonthlyComputeUnitSeconds <= 0 || p.MaxMonthlyStorageByteSeconds <= 0 || p.MaxMonthlyEgressBytes <= 0 {
 		return ErrInvalid
 	}
-	if p.ComputeUnitHourMillicents < 0 || p.EgressGiBMillicents < 0 {
+	if p.MaxMonthlyHistoryByteSeconds < 0 || p.ComputeUnitHourMillicents < 0 || p.StorageGiBHourMillicents < 0 || p.HistoryGiBHourMillicents < 0 || p.EgressGiBMillicents < 0 {
 		return ErrInvalid
 	}
 	return nil
@@ -298,6 +302,8 @@ type UsageSnapshot struct {
 	LastObservedAt     time.Time
 	ReadyDatabases     int
 	ComputeUnitSeconds int64
+	StorageByteSeconds int64
+	HistoryByteSeconds int64
 	EgressBytes        int64
 	CostMillicents     int64
 }
@@ -315,6 +321,8 @@ func (s UsageSnapshot) Exceeds(policy UsagePolicy) bool {
 	}
 	return s.CostMillicents >= policy.MaxMonthlyCostMillicents ||
 		s.ComputeUnitSeconds >= policy.MaxMonthlyComputeUnitSeconds ||
+		s.StorageByteSeconds >= policy.MaxMonthlyStorageByteSeconds ||
+		(policy.MaxMonthlyHistoryByteSeconds > 0 && s.HistoryByteSeconds >= policy.MaxMonthlyHistoryByteSeconds) ||
 		s.EgressBytes >= policy.MaxMonthlyEgressBytes
 }
 
