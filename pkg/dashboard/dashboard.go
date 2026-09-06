@@ -1314,6 +1314,10 @@ type AccountData struct {
 	// faas_csrf sidecar cookie. Same envelope shape as the delete /
 	// restore tokens above — sealed by (action, account_id).
 	ConnectGithubConfirmToken string
+	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
+	// a dedicated cookie name because the account page renders several
+	// independently action-bound forms at once.
+	PlanConfirmToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a

@@ -132,6 +132,7 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/":                                         true, // HTML dashboard
 	"POST /dashboard/account/delete":                          true, // HTML form
 	"POST /dashboard/account/keys/{id}/delete":                true, // HTML form (issue #248)
+	"POST /dashboard/account/plan":                            true, // HTML form (issue #248)
 	"POST /dashboard/account/restore":                         true, // HTML form
 	"GET /dashboard/account/export":                           true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/dpa":                              true, // session-auth twin of DPA

@@ -1521,6 +1521,23 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 	})
 	data.KeyDeleteConfirmToken = keyDeleteTok
+	planTok, err := middleware.IssueForAuthenticatedNamed(
+		s.sessions, dashboardAccountPlanAction, view.ID, dashboardAccountPlanCSRFCookie)
+	if err != nil {
+		log.Error("dashboard renderAccount: csrf issue plan", "err", err, "account_id", view.ID)
+		renderProblem(w, log, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     dashboardAccountPlanCSRFCookie,
+		Value:    planTok,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.domain != "",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+	})
+	data.PlanConfirmToken = planTok
 	// Wire to .Data.ConnectGithubConfirmToken in account.html; the
 	// form action is /dashboard/install/connect (handlers_oauth_code_callback.go).
 	data.ConnectGithubConfirmToken = connectGithubTok
@@ -1542,6 +1559,12 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 	switch r.URL.Query().Get("key_revoked") {
 	case "1":
 		data.FlashSurface = "API key revoked."
+	}
+	switch r.URL.Query().Get("plan") {
+	case "unchanged":
+		data.FlashSurface = "Your account is already on that plan."
+	case "unavailable":
+		data.FlashSurface = "Plan changes are unavailable until billing is configured."
 	}
 	// Issue #695 / ADR-080: per-account apps-auth-default
 	// grand-father banner. Renders when the account has at
