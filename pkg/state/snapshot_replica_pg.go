@@ -233,13 +233,13 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		update snapshot_replicas
 		set state = 'syncing', attempts = least(attempts + 1, $3),
 		    updated_at = now(), next_attempt_at = null, last_error = null
-		where snapshot_id = $1 and node_id = $2`, job.SnapshotID, job.NodeID, snapshotReplicaMaxAttempts); err != nil {
+		where snapshot_id = $1 and node_id = $2`, job.SnapshotID, job.NodeID, snapshotReplicaAttemptCap); err != nil {
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica update: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica commit: %w", err)
 	}
-	job.Attempts = min(job.Attempts+1, snapshotReplicaMaxAttempts)
+	job.Attempts = min(job.Attempts+1, snapshotReplicaAttemptCap)
 	job.VMStateStorageKey = SnapshotVMStateKey(Snapshot{DeploymentID: job.DeploymentID, StorageKey: job.StorageKey, Tier: job.Tier})
 	return job, nil
 }
@@ -262,7 +262,7 @@ func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nod
 			update snapshot_replicas
 			set state = $3, attempts = greatest(attempts, $5), last_error = $4,
 			    ready_at = null, updated_at = now(), next_attempt_at = null
-			where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message, snapshotReplicaMaxAttempts)
+			where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message, snapshotReplicaAttemptCap)
 		if err != nil {
 			return fmt.Errorf("state: mark snapshot replica permanent failure: %w", err)
 		}
@@ -277,9 +277,9 @@ func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nod
 	tag, err := s.pool.Exec(ctx, `
 		update snapshot_replicas
 		set state = $3, last_error = $4, ready_at = null, updated_at = now(),
-		    next_attempt_at = now() + make_interval(secs => least($6, $7 * power(2, greatest(attempts - 1, 0)))::int)
+		    next_attempt_at = now() + make_interval(secs => least($5, $6 * power(2, greatest(attempts - 1, 0)))::int)
 		where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message,
-		snapshotReplicaMaxAttempts, int(snapshotReplicaMaxRetryDelay/time.Second), int(snapshotReplicaInitialRetryDelay/time.Second))
+		int(snapshotReplicaMaxRetryDelay/time.Second), int(snapshotReplicaInitialRetryDelay/time.Second))
 	if err != nil {
 		return fmt.Errorf("state: mark snapshot replica failed: %w", err)
 	}

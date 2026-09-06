@@ -145,7 +145,7 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 		return SnapshotReplicaJob{}, ErrNotFound
 	}
 	chosenRow.state = SnapshotReplicaSyncing
-	chosenRow.attempts = min(chosenRow.attempts+1, snapshotReplicaMaxAttempts)
+	chosenRow.attempts = min(chosenRow.attempts+1, snapshotReplicaAttemptCap)
 	chosenRow.updatedAt = now
 	chosenRow.nextAttemptAt = time.Time{}
 	chosenRow.lastError = ""
@@ -213,7 +213,7 @@ func (m *MemStore) MarkSnapshotReplicaFailed(_ context.Context, snapshotID, node
 	row.readyAt = time.Time{}
 	row.updatedAt = time.Now()
 	if isPermanentSnapshotReplicaError(cause) {
-		row.attempts = snapshotReplicaMaxAttempts
+		row.attempts = snapshotReplicaAttemptCap
 		row.nextAttemptAt = time.Time{}
 	} else {
 		row.nextAttemptAt = row.updatedAt.Add(snapshotReplicaRetryDelay(row.attempts))

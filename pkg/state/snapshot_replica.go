@@ -18,7 +18,10 @@ const (
 	SnapshotReplicaFailed  SnapshotReplicaState = "failed"
 )
 
-const snapshotReplicaMaxAttempts = 8
+// snapshotReplicaAttemptCap bounds the persisted retry counter and therefore
+// the exponential-backoff exponent. Transient failures remain retryable after
+// the counter reaches this cap; only permanent failures stop retrying.
+const snapshotReplicaAttemptCap = 8
 
 // snapshotReplicaDeploymentPriority ranks snapshots by how soon a customer
 // can need them. A live deployment serves the next wake, a deployment that is

@@ -180,7 +180,7 @@ func TestMemStoreSnapshotReplicaTransientFailureKeepsRetryingAtCap(t *testing.T)
 		t.Fatal(err)
 	}
 	key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: node.ID}
-	for attempt := 1; attempt <= snapshotReplicaMaxAttempts+2; attempt++ {
+	for attempt := 1; attempt <= snapshotReplicaAttemptCap+2; attempt++ {
 		job, err := m.ClaimSnapshotReplica(ctx, node.ID)
 		if err != nil {
 			t.Fatalf("claim attempt %d: %v", attempt, err)
@@ -195,8 +195,8 @@ func TestMemStoreSnapshotReplicaTransientFailureKeepsRetryingAtCap(t *testing.T)
 		row.nextAttemptAt = time.Now().Add(-time.Second)
 		m.snapshotReplicas[key] = row
 	}
-	if got := m.snapshotReplicas[key].attempts; got != snapshotReplicaMaxAttempts {
-		t.Fatalf("attempt counter = %d, want capped %d", got, snapshotReplicaMaxAttempts)
+	if got := m.snapshotReplicas[key].attempts; got != snapshotReplicaAttemptCap {
+		t.Fatalf("attempt counter = %d, want capped %d", got, snapshotReplicaAttemptCap)
 	}
 }
 
