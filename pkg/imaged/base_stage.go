@@ -625,7 +625,8 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, ref, outImage s
 		return err
 	}
 	findings, scanErr := h.runGrype(ctx, scanSource)
-	if scanErr != nil || findings == nil {
+	scanFailed := scanErr != nil || findings == nil
+	if scanFailed {
 		h.log.Warn("imaged: grype scan failed; writing fail-closed sidecar",
 			"ref", ref, "err", scanErr)
 		// CRITICAL=9999 (and the other buckets set to 9999 as well)
@@ -641,16 +642,26 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, ref, outImage s
 			},
 		}
 	}
+	fixAvailableFindings := findings.fixAvailableToMap()
+	if scanFailed {
+		// A scanner failure must remain fail closed under the admission
+		// policy as well as in the total counts. The synthetic 9999 values
+		// have no Vulnerability rows from which fix availability can be
+		// derived, so copy the placeholder counts explicitly.
+		fixAvailableFindings = findings.toMap()
+	}
 	scanBlob, err := json.Marshal(struct {
-		Image     string         `json:"image"`
-		Source    string         `json:"source"`
-		Findings  map[string]int `json:"findings"`
-		ScannedAt time.Time      `json:"scanned_at"`
+		Image                string         `json:"image"`
+		Source               string         `json:"source"`
+		Findings             map[string]int `json:"findings"`
+		FixAvailableFindings map[string]int `json:"fix_available_findings"`
+		ScannedAt            time.Time      `json:"scanned_at"`
 	}{
-		Image:     ref,
-		Source:    scanSource,
-		Findings:  findings.toMap(),
-		ScannedAt: time.Now().UTC(),
+		Image:                ref,
+		Source:               scanSource,
+		Findings:             findings.toMap(),
+		FixAvailableFindings: fixAvailableFindings,
+		ScannedAt:            time.Now().UTC(),
 	})
 	if err != nil {
 		return fmt.Errorf("imaged: marshal scan sidecar: %w", err)
@@ -695,13 +706,20 @@ func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.Stora
 	}
 	defer func() { _ = rc.Close() }()
 	var sidecar struct {
-		Source   string         `json:"source"`
-		Findings map[string]int `json:"findings"`
+		Source               string         `json:"source"`
+		Findings             map[string]int `json:"findings"`
+		FixAvailableFindings map[string]int `json:"fix_available_findings"`
 	}
 	if err := json.NewDecoder(rc).Decode(&sidecar); err != nil {
 		return false
 	}
 	if sidecar.Findings[SeverityCritical] >= 9999 {
+		return false
+	}
+	// Sidecars written before the runtime gate matched CI's --only-fixed
+	// policy do not carry this field. Refresh them so vmmd never has to
+	// guess whether a critical finding is actionable.
+	if sidecar.FixAvailableFindings == nil {
 		return false
 	}
 	return sidecar.Source != "" && sidecar.Source == source

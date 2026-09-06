@@ -3752,7 +3752,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 // that wire bringUp directly without a Wake frame.
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest, timings *bringUpTimings) (WakeMethod, error) {
 	// issue #299: refuse to bring up an instance whose base ext4
-	// staged with a CRITICAL Grype finding. Runs BEFORE the restore
+	// staged with a fix-available CRITICAL Grype finding. Runs BEFORE the restore
 	// decision tree because a scan refusal is a policy gate, not a
 	// snapshot-cache decision (ADR-005 doesn't apply — we're not
 	// failing to find a snapshot, we're refusing the boot on a
@@ -3910,11 +3910,13 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 }
 
 // bringUpScanCheck — issue #299 admission seam: refuse to bring up
-// an instance whose base ext4 staged with a CRITICAL Grype finding.
+// an instance whose base ext4 staged with a fix-available CRITICAL Grype finding.
 //
 // Reads the scan sidecar at wire.ScanKeyForBaseKey(baseKey) and
-// returns *api.Problem with code = api.CodeScanCritical if CRITICAL
-// > 0. The sidecar is written by imaged at base-stage time (see
+// returns *api.Problem with code = api.CodeScanCritical if the
+// fix-available CRITICAL count is greater than zero. This matches runtime-base
+// publication's Grype --only-fixed gate while retaining total counts for
+// visibility. The sidecar is written by imaged at base-stage time (see
 // pkg/imaged/base_stage.go) in lock-step with the digest sidecar —
 // a missing sidecar means the base was staged by an imaged that
 // predates issue #299 OR the storage backend lost it (a real ops
@@ -3926,7 +3928,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 //
 // Returns nil when storage is nil (no scan check configured — the
 // unit tests that don't wire WithStorage take this path). Returns
-// nil on a scan sidecar with CRITICAL=0; per-severity finding
+// nil on a scan sidecar with no fix-available CRITICAL findings; per-severity finding
 // counts are forwarded to vmmd's imageScanMetrics counter via
 // metricsImageScan so the §12 dashboard sees the per-image
 // vulnerability posture, not just the gate result.
@@ -3951,18 +3953,37 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	}
 	defer func() { _ = rc.Close() }()
 	var scan struct {
-		Image    string         `json:"image"`
-		Findings map[string]int `json:"findings"`
+		Image                string         `json:"image"`
+		Findings             map[string]int `json:"findings"`
+		FixAvailableFindings map[string]int `json:"fix_available_findings"`
 	}
 	if err := json.NewDecoder(rc).Decode(&scan); err != nil {
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar unreadable",
 			fmt.Sprintf("scan sidecar at %q unreadable: %v (issue #299)", scanKey, err))
 	}
-	if n := scan.Findings["CRITICAL"]; n > 0 {
+	if _, ok := scan.Findings["CRITICAL"]; !ok {
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
-			"CRITICAL vulnerability in base ext4",
-			fmt.Sprintf("base %q has %d CRITICAL Grype findings; refusing to boot (issue #299)", baseKey, n))
+			"scan sidecar incomplete",
+			fmt.Sprintf("scan sidecar at %q has no CRITICAL total; refusing to boot (issue #299)", scanKey))
+	}
+	gateFindings := scan.FixAvailableFindings
+	if gateFindings == nil {
+		// Legacy sidecars did not distinguish fixable findings. Preserve
+		// their stricter behavior until imaged refreshes them rather than
+		// silently weakening admission on an incomplete record.
+		gateFindings = scan.Findings
+	}
+	n, ok := gateFindings["CRITICAL"]
+	if !ok {
+		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+			"scan sidecar incomplete",
+			fmt.Sprintf("scan sidecar at %q has no fix-available CRITICAL total; refusing to boot (issue #299)", scanKey))
+	}
+	if n > 0 {
+		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+			"Fixable CRITICAL vulnerability in base ext4",
+			fmt.Sprintf("base %q has %d fix-available CRITICAL Grype findings; refusing to boot (issue #299)", baseKey, n))
 	}
 	// Forward per-severity finding counts to the vmmd Prometheus
 	// counter. The image label is the OCI ref imaged wrote into

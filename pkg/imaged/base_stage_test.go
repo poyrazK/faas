@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -1353,6 +1354,11 @@ func TestWriteScanSidecar_KeySetStable(t *testing.T) {
 		SeverityCounts: SeverityCounts{
 			Critical: 1, High: 2, Medium: 3, Low: 4, Unknown: 5,
 		},
+		Vulnerabilities: []Vulnerability{
+			{Severity: SeverityCritical, FixedIn: "1.2.3"},
+			{Severity: SeverityHigh},
+			{Severity: SeverityMedium, FixedIn: "4.5.6"},
+		},
 	}
 
 	// Two independent runs so a future refactor that introduces a
@@ -1392,9 +1398,10 @@ func TestWriteScanSidecar_KeySetStable(t *testing.T) {
 			// (struct{Image,Findings,ScannedAt}). The findings map is
 			// the load-bearing field for vmmd's bringUpScanCheck.
 			var got struct {
-				Image     string         `json:"image"`
-				Findings  map[string]int `json:"findings"`
-				ScannedAt time.Time      `json:"scanned_at"`
+				Image                string         `json:"image"`
+				Findings             map[string]int `json:"findings"`
+				FixAvailableFindings map[string]int `json:"fix_available_findings"`
+				ScannedAt            time.Time      `json:"scanned_at"`
 			}
 			if err := json.Unmarshal(sidecarBytes, &got); err != nil {
 				t.Fatalf("unmarshal sidecar: %v (bytes=%s)", err, string(sidecarBytes))
@@ -1434,6 +1441,16 @@ func TestWriteScanSidecar_KeySetStable(t *testing.T) {
 				if _, ok := wantKeys[k]; !ok {
 					t.Errorf("findings has unexpected key %q (close-enum violation)", k)
 				}
+			}
+			wantFixAvailable := map[string]int{
+				SeverityCritical: 1,
+				SeverityHigh:     0,
+				SeverityMedium:   1,
+				SeverityLow:      0,
+				SeverityUnknown:  0,
+			}
+			if !reflect.DeepEqual(got.FixAvailableFindings, wantFixAvailable) {
+				t.Errorf("fix_available_findings = %v, want %v", got.FixAvailableFindings, wantFixAvailable)
 			}
 		})
 	}
@@ -1508,6 +1525,38 @@ func TestScanSidecarSourceCurrent_RetriesFailClosedPlaceholder(t *testing.T) {
 	h := &Handler{}
 	if h.scanSidecarSourceCurrent(context.Background(), be, baseKey, "") {
 		t.Fatal("fail-closed scanner placeholder should be refreshed")
+	}
+}
+
+func TestScanSidecarSourceCurrent_RefreshesLegacyPolicySidecar(t *testing.T) {
+	be, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalStorageBackend: %v", err)
+	}
+	baseKey := "base/runtime.ext4"
+	canonical, ok, err := be.LocalPath(baseKey)
+	if err != nil || !ok {
+		t.Fatalf("LocalPath = %q, %t, %v", canonical, ok, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(canonical, []byte("ext4-placeholder"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	sidecar, err := json.Marshal(map[string]any{
+		"source":   canonical,
+		"findings": map[string]int{"CRITICAL": 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := be.Put(context.Background(), wire.ScanKeyForBaseKey(baseKey), bytes.NewReader(sidecar)); err != nil {
+		t.Fatalf("Put sidecar: %v", err)
+	}
+	h := &Handler{}
+	if h.scanSidecarSourceCurrent(context.Background(), be, baseKey, "") {
+		t.Fatal("legacy sidecar without fix_available_findings should be refreshed")
 	}
 }
 
