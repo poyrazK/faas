@@ -100,6 +100,11 @@ type WriteCheck func(ctx context.Context, repoFullName, commitSHA string, phase 
 
 type WriteAppCheckFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, summary string) error
 
+// WriteScopedAppCheckFunc is the scope-aware Check Run seam. The legacy
+// WriteAppCheckFunc remains supported for embedders that do not need named
+// environments yet.
+type WriteScopedAppCheckFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug, scope string, phase githubdgrpc.CheckPhase, summary string) error
+
 // WriteSkippedCheckForInstallationFunc writes the neutral production Check
 // Run used when a commit explicitly opts out of deployment.
 type WriteSkippedCheckForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error
@@ -161,6 +166,7 @@ type Service struct {
 	ChangedFiles                     ChangedFilesClient
 	WriteCheck                       WriteCheck
 	WriteAppCheck                    WriteAppCheckFunc
+	WriteScopedAppCheck              WriteScopedAppCheckFunc
 	WriteSkippedCheckForInstallation WriteSkippedCheckForInstallationFunc
 	// Ops is the per-daemon Prometheus facade. Used by the
 	// push-dispatch path to increment
@@ -327,6 +333,23 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// is the canonical "no row" shape; ErrNoBinding covers both
 	// "store said not-found" and "store returned an empty row".
 	binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, branch, ev.Installation.ID)
+	if (err != nil || binding.BindingID == "") && !isTag && s.Reconcile != nil && s.Reconcile.Store != nil {
+		// A mapped non-production branch has no row in the legacy
+		// repo+production_branch binding index. Resolve the project by
+		// repository and synthesize the same binding shape so branch
+		// routing remains additive and old bindings continue to work.
+		project, projectErr := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		if projectErr == nil && project.AccountID != "" && project.ProductionBranch != "" {
+			binding = state.GitHubBinding{
+				BindingID:        "project-" + project.ID,
+				AccountID:        project.AccountID,
+				InstallID:        project.InstallID,
+				RepoFullName:     project.RepoFullName,
+				ProductionBranch: project.ProductionBranch,
+			}
+			err = nil
+		}
+	}
 	if (err != nil || binding.BindingID == "") && isTag && s.Reconcile != nil && s.Reconcile.Store != nil {
 		// A repository may intentionally deploy from a non-default
 		// production branch. The project row is the authoritative
@@ -420,6 +443,14 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return reconcile.Result{}, ErrSkipDeploy
 	}
 
+	deploymentScope, reconcileBranch, err := s.scopeForPush(ctx, project, branch)
+	if err != nil {
+		if errors.Is(err, ErrIgnored) {
+			return reconcile.Result{}, ErrIgnored
+		}
+		return reconcile.Result{}, err
+	}
+
 	// 4. Fetch the source tree. The fetcher unseals the install
 	// token internally (cmd/githubd/source_fetcher.go) and
 	// returns a Tree whose Close() removes the temp dir.
@@ -445,7 +476,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	}
 	// githubd is push-driven (no --exclude analog on the webhook
 	// path); pass nil so workloadDiff's exclude filter is a no-op.
-	result, err := s.Reconcile.Reconcile(ctx, project, scan, ev.After, branch, nil)
+	result, err := s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, nil)
 	if err != nil {
 		if errors.Is(err, reconcile.ErrIgnored) {
 			// Defensive: ErrIgnored is the Plan-side sentinel;
@@ -530,7 +561,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// Durable deliveries let the deployment outbox write the initial queued
 	// state; skipping the eager write prevents a reclaimed, already-live
 	// delivery from regressing its Check Run back to queued.
-	if deliveryID == "" && s.WriteAppCheck == nil && s.WriteCheck != nil && len(toEnqueue) > 0 {
+	if deliveryID == "" && s.WriteAppCheck == nil && s.WriteScopedAppCheck == nil && s.WriteCheck != nil && len(toEnqueue) > 0 {
 		if werr := s.WriteCheck(ctx, ev.Repository.FullName, ev.After, githubdgrpc.CheckPhaseQueued); werr != nil {
 			s.Log.Warn("githubd: write queued check", "err", werr, "repo", ev.Repository.FullName, "sha", ev.After)
 		}
@@ -539,9 +570,9 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	buildIDs := make([]string, 0, len(toEnqueue))
 	var deliveryErrors []error
 	for _, app := range toEnqueue {
-		if deliveryID == "" && s.WriteAppCheck != nil {
-			if werr := s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-				app.Slug, githubdgrpc.CheckPhaseQueued, "Deployment queued."); werr != nil {
+		if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
+			if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+				app.Slug, deploymentScope, githubdgrpc.CheckPhaseQueued, fmt.Sprintf("Deployment queued (scope: %s).", deploymentScope)); werr != nil {
 				s.Log.Warn("githubd: write queued app check", "app_id", app.ID, "err", werr)
 			}
 		}
@@ -555,9 +586,9 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		sourcePath, sourceBytes, sourceURL, stageErr := s.stageAppSource(ctx, tree, app, project, ev.After, branch)
 		if stageErr != nil {
 			s.Log.Warn("githubd: stage app source", "app_id", app.ID, "err", stageErr, "repo", ev.Repository.FullName, "sha", ev.After)
-			if deliveryID == "" && s.WriteAppCheck != nil {
-				_ = s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-					app.Slug, githubdgrpc.CheckPhaseFailed, "Source staging failed: "+stageErr.Error())
+			if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
+				_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, deploymentScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Source staging failed (scope: %s): %s", deploymentScope, stageErr.Error()))
 			}
 			if deliveryID != "" {
 				deliveryErrors = append(deliveryErrors, fmt.Errorf("stage app %s: %w", app.ID, stageErr))
@@ -571,6 +602,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			RepoFullName: ev.Repository.FullName,
 			Ref:          ev.Ref,
 			Branch:       branch,
+			Scope:        deploymentScope,
 			Pusher:       ev.Pusher.Name,
 			SourcePath:   sourcePath,
 			SourceURL:    sourceURL,
@@ -586,9 +618,9 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			// delivery dispatch aggregates the failure after fan-out so
 			// the inbox retries; already-successful apps are idempotent.
 			s.Log.Warn("githubd: enqueue build", "app_id", app.ID, "err", err, "repo", ev.Repository.FullName, "sha", ev.After)
-			if deliveryID == "" && s.WriteAppCheck != nil {
-				_ = s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-					app.Slug, githubdgrpc.CheckPhaseFailed, "Build enqueue failed: "+err.Error())
+			if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
+				_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, deploymentScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Build enqueue failed (scope: %s): %s", deploymentScope, err.Error()))
 			}
 			if deliveryID != "" {
 				deliveryErrors = append(deliveryErrors, fmt.Errorf("enqueue app %s: %w", app.ID, err))
@@ -621,6 +653,43 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		"files", len(changedFiles),
 		"pusher", ev.Pusher.Name)
 	return result, nil
+}
+
+// scopeForPush resolves a branch to its deployment scope. The production
+// branch keeps the historical default scope when no explicit rule exists;
+// every other branch must be explicitly mapped before it can deploy. The
+// empty reconcile branch bypasses the legacy production-branch guard while
+// BuildSpec.Branch still records the real Git ref for provenance.
+func (s *Service) scopeForPush(ctx context.Context, project state.Project, branch string) (string, string, error) {
+	scope := state.DefaultEnvScope
+	reconcileBranch := branch
+	if branchesStore, ok := s.Reconcile.Store.(state.ProjectDeployBranchesStore); ok {
+		branches, err := branchesStore.ListProjectDeployBranches(ctx, project.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return "", branch, fmt.Errorf("githubd: resolve deploy branch scope: %w", err)
+		}
+		if mapped, exists := branches[branch]; exists {
+			scope = mapped
+			if branch != project.ProductionBranch {
+				reconcileBranch = ""
+			}
+			return scope, reconcileBranch, nil
+		}
+	}
+	if branch != project.ProductionBranch {
+		return "", branch, ErrIgnored
+	}
+	return scope, reconcileBranch, nil
+}
+
+func (s *Service) writeAppCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug, scope string, phase githubdgrpc.CheckPhase, summary string) error {
+	if s.WriteScopedAppCheck != nil {
+		return s.WriteScopedAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, scope, phase, summary)
+	}
+	if s.WriteAppCheck != nil {
+		return s.WriteAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, phase, summary)
+	}
+	return nil
 }
 
 // lookupChangedFiles calls the ChangedFilesClient (if wired) and

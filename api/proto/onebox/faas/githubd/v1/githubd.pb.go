@@ -1333,9 +1333,13 @@ type EnqueueBuildRequest struct {
 	// with app_id to derive stable deployment/build IDs, so retrying a durable
 	// inbox item cannot enqueue duplicate customer work. Empty preserves the
 	// non-webhook and legacy caller behavior.
-	DeliveryId    string `protobuf:"bytes,14,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DeliveryId string `protobuf:"bytes,14,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	// deployment_scope is the named environment selected by the project's
+	// GitHub branch routing rule (for example "staging"). Empty preserves the
+	// legacy default scope.
+	DeploymentScope string `protobuf:"bytes,15,opt,name=deployment_scope,json=deploymentScope,proto3" json:"deployment_scope,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *EnqueueBuildRequest) Reset() {
@@ -1462,6 +1466,13 @@ func (x *EnqueueBuildRequest) GetSenderLogin() string {
 func (x *EnqueueBuildRequest) GetDeliveryId() string {
 	if x != nil {
 		return x.DeliveryId
+	}
+	return ""
+}
+
+func (x *EnqueueBuildRequest) GetDeploymentScope() string {
+	if x != nil {
+		return x.DeploymentScope
 	}
 	return ""
 }
@@ -1907,7 +1918,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x05phase\x18\x03 \x01(\x0e2\".onebox.faas.githubd.v1.CheckPhaseR\x05phase\x12\x19\n" +
 	"\blogs_url\x18\x04 \x01(\tR\alogsUrl\x12\x18\n" +
 	"\asummary\x18\x05 \x01(\tR\asummary\"\x14\n" +
-	"\x12WriteCheckResponse\"\xf7\x03\n" +
+	"\x12WriteCheckResponse\"\xa2\x04\n" +
 	"\x13EnqueueBuildRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -1929,7 +1940,8 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x13pull_request_number\x18\f \x01(\x05R\x11pullRequestNumber\x12!\n" +
 	"\fsender_login\x18\r \x01(\tR\vsenderLogin\x12\x1f\n" +
 	"\vdelivery_id\x18\x0e \x01(\tR\n" +
-	"deliveryId\"m\n" +
+	"deliveryId\x12)\n" +
+	"\x10deployment_scope\x18\x0f \x01(\tR\x0fdeploymentScope\"m\n" +
 	"\x14EnqueueBuildResponse\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x15\n" +

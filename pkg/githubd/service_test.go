@@ -111,6 +111,29 @@ func newRig(t *testing.T, scanFn func(fs.FS) (reposcan.Result, error)) *testRig 
 	return &testRig{mem: mem, auditor: aud, rec: rec, acct: acct.ID, install: 42}
 }
 
+func TestScopeForPushMapsNonProductionBranch(t *testing.T) {
+	rig := newRig(t, nil)
+	project := rig.seedProject(t, "octo/api", "main")
+	if err := rig.mem.ReplaceProjectDeployBranches(context.Background(), rig.acct, project.ID, map[string]string{
+		"main":    "production",
+		"staging": "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.Reconcile = rig.rec
+	scope, reconcileBranch, err := svc.scopeForPush(context.Background(), project, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope != "staging" || reconcileBranch != "" {
+		t.Fatalf("scope=%q reconcileBranch=%q", scope, reconcileBranch)
+	}
+	if _, _, err := svc.scopeForPush(context.Background(), project, "feature/login"); !errors.Is(err, ErrIgnored) {
+		t.Fatalf("unmapped branch error=%v, want ErrIgnored", err)
+	}
+}
+
 // seedProject seeds the (installID, repo) → project row the push-
 // dispatch path resolves in step 3. ScanSource is set to the
 // Tier-1 "single" tier so the happy-path test (which stubs
@@ -196,6 +219,27 @@ func TestHandlePushRequest_HappyPath(t *testing.T) {
 	}
 	if checkRepo != "octo/api" || checkSHA != "cafebabe" || checkPhase != githubdgrpc.CheckPhaseQueued {
 		t.Errorf("WriteCheck args = (%q,%q,%v)", checkRepo, checkSHA, checkPhase)
+	}
+}
+
+func TestHandlePushRequest_MappedBranchCarriesScope(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	project := rig.seedProject(t, "octo/api", "main")
+	if err := rig.mem.ReplaceProjectDeployBranches(context.Background(), rig.acct, project.ID, map[string]string{
+		"main":    "production",
+		"staging": "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := newServiceForRig(t, rig)
+	enq := &recordingEnqueuer{buildID: "build-staging"}
+	svc.Enqueuer = enq
+	body := []byte(`{"ref":"refs/heads/staging","after":"sha-staging","repository":{"full_name":"octo/api","name":"api"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
+	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
+		t.Fatalf("HandlePushRequest: %v", err)
+	}
+	if len(enq.calls) != 1 || enq.calls[0].scope != "staging" {
+		t.Fatalf("enqueue calls = %#v, want one staging-scope call", enq.calls)
 	}
 }
 
@@ -437,6 +481,7 @@ type enqueueCall struct {
 	deliveryID string
 	commitSHA  string
 	sourcePath string
+	scope      string
 }
 
 func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Build, error) {
@@ -446,6 +491,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Bu
 		deliveryID: spec.DeliveryID,
 		commitSHA:  spec.CommitSHA,
 		sourcePath: spec.SourcePath,
+		scope:      spec.Scope,
 	})
 	if r.err != nil {
 		return state.Build{}, r.err

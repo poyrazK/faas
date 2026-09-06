@@ -356,6 +356,10 @@ message EnqueueBuildRequest {
   // inbox item cannot enqueue duplicate customer work. Empty preserves the
   // non-webhook and legacy caller behavior.
   string delivery_id      = 14;
+  // deployment_scope is the named environment selected by the project's
+  // GitHub branch routing rule (for example "staging"). Empty preserves the
+  // legacy default scope.
+  string deployment_scope  = 15;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for

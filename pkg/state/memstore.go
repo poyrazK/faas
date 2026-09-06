@@ -548,6 +548,9 @@ type MemStore struct {
 	projects              map[string]Project
 	projectsByAccountSlug map[string]map[string]string // account_id → slug → id
 	projectsByInstallRepo map[installRepoKey]string    // install_id, repo_full_name → id
+	// githubDeployBranches stores the optional branch→scope rules keyed by
+	// project ID. It mirrors github_deploy_branches in Postgres.
+	githubDeployBranches map[string]map[string]string
 	// clock is the seam CurrentMonthOverageCents uses to compute the
 	// UTC month-start cutoff. Default is time.Now (production); tests
 	// install a fixture via SetClockForTest so a usage row planted at
@@ -712,6 +715,7 @@ func NewMemStore() *MemStore {
 		keys:                   map[string]APIKey{},
 		keyByHash:              map[string]APIKey{},
 		apps:                   map[string]App{},
+		githubDeployBranches:   map[string]map[string]string{},
 		githubBindings:         map[string]GitHubBinding{},
 		githubInstalls:         map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
@@ -4427,7 +4431,9 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.RolloutStartedAt = &now
 	}
 
-	// Find the most-recent non-terminal deployment row for this app.
+	// Find the most-recent non-terminal deployment row for this app and
+	// deployment scope. Production and staging are independent rollout
+	// lanes; a staging push must never supersede production.
 	// O(N) over the map is fine at one-box scale; spec §6 keeps the
 	// rows-per-app bounded by the build cadence.
 	var (
@@ -4436,7 +4442,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	)
 	var maxCreated time.Time
 	for id, existing := range m.deployments {
-		if existing.AppID != d.AppID {
+		if existing.AppID != d.AppID || normalizedDeploymentScope(existing.Scope) != normalizedDeploymentScope(d.Scope) {
 			continue
 		}
 		// Same narrow set as PgStore (PR-B): only flip pending/live
@@ -4481,7 +4487,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		// revision live and later collide with the one-live index when
 		// the new row is activated.
 		for otherID, other := range m.deployments {
-			if other.AppID != d.AppID || other.Status != DeployLive || otherID == priorID {
+			if other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive || otherID == priorID {
 				continue
 			}
 			other.Status = DeploySuperseded
