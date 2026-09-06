@@ -18,6 +18,7 @@ die() {
 : "${FAAS_ACCEPTANCE_IMAGE:?set FAAS_ACCEPTANCE_IMAGE to the immutable builder image tag}"
 : "${FAAS_ACCEPTANCE_GO:?set FAAS_ACCEPTANCE_GO to the pinned Go binary}"
 : "${FAAS_ACCEPTANCE_CRANE:?set FAAS_ACCEPTANCE_CRANE to the pinned crane binary}"
+: "${FAAS_ACCEPTANCE_NODE_NAME:?set FAAS_ACCEPTANCE_NODE_NAME to the compute_nodes identity}"
 
 [[ "${FAAS_ACCEPTANCE_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
 [[ "${FAAS_ACCEPTANCE_IMAGE}" == "ghcr.io/poyrazk/builder-base:sha-${FAAS_ACCEPTANCE_SOURCE_SHA}" ]] ||
@@ -54,9 +55,13 @@ cache_root="/var/cache/faas-builder-acceptance"
 rootfs_dir="${stage_root}/rootfs"
 builder_path="${stage_root}/base/runner-builder-amd64.ext4"
 guest_init="${stage_root}/faas-guest-init"
+gregalectl_path="${stage_root}/gregalectl"
 rootfs_tar="${stage_root}/builder-rootfs.tar"
 active_services="${stage_root}/active-services"
-services=(faas-vmmd faas-builderd faas-imaged faas-gatewayd-internal)
+maintenance_state="${stage_root}/maintenance.state"
+# Start vmmd last during cleanup. Its startup registration can mark the row
+# active, so the other customer-serving daemons must already be ready first.
+services=(faas-builderd faas-imaged faas-gatewayd-internal faas-vmmd)
 
 mkdir -p /var/lock
 exec 9>/var/lock/faas-builder-acceptance.lock
@@ -70,6 +75,7 @@ mkdir -p "${stage_root}/base" "${rootfs_dir}" "${cache_root}/go-build" \
 cleanup() {
   local rc=$?
   local restore_failed=0
+  local services_ready
   trap - EXIT HUP INT TERM
   set +e
 
@@ -85,6 +91,19 @@ cleanup() {
       restore_failed=1
     fi
   done < "${active_services}" 2>/dev/null || true
+
+  if [[ -r "${maintenance_state}" ]]; then
+    services_ready=true
+    if [[ "${restore_failed}" -ne 0 ]]; then
+      services_ready=false
+    fi
+    if ! FAAS_ACCEPTANCE_GREGALECTL="${gregalectl_path}" \
+      bash "${repo_root}/scripts/ci/native-builder-node-maintenance.sh" \
+        restore "${maintenance_state}" "${services_ready}"; then
+      echo "native builder acceptance: failed to restore compute-node placement state" >&2
+      restore_failed=1
+    fi
+  fi
   if [[ "${restore_failed}" -ne 0 ]]; then
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
@@ -178,9 +197,18 @@ export GOCACHE="${cache_root}/go-build"
 export GOMODCACHE="${cache_root}/go-mod"
 export GOPATH="${cache_root}"
 CGO_ENABLED=0 "${FAAS_ACCEPTANCE_GO}" build -trimpath -tags linux -o "${guest_init}" ./guest/init
+# The host's installed operator CLI may predate the live schema. Build the
+# matching source revision so drain/activate always use the lifecycle column
+# shipped by this acceptance bundle.
+CGO_ENABLED=0 "${FAAS_ACCEPTANCE_GO}" build -trimpath -o "${gregalectl_path}" ./cmd/gregalectl
 
+# Remove the node from placement and wait for live workloads to leave before
+# the final process-level check. This closes the race where CI used to stop
+# production daemons while the scheduler still considered the node active.
+FAAS_ACCEPTANCE_GREGALECTL="${gregalectl_path}" \
+  bash "${repo_root}/scripts/ci/native-builder-node-maintenance.sh" enter "${maintenance_state}"
 if firecracker_running; then
-  die "a Firecracker workload started while the fixture was staged; drain the node before retrying"
+  die "a Firecracker workload remains after the node reached drain-safe state"
 fi
 for service in "${services[@]}"; do
   if systemctl is-active --quiet "${service}"; then
