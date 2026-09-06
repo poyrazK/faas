@@ -463,7 +463,7 @@ var cliCommands = []cliCommand{
 			// `deployment` verb, which is already at three
 			// flag-shaped drill-downs.
 			{Name: "show", Short: "Print the closed 6-stage post-stream summary"},
-			{Name: statusLiteral, Short: "Print the stage summary with terminal-status footer (live since / failed at)"},
+			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance"},
 			// ADR-117 §Production-ready follow-on, C2 — per-stage
 			// retry. The verb is `retry` (NOT a `--retry` flag on
 			// show/status) because the action mutates state — a

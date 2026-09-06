@@ -115,6 +115,21 @@ func TestCmdDeploysStatus_Failed(t *testing.T) {
 	if !strings.Contains(got, wantTs) {
 		t.Errorf("expected 'failed at %s' footer\nfull: %s", wantTs, got)
 	}
+	// A status lookup should answer the next question too: what
+	// failed and what should I change before retrying? The deployment
+	// row already carries the persisted explanation, so status must
+	// render it without a second command or a log grep.
+	for _, want := range []string{
+		"image_not_found",
+		"the image reference could not be pulled",
+		"why: the registry returned 404",
+		"fix: • push the image and retry the deployment",
+		"manifest unknown",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing actionable failure detail %q\nfull: %s", want, got)
+		}
+	}
 	// The "live since" footer must NOT appear for a failed deploy.
 	if strings.Contains(got, "live since") {
 		t.Errorf("failed render must NOT contain 'live since'\nfull: %s", got)

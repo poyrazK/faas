@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // showTestID is the 32-hex deployment id used across all show-summary
@@ -364,17 +366,34 @@ func deploymentResponseLive(id string, createdAt time.Time) []byte {
 // other tests do).
 func deploymentResponseFailed(id string, createdAt time.Time) []byte {
 	type resp struct {
-		ID        string `json:"id"`
-		AppID     string `json:"app_id"`
-		Kind      string `json:"kind"`
-		Status    string `json:"status"`
-		CreatedAt string `json:"created_at"`
+		ID                string           `json:"id"`
+		AppID             string           `json:"app_id"`
+		Kind              string           `json:"kind"`
+		Status            string           `json:"status"`
+		Error             string           `json:"error"`
+		ErrorCode         string           `json:"error_code"`
+		ErrorHint         string           `json:"error_hint"`
+		ErrorWhy          string           `json:"error_why"`
+		ErrorFix          string           `json:"error_fix"`
+		ErrorRelevantLogs []api.LogExcerpt `json:"error_relevant_logs"`
+		CreatedAt         string           `json:"created_at"`
 	}
 	b, _ := json.Marshal(resp{
 		ID:        id,
 		AppID:     "app-1",
 		Kind:      "image",
 		Status:    "failed",
+		Error:     "image pull failed",
+		ErrorCode: "image_not_found",
+		ErrorHint: "the image reference could not be pulled",
+		ErrorWhy:  "the registry returned 404 for the requested image",
+		ErrorFix:  "• push the image and retry the deployment",
+		ErrorRelevantLogs: []api.LogExcerpt{{
+			Timestamp: createdAt.Add(-time.Second).Format(time.RFC3339),
+			Level:     "error",
+			Source:    "build",
+			Message:   "manifest unknown",
+		}},
 		CreatedAt: createdAt.Format(time.RFC3339Nano),
 	})
 	return b

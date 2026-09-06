@@ -137,6 +137,20 @@ func findLatestFailedDeployment(client *Client, appID string, maxPages int) (*ap
 // the prose from the deployment row (persisted) instead of the
 // API Problem (live).
 func renderInspectErrorsHuman(w io.Writer, slug string, dep api.DeploymentResponse) {
+	renderDeploymentFailure(w, dep)
+	// Footer: when the failure happened (the apid stamps
+	// created_at; we accept the empty case gracefully).
+	_, _ = fmt.Fprintf(w, "  app: %s\n", slug)
+	if dep.CreatedAt != "" {
+		_, _ = fmt.Fprintf(w, "  failed_at: %s\n", dep.CreatedAt)
+	}
+}
+
+// renderDeploymentFailure prints the persisted explanation attached to one
+// failed deployment. Keeping this separate from the app-level `inspect
+// --errors` footer lets `deploys status` show the same actionable guidance
+// while the deployment id is still in hand.
+func renderDeploymentFailure(w io.Writer, dep api.DeploymentResponse) {
 	title := dep.ErrorCode
 	if title == "" {
 		title = "Failed deployment"
@@ -161,11 +175,5 @@ func renderInspectErrorsHuman(w io.Writer, slug string, dep api.DeploymentRespon
 	// has the same "→ docs" line the live-error renderer emits.
 	if dep.ErrorCode != "" {
 		RenderDocsRow(w, docsURLForCode(dep.ErrorCode))
-	}
-	// Footer: when the failure happened (the apid stamps
-	// created_at; we accept the empty case gracefully).
-	_, _ = fmt.Fprintf(w, "  app: %s\n", slug)
-	if dep.CreatedAt != "" {
-		_, _ = fmt.Fprintf(w, "  failed_at: %s\n", dep.CreatedAt)
 	}
 }
