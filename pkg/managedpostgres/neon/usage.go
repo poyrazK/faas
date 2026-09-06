@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
-const consumptionMetrics = "compute_unit_seconds,public_network_transfer_bytes,private_network_transfer_bytes"
+const consumptionMetrics = "compute_unit_seconds,root_branch_bytes_month,child_branch_bytes_month,instant_restore_bytes_month,snapshot_storage_bytes_month,public_network_transfer_bytes,private_network_transfer_bytes"
 
 type consumptionMetric struct {
 	Name  string `json:"metric_name"`
@@ -64,7 +64,7 @@ func (p *Provider) Usage(ctx context.Context, providerResourceID string, window 
 		}
 		return managedpostgres.Usage{}, managedpostgres.ErrUnavailable
 	}
-	compute, egress, err := sumConsumption(response.Projects[0])
+	compute, storage, history, egress, err := sumConsumption(response.Projects[0])
 	if err != nil {
 		return managedpostgres.Usage{}, err
 	}
@@ -72,6 +72,8 @@ func (p *Provider) Usage(ctx context.Context, providerResourceID string, window 
 		Window: window,
 		Readings: []managedpostgres.MeterReading{
 			{Meter: managedpostgres.MeterComputeUnitSeconds, Quantity: compute},
+			{Meter: managedpostgres.MeterStorageByteSeconds, Quantity: storage},
+			{Meter: managedpostgres.MeterHistoryByteSeconds, Quantity: history},
 			{Meter: managedpostgres.MeterEgressBytes, Quantity: egress},
 		},
 	}
@@ -104,29 +106,54 @@ func firstOfUTCMonth(value time.Time) bool {
 	return atUTCMidnight(value) && value.Day() == 1
 }
 
-func sumConsumption(project projectConsumption) (int64, int64, error) {
+func sumConsumption(project projectConsumption) (int64, int64, int64, int64, error) {
 	var compute int64
+	var storageByteHours int64
+	var historyByteHours int64
 	var egress int64
 	for _, period := range project.Periods {
 		for _, timeframe := range period.Consumption {
 			for _, metric := range timeframe.Metrics {
 				if metric.Value < 0 {
-					return 0, 0, managedpostgres.ErrUnavailable
+					return 0, 0, 0, 0, managedpostgres.ErrUnavailable
 				}
 				var err error
 				switch metric.Name {
 				case "compute_unit_seconds":
 					compute, err = addQuantity(compute, metric.Value)
+				case "root_branch_bytes_month", "child_branch_bytes_month":
+					storageByteHours, err = addQuantity(storageByteHours, metric.Value)
+				case "instant_restore_bytes_month", "snapshot_storage_bytes_month":
+					historyByteHours, err = addQuantity(historyByteHours, metric.Value)
 				case "public_network_transfer_bytes", "private_network_transfer_bytes":
 					egress, err = addQuantity(egress, metric.Value)
 				}
 				if err != nil {
-					return 0, 0, err
+					return 0, 0, 0, 0, err
 				}
 			}
 		}
 	}
-	return compute, egress, nil
+	storage, err := byteHoursToSeconds(storageByteHours)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	history, err := byteHoursToSeconds(historyByteHours)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return compute, storage, history, egress, nil
+}
+
+// Neon reports storage line items in byte-hours even though the metric names
+// use a billing-oriented *_bytes_month suffix. Gregale's canonical meter is
+// byte-seconds, so convert only after summing all provider timeframes and
+// reject overflow instead of recording a wrapped quantity.
+func byteHoursToSeconds(value int64) (int64, error) {
+	if value < 0 || value > math.MaxInt64/int64(time.Hour/time.Second) {
+		return 0, managedpostgres.ErrUnavailable
+	}
+	return value * int64(time.Hour/time.Second), nil
 }
 
 func addQuantity(total, value int64) (int64, error) {

@@ -85,6 +85,10 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 		switch record.Meter {
 		case MeterComputeUnitSeconds:
 			snapshot.ComputeUnitSeconds, err = addUsage(snapshot.ComputeUnitSeconds, record.Quantity)
+		case MeterStorageByteSeconds:
+			snapshot.StorageByteSeconds, err = addUsage(snapshot.StorageByteSeconds, record.Quantity)
+		case MeterHistoryByteSeconds:
+			snapshot.HistoryByteSeconds, err = addUsage(snapshot.HistoryByteSeconds, record.Quantity)
 		case MeterEgressBytes:
 			snapshot.EgressBytes, err = addUsage(snapshot.EgressBytes, record.Quantity)
 		}

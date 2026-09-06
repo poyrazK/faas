@@ -83,29 +83,32 @@ with the initial Neon adapter. Provider-supplied root-certificate PEM also
 fails closed until the portable binding contract can deliver a separate sealed
 certificate file; it is never silently discarded.
 
-Neon's consumption-history API currently maps cleanly to Gregale's
-`compute_unit_seconds` and `egress_bytes` meters. Storage is intentionally not
-reported yet: Neon's byte-month metric must not be mislabeled as Gregale
-byte-seconds. Storage accounting and spend enforcement therefore remain preview
-blockers.
+Neon's consumption-history API maps compute and network transfer directly to
+Gregale's `compute_unit_seconds` and `egress_bytes` meters. Neon reports root
+and child branch storage, instant-restore history, and snapshot storage as
+byte-hours under billing-oriented `*_bytes_month` names. The adapter converts
+those values to Gregale's canonical `storage_byte_seconds` and
+`history_byte_seconds` meters only after summing each complete provider window;
+it rejects arithmetic overflow rather than recording a wrapped quantity.
 
 ## Usage collection and admission guardrails
 
 The provider-neutral usage ledger is disabled by default. An operator may turn
 it on with the `usage` block in the example configuration, after replacing the
 zero-valued caps and rates with approved commercial limits. The collector
-imports only complete provider windows, records them idempotently by database,
-window, and meter, and currently consumes Neon's compute-unit seconds and
-egress bytes. Storage byte-months remain deliberately unmetered until they can
-be represented without changing Gregale's canonical units.
+imports only complete provider windows and records them idempotently by
+database, window, and meter. Enabled policies require monthly caps for compute,
+storage, and egress; history is optional because providers may not expose
+point-in-time or snapshot storage. Rates use integer millicents per CU-hour,
+GiB-hour of storage/history, or GiB of egress.
 
 When enabled, a new database reservation is admitted only if the account has a
-fresh usage observation and has not crossed its monthly cost, compute, or
-egress ceiling. Missing or stale observations fail closed; an existing named
-database remains idempotent and can still be reconciled. This is an operator
-safety control, not a customer invoice or plan-entitlement API. The durable
-ledger is ready for billing integration, but public plans, invoices, and usage
-endpoints remain separate launch work.
+fresh usage observation and has not crossed its monthly cost, compute, storage,
+history (when configured), or egress ceiling. Missing or stale observations fail
+closed; an existing named database remains idempotent and can still be
+reconciled. This is an operator safety control, not a customer invoice or
+plan-entitlement API. The durable ledger is ready for billing integration, but
+public plans, invoices, and usage endpoints remain separate launch work.
 
 The adapter contract is based on Neon's maintained
 [v2 OpenAPI specification](https://neon.com/api_spec/release/v2.json). A live

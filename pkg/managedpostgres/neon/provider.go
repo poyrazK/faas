@@ -119,7 +119,12 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		PointInTimeRestore:      p.maxRestoreWindow > 0,
 		MaxRestoreWindowSeconds: p.maxRestoreWindow,
 		MaxStorageBytes:         p.maxStorageBytes,
-		UsageMeters:             []managedpostgres.Meter{managedpostgres.MeterComputeUnitSeconds, managedpostgres.MeterEgressBytes},
+		UsageMeters: []managedpostgres.Meter{
+			managedpostgres.MeterComputeUnitSeconds,
+			managedpostgres.MeterStorageByteSeconds,
+			managedpostgres.MeterHistoryByteSeconds,
+			managedpostgres.MeterEgressBytes,
+		},
 	}
 }
 

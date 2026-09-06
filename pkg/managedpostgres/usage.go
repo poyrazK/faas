@@ -13,6 +13,7 @@ const (
 	defaultUsageBatchSize          = 20
 	secondsPerHour                 = int64(time.Hour / time.Second)
 	bytesPerGiB                    = int64(1 << 30)
+	byteSecondsPerGiBHour          = secondsPerHour * bytesPerGiB
 )
 
 type UsageCollectionObservation struct {
@@ -213,6 +214,10 @@ func (p UsagePolicy) Cost(reading MeterReading) (int64, error) {
 	switch reading.Meter {
 	case MeterComputeUnitSeconds:
 		rate, denominator = p.ComputeUnitHourMillicents, secondsPerHour
+	case MeterStorageByteSeconds:
+		rate, denominator = p.StorageGiBHourMillicents, byteSecondsPerGiBHour
+	case MeterHistoryByteSeconds:
+		rate, denominator = p.HistoryGiBHourMillicents, byteSecondsPerGiBHour
 	case MeterEgressBytes:
 		rate, denominator = p.EgressGiBMillicents, bytesPerGiB
 	default:

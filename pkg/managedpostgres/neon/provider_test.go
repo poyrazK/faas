@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -404,8 +405,8 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 		}
 		writeResponse(t, writer, http.StatusOK, map[string]any{
 			"projects": []map[string]any{{"project_id": "quiet-river-123", "periods": []map[string]any{{"consumption": []map[string]any{
-				{"metrics": []map[string]any{{"metric_name": "compute_unit_seconds", "value": 10}, {"metric_name": "public_network_transfer_bytes", "value": 4}}},
-				{"metrics": []map[string]any{{"metric_name": "compute_unit_seconds", "value": 5}, {"metric_name": "private_network_transfer_bytes", "value": 6}}},
+				{"metrics": []map[string]any{{"metric_name": "compute_unit_seconds", "value": 10}, {"metric_name": "root_branch_bytes_month", "value": 2}, {"metric_name": "instant_restore_bytes_month", "value": 4}, {"metric_name": "public_network_transfer_bytes", "value": 4}}},
+				{"metrics": []map[string]any{{"metric_name": "compute_unit_seconds", "value": 5}, {"metric_name": "child_branch_bytes_month", "value": 3}, {"metric_name": "snapshot_storage_bytes_month", "value": 5}, {"metric_name": "private_network_transfer_bytes", "value": 6}}},
 			}}}}},
 			"pagination": map[string]any{},
 		})
@@ -415,7 +416,7 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Usage: %v", err)
 	}
-	if len(usage.Readings) != 2 || usage.Readings[0].Quantity != 15 || usage.Readings[1].Quantity != 10 {
+	if len(usage.Readings) != 4 || usage.Readings[0].Quantity != 15 || usage.Readings[1].Quantity != 5*int64(time.Hour/time.Second) || usage.Readings[2].Quantity != 9*int64(time.Hour/time.Second) || usage.Readings[3].Quantity != 10 {
 		t.Fatalf("usage = %+v", usage)
 	}
 	window.From = window.From.Add(time.Minute)
@@ -424,5 +425,14 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 	}
 	if requests.Load() != 1 {
 		t.Fatalf("unsupported window contacted provider %d times", requests.Load())
+	}
+}
+
+func TestByteHoursToSecondsRejectsOverflow(t *testing.T) {
+	if got, err := byteHoursToSeconds(2); err != nil || got != 2*int64(time.Hour/time.Second) {
+		t.Fatalf("byte-hours conversion = %d, %v", got, err)
+	}
+	if _, err := byteHoursToSeconds(math.MaxInt64/int64(time.Hour/time.Second) + 1); !errors.Is(err, managedpostgres.ErrUnavailable) {
+		t.Fatalf("overflow conversion = %v, want ErrUnavailable", err)
 	}
 }
