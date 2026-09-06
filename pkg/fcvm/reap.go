@@ -106,6 +106,131 @@ type ReapReport struct {
 	SkippedUnknown int
 }
 
+// LayerCloneReapOptions configures the startup sweep for writable layer
+// clones left behind when vmmd exits before Kill can drain materialisedTmp.
+// Root is the node-local storage cache. IsLive is the same durable-state gate
+// used by ReapOrphanedJails.
+type LayerCloneReapOptions struct {
+	Root   string
+	IsLive LiveInstanceFunc
+	Log    *slog.Logger
+	MinAge time.Duration
+	now    func() time.Time
+}
+
+// LayerCloneReapReport records the bounded startup cleanup outcome.
+type LayerCloneReapReport struct {
+	Scanned               int
+	Reaped                int
+	ReclaimedLogicalBytes int64
+	SkippedLive           int
+	SkippedYoung          int
+	SkippedUnknown        int
+	Failed                int
+}
+
+// ReapOrphanedLayerClones removes aged, instance-addressed writable clones
+// whose durable instance is no longer live. Clones created by older binaries
+// do not carry an instance id and are deliberately ignored: deleting those
+// would require guessing whether a surviving Firecracker process owns them.
+func ReapOrphanedLayerClones(ctx context.Context, opts LayerCloneReapOptions) (LayerCloneReapReport, error) {
+	var rep LayerCloneReapReport
+	if opts.IsLive == nil {
+		return rep, errors.New("fcvm: reap layer clones: nil IsLive; refusing to sweep without a liveness gate")
+	}
+	if opts.Root == "" {
+		return rep, errors.New("fcvm: reap layer clones: empty root")
+	}
+	if opts.MinAge <= 0 {
+		opts.MinAge = DefaultReapMinAge
+	}
+	if opts.now == nil {
+		opts.now = time.Now
+	}
+
+	buckets, err := os.ReadDir(opts.Root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return rep, nil
+		}
+		return rep, fmt.Errorf("fcvm: reap layer clones: read root %q: %w", opts.Root, err)
+	}
+	for _, bucket := range buckets {
+		if err := ctx.Err(); err != nil {
+			return rep, err
+		}
+		if !bucket.IsDir() || !looksLikeCacheBucket(bucket.Name()) {
+			continue
+		}
+		bucketPath := filepath.Join(opts.Root, bucket.Name())
+		entries, err := os.ReadDir(bucketPath)
+		if err != nil {
+			logWarn(opts.Log, "vmmd: reap layer clones: read bucket", "path", bucketPath, "err", err)
+			continue
+		}
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return rep, err
+			}
+			instanceID, ok := layerCloneInstanceID(entry.Name())
+			if !ok {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			rep.Scanned++
+			if opts.now().Sub(info.ModTime()) < opts.MinAge {
+				rep.SkippedYoung++
+				continue
+			}
+			live, err := opts.IsLive(ctx, instanceID)
+			if err != nil {
+				rep.SkippedUnknown++
+				logWarn(opts.Log, "vmmd: reap layer clones: liveness unknown; leaving clone",
+					"instance", instanceID, "err", err)
+				continue
+			}
+			if live {
+				rep.SkippedLive++
+				continue
+			}
+			path := filepath.Join(bucketPath, entry.Name())
+			if err := os.Remove(path); err != nil {
+				rep.Failed++
+				logWarn(opts.Log, "vmmd: reap layer clones: remove clone",
+					"instance", instanceID, "path", path, "err", err)
+				continue
+			}
+			rep.Reaped++
+			rep.ReclaimedLogicalBytes += info.Size()
+		}
+	}
+	return rep, nil
+}
+
+func looksLikeCacheBucket(name string) bool {
+	if len(name) != 2 {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func layerCloneInstanceID(name string) (string, bool) {
+	const prefix = ".faas-layer-"
+	if !strings.HasPrefix(name, prefix) || len(name) <= len(prefix)+36 || name[len(prefix)+36] != '-' {
+		return "", false
+	}
+	id := name[len(prefix) : len(prefix)+36]
+	return id, looksLikeInstanceID(id)
+}
+
 // ReapOrphanedJails sweeps JailRoot once and tears down every
 // per-instance chroot whose instance the scheduler no longer considers
 // live. It is safe to call on a node with live VMs; see the file
