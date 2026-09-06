@@ -10,6 +10,10 @@ export type AccountLimits = {
   ram_mb: number;
   max_concurrency: number;
   deployed_apps: number;
+  /**
+   * Maximum live `gregale dev` environments for this plan.
+   */
+  developer_apps: number;
   included_gb_hours: number;
   app_layer_max_mb: number;
   /**

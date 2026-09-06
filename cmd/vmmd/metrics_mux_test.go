@@ -14,7 +14,7 @@ func TestMetricsMuxCombinesWakeExecutionAndEventWrites(t *testing.T) {
 	phases := fcvm.NewWakePhaseMetrics()
 	phases.ObserveWakePhase("restore_ms", 125)
 	ops.WakePhaseDuration("restore_breakdown", "ok").Observe(0.002)
-	mux := newMetricsMux(ops, fcvm.NewColdBootMetrics(), fcvm.NewFrameworkReadyMetrics(), phases)
+	mux := newMetricsMux(ops, fcvm.NewColdBootMetrics(), fcvm.NewFrameworkReadyMetrics(), phases, fcvm.NewDiskMetrics())
 	for attempt := 0; attempt < 2; attempt++ {
 		for _, path := range []string{"/metrics", "/metrics/fallback", "/metrics/framework-warmup", "/metrics/wake-phase"} {
 			rec := httptest.NewRecorder()

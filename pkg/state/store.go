@@ -330,15 +330,17 @@ var ErrPriorityOutOfRange = errors.New("state: priority must be in [0, 1000]")
 // the observed count so apid can include it in the 403 envelope via
 // api.ErrPlanLimitApps without re-running the count.
 // QuotaErrorKind names the cap that tripped. "apps" is the
-// Limits.DeployedApps cap; "crons" is Limits.CronLimitPerAccount.
+// Limits.DeployedApps cap; "developer_apps" is Limits.DeveloperApps;
+// "crons" is Limits.CronLimitPerAccount.
 // "apps" is the zero value so existing call sites that build a
 // QuotaError without a Kind keep behaving the same.
 type QuotaErrorKind string
 
 const (
-	QuotaErrorKindApps   QuotaErrorKind = "apps"
-	QuotaErrorKindCrons  QuotaErrorKind = "crons"
-	QuotaErrorKindMemory                = "memory" // reserved for ADR-046 follow-on
+	QuotaErrorKindApps          QuotaErrorKind = "apps"
+	QuotaErrorKindDeveloperApps QuotaErrorKind = "developer_apps"
+	QuotaErrorKindCrons         QuotaErrorKind = "crons"
+	QuotaErrorKindMemory                       = "memory" // reserved for ADR-046 follow-on
 	// QuotaErrorKindMirror (issue #72 / ADR-125) trips when a
 	// Pro/Scale customer tries to create more than
 	// limits.MirrorTargetsPerApp mirror rules on one app. Free /
@@ -367,6 +369,8 @@ type QuotaError struct {
 
 func (e *QuotaError) Error() string {
 	switch e.Kind {
+	case QuotaErrorKindDeveloperApps:
+		return fmt.Sprintf("state: developer environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindCrons:
 		if e.NotAllowed {
 			return "state: crons not allowed on this plan"
@@ -1823,6 +1827,10 @@ type Store interface {
 	// CountDeployedApps counts apps that occupy a deploy slot (active or
 	// evicted_cold) for quota enforcement (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
+	// CountDeveloperApps counts live `gregale dev` environments. These are
+	// deliberately separate from the deployed-app quota so local development
+	// cannot consume production or preview slots.
+	CountDeveloperApps(ctx context.Context, accountID string) (int, error)
 	// CountAppsWithEvictionPriority returns the per-account count of
 	// apps whose eviction_priority equals the given tier (issue #475).
 	// Counts APPS (not instances) — the per-account cap

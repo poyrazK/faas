@@ -720,6 +720,10 @@ message InstanceStatsRow {
   // rx_valid follows the same Validity convention as tx_valid.
   uint64 net_rx_bytes = 9;
   uint32 rx_valid     = 10;
+  // Latest writable application filesystem sample. Wrapper fields preserve
+  // absent-versus-zero semantics for older nodes and first samples.
+  google.protobuf.Int64Value disk_used_bytes = 11;
+  google.protobuf.Int64Value disk_capacity_bytes = 12;
 }
 
 message ListInstanceStatsRequest {
@@ -965,6 +969,10 @@ message InstanceTelemetry {
   google.protobuf.Int64Value net_rx_bytes = 10;
   // Cumulative requests; absent on older nodes, zero is a valid baseline.
   google.protobuf.Int64Value request_count_total = 11;
+  // Writable application filesystem usage sampled by guest-init. Additive;
+  // absent means the node predates disk telemetry or has no sample yet.
+  google.protobuf.Int64Value disk_used_bytes = 12;
+  google.protobuf.Int64Value disk_capacity_bytes = 13;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

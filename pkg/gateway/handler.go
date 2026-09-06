@@ -5290,17 +5290,15 @@ haveApp:
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 			return
 		}
-		// The wake guarantees one routable target in the normal case. Re-pick
-		// after the gate because the target may have been populated by a peer
-		// or by the leader's admission.
-		pick = h.backend.Pick(app.ID)
 	}
 	// The first request above guarantees one routable target. Reconcile the
 	// request pressure accumulated by the whole burst before forwarding so
 	// requests do not all pile onto that first target while sibling VMs are
 	// still restoring. The admission worker is detached internally, but this
 	// request remains cancellable by its own budget.
-	if burstErr := h.maybeBurstCapacity(r.Context(), app, limits.MaxConcurrency, limits.ConcurrencyPerVMBound); burstErr != nil {
+	//nolint:contextcheck // request ctx at handler boundary.
+	waitedForBurst, burstErr := h.maybeBurstCapacity(r.Context(), app, limits.MaxConcurrency, limits.ConcurrencyPerVMBound)
+	if burstErr != nil {
 		// A burst that cannot become routable within the request budget is
 		// a controlled timeout, not an upstream 502. Client disconnects
 		// remain silent; genuine admission failures use the normal
@@ -5308,6 +5306,14 @@ haveApp:
 		writeBurstCapacityError(w, r, burstErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
 		return
+	}
+
+	// Choose from the capacity that is now ready. A pre-wake selection
+	// would send every queued request to the first guest even after waiting
+	// for siblings. Keep the single PickWarm call on ordinary warm traffic
+	// so round-robin cursors advance only once per request.
+	if !pick.OK || waitedForBurst {
+		pick = h.backend.Pick(app.ID)
 	}
 
 	// Wake-fan-out (issue #556 / PR-C): when Pick landed on a

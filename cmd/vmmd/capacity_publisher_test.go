@@ -79,6 +79,8 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 				InflightRequests:  3,
 				RequestCountTotal: wrapperspb.Int64(123),
 				OpenConns:         5,
+				DiskUsedBytes:     wrapperspb.Int64(80),
+				DiskCapacityBytes: wrapperspb.Int64(100),
 				LastRequestAt:     timestamppb.New(time.Unix(123, 0)),
 			}},
 		}, nil
@@ -92,7 +94,7 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 		t.Fatalf("telemetry rows = %d, want 1", len(got.GetInstances()))
 	}
 	row := got.GetInstances()[0]
-	if row.GetInstanceId() != "vm-1" || row.GetInflightRequests() != 3 || row.GetOpenConns() != 5 || row.GetRequestCountTotal() == nil || row.GetRequestCountTotal().GetValue() != 123 || row.GetCpuPct().GetValue() != 12.5 {
+	if row.GetInstanceId() != "vm-1" || row.GetInflightRequests() != 3 || row.GetOpenConns() != 5 || row.GetRequestCountTotal() == nil || row.GetRequestCountTotal().GetValue() != 123 || row.GetCpuPct().GetValue() != 12.5 || row.GetDiskUsedBytes().GetValue() != 80 || row.GetDiskCapacityBytes().GetValue() != 100 {
 		t.Fatalf("telemetry row = %+v, want vm-1 cpu=12.5 inflight=3 open_conns=5", row)
 	}
 }

@@ -147,7 +147,10 @@ type MemStore struct {
 	// row so RecordMailSuppression can dedupe the same way
 	// the (source, provider_event_id) unique index does.
 	mailSuppressions map[string]mailSuppressionRow
-	deployments      map[string]Deployment
+	// deployFailedEmailAt mirrors apps.last_deploy_failed_email_at for
+	// the in-memory implementation of the I1 cooldown gate.
+	deployFailedEmailAt map[string]time.Time
+	deployments         map[string]Deployment
 	// statusIncidents (issue #599 / ADR-130) is the in-memory
 	// mirror of the status_incidents table (migrations/00412).
 	// Append-only + resolved_at-stamped; the partial-index read
@@ -723,9 +726,10 @@ func NewMemStore() *MemStore {
 		githubWebhookSecrets:    map[int64][]byte{},
 		githubWebhookSecretMeta: map[int64]webhookSecretMeta{},
 		// Issue #246 acceptance item 7: mail suppression list mirror.
-		mailSuppressions: map[string]mailSuppressionRow{},
-		deployments:      map[string]Deployment{},
-		builds:           map[string]Build{},
+		mailSuppressions:    map[string]mailSuppressionRow{},
+		deployFailedEmailAt: map[string]time.Time{},
+		deployments:         map[string]Deployment{},
+		builds:              map[string]Build{},
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
 		// build_id (mirrors the build_provenance.build_id UNIQUE).
 		// Starts empty; CreateBuildProvenance fills it.
@@ -2573,16 +2577,30 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
-	// 1. Authoritative count under the same lock. Mirrors the predicate
-	//    PgStore uses against the apps table.
+	// 1. Authoritative count under the same lock. Mirrors the PgStore
+	//    predicates, including the separate developer-environment cap.
 	observed := 0
+	developer := IsDeveloperApp(app)
 	for _, a := range m.apps {
-		if a.AccountID == app.AccountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
-			observed++
+		if a.AccountID != app.AccountID || (a.Status != AppActive && a.Status != AppEvictedCold) {
+			continue
 		}
+		if developer != IsDeveloperApp(a) {
+			continue
+		}
+		observed++
 	}
-	if observed >= limits.DeployedApps {
-		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	limit := limits.DeployedApps
+	kind := QuotaErrorKindApps
+	if developer {
+		limit = limits.DeveloperApps
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindDeveloperApps
+	}
+	if observed >= limit {
+		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
 	// 2. Conditional insert. Slug uniqueness is enforced by the same
 	//    loop CreateApp uses; returning ErrConflict keeps the wire
@@ -3649,7 +3667,19 @@ func (m *MemStore) CountDeployedApps(_ context.Context, accountID string) (int, 
 	defer m.mu.Unlock()
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
+		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && !IsDeveloperApp(a) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *MemStore) CountDeveloperApps(_ context.Context, accountID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, a := range m.apps {
+		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && IsDeveloperApp(a) {
 			n++
 		}
 	}
@@ -6428,6 +6458,27 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	d.ErrorCode = code
 	m.deployments[id] = d
 	return d, nil
+}
+
+// ClaimDeployFailedEmail mirrors PgStore.ClaimDeployFailedEmail while
+// preserving the same atomic check-and-stamp under the MemStore mutex.
+func (m *MemStore) ClaimDeployFailedEmail(_ context.Context, appID string, at time.Time) (bool, error) {
+	if appID == "" {
+		return false, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if app, ok := m.apps[appID]; !ok || app.Status == AppDeleted {
+		return false, ErrNotFound
+	}
+	if m.deployFailedEmailAt == nil {
+		m.deployFailedEmailAt = make(map[string]time.Time)
+	}
+	if last, ok := m.deployFailedEmailAt[appID]; ok && !last.Before(at.UTC().Add(-time.Hour)) {
+		return false, nil
+	}
+	m.deployFailedEmailAt[appID] = at.UTC()
+	return true, nil
 }
 
 // SetDeploymentFailedEx is the error-explanations cluster (spec §6.4

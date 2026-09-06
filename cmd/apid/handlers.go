@@ -899,6 +899,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			RAMMB:              l.RAMMB,
 			MaxConcurrency:     l.MaxConcurrency,
 			DeployedApps:       l.DeployedApps,
+			DeveloperApps:      l.DeveloperApps,
 			IncludedGBHours:    int64(l.IncludedGBHours),
 			AppLayerMaxMB:      l.AppLayerMaxMB,
 			EphemeralDiskMaxMB: l.EphemeralDiskMaxMB(),
@@ -914,6 +915,9 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 	if r != nil {
 		if n, err := s.store.CountDeployedApps(ctx, acct.ID); err == nil {
 			resp.AppCount = n
+		}
+		if n, err := s.store.CountDeveloperApps(ctx, acct.ID); err == nil {
+			resp.DeveloperAppCount = n
 		}
 		month := time.Now().UTC()
 		if rows, err := s.store.UsageByMonth(ctx, acct.ID, month); err == nil {

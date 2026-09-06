@@ -2155,8 +2155,8 @@ type RollbackRequest struct {
 
 // AccountResponse is the whoami payload. Limits is the plan's
 // quota/limit table (RAM MB, max concurrency, included GB-h,
-// deployed-app cap) so the dashboard /account page can show
-// "you have X of Y apps" without a second round trip. UsageGBHours
+// deployed-app and developer-environment caps) so the dashboard /account
+// page can show both budgets without a second round trip. UsageGBHours
 // is the roll-up for the current month (caller-aggregated from
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
@@ -2172,6 +2172,7 @@ type AccountResponse struct {
 	Limits                       AccountLimits `json:"limits"`
 	UsageGBHours                 float64       `json:"usage_gb_hours"`
 	AppCount                     int           `json:"app_count"`
+	DeveloperAppCount            int           `json:"developer_app_count"`
 	GitHubInstall                string        `json:"github_install_id,omitempty"`
 	// PlanChangeStatus and RequestedPlan are populated only when a plan
 	// change was accepted by the billing provider but is not yet reflected
@@ -2190,6 +2191,7 @@ type AccountLimits struct {
 	RAMMB              int    `json:"ram_mb"`
 	MaxConcurrency     int    `json:"max_concurrency"`
 	DeployedApps       int    `json:"deployed_apps"`
+	DeveloperApps      int    `json:"developer_apps"`
 	IncludedGBHours    int64  `json:"included_gb_hours"`
 	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
 	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`

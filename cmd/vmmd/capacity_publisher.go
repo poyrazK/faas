@@ -407,6 +407,8 @@ func buildCapacityReport(
 				NetTxBytes:          in.GetNetTxBytes(),
 				NetRxBytes:          in.GetNetRxBytes(),
 				OpenConns:           in.GetOpenConns(),
+				DiskUsedBytes:       in.GetDiskUsedBytes(),
+				DiskCapacityBytes:   in.GetDiskCapacityBytes(),
 			}
 			report.Instances = append(report.Instances, row)
 		}

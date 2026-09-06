@@ -333,6 +333,7 @@ func (p *Problem) HasHeader(key string) []string {
 // the CLI's exit-code mapping.
 const (
 	CodePlanLimitApps          = "plan_limit_apps"
+	CodePlanLimitDeveloperApps = "plan_limit_developer_apps"
 	CodePlanLimitRAM           = "plan_limit_ram"
 	CodePlanLimitConcur        = "plan_limit_concurrency"
 	CodeInvalidAppCPU          = "invalid_cpu_millicores"
@@ -1547,7 +1548,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodePlanLimitApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
@@ -1975,6 +1976,16 @@ func ErrPlanLimitApps(l Limits, observed int) *Problem {
 		fmt.Sprintf("%s plan allows %d deployed app(s); you have %d.", l.Plan, l.DeployedApps, observed)).
 		WithLimit(int64(l.DeployedApps), int64(observed)).
 		WithDocs(docsBase + "/plans#apps")
+}
+
+// ErrPlanLimitDeveloperApps is returned when a developer session would exceed
+// the separate per-plan development-environment cap.
+func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperApps,
+		"Developer environment limit reached",
+		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
+		WithLimit(int64(l.DeveloperApps), int64(observed)).
+		WithDocs(docsBase + "/plans#developer-environments")
 }
 
 // ErrPlanLimitRAM is returned when a requested ram_mb exceeds the plan cap.
