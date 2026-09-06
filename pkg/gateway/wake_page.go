@@ -117,7 +117,7 @@ func (h *Handler) beginWakePageCycle(appID string) {
 	h.wakePageCycles[appID] = &wakePageCycle{}
 }
 
-func (h *Handler) noteWakePageServed(appID, accountID, requestID string, servedAt time.Time) {
+func (h *Handler) noteWakePageServed(ctx context.Context, appID, accountID, requestID string, servedAt time.Time) {
 	if h == nil || appID == "" {
 		return
 	}
@@ -145,13 +145,13 @@ func (h *Handler) noteWakePageServed(appID, accountID, requestID string, servedA
 	}
 	resolvedWakeID := cycle.wakeID
 	h.wakePageMu.Unlock()
-	h.emitWakePageVisit(context.Background(), appID, resolvedWakeID, visit)
+	h.emitWakePageVisit(ctx, appID, resolvedWakeID, visit)
 }
 
 // finishWakePageCycle is called by the wake leader, not by the timed-out
 // browser waiter. A successful wake flushes all pages with the real wake ID;
 // a failed wake drops them so a later retry starts a fresh generation.
-func (h *Handler) finishWakePageCycle(appID, wakeID string) {
+func (h *Handler) finishWakePageCycle(ctx context.Context, appID, wakeID string) {
 	if h == nil || appID == "" {
 		return
 	}
@@ -171,16 +171,13 @@ func (h *Handler) finishWakePageCycle(appID, wakeID string) {
 	cycle.pending = nil
 	h.wakePageMu.Unlock()
 	for _, visit := range pending {
-		h.emitWakePageVisit(context.Background(), appID, wakeID, visit)
+		h.emitWakePageVisit(ctx, appID, wakeID, visit)
 	}
 }
 
 func (h *Handler) emitWakePageVisit(ctx context.Context, appID, wakeID string, visit wakePageVisit) {
 	if h == nil || h.wakePageAudit == nil || wakeID == "" {
 		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// The page event is often flushed after the original HTTP request has
 	// returned, so callers pass a detached context. Keep the best-effort audit

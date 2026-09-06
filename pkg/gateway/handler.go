@@ -5247,7 +5247,7 @@ haveApp:
 				// The caller's short wait expired, but the detached wake is
 				// still alive. Record the visit and let the page's fetch/meta
 				// retry land on the app without a manual reload.
-				h.noteWakePageServed(app.ID, app.AccountID, requestIDFrom(r), time.Now())
+				h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
 				writeWakePage(w, r.Header.Get("x-faas-wake-id"))
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
@@ -6668,7 +6668,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 						h.log.Warn("gateway: live target reconciliation failed", "app_id", appID, "err", reconcileErr)
 					}
 				} else if h.backend.HealthyCount(appID) > 0 {
-					h.finishWakePageCycle(appID, "")
+					h.finishWakePageCycle(ctx, appID, "")
 					return nil
 				}
 			}
@@ -6679,13 +6679,13 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 						return e
 					}
 					if atCapacity {
-						h.finishWakePageCycle(appID, "")
+						h.finishWakePageCycle(admitCtx, appID, "")
 						return nil
 					}
 					admittedWakeID = id
 					method = m
 					cold = true
-					h.finishWakePageCycle(appID, id)
+					h.finishWakePageCycle(admitCtx, appID, id)
 					return nil
 				}
 				id, m, atCapacity, e := h.backend.Admit(admitCtx, appID, "", scope, sched.TriggerGateway, maxConcurrency)
@@ -6693,13 +6693,13 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					return e
 				}
 				if atCapacity {
-					h.finishWakePageCycle(appID, "")
+					h.finishWakePageCycle(admitCtx, appID, "")
 					return nil
 				}
 				admittedWakeID = id
 				method = m
 				cold = true
-				h.finishWakePageCycle(appID, id)
+				h.finishWakePageCycle(admitCtx, appID, id)
 				return nil
 			}
 			var admitErr error
@@ -6716,7 +6716,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 				// The detached leader owns the wake generation. If it
 				// fails before an ID is returned, discard any page visits
 				// so a later retry cannot attach them to a different wake.
-				h.finishWakePageCycle(appID, "")
+				h.finishWakePageCycle(ctx, appID, "")
 			}
 			return admitErr
 		},
