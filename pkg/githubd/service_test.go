@@ -213,6 +213,31 @@ func TestHandlePushRequest_NoBindingIsSilent(t *testing.T) {
 	}
 }
 
+func TestHandlePushRequest_SkipMarkerStopsBeforeSourceFetch(t *testing.T) {
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	svc.Source = &stubSource{err: errors.New("source must not be fetched")}
+	var checkInstall int64
+	var checkSummary string
+	svc.WriteSkippedCheckForInstallation = func(_ context.Context, installID int64, repo, sha, summary string) error {
+		checkInstall = installID
+		checkSummary = summary
+		if repo != "octo/api" || sha != "deadbeef" {
+			t.Errorf("check target = %s@%s", repo, sha)
+		}
+		return nil
+	}
+	body := []byte(`{"ref":"refs/heads/main","after":"deadbeef","repository":{"full_name":"octo/api","name":"api"},"head_commit":{"message":"docs: update [skip deploy]"},"pusher":{"name":"alice"}}`)
+	_, err := svc.HandlePushRequest(context.Background(), body)
+	if !IsSkipDeploy(err) {
+		t.Fatalf("err = %v, want ErrSkipDeploy", err)
+	}
+	if checkInstall != rig.install || !strings.Contains(checkSummary, "[skip deploy]") {
+		t.Errorf("skipped check = install %d summary %q", checkInstall, checkSummary)
+	}
+}
+
 func TestHandlePushRequest_FeatureBranchIgnored(t *testing.T) {
 	// Seed a project whose production_branch="main". Push to
 	// refs/heads/feature/x — bind matches via the feature/x row,
