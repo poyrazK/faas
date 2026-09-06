@@ -314,6 +314,19 @@
       </form>
       {{ end }}
 
+      {{/* A superseded deployment is a safe rollback target. Keep the
+          action on the detail page as well as the app deployment list so
+          recovery does not depend on remembering where the old version
+          lives. The handler binds the form to the same named CSRF envelope
+          and app-scoped rollback endpoint as app_detail.html. */}}
+      {{ if and .Data.CanRollback .Data.RollbackConfirmToken }}
+      <form method="POST" action="/dashboard/apps/{{ .Data.App.Slug }}/rollback" class="deploy-rollback-form" data-cluster="deploy-rollback-form">
+        <input type="hidden" name="csrf_token" value="{{ .Data.RollbackConfirmToken }}">
+        <input type="hidden" name="deployment_id" value="{{ .Data.Deployment.ID }}" required>
+        <button type="submit" class="btn rollback">Rollback to this deployment</button>
+      </form>
+      {{ end }}
+
       <h2>Scan</h2>
       {{if .Data.Scan}}
         <p>

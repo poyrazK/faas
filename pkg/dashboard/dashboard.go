@@ -507,6 +507,16 @@ type DeploymentDetailData struct {
 	Deployment DeploymentItem
 	Scan       *ScanPayload
 	Stages     *StagePayload
+	// CanRollback is true for a superseded deployment that can be
+	// selected as the rollback target. The handler binds the form to
+	// the same app-scoped rollback endpoint used by the app detail
+	// page; keeping the gate in the view model prevents a stale or
+	// failed row from rendering a misleading action.
+	CanRollback bool
+	// RollbackConfirmToken is the named CSRF envelope consumed by
+	// POST /dashboard/apps/{slug}/rollback. It is empty when
+	// CanRollback is false.
+	RollbackConfirmToken string
 	// PreviewURL carries the resolved per-deployment preview
 	// URL. nil when the deployment doesn't exist or belongs to
 	// another account (handler already 404s in that case).
