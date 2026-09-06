@@ -141,6 +141,10 @@ type Endpoint struct {
 // must be handed directly to a CredentialSink and never written to the
 // managed_postgres_databases or managed_postgres_bindings catalog rows.
 type CredentialMaterial struct {
+	// ProviderIdentityID is the provider's opaque, non-secret identity for
+	// this credential. It is persisted for lifecycle audit; passwords and
+	// connection URLs never are.
+	ProviderIdentityID string
 	Username           string
 	Password           string
 	Database           string
@@ -154,7 +158,7 @@ func (CredentialMaterial) String() string { return "[REDACTED]" }
 func (CredentialMaterial) GoString() string { return "managedpostgres.CredentialMaterial{[REDACTED]}" }
 
 func (c CredentialMaterial) Validate() error {
-	if c.Username == "" || c.Password == "" || c.Database == "" || len(c.Endpoints) == 0 {
+	if !validOpaqueID(c.ProviderIdentityID) || c.Username == "" || c.Password == "" || c.Database == "" || len(c.Endpoints) == 0 {
 		return ErrInvalid
 	}
 	if c.TLSMode != "require" && c.TLSMode != "verify-ca" && c.TLSMode != "verify-full" {
@@ -367,7 +371,9 @@ type Binding struct {
 // binding ID + generation. It is intentionally separate from Store.
 type CredentialSink interface {
 	Put(context.Context, Binding, CredentialMaterial) (string, error)
-	Delete(context.Context, string) error
+	// Delete receives the whole binding so a sink can recover the
+	// deterministic reference after a crash between Put and catalog commit.
+	Delete(context.Context, Binding) error
 }
 
 type Store interface {

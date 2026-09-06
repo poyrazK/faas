@@ -1,6 +1,6 @@
 # ADR-155 · Provider-neutral managed PostgreSQL foundation
 
-- **Status:** accepted as a control-plane foundation with a dark-wired Neon adapter; no public entitlement until billing guardrails, backups, live provider qualification, and a support runbook are complete.
+- **Status:** accepted as a control-plane foundation with a dark-wired Neon adapter and recoverable credential binding; no public entitlement until billing guardrails, backups, live provider qualification, and a support runbook are complete.
 - **Date:** 2026-09-05
 - **Decision:** make managed PostgreSQL an account resource with app-scoped bindings, behind a provider-neutral lifecycle and metering boundary.
 
@@ -55,11 +55,11 @@ matches the desired Gregale spec and the observed generation has caught up.
 Deletion leaves a tombstone so names can be safely reused without losing audit
 history.
 
-Credential issuance is not part of database provisioning. A future binding
-service will ask the adapter for an independently revocable credential and pass
-the returned material directly to `CredentialSink`, implemented using
-Gregale's encrypted app-secret store. Catalog tables may store only an opaque
-credential reference. They must never store a password or connection URL.
+Credential issuance is not part of database provisioning. The binding service
+asks the adapter for an independently revocable credential and passes the
+returned material directly to `CredentialSink`, implemented using Gregale's
+encrypted app-secret store. Catalog tables may store only an opaque credential
+reference. They must never store a password or connection URL.
 
 Provider usage maps to unit-bearing canonical meters: active seconds, compute-
 unit seconds, storage byte-seconds, history byte-seconds, egress bytes, and
@@ -167,6 +167,35 @@ remains. This makes the future provider-call → sealed-secret-write → catalog
 transition a recoverable saga rather than pretending the external provider and
 Gregale PostgreSQL share a transaction. This follow-up still makes no provider
 credential call and exposes no customer route.
+
+## Binding reconciler follow-up
+
+The binding service completes the provider-call → encrypted-secret → catalog
+saga. Each binding generation derives one stable provider identity key. The
+adapter must treat repeated issuance for that key as the same credential, and
+the app-secret sink derives one opaque reference from the same binding and
+generation. A crash after issuing the role or writing the secret therefore
+replays the same effects instead of creating parallel identities.
+
+Provisioning claims a persisted lease, verifies that the parent database is
+still ready and resolves its stored backend fingerprint, issues credentials,
+validates the returned material, and seals one PostgreSQL connection URL into
+the binding-owned `app_secrets` row. Only then may the fenced store transition
+the binding to `ready`. Plaintext credentials never enter the managed-Postgres
+catalog or logs and their in-process lifetime is bounded to this operation.
+
+Deletion uses the reverse safety order: revoke the deterministic provider
+identity, remove the owned secret through its deterministic reference, then
+write the deleted tombstone. Both external steps are idempotent. The sink can
+derive the reference even when a crash happened after the secret write but
+before `credential_ref` reached the binding row.
+
+The background binding reconciler obeys `provisioning_enabled` for provisioning
+and failed rows but always discovers deletion rows. Provider, secret-store, and
+catalog failures persist a sanitized stage-specific code and a bounded retry
+schedule. Read-only bindings require a provider-returned read-only endpoint;
+provider CA material fails closed until a portable second-secret/file contract
+exists rather than being silently discarded.
 
 ## Consequences
 

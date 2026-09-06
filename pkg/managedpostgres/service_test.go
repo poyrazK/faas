@@ -358,11 +358,12 @@ func TestPlacementFingerprintFencesRepurposedBackend(t *testing.T) {
 
 func TestCredentialMaterialRedactsFormatting(t *testing.T) {
 	material := CredentialMaterial{
-		Username:  "user",
-		Password:  "very-secret",
-		Database:  "app",
-		TLSMode:   "verify-full",
-		Endpoints: []Endpoint{{Role: EndpointPooled, Host: "db.example.test", Port: 5432}},
+		ProviderIdentityID: "provider-role-a",
+		Username:           "user",
+		Password:           "very-secret",
+		Database:           "app",
+		TLSMode:            "verify-full",
+		Endpoints:          []Endpoint{{Role: EndpointPooled, Host: "db.example.test", Port: 5432}},
 	}
 	if err := material.Validate(); err != nil {
 		t.Fatal(err)
