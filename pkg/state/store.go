@@ -3428,6 +3428,22 @@ type Store interface {
 	// branch (issue #1233, ADR-123).
 	MTDSpendEurCents(ctx context.Context, accountID string) (int64, error)
 
+	// CountNewErrorFingerprintsSince counts distinct app error groups first
+	// observed since the supplied instant. An empty appID scopes the count to
+	// every app in the account. Used by the issue #1395 B3 alert metric.
+	CountNewErrorFingerprintsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
+
+	// ColdWakeRatePctSince returns the percentage of request_telemetry rows
+	// marked cold_boot since the supplied instant, weighted by each row's count
+	// field. An empty appID scopes the rate to the account.
+	ColdWakeRatePctSince(ctx context.Context, accountID, appID string, since time.Time) (float64, error)
+
+	// DailyCostCents returns the estimated raw usage cost for the UTC day that
+	// contains day, derived from usage_daily.mb_seconds. An empty appID scopes
+	// the sum to the account. The result is in integer EUR cents before any
+	// monthly included allowance is applied.
+	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
+
 	// UpsertAccountSpendSnapshot is called by the meterd tick
 	// loop on every AlertEvalInterval. Idempotent via the
 	// (account_id, source, period_end) UNIQUE at migrations/00350.

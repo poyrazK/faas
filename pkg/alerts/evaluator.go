@@ -58,7 +58,7 @@ const AlertSecretNamespace = "alert_rule"
 // The methods mirror state.Store with identical semantics; the only
 // reason they aren't `state.Store` is so we don't drag in
 // pkg/state's full interface when the only methods the evaluator
-// touches are these nine.
+// touches are these twelve.
 type Store interface {
 	ListEnabledAlertRules(ctx context.Context) ([]state.AlertRule, error)
 	AlertRuleByID(ctx context.Context, id string) (state.AlertRule, error)
@@ -68,6 +68,9 @@ type Store interface {
 	WasInvokedSuccessfullySince(ctx context.Context, accountID, appID string, since time.Time) (bool, error)
 	MTDSpendEurCents(ctx context.Context, accountID string) (int64, error)
 	MinCertExpiryForApp(ctx context.Context, accountID, appID string) (int64, error)
+	CountNewErrorFingerprintsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
+	ColdWakeRatePctSince(ctx context.Context, accountID, appID string, since time.Time) (float64, error)
+	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
 	SetAlertRuleState(ctx context.Context, ruleID string, to state.AlertState, at time.Time) (changed bool, err error)
 	SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, at time.Time) error
@@ -742,6 +745,34 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			return 0, false, skipDegraded
 		}
 		observed := float64(secs)
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricNewErrorFingerprint:
+		since := e.windowStart(rule.WindowSpec, e.now())
+		n, err := e.store.CountNewErrorFingerprintsSince(ctx, rule.AccountID, rule.AppID, since)
+		if err != nil {
+			e.log.Warn("alerts: count new error fingerprints",
+				"rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		observed := float64(n)
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricColdWakeRatePct:
+		since := e.windowStart(rule.WindowSpec, e.now())
+		observed, err := e.store.ColdWakeRatePctSince(ctx, rule.AccountID, rule.AppID, since)
+		if err != nil {
+			e.log.Warn("alerts: calculate cold wake rate",
+				"rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricDailyCostCents:
+		observedCents, err := e.store.DailyCostCents(ctx, rule.AccountID, rule.AppID, e.now())
+		if err != nil {
+			e.log.Warn("alerts: calculate daily cost",
+				"rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		observed := float64(observedCents)
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	default:
 		// PromQL-driven metrics.

@@ -2193,21 +2193,26 @@ type OperatorIntent struct {
 // cert_expiry_seconds / queue_depth). The pkg/api.AllowedAlertRuleMetrics
 // slice and the alert_rules_metric_chk DB CHECK mirror these byte-for-byte
 // (migrations/00349_alert_rules_extend_metrics_chk.sql).
+// Issue #1395 B3 adds new_error_fingerprint, cold_wake_rate_pct, and
+// daily_cost_cents from the durable observability rollups.
 type AlertMetric string
 
 const (
-	AlertMetricErrorRate         AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50        AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95        AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99        AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct      AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount      AlertMetric = "request_count"
-	AlertMetricFailedInvocs      AlertMetric = "failed_invocations"
-	AlertMetricAPIUp             AlertMetric = "api_up"
-	AlertMetricAccountSpendEUR   AlertMetric = "account_spend_eur"
-	AlertMetricFailedDeployments AlertMetric = "deployment_failed"
-	AlertMetricCertExpirySeconds AlertMetric = "cert_expiry_seconds"
-	AlertMetricQueueDepth        AlertMetric = "queue_depth"
+	AlertMetricErrorRate           AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50          AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95          AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99          AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct        AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount        AlertMetric = "request_count"
+	AlertMetricFailedInvocs        AlertMetric = "failed_invocations"
+	AlertMetricAPIUp               AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR     AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments   AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds   AlertMetric = "cert_expiry_seconds"
+	AlertMetricQueueDepth          AlertMetric = "queue_depth"
+	AlertMetricNewErrorFingerprint AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct     AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents      AlertMetric = "daily_cost_cents"
 	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
 	// Prometheus-counter-backed tripwire for a canary sitting at the
 	// same step past StuckAfterDuration. The actual firing happens

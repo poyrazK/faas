@@ -9558,7 +9558,7 @@ func scanAlertPresetCols(scan func(...any) error) (AlertPreset, error) {
 // (defence-in-depth: the closed-set check on minimum_plan is the
 // authoritative gate, not a SQL filter).
 //
-// Catalog cardinality is bounded (8 rows today) so no pagination
+// Catalog cardinality is bounded (10 rows today) so no pagination
 // is needed; the slice fits in a single round trip.
 func (s *PgStore) ListAlertPresets(ctx context.Context) ([]AlertPreset, error) {
 	rows, err := s.pool.Query(ctx,
@@ -9665,6 +9665,78 @@ func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64
 		return 0, err
 	}
 	return total, nil
+}
+
+// CountNewErrorFingerprintsSince counts app_errors groups whose fingerprint
+// was first observed in the requested window. app_errors is deduplicated on
+// (account_id, app_id, fingerprint), so counting rows is counting distinct
+// newly-seen fingerprints without scanning the request-level samples.
+func (s *PgStore) CountNewErrorFingerprintsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error) {
+	appArg := any(nil)
+	if appID != "" {
+		appArg = appID
+	}
+	var total int
+	err := s.pool.QueryRow(ctx, `
+		select count(*)::int
+		  from app_errors
+		 where account_id = $1
+		   and first_seen_at >= $2
+		   and ($3::uuid is null or app_id = $3::uuid)`,
+		accountID, since.UTC(), appArg).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// ColdWakeRatePctSince computes the request-weighted share of cold_boot
+// request telemetry rows in the requested window. Collapsed telemetry rows
+// carry their original request cardinality in count, so both the numerator
+// and denominator use that weight.
+func (s *PgStore) ColdWakeRatePctSince(ctx context.Context, accountID, appID string, since time.Time) (float64, error) {
+	appArg := any(nil)
+	if appID != "" {
+		appArg = appID
+	}
+	var rate float64
+	err := s.pool.QueryRow(ctx, `
+		select coalesce(
+			100.0 * sum(case when cold_boot then count else 0 end)::float8
+			/ nullif(sum(count), 0), 0
+		)::float8
+		  from request_telemetry
+		 where account_id = $1
+		   and received_at >= $2
+		   and ($3::uuid is null or app_id = $3::uuid)`,
+		accountID, since.UTC(), appArg).Scan(&rate)
+	if err != nil {
+		return 0, err
+	}
+	return rate, nil
+}
+
+// DailyCostCents estimates the raw usage cost for one UTC day from the
+// usage_daily rollup. The alert metric deliberately does not subtract the
+// monthly included allowance: it is a daily burn-rate signal, while billing
+// and account_spend_eur remain the authoritative allowance-aware surfaces.
+func (s *PgStore) DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error) {
+	appArg := any(nil)
+	if appID != "" {
+		appArg = appID
+	}
+	var mbSeconds int64
+	err := s.pool.QueryRow(ctx, `
+		select coalesce(sum(mb_seconds), 0)::bigint
+		  from usage_daily
+		 where account_id = $1
+		   and day = ($2::timestamptz at time zone 'utc')::date
+		   and ($3::uuid is null or app_id = $3::uuid)`,
+		accountID, day.UTC(), appArg).Scan(&mbSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return api.OverageCentsForBillableMBSeconds(mbSeconds), nil
 }
 
 // UpsertAccountSpendSnapshot is called by the meterd tick loop on

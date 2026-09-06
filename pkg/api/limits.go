@@ -720,7 +720,7 @@ type Limits struct {
 	// in the alert_presets catalog. NOT a per-app cap — instantiating
 	// a preset counts toward the existing AlertRuleLimitPerApp /
 	// AlertRuleLimitPerAccount. Default 0 (no catalog seeded); the
-	// PR-A seed inserts 8 rows so every plan gets 8. Surfaced via
+	// PR-A/B3 seeds insert 10 rows so every plan gets 10. Surfaced via
 	// the GET /v1/alert-presets response so the CLI / dashboard can
 	// render "8 presets available" without hardcoding the seed
 	// count — a future ADR that re-seeds the catalog only has to

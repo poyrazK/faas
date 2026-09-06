@@ -102,6 +102,8 @@ func TruncateRunes(s string, maxRunes int) string {
 // preset catalog (api_up, account_spend_eur, deployment_failed,
 // cert_expiry_seconds, queue_depth). The DB CHECK constraint on
 // alert_rules.metric mirrors this list — see migrations/00349.
+// Issue #1395 B3 adds three durable observability metrics backed by
+// app_errors, request_telemetry, and usage_daily.
 var AllowedAlertRuleMetrics = []string{
 	"error_rate_pct",
 	"latency_p50_ms",
@@ -115,6 +117,9 @@ var AllowedAlertRuleMetrics = []string{
 	"deployment_failed",
 	"cert_expiry_seconds",
 	"queue_depth",
+	"new_error_fingerprint",
+	"cold_wake_rate_pct",
+	"daily_cost_cents",
 	// SAFE-RELEASES-OBS PR-B (issue #976 / ADR-122): 4 new
 	// Prometheus-counter-backed tripwires for the canary/safedeploy
 	// lifecycle. The actual firing happens in Prometheus against
