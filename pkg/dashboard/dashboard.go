@@ -319,6 +319,82 @@ type SecretItem struct {
 	Managed         bool
 }
 
+// AppErrorsData is the dashboard-facing payload for the automatic error
+// grouping page (/dashboard/apps/{slug}/errors). It mirrors the existing
+// summary, drill-down, and first-sample API surfaces without exposing any
+// unredacted request data.
+type AppErrorsData struct {
+	AppSlug             string
+	AppStatus           string
+	Plan                string
+	PlanAllowed         bool
+	WindowStart         string
+	WindowEnd           string
+	WindowClamped       bool
+	Limit               int
+	SummaryURL          string
+	Window24hURL        string
+	Window7dURL         string
+	Items               []ErrorSummaryItem
+	NextSummaryURL      string
+	SelectedFingerprint string
+	Detail              *ErrorDetail
+	ErrorMessage        string
+}
+
+// ErrorSummaryItem is one grouped error fingerprint in the dashboard.
+type ErrorSummaryItem struct {
+	Fingerprint   string
+	ErrorClass    string
+	Route         string
+	HTTPStatus    int32
+	Count         int64
+	RequestCount  int64
+	FirstSeenAt   string
+	LastSeenAt    string
+	SampleMessage string
+	TriageState   string
+	DetailURL     string
+}
+
+// ErrorDetail contains the bounded request history and oldest sample for a
+// selected fingerprint. Headers and messages are already redacted by the
+// app-errors writer before they reach this projection.
+type ErrorDetail struct {
+	Fingerprint     string
+	ErrorClass      string
+	Route           string
+	HTTPStatus      int32
+	Requests        []ErrorRequestItem
+	NextRequestsURL string
+	Sample          *ErrorSample
+	TriageState     string
+}
+
+// ErrorRequestItem is one redacted request associated with a fingerprint.
+type ErrorRequestItem struct {
+	RequestID     string
+	ReceivedAt    string
+	Route         string
+	HTTPStatus    int32
+	ErrorClass    string
+	SampleMessage string
+	DeploymentID  string
+}
+
+// ErrorSample is the oldest redacted request sample for a fingerprint.
+type ErrorSample struct {
+	RequestID         string
+	ReceivedAt        string
+	Route             string
+	HTTPStatus        int32
+	ErrorClass        string
+	SampleMessage     string
+	DeploymentID      string
+	HeadersSample     map[string]string
+	RedactionsApplied []string
+}
+
 // ScanSummary is the per-deploy grype scan summary
 // (issue #464 / ADR-055). The full typed payload lives on
 // the deployments row (state.Deployment.ScanResult +
@@ -378,6 +454,42 @@ type DomainItem struct {
 	CertExpiresAt    string
 	CertLastError    string
 	DNSLastCheckedAt string
+	DoctorURL        string
+}
+
+// AppDomainsData is the dashboard-facing payload for the per-app custom
+// domains page. The page is read-only: domain mutations continue through the
+// existing API/CLI paths, while this view combines durable TLS state with the
+// cached domain-doctor observation.
+type AppDomainsData struct {
+	App          AppListItem
+	Domains      []DomainPageItem
+	WWWApexHint  string
+	ErrorMessage string
+}
+
+// DomainPageItem is one custom-domain row on the app domains page.
+type DomainPageItem struct {
+	Domain           string
+	Verified         bool
+	VerifiedAt       string
+	TXTRecord        string
+	CertStatus       string
+	CertExpiresAt    string
+	CertLastError    string
+	DNSLastCheckedAt string
+	DoctorURL        string
+	Doctor           *DomainDoctorSummary
+}
+
+// DomainDoctorSummary is the latest cached doctor result. The page does not
+// trigger a network probe for every row; the doctor link performs the existing
+// bounded refresh when the observation is missing or stale.
+type DomainDoctorSummary struct {
+	Healthy    bool
+	Stale      bool
+	ObservedAt string
+	Checks     []DashboardDoctorCheck
 }
 
 // CronItem is one row on the app detail page's crons tab

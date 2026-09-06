@@ -42,7 +42,6 @@ import (
 	evts "github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
-	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -279,22 +278,13 @@ func fwdStreamOnce(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient
 // emitted on the first downstream byte (the Response Init
 // frame's WriteHeader). nil events opts out (pre-PR-C fixtures).
 //
-// ADR-093 / PR-C: when the inbound request carries an end-to-end
-// budget, the 910 s stream session is bounded by the budget's
-// remaining time (min(parentRemaining, 910s)). The 910 s ceiling is
-// unchanged — the budget can only shorten it. When no Budget is
-// attached to ctx, the legacy context.WithTimeout(910s) ceiling is
-// preserved.
+// ADR-093 follow-up: when the inbound request carries an end-to-end
+// budget, it governs admission and the response headers. Once the
+// headers are committed, newStreamSession detaches that budget and
+// the stream is bounded by activity, the 910 s hop ceiling, and the
+// independent idle timer.
 func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient, log *slog.Logger, t Target, events *evts.Platform) {
-	var (
-		ctx    context.Context
-		cancel context.CancelFunc
-	)
-	if b, ok := reqbudget.FromContext(r.Context()); ok {
-		ctx, cancel, _ = b.WithCeiling(r.Context(), 910*time.Second)
-	} else {
-		ctx, cancel = context.WithTimeout(r.Context(), 910*time.Second)
-	}
+	ctx, detachBudget, touch, cancel := newStreamSession(r.Context(), 910*time.Second, streamIdleTimeout)
 	defer cancel()
 
 	// ADR-124: read the customer's per-app wire-protocol choice
@@ -412,6 +402,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		for {
 			n, err := cr.Read(buf)
 			if n > 0 {
+				touch()
 				if serr := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 					Frame: &vmmdpb.ForwardHTTPStreamRequest_BodyChunk{
 						BodyChunk: append([]byte(nil), buf[:n]...),
@@ -442,14 +433,23 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	wroteHeader := false
 	for {
 		frame, err := stream.Recv()
+		touch()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
+			streamErr := ctx.Err()
 			// Cancel the derived stream context so the request body is
 			// closed and the body goroutine can finish before return.
 			cancel()
 			<-bodyErrCh
+			if streamErr != nil && wroteHeader {
+				// A detached stream ended because its client canceled or
+				// its independent idle/ceiling safety bound fired. The
+				// response is already committed, so close cleanly without
+				// attempting to write a second error response.
+				return
+			}
 			if handleForwardRequestCancellation(w, r, !wroteHeader) {
 				return
 			}
@@ -477,6 +477,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
+			// The initial response headers are the first response byte for
+			// budget purposes. From this point onward, the stream is governed
+			// by activity plus the independent idle timer, not the ordinary
+			// 3/30-second request budget.
+			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
+				detachBudget()
+			}
+			touch()
 			// issue #517 / PR-C / ADR-064 — emit
 			// wake.proxy_first_byte on the first downstream
 			// byte. The wake_id is the per-wake correlation
@@ -578,22 +586,13 @@ const rawStreamSessionDeadline = 24 * time.Hour
 //
 // nil events opts out (legacy callers and the test corpus).
 //
-// ADR-093 / PR-C: when the inbound request carries an end-to-end
-// budget, the 24 h raw-stream session is bounded by the budget's
-// remaining time (min(parentRemaining, rawStreamSessionDeadline)).
-// The 24 h ceiling is unchanged — the budget can only shorten it.
-// When no Budget is attached to ctx, the legacy
-// context.WithTimeout(rawStreamSessionDeadline) ceiling is preserved.
+// ADR-093 follow-up: when the inbound request carries an end-to-end
+// budget, it governs admission and the upgrade response headers. Once
+// a successful upgrade starts, newStreamSession detaches that budget;
+// the raw session remains bounded by activity, the 24 h ceiling, and
+// the independent idle timer.
 func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient, log *slog.Logger, t Target, events *evts.Platform, sink *egresssink.EgressSink) {
-	var (
-		ctx    context.Context
-		cancel context.CancelFunc
-	)
-	if b, ok := reqbudget.FromContext(r.Context()); ok {
-		ctx, cancel, _ = b.WithCeiling(r.Context(), rawStreamSessionDeadline)
-	} else {
-		ctx, cancel = context.WithTimeout(r.Context(), rawStreamSessionDeadline)
-	}
+	ctx, detachBudget, touch, cancel := newStreamSession(r.Context(), rawStreamSessionDeadline, streamIdleTimeout)
 	defer cancel()
 
 	// Issue #676 / ADR-080 follow-up, PR-B: instrument the WS
@@ -697,6 +696,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		for {
 			n, err := cr.Read(buf)
 			if n > 0 {
+				touch()
 				if serr := stream.Send(&vmmdpb.ForwardRawRequest{
 					Frame: &vmmdpb.ForwardRawRequest_BodyChunk{
 						BodyChunk: append([]byte(nil), buf[:n]...),
@@ -756,14 +756,22 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	wroteHeader := false
 	for {
 		frame, err := stream.Recv()
+		touch()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
+			streamErr := ctx.Err()
 			// Cancel the derived stream context so the request body is
 			// closed and the body goroutine can finish before return.
 			cancel()
 			<-bodyErrCh
+			if streamErr != nil && wroteHeader {
+				// A detached upgrade ended because its client canceled or
+				// its independent idle/ceiling safety bound fired. The
+				// handshake is already committed, so close cleanly.
+				return
+			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				wsOutcome = WSOutcomeUpstreamUnavailable
 				log.Warn("gateway: raw forwarder stream Unavailable; surfacing 503",
@@ -789,6 +797,13 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
+			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
+				// The upgrade response has started. Drop only the ordinary
+				// request budget; the raw session remains bounded by activity,
+				// the 24-hour ceiling, and client cancellation.
+				detachBudget()
+			}
+			touch()
 			// Mirror fwdStreamOnceWithEvents: emit
 			// wake.proxy_first_byte on the first downstream
 			// byte. nil events opts out (legacy callers and

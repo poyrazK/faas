@@ -8843,6 +8843,12 @@ func (m *MemStore) LookupBootStartedForWakes(_ context.Context, wakeIDs []string
 		if t, ok := payload["trigger"].(string); ok {
 			meta.Trigger = t
 		}
+		if method, ok := payload["method"].(string); ok {
+			meta.Method = method
+		}
+		if tier, ok := payload["tier"].(string); ok {
+			meta.Tier = tier
+		}
 		if q, ok := payload["queued_count"].(float64); ok {
 			meta.QueuedCount = int(q)
 		}

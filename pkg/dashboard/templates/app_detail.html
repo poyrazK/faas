@@ -197,6 +197,8 @@
         · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a>
       </p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View live logs →</a></p>
+      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>
+      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/domains">Manage custom domains →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/env">Manage environment &amp; secrets →</a></p>
 
       <h2>Manifest</h2>
@@ -229,7 +231,7 @@
       {{if .Data.Domains}}
         <h2>Custom domains</h2>
         <table aria-label="Custom domain certificate status">
-          <thead><tr><th>Domain</th><th>Verification</th><th>Certificate</th><th>Expires</th><th>Last error</th></tr></thead>
+          <thead><tr><th>Domain</th><th>Verification</th><th>Certificate</th><th>Expires</th><th>Last error</th><th>Doctor</th></tr></thead>
           <tbody>
             {{range .Data.Domains}}
               <tr>
@@ -238,6 +240,7 @@
                 <td>{{if eq .CertStatus "issued"}}<span class="badge running">issued</span>{{else if eq .CertStatus "renewing"}}<span class="badge cert-renewing">renewing</span>{{else if eq .CertStatus "failed"}}<span class="badge cert-failed">failed</span>{{else}}<span class="badge dim">{{if .CertStatus}}{{.CertStatus}}{{else}}pending{{end}}</span>{{end}}</td>
                 <td>{{if .CertExpiresAt}}{{.CertExpiresAt}}{{else}}—{{end}}</td>
                 <td>{{if .CertLastError}}<code>{{.CertLastError}}</code>{{else}}—{{end}}</td>
+                <td><a href="{{.DoctorURL}}">Doctor →</a></td>
               </tr>
             {{end}}
           </tbody>

@@ -3677,6 +3677,8 @@ type Event struct {
 //     absent-value convention.
 type WakeBootMeta struct {
 	Trigger            string // pkg/sched/triggers.go closed enum; "" if absent
+	Method             string // restore or cold_boot; "" if absent
+	Tier               string // warm, init, or cold_boot_fallback; "" if absent
 	QueuedCount        int    // ledger.Concurrency at admit; 0 if absent
 	ConcurrencyAtAdmit int    // same reading; 0 is the cold-start case
 	AtCapacity         bool   // PR-A — true when admitted at the plan's per-app MaxConcurrency ceiling
@@ -5978,6 +5980,30 @@ type DataUpstreamProbe struct {
 	// projects to NULL on the wire (coalesce('') in the
 	// queries.sql read paths).
 	ProbeNode string
+}
+
+// DataUpstreamProbeHistoryBucket is one time bucket of probe history.
+// SampleCount includes both successful and failed probes; percentile values
+// are nil when the bucket has no successful RTT samples.
+type DataUpstreamProbeHistoryBucket struct {
+	SampledAt   time.Time
+	P50Ms       *int
+	P95Ms       *int
+	SampleCount int
+}
+
+// DataUpstreamProbeHistory is the history series for one upstream and region.
+// Probe rows identify an upstream by host hash + kind, so the history query
+// joins those redacted fields back to the app-scoped data_upstreams row before
+// returning the customer-facing port/scope metadata.
+type DataUpstreamProbeHistory struct {
+	HostRedactedHash string
+	Kind             DataUpstreamKind
+	Port             int
+	Scope            string
+	DeploymentScope  string
+	Region           string
+	Buckets          []DataUpstreamProbeHistoryBucket
 }
 
 // DataUpstreamTarget is the deduplicated (host_redacted_hash,

@@ -194,6 +194,7 @@ func TestIsValidScope(t *testing.T) {
 		ScopeRegistryCredentialsRead, ScopeRegistryCredentialsWrite,
 		ScopeUpstreamsWrite,
 		ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite,
+		ScopeManagedPostgresManage, ScopeManagedPostgresRead,
 	}
 	for _, s := range valid {
 		if !IsValidScope(s) {
@@ -237,4 +238,6 @@ func TestScopeSurfaceConstants(t *testing.T) {
 	mustContain("ScopesStorageReadSurface", ScopesStorageReadSurface, ScopeAdmin, ScopeStorageRead)
 	mustContain("ScopesStorageWriteSurface", ScopesStorageWriteSurface, ScopeAdmin, ScopeStorageWrite)
 	mustContain("ScopesStorageListSurface", ScopesStorageListSurface, ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite)
+	mustContain("ScopesManagedPostgresManageSurface", ScopesManagedPostgresManageSurface, ScopeAdmin, ScopeManagedPostgresManage)
+	mustContain("ScopesManagedPostgresReadSurface", ScopesManagedPostgresReadSurface, ScopeAdmin, ScopeManagedPostgresRead)
 }

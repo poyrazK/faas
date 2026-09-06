@@ -145,6 +145,13 @@ type VmmdAPI interface {
 	SignalAndKill(ctx context.Context, instance string, signal int32, graceSeconds int32) (killSignalSent bool, exitCode int32, err error)
 }
 
+// wakeNetworkReadyVMM is the optional fast-wake seam implemented by
+// fcvm.Manager. Test doubles and alternate VMMs can keep implementing VmmdAPI;
+// they fall back to the ordinary Wake call without bridge prewarming.
+type wakeNetworkReadyVMM interface {
+	WakeWithNetworkReady(context.Context, fcvm.WakeRequest, fcvm.WakeNetworkReadyHook) (*fcvm.Instance, error)
+}
+
 // JobVMMAPI is the optional job-task slice of fcvm.Manager. It is deliberately
 // separate from VmmdAPI so existing vmmd test fakes and non-job integrations
 // do not need to grow job-specific methods.
@@ -490,7 +497,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 	// rows share the wake_id from the wire envelope (PR-A) so
 	// the customer-facing timeline endpoint can join them.
 	s.emitBootStartedMirror(ctx, req.GetInstance(), "restore")
-	inst, err := s.vmm.Wake(ctx, wr)
+	inst, err := s.wakeWithBridgePrewarm(ctx, wr, req.GetApp().GetAppProtocol())
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -499,6 +506,31 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 		s.log.Warn("vmmd: restore fell back to cold boot", "instance", req.GetInstance(), "err", inst.RestoreError)
 	}
 	return wakeResponseFromInstance(req.GetInstance(), wr, inst, vmmdpb.WakeMethod_WAKE_RESTORE), nil
+}
+
+// wakeWithBridgePrewarm starts the persistent stream bridge as soon as the
+// instance netns exists. Firecracker restore, the resume hook, and readiness
+// continue in parallel, so the first customer request does not pay the bridge
+// process/socket startup. Both rollback switches retain the previous path.
+func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest, appProtocol string) (*fcvm.Instance, error) {
+	fastVMM, ok := s.vmm.(wakeNetworkReadyVMM)
+	if !ok || currentStreamBridgeVersion() != "v2" || !persistentStreamBridgeEnabled() {
+		return s.vmm.Wake(ctx, wr)
+	}
+	if s.streamBridges == nil {
+		s.streamBridges = newStreamBridgeManager(s.log)
+	}
+	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) { //nolint:contextcheck // The persistent bridge follows vmmd's lifecycle, not the short wake RPC.
+		s.streamBridges.prewarm(&vmmdpb.ForwardHTTPRequestInit{
+			Instance:    ready.Instance,
+			Port:        uint32(wr.Port),
+			AppProtocol: appProtocol,
+		}, ready.Netns)
+	})
+	if err != nil {
+		s.streamBridges.forget(context.WithoutCancel(ctx), wr.Instance)
+	}
+	return inst, err
 }
 
 // CreateColdBoot primes an instance for the deploy-pipeline first-boot
@@ -651,6 +683,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
 	return &vmmdpb.SnapshotResponse{
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
@@ -794,6 +827,7 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
 	s.ForgetCPU(req.GetInstance())
 	s.ForgetNet(req.GetInstance())
 	s.ForgetActivity(req.GetInstance())
@@ -824,6 +858,7 @@ func (s *Server) StopInstance(ctx context.Context, req *vmmdpb.StopInstanceReque
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
 	s.ForgetCPU(req.GetInstance())
 	s.ForgetNet(req.GetInstance())
 	s.ForgetActivity(req.GetInstance())

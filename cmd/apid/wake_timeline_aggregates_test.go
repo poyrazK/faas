@@ -193,3 +193,17 @@ func TestAggregateWakeTimeline_DivisionByZeroGuard(t *testing.T) {
 		t.Errorf("AtCapacityPct = %v, want 0 (denominator is 0; must not divide)", agg.AtCapacityPct)
 	}
 }
+
+func TestWakeTimelineWindow_ExplicitBounds(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	instances := []state.Instance{
+		{ID: "future", StartedAt: now.Add(time.Hour), WakeID: "future"},
+		{ID: "new", StartedAt: now, WakeID: "new"},
+		{ID: "old", StartedAt: now.Add(-48 * time.Hour), WakeID: "old"},
+		{ID: "older", StartedAt: now.Add(-72 * time.Hour), WakeID: "older"},
+	}
+	rows := wakeTimelineWindow(instances, now.Add(-24*time.Hour), now)
+	if len(rows) != 1 || rows[0].WakeID != "new" {
+		t.Fatalf("window rows = %#v, want only new row", rows)
+	}
+}

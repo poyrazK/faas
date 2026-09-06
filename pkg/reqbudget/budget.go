@@ -4,6 +4,7 @@ package reqbudget
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -67,6 +68,13 @@ func (b Budget) now() time.Time {
 // stored. Unexported so callers can't introspect or collide.
 type budgetKey struct{}
 
+// budgetParentKey points at the context that existed before the request
+// budget was attached. It lets a long-lived stream keep client/server
+// cancellation while dropping only the platform budget after the response
+// has started. The value is private so callers cannot accidentally replace
+// the cancellation root.
+type budgetParentKey struct{}
+
 // FromContext returns the Budget attached to ctx and true, or the
 // zero Budget and false when no Budget is attached. The bool is the
 // load-bearing piece: call-sites without a budget (internal goroutines,
@@ -83,6 +91,167 @@ func FromContext(ctx context.Context) (Budget, bool) {
 // tests can pin a Budget onto a context without touching deadlines.
 func NewContext(parent context.Context, b Budget) context.Context {
 	return context.WithValue(parent, budgetKey{}, b)
+}
+
+func budgetBaseContext(parent context.Context) context.Context {
+	if stored, ok := parent.Value(budgetParentKey{}).(context.Context); ok && stored != nil {
+		return stored
+	}
+	return parent
+}
+
+// WithStream creates a context for a potentially long-lived response. Before
+// detach is called, the context observes the request budget and cancels when
+// it expires. After detach, the request budget is ignored, but cancellation
+// and deadlines from the context that preceded the budget remain active.
+//
+// The returned cancel function must be called when the stream ends. detach is
+// idempotent and should be called after response headers (the first response
+// byte) have been committed. When no Budget is attached, WithStream is an
+// identity wrapper with no budget to detach.
+func WithStream(parent context.Context) (ctx context.Context, detach func(), cancel context.CancelFunc) {
+	if _, ok := FromContext(parent); !ok {
+		return parent, func() {}, func() {}
+	}
+
+	base := budgetBaseContext(parent)
+
+	b, _ := FromContext(parent)
+	remaining := b.Remaining(time.Time{})
+	if remaining <= 0 {
+		// Keep the original context so an already-expired request retains
+		// its normal deadline/error semantics.
+		return parent, func() {}, func() {}
+	}
+
+	s := &streamContext{
+		current:  parent,
+		base:     base,
+		done:     make(chan struct{}),
+		detached: make(chan struct{}),
+		timer:    time.NewTimer(remaining),
+	}
+	go s.watch()
+
+	return s, s.detach, s.cancel
+}
+
+// streamContext is deliberately small and lives here rather than in a
+// gateway package so every request-serving daemon gets the same semantics.
+// Value delegates to the current request context, except that a detached
+// stream no longer exposes Budget to downstream hop helpers.
+type streamContext struct {
+	current  context.Context
+	base     context.Context
+	done     chan struct{}
+	detached chan struct{}
+	timer    *time.Timer
+
+	mu         sync.RWMutex
+	isDetached bool
+	err        error
+	closeOnce  sync.Once
+	detachOnce sync.Once
+}
+
+func (s *streamContext) Deadline() (time.Time, bool) {
+	s.mu.RLock()
+	detached := s.isDetached
+	s.mu.RUnlock()
+	if detached {
+		return s.base.Deadline()
+	}
+	b, ok := FromContext(s.current)
+	if !ok || b.Total <= 0 {
+		return s.base.Deadline()
+	}
+	budgetDeadline := b.Started.Add(b.Total)
+	baseDeadline, hasBase := s.base.Deadline()
+	if !hasBase || budgetDeadline.Before(baseDeadline) {
+		return budgetDeadline, true
+	}
+	return baseDeadline, true
+}
+
+func (s *streamContext) Done() <-chan struct{} { return s.done }
+
+func (s *streamContext) Err() error {
+	s.mu.RLock()
+	err := s.err
+	s.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	return s.base.Err()
+}
+
+func (s *streamContext) Value(key any) any {
+	if key == (budgetKey{}) {
+		s.mu.RLock()
+		detached := s.isDetached
+		s.mu.RUnlock()
+		if detached {
+			return nil
+		}
+	}
+	return s.current.Value(key)
+}
+
+func (s *streamContext) watch() {
+	select {
+	case <-s.base.Done():
+		s.finish(s.base.Err())
+	case <-s.timer.C:
+		s.mu.RLock()
+		detached := s.isDetached
+		s.mu.RUnlock()
+		if !detached {
+			s.finish(context.DeadlineExceeded)
+		}
+	case <-s.detached:
+		// The timer is no longer part of the stream after detach, but
+		// the original cancellation root remains load-bearing.
+		select {
+		case <-s.base.Done():
+			s.finish(s.base.Err())
+		case <-s.done:
+		}
+	case <-s.done:
+	}
+}
+
+func (s *streamContext) detach() {
+	s.detachOnce.Do(func() {
+		s.mu.Lock()
+		s.isDetached = true
+		s.mu.Unlock()
+		if !s.timer.Stop() {
+			select {
+			case <-s.timer.C:
+			default:
+			}
+		}
+		close(s.detached)
+	})
+}
+
+func (s *streamContext) cancel() {
+	s.finish(context.Canceled)
+}
+
+func (s *streamContext) finish(err error) {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.err = err
+		s.mu.Unlock()
+		if !s.timer.Stop() {
+			select {
+			case <-s.timer.C:
+			default:
+			}
+		}
+		close(s.done)
+	})
 }
 
 // Remaining is the wall-clock budget left at time `b.now()`. Negative
@@ -167,6 +336,7 @@ func derivedChild(parentBudget Budget, parent context.Context, now time.Time, ch
 	if hopName != "" && hopCost > 0 {
 		childBudget.Overheads = append(childBudget.Overheads, HopMargin{Name: hopName, Cost: hopCost})
 	}
+	childCtx = context.WithValue(childCtx, budgetParentKey{}, budgetBaseContext(parent))
 	return childCtx, cancel, childBudget
 }
 
@@ -300,5 +470,6 @@ func WithRemaining(parent context.Context, total, ceiling time.Duration, route, 
 		Endpoint: endpoint,
 		Source:   SourceEdge,
 	}
+	ctx = context.WithValue(ctx, budgetParentKey{}, budgetBaseContext(parent))
 	return context.WithValue(ctx, budgetKey{}, b), cancel, b
 }

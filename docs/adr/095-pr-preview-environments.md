@@ -1,6 +1,6 @@
 # ADR-095 · PR-preview environments (issue #272)
 
-- **Status:** PR-A + PR-B shipped; PR-C ready (in review)
+- **Status:** PR-A through PR-C shipped; stable PR feedback comments are now shipped
 - **Date:** 2026-08-11
 - **Issue:** #272
 - **Supersedes:** none.
@@ -49,10 +49,10 @@ The preview slice is the **first consumer of those
 primitives** — it exercises the full pipeline with a
 non-production consumer and unlocks everything after it
 (preview-aware dashboard, fork-PR isolation, tier-A
-PR-feedback loop). ADR-012 line 20 defers PR previews
-behind `Pull Requests:write` on the GitHub App; we ship
-this slice without that permission and accept the
-fork-PR limitation (D3).
+PR-feedback loop). The PR feedback loop requires
+`Issues:write` on the GitHub App for the single
+idempotent preview status comment; fork PRs remain refused
+without a per-install override (D3).
 
 ## User-confirmed design decisions (D1–D4)
 
@@ -121,7 +121,7 @@ fork-PR limitation (D3).
 |------|------------------------------------------|--------------------------------|-------------------------------|
 | Code change size | Small. Single `IsFork()` check in `handlePullRequest`. | Moderate. New "preview secrets" surface + audit log + dashboard pane. | Small. One bool column on `github_installations`. |
 | Security posture | Best. No untrusted code ever reaches a build VM. | Mixed. Untrusted code can still run; secrets guard is the only barrier. | Per-install opt-in. |
-| ADR-012 alignment | Clean. §11 least-privilege forbids one customer's PR from running untrusted code under another customer's install. | Adds a new §11 surface (secret scoping at build time). | Aligns with the deferred `Pull Requests:write` permission work. |
+| ADR-012 alignment | Clean. §11 least-privilege forbids one customer's PR from running untrusted code under another customer's install. | Adds a new §11 surface (secret scoping at build time). | Uses the narrower `Issues:write` comment permission; fork execution remains refused. |
 | DX | Worst for fork authors. They get a `gregale-preview: skipped` check instead of a live URL. | Best for fork authors. | Best for fork authors on opted-in installs. |
 | Rollback cost | Trivial. Disable the fork check + ship the build path. | Harder. Must roll back the new secrets surface. | Same as option 1. |
 

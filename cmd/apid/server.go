@@ -974,6 +974,18 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.listObjectMultipartParts))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.signObjectMultipartPart))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.completeObjectMultipartUpload))))
+	// Managed PostgreSQL is an account-scoped control-plane resource. The
+	// read/write scopes are intentionally separate from generic app scopes so
+	// CI credentials can bind workloads without receiving unrelated access.
+	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
+	mux.HandleFunc("POST /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresDatabase))))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresDatabase))))
+	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresBindings))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresBinding))))))
+	mux.HandleFunc("GET /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBinding))))
+	mux.HandleFunc("DELETE /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresBinding)))))
 	// Account. The /v1/account/plan change is destructive across the
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).
@@ -2092,6 +2104,7 @@ func (s *server) handler() http.Handler {
 	// (PUT/DELETE) use ScopesUpstreamWriteSurface, mirroring the env
 	// surface's split.
 	mux.HandleFunc("GET /v1/apps/{slug}/upstreams", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listUpstreams)))
+	mux.HandleFunc("GET /v1/apps/{slug}/upstreams/history", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getUpstreamHistory)))
 	mux.HandleFunc("GET /v1/apps/{slug}/upstreams/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getUpstream)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/upstreams", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.createUpstream)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/upstreams/{id}", s.authLimited(s.requireScope(api.ScopesUpstreamWriteSurface...)(s.deleteUpstream)))

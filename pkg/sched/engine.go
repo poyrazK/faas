@@ -2633,7 +2633,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// buildAppSpec (engine.go:1757) for the same field
 		// wired on the (re)build path. Empty falls back to
 		// "unknown" in the histogram observer.
-		Runtime: app.Runtime,
+		Runtime:     app.Runtime,
+		AppProtocol: app.AppProtocol,
 	}
 
 	// Capture the boot inputs we need across the unlocked window. These
@@ -2692,6 +2693,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		trigger:            trigger,
 		queuedCount:        concurrency,
 		concurrencyAtAdmit: concurrency,
+		chosenTier:         chosenTier,
 		atCapacity:         atCapacity,
 	}
 	// issue #517 / PR-C / ADR-064 — emit wake.queue_accepted at
@@ -2808,6 +2810,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			InstanceID:         bootInput.insID,
 			NodeID:             bootInput.nodeID,
 			Method:             method,
+			Tier:               bootInput.chosenTier,
 			RequestedAt:        bootInput.startedAt, // best-effort stamp
 			Trigger:            bootInput.trigger,
 			QueuedCount:        bootInput.queuedCount,
@@ -3130,6 +3133,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			InstanceID:         bootInput.insID,
 			NodeID:             bootInput.nodeID,
 			Method:             completedMethod,
+			Tier:               bootInput.chosenTier,
 			StartedAt:          bootInput.startedAt,
 			CompletedAt:        now,
 			Trigger:            bootInput.trigger,
@@ -3203,6 +3207,7 @@ type bootInput struct {
 	trigger            string
 	queuedCount        int
 	concurrencyAtAdmit int
+	chosenTier         string
 	// atCapacity (PR-A) is the bool returned by admitGate's
 	// wakeAdmit branch — true when the pre-admit ledger reading is
 	// maxConc-1 and this admit pushes the post-admit ledger to the
@@ -4183,7 +4188,8 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// path can label
 		// vmmd_guest_framework_warmup_seconds by runner. Empty
 		// falls back to "unknown" in the histogram observer.
-		Runtime: app.Runtime,
+		Runtime:     app.Runtime,
+		AppProtocol: app.AppProtocol,
 	}, nil
 }
 
@@ -4816,7 +4822,8 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// buildAppSpec (engine.go:1757) for the same field
 		// wired on the (re)build path. Empty falls back to
 		// "unknown" in the histogram observer.
-		Runtime: app.Runtime,
+		Runtime:     app.Runtime,
+		AppProtocol: app.AppProtocol,
 	}
 	// ADR-038 / Tier 3 phase 3: same verify path as Wake. Prime
 	// is the deploy-pipeline first boot; a tampered layer here

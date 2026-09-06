@@ -9,6 +9,7 @@ import (
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -23,12 +24,28 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
+	accountStore := state.NewPgStore(pool)
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, managedpostgres.UsageCollectorOptions{Logger: log})
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 	service, err := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
 		ProvisioningEnabled: func() bool { return registry.ProvisioningEnabled },
+		MaxDatabasesPerAccount: func(ctx context.Context, accountID string) (int, error) {
+			account, err := accountStore.AccountByID(ctx, accountID)
+			if err != nil {
+				return 0, err
+			}
+			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			if !ok || limits.DatabasesMax <= 0 {
+				return 0, managedpostgres.ErrQuotaExceeded
+			}
+			limit := limits.DatabasesMax
+			if registry.MaxDatabasesPerAccount < limit {
+				limit = registry.MaxDatabasesPerAccount
+			}
+			return limit, nil
+		},
 		Admit: func(ctx context.Context, accountID string) error {
 			return registry.UsagePolicy().Admit(ctx, store, accountID, time.Now().UTC())
 		},
@@ -44,7 +61,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, err
 	}
 	secretSink, err := newAppSecretCredentialSink(
-		state.NewPgStore(pool),
+		accountStore,
 		func() *age.X25519Recipient {
 			if setSecretRecipient == nil {
 				return nil

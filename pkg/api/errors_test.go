@@ -123,8 +123,15 @@ func TestErrPlanLimitApps(t *testing.T) {
 	if p.Observed == nil || *p.Observed != 6 {
 		t.Errorf("Observed = %v, want 6", p.Observed)
 	}
-	if !strings.Contains(p.DocsURL, "docs.gregale.dev") {
-		t.Errorf("DocsURL = %q", p.DocsURL)
+	// Pins the docs host. docs.gregale.dev was never deployed (DNS
+	// resolves, every path 404s), so customer-facing links live on
+	// the platform host instead. This assertion is the tripwire for
+	// a future host rotation.
+	if !strings.HasPrefix(p.DocsURL, "https://gregale.dev/docs") {
+		t.Errorf("DocsURL = %q, want the live docs base", p.DocsURL)
+	}
+	if !strings.Contains(p.DocsURL, "plans") {
+		t.Errorf("DocsURL = %q, want it to name the plans topic", p.DocsURL)
 	}
 }
 

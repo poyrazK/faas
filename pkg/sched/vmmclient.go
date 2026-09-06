@@ -392,6 +392,10 @@ type AppSpec struct {
 	// for parity with app_id; an empty value is a contract
 	// violation surfaced as InvalidArgument.
 	Runtime string
+	// AppProtocol selects the guest wire protocol. It crosses the wake wire so
+	// vmmd can prestart the persistent bridge with the same framing that the
+	// gateway will request. Empty preserves the legacy HTTP/1 default.
+	AppProtocol string
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty = no static
@@ -1086,7 +1090,8 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// see pkg/sched/engine.go's wake path that fills
 		// AppSpec.Runtime. Empty falls back to "unknown" in
 		// the histogram observer.
-		Runtime: a.Runtime,
+		Runtime:     a.Runtime,
+		AppProtocol: a.AppProtocol,
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Empty = no static pin
 		// (default behaviour preserved). vmmd sets

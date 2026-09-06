@@ -73,6 +73,9 @@
 //     streams" rather than "no data". Nil-safe via the ObserveStreamStart
 //     / ObserveStreamEnd wrappers so the handler hot path doesn't need
 //     to gate on every call.)
+//   - gateway_vm_inflight_requests{plan}         gauge (issue #1052;
+//     requests occupying per-instance concurrency slots. The plan label is
+//     closed; instance identity remains in vmmd's bounded stats stream.)
 package gateway
 
 import (
@@ -101,6 +104,10 @@ type Metrics struct {
 	// inflightRequests (issue #587 / PR-A) is the per-daemon
 	// drain.Tracker in-flight gauge (see SetInflightRequests).
 	inflightRequests *prometheus.GaugeVec
+	// vmInflightRequests tracks the requests currently occupying a
+	// per-instance concurrency slot, grouped by plan. Unlike the drain gauge
+	// above, this is the capacity signal for the VM multiplexing gate.
+	vmInflightRequests *prometheus.GaugeVec
 	// wakeLatencyByNode (PR #4 / ADR-092 §3.5) is the per-node
 	// labelled twin of wakeLatency. The unlabeled histogram stays
 	// untouched — it's the §12 SLA contract and is consumed by
@@ -950,6 +957,15 @@ func NewMetrics() *Metrics {
 			Name: "gateway_stream_active",
 			Help: "Per-(app, plan) concurrent in-flight streaming responses (ADR-047 PR-D). Inc'd when setupStreamingWriter installs the streaming path; Dec'd in the handler's defer after the final flush. Buffered-path requests are NOT counted. Real-time operator view of streaming concurrency; pairs with gateway_stream_flushes_total to estimate avg flush per response.",
 		}, []string{"app", "plan"}),
+		// Per-VM request slots (issue #1052 / issue #559). The instance
+		// identity is deliberately omitted from the label set: it is a
+		// high-churn identifier and the plan aggregate is the stable
+		// capacity signal. Per-instance detail remains available from
+		// vmmd's existing instance stats stream.
+		vmInflightRequests: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_vm_inflight_requests",
+			Help: "Current requests occupying gateway per-instance concurrency slots, labelled by plan. A slot spans the complete HTTP bridge lifetime, including streaming and Upgrade requests (issue #1052).",
+		}, []string{"plan"}),
 		// ADR-040 / issue #292. account_id label has cardinality O(active
 		// accounts × 4 plans). Bounded admission lives in
 		// accountLabels (account_label_set.go) — real ids over the
@@ -1337,6 +1353,7 @@ func NewMetrics() *Metrics {
 	// alert + runbook concern, not the gauge's.
 	for _, plan := range []string{"free", "hobby", "pro", "scale"} {
 		m.streamActive.WithLabelValues("__other__", plan)
+		m.vmInflightRequests.WithLabelValues(plan)
 	}
 	// PR #4 doesn't touch the edge-rule label set, but the
 	// ADR-091 hardening PR-A pre-instantiation must remain present
@@ -1395,7 +1412,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1447,6 +1464,16 @@ func (m *Metrics) SetInflightRequests(daemon, op string, count float64) {
 		return
 	}
 	m.inflightRequests.WithLabelValues(daemon, op).Set(count)
+}
+
+// ObserveVMInflightDelta updates the plan-level aggregate of requests
+// occupying per-instance concurrency slots. The manager emits balanced +1/-1
+// deltas, so the gauge returns to zero after every request drains. Nil-safe.
+func (m *Metrics) ObserveVMInflightDelta(plan string, delta int64) {
+	if m == nil || m.vmInflightRequests == nil || plan == "" || delta == 0 {
+		return
+	}
+	m.vmInflightRequests.WithLabelValues(plan).Add(float64(delta))
 }
 
 // Registry returns the underlying *prometheus.Registry — pass to promhttp.

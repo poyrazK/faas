@@ -57,6 +57,94 @@ func TestStreamBridgeManagerSharesConcurrentStartup(t *testing.T) {
 	}
 }
 
+func TestStreamBridgeManagerPrewarmSharesStartupWithFirstAcquire(t *testing.T) {
+	bridgePath, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(streamBridgePathEnv, bridgePath)
+
+	var starts atomic.Int32
+	started := make(chan struct{}, 1)
+	ready := make(chan struct{})
+	var readyOnce sync.Once
+	t.Cleanup(func() { readyOnce.Do(func() { close(ready) }) })
+	manager := newTestStreamBridgeManager(t, func() {
+		starts.Add(1)
+		started <- struct{}{}
+	})
+	manager.waitSocket = func(string, time.Duration) error {
+		<-ready
+		return nil
+	}
+	req := &vmmdpb.ForwardHTTPRequestInit{
+		Instance: "instance-prewarm", Port: 9090, AppProtocol: "http2",
+	}
+	manager.prewarm(req, "fc-instance-prewarm")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("prewarm did not start bridge")
+	}
+
+	type acquireResult struct {
+		lease *streamBridgeLease
+		err   error
+	}
+	acquired := make(chan acquireResult, 1)
+	go func() {
+		lease, acquireErr := manager.acquire(context.Background(), req, "fc-instance-prewarm")
+		acquired <- acquireResult{lease: lease, err: acquireErr}
+	}()
+	select {
+	case result := <-acquired:
+		if result.lease != nil {
+			result.lease.release()
+		}
+		t.Fatalf("acquire completed before prewarm was ready: %v", result.err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	if got := starts.Load(); got != 1 {
+		t.Fatalf("bridge starts while acquire waits = %d, want one", got)
+	}
+	readyOnce.Do(func() { close(ready) })
+	select {
+	case result := <-acquired:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		result.lease.release()
+	case <-time.After(time.Second):
+		t.Fatal("acquire did not reuse completed prewarm")
+	}
+	if got := starts.Load(); got != 1 {
+		t.Fatalf("bridge starts after acquire = %d, want one", got)
+	}
+}
+
+func TestStreamBridgeManagerRestartsWhenProtocolChanges(t *testing.T) {
+	bridgePath, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(streamBridgePathEnv, bridgePath)
+
+	var starts atomic.Int32
+	manager := newTestStreamBridgeManager(t, func() { starts.Add(1) })
+	for _, protocol := range []string{"http1", "grpc"} {
+		lease, acquireErr := manager.acquire(context.Background(), &vmmdpb.ForwardHTTPRequestInit{
+			Instance: "instance-protocol", Port: 8080, AppProtocol: protocol,
+		}, "fc-instance-protocol")
+		if acquireErr != nil {
+			t.Fatal(acquireErr)
+		}
+		lease.release()
+	}
+	if got := starts.Load(); got != 2 {
+		t.Fatalf("bridge starts after protocol change = %d, want two", got)
+	}
+}
+
 func TestStreamBridgeManagerBridgeContextOutlivesRequest(t *testing.T) {
 	bridgePath, err := os.Executable()
 	if err != nil {

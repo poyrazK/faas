@@ -3419,10 +3419,16 @@ const (
 	//     reset if the upstream's headers already reached the wire).
 	// Inbound body caps are enforced by http.MaxBytesReader at the
 	// ServeHTTP entry (separate from the response cap).
-	MaxResponseBodyBytesDefault   int64 = 25 * 1024 * 1024 // 25 MB (spec §4.1)
-	ResponseWriteTimeoutDefault         = 300              // 300 s (spec §4.1)
-	StreamingFlushBytesDefault          = 256 * 1024       // 256 KiB flush window (ADR-047)
-	StreamingFlushIntervalDefault       = 200 * time.Millisecond
+	MaxResponseBodyBytesDefault int64 = 25 * 1024 * 1024 // 25 MB (spec §4.1)
+	ResponseWriteTimeoutDefault       = 300              // 300 s (spec §4.1)
+	// StreamingIdleTimeoutDefault is the maximum quiet period for an
+	// active streaming or upgraded response after its headers have been
+	// sent. It is independent of the request budget: active sessions may
+	// outlive the 3/30-second request budget, but a silent session must not
+	// pin gateway resources forever.
+	StreamingIdleTimeoutDefault   = 60 * time.Minute
+	StreamingFlushBytesDefault    = 256 * 1024 // 256 KiB flush window (ADR-047)
+	StreamingFlushIntervalDefault = 200 * time.Millisecond
 
 	// MaxAppManifestStopGracePeriod is the gross upper bound on the
 	// AppManifest.StopGracePeriod field (issue #1186 workstream A.4 /

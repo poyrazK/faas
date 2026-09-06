@@ -1725,6 +1725,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// writer as the auth gates so wake.page_served joins the eventual
 	// scheduler wake by its real wake_id.
 	handler.WithWakePageAudit(deps.requireAuthnAudit)
+	// Per-instance request concurrency saturation uses the same shared
+	// gateway audit stream so operators can correlate a full VM with the
+	// wake/reaper timeline.
+	handler.WithVMConcurrencyAudit(deps.requireAuthnAudit)
 	// ADR-089 / issue #561 PR 3: arm the per-host edge-rule
 	// matcher so ServeHTTP consults it BEFORE Backend.Lookup
 	// (handler.go:1599-1618). The resolve closure wraps

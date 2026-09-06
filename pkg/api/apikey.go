@@ -274,9 +274,11 @@ const (
 	// Object storage separates control-plane management from data-plane
 	// access. Data-plane keys also need an explicit grant for the target
 	// bucket; these scopes alone never expose a bucket.
-	ScopeStorageManage = "storage:manage"
-	ScopeStorageRead   = "storage:read"
-	ScopeStorageWrite  = "storage:write"
+	ScopeStorageManage         = "storage:manage"
+	ScopeStorageRead           = "storage:read"
+	ScopeStorageWrite          = "storage:write"
+	ScopeManagedPostgresManage = "postgres:manage"
+	ScopeManagedPostgresRead   = "postgres:read"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -296,6 +298,8 @@ var validScopes = map[string]struct{}{
 	ScopeStorageManage:            {},
 	ScopeStorageRead:              {},
 	ScopeStorageWrite:             {},
+	ScopeManagedPostgresManage:    {},
+	ScopeManagedPostgresRead:      {},
 }
 
 // IsValidScope reports whether s is in the allowed scope vocabulary.
@@ -407,8 +411,10 @@ var (
 
 	// Object-storage route surfaces. Admin remains the universal escape
 	// hatch; session-cookie principals are implicitly admin in requireScope.
-	ScopesStorageManageSurface = []string{ScopeAdmin, ScopeStorageManage}
-	ScopesStorageReadSurface   = []string{ScopeAdmin, ScopeStorageRead}
-	ScopesStorageWriteSurface  = []string{ScopeAdmin, ScopeStorageWrite}
-	ScopesStorageListSurface   = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
+	ScopesStorageManageSurface         = []string{ScopeAdmin, ScopeStorageManage}
+	ScopesStorageReadSurface           = []string{ScopeAdmin, ScopeStorageRead}
+	ScopesStorageWriteSurface          = []string{ScopeAdmin, ScopeStorageWrite}
+	ScopesStorageListSurface           = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
+	ScopesManagedPostgresManageSurface = []string{ScopeAdmin, ScopeManagedPostgresManage}
+	ScopesManagedPostgresReadSurface   = []string{ScopeAdmin, ScopeManagedPostgresRead}
 )

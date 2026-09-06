@@ -196,6 +196,10 @@ type Service struct {
 	// reopen in the same webhook burst) collapses to a
 	// single comment.
 	WritePreviewDestroyComment WritePreviewDestroyComment
+	// WritePreviewCommentForInstallation upserts the stable PR-thread
+	// preview status comment. It is installation-scoped so a repository
+	// can never accidentally publish another customer's preview details.
+	WritePreviewCommentForInstallation WritePreviewCommentForInstallationFunc
 	// WorkDir is the root directory under which githubd
 	// stages the per-app source tarballs that the apid
 	// bridge passes to builderd. Defaults to /var/lib/faas/
@@ -945,7 +949,11 @@ func dashboardDestroyPreviewURL(parentSlug, previewSlug string) string {
 	if parentSlug == "" || previewSlug == "" {
 		return ""
 	}
-	return "/dashboard/apps/" + parentSlug + "/preview/" + previewSlug + "/destroy"
+	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
+	if domain == "" {
+		domain = "gregale.dev"
+	}
+	return "https://" + domain + "/dashboard/apps/" + parentSlug + "/preview/" + previewSlug + "/destroy"
 }
 
 // previewCommentOnce stamps apps.preview_destroy_commented_at
@@ -1082,6 +1090,33 @@ func (s *Service) writeForkRefusedCheck(ctx context.Context, installationID int6
 // Mega-C PR-1, leaf 3). Body is a Markdown fragment; the caller
 // composes the dashboard URL prefix.
 type WritePreviewDestroyCommentFunc func(ctx context.Context, repoFullName string, prNumber int, body string) error
+
+// WritePreviewCommentForInstallationFunc is the installation-scoped seam for
+// the single updatable PR preview comment. marker is a hidden, stable token
+// used by the GitHub writer to find the existing comment on retries.
+type WritePreviewCommentForInstallationFunc func(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string) error
+
+func previewCommentMarker(previewSlug string) string {
+	return "<!-- gregale-preview:" + previewSlug + " -->"
+}
+
+func previewCommentBody(marker, previewSlug, previewURL, parentSlug, commitSHA string, closed bool) string {
+	status := "queued"
+	statusCopy := "The preview build is queued."
+	if closed {
+		status = "closed"
+		statusCopy = "The PR is closed; teardown is scheduled after the grace period."
+	}
+	destroyURL := dashboardDestroyPreviewURL(parentSlug, previewSlug)
+	return fmt.Sprintf("%s\n### Gregale preview — %s\n\n%s\n\n[Open preview](%s) · [Destroy preview](%s)\n\nCommit: `%s`", marker, status, statusCopy, previewURL, destroyURL, commitSHA)
+}
+
+func (s *Service) writePreviewComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string) error {
+	if s.WritePreviewCommentForInstallation == nil {
+		return nil
+	}
+	return s.WritePreviewCommentForInstallation(ctx, installationID, repoFullName, prNumber, marker, body)
+}
 
 // handlePullRequest is the HTTP webhook entry point for the
 // pull_request event family (issue #272 / ADR-094). It provisions
@@ -1350,7 +1385,22 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 
 	result := reconcile.Result{Added: []state.App{created}}
 
-	// 5c. On a closed PR, post a one-time destroy-hint comment
+	// 5c. Upsert the stable PR status comment. Older deployments that
+	//     only wire WritePreviewDestroyComment retain the original
+	//     close-only destroy hint as a compatibility fallback.
+	previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
+	if s.WritePreviewCommentForInstallation != nil {
+		marker := previewCommentMarker(previewSlugVal)
+		body := previewCommentBody(marker, previewSlugVal, previewURL, parentApp.Slug,
+			ev.PullRequest.HeadSHA, ev.Action == PullRequestActionClosed)
+		if werr := s.writePreviewComment(ctx, install.InstallationID, ev.Repository.FullName,
+			ev.Number, marker, body); werr != nil {
+			s.Log.Warn("githubd: upsert preview status comment", "err", werr,
+				"repo", ev.Repository.FullName, "pr", ev.Number,
+				"preview_slug", previewSlugVal)
+		}
+	}
+	// 5d. On a closed PR, post a one-time destroy-hint comment
 	//     on the PR thread (issue #961 Mega-C PR-1, leaf 3).
 	//     previewCommentOnce dedupes via the new
 	//     apps.preview_destroy_commented_at column so close →
@@ -1359,7 +1409,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	//     githubd's main.go doesn't wire a writer (e.g. tests,
 	//     or a deployment where we want to disable the surface
 	//     temporarily), this block short-circuits cleanly.
-	if ev.Action == PullRequestActionClosed && s.WritePreviewDestroyComment != nil {
+	if ev.Action == PullRequestActionClosed && s.WritePreviewCommentForInstallation == nil && s.WritePreviewDestroyComment != nil {
 		firstTime, _ := s.previewCommentOnce(ctx, created.ID)
 		if firstTime {
 			destroyURL := dashboardDestroyPreviewURL(parentApp.Slug, previewSlugVal)
@@ -1386,7 +1436,6 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	//    the PR UI shows the spinner; the subsequent build
 	//    pipeline (a follow-up PR-A.1) will transition it to
 	//    `in_progress` / `completed`.
-	previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
 	if webhookDeliveryID(ctx) == "" {
 		if werr := s.writePreviewCheck(ctx, install.InstallationID,
 			ev.Repository.FullName, ev.PullRequest.HeadSHA,

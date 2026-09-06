@@ -10,6 +10,6 @@ export type CreateOrgAPIKeyRequest = {
   /**
    * Requested permission set for the org-scoped key. Unknown scopes are rejected; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical.
    */
-  scopes?: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'storage:manage' | 'storage:read' | 'storage:write'>;
+  scopes?: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'storage:manage' | 'storage:read' | 'storage:write' | 'postgres:manage' | 'postgres:read'>;
 };
 

@@ -46,3 +46,13 @@ func TestWriteBurstCapacityErrorLeavesClientDisconnectSilent(t *testing.T) {
 		t.Fatalf("client disconnect wrote status/body: status=%d body=%q", rr.Code, rr.Body.String())
 	}
 }
+
+func TestRequestBudgetExpiredUsesBudgetClockWhenContextErrorLags(t *testing.T) {
+	ctx := reqbudget.NewContext(context.Background(), reqbudget.Budget{
+		Total:   time.Second,
+		Started: time.Now().Add(-2 * time.Second),
+	})
+	if !requestBudgetExpired(ctx) {
+		t.Fatal("requestBudgetExpired = false, want true for an elapsed budget")
+	}
+}

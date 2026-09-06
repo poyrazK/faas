@@ -1,7 +1,29 @@
 # Managed PostgreSQL operator preview
 
-Managed PostgreSQL is wired into `apid` as a dark control-plane capability. It
-has no customer API or plan entitlement yet.
+Managed PostgreSQL now has a customer-facing, provider-neutral API while
+remaining an opt-in operator preview. The API exposes account-scoped database
+CRUD/status, restore-to-new-database, and workload bindings under
+`/v1/postgres/*`. Provider IDs, passwords, connection URLs, and secret
+ciphertext never cross that API boundary. `provisioning_enabled` must remain
+false until an isolated provider qualification is approved; reads and durable
+deletion reconciliation remain safe while provisioning is disabled.
+
+Plan entitlements are enforced before provider work and again at the atomic
+database reservation boundary:
+
+| Plan | Databases | Storage | Restore window | Classes |
+| --- | ---: | ---: | ---: | --- |
+| Free | 0 | — | — | — |
+| Hobby | 1 | 10 GiB | 7 days | development |
+| Pro | 3 | 50 GiB | 7 days | development, burstable |
+| Scale | 10 | 100 GiB | 7 days | development, burstable, production |
+
+The operator registry can set a lower global database or provider ceiling;
+customer limits never raise it. API keys use `postgres:read` for read/status
+operations and `postgres:manage` for create, restore, delete, and binding
+operations. Binding credentials are delivered through the existing app-secret
+surface after the binding saga reaches `ready`.
+
 Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery both fail closed
 while it is false. Deletion intents are still reconciled, so disabling rollout
