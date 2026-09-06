@@ -207,7 +207,7 @@ class TestImagesLockUpdatePlatformSelection(unittest.TestCase):
 
         requests: list = []
 
-        def urlopen(request, timeout):
+        def open_registry(request, timeout):
             self.assertIn(timeout, (10, 15))
             requests.append(request)
             if len(requests) == 1:
@@ -225,13 +225,42 @@ class TestImagesLockUpdatePlatformSelection(unittest.TestCase):
                 ]
             })
 
-        with mock.patch.object(update.urllib.request, "urlopen", side_effect=urlopen):
+        with mock.patch.object(
+            update, "_open_registry_request", side_effect=open_registry
+        ):
             digest = update.resolve_via_registry_api(
                 "cgr.example/chainguard/bash", "latest", "linux/amd64"
             )
 
         self.assertEqual(digest, "sha256:x86")
         self.assertEqual(len(requests), 3)
+
+    def test_bearer_auth_rejects_untrusted_or_insecure_realm(self) -> None:
+        update = _load_lock_update_module()
+        auth = {"Authorization": "Basic secret"}
+        for realm in (
+            "https://evil.example/token",
+            "http://cgr.example/token",
+            "https://cgr.example:8443/token",
+        ):
+            challenge = f'Bearer realm="{realm}",service="cgr.example"'
+            with mock.patch.object(update, "_open_registry_request") as open_registry:
+                self.assertIsNone(
+                    update._registry_bearer_token(challenge, "cgr.example", auth)
+                )
+                open_registry.assert_not_called()
+
+    def test_bearer_redirect_strips_cross_origin_authorization(self) -> None:
+        update = _load_lock_update_module()
+        request = urllib.request.Request(
+            "https://cgr.example/token", headers={"Authorization": "Basic secret"}
+        )
+        headers = email.message.Message()
+        redirected = update._AuthSafeRedirectHandler().redirect_request(
+            request, None, 302, "Found", headers, "https://evil.example/token"
+        )
+        self.assertIsNotNone(redirected)
+        self.assertIsNone(redirected.get_header("Authorization"))
 
 
 if __name__ == "__main__":
