@@ -125,6 +125,7 @@ func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate valida
 // to include kind=validate compile errors; the maintenance
 // amendment widens it again to include kind=maintenance.
 func (g *gatewaydEdgeRules) loadHost(ctx context.Context, host string) (*gateway.HostEntry, error) {
+	generation := g.cache.Generation()
 	storeRules, err := g.store.MatchEdgeRulesForHost(ctx, host)
 	if err != nil {
 		return nil, err
@@ -223,6 +224,7 @@ func (g *gatewaydEdgeRules) loadHost(ctx context.Context, host string) (*gateway
 			g.metrics.ObserveEdgeRuleCompileError("throttle")
 		}
 	}
+	g.cache.PutIfGeneration(host, entry, generation)
 	return entry, nil
 }
 
@@ -249,7 +251,6 @@ func (g *gatewaydEdgeRules) MatchRoute(ctx context.Context, host, requestPath, m
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Route
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstRouteMatch(rules, requestPath, method)
 }
@@ -273,7 +274,6 @@ func (g *gatewaydEdgeRules) MatchRewrite(ctx context.Context, host, requestPath,
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Rewrite
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstRewriteMatch(rules, requestPath, method)
 }
@@ -295,7 +295,6 @@ func (g *gatewaydEdgeRules) MatchRedirect(ctx context.Context, host, requestPath
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Redirect
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstRedirectMatch(rules, requestPath, method)
 }
@@ -317,7 +316,6 @@ func (g *gatewaydEdgeRules) MatchHeaders(ctx context.Context, host, requestPath,
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Headers
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstHeadersMatch(rules, requestPath, method)
 }
@@ -341,7 +339,6 @@ func (g *gatewaydEdgeRules) MatchCORS(ctx context.Context, host, requestPath, me
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.CORS
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstCORSMatch(rules, requestPath, method)
 }
@@ -367,7 +364,6 @@ func (g *gatewaydEdgeRules) MatchJWT(ctx context.Context, host, requestPath, met
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.JWT
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstJWTMatch(rules, requestPath, method)
 }
@@ -392,7 +388,6 @@ func (g *gatewaydEdgeRules) MatchIP(ctx context.Context, host, requestPath, meth
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.IP
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstIPMatch(rules, requestPath, method)
 }
@@ -419,7 +414,6 @@ func (g *gatewaydEdgeRules) MatchValidate(ctx context.Context, host, requestPath
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Validate
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstValidateMatch(rules, requestPath, method)
 }
@@ -447,7 +441,6 @@ func (g *gatewaydEdgeRules) MatchLimit(ctx context.Context, host, requestPath, m
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Limit
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstLimitMatch(rules, requestPath, method)
 }
@@ -476,7 +469,6 @@ func (g *gatewaydEdgeRules) MatchMaintenance(ctx context.Context, host, requestP
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Maintenance
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstMaintenanceMatch(rules, requestPath, method)
 }
@@ -504,7 +496,6 @@ func (g *gatewaydEdgeRules) MatchGeo(ctx context.Context, host, requestPath, met
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Geo
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstGeoMatch(rules, requestPath, method)
 }
@@ -534,7 +525,6 @@ func (g *gatewaydEdgeRules) MatchThrottle(ctx context.Context, host, requestPath
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Throttle
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstThrottleMatch(rules, requestPath, method)
 }
@@ -564,7 +554,6 @@ func (g *gatewaydEdgeRules) MatchBudget(ctx context.Context, host, requestPath, 
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Budget
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstBudgetMatch(rules, requestPath, method)
 }
@@ -602,7 +591,6 @@ func (g *gatewaydEdgeRules) MatchCache(ctx context.Context, host, requestPath, m
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Cache
-		g.cache.Put(host, entry)
 	}
 	return gateway.PickFirstCacheMatch(rules, requestPath, method)
 }
