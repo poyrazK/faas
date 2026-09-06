@@ -179,12 +179,18 @@ func (h *Handler) emitWakePageVisit(ctx context.Context, appID, wakeID string, v
 	if h == nil || h.wakePageAudit == nil || wakeID == "" {
 		return
 	}
+	// The page event is often flushed after the original HTTP request has
+	// returned, so callers pass a detached context. Keep the best-effort audit
+	// write bounded rather than allowing a stalled database to pin the wake
+	// leader goroutine indefinitely.
+	eventCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	var subject *string
 	if visit.accountID != "" {
 		accountID := visit.accountID
 		subject = &accountID
 	}
-	h.wakePageAudit.Emit(ctx, events.WakePageServed, subject, map[string]any{
+	h.wakePageAudit.Emit(eventCtx, events.WakePageServed, subject, map[string]any{
 		"wake_id":    wakeID,
 		"app_id":     appID,
 		"request_id": visit.requestID,
