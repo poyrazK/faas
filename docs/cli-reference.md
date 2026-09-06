@@ -674,7 +674,7 @@ Print the closed 6-stage post-stream summary
 
 ### deploys status
 
-Print the stage summary with terminal-status footer (live since / failed at)
+Print stages, terminal status, and failure guidance
 
 ### deploys retry
 

@@ -57,6 +57,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -211,6 +212,9 @@ func cmdDeploysShow(args []string) int {
 		// 0 because the wire call was authoritative.
 		_, _ = fmt.Fprintf(os.Stderr, "warning: stage summary render failed: %v\n", err)
 	}
+	if *withStatus && dep != nil {
+		renderDeployFailureIfPresent(osStdout, *dep)
+	}
 	return 0
 }
 
@@ -273,7 +277,25 @@ func cmdDeploysStatus(args []string) int {
 	if err := renderDeploySummary(osStdout, ss, status, terminalAt); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "warning: stage summary render failed: %v\n", err)
 	}
+	renderDeployFailureIfPresent(osStdout, *dep)
 	return 0
+}
+
+// renderDeployFailureIfPresent appends the persisted, customer-facing failure
+// explanation after the stage block. The deploy status command already has the
+// deployment row, so this avoids making the operator switch to
+// `gregale inspect <slug> --errors` just to learn what to fix.
+func renderDeployFailureIfPresent(w io.Writer, dep api.DeploymentResponse) {
+	if dep.Status != deploymentStatusFailed || !hasDeploymentFailureDetails(dep) {
+		return
+	}
+	_, _ = fmt.Fprintln(w)
+	renderDeploymentFailure(w, dep)
+}
+
+func hasDeploymentFailureDetails(dep api.DeploymentResponse) bool {
+	return dep.Error != "" || dep.ErrorCode != "" || dep.ErrorHint != "" ||
+		dep.ErrorWhy != "" || dep.ErrorFix != "" || len(dep.ErrorRelevantLogs) > 0
 }
 
 // wantDeploySummaryFooter is the boolean toggle for the
