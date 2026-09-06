@@ -52,6 +52,7 @@ func TestSourceTarball_MissingField(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body)
 	}
+	assertSourceTarballDeprecationHeaders(t, rec)
 	if !strings.Contains(rec.Body.String(), "tarball") {
 		t.Errorf("body should mention tarball, got %s", rec.Body)
 	}
@@ -90,6 +91,7 @@ func TestSourceTarball_HappyPath_NoSidecar(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202 (%s)", rec.Code, rec.Body)
 	}
+	assertSourceTarballDeprecationHeaders(t, rec)
 
 	var resp api.DeploymentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -125,6 +127,31 @@ func TestSourceTarball_HappyPath_NoSidecar(t *testing.T) {
 	if data["repo"] != "" {
 		t.Errorf("audit repo = %v, want empty", data["repo"])
 	}
+}
+
+func assertSourceTarballDeprecationHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if got := rec.Header().Get("Deprecation"); got != "true" {
+		t.Errorf("Deprecation: got %q, want %q", got, "true")
+	}
+	if got := rec.Header().Get("Sunset"); got != "Wed, 01 Oct 2026 00:00:00 GMT" {
+		t.Errorf("Sunset: got %q, want RFC 7231 IMF-fixdate", got)
+	}
+	if got := rec.Header().Get("Link"); got != `</v1/uploads>; rel="successor-version"` {
+		t.Errorf("Link: got %q, want resumable upload successor", got)
+	}
+}
+
+func TestSourceTarball_DeprecationHeadersOnAuthFailure(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	req := httptest.NewRequest(http.MethodPost, "/v1/apps/unauthenticated/deployments/source-tarball", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	assertSourceTarballDeprecationHeaders(t, rec)
 }
 
 // TestSourceTarball_HappyPath_WithSidecar: a valid tarball WITH a

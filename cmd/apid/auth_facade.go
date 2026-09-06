@@ -316,9 +316,9 @@ func (s *server) clearSessionCookie(w http.ResponseWriter, _ *http.Request) {
 }
 
 // withDeprecation stamps the RFC 8594 + RFC 8288 deprecation headers
-// on the wrapped route so clients (and the operator UI's lint) can
-// detect a sunsetting endpoint. Three headers are set before the
-// handler runs:
+// on the wrapped operator route so clients (and the operator UI's
+// lint) can detect a sunsetting endpoint. Three headers are set before
+// the handler runs:
 //
 //   - Deprecation: true                         (RFC 8594 §2)
 //   - Sunset: Wed, 01 Oct 2026 00:00:00 GMT     (RFC 8594 §3)
@@ -346,10 +346,26 @@ func (s *server) withDeprecation(next accountHandler) accountHandler {
 		link   = `</v1/admin/obs/nodes/events>; rel="successor-version"`
 	)
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		h := w.Header()
-		h.Set("Deprecation", "true")
-		h.Set("Sunset", sunset)
-		h.Set("Link", link)
+		setDeprecationHeaders(w, sunset, link)
 		next(w, r, acct)
 	}
+}
+
+// withDeprecationHTTP is the outermost form for routes whose auth chain is
+// already an http.Handler. Unlike the accountHandler variant above, this
+// preserves the headers even when authentication rejects the request before
+// an account is available.
+func (s *server) withDeprecationHTTP(link string, next http.Handler) http.Handler {
+	const sunset = "Wed, 01 Oct 2026 00:00:00 GMT"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setDeprecationHeaders(w, sunset, link)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func setDeprecationHeaders(w http.ResponseWriter, sunset, link string) {
+	h := w.Header()
+	h.Set("Deprecation", "true")
+	h.Set("Sunset", sunset)
+	h.Set("Link", link)
 }
