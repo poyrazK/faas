@@ -480,6 +480,11 @@ jobs:
       - name: Scan runtime base for critical vulnerabilities
         env:
           GRYPE_BIN: ${{ runner.temp }}/grype
+          # The hardened Python 3.13 base is the first runtime lane whose
+          # publication gate matches vmmd admission exactly. Keep legacy
+          # Debian lanes on their existing fixed-finding gate until their
+          # shared parent migration lands separately.
+          GRYPE_ONLY_FIXED: ${{ matrix.image == 'runner-python313' && 'false' || 'true' }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             ref="${IMAGE_NAME}:ci-${GITHUB_SHA}"

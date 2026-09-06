@@ -757,12 +757,11 @@ type RuntimeBaseRef struct {
 // the build/run path at function-deploy time reuses go124's runner
 // binary.
 //
-// ADR-053: the Debian-backed node/python runtime rows declare
-// ParentRef: BaseRefDebianParent. Node22 is intentionally standalone on
-// Alpine because musl cannot compose over the shared glibc parent; its full
-// OCI chain is staged through the legacy (parentRef="") path. The shared
-// parent is staged
-// first (index 0) so a parent re-stage failure aborts the loop
+// ADR-053: the Debian-backed Node 24 and Python 3.12 rows declare ParentRef:
+// BaseRefDebianParent. Node 22 is standalone on Alpine, and Python 3.13 is
+// standalone on Wolfi; neither OCI chain can compose over the Debian parent.
+// Those full chains use the legacy (parentRef="") path. The shared parent is
+// staged first (index 0) so a parent re-stage failure aborts the loop
 // before any child is attempted — half-staged fleet is worse
 // than refuse. The parent row's ParentRef is "" (legacy path:
 // apply ALL its layers, no composition).
@@ -776,7 +775,7 @@ var DefaultRuntimeBaseRefs = []RuntimeBaseRef{
 	{Runtime: RuntimeGo124, Ref: BaseRefGo124, EnvOverride: "FAAS_DEPLOY_BASE_REF_GO124"},
 	{Runtime: RuntimeGo124Alpine, Ref: BaseRefGo124Alpine, EnvOverride: "FAAS_DEPLOY_BASE_REF_GO124_ALPINE"},
 	{Runtime: RuntimeNode24, Ref: BaseRefNode24, EnvOverride: "FAAS_DEPLOY_BASE_REF_NODE24", ParentRef: BaseRefDebianParent},
-	{Runtime: RuntimePython313, Ref: BaseRefPython313, EnvOverride: "FAAS_DEPLOY_BASE_REF_PYTHON313", ParentRef: BaseRefDebianParent},
+	{Runtime: RuntimePython313, Ref: BaseRefPython313, EnvOverride: "FAAS_DEPLOY_BASE_REF_PYTHON313"},
 }
 
 // EnsureBasesResult reports what EnsureBases did for a single runtime
