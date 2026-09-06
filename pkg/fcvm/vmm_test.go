@@ -78,6 +78,16 @@ func TestReadyTimeoutForUsesPerAppOverride(t *testing.T) {
 	}
 }
 
+func TestLayerCloneTempPatternCarriesDurableInstanceID(t *testing.T) {
+	const instanceID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	if got, want := layerCloneTempPattern(instanceID), ".faas-layer-"+instanceID+"-*"; got != want {
+		t.Fatalf("pattern = %q, want %q", got, want)
+	}
+	if got := layerCloneTempPattern("not-an-instance-id"); got != ".faas-layer-*" {
+		t.Fatalf("invalid-id pattern = %q, want legacy safe fallback", got)
+	}
+}
+
 func TestNotReadyProblemUsesPerAppTimeout(t *testing.T) {
 	v := &JailerVMM{readyTimeout: 30 * time.Second}
 	p := v.notReadyProblem(Lease{Instance: "inst-1"}, "", 1, 45*time.Second)
