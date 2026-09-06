@@ -143,8 +143,10 @@ func seedComputeNode(t *testing.T, pool *pgxpool.Pool, targetURL string) string 
 	ctx := context.Background()
 	var id string
 	err := pool.QueryRow(ctx,
-		`insert into compute_nodes (name, schedd_target_url, lifecycle)
-		 values ($1, $2, 'active'::compute_node_lifecycle) returning id`, "fsn-live-test", targetURL).Scan(&id)
+		`insert into compute_nodes
+		 (name, target_url, schedd_target_url, lifecycle, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb)
+		 values ($1, 'unix:///run/test-vmmd.sock', $2, 'active'::compute_node_lifecycle, 4, 4096, 3, 2048)
+		 returning id`, "fsn-live-test", targetURL).Scan(&id)
 	if err != nil {
 		t.Fatalf("seed compute_node: %v", err)
 	}
