@@ -5,10 +5,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var _ ObjectStorageAccountingStore = (*MemStore)(nil)
+var _ ObjectStorageBillingStore = (*MemStore)(nil)
 
 func (m *MemStore) ObjectUsage(_ context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
 	m.mu.Lock()
@@ -16,8 +18,19 @@ func (m *MemStore) ObjectUsage(_ context.Context, account string, now time.Time)
 	return m.objectUsageLocked(account, now), nil
 }
 
+func (m *MemStore) ObjectUsageForPeriod(_ context.Context, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.objectUsageLockedForPeriod(account, periodStart), nil
+}
+
 func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageSnapshot {
-	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+ObjectStoragePeriod(now).String()]}
+	return m.objectUsageLockedForPeriod(account, ObjectStoragePeriod(now))
+}
+
+func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.Time) ObjectUsageSnapshot {
+	periodStart = ObjectStoragePeriod(periodStart)
+	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+periodStart.String()]}
 	for _, b := range m.objectBuckets {
 		if b.AccountID == account {
 			u := m.objectUsage[b.ID]
@@ -27,7 +40,7 @@ func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageS
 	}
 	latest := map[string]api.ObjectStorageUsageReport{}
 	for _, r := range m.objectReports {
-		if r.AccountID == account && r.PeriodStart.Equal(ObjectStoragePeriod(now)) && r.ObservedAt.After(latest[r.BackendID].ObservedAt) {
+		if r.AccountID == account && r.PeriodStart.Equal(periodStart) && r.ObservedAt.After(latest[r.BackendID].ObservedAt) {
 			latest[r.BackendID] = r
 		}
 	}
@@ -35,6 +48,47 @@ func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageS
 		out.Reports = append(out.Reports, r)
 	}
 	return out
+}
+
+func (m *MemStore) GetObjectStorageBillingPeriod(_ context.Context, account string, periodStart time.Time) (ObjectStorageBillingRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.objectStorageBilling == nil {
+		return ObjectStorageBillingRecord{}, ErrNotFound
+	}
+	record, ok := m.objectStorageBilling[objectBillingKey(account, periodStart)]
+	if !ok {
+		return ObjectStorageBillingRecord{}, ErrNotFound
+	}
+	return record, nil
+}
+
+func (m *MemStore) RecordObjectStorageBillingPeriod(_ context.Context, record ObjectStorageBillingRecord) (ObjectStorageBillingRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record = normalizeObjectStorageBillingRecord(record)
+	if err := validateObjectStorageBillingRecord(record); err != nil {
+		return ObjectStorageBillingRecord{}, err
+	}
+	if m.objectStorageBilling == nil {
+		m.objectStorageBilling = map[string]ObjectStorageBillingRecord{}
+	}
+	key := objectBillingKey(record.AccountID, record.PeriodStart)
+	if existing, ok := m.objectStorageBilling[key]; ok {
+		if sameObjectStorageBillingRecord(existing, record) {
+			return existing, nil
+		}
+		return ObjectStorageBillingRecord{}, ErrObjectBillingConflict
+	}
+	if record.ID == "" {
+		record.ID = uuid.NewString()
+	}
+	m.objectStorageBilling[key] = record
+	return record, nil
+}
+
+func objectBillingKey(account string, periodStart time.Time) string {
+	return account + "\x00" + ObjectStoragePeriod(periodStart).Format(time.RFC3339)
 }
 
 func (m *MemStore) AdmitObjectURL(_ context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {

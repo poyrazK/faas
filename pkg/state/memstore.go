@@ -432,6 +432,9 @@ type MemStore struct {
 	// invoices is the in-memory mirror of the `invoices` table
 	// (migration 00050, issue #259).
 	invoices map[string]Invoice
+	// objectStorageBilling is the in-memory mirror of the finalized
+	// object-storage month-close ledger.
+	objectStorageBilling map[string]ObjectStorageBillingRecord
 	// accountCredits is the in-memory mirror of the `account_credits`
 	// table (migration 00049, issue #279). Keyed by credit id. The
 	// handler is the only writer in production; meterd never reads
@@ -827,7 +830,8 @@ func NewMemStore() *MemStore {
 		stripeByCustomer: map[string]string{},
 		// invoices starts empty; PR A reads it via ListInvoicesForAccount,
 		// PR B writes via UpsertInvoice (webhook ingestion).
-		invoices: map[string]Invoice{},
+		invoices:             map[string]Invoice{},
+		objectStorageBilling: map[string]ObjectStorageBillingRecord{},
 		// accountCredits starts empty; the operator-only
 		// POST /v1/admin/accounts/{id}/credits path is the sole writer.
 		accountCredits: map[string]AccountCredit{},

@@ -13,14 +13,23 @@ import (
 )
 
 var _ ObjectStorageAccountingStore = (*PgStore)(nil)
+var _ ObjectStorageBillingStore = (*PgStore)(nil)
 
 func objectUsageTime(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
 
 func (s *PgStore) ObjectUsage(ctx context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
-	return readObjectUsage(ctx, s.pool, account, now)
+	return readObjectUsage(ctx, s.pool, account, ObjectStoragePeriod(now))
 }
 
 func readObjectUsage(ctx context.Context, db sqlc.DBTX, account string, now time.Time) (ObjectUsageSnapshot, error) {
+	return readObjectUsageForPeriod(ctx, db, account, ObjectStoragePeriod(now))
+}
+
+func (s *PgStore) ObjectUsageForPeriod(ctx context.Context, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
+	return readObjectUsageForPeriod(ctx, s.pool, account, ObjectStoragePeriod(periodStart))
+}
+
+func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
 	q := sqlc.New()
 	out := ObjectUsageSnapshot{}
 	rows, err := q.ObjectUsageBuckets(ctx, db, mustPgUUID(account))
@@ -34,14 +43,14 @@ func readObjectUsage(ctx context.Context, db sqlc.DBTX, account string, now time
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 		})
 	}
-	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))})
+	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
 	if err != nil {
 		return out, err
 	}
 	for _, r := range reports {
 		out.Reports = append(out.Reports, objectReportFromSQL(r))
 	}
-	out.Authorizations, err = q.ObjectUsageAuthorizationCount(ctx, db, sqlc.ObjectUsageAuthorizationCountParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))})
+	out.Authorizations, err = q.ObjectUsageAuthorizationCount(ctx, db, sqlc.ObjectUsageAuthorizationCountParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
