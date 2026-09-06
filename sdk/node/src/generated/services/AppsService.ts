@@ -108,6 +108,7 @@ export class AppsService {
         'slug': slug,
       },
       errors: {
+        400: `code: validation_failed`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429. Two response shapes:
@@ -882,6 +883,7 @@ export class AppsService {
     slug,
     since,
     limit,
+    route,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -895,6 +897,10 @@ export class AppsService {
      * Page size, default 20, max 200.
      */
     limit?: number | null,
+    /**
+     * Exact route-template filter.
+     */
+    route?: string | null,
   }): CancelablePromise<DebugTelemetryListResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -905,6 +911,7 @@ export class AppsService {
       query: {
         'since': since,
         'limit': limit,
+        'route': route,
       },
       errors: {
         401: `code: unauthorized`,

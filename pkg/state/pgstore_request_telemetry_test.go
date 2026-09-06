@@ -73,6 +73,7 @@ func TestPgStoreRequestTelemetry_RoundTrip(t *testing.T) {
 		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
 		Limit:        50,
+		Route:        "GET /foo",
 	})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -82,6 +83,9 @@ func TestPgStoreRequestTelemetry_RoundTrip(t *testing.T) {
 	}
 	if rows[0].Route != "GET /foo" {
 		t.Errorf("List.Route = %q, want %q", rows[0].Route, "GET /foo")
+	}
+	if rows[0].Count != 1 {
+		t.Errorf("List.Count = %d, want 1", rows[0].Count)
 	}
 	if rows[0].Method != "GET" {
 		t.Errorf("List.Method = %q, want GET", rows[0].Method)

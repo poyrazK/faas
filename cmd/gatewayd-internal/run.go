@@ -1971,8 +1971,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	requestTelemetryEnabled := osGetenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false"
 	if requestTelemetryEnabled {
 		recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{
-			Enabled:  true,
-			RingSize: 4096,
+			Enabled:     true,
+			RingSize:    4096,
+			OnOverwrite: deps.metrics.IncRequestTelemetryOverwritten,
 		}, log)
 		// The split-box target falls back to FAAS_APID_APP_ERRORS_TARGET / the
 		// TOML AppErrors target. Load the same client certificate so the
@@ -1989,21 +1990,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			FlushInterval:  5 * time.Second,
 			FlushBatchSize: 256,
 			MaxRetries:     3,
+			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
+			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
 		}, recorder, func(ctx context.Context, rows []gateway.RequestTelemetryRow) error {
-			// Dial failed at boot — log-only fallback mirrors
-			// PR-A's stub. Operators see the dial failure once
-			// at startup + a per-tick "drained batch" debug.
 			if rtCli == nil {
-				rtShippedTotal += int64(len(rows))
-				if len(rows) > 0 {
-					log.Debug("request_telemetry: drained batch (no apid client)",
-						"batch_size", len(rows),
-						"shipped_total", rtShippedTotal)
+				// DialRequestTelemetry is intentionally lazy. If the
+				// initial dial failed (or the connection was invalidated
+				// after a stream error), retry the connection here rather
+				// than claiming the drained batch was shipped.
+				var err error
+				rtCli, err = apidgrpc.DialRequestTelemetry(ctx, apidRTTarget, rtTLS)
+				if err != nil {
+					return fmt.Errorf("open request_telemetry client: %w", err)
 				}
-				return nil
 			}
 			stream, err := rtCli.IncrementRequestTelemetry(ctx)
 			if err != nil {
+				_ = rtCli.Close()
+				rtCli = nil
 				return fmt.Errorf("open request_telemetry stream: %w", err)
 			}
 			for i := range rows {
@@ -2026,12 +2030,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				if err := stream.Send(req); err != nil {
 					_ = stream.CloseSend()
+					_ = rtCli.Close()
+					rtCli = nil
 					return fmt.Errorf("send request_telemetry row: %w", err)
 				}
 			}
 			if err := stream.CloseSend(); err != nil {
-				log.Warn("request_telemetry: stream CloseSend failed",
-					"batch_size", len(rows), "err", err)
+				_ = rtCli.Close()
+				rtCli = nil
+				return fmt.Errorf("close request_telemetry stream: %w", err)
 			}
 			// Drain responses to detect per-row failures. The
 			// publisher's retry-with-backoff covers transient
@@ -2045,6 +2052,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					if errors.Is(rerr, io.EOF) {
 						break
 					}
+					_ = rtCli.Close()
+					rtCli = nil
 					return fmt.Errorf("recv request_telemetry response: %w", rerr)
 				}
 				if resp == nil {
@@ -2055,7 +2064,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						"retry_after_ms", resp.GetRetryAfterMs())
 				}
 			}
-			rtShippedTotal += int64(len(rows))
+			for _, row := range rows {
+				if row.Count > 0 {
+					rtShippedTotal += int64(row.Count)
+				} else {
+					rtShippedTotal++
+				}
+			}
 			if len(rows) > 0 {
 				log.Debug("request_telemetry: drained batch",
 					"batch_size", len(rows),
@@ -2067,15 +2082,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// (Defer the close until after publisher.Stop so the
 		// publisher's final-drain batch can still ship.)
 		if dialErr != nil {
-			log.Warn("request_telemetry: apid socket dial failed; recorder ships to log only",
+			log.Warn("request_telemetry: apid socket dial failed; will retry on flush",
 				"err", dialErr)
-		} else {
-			defer func() {
+		}
+		defer func() {
+			if rtCli != nil {
 				if err := rtCli.Close(); err != nil {
 					log.Warn("request_telemetry: close apid client", "err", err)
 				}
-			}()
-		}
+			}
+		}()
+		// Wake the publisher as the recorder approaches capacity so the
+		// normal five-second ticker is only the idle fallback.
+		recorder.SetWakeHook(publisher.Wake)
 		publisher.Start(ctx)
 		handler.WithRequestTelemetryRecorder(recorder)
 		// Stop() drains the final batch synchronously on shutdown.

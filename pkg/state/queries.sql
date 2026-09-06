@@ -1572,12 +1572,13 @@ INSERT INTO request_telemetry (
 -- request_telemetry_app_received_idx. The (since, until) pair is
 -- timestamptz; handler-side date parsing is at cmd/apid/
 -- handlers_debug_telemetry.go (parseDebugTelemetryWindow).
-SELECT id, deployment_id, route, method, status, latency_ms,
+SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
   AND received_at <  $3
+  AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
 ORDER BY received_at DESC
 LIMIT $4;
 
@@ -1585,7 +1586,7 @@ LIMIT $4;
 -- Direct request drill-down for the customer debugger. The app_id
 -- predicate is the database-side tenant boundary; the handler has
 -- already resolved the slug through the caller's account.
-SELECT id, deployment_id, route, method, status, latency_ms,
+SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at
 FROM request_telemetry
 WHERE app_id = $1

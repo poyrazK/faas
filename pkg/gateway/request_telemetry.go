@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,10 +81,14 @@ type RequestTelemetryConfig struct {
 
 	// Now is injectable for tests. nil ⇒ time.Now.
 	Now func() time.Time
+
+	// OnOverwrite is called once for each row evicted after the ring reaches
+	// capacity. It is a callback so the recorder stays independent of metrics.
+	OnOverwrite func()
 }
 
 func (c *RequestTelemetryConfig) setDefaults() {
-	if c.RingSize == 0 {
+	if c.RingSize <= 0 {
 		c.RingSize = 4096
 	}
 	if c.Now == nil {
@@ -108,6 +113,16 @@ type requestTelemetryRecorder struct {
 	ring   []RequestTelemetryRow
 	head   int
 	len    int
+
+	// overwrittenTotal counts rows lost before the publisher can drain them.
+	overwrittenTotal atomic.Int64
+
+	// wakeFn is installed by the publisher after construction. wakeArmed
+	// prevents a callback on every enqueue while the ring remains near full.
+	// All three fields are guarded by ringMu.
+	wakeFn        func()
+	wakeThreshold int
+	wakeArmed     bool
 }
 
 // NewRequestTelemetryRecorder wires the recorder. The publisher
@@ -115,10 +130,16 @@ type requestTelemetryRecorder struct {
 // tick (see request_telemetry_publisher.go).
 func NewRequestTelemetryRecorder(cfg RequestTelemetryConfig, log *slog.Logger) *requestTelemetryRecorder {
 	cfg.setDefaults()
+	threshold := cfg.RingSize / 2
+	if threshold < 1 {
+		threshold = 1
+	}
 	return &requestTelemetryRecorder{
-		cfg:  cfg,
-		log:  log,
-		ring: make([]RequestTelemetryRow, cfg.RingSize),
+		cfg:           cfg,
+		log:           log,
+		ring:          make([]RequestTelemetryRow, cfg.RingSize),
+		wakeThreshold: threshold,
+		wakeArmed:     true,
 	}
 }
 
@@ -151,6 +172,8 @@ func (r *requestTelemetryRecorder) RecordFromObserve(row RequestTelemetryRow) {
 // past the cap — the publisher's drain is the back-pressure
 // signal (it should drain faster than the ring fills).
 func (r *requestTelemetryRecorder) enqueue(row RequestTelemetryRow) {
+	var wakeFn func()
+	overwrote := false
 	r.ringMu.Lock()
 	if r.len < len(r.ring) {
 		// ring not full — append at tail
@@ -161,8 +184,20 @@ func (r *requestTelemetryRecorder) enqueue(row RequestTelemetryRow) {
 		// ring full — overwrite head, advance head by 1
 		r.ring[r.head] = row
 		r.head = (r.head + 1) % len(r.ring)
+		r.overwrittenTotal.Add(1)
+		overwrote = true
+	}
+	if r.wakeFn != nil && r.wakeArmed && r.len >= r.wakeThreshold {
+		wakeFn = r.wakeFn
+		r.wakeArmed = false
 	}
 	r.ringMu.Unlock()
+	if overwrote && r.cfg.OnOverwrite != nil {
+		r.cfg.OnOverwrite()
+	}
+	if wakeFn != nil {
+		wakeFn()
+	}
 }
 
 // DrainBatch returns up to max rows from the head of the ringbuffer
@@ -191,6 +226,9 @@ func (r *requestTelemetryRecorder) DrainBatch(max int) []RequestTelemetryRow {
 	// them on the next enqueue.
 	r.head = (r.head + n) % len(r.ring)
 	r.len -= n
+	if r.len < r.wakeThreshold {
+		r.wakeArmed = true
+	}
 	return out
 }
 
@@ -207,6 +245,33 @@ func (r *requestTelemetryRecorder) PendingCount() int {
 // useful for /metrics + tests.
 func (r *requestTelemetryRecorder) RingCapacity() int {
 	return len(r.ring)
+}
+
+// OverwrittenTotal returns the number of rows evicted because the ring was
+// full. These rows are lost before the publisher can collapse or ship them.
+func (r *requestTelemetryRecorder) OverwrittenTotal() int64 {
+	return r.overwrittenTotal.Load()
+}
+
+// SetWakeHook installs the publisher wake callback. Call it during daemon
+// boot, before request traffic starts. The callback is invoked outside ringMu
+// and must be non-blocking.
+func (r *requestTelemetryRecorder) SetWakeHook(fn func()) {
+	var wakeFn func()
+	r.ringMu.Lock()
+	r.wakeFn = fn
+	r.wakeArmed = r.len < r.wakeThreshold
+	if fn != nil && !r.wakeArmed {
+		// The hook may be attached after a recorder has already accepted
+		// traffic (for example, during dependency wiring in a test). Make
+		// the existing near-full backlog visible immediately instead of
+		// waiting for the next periodic ticker.
+		wakeFn = fn
+	}
+	r.ringMu.Unlock()
+	if wakeFn != nil {
+		wakeFn()
+	}
 }
 
 // --- context-key helpers for the ServeHTTP-side stamping ---

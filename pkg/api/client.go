@@ -4256,10 +4256,27 @@ func (c *Client) DeleteAppOpenAPI(ctx context.Context, slug string) error {
 // 404 when the app is owned by a different account (IDOR-safe
 // byte-identical-404).
 func (c *Client) ListAppDebugRequests(ctx context.Context, slug, since string) (DebugTelemetryListResponse, error) {
+	return c.ListAppDebugRequestsWithOptions(ctx, slug, DebugTelemetryListOptions{Since: since})
+}
+
+// ListAppDebugRequestsWithOptions is the filtered form of
+// ListAppDebugRequests. Route and limit are sent to the API so filtering and
+// pagination happen before rows are read from the database.
+func (c *Client) ListAppDebugRequestsWithOptions(ctx context.Context, slug string, opts DebugTelemetryListOptions) (DebugTelemetryListResponse, error) {
 	var out DebugTelemetryListResponse
 	path := "/v1/apps/" + slug + "/debug/requests"
-	if since != "" {
-		path += "?since=" + url.QueryEscape(since)
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Route != "" {
+		q.Set("route", opts.Route)
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

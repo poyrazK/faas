@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -33,6 +34,8 @@ import (
 // debugCmdUsage is the canonical usage text. Mirrors the shape of
 // commands_invocations.go's PrintUsage strings.
 const debugCmdUsage = "usage: gregale debug <requests|regressions|compare> ..."
+
+const debugRequestsCmdUsage = "usage: gregale debug requests <list|get|replay> ..."
 
 // debugCmdDocsTopic is the docs topic slug for the debug
 // namespace. Resolves to cli_meta.go's "debug" cliCommand entry;
@@ -43,6 +46,10 @@ func cmdDebug(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, debugCmdUsage, debugCmdDocsTopic)
 		return 1
+	}
+	if args[0] == "--help" || args[0] == "-h" {
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests get      show one request's metadata\n  requests replay   queue a request replay\n  regressions       list detected regressions\n  compare           compare two deployments", debugCmdDocsTopic)
+		return 0
 	}
 	switch args[0] {
 	case "requests":
@@ -58,8 +65,12 @@ func cmdDebug(args []string) int {
 
 func cmdDebugRequests(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests <list|get|replay> ...", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugRequestsCmdUsage, debugCmdDocsTopic)
 		return 1
+	}
+	if args[0] == "--help" || args[0] == "-h" {
+		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  get       show one request's metadata\n  replay    queue a request replay", debugCmdDocsTopic)
+		return 0
 	}
 	switch args[0] {
 	case subList:
@@ -80,38 +91,35 @@ func cmdDebugRequestsList(args []string) int {
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	route := fs.String("route", "", "route filter (exact match)")
 	limit := fs.Int("limit", 20, "max rows (1..200)")
-	if err := fs.Parse(args); err != nil {
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true, "route": true, "limit": true})
+	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale debug requests list [--since D] [--route P] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1
 	}
-	slug := fs.Arg(0)
+	if *limit < 1 || *limit > 200 {
+		fmt.Fprintln(os.Stderr, "--limit must be between 1 and 200")
+		return 1
+	}
+	slug := positional[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListAppDebugRequests(context.Background(), slug, *since)
+	resp, err := client.ListAppDebugRequestsWithOptions(context.Background(), slug, api.DebugTelemetryListOptions{
+		Since: *since,
+		Route: *route,
+		Limit: *limit,
+	})
 	if err != nil {
 		return printErr("Could not list debug requests", err)
-	}
-	if *route != "" {
-		filtered := resp.Requests[:0]
-		for _, r := range resp.Requests {
-			if r.Route == *route {
-				filtered = append(filtered, r)
-			}
-		}
-		resp.Requests = filtered
-	}
-	if *limit > 0 && len(resp.Requests) > *limit {
-		resp.Requests = resp.Requests[:*limit]
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	renderDebugRequestsTable(os.Stdout, resp)
+	renderDebugRequestsTable(osStdout, resp)
 	return 0
 }
 
@@ -161,14 +169,15 @@ func cmdDebugRequestsReplay(args []string) int {
 func cmdDebugRegressions(args []string) int {
 	fs := flag.NewFlagSet("debug regressions", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	if err := fs.Parse(args); err != nil {
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true})
+	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale debug regressions [--since D] <slug>", debugCmdDocsTopic)
 		return 1
 	}
-	slug := fs.Arg(0)
+	slug := positional[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -180,7 +189,7 @@ func cmdDebugRegressions(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	renderDebugRegressionsTable(os.Stdout, resp)
+	renderDebugRegressionsTable(osStdout, resp)
 	return 0
 }
 
@@ -193,14 +202,20 @@ func cmdDebugCompare(args []string) int {
 	route := fs.String("route", "", "route filter (exact match)")
 	source := fs.String("source", "", "source deployment id")
 	mirror := fs.String("mirror", "", "mirror deployment id")
-	if err := fs.Parse(args); err != nil {
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
+		"since":  true,
+		"route":  true,
+		"source": true,
+		"mirror": true,
+	})
+	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *source == "" || *mirror == "" {
+	if len(positional) != 1 || *source == "" || *mirror == "" {
 		PrintUsage(os.Stderr, "usage: gregale debug compare --source <id> --mirror <id> [--route P] [--since D] <slug>", debugCmdDocsTopic)
 		return 1
 	}
-	slug := fs.Arg(0)
+	slug := positional[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -212,22 +227,53 @@ func cmdDebugCompare(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	renderDebugCompareTable(os.Stdout, resp)
+	renderDebugCompareTable(osStdout, resp)
 	return 0
 }
 
 func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOLD\tRECEIVED_AT")
+	_, _ = fmt.Fprintln(tw, "ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tRECEIVED_AT")
 	for _, r := range resp.Requests {
 		cold := ""
 		if r.ColdBoot {
 			cold = "yes"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
-			r.ID, r.Route, r.Method, r.Status, r.LatencyMS, cold, r.ReceivedAt)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
+			r.ID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, r.ReceivedAt)
 	}
 	_ = tw.Flush()
+}
+
+// normalizeDebugFlagArgs lets the debug commands accept a slug either before
+// or after flags. The standard flag package stops parsing at the first
+// positional argument, which made the documented `... <slug> --since ...`
+// form silently ignore filters. Only known value-taking flags consume the
+// following argument; unknown flags are left for flag.FlagSet to report.
+func normalizeDebugFlagArgs(args []string, valueFlags map[string]bool) (flagArgs, positional []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			flagArgs = append(flagArgs, arg)
+			name := arg
+			if eq := strings.IndexByte(name, '='); eq >= 0 {
+				name = name[:eq]
+			} else {
+				name = strings.TrimLeft(name, "-")
+				if valueFlags[name] && i+1 < len(args) {
+					i++
+					flagArgs = append(flagArgs, args[i])
+				}
+			}
+			continue
+		}
+		positional = append(positional, arg)
+	}
+	return flagArgs, positional
 }
 
 func renderDebugRegressionsTable(w io.Writer, resp api.DebugRegressionsResponse) {
