@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -2106,6 +2107,7 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 		Cmd:              cmd,
 		WorkingDir:       cfg.WorkingDir,
 		User:             cfg.User,
+		ExposedPorts:     cfg.ExposedPorts,
 		Healthcheck:      cfg.Healthcheck,
 		StopSignal:       cfg.StopSignal,
 		StopGracePeriodS: cfg.StopGracePeriodS,
@@ -2383,11 +2385,11 @@ func runtimeToEnvSuffix(runtime string) string {
 // exact same projection + the same ErrImageManifestInvalid failure mode.
 //
 // ADR-051 Phase 4 (characterization boot): the App path must default
-// Port + Healthz and inject PORT=8080 into Env so the in-guest probe
+// Port + Healthz and inject PORT into Env so the in-guest probe
 // (guest/init/{characterize,portnorm}_linux.go) sees a known listening
-// port and the app listens on :8080. Without these defaults the port
-// normalization ladder in portnorm_linux.go must fall through to the
-// userspace forwarder on every first wake, which the architecture
+// port and the app listens on the selected serving port. Without these
+// defaults, the port normalization ladder in portnorm_linux.go must fall
+// through to the userspace forwarder on every first wake, which the architecture
 // avoids (ADR-051 §"Consequences"). Customer-pinned values in
 // cfg.Port / cfg.Env["PORT"] survive this seeding (last-write-wins
 // is the customer's call).
@@ -2398,6 +2400,7 @@ func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 		Cmd:              append([]string(nil), cfg.Cmd...),
 		WorkingDir:       cfg.WorkingDir,
 		User:             cfg.User,
+		ExposedPorts:     cfg.ExposedPorts,
 		Healthcheck:      cfg.Healthcheck,
 		StopSignal:       cfg.StopSignal,
 		StopGracePeriodS: cfg.StopGracePeriodS,
@@ -2416,7 +2419,7 @@ func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 }
 
 // applyContainerDefaults seeds the platform-default Healthz path
-// (ADR-051 §"Consequences") and the PORT=8080 env var when the
+// (ADR-051 §"Consequences") and the effective PORT env var when the
 // customer didn't pin them. Lives here so both the registry pull
 // path (manifestFromImageConfig) and the local OCI build path
 // (buildLocalOCIAppLayer in local_oci.go) share the exact same
@@ -2429,7 +2432,7 @@ func applyContainerDefaults(m *api.AppManifest) {
 		m.Env = make(map[string]string, 1)
 	}
 	if _, set := m.Env["PORT"]; !set {
-		m.Env["PORT"] = "8080"
+		m.Env["PORT"] = strconv.Itoa(m.EffectivePort())
 	}
 }
 

@@ -87,6 +87,30 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestSingleTCPExposedPort(t *testing.T) {
+	tests := []struct {
+		name    string
+		exposed map[string]struct{}
+		want    int
+		ok      bool
+	}{
+		{name: "single tcp", exposed: map[string]struct{}{"3000/tcp": {}}, want: 3000, ok: true},
+		{name: "case insensitive protocol", exposed: map[string]struct{}{"3000/TCP": {}}, want: 3000, ok: true},
+		{name: "udp ignored", exposed: map[string]struct{}{"53/udp": {}}, ok: false},
+		{name: "multiple tcp ports are ambiguous", exposed: map[string]struct{}{"3000/tcp": {}, "8080/tcp": {}}, ok: false},
+		{name: "duplicate port spelling", exposed: map[string]struct{}{"3000/tcp": {}, "3000/TCP": {}}, want: 3000, ok: true},
+		{name: "malformed entries ignored", exposed: map[string]struct{}{"bad/tcp": {}, "70000/tcp": {}}, ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := SingleTCPExposedPort(tt.exposed)
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("SingleTCPExposedPort(%v) = (%d, %v), want (%d, %v)", tt.exposed, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 func TestParseConfigRejectsNonLayerRootfs(t *testing.T) {
 	if _, err := ParseConfig(strings.NewReader(`{"rootfs":{"type":"foreign"}}`)); err == nil {
 		t.Error("expected error on unsupported rootfs type")
@@ -113,6 +137,19 @@ func TestManifestFromConfig(t *testing.T) {
 	}
 	if m.User != "app" {
 		t.Errorf("uid 1000 should normalise to %q, got %q", "app", m.User)
+	}
+}
+
+func TestManifestFromConfig_ExposedPortSeedsServingPort(t *testing.T) {
+	m, err := ManifestFromConfig(Config{
+		Cmd:          []string{"/app/server"},
+		ExposedPorts: map[string]struct{}{"3000/tcp": {}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Port != 3000 {
+		t.Fatalf("Port = %d, want 3000", m.Port)
 	}
 }
 

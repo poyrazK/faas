@@ -51,9 +51,8 @@ type ImageConfig struct {
 	// StopGracePeriod mirrors the OCI StopGracePeriodSeconds value
 	// (integer seconds). Runtime wiring in M-2.
 	StopGracePeriodS int
-	// ExposedPorts is the set of ports the image declares; we don't use them
-	// directly (the customer pins a port via the app's manifest) but parsing
-	// them keeps a future "expose-all" mode cheap.
+	// ExposedPorts is the set of ports the image declares. A single valid TCP
+	// entry can seed the serving port; an explicit deployment port wins.
 	ExposedPorts map[string]struct{}
 }
 

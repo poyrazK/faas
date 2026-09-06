@@ -75,6 +75,34 @@ func TestManifestFromImageConfig_BusyboxCmdOnly(t *testing.T) {
 	}
 }
 
+func TestManifestFromImageConfig_SingleTCPExposeSeedsPortAndEnv(t *testing.T) {
+	t.Parallel()
+	m, err := manifestFromImageConfig(oci.ImageConfig{
+		Cmd:          []string{"/app/server"},
+		ExposedPorts: map[string]struct{}{"3000/tcp": {}},
+	})
+	if err != nil {
+		t.Fatalf("manifestFromImageConfig: %v", err)
+	}
+	if m.Port != 3000 || m.Env["PORT"] != "3000" {
+		t.Fatalf("manifest port/env = %d/%q, want 3000/3000", m.Port, m.Env["PORT"])
+	}
+}
+
+func TestManifestFromImageConfig_AmbiguousExposeKeepsDefaultPort(t *testing.T) {
+	t.Parallel()
+	m, err := manifestFromImageConfig(oci.ImageConfig{
+		Cmd:          []string{"/app/server"},
+		ExposedPorts: map[string]struct{}{"3000/tcp": {}, "8080/tcp": {}},
+	})
+	if err != nil {
+		t.Fatalf("manifestFromImageConfig: %v", err)
+	}
+	if m.Port != 0 || m.EffectivePort() != 8080 || m.Env["PORT"] != "8080" {
+		t.Fatalf("manifest port/effective/env = %d/%d/%q, want 0/8080/8080", m.Port, m.EffectivePort(), m.Env["PORT"])
+	}
+}
+
 func TestManifestFromImageConfig_HealthcheckFlowThrough(t *testing.T) {
 	t.Parallel()
 	// HEALTHCHECK CMD shape projects onto AppManifest.Healthcheck
