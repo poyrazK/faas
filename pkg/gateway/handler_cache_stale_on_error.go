@@ -150,11 +150,12 @@ func (h *Handler) startStaleWhileWakingRefresh(r *http.Request, app App, rule *E
 		Query:          snap.Query,
 		VaryHash:       snap.VaryHash,
 	}
-	request := r.Clone(context.Background())
+	detached := context.WithoutCancel(r.Context())
+	request := r.Clone(detached)
 	request.Body = http.NoBody
-	go func() {
+	go func(ctx context.Context) {
 		_, _, _ = h.cacheRefresh.Do(key.String(), func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(api.WakeQueueTTLSeconds)*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, time.Duration(api.WakeQueueTTLSeconds)*time.Second)
 			defer cancel()
 			limits, _ := api.LimitsFor(app.Plan)
 			if _, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan); err != nil {
@@ -163,7 +164,7 @@ func (h *Handler) startStaleWhileWakingRefresh(r *http.Request, app App, rule *E
 			h.refreshCacheFromWarmTarget(ctx, request, app, rule, key)
 			return nil, nil
 		})
-	}()
+	}(detached)
 }
 
 func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Request, app App, rule *EdgeRuleCacheResolved, key CacheKey) {
