@@ -70,9 +70,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 			dashboardBase := "https://" + domain
 			marker := "<!-- gregale-preview:" + appSlug + " -->"
 			body := fmt.Sprintf("%s\n### Gregale preview — %s\n\nPreview status: **%s**.\n\n[Open preview](%s) · [Deployment details](%s/dashboard/apps/%s/deployments/%s) · [Deployment logs](%s/v1/deployments/%s/logs) · [Destroy preview](%s/dashboard/apps/%s/preview/%s/destroy)\n\nCommit: `%s`", marker, status, status, previewURL, dashboardBase, appSlug, deploymentID, dashboardBase, deploymentID, dashboardBase, previewOf, appSlug, commitSHA)
-			if commentErr := checks.UpsertPreviewComment(ctx, installationID, repo, previewPRNumber, marker, body); commentErr != nil {
-				// Deliberately ignored; see comment above.
-			}
+			_ = checks.UpsertPreviewComment(ctx, installationID, repo, previewPRNumber, marker, body)
 		}
 		return nil
 	}
