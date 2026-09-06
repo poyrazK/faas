@@ -205,10 +205,11 @@ func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, 
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnavailable
 	}
 	material := managedpostgres.CredentialMaterial{
-		Username: direct.username,
-		Password: direct.password,
-		Database: direct.database,
-		TLSMode:  direct.tlsMode,
+		ProviderIdentityID: roleName,
+		Username:           direct.username,
+		Password:           direct.password,
+		Database:           direct.database,
+		TLSMode:            direct.tlsMode,
 		Endpoints: []managedpostgres.Endpoint{
 			{Role: managedpostgres.EndpointPooled, Host: pooled.host, Port: pooled.port},
 			{Role: managedpostgres.EndpointDirect, Host: direct.host, Port: direct.port},

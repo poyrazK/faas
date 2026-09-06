@@ -364,7 +364,7 @@ func TestIssueCredentialsIsIdempotentAndRevokeDeletesRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueCredentials retry: %v", err)
 	}
-	if first.Username != second.Username || first.Password != "p@ss:word" || len(first.Endpoints) != 2 || first.Endpoints[0].Role != managedpostgres.EndpointPooled || postCount != 1 {
+	if first.Username != second.Username || first.ProviderIdentityID != first.Username || first.Password != "p@ss:word" || len(first.Endpoints) != 2 || first.Endpoints[0].Role != managedpostgres.EndpointPooled || postCount != 1 {
 		t.Fatalf("credentials = %+v / %+v; posts=%d", first, second, postCount)
 	}
 	if err := provider.RevokeCredentials(context.Background(), request); err != nil {

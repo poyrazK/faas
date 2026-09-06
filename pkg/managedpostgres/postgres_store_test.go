@@ -439,3 +439,102 @@ func TestPostgresBindingStoreOwnsSecretTargetAndFencesLifecycle(t *testing.T) {
 		t.Fatalf("customer write after target release: %v", err)
 	}
 }
+
+type postgresBindingCredentialSink struct {
+	store *state.PgStore
+}
+
+func (s *postgresBindingCredentialSink) Put(ctx context.Context, binding Binding, _ CredentialMaterial) (string, error) {
+	credentialRef := "integration-secret-" + binding.ID
+	err := s.store.PutManagedPostgresSecret(ctx, state.AppSecret{
+		AccountID:                   binding.AccountID,
+		AppID:                       binding.AppID,
+		Scope:                       binding.Scope,
+		Key:                         binding.EnvironmentKey,
+		Ciphertext:                  []byte("sealed-integration-credential"),
+		Kid:                         "age1integration",
+		ManagedPostgresBindingID:    binding.ID,
+		ManagedCredentialRef:        credentialRef,
+		ManagedCredentialGeneration: binding.CredentialGeneration,
+	})
+	return credentialRef, err
+}
+
+func (s *postgresBindingCredentialSink) Delete(ctx context.Context, binding Binding) error {
+	credentialRef := binding.CredentialRef
+	if credentialRef == "" {
+		credentialRef = "integration-secret-" + binding.ID
+	}
+	return s.store.DeleteManagedPostgresSecret(ctx, credentialRef)
+}
+
+func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombstone(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	stateStore := state.NewPgStore(pool)
+	app, err := stateStore.CreateApp(ctx, state.App{
+		AccountID: accountID,
+		Slug:      "binding-service-" + uuid.NewString(),
+		Type:      state.AppTypeApp,
+		RAMMB:     256,
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	provider := &bindingProvider{}
+	provider.capabilities = testCapabilities()
+	provider.material = bindingTestMaterial()
+	registry := testRegistry(t, provider, func(config *Config) { config.ProvisioningEnabled = true })
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 6, 15, 0, 0, 0, time.UTC)
+	databaseInput := postgresTestDatabase(accountID, "binding-service", now)
+	databaseInput.BackendFingerprint = backend.Fingerprint
+	database, created, err := store.Reserve(ctx, databaseInput, 3)
+	if err != nil || !created {
+		t.Fatalf("reserve database: created=%v database=%+v err=%v", created, database, err)
+	}
+	claimedDatabase, err := store.Claim(ctx, accountID, database.ID, uuid.NewString(), StateProvisioning, now, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordProviderResource(ctx, database.ID, claimedDatabase.LeaseToken, "provider-binding-service", now); err != nil {
+		t.Fatal(err)
+	}
+	database, err = store.FinishProvision(ctx, database.ID, claimedDatabase.LeaseToken, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := NewBindingService(registry, store, store, &postgresBindingCredentialSink{store: stateStore}, BindingServiceOptions{
+		LeaseDuration:       time.Minute,
+		ProviderTimeout:     time.Second,
+		ProvisioningEnabled: func() bool { return true },
+		Now:                 func() time.Time { return now },
+		NewID:               uuid.NewString,
+		NewLeaseToken:       uuid.NewString,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := service.Create(ctx, CreateBindingRequest{
+		AccountID: accountID, DatabaseID: database.ID, AppID: app.ID,
+		Scope: "default", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite,
+	})
+	if err != nil || binding.State != BindingStateReady || provider.issueCalls != 1 {
+		t.Fatalf("create binding: binding=%+v issue_calls=%d err=%v", binding, provider.issueCalls, err)
+	}
+	secret, err := stateStore.GetAppSecretInScope(ctx, accountID, app.ID, binding.Scope, binding.EnvironmentKey)
+	if err != nil || secret.ManagedPostgresBindingID != binding.ID || secret.ManagedCredentialRef != binding.CredentialRef {
+		t.Fatalf("ready binding secret: secret=%+v err=%v", secret, err)
+	}
+
+	deleted, err := service.Delete(ctx, accountID, binding.ID)
+	if err != nil || deleted.State != BindingStateDeleted || provider.revokeCalls != 1 {
+		t.Fatalf("delete binding: binding=%+v revoke_calls=%d err=%v", deleted, provider.revokeCalls, err)
+	}
+	if _, err := stateStore.GetAppSecretInScope(ctx, accountID, app.ID, binding.Scope, binding.EnvironmentKey); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("secret survived binding tombstone: %v", err)
+	}
+}

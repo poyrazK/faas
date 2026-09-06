@@ -1,19 +1,32 @@
 # Managed PostgreSQL operator preview
 
 Managed PostgreSQL is wired into `apid` as a dark control-plane capability. It
-has no customer API, plan entitlement, or automatic credential binding yet.
+has no customer API or plan entitlement yet.
 Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery both fail closed
 while it is false. Deletion intents are still reconciled, so disabling rollout
 cannot strand known paid resources.
 
-The binding catalog and encrypted-secret ownership boundary are already
-durable. Reserving a binding claims one `(app, scope, environment key)` target
-globally, so two databases cannot both own `DATABASE_URL`. A customer secret
-write racing that reservation is serialized in PostgreSQL; exactly one wins.
-Once claimed, customer PUT, rotate, and DELETE operations return a conflict
-until the binding reaches its deleted tombstone. Host-key maintenance can still
-re-seal the ciphertext without changing the managed owner.
+The binding catalog, credential saga, and encrypted-secret ownership boundary
+are durable. Reserving a binding claims one `(app, scope, environment key)`
+target globally, so two databases cannot both own `DATABASE_URL`. A customer
+secret write racing that reservation is serialized in PostgreSQL; exactly one
+wins. Once claimed, customer PUT, rotate, and DELETE operations return a
+conflict until the binding reaches its deleted tombstone. Host-key maintenance
+can still re-seal the ciphertext without changing the managed owner.
+
+The binding reconciler issues a deterministic provider identity, builds a
+percent-encoded PostgreSQL URL, and seals it under the host age recipient before
+marking the binding ready. The catalog stores only the provider's opaque
+identity ID and an opaque deterministic secret reference. If `apid` stops after
+the provider call or secret write, the expired lease is rediscovered and the
+same identity and secret reference are retried. Deletion revokes the upstream
+identity first, removes the owned secret, and only then writes the binding
+tombstone.
+
+Binding provisioning follows `provisioning_enabled`; binding deletion runs even
+while the flag is false. A missing host age recipient or HMAC key leaves the
+binding failed with a retry rather than storing plaintext or marking it ready.
 
 ## Neon backend configuration
 
@@ -57,17 +70,18 @@ a second POST. Deletion also searches by Gregale's stable resource ID when the
 opaque Neon ID was never persisted, closing the ambiguous-create cleanup path.
 Ambiguous duplicate names fail closed.
 
-Each app binding will use a deterministic Neon role. Repeating credential
+Each app binding uses a deterministic Neon role. Repeating credential
 issuance retrieves the stored role password rather than resetting it. Revoking
 a binding deletes that role. The adapter returns credential material only in
 memory and provider errors never include response bodies, connection strings,
 endpoint hosts, or API keys.
 
-Binding reconciliation is not enabled yet. Its persisted lease, retry,
-credential-generation, access, and tombstone fields are provider-neutral. A
-future worker must write the sealed app-secret row before marking a binding
-ready, and must remove that owned row before completing deletion; the
-PostgreSQL store fences both transitions.
+Neon currently supports `read_write` bindings only. The sink prefers a pooled
+endpoint and falls back to a direct endpoint. A `read_only` binding requires an
+adapter-provided read-only endpoint and therefore fails closed as unsupported
+with the initial Neon adapter. Provider-supplied root-certificate PEM also
+fails closed until the portable binding contract can deliver a separate sealed
+certificate file; it is never silently discarded.
 
 Neon's consumption-history API currently maps cleanly to Gregale's
 `compute_unit_seconds` and `egress_bytes` meters. Storage is intentionally not
