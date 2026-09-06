@@ -219,10 +219,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    appSlugFallback,
 		DocSlug: "apps",
-		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|--profile NAME|--ram N|…])",
+		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|restart|--profile NAME|--ram N|…])",
 		Subcommands: []cliSub{
 			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
+			{Name: "restart", Short: "Park and wake from a fresh snapshot"},
 			{Name: "security", Short: "Toggle require_signed on deploys"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
 		},

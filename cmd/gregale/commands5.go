@@ -5,6 +5,7 @@
 //   gregale env pull|push     local .env <-> sealed secrets (key-only pull per §11/G2)
 //   gregale app <slug> scale  per-app scale knobs (--ram/--max-concurrency/--idle/--min)
 //   gregale app <slug> rename atomic slug swap (full-stack: server + state + CLI)
+//   gregale app <slug> restart park + fresh snapshot + wake
 //   gregale plan <plan>       top-level plan change (account-scoped)
 //   gregale dashboard         opens the account-level dashboard in the browser
 //
@@ -42,8 +43,9 @@ import (
 // with the leaf it dispatches to); subRoutes follows the same
 // colocated pattern in commands_app_routes.go.
 const (
-	subScale  = "scale"
-	subRename = "rename"
+	subScale   = "scale"
+	subRename  = "rename"
+	subRestart = "restart"
 )
 
 // validCLISlug matches the server-side validSlug regex in cmd/apid/handlers.go.
@@ -726,13 +728,36 @@ func cmdAppRename(slug, newSlug string) int {
 	return 0
 }
 
+// cmdAppRestart requests a fresh snapshot restart for an app. The server
+// performs the park and replacement wake asynchronously and returns a wake id
+// for correlation with the wake timeline.
+func cmdAppRestart(slug string, args []string) int {
+	if len(args) != 0 {
+		PrintUsage(os.Stderr, "usage: gregale app <slug> restart", "apps")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.RestartApp(context.Background(), slug)
+	if err != nil {
+		return printErr("Restart failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	PrintOK(osStdout, "Restart requested (wake_id=%s)", out.WakeID)
+	return 0
+}
+
 // cmdAppDispatch routes `gregale app <slug> ...` to either the new
 // subcommand form (scale / rename / security / routes) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|security [--require-signed=true|false]|routes|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|security [--require-signed=true|false]|routes|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -746,6 +771,8 @@ func cmdAppDispatch(args []string) int {
 				return 1
 			}
 			return cmdAppRename(slug, args[2])
+		case subRestart:
+			return cmdAppRestart(slug, args[2:])
 		case subSecurity:
 			return cmdAppSecurity(slug, args[2:])
 		case subRoutes:

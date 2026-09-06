@@ -467,6 +467,14 @@ func (c *Client) Park(ctx context.Context, slug string) error {
 func (c *Client) Wake(ctx context.Context, slug string) error {
 	return c.do(ctx, "POST", "/v1/apps/"+slug+"/wake", nil, nil)
 }
+
+// RestartApp queues a fresh snapshot restart and returns its wake correlation
+// id. The API performs the park and replacement wake asynchronously.
+func (c *Client) RestartApp(ctx context.Context, slug string) (AppRestartResponse, error) {
+	var out AppRestartResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart", nil, &out)
+}
+
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
 	var out []InstanceResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/instances", nil, &out)

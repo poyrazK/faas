@@ -9,7 +9,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`apps`](#apps) | List your apps |
-| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|--profile NAME\|--ram N\|…]) |
+| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|restart\|--profile NAME\|--ram N\|…]) |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Build provenance + sbom (build provenance &lt;id&gt;\|build sbom &lt;id&gt;) |
@@ -229,7 +229,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 ## app
 
-Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|--profile NAME|--ram N|…])
+Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
 `gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>]`
 
@@ -247,6 +247,10 @@ Set max_concurrency / resource profile / RAM / CPU
 ### app rename
 
 Rename an app
+
+### app restart
+
+Park and wake from a fresh snapshot
 
 ### app security
 

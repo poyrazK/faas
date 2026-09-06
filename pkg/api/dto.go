@@ -816,6 +816,13 @@ type AppResponse struct {
 	CORSDefaultOrigins []string `json:"cors_default_origins"`
 }
 
+// AppRestartResponse is returned when a customer restart request is accepted.
+// The wake_id is the correlation id schedd carries onto the replacement
+// instance and wake timeline.
+type AppRestartResponse struct {
+	WakeID string `json:"wake_id"`
+}
+
 // ParkedDeploymentRef is the reference shape returned in
 // AppResponse.ParkedDeployment (issue #554 / ADR-079 follow-up).
 // Lives in pkg/api/dto.go per pkg-api-cannot-import-pkg-state so

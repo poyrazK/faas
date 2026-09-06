@@ -77,6 +77,7 @@ from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
 from .app_response_type import AppResponseType
+from .app_restart_response import AppRestartResponse
 from .app_routes_response import AppRoutesResponse
 from .app_routes_response_source import AppRoutesResponseSource
 from .app_secret_export_response import AppSecretExportResponse
@@ -852,6 +853,7 @@ __all__ = (
     "AppResponseEvictionPriority",
     "AppResponseRuntime",
     "AppResponseType",
+    "AppRestartResponse",
     "AppRoutesResponse",
     "AppRoutesResponseSource",
     "AppSecretExportResponse",

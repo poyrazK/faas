@@ -37,6 +37,7 @@ export type { AppOpenAPIImportResponse } from './AppOpenAPIImportResponse.js';
 export type { AppRegistryCredentialListResponse } from './AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './AppRegistryCredentialResponse.js';
 export type { AppResponse } from './AppResponse.js';
+export type { AppRestartResponse } from './AppRestartResponse.js';
 export type { AppRoutesResponse } from './AppRoutesResponse.js';
 export type { AppSLOResponse } from './AppSLOResponse.js';
 export type { AppSecretExportResponse } from './AppSecretExportResponse.js';
