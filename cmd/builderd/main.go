@@ -106,6 +106,15 @@ func builderNotificationChannels() []string {
 	return []string{db.NotifyBuildQueued, db.NotifyBuildChanged}
 }
 
+const (
+	// The durable worker remains the recovery path, so the fast path can use a
+	// small fixed queue without allowing notification volume to become process
+	// memory. Two workers match builderd's maximum VM build concurrency while
+	// still allowing one worker to handle a cache hit or cancellation promptly.
+	buildNotificationQueueCapacity = 64
+	buildNotificationWorkers       = 2
+)
+
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// DEPLOY-1 / ADR-075 capdecl gate. builderd is unprivileged —
 	// no Allow, no Deny. The build queue consumer, the vmmd
@@ -282,6 +291,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"cache_dir", cfg.CacheDir,
 		"poll_interval", cfg.PollInterval)
 
+	// LISTEN/NOTIFY is the low-latency hint path, not the durable queue. Keep
+	// both build processing and cancellation work bounded so a notification
+	// burst cannot create an unbounded number of goroutines. Dropped build
+	// notifications are recovered by workerLoop; cancellation remains fenced by
+	// the durable deployment/build status and can be retried by a later event.
+	notificationCtx, stopNotificationWorkers := context.WithCancel(ctx)
+	defer stopNotificationWorkers()
+	buildQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
+		if _, err := b.ProcessOne(workCtx, buildID); err != nil {
+			log.Warn("builderd: process", "build", buildID, "err", err)
+		}
+	})
+	cancelQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
+		cancelBuild(workCtx, driver, buildID, log)
+	})
+
 	// PR-B: durable worker. LISTEN/NOTIFY above is the fast path
 	// (apid emits on build_queued immediately after CreateBuild); this
 	// worker is the recovery net for missed notify / apid crashed
@@ -363,10 +388,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			if n.Channel != db.NotifyBuildQueued {
 				if n.Channel == db.NotifyBuildChanged {
-					// Destroy may wait for vmmd to reap a VM and flush its
-					// export. Keep the LISTEN loop available for other
-					// cancellations and queued builds while that happens.
-					go handleBuildCancelled(ctx, driver, n.Payload, log)
+					var p struct {
+						BuildID string `json:"build_id"`
+					}
+					if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+						log.Warn("builderd: bad build_changed payload", "err", err)
+						continue
+					}
+					if p.BuildID == "" {
+						log.Warn("builderd: build_changed missing build_id", "payload", n.Payload)
+						continue
+					}
+					if !cancelQueue.Enqueue(p.BuildID) {
+						log.Debug("builderd: coalesced or deferred build cancellation", "build", p.BuildID)
+					}
 				}
 				continue
 			}
@@ -381,39 +416,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("builderd: build_queued missing build id", "payload", n.Payload)
 				continue
 			}
-			// Keep the LISTEN loop responsive while a build waits for
-			// vmmd.Destroy/export. A synchronous ProcessOne would prevent
-			// the build_changed notification from being read, defeating
-			// cancellation for the exact in-flight build it is meant to stop.
-			go func(buildID string) {
-				if _, err := b.ProcessOne(ctx, buildID); err != nil {
-					log.Warn("builderd: process", "build", buildID, "err", err)
-				}
-			}(p.Build)
+			if !buildQueue.Enqueue(p.Build) {
+				log.Debug("builderd: coalesced or deferred build notification", "build", p.Build)
+			}
 		}
 	}
 }
 
-// handleBuildCancelled is the ADR-124 build-cancel listener
-// (cmd/builderd/main.go LISTEN goroutine). The pgstore row flip
-// already happened inside CancelDeploymentTx; this function's only
-// job is to ask the VM driver to drop the in-flight VM. The
-// fire-and-forget shape is deliberate — a Cancel error is logged
-// at WARN and the orphan is left for the ReaperLoop
-// (pkg/builderd/reaper.go) to sweep. We never bubble up an error:
-// the LISTEN goroutine must keep draining the channel.
-func handleBuildCancelled(ctx context.Context, driver any, payload string, log *slog.Logger) {
-	var p struct {
-		BuildID string `json:"build_id"`
-	}
-	if err := json.Unmarshal([]byte(payload), &p); err != nil {
-		log.Warn("builderd: bad build_changed payload", "err", err)
-		return
-	}
-	if p.BuildID == "" {
-		log.Warn("builderd: build_changed missing build_id", "payload", payload)
-		return
-	}
+// cancelBuild is the bounded ADR-124 build-cancel worker. The deployment row
+// flip already happened inside CancelDeploymentTx; this function asks the VM
+// driver to drop the in-flight VM. A cancellation error is logged and the
+// orphan remains visible to ReaperLoop, while a later notification can retry
+// the same build ID without creating another goroutine.
+func cancelBuild(ctx context.Context, driver any, buildID string, log *slog.Logger) {
 	vm, ok := driver.(builderdpkg.VM)
 	if !ok || vm == nil {
 		// vm is the unit-test stub (interface{} nil) — nothing to do.
@@ -421,8 +436,8 @@ func handleBuildCancelled(ctx context.Context, driver any, payload string, log *
 	}
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := vm.Cancel(cctx, p.BuildID); err != nil {
-		log.Warn("builderd: build cancel", "build", p.BuildID, "err", err)
+	if err := vm.Cancel(cctx, buildID); err != nil {
+		log.Warn("builderd: build cancel", "build", buildID, "err", err)
 	}
 }
 

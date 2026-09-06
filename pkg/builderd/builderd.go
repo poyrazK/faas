@@ -331,10 +331,12 @@ func (b *Builderd) stopIfBuildCancelled(ctx context.Context, buildID string) boo
 func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (BuildResult, error) {
 	dep, err := b.store.DeploymentByID(ctx, build.DeploymentID)
 	if err != nil {
+		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
 	}
 	app, err := b.store.AppByID(ctx, dep.AppID)
 	if err != nil {
+		b.recoverClaimAfterLookupFailure(ctx, build, "load app", err)
 		return BuildResult{}, fmt.Errorf("builderd: load app: %w", err)
 	}
 	// Issue #197 B3.11: the cache key is partitioned by plan. A Hobby
@@ -343,6 +345,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// account eagerly so the cache lookup below can include the plan.
 	acct, acctErr := b.store.AccountByID(ctx, app.AccountID)
 	if acctErr != nil {
+		b.recoverClaimAfterLookupFailure(ctx, build, "load account", acctErr)
 		return BuildResult{}, fmt.Errorf("builderd: load account: %w", acctErr)
 	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
@@ -796,7 +799,9 @@ func (b *Builderd) emitBuildSucceeded(ctx context.Context, buildID string, durat
 // Also observes build_duration_seconds with outcome="failed".
 func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.FailureClass, msg string, buildStart time.Time) bool {
 	depID, buildID := claim.DeploymentID, claim.ID
-	if err := b.store.FailBuild(ctx, claim, fc, msg); err != nil {
+	if err := retryStateMutation(ctx, func() error {
+		return b.store.FailBuild(ctx, claim, fc, msg)
+	}); err != nil {
 		b.log.Warn("builderd: mark failed", "build", buildID, "err", err)
 		return false
 	}
@@ -960,7 +965,9 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,
 		StartedAt: build.StartedAt, FinishedAt: time.Now(), FrameworkVer: frameworkVer,
 	}
-	if err := b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov); err != nil {
+	if err := retryStateMutation(ctx, func() error {
+		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)
+	}); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, nil
 		}
@@ -979,6 +986,63 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		}
 	}
 	return result, nil
+}
+
+// recoverClaimAfterLookupFailure prevents a build claimed by builderd from
+// being left running merely because a parent lookup failed. A missing parent
+// is terminal for this build row; a transport or database error is retried by
+// returning the row to the durable queue. The deployment update is best
+// effort because the deployment itself may have been deleted concurrently.
+func (b *Builderd) recoverClaimAfterLookupFailure(ctx context.Context, claim state.Build, phase string, cause error) {
+	message := fmt.Sprintf("%s: %v", phase, cause)
+	if errors.Is(cause, state.ErrNotFound) {
+		if err := retryStateMutation(ctx, func() error {
+			return b.store.UpdateBuildStatus(ctx, claim.ID, state.BuildFailed, state.FailureInfra, false, true)
+		}); err != nil {
+			b.log.Warn("builderd: terminalize orphaned claim", "build", claim.ID, "err", err)
+		}
+		if err := retryStateMutation(ctx, func() error {
+			return b.store.UpdateDeploymentStatus(ctx, claim.DeploymentID, state.DeployFailed, message)
+		}); err != nil && !errors.Is(err, state.ErrNotFound) {
+			b.log.Warn("builderd: mark orphaned deployment failed", "build", claim.ID, "deployment", claim.DeploymentID, "err", err)
+		}
+		return
+	}
+	if err := retryStateMutation(ctx, func() error {
+		return b.store.RequeueBuild(ctx, claim.ID)
+	}); err != nil && !errors.Is(err, state.ErrNotFound) {
+		b.log.Warn("builderd: requeue after claim lookup failure", "build", claim.ID, "phase", phase, "err", err)
+	}
+}
+
+// retryStateMutation handles short database/network interruptions around
+// build state transitions. CompleteBuild is idempotent under the claim fence,
+// so retrying after an uncertain commit is safe: a successful first commit
+// makes the retry return ErrNotFound, which callers already treat as a stale
+// claim. ErrNotFound and context cancellation are state decisions, not
+// transient transport failures, and are returned without a delay.
+func retryStateMutation(ctx context.Context, op func() error) error {
+	const attempts = 3
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		err = op()
+		if err == nil || errors.Is(err, state.ErrNotFound) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if attempt == attempts-1 {
+			break
+		}
+		timer := time.NewTimer(time.Duration(50*(1<<attempt)) * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return err
 }
 
 // emitBuildLog appends a line to the build log file (lazily opened) and fans
