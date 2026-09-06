@@ -5315,6 +5315,67 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/upstreams/history:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: from
+        in: query
+        required: false
+        schema: { type: string, format: date-time }
+        description: "Inclusive RFC3339 window start. Defaults to 24 hours before `to`; the maximum window is 30 days."
+      - name: to
+        in: query
+        required: false
+        schema: { type: string, format: date-time }
+        description: "Exclusive RFC3339 window end. Defaults to the current time."
+      - name: bucket
+        in: query
+        required: false
+        schema:
+          type: string
+          default: 5m
+        description: "Aggregation bucket duration, from 1m through 24h. The result is capped at 1000 buckets."
+      - name: region
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: '^[a-z0-9_-]{1,32}$'
+        description: "Optional probe region filter. Omitted returns every region with samples."
+      - name: deployment_scope
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+        description: "Optional deployment scope filter from the ADR-098 issue #954 overlay."
+    get:
+      tags: [upstreams]
+      operationId: getAppDataUpstreamHistory
+      summary: Get historical data-upstream probe metrics.
+      description: |
+        Returns one time series per captured upstream and probe region.
+        Each bucket contains p50/p95 successful RTTs and the total number
+        of probes, including failures. The query is bounded to the probe
+        retention window and is aggregated server-side; raw probe rows and
+        plaintext hosts are never returned.
+      responses:
+        '200':
+          description: Bucketed upstream probe history.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DataUpstreamHistoryResponse' }
+        '400':
+          description: Invalid time window, bucket, or region filter.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/upstreams/{id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -19498,6 +19559,42 @@ components:
           items: { $ref: '#/components/schemas/DataUpstreamResponse' }
         quota_max: { type: integer }
         count: { type: integer }
+
+    DataUpstreamHistoryBucket:
+      type: object
+      required: [sampled_at, sample_count]
+      description: "One server-side probe aggregation bucket. Percentiles are omitted when every probe in the bucket failed."
+      properties:
+        sampled_at: { type: string, format: date-time, description: "UTC start of the aggregation bucket." }
+        p50_ms: { type: [integer, 'null'], description: "Successful probe RTT p50 in milliseconds." }
+        p95_ms: { type: [integer, 'null'], description: "Successful probe RTT p95 in milliseconds." }
+        sample_count: { type: integer, minimum: 1, description: "Total probes in the bucket, including failures." }
+
+    DataUpstreamHistoryResponse:
+      type: object
+      required: [host_redacted_hash, kind, port, region, buckets]
+      description: "Historical probe series for one redacted upstream and region."
+      properties:
+        host_redacted_hash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: "SHA-256 hex of (HostHashSalt||host); plaintext hosts never appear on this surface."
+        kind:
+          type: string
+          enum: [postgres, redis, mongo, cassandra, clickhouse, elasticsearch, opensearch, rabbitmq, kafka, nats, minio, memcached, etcd, s3, https_api]
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        scope:
+          type: string
+          description: "Env scope associated with the upstream."
+        deployment_scope:
+          type: string
+          description: "Deployment scope from the ADR-098 issue #954 overlay."
+        region:
+          type: string
+          pattern: '^[a-z0-9_-]{1,32}$'
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/DataUpstreamHistoryBucket' }
     # Fields tagged with `x-since: "YYYY-MM"` (issue #NNN) were added after
     # the public launch. OpenAPI consumers (the Go SDK, the Node SDK) read
     # the extension and surface "this field was added in YYYY-MM" so

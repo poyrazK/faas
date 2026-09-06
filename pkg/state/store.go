@@ -5686,6 +5686,13 @@ type Store interface {
 	// the window.
 	ListDataUpstreamProbesByHostRegion(ctx context.Context, arg sqlc.ListDataUpstreamProbesByHostRegionParams) ([]DataUpstreamProbe, error)
 
+	// ListDataUpstreamProbeHistory backs
+	// GET /v1/apps/{slug}/upstreams/history. It aggregates the raw probe
+	// rows into server-side time buckets so the API never serializes the
+	// full probe stream. The window is half-open [since, until); an empty
+	// deploymentScope or region leaves that dimension unfiltered.
+	ListDataUpstreamProbeHistory(ctx context.Context, accountID, appID, deploymentScope, region string, since, until time.Time, bucket time.Duration) ([]DataUpstreamProbeHistory, error)
+
 	// ListDistinctUpstreamHostHashes (PR-C / meterd probe
 	// loop) walks data_upstreams and returns the
 	// deduplicated set of (host_redacted_hash, kind, port)

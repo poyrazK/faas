@@ -3998,7 +3998,7 @@ func (c *Client) GetRekeyProgress(ctx context.Context) (RekeyProgress, error) {
 	return out, c.do(ctx, "GET", "/v1/admin/secrets/rekey-progress", nil, &out)
 }
 
-// Data upstreams (ADR-098 §9.A PR-B). The 4 endpoints back
+// Data upstreams (ADR-098 §9.A PR-B). The 5 endpoints back
 // `gregale upstreams list/get/create/delete`. The wire routes
 // are owned by cmd/apid/handlers_upstreams.go; the typed DTOs
 // live next to this method in pkg/api/upstreams.go (closed-vocab
@@ -4049,6 +4049,36 @@ func (c *Client) ListAppDataUpstreamsWithQuota(ctx context.Context, slug, scope 
 	}
 	return out.Upstreams, out.Count, out.Quota, nil
 }
+
+// GetAppDataUpstreamHistory returns bucketed probe history for an app. The
+// from/to values are RFC3339 timestamps and bucket is a duration such as
+// "5m"; empty values use the server defaults. The response carries only
+// redacted host hashes and never plaintext upstream hosts.
+func (c *Client) GetAppDataUpstreamHistory(ctx context.Context, slug, from, to, bucket, region, deploymentScope string) ([]DataUpstreamHistoryResponse, error) {
+	path := "/v1/apps/" + slug + "/upstreams/history"
+	q := url.Values{}
+	if from != "" {
+		q.Set("from", from)
+	}
+	if to != "" {
+		q.Set("to", to)
+	}
+	if bucket != "" {
+		q.Set("bucket", bucket)
+	}
+	if region != "" {
+		q.Set("region", region)
+	}
+	if deploymentScope != "" {
+		q.Set("deployment_scope", deploymentScope)
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out []DataUpstreamHistoryResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) GetAppDataUpstream(ctx context.Context, slug, id string) (DataUpstreamResponse, error) {
 	var out DataUpstreamResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/upstreams/"+id, nil, &out)

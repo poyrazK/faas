@@ -114,6 +114,8 @@ export type { CustomStage } from './CustomStage.js';
 export type { DailyUsageListResponse } from './DailyUsageListResponse.js';
 export type { DailyUsagePoint } from './DailyUsagePoint.js';
 export type { DailyUsageResponse } from './DailyUsageResponse.js';
+export type { DataUpstreamHistoryBucket } from './DataUpstreamHistoryBucket.js';
+export type { DataUpstreamHistoryResponse } from './DataUpstreamHistoryResponse.js';
 export type { DataUpstreamListResponse } from './DataUpstreamListResponse.js';
 export type { DataUpstreamResponse } from './DataUpstreamResponse.js';
 export type { DebugCompareRequest } from './DebugCompareRequest.js';
