@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/stages"
@@ -2520,6 +2521,16 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	} else if stagePayload.BodyHTML != "" {
 		data.Stages = &stagePayload
 	}
+	// API-hosting receipts are durable, non-secret evidence written after
+	// readiness. Decode at the handler edge so the template can render a
+	// stable, actionable view and a malformed/older row cannot break the
+	// read-only dashboard page.
+	if receipt, receiptErr := dashboardHostingReceipt(dep.APIHostingReceipt); receiptErr != nil {
+		log.Warn("dashboard renderDeploymentDetail: decode hosting receipt",
+			"deployment_id", dep.ID, "err", receiptErr)
+	} else {
+		data.HostingReceipt = receipt
+	}
 	// Issue #976 / ADR-122 / SAFE-RELEASES-C.3 — populate the
 	// per-deployment preview URL for the dashboard. Mirrors
 	// getDeploymentURL (cmd/apid/handlers_url.go::getDeploymentURL)
@@ -2622,6 +2633,43 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	if err := dashboard.Render(w, log, nonce, page); err != nil {
 		renderProblem(w, log, err)
 	}
+}
+
+// dashboardHostingReceipt projects the durable receipt into the small view
+// consumed by deployment_detail.html. Empty/default JSON means the row has no
+// receipt yet; that is a normal state for legacy and in-flight deployments.
+func dashboardHostingReceipt(raw json.RawMessage) (*dashboard.HostingReceiptView, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "{}" {
+		return nil, nil
+	}
+	receipt, err := apihostingreceipt.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	verifiedAt := ""
+	if !receipt.Smoke.VerifiedAt.IsZero() {
+		verifiedAt = receipt.Smoke.VerifiedAt.UTC().Format(time.RFC3339)
+	}
+	return &dashboard.HostingReceiptView{
+		AppURL:          receipt.AppURL,
+		SourceKind:      receipt.Source.Kind,
+		SourceURL:       receipt.Source.URL,
+		CommitSHA:       receipt.Source.CommitSHA,
+		ImageDigest:     receipt.Source.ImageDigest,
+		ProfileVersion:  receipt.Profile.Version,
+		Framework:       receipt.Profile.Framework,
+		FrameworkVer:    receipt.Profile.FrameworkVer,
+		Port:            receipt.Profile.Port,
+		HealthPath:      receipt.Profile.HealthPath,
+		SmokeStatus:     receipt.Smoke.Status,
+		SmokePath:       receipt.Smoke.Path,
+		SmokeStatusCode: receipt.Smoke.StatusCode,
+		SmokeLatencyMS:  receipt.Smoke.LatencyMS,
+		SmokeVerifiedAt: verifiedAt,
+		SmokeErrorCode:  receipt.Smoke.ErrorCode,
+		SmokeError:      receipt.Smoke.Error,
+	}, nil
 }
 
 // dashboardStagePayload projects the typed state.Deployment row

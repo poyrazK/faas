@@ -27,7 +27,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -38,6 +40,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 )
 
 // deploymentIDPattern enforces the 32-hex deployment id shape the API
@@ -479,6 +482,7 @@ func cmdDeploymentGet(args []string) int {
 	if d.ErrorCode != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "error_code:", d.ErrorCode)
 	}
+	renderDeploymentHostingReceipt(osStdout, d.APIHostingReceipt)
 	if *showScan {
 		sc, scanErr := client.GetDeploymentScan(context.Background(), id)
 		if scanErr != nil {
@@ -537,6 +541,57 @@ func cmdDeploymentGet(args []string) int {
 		}
 	}
 	return 0
+}
+
+// renderDeploymentHostingReceipt prints the durable post-readiness evidence
+// when the server has one. Legacy and in-flight deployments have an empty or
+// default receipt, which intentionally produces no extra output.
+func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("{}")) {
+		return
+	}
+	receipt, err := apihostingreceipt.Decode(raw)
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "%-14s unavailable (%v)\n", "hosting_receipt:", err)
+		return
+	}
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_status:", receipt.Smoke.Status)
+	if receipt.AppURL != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_app_url:", receipt.AppURL)
+	}
+	if receipt.Smoke.Path != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "health_path:", receipt.Smoke.Path)
+	}
+	if receipt.Smoke.StatusCode != 0 {
+		_, _ = fmt.Fprintf(w, "%-14s %d\n", "health_status:", receipt.Smoke.StatusCode)
+	}
+	if receipt.Smoke.LatencyMS != 0 {
+		_, _ = fmt.Fprintf(w, "%-14s %dms\n", "health_latency:", receipt.Smoke.LatencyMS)
+	}
+	if !receipt.Smoke.VerifiedAt.IsZero() {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "verified_at:", receipt.Smoke.VerifiedAt.UTC().Format(time.RFC3339))
+	}
+	if receipt.Profile.Framework != "" {
+		profile := receipt.Profile.Framework
+		if receipt.Profile.FrameworkVer != "" {
+			profile += " " + receipt.Profile.FrameworkVer
+		}
+		_, _ = fmt.Fprintf(w, "%-14s %s (port %d)\n", "profile:", profile, receipt.Profile.Port)
+	}
+	if receipt.Source.CommitSHA != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "source_sha:", receipt.Source.CommitSHA)
+	}
+	if receipt.Source.ImageDigest != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "image_digest:", receipt.Source.ImageDigest)
+	}
+	if receipt.Smoke.ErrorCode != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_error:", receipt.Smoke.ErrorCode)
+	}
+	if receipt.Smoke.Error != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_detail:", receipt.Smoke.Error)
+	}
 }
 
 // cmdDeploymentSetMinInstances implements `gregale deployment

@@ -672,6 +672,10 @@ type DeploymentDetailData struct {
 	// POST /dashboard/apps/{slug}/rollback. It is empty when
 	// CanRollback is false.
 	RollbackConfirmToken string
+	// HostingReceipt is the durable post-readiness evidence emitted by
+	// imaged. It is optional because older deployments and non-API
+	// deployment paths may not have a receipt yet.
+	HostingReceipt *HostingReceiptView
 	// PreviewURL carries the resolved per-deployment preview
 	// URL. nil when the deployment doesn't exist or belongs to
 	// another account (handler already 404s in that case).
@@ -707,6 +711,31 @@ type DeploymentDetailData struct {
 	// template can pick a CSS palette without re-implementing
 	// the kind→severity mapping.
 	DeploymentAudit []DeploymentAuditRow
+}
+
+// HostingReceiptView is the dashboard-safe projection of the durable API
+// hosting receipt. The raw receipt stays on the API/state boundary; this
+// view keeps the template focused on the fields that answer "is it ready,
+// what was checked, and what artifact went live?" without exposing storage
+// internals such as the rootfs key.
+type HostingReceiptView struct {
+	AppURL          string
+	SourceKind      string
+	SourceURL       string
+	CommitSHA       string
+	ImageDigest     string
+	ProfileVersion  string
+	Framework       string
+	FrameworkVer    string
+	Port            int
+	HealthPath      string
+	SmokeStatus     string
+	SmokePath       string
+	SmokeStatusCode int
+	SmokeLatencyMS  int64
+	SmokeVerifiedAt string
+	SmokeErrorCode  string
+	SmokeError      string
 }
 
 // DeploymentAuditRow is the dashboard-local projection of one
