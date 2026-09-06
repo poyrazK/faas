@@ -292,15 +292,16 @@ func (c *Client) AdmitMirrorInstance(ctx context.Context, appID, mirrorDeploymen
 	return resp.GetInstanceId(), resp.GetWakeId(), nil
 }
 
-// ReportActivity flushes a batch of last_request_at touches to schedd. Returns
+// ReportActivity flushes batched last_request_at and request-count deltas to schedd. Returns
 // the number of rows schedd applied (touches for parked/gone instances are
 // silently dropped on its side).
 func (c *Client) ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error) {
 	pb := make([]*scheddpb.Touch, 0, len(touches))
 	for _, t := range touches {
 		pb = append(pb, &scheddpb.Touch{
-			InstanceId: t.InstanceID,
-			UnixMs:     t.LastRequest.UnixMilli(),
+			InstanceId:   t.InstanceID,
+			UnixMs:       t.LastRequest.UnixMilli(),
+			RequestDelta: t.RequestDelta,
 		})
 	}
 	resp, err := c.cli.ReportActivity(ctx, &scheddpb.ReportActivityRequest{Touches: pb})
