@@ -364,6 +364,9 @@ type invalidator interface {
 	// per-rule invalidation would require the rule's match_host
 	// in the notify payload, which it doesn't carry.
 	InvalidateResponseCacheAll()
+	// InvalidateResponseCacheByPath drops only the requested path subset
+	// for one app. Malformed globs are logged and ignored by the consumer.
+	InvalidateResponseCacheByPath(appID, pathGlob string) error
 	// RequestCertForSurface (ADR-100 / issue #879) is the
 	// cert-remint goroutine's entry point. A
 	// tenant_surface_changed notification (any insert / update /
@@ -419,6 +422,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyKeyChanged,
 		db.NotifyDeploymentChanged,
 		db.NotifyEdgeRuleChanged,
+		db.NotifyCachePurge,
 		db.NotifyTenantSurfaceChanged,
 		db.NotifyCorsPresetChanged,
 	}
@@ -523,39 +527,16 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.EvictInstance(p.AppID, p.InstanceID)
 		}
 	case db.NotifyAppChanged:
-		// ADR-091 amendment / §4.1.2.0: a per-app column flip
-		// (e.g. apps.maintenance_mode) fires apps_maintenance_mode_notify
-		// which emits 'app_changed' with NEW.id as the payload.
-		// Drop ONLY that app from the apps LRU — not the route
-		// cache — because the next Backend.Lookup will re-read
-		// the apps row and pick up the new column value. This
-		// arm is also the load-bearing destination of any future
-		// per-app column triggers (e.g. apps.streaming_enabled
-		// flips, apps.public_auth_mode rotations). Until those
-		// land, the only fired trigger is apps_maintenance_mode_notify.
-		// Wholesale FlushRoutes() used to be the only behaviour;
-		// we keep that for NotifyDomainChanged because a custom
-		// domain's host→app mapping change affects the route
-		// resolver wholesale, not per-app.
-		if n.Payload != "" {
-			inv.ResetApp(n.Payload)
-			// ADR-122 §Decision: drop kind=cache entries for
-			// the affected app. A deploy or a per-app column
-			// flip must not let the previous release's body
-			// serve under the new release's URL — the cache
-			// key's DeploymentID is empty in v1, so the only
-			// way to fence deploys is a per-app drop. Per-app
-			// (not wholesale) so an isolated app flip doesn't
-			// evict every other app's entries.
-			inv.InvalidateResponseCacheByApp(n.Payload)
+		// APID publishes a JSON envelope, while the maintenance-mode
+		// database trigger publishes a bare app ID. Decode both before
+		// touching caches; a JSON document is never an app-cache key.
+		if appID := appChangedID(n.Payload); appID != "" {
+			inv.ResetApp(appID)
+			inv.InvalidateResponseCacheByApp(appID)
 		} else {
-			// Defensive: a missing payload on the existing
-			// channel (e.g. a row delete or a future trigger
-			// without a NEW.id payload) falls back to wholesale
-			// FlushRoutes — same posture as the legacy arm.
+			// Preserve the conservative fallback when no app can be
+			// identified, including malformed or incomplete envelopes.
 			inv.FlushRoutes()
-			// Wholesale cache drop on a malformed payload —
-			// safer than guessing the affected app.
 			inv.InvalidateResponseCacheAll()
 		}
 	case db.NotifyDomainChanged:
@@ -624,9 +605,25 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				log.Warn("gatewayd: refresh mirror rules failed", "app", p.AppID, "err", err)
 			}
 		default:
+			// v1 cache lookup happens before target selection, so the
+			// deployment dimension is currently empty. Fence rollout and
+			// traffic changes with an app-wide cache purge.
+			inv.InvalidateResponseCacheByApp(p.AppID)
 			if err := inv.RefreshDeploymentWeights(ctx, p.AppID); err != nil {
 				log.Warn("gatewayd: refresh deployment weights failed", "app", p.AppID, "err", err)
 			}
+		}
+	case db.NotifyCachePurge:
+		var p struct {
+			AppID    string `json:"app_id"`
+			PathGlob string `json:"path_glob"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" {
+			log.Warn("gatewayd: bad cache purge payload", "payload", n.Payload)
+			return
+		}
+		if err := inv.InvalidateResponseCacheByPath(p.AppID, p.PathGlob); err != nil {
+			log.Warn("gatewayd: cache purge failed", "app", p.AppID, "path", p.PathGlob, "err", err)
 		}
 	case db.NotifyEdgeRuleChanged:
 		// Issue #561 / ADR-089 PR 3. A create / update /

@@ -7,6 +7,7 @@ import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
+import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
 import type { AppSLOResponse } from '../models/AppSLOResponse.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
@@ -1131,6 +1132,96 @@ export class AppsService {
         404: `code: not_found`,
         429: `code: plan_limit_concurrency`,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Restart an app from a fresh snapshot.
+   * Parks every live instance, captures a fresh snapshot, and queues one
+   * replacement wake. Requests are single-flight per app; the returned
+   * wake_id identifies the replacement wake in the wake timeline.
+   *
+   * @returns AppRestartResponse Restart accepted.
+   * @throws ApiError
+   */
+  public static restartApp({
+    slug,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppRestartResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/restart',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: admission_refused — the account's spend cap (accounts.overage_cap_cents) is met/exceeded by the current-month overage. Schedd refuses new wakes until the customer raises or clears the cap via POST /v1/account/overage-cap. The Limit / Observed fields carry the cap and current overage in integer cents so a script can compute "how much to raise" without parsing prose. No Retry-After: the cap is a deliberate customer budget, not back-pressure.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Purge cached responses for an app.
+   * Requests an in-process response-cache purge on every gateway. The
+   * optional path glob limits the purge to matching normalized request
+   * paths; omit it to purge the complete app cache.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static purgeAppCache({
+    slug,
+    path,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional normalized request path glob (for example `/products*`).
+     */
+    path?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/cache',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'path': path,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
       },
     });
   }

@@ -1608,6 +1608,15 @@ func (b *PGBackend) InvalidateResponseCacheByApp(appID string) {
 	b.responseCache.InvalidateByApp(appID)
 }
 
+// InvalidateResponseCacheByPath drops the matching cached paths for one app.
+// A nil cache is treated as an already-completed purge.
+func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	return b.responseCache.InvalidateByAppPath(appID, pathGlob)
+}
+
 // InvalidateResponseCacheAll (ADR-122 §Decision) drops every
 // cached entry. Called from cmd/gatewayd-internal on
 // db.NotifyEdgeRuleChanged when a kind=cache rule is created /

@@ -64,7 +64,16 @@ func (c *Cache) LookupBuild(recipe BuildCacheRecipe) (CacheEntry, bool) {
 	if err != nil {
 		return CacheEntry{}, false
 	}
-	return c.lookupKey(key, recipe.Framework, recipe.Plan)
+	if c == nil {
+		return CacheEntry{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.lookupKey(key, recipe.Framework, recipe.Plan)
+	if ok {
+		c.touchEntry(entry.Path)
+	}
+	return entry, ok
 }
 
 // StoreBuild publishes under the same normalized recipe used by LookupBuild.
@@ -73,5 +82,10 @@ func (c *Cache) StoreBuild(recipe BuildCacheRecipe, layerPath string, bytes int6
 	if err != nil {
 		return err
 	}
+	if c == nil {
+		return errors.New("cache: not configured")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.storeKey(key, recipe.Framework, recipe.Plan, layerPath, bytes)
 }

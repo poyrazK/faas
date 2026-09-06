@@ -3,7 +3,7 @@ package faas
 import (
 	"errors"
 
-	"github.com/poyrazK/faas-go/internal/api"
+	"github.com/poyrazK/faas/sdk/go/internal/api"
 )
 
 // Sentinel errors exported for the public SDK. Each maps to one or

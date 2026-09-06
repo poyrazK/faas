@@ -565,12 +565,16 @@ type CronFireNowRequest struct {
 }
 
 type CustomDomain struct {
-	Domain         interface{}
-	AppID          pgtype.UUID
-	VerifiedAt     pgtype.Timestamptz
-	ChallengeToken string
-	AppIDRedirect  pgtype.UUID
-	OrgID          pgtype.UUID
+	Domain           interface{}
+	AppID            pgtype.UUID
+	VerifiedAt       pgtype.Timestamptz
+	ChallengeToken   string
+	AppIDRedirect    pgtype.UUID
+	OrgID            pgtype.UUID
+	CertStatus       string
+	CertExpiresAt    pgtype.Timestamptz
+	CertLastError    pgtype.Text
+	DnsLastCheckedAt pgtype.Timestamptz
 }
 
 type DataUpstream struct {
@@ -1190,6 +1194,29 @@ type ObjectStorageKeyGrant struct {
 	MaxBytes int64
 }
 
+type ObjectStorageMultipartUpload struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	BucketID         pgtype.UUID
+	ObjectKey        string
+	SizeBytes        int64
+	PartSizeBytes    int64
+	PartCount        int32
+	ContentType      string
+	ProviderUploadID string
+	CompletionParts  []byte
+	State            string
+	ExpiresAt        pgtype.Timestamptz
+	LeaseToken       pgtype.Text
+	LeaseUntil       pgtype.Timestamptz
+	AttemptCount     int32
+	RetryAt          pgtype.Timestamptz
+	LastErrorCode    string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type ObjectStorageUsageHead struct {
 	AccountID   pgtype.UUID
 	BackendID   string
@@ -1632,6 +1659,30 @@ type TriggerRecord struct {
 	DeadlineAt           pgtype.Timestamptz
 	RetryPolicy          []byte
 	ResultRetentionUntil pgtype.Timestamptz
+}
+
+type UploadCommitOutcome struct {
+	UploadID     string
+	DeploymentID string
+	BuildID      string
+	FinalizedAt  pgtype.Timestamptz
+}
+
+type UploadSession struct {
+	ID            string
+	AccountID     pgtype.UUID
+	AppSlug       string
+	TotalSize     int64
+	ReceivedBytes int64
+	ChunkSize     int32
+	Sha256Hex     pgtype.Text
+	PartPath      string
+	Status        string
+	CreatedAt     pgtype.Timestamptz
+	LastPatchedAt pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	DeploymentID  pgtype.Text
+	DeployOptions []byte
 }
 
 // Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-048. Informational — not billed.

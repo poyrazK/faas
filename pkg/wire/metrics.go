@@ -400,6 +400,10 @@ type OpsMetrics struct {
 	// counter after every successful park (idle / aggressive /
 	// RAM-pressure).
 	evictedPriority *prometheus.CounterVec
+	// evictionFiredTotal (issue #255) counts every successful reaper
+	// eviction/park, labelled by tenant plan and reaper reason. The closed
+	// label sets keep the operator-facing series bounded.
+	evictionFiredTotal *prometheus.CounterVec
 	// bridgeFramingTotal (ADR-127 §D3, Layer 7) — closed-set
 	// counter for the per-request framing decision at the bridge.
 	// Labels:
@@ -1659,6 +1663,10 @@ type OpsMetrics struct {
 	// breakerFailureThreshold consecutive failures, then auto-
 	// resets after breakerCooldown).
 	githubdPathFilterTotal *prometheus.CounterVec
+	// githubdPushSkippedTotal counts customer-requested deployment skips,
+	// labelled by a closed reason set so commit text never becomes a metric
+	// label. Only githubd increments this single-registry counter.
+	githubdPushSkippedTotal *prometheus.CounterVec
 	// registryCredentialMarkUsedFailures: ADR-062 / issue #461.
 	// Counts every failure of imaged's
 	// store.MarkAppRegistryCredentialUsed call after a successful
@@ -1771,6 +1779,20 @@ type OpsMetrics struct {
 	// successful schedd completeness query, independent of scrape time.
 	operatorActionTraceCompletenessLastSuccessTimestamp prometheus.Gauge
 	operatorActionTraceCompletenessFirstTickOnce        sync.Once
+	// Upload session counters (issue #1182 §P1 PR-1). Five fields
+	// backing the POST /v1/uploads, PATCH /v1/uploads/{id},
+	// POST /v1/uploads/{id}/commit, DELETE /v1/uploads/{id}
+	// surface plus the in-process reaper. Consumed by
+	// cmd/apid/handlers_upload_session.go via the
+	// SetUploadSessionCounters pattern (same precedent as
+	// pkg/rootfs/layer.go:33 SetOpsMetrics). The {plan} counter
+	// vecs are pre-instantiated to the 4-value closed set in the
+	// ctor below so /metrics surfaces zero series from boot.
+	uploadSessionCreatedTotal           *prometheus.CounterVec
+	uploadSessionCommittedTotal         *prometheus.CounterVec
+	uploadSessionExpiredTotal           prometheus.Counter
+	uploadSessionReaperRowsDeletedTotal prometheus.Counter
+	uploadSessionReaperFailedTotal      prometheus.Counter
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -2152,6 +2174,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	evictedPriority.WithLabelValues("reserved", "idle")
 	evictedPriority.WithLabelValues("reserved", "eviction_aggressive")
 	evictedPriority.WithLabelValues("reserved", "eviction_ram")
+	evictionFiredTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_eviction_fired_total",
+		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,unknown}.",
+	}, []string{"tenant_tier", "reason"})
+	for _, tier := range []string{"free", "hobby", "pro", "scale", "unknown"} {
+		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "unknown"} {
+			evictionFiredTotal.WithLabelValues(tier, reason)
+		}
+	}
 	rebalanceDecisions := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_rebalance_decisions_total",
 		Help: "Count of per-app decisions the Tier A4 cross-node rebalancer made on a drain event (ADR-064), labelled by outcome ∈ {migrated, conflict, no_headroom, cooldown, no_eligibility}. The migrated counter is the §12 rebalance-rate panel.",
@@ -3094,6 +3125,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_path_filter_total",
 		Help: "Path-filter mode counter for githubd push dispatch (issue #432 phase 5, ADR-050 §109). mode ∈ {paths, full_fallback, truncated, error, breaker_open}. One increment per inbound webhook after lookupChangedFiles picks a mode. mode=paths is the optimistic path; the others collapse into the rebuild-all fallback for that push. The single-registry pattern demands the field is present on every daemon's OpsMetrics — only githubd increments via ObserveGithubdPathFilter.",
 	}, []string{"mode"})
+	githubdPushSkippedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_push_skipped_total",
+		Help: "Customer-requested deployment skips in githubd push dispatch. reason is a closed policy label.",
+	}, []string{"reason"})
 	// PR-E sister collector for the user-space OCI dialer. Only
 	// registered when prefix == "imaged" — on every other daemon the
 	// field stays nil and the imaged-side hook in cmd/imaged/main.go
@@ -3113,14 +3148,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Issue #517 / PR-C / ADR-064 — wake-phase collector pair.
 	// Counter gauges per-phase emit counts; histogram buckets
 	// the per-phase duration. Both labelled by the same closed
-	// (phase, result) tuple; the closed 13-phase set is
+	// (phase, result) tuple; the closed 14-phase set is
 	// pre-instantiated below so the §12 wake-latency panel exists
 	// from boot. The histogram buckets are sized for the wake
 	// envelope: queue→admit <100ms; boot <30s; readiness <60s;
 	// proxy <5s; the 60s tail catches pathological stalls.
 	wakePhaseEmitted := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_phase_emitted_total",
-		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 13-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
+		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 14-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
 	}, []string{"phase", "result"})
 	// vmmd already exports execution timings under wake_phase_duration_seconds.
 	// Event-store latency is a different family (and has different labels).
@@ -3153,7 +3188,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, residentGBPerCustomer, billingCapExceededTotal,
@@ -3207,6 +3242,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidStatelessAdvisoryEventsTotal,
 		apidGithubdBridgeEnqueuedTotal,
 		githubdPathFilterTotal,
+		githubdPushSkippedTotal,
 		throttleSecondsTotal, throttleRatio,
 		egressSourceErrors,
 		wakePhaseEmitted, wakePhaseDur, recoveryEventEmitted,
@@ -3858,6 +3894,58 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, kind := range operatorIntentKindClosedSet {
 		operatorActionTraceCompletenessRatio.WithLabelValues(kind)
 	}
+	// Issue #1182 §P1 packaging follow-up: resumable upload session
+	// counters (PR-1 of 3). Five counters backing the new POST /v1/
+	// uploads, PATCH /v1/uploads/{id}, POST /v1/uploads/{id}/commit,
+	// DELETE /v1/uploads/{id} surface plus the in-process reaper.
+	//
+	// Card discipline: only {plan} on the *_total counters with a
+	// closed-set cardinality (4 plans × 2 events = 8 series). The
+	// reaper counters are unlabelled — reaper has one outcome
+	// shape. Operators wiring the §12 Grafana panel
+	// (deployment_audit_gc_rows_deleted_total sibling) can rate()()
+	// the same way.
+	//
+	// Pre-instantiated at boot for every plan so /metrics carries
+	// zero-valued series from the moment the daemon starts — same
+	// precedent as the alert_preset / deployment_audit families
+	// above.
+	uploadSessionCreatedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_created_total",
+		Help: "Count of upload sessions opened via POST /v1/uploads, labelled by account plan. Fires once per successful CreateUploadSession row insert (cmd/apid/handlers_upload_session.go). Saturation signal: a customer creating many sessions without committing usually means the CLI crashed mid-upload; combine with apid_upload_session_expired_total to size the reaper's 5-minute cadence.",
+	}, []string{"plan"})
+	uploadSessionCommittedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_committed_total",
+		Help: "Count of upload sessions committed via POST /v1/uploads/{id}/commit, labelled by account plan. Fires once per successful MarkUploadSessionCommitted transition (open→committed). The deployment_id column on upload_sessions is set in the same transaction; join with apid_upload_session_committed_total{plan} × builds.kind='tarball' for the full source-tarball deploy rate.",
+	}, []string{"plan"})
+	uploadSessionExpiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_expired_total",
+		Help: "Count of upload sessions marked expired by the in-process reaper (cmd/apid/upload_session_reaper.go). Unlabelled — reaper has one outcome. A sustained rate implies customers are crashing mid-upload OR a flaky link is forcing repeated re-rolls; pair with apid_upload_session_committed_total to compute the commit ratio per plan.",
+	})
+	uploadSessionReaperRowsDeletedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_reaper_rows_deleted_total",
+		Help: "Count of upload_sessions rows deleted (status→expired) by the in-process reaper. Sibling of deployment_audit_gc_rows_deleted_total; same metric family for retention-loop observability. /v1/admin/obs/health reports the rate of this counter vs the reaper's last run timestamp.",
+	})
+	uploadSessionReaperFailedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_upload_session_reaper_failed_total",
+		Help: "Count of reaper iterations that errored (DB query, os.Remove, ctx cancellation). Unlabelled — reaper has one failure shape. Alertable: a sustained non-zero rate means the reaper goroutine is wedged and the spool at /var/spool/faas/builds will leak.",
+	})
+	commonCollectors = append(commonCollectors,
+		uploadSessionCreatedTotal,
+		uploadSessionCommittedTotal,
+		uploadSessionExpiredTotal,
+		uploadSessionReaperRowsDeletedTotal,
+		uploadSessionReaperFailedTotal,
+	)
+	// Pre-instantiate {plan} closed-set series so /metrics surfaces
+	// zero values from boot. Plan enum mirrors the four-value
+	// PlanLimits table at pkg/api/limits.go (free/hobby/pro/scale);
+	// hard-coded here rather than imported to avoid a pkg/wire →
+	// pkg/api import cycle (pkg/api already imports pkg/wire).
+	for _, plan := range []string{"free", "hobby", "pro", "scale"} {
+		uploadSessionCreatedTotal.WithLabelValues(plan)
+		uploadSessionCommittedTotal.WithLabelValues(plan)
+	}
 	commonCollectors = append(commonCollectors,
 		auditLogWriteTotal,
 		auditLogWriteFailuresTotal,
@@ -3930,6 +4018,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// same vocabulary.
 	for _, mode := range []string{PathFilterModePaths, PathFilterModeFullFallback, PathFilterModeTruncated, PathFilterModeError, PathFilterModeBreakerOpen} {
 		githubdPathFilterTotal.WithLabelValues(mode)
+	}
+	for _, reason := range []string{PushSkippedReasonMarker} {
+		githubdPushSkippedTotal.WithLabelValues(reason)
 	}
 	// issue #299: pre-instantiate the closed `severity` label set
 	// for imageScanVulns so the rows surface in /metrics from boot
@@ -4012,7 +4103,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		snapshotBackoffStamp.WithLabelValues(outcome)
 	}
 	// Issue #517 / PR-C / ADR-064: pre-instantiate the closed
-	// 15-phase × 2-result label set for wakePhaseEmitted and
+	// 17-phase × 2-result label set for wakePhaseEmitted and
 	// wakePhaseDur so the §12 wake-latency panel surfaces zero
 	// on an idle daemon (mirrors the buildDuration / stripePush
 	// pre-instantiation precedents above). The phase list mirrors
@@ -4021,7 +4112,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// lock-step. result ∈ {ok, failed}.
 	for _, phase := range []string{
 		"queue_accepted", "admitted", "boot_started", "boot_completed",
-		"boot_failed", "readiness_200", "proxy_first_byte",
+		"boot_failed", "readiness_200", "proxy_first_byte", "page_served",
 		"park_started", "park_completed", "stalled",
 		"build_succeeded", "build_failed", "deploy_failed",
 		// ADR-098 C11: vmmd-side phase-decomposed wake timings
@@ -4299,6 +4390,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude:                   planGateRescuedByExclude,
 		tailCapReached:                             tailCapReached,
 		evictedPriority:                            evictedPriority,
+		evictionFiredTotal:                         evictionFiredTotal,
 		eventsWriteFail:                            eventsWriteFail,
 		auditWriteFail:                             auditWriteFail,
 		auditWriteDur:                              auditWriteDur,
@@ -4440,6 +4532,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidStatelessAdvisoryEventsTotal:                      apidStatelessAdvisoryEventsTotal,
 		apidGithubdBridgeEnqueuedTotal:                        apidGithubdBridgeEnqueuedTotal,
 		githubdPathFilterTotal:                                githubdPathFilterTotal,
+		githubdPushSkippedTotal:                               githubdPushSkippedTotal,
 		wakePhaseEmitted:                                      wakePhaseEmitted,
 		wakePhaseDur:                                          wakePhaseDur,
 		recoveryEventEmitted:                                  recoveryEventEmitted,
@@ -4451,6 +4544,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
 		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
+		uploadSessionCreatedTotal:                           uploadSessionCreatedTotal,
+		uploadSessionCommittedTotal:                         uploadSessionCommittedTotal,
+		uploadSessionExpiredTotal:                           uploadSessionExpiredTotal,
+		uploadSessionReaperRowsDeletedTotal:                 uploadSessionReaperRowsDeletedTotal,
+		uploadSessionReaperFailedTotal:                      uploadSessionReaperFailedTotal,
 	}
 }
 
@@ -5087,6 +5185,26 @@ func (m *OpsMetrics) EvictedPriority(priority, reason string) prometheus.Counter
 		return nil
 	}
 	return m.evictedPriority.WithLabelValues(priority, reason)
+}
+
+// EvictionFired returns the bounded (tenant_tier, reason) counter for a
+// successful reaper eviction or park (issue #255). Unknown values collapse to
+// the explicit "unknown" bucket so callers cannot create unbounded series.
+func (m *OpsMetrics) EvictionFired(tenantTier, reason string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	switch tenantTier {
+	case "free", "hobby", "pro", "scale":
+	default:
+		tenantTier = "unknown"
+	}
+	switch reason {
+	case "idle", "eviction_aggressive", "ram_pressure":
+	default:
+		reason = "unknown"
+	}
+	return m.evictionFiredTotal.WithLabelValues(tenantTier, reason)
 }
 
 // GuestTailSeconds returns the per-(plan, runtime, outcome)
@@ -7581,7 +7699,28 @@ const (
 	PathFilterModeTruncated    = "truncated"
 	PathFilterModeError        = "error"
 	PathFilterModeBreakerOpen  = "breaker_open"
+	PushSkippedReasonMarker    = "marker"
 )
+
+// ObserveGithubdPushSkipped increments githubd_push_skipped_total{reason}.
+// The reason vocabulary is deliberately closed so commit messages cannot
+// create unbounded Prometheus series.
+func (m *OpsMetrics) ObserveGithubdPushSkipped(reason string) {
+	if m == nil || m.githubdPushSkippedTotal == nil {
+		return
+	}
+	if reason == PushSkippedReasonMarker {
+		m.githubdPushSkippedTotal.WithLabelValues(reason).Inc()
+	}
+}
+
+// GithubdPushSkippedTotal returns the metric series for service-level tests.
+func (m *OpsMetrics) GithubdPushSkippedTotal(reason string) prometheus.Counter {
+	if m == nil || m.githubdPushSkippedTotal == nil || reason != PushSkippedReasonMarker {
+		return nil
+	}
+	return m.githubdPushSkippedTotal.WithLabelValues(reason)
+}
 
 // ObserveAdvisoryBatchResult increments
 // stateless_advisory_batches_emitted_total{result} (Mega-PR B).
@@ -8483,6 +8622,54 @@ const (
 // are silently ignored — the closed-set guard pre-instantiates the
 // label combinations at boot so an out-of-vocab label would inflate
 // cardinality silently otherwise.
+// UploadSessionCreatedTotal returns the {plan}-labelled
+// upload-sessions-created counter vec. cmd/apid wires this into
+// the package-level SetUploadSessionCounters at boot
+// (cmd/apid/main.go); nil-safe — handlers reach it via the
+// uploadSessionCounters package-level state.
+func (m *OpsMetrics) UploadSessionCreatedTotal() *prometheus.CounterVec {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionCreatedTotal
+}
+
+// UploadSessionCommittedTotal returns the {plan}-labelled
+// upload-sessions-committed counter vec.
+func (m *OpsMetrics) UploadSessionCommittedTotal() *prometheus.CounterVec {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionCommittedTotal
+}
+
+// UploadSessionExpiredTotal returns the unlabelled
+// upload-sessions-expired counter.
+func (m *OpsMetrics) UploadSessionExpiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionExpiredTotal
+}
+
+// UploadSessionReaperRowsDeletedTotal returns the unlabelled
+// reaper-rows-deleted counter.
+func (m *OpsMetrics) UploadSessionReaperRowsDeletedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionReaperRowsDeletedTotal
+}
+
+// UploadSessionReaperFailedTotal returns the unlabelled
+// reaper-failed counter.
+func (m *OpsMetrics) UploadSessionReaperFailedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.uploadSessionReaperFailedTotal
+}
+
 func (m *OpsMetrics) ObserveESMPoll(source, outcome string) {
 	if m == nil || m.esmPollsTotal == nil {
 		return

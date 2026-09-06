@@ -8,6 +8,7 @@ package githubd
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 // PullRequestAction enumerates the GitHub `pull_request` webhook
@@ -144,9 +145,35 @@ type PushEvent struct {
 	Ref          string              `json:"ref"`        // "refs/heads/main"
 	Before       string              `json:"before"`     // commit SHA the branch was at before the push; empty for the first push on a branch (0000...0000)
 	After        string              `json:"after"`      // commit SHA the head now points at
+	Created      bool                `json:"created"`    // true when this push created the ref
+	Deleted      bool                `json:"deleted"`    // true when GitHub deletes a branch or tag
+	Forced       bool                `json:"forced"`     // true when the ref was force-updated
 	Repository   PushRepository      `json:"repository"` // repo identity
 	Installation InstallationPayload `json:"installation"`
 	Pusher       PushPusher          `json:"pusher"` // optional audit
+	HeadCommit   PushCommit          `json:"head_commit"`
+	Commits      []PushCommit        `json:"commits"`
+}
+
+// PushCommit is the commit-message subset used by deploy trigger policy.
+type PushCommit struct {
+	Message string `json:"message"`
+}
+
+// DeploySkipMarker returns the first supported commit marker, if any.
+// GitHub includes both head_commit and commits in push payloads depending on
+// the delivery shape, so inspect both and keep the policy case-insensitive.
+func (ev PushEvent) DeploySkipMarker() string {
+	for _, commit := range append([]PushCommit{ev.HeadCommit}, ev.Commits...) {
+		message := strings.ToLower(commit.Message)
+		if strings.Contains(message, "[skip deploy]") {
+			return "[skip deploy]"
+		}
+		if strings.Contains(message, "[deploy skip]") {
+			return "[deploy skip]"
+		}
+	}
+	return ""
 }
 
 // PushRepository is the bits of `repository` the dispatch logic
@@ -156,6 +183,10 @@ type PushRepository struct {
 	FullName string `json:"full_name"`
 	Name     string `json:"name"`
 	HTMLURL  string `json:"html_url"`
+	// DefaultBranch is the binding key used for tag deployments. A tag
+	// has no branch of its own, so githubd resolves it against the
+	// repository's configured default production branch.
+	DefaultBranch string `json:"default_branch"`
 }
 
 // PushPusher is the actor who triggered the push. Captured for the

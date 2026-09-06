@@ -20,6 +20,9 @@ class AppEffectiveLimits:
     """Memory limit configured for this app instance, in MB."""
     plan_memory_max_mb: int
     """Largest memory limit the current plan permits for an app instance, in MB."""
+    ephemeral_disk_max_mb: int
+    """Maximum writable ephemeral app-disk capacity for this app, in MB. This is the same physical drive1 cap
+    historically named app_layer_max_mb."""
     guest_vcpus: int
     """Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit."""
     cpu_limit_millicores: int
@@ -52,6 +55,8 @@ class AppEffectiveLimits:
 
         plan_memory_max_mb = self.plan_memory_max_mb
 
+        ephemeral_disk_max_mb = self.ephemeral_disk_max_mb
+
         guest_vcpus = self.guest_vcpus
 
         cpu_limit_millicores = self.cpu_limit_millicores
@@ -82,6 +87,7 @@ class AppEffectiveLimits:
             {
                 "memory_limit_mb": memory_limit_mb,
                 "plan_memory_max_mb": plan_memory_max_mb,
+                "ephemeral_disk_max_mb": ephemeral_disk_max_mb,
                 "guest_vcpus": guest_vcpus,
                 "cpu_limit_millicores": cpu_limit_millicores,
                 "plan_cpu_max_millicores": plan_cpu_max_millicores,
@@ -105,6 +111,8 @@ class AppEffectiveLimits:
         memory_limit_mb = d.pop("memory_limit_mb")
 
         plan_memory_max_mb = d.pop("plan_memory_max_mb")
+
+        ephemeral_disk_max_mb = d.pop("ephemeral_disk_max_mb")
 
         guest_vcpus = d.pop("guest_vcpus")
 
@@ -133,6 +141,7 @@ class AppEffectiveLimits:
         app_effective_limits = cls(
             memory_limit_mb=memory_limit_mb,
             plan_memory_max_mb=plan_memory_max_mb,
+            ephemeral_disk_max_mb=ephemeral_disk_max_mb,
             guest_vcpus=guest_vcpus,
             cpu_limit_millicores=cpu_limit_millicores,
             plan_cpu_max_millicores=plan_cpu_max_millicores,

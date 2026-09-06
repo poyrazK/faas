@@ -35,6 +35,7 @@ package apidsource
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -133,13 +134,18 @@ type Notifier interface {
 // bridge stamps it from req.Pusher.Login; the apid paths leave
 // it empty.
 type EnqueueParams struct {
-	AppID       string
+	AppID string
+	// DeliveryID is the authenticated GitHub webhook delivery ID. When set,
+	// Enqueue derives stable deployment/build UUIDs from (delivery, app) and
+	// recovers existing rows after retries or ambiguous commit responses.
+	DeliveryID  string
 	Kind        state.DeploymentKind
 	SourcePath  string
 	SourceBytes int64
 	SourceRoot  string
 	SourceURL   string
 	CommitSHA   string
+	Scope       string
 	Handler     string
 	Source      string
 	LogSpool    string
@@ -264,13 +270,24 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: build ID: %w", err)
 	}
 	buildID := id.String()
+	deploymentID := ""
+	if p.DeliveryID != "" {
+		deploymentID, buildID = githubDeliveryIDs(p.DeliveryID, p.AppID)
+	}
 	if err := publishSource(ctx, sourceStorage, buildID, p.SourcePath); err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source handoff: %w", err)
 	}
 
 	// Step 1: read prior deployment so the supersede notify can
 	// carry the right deployment_id.
-	prev, _ := store.LatestDeployment(ctx, p.AppID)
+	prev := state.Deployment{}
+	if scoped, ok := store.(interface {
+		LatestDeploymentForScope(context.Context, string, string) (state.Deployment, error)
+	}); ok {
+		prev, _ = scoped.LatestDeploymentForScope(ctx, p.AppID, p.Scope)
+	} else {
+		prev, _ = store.LatestDeployment(ctx, p.AppID)
+	}
 
 	// Step 2: create the deployment row. SourceURL + CommitSHA are
 	// provenance-only on the apid tarball path; the bridge sets them.
@@ -280,6 +297,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	d, err := store.CreateDeployment(ctx, state.Deployment{
+		ID:          deploymentID,
 		AppID:       p.AppID,
 		Kind:        p.Kind,
 		SourcePath:  p.SourcePath,
@@ -287,6 +305,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		SourceRoot:  p.SourceRoot,
 		SourceURL:   p.SourceURL,
 		CommitSHA:   p.CommitSHA,
+		Scope:       p.Scope,
 		Handler:     p.Handler,
 		Status:      state.DeployPending,
 		// Issue #606 / SAFE-RELEASES-E.1: actor columns propagated
@@ -308,7 +327,44 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		Workflows:  append(json.RawMessage(nil), p.Workflows...),
 	})
 	if err != nil {
-		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create deployment: %w", err)
+		// A deterministic ID conflict means this delivery/app pair crossed
+		// the commit boundary during an earlier attempt. Recover the durable
+		// row rather than creating duplicate customer work.
+		if p.DeliveryID == "" || !errors.Is(err, state.ErrConflict) {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create deployment: %w", err)
+		}
+		idempotent, ok := store.(interface {
+			DeploymentByID(context.Context, string) (state.Deployment, error)
+		})
+		if !ok {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: recover deployment: store lacks DeploymentByID")
+		}
+		d, err = idempotent.DeploymentByID(ctx, deploymentID)
+		if err != nil {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: recover deployment %s: %w", deploymentID, err)
+		}
+		if d.AppID != p.AppID {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: deployment id collision %s", deploymentID)
+		}
+		// The original create already performed any supersede transition.
+		// Do not emit a false supersede notification for the recovered row.
+		prev = state.Deployment{}
+	}
+
+	if p.DeliveryID != "" {
+		if reader, ok := store.(interface {
+			BuildByID(context.Context, string) (state.Build, error)
+		}); ok {
+			existing, readErr := reader.BuildByID(ctx, buildID)
+			switch {
+			case readErr == nil && existing.DeploymentID == d.ID:
+				return EnqueueResult{DeploymentID: d.ID, BuildID: existing.ID}, nil
+			case readErr == nil:
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: build id collision %s", buildID)
+			case !errors.Is(readErr, state.ErrNotFound):
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: recover build %s: %w", buildID, readErr)
+			}
+		}
 	}
 
 	// Step 3: build.log spool. Same shape as cmd/apid/deploy_inputs.go
@@ -337,6 +393,20 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// pipeline at build time.
 	build, err := store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
 	if err != nil {
+		if p.DeliveryID != "" && errors.Is(err, state.ErrConflict) {
+			if reader, ok := store.(interface {
+				BuildByID(context.Context, string) (state.Build, error)
+			}); ok {
+				if existing, readErr := reader.BuildByID(ctx, buildID); readErr == nil && existing.DeploymentID == d.ID {
+					return EnqueueResult{DeploymentID: d.ID, BuildID: existing.ID}, nil
+				}
+			}
+		}
+		// Delivery-backed work remains pending for the durable inbox to
+		// retry. Non-webhook callers keep the historical terminal cleanup.
+		if p.DeliveryID != "" {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create build: %w", err)
+		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if cleanupErr := store.FailSourceDeployment(cleanupCtx, d.ID, "create build: "+err.Error()); cleanupErr != nil {
@@ -391,4 +461,12 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		"deployment", d.ID, "app", p.AppID, "kind", p.Kind, "build", build.ID, "source", source)
 
 	return EnqueueResult{DeploymentID: d.ID, BuildID: build.ID}, nil
+}
+
+var githubDeliveryNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.dev/github-delivery/v1"))
+
+func githubDeliveryIDs(deliveryID, appID string) (deploymentID, buildID string) {
+	key := deliveryID + "\x00" + appID
+	return uuid.NewSHA1(githubDeliveryNamespace, []byte(key+"\x00deployment")).String(),
+		uuid.NewSHA1(githubDeliveryNamespace, []byte(key+"\x00build")).String()
 }

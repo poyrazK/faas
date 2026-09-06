@@ -29,9 +29,10 @@ const (
 // developer sessions. The outer key isolates accounts, developer workspaces,
 // selected monorepo members, frameworks, and runtime bases. BuildKit still
 // validates every imported layer against its exact inputs, including lockfile
-// bytes, so a changed dependency manifest becomes a selective cache miss.
+// bytes and Dockerfile instructions, so changed build inputs become selective
+// cache misses.
 func dependencyCacheKeyForApp(app state.App, framework Framework, sourceRoot, runtimeBaseRef string) string {
-	if app.ID == "" || app.AccountID == "" || app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 || framework == FrameworkDocker {
+	if app.ID == "" || app.AccountID == "" || app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 {
 		return ""
 	}
 	effectiveRoot, err := sourcecontext.EffectiveRoot(sourceRoot)

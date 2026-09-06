@@ -546,6 +546,7 @@ func (s *ScalingPolicy) ClearUnknownFields() {
 type AppEffectiveLimits struct {
 	MemoryLimitMB          int   `json:"memory_limit_mb"`
 	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
+	EphemeralDiskMaxMB     int   `json:"ephemeral_disk_max_mb"`
 	GuestVCPUs             int   `json:"guest_vcpus"`
 	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
 	PlanCPUMaxMillicores   int   `json:"plan_cpu_max_millicores"`
@@ -813,6 +814,13 @@ type AppResponse struct {
 	// the column carries a value, so dashboards can render
 	// the list directly.
 	CORSDefaultOrigins []string `json:"cors_default_origins"`
+}
+
+// AppRestartResponse is returned when a customer restart request is accepted.
+// The wake_id is the correlation id schedd carries onto the replacement
+// instance and wake timeline.
+type AppRestartResponse struct {
+	WakeID string `json:"wake_id"`
 }
 
 // ParkedDeploymentRef is the reference shape returned in
@@ -2147,8 +2155,8 @@ type RollbackRequest struct {
 
 // AccountResponse is the whoami payload. Limits is the plan's
 // quota/limit table (RAM MB, max concurrency, included GB-h,
-// deployed-app cap) so the dashboard /account page can show
-// "you have X of Y apps" without a second round trip. UsageGBHours
+// deployed-app and developer-environment caps) so the dashboard /account
+// page can show both budgets without a second round trip. UsageGBHours
 // is the roll-up for the current month (caller-aggregated from
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
@@ -2164,6 +2172,7 @@ type AccountResponse struct {
 	Limits                       AccountLimits `json:"limits"`
 	UsageGBHours                 float64       `json:"usage_gb_hours"`
 	AppCount                     int           `json:"app_count"`
+	DeveloperAppCount            int           `json:"developer_app_count"`
 	GitHubInstall                string        `json:"github_install_id,omitempty"`
 	// PlanChangeStatus and RequestedPlan are populated only when a plan
 	// change was accepted by the billing provider but is not yet reflected
@@ -2178,12 +2187,14 @@ type AccountResponse struct {
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan            string `json:"plan"`
-	RAMMB           int    `json:"ram_mb"`
-	MaxConcurrency  int    `json:"max_concurrency"`
-	DeployedApps    int    `json:"deployed_apps"`
-	IncludedGBHours int64  `json:"included_gb_hours"`
-	AppLayerMaxMB   int    `json:"app_layer_max_mb"`
+	Plan               string `json:"plan"`
+	RAMMB              int    `json:"ram_mb"`
+	MaxConcurrency     int    `json:"max_concurrency"`
+	DeployedApps       int    `json:"deployed_apps"`
+	DeveloperApps      int    `json:"developer_apps"`
+	IncludedGBHours    int64  `json:"included_gb_hours"`
+	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
+	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext
@@ -2339,19 +2350,15 @@ type CustomDomainResponse struct {
 	Default        bool     `json:"default,omitempty"`    // true when this domain is the app's default (issue #961 / Mega-A PR-3)
 	CertNotAfter   string   `json:"cert_not_after,omitempty"`
 	CertSANs       []string `json:"cert_sans,omitempty"`
-	// CertStatus summarises the live cert dial (issue #961 / Mega-A PR-3
-	// code-review round, MED-4). One of:
-	//   ""           — cert dial was not attempted (domain unverified, or
-	//                  dialCert not called because the cert is already known).
-	//   "issued"     — port-443 handshake succeeded and the leaf cert
-	//                  covers this domain (sanContains matched).
-	//   "pending"    — domain is verified but the cert dial has not yet
-	//                  succeeded (DNS propagated but cert not yet minted).
-	//   "dial_failed:<reason>" — TCP dial, TLS handshake, or cert parse
-	//                  failed. <reason> is one of: dial_refused,
-	//                  dial_timeout, handshake_failed, no_peer_certs,
-	//                  parse_failed. omitempty so legacy rows / pre-PR-3
-	//                  clients see bit-identical payloads.
+	// Durable legacy custom-domain TLS state (issue #1397 / F1). These
+	// fields are populated by the DNS/cert poller and remain available when
+	// the live cert endpoint is temporarily unreachable.
+	CertExpiresAt    string `json:"cert_expires_at,omitempty"`
+	CertLastError    string `json:"cert_last_error,omitempty"`
+	DNSLastCheckedAt string `json:"dns_last_checked_at,omitempty"`
+	// CertStatus is the durable TLS lifecycle (pending, issued, renewing, or
+	// failed). The per-domain show endpoint may temporarily override it with
+	// a live "dial_failed:<reason>" probe result; list/status remain durable.
 	CertStatus string `json:"cert_status,omitempty"`
 }
 
@@ -4764,6 +4771,10 @@ var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?
 // plan RAM" (the common case). 32..512 enforced at the API
 // layer; the "+8 MB" baseline (PerVMOverheadMB) is added once
 // per instance in PR-B's admission, not per sidecar.
+//
+// CPUMillicores is this sidecar's sustained host/container CPU
+// quota in millicores. 0 preserves the app-level CPU plan cap;
+// non-zero values must be one of 250, 500, or 1000.
 type Sidecar struct {
 	// Name matches the RFC 1123 label grammar. Unique within a
 	// single request. Required.
@@ -4792,6 +4803,10 @@ type Sidecar struct {
 	// means "absent / inherit the plan RAM" (the common case).
 	// 32..512 enforced at the API layer.
 	RamMB int `json:"ram_mb,omitempty"`
+	// CPUMillicores is the per-sidecar sustained CPU ceiling.
+	// 0 preserves the plan CPU quota, non-zero values are one of
+	// 250, 500, or 1000.
+	CPUMillicores int `json:"cpu_millicores,omitempty"`
 	// Essential defaults to true. If true and the workload exits
 	// non-zero: the dependency set fails (`failure_class=user_error`)
 	// and essential long-running sidecars restart-loop. If false,
@@ -4872,6 +4887,9 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	}
 	if s.RamMB != 0 && (s.RamMB < 32 || s.RamMB > 512) {
 		return ErrSidecarInvalidRamMB(s.RamMB)
+	}
+	if s.CPUMillicores != 0 && !ValidAppCPUMillicores(s.CPUMillicores) {
+		return ErrSidecarInvalidCPUMillicores(s.CPUMillicores)
 	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
 		return NewProblem(http.StatusBadRequest, CodeValidation,

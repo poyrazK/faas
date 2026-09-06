@@ -254,11 +254,13 @@ type StatsSnapshot struct {
 // zero / absent shape and the poller falls back to durable state for
 // the timestamp.
 type VMInstanceStat struct {
-	InstanceID    string
-	LeaseUID      int32
-	HostIP        string
-	ResidentBytes *int64
-	CPUPct        *float64
+	InstanceID        string
+	LeaseUID          int32
+	HostIP            string
+	ResidentBytes     *int64
+	DiskUsedBytes     *int64
+	DiskCapacityBytes *int64
+	CPUPct            *float64
 	// CPUSeconds is the cumulative CPU-seconds reading from
 	// vmmd's cpustats cache (issue #279 / PR-B). nil on the
 	// wire when the cache has no baseline for the instance
@@ -973,6 +975,14 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		b := v.GetValue()
 		row.ResidentBytes = &b
 	}
+	if v := in.GetDiskUsedBytes(); v != nil {
+		b := v.GetValue()
+		row.DiskUsedBytes = &b
+	}
+	if v := in.GetDiskCapacityBytes(); v != nil {
+		b := v.GetValue()
+		row.DiskCapacityBytes = &b
+	}
 	if v := in.GetCpuPct(); v != nil {
 		c := v.GetValue()
 		row.CPUPct = &c
@@ -1036,16 +1046,17 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			})
 		}
 		sidecars = append(sidecars, &vmmdpb.SidecarSpec{
-			Name:       sc.Name,
-			Type:       sc.Type,
-			Image:      sc.Image,
-			RamMb:      int32(sc.RamMB),
-			Port:       uint32(sc.Port),
-			Essential:  sc.Essential,
-			StorageKey: sc.StorageKey,
-			DriveSlot:  sc.DriveID,
-			SealedEnv:  sealedSidecarEnv,
-			DependsOn:  dependsOn,
+			Name:          sc.Name,
+			Type:          sc.Type,
+			Image:         sc.Image,
+			RamMb:         int32(sc.RamMB),
+			CpuMillicores: int32(sc.CPUMillicores),
+			Port:          uint32(sc.Port),
+			Essential:     sc.Essential,
+			StorageKey:    sc.StorageKey,
+			DriveSlot:     sc.DriveID,
+			SealedEnv:     sealedSidecarEnv,
+			DependsOn:     dependsOn,
 		})
 	}
 	return &vmmdpb.AppSpec{

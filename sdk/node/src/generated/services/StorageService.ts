@@ -2,10 +2,16 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CompleteObjectMultipartUploadRequest } from '../models/CompleteObjectMultipartUploadRequest.js';
+import type { CreateObjectMultipartUploadRequest } from '../models/CreateObjectMultipartUploadRequest.js';
 import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
+import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
+import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
+import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
+import type { ObjectMultipartUploadList } from '../models/ObjectMultipartUploadList.js';
 import type { ObjectSignedRequest } from '../models/ObjectSignedRequest.js';
 import type { ObjectSignRequest } from '../models/ObjectSignRequest.js';
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
@@ -332,6 +338,299 @@ export class StorageService {
       path: {
         'slug': slug,
         'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * List durable resumable upload sessions
+   * Requires storage:write or admin and a matching bucket grant. The provider upload ID is never returned. Use cursor to recover sessions after a client loses its local session identifier.
+   * @returns ObjectMultipartUploadList Durable upload sessions; Cache-Control no-store
+   * @returns Problem Invalid cursor, access denial, or backend placement unavailable
+   * @throws ApiError
+   */
+  public static listObjectMultipartUploads({
+    slug,
+    bucket,
+    limit = 100,
+    cursor,
+  }: {
+    /**
+     * App containing the multipart upload target.
+     */
+    slug: string,
+    /**
+     * Identifier of the bucket receiving the multipart object.
+     */
+    bucket: string,
+    /**
+     * Maximum number of sessions to return.
+     */
+    limit?: number,
+    /**
+     * UUID cursor returned by the previous page.
+     */
+    cursor?: string,
+  }): CancelablePromise<ObjectMultipartUploadList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+      },
+    });
+  }
+  /**
+   * Start or recover a resumable multipart upload
+   * Requires storage:write or admin and a matching bucket grant. Gregale
+   * reserves the complete declared size before creating billable provider
+   * parts. A retry with the same live bucket/key, size, and content type
+   * returns the existing session; conflicting parameters return 409. The
+   * provider upload ID remains private. Sessions expire after 24 hours.
+   *
+   * @returns ObjectMultipartUpload Existing compatible live session returned
+   * @returns Problem Invalid request, stale accounting, capacity limit, access denial, or provider failure
+   * @throws ApiError
+   */
+  public static createObjectMultipartUpload({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App containing the multipart upload target.
+     */
+    slug: string,
+    /**
+     * Identifier of the bucket receiving the multipart object.
+     */
+    bucket: string,
+    requestBody: CreateObjectMultipartUploadRequest,
+  }): CancelablePromise<ObjectMultipartUpload | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * List parts confirmed by the storage provider
+   * Requires storage:write or admin and a matching bucket grant. Returns provider-confirmed ETags so an interrupted client can resume completion without exposing provider credentials or upload IDs.
+   * @returns ObjectMultipartPartList Provider-confirmed uploaded parts; Cache-Control no-store
+   * @returns Problem Session missing, not recoverable, access denial, or provider failure
+   * @throws ApiError
+   */
+  public static listObjectMultipartParts({
+    slug,
+    bucket,
+    upload,
+    partNumberMarker,
+    limit = 1000,
+  }: {
+    /**
+     * App authorizing multipart recovery.
+     */
+    slug: string,
+    /**
+     * Bucket containing the provider-confirmed parts.
+     */
+    bucket: string,
+    /**
+     * Gregale session whose provider parts are being recovered.
+     */
+    upload: string,
+    /**
+     * Return parts after this part number.
+     */
+    partNumberMarker?: number,
+    /**
+     * Maximum number of provider parts to return.
+     */
+    limit?: number,
+  }): CancelablePromise<ObjectMultipartPartList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'upload': upload,
+      },
+      query: {
+        'part_number_marker': partNumberMarker,
+        'limit': limit,
+      },
+    });
+  }
+  /**
+   * Read resumable upload state and part layout
+   * Requires storage:write or admin and a matching bucket grant. Provider credentials and upload IDs are never returned.
+   * @returns ObjectMultipartUpload Durable session state; Cache-Control no-store
+   * @returns Problem Session missing, access denied, or backend placement unavailable
+   * @throws ApiError
+   */
+  public static getObjectMultipartUpload({
+    slug,
+    bucket,
+    upload,
+  }: {
+    /**
+     * App containing the durable upload session.
+     */
+    slug: string,
+    /**
+     * Bucket containing the multipart session.
+     */
+    bucket: string,
+    /**
+     * Gregale multipart session identifier; this is not the provider upload ID.
+     */
+    upload: string,
+  }): CancelablePromise<ObjectMultipartUpload | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'upload': upload,
+      },
+    });
+  }
+  /**
+   * Abort a multipart upload and release provider-side parts
+   * Requires storage:write or admin and a matching bucket grant. Repeating an already-finished abort is safe. Failed aborts are retried by the recovery worker.
+   * @returns Problem Session busy/completed, access denied, or provider failure
+   * @throws ApiError
+   */
+  public static abortObjectMultipartUpload({
+    slug,
+    bucket,
+    upload,
+  }: {
+    /**
+     * App containing the durable upload session.
+     */
+    slug: string,
+    /**
+     * Bucket containing the multipart session.
+     */
+    bucket: string,
+    /**
+     * Gregale multipart session identifier; this is not the provider upload ID.
+     */
+    upload: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'upload': upload,
+      },
+    });
+  }
+  /**
+   * Issue an exact-length direct upload URL for one part
+   * Requires storage:write or admin and a matching bucket grant. The URL
+   * binds the server-calculated byte length for this part and expires within
+   * 15 minutes. Upload it without Gregale credentials and retain the ETag
+   * response header for completion. Every issued part URL consumes the
+   * authorization safety budget.
+   *
+   * @returns ObjectSignedRequest Temporary provider capability; Cache-Control no-store
+   * @returns Problem Invalid part, expired session, stale accounting, access denial, or provider failure
+   * @throws ApiError
+   */
+  public static signObjectMultipartPart({
+    slug,
+    bucket,
+    upload,
+    part,
+    requestBody,
+  }: {
+    /**
+     * App authorizing the multipart part capability.
+     */
+    slug: string,
+    /**
+     * Bucket receiving this upload part.
+     */
+    bucket: string,
+    /**
+     * Gregale multipart session identifier.
+     */
+    upload: string,
+    /**
+     * One-based part number from the session layout.
+     */
+    part: number,
+    requestBody: ObjectMultipartPartSignRequest,
+  }): CancelablePromise<ObjectSignedRequest | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'upload': upload,
+        'part': part,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Assemble all uploaded parts into the final object
+   * Requires storage:write or admin and a matching bucket grant. Supply one
+   * ETag for every part in ascending order. Completion intent is persisted
+   * before contacting the provider and recovered after crashes. An identical
+   * retry after completion returns the completed session without repeating
+   * the provider operation.
+   *
+   * @returns ObjectMultipartUpload Object completed; Cache-Control no-store
+   * @returns Problem Invalid/missing parts, expired or conflicting session, access denial, or provider failure
+   * @throws ApiError
+   */
+  public static completeObjectMultipartUpload({
+    slug,
+    bucket,
+    upload,
+    requestBody,
+  }: {
+    /**
+     * App finalizing the multipart upload.
+     */
+    slug: string,
+    /**
+     * Bucket receiving the completed object.
+     */
+    bucket: string,
+    /**
+     * Gregale multipart session identifier to complete.
+     */
+    upload: string,
+    requestBody: CompleteObjectMultipartUploadRequest,
+  }): CancelablePromise<ObjectMultipartUpload | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'upload': upload,
       },
       body: requestBody,
       mediaType: 'application/json',

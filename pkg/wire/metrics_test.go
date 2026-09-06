@@ -82,6 +82,18 @@ func TestOpsMetrics_IndependentRegistries(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_EvictionFired(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.EvictionFired("pro", "ram_pressure").Inc()
+	body := render(t, m)
+	if !strings.Contains(body, `schedd_eviction_fired_total{reason="ram_pressure",tenant_tier="pro"} 1`) {
+		t.Errorf("missing eviction counter:\n%s", body)
+	}
+	if !strings.Contains(body, `schedd_eviction_fired_total{reason="unknown",tenant_tier="unknown"} 0`) {
+		t.Errorf("missing pre-instantiated unknown eviction counter:\n%s", body)
+	}
+}
+
 func render(t *testing.T, m *wire.OpsMetrics) string {
 	t.Helper()
 	srv := httptest.NewServer(m.Handler())
@@ -890,7 +902,7 @@ func TestOpsMetrics_SnapshotDiskDriftNilSafe(t *testing.T) {
 // TestOpsMetrics_WakePhaseClosedSet (issue #517 / PR-C / ADR-064) —
 // the wake-phase collector pair is registered on every daemon
 // (single-registry pattern, memory wire-opsmetrics-single-registry)
-// and pre-instantiated with the closed 13-phase × 2-result label
+// and pre-instantiated with the closed 14-phase × 2-result label
 // set so the §12 wake-latency panel surfaces zero on an idle
 // daemon. The accessor must be nil-safe on a nil receiver so
 // engine unit tests without metrics keep working.

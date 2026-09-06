@@ -219,10 +219,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    appSlugFallback,
 		DocSlug: "apps",
-		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|--profile NAME|--ram N|…])",
+		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|restart|--profile NAME|--ram N|…])",
 		Subcommands: []cliSub{
 			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
+			{Name: "restart", Short: "Park and wake from a fresh snapshot"},
 			{Name: "security", Short: "Toggle require_signed on deploys"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
 		},
@@ -571,6 +572,7 @@ var cliCommands = []cliCommand{
 			{Name: subRm, Short: "Remove a custom domain binding"},
 			{Name: subDomainsVerify, Short: "Re-verify DNS + cert for a domain"},
 			{Name: subDomainsShow, Short: "Show a domain's cert details"},
+			{Name: subDomainsStatus, Short: "Show durable TLS status for all domains"},
 			{Name: subDomainsDoctor, Short: "5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)"},
 		},
 	},
@@ -585,6 +587,9 @@ var cliCommands = []cliCommand{
 			{Name: "once", Short: "deploy once and exit"},
 			{Name: "stop", Short: "tear down the developer environment"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
+		},
+		Subcommands: []cliSub{
+			{Name: "status", Short: "show developer-environment quota usage"},
 		},
 	},
 	{
@@ -1091,6 +1096,17 @@ var cliCommands = []cliCommand{
 				{Name: "window", Short: "summary window: 1h | 24h | 7d (default 1h)", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
 		},
+	},
+	{
+		Name:    "cache",
+		DocSlug: "cache",
+		Short:   "Manage response cache (cache purge <slug> [--path GLOB])",
+		Subcommands: []cliSub{
+			{Name: "purge", Short: "Purge cached responses for an app", Flags: []cliFlag{
+				{Name: "path", Short: "optional normalized request path glob", Value: "GLOB"},
+			}},
+		},
+		Positionals: []string{"<slug>"},
 	},
 	{
 		Name:    "webhooks",

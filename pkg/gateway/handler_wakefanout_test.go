@@ -159,6 +159,10 @@ func TestHandler_WakeFanOut_WakesLandedDeployment(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
+	if got := rec.Header().Get("x-faas-wake-id"); got != "fake-wake-id" {
+		t.Fatalf("cold-bucket wake ID = %q, want fake-wake-id", got)
+	}
+
 	// Only the explicit cold deployment bucket is admitted.
 	if got := b.totalAdmits.Load(); got != 1 {
 		t.Fatalf("totalAdmits = %d, want 1 (wake-fan-out only)", got)

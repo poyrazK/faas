@@ -32,24 +32,27 @@ var healthzBody = mustJSON(map[string]bool{"ok": true})
 // Only the canonical required fields are populated; GitHubInstall is
 // omitted (omitempty) so the test sees a clean body.
 var accountResponse = mustJSON(map[string]any{
-	"id":             "0123456789abcdef0123456789abcdef",
-	"email":          "ops@example.com",
-	"email_verified": true,
-	"plan":           "hobby",
-	"status":         "active",
-	"limits":         accountLimits(),
-	"usage_gb_hours": 1.234,
-	"app_count":      3,
+	"id":                  "0123456789abcdef0123456789abcdef",
+	"email":               "ops@example.com",
+	"email_verified":      true,
+	"plan":                "hobby",
+	"status":              "active",
+	"limits":              accountLimits(),
+	"usage_gb_hours":      1.234,
+	"app_count":           3,
+	"developer_app_count": 1,
 })
 
 func accountLimits() map[string]any {
 	return map[string]any{
-		"plan":              "hobby",
-		"ram_mb":            256,
-		"max_concurrency":   2,
-		"deployed_apps":     3,
-		"included_gb_hours": 50,
-		"app_layer_max_mb":  512,
+		"plan":                  "hobby",
+		"ram_mb":                256,
+		"max_concurrency":       2,
+		"deployed_apps":         3,
+		"developer_apps":        2,
+		"included_gb_hours":     50,
+		"app_layer_max_mb":      512,
+		"ephemeral_disk_max_mb": 512,
 	}
 }
 
@@ -94,6 +97,7 @@ func appEffectiveLimits() map[string]any {
 	return map[string]any{
 		"memory_limit_mb":          256,
 		"plan_memory_max_mb":       256,
+		"ephemeral_disk_max_mb":    512,
 		"guest_vcpus":              2,
 		"cpu_limit_millicores":     1000,
 		"plan_cpu_max_millicores":  1000,

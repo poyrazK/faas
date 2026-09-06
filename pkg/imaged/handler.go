@@ -15,12 +15,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/buildcache"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -2105,6 +2107,7 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 		Cmd:              cmd,
 		WorkingDir:       cfg.WorkingDir,
 		User:             cfg.User,
+		ExposedPorts:     cfg.ExposedPorts,
 		Healthcheck:      cfg.Healthcheck,
 		StopSignal:       cfg.StopSignal,
 		StopGracePeriodS: cfg.StopGracePeriodS,
@@ -2382,11 +2385,11 @@ func runtimeToEnvSuffix(runtime string) string {
 // exact same projection + the same ErrImageManifestInvalid failure mode.
 //
 // ADR-051 Phase 4 (characterization boot): the App path must default
-// Port + Healthz and inject PORT=8080 into Env so the in-guest probe
+// Port + Healthz and inject PORT into Env so the in-guest probe
 // (guest/init/{characterize,portnorm}_linux.go) sees a known listening
-// port and the app listens on :8080. Without these defaults the port
-// normalization ladder in portnorm_linux.go must fall through to the
-// userspace forwarder on every first wake, which the architecture
+// port and the app listens on the selected serving port. Without these
+// defaults, the port normalization ladder in portnorm_linux.go must fall
+// through to the userspace forwarder on every first wake, which the architecture
 // avoids (ADR-051 §"Consequences"). Customer-pinned values in
 // cfg.Port / cfg.Env["PORT"] survive this seeding (last-write-wins
 // is the customer's call).
@@ -2397,6 +2400,7 @@ func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 		Cmd:              append([]string(nil), cfg.Cmd...),
 		WorkingDir:       cfg.WorkingDir,
 		User:             cfg.User,
+		ExposedPorts:     cfg.ExposedPorts,
 		Healthcheck:      cfg.Healthcheck,
 		StopSignal:       cfg.StopSignal,
 		StopGracePeriodS: cfg.StopGracePeriodS,
@@ -2415,7 +2419,7 @@ func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 }
 
 // applyContainerDefaults seeds the platform-default Healthz path
-// (ADR-051 §"Consequences") and the PORT=8080 env var when the
+// (ADR-051 §"Consequences") and the effective PORT env var when the
 // customer didn't pin them. Lives here so both the registry pull
 // path (manifestFromImageConfig) and the local OCI build path
 // (buildLocalOCIAppLayer in local_oci.go) share the exact same
@@ -2428,7 +2432,7 @@ func applyContainerDefaults(m *api.AppManifest) {
 		m.Env = make(map[string]string, 1)
 	}
 	if _, set := m.Env["PORT"]; !set {
-		m.Env["PORT"] = "8080"
+		m.Env["PORT"] = strconv.Itoa(m.EffectivePort())
 	}
 }
 
@@ -2499,7 +2503,12 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 			return fmt.Errorf("imaged: load existing snapshot: %w", err)
 		}
 	}
-	if p.NodeID != "" {
+	if stored.StorageKey != p.StorageKey && state.IsSnapshotCaptureKey(p.StorageKey) {
+		// A second capture can finish before the first notification is read.
+		// Keep the already-published pair and discard only this unused one.
+		h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: p.StorageKey})
+	}
+	if p.NodeID != "" && stored.StorageKey == p.StorageKey {
 		if origins, ok := h.store.(state.SnapshotOriginStore); ok {
 			if originErr := origins.RecordSnapshotOrigin(ctx, stored.ID, p.NodeID); originErr != nil {
 				// Origin metadata improves locality but is not the blob's
@@ -2609,6 +2618,12 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 			"deployment", p.DeploymentID)
 		return nil
 	}
+	// Cache hits arrive through a deployment-specific hard link. Keep it for
+	// crash recovery while this handler runs, then remove it only after the
+	// deployment row has stopped referencing the handoff (or reached a
+	// terminal failure). Register this before markFailedOnUnhandledError so
+	// the failure transition runs before the release check on an error.
+	defer h.releaseBuildCacheLease(ctx, dep)
 	// Issue #195 B1.5: install the defer AFTER the empty-rootfs
 	// early-return so the no-op skip path doesn't touch the row.
 	// The defer covers the build-window + snapshot_prime notifier
@@ -2693,6 +2708,25 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
 	}
 	return nil
+}
+
+func (h *Handler) releaseBuildCacheLease(parent context.Context, dep state.Deployment) {
+	if _, ok := buildcache.ParseLeasePath(dep.RootfsPath); !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	defer cancel()
+	current, err := h.store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		h.log.Warn("imaged: check build cache lease", "deployment", dep.ID, "err", err)
+		return
+	}
+	if current.RootfsPath == dep.RootfsPath && current.Status != state.DeployFailed {
+		return
+	}
+	if err := buildcache.Release(dep.RootfsPath); err != nil {
+		h.log.Warn("imaged: release build cache lease", "deployment", dep.ID, "err", err)
+	}
 }
 
 // ensureDeploymentRuntimeBase makes the shared drive0 available before
@@ -3174,6 +3208,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
 	}
 	if !keepSnap {
+		h.cleanupSnapshotCaptures(ctx, be, dep.ID)
 		memKey := state.SnapMemKey(dep.ID)
 		vmKey := state.SnapVMStateKey(dep.ID)
 		if err := be.Delete(ctx, memKey); err != nil {
@@ -3239,6 +3274,7 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 			h.log.Warn("imaged: app cleanup list sidecar layers",
 				"deployment", d.ID, "err", listErr)
 		}
+		h.cleanupSnapshotCaptures(ctx, be, d.ID)
 		memKey := state.SnapMemKey(d.ID)
 		vmKey := state.SnapVMStateKey(d.ID)
 		if err := be.Delete(ctx, memKey); err != nil {

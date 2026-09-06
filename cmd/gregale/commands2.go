@@ -59,6 +59,7 @@ const (
 	subDomainsSetDefault = "set-default"
 	subDomainsVerify     = "verify"
 	subDomainsShow       = "show"
+	subDomainsStatus     = "status"
 	subDomainsDoctor     = "doctor"
 
 	statusPending  = "pending"
@@ -1871,7 +1872,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 				return printErr("Bad --tarball", deployErr)
 			}
-		} else if len(workflowDefs) == 0 && canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		} else if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+			uploadOptions := api.UploadDeployOptions{
+				Runtime: *runtime, Handler: *handler, Dockerfile: *dockerfile,
+				SourceRoot: sourceRoot, Reason: ann.Reason, Tag: ann.Tag,
+				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
+			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
 				lastPercent := -1
@@ -1885,7 +1891,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			var uploadErr error
-			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress)
+			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress, uploadOptions)
 			if uploadErr == nil && !usedResumable {
 				dep, uploadErr = DeployTarballWithSourceRoot(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
 			}
@@ -2179,6 +2185,8 @@ func cmdDomains(args []string) int {
 		return cmdDomainsVerify(args[1:])
 	case subDomainsShow:
 		return cmdDomainsShow(args[1:])
+	case subDomainsStatus:
+		return cmdDomainsStatus(args[1:])
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
 	}
@@ -3143,7 +3151,7 @@ func cmdLogs(args []string) int {
 	// --explain` actionable — the customer no longer has to read the
 	// whole stream to know which error fired.
 	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain]", "logs")
 		return 1
 	}
@@ -3191,7 +3199,7 @@ func cmdLogsTail(args []string) int {
 	grep := fs.String("grep", "", "only show lines matching this substring")
 	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs tail <slug> [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error]", "logs")
 		return 1
 	}
@@ -3283,7 +3291,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			// side). Move 3's `not_implemented` shape is dead code;
 			// removed.
 			if e.Event == "degraded" {
-				fmt.Fprintln(os.Stderr, "Log stream degraded: the scheduler is temporarily unavailable")
+				fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}

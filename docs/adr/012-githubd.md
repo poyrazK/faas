@@ -9,7 +9,7 @@
   `cmd/gatewayd/<file>.go` citations in this body are stale; see PR-E for
   the new file locations.
 - **Date:** 2026-07-17
-- **Decision:** Introduce `cmd/githubd/` as a new daemon that owns the GitHub App surface for push-to-deploy (resolves gap G8). githubd owns: (1) push-webhook receiver for `push` events on the production branch, (2) Checks-API status writer (`queued` → `building` → `live`/`failed` with logs link), (3) OAuth callback handler for the install flow, (4) per-repo install-token cache. githubd talks to `apid` over gRPC on `/run/faas/githubd.sock` (mode 0660 group `faas`, ADR-015 unix-socket auth) using the `pkg/githubdgrpc` package (ADR-018 schedd pattern). githubd's own HTTP listener is loopback-only at `127.0.0.1:8083`; the public webhook surface lives on `gatewayd` at `/webhooks/github`, HMAC-verified at the edge, then reverse-proxied to githubd.
+- **Decision:** Introduce `cmd/githubd/` as a new daemon that owns the GitHub App surface for push-to-deploy (resolves gap G8). githubd owns: (1) push-webhook receiver for `push` events on the production branch, including release tag pushes resolved against the repository's default production branch, (2) Checks-API status writer (`queued` → `building` → `live`/`failed` with logs link), (3) OAuth callback handler for the install flow, (4) per-repo install-token cache. githubd talks to `apid` over gRPC on `/run/faas/githubd.sock` (mode 0660 group `faas`, ADR-015 unix-socket auth) using the `pkg/githubdgrpc` package (ADR-018 schedd pattern). githubd's own HTTP listener is loopback-only at `127.0.0.1:8083`; the public webhook surface lives on `gatewayd` at `/webhooks/github`, HMAC-verified at the edge, then reverse-proxied to githubd.
 - **Why:** outbound `api.github.com` traffic + Checks-token refresh + webhook signature verification don't fit `apid`'s "customer-intent CRUD" ownership. Mixing them in apid would dilute that ownership and pull api.github.com's latency into apid's hot path. The webhook + Checks flows are background-ish (seconds-to-tens-of-seconds); colocating them in their own daemon with its own goroutine budget is the load-bearing shape (CLAUDE.md: "Components talk via Postgres rows + `pg_notify`, or gRPC on unix sockets"). Least-privilege scope review per §11 (spec §11 line 398): the GitHub App requests only `Contents:read` + `Checks:write` + push webhook — no org-wide access.
 - **Consequences:**
   - New daemon `cmd/githubd/` added to the fleet (9th daemon). Follows the `wire.StubRun("M7.5")` bootstrap (mirroring how meterd was bootstrapped in M7) then gets replaced with the real main loop once the gRPC surface is exercised in tests.
@@ -19,6 +19,19 @@
   - `pkg/githubd/webhook.go` reuses the HMAC primitives from `pkg/stripex/webhook.go:90-104` (`hmac.Equal` + `hmac.New(sha256.New, …)`); only the header parse differs.
   - PR-preview environments deferred to v1.1 (UX spec §5.3 + spec §17 G8). The GitHub App scopes do not include `Pull Requests:write`; webhook events we accept are `push` only.
   - `cmd/builderd/main.go` gains a `LISTEN build_queued` (or whichever notify channel the slice-7 commit picks) so webhook-induced deploys are picked up identically to CLI-induced ones.
+
+## §9 Release-tag promotion policy
+
+Production tag pushes are accepted only when the tag is a valid SemVer with
+the conventional `v` prefix (for example `v1.2.3` or `v1.2.3-rc.1`), GitHub
+marks the ref as `created`, and the `before` SHA is the all-zero creation
+sentinel. A tag update or force-push is acknowledged but ignored with the
+reason `release_tag_moved`;
+an invalid tag is acknowledged with `invalid_release_tag`. Both decisions
+happen before binding lookup, source fetch, or reconcile. This makes a release
+tag a one-way promotion boundary without adding customer state or a database
+migration; a new version must use a new tag.
+
 - **Rejected alternatives:**
   - **githubd as a module inside apid.** Rejected: apid's responsibility is customer-intent CRUD; outbound api.github.com traffic + Checks token refresh would dilute that, and any apid hot-path regression would now have a third-party-API dependency.
   - **githubd terminates the webhook itself (own public listener).** Rejected: violates the §11 single-public-listener invariant. githubd is loopback-only; gatewayd already has CertMagic + the canonical request-ID injection + rate-limit observability — splitting the public surface doubles the §11 attack surface.

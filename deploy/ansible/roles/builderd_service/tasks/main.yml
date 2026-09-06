@@ -170,7 +170,7 @@
     state: directory
     owner: faas-builderd
     group: faas
-    mode: "0770"
+    mode: "2770"
 
 # builderd's content-addressed build cache defaults to /var/cache/faas/builds
 # (cmd/builderd/config.go). ProtectSystem=strict requires this host-local
@@ -178,6 +178,17 @@
 - name: builderd_service — ensure build cache exists
   ansible.builtin.file:
     path: "{{ builderd_cache_dir }}"
+    state: directory
+    owner: faas-builderd
+    group: faas
+    mode: "0770"
+
+# Cache-hit artifacts are hard-linked here while imaged consumes the builder
+# handoff. The imaged unit receives write access to this child only, leaving
+# canonical cache entries read-only to the sibling daemon.
+- name: builderd_service — ensure build cache lease directory exists
+  ansible.builtin.file:
+    path: "{{ builderd_cache_dir }}/.leases"
     state: directory
     owner: faas-builderd
     group: faas

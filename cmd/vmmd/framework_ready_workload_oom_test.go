@@ -9,7 +9,7 @@
 //
 //  1. Malformed JSON envelope → parse error (the dispatcher
 //     never sees it).
-//  2. Closed-set byte outside {0x01..0x05} → parse error
+//  2. Closed-set byte outside {0x01..0x06} → parse error
 //     ("unknown msg sub-type 0xNN").
 //
 // The TypeLabel round-trip is also pinned so the Debug log
@@ -114,7 +114,7 @@ func TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON(t *testing.T) {
 }
 
 // TestParseFrameworkReadyDatagram_TypeClosedSet pins the
-// 5-value closed-set discipline: {0x01..0x05} parse OK;
+// 6-value closed-set discipline: {0x01..0x06} parse OK;
 // anything else returns the "unknown msg sub-type" sentinel.
 // Mirrors TestParseFrameworkReadyDatagram's earlier
 // closed-set guard. Future event classes add a byte + a
@@ -127,7 +127,6 @@ func TestParseFrameworkReadyDatagram_TypeClosedSet(t *testing.T) {
 		body []byte
 	}{
 		{"type_0x00", []byte{0x00}},
-		{"type_0x06", []byte{0x06, 0x00}},
 		{"type_0xFF", []byte{0xFF, 0x00, 0x00}},
 		{"type_0x07_then_payload", []byte{0x07, '{', '}'}},
 		{"type_0x10_then_long_payload", append([]byte{0x10}, []byte(strings.Repeat("x", 32))...)},

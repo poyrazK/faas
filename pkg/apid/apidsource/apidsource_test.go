@@ -164,6 +164,38 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	}
 }
 
+func TestEnqueue_GithubDeliveryRetryReturnsExistingWork(t *testing.T) {
+	st := state.NewMemStore()
+	app := mustSeedApp(t, st)
+	notif := &recordingNotifier{}
+	srcPath, srcBytes := stageSource(t, t.TempDir())
+	params := EnqueueParams{
+		AppID:       app.ID,
+		DeliveryID:  "f7fd51ee-e5e7-4a2e-a30c-c111fa02dc6f",
+		Kind:        state.DeploymentKindGitHub,
+		SourcePath:  srcPath,
+		SourceBytes: srcBytes,
+		LogSpool:    t.TempDir(),
+		Log:         quietLogger(),
+	}
+
+	first, err := Enqueue(context.Background(), st, notif, params)
+	if err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+	second, err := Enqueue(context.Background(), st, notif, params)
+	if err != nil {
+		t.Fatalf("retry Enqueue: %v", err)
+	}
+	if second != first {
+		t.Fatalf("retry created different work: first=%+v second=%+v", first, second)
+	}
+	build, err := st.BuildByID(context.Background(), first.BuildID)
+	if err != nil || build.DeploymentID != first.DeploymentID {
+		t.Fatalf("durable build mismatch: build=%+v err=%v", build, err)
+	}
+}
+
 func TestEnqueue_HappyPath_SecondDeploy_FiresSupersede(t *testing.T) {
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)

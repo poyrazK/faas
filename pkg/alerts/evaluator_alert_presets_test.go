@@ -1,5 +1,5 @@
 // evaluator_alert_presets_test.go — alert-preset evaluator tests
-// (issue #1233 / ADR-123). Pins the 5 new cases in
+// (issue #1233 / ADR-123 and issue #1395 B3). Pins the durable cases in
 // pkg/alerts/evaluator.go::observe:
 //
 //  1. AlertMetricFailedDeployments — Postgres-backed via
@@ -22,12 +22,9 @@
 //     the source is degraded and the evaluator skips without
 //     firing.
 //
-// This file covers the 3 simple cases end-to-end (FailedDeployments,
-// APIUp, QueueDepth-degraded). The Postgres-backed spend / cert
-// paths are exercised via their memstore method tests in
-// pkg/state/memstore_*_test.go (the rule-fired integration test
-// requires elaborate fixture setup that's better placed where the
-// state methods are tested).
+// The B3 table-driven test below covers all four new alert metrics with
+// deterministic store values, while the Postgres-backed reads remain
+// covered by the pgstore integration tests when a test database is present.
 package alerts_test
 
 import (
@@ -38,10 +35,33 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/alerts"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
+
+// b3MetricStore keeps the evaluator test on the real MemStore for alert-rule
+// lifecycle and delivery state while supplying deterministic values for the
+// three production-only rollup reads introduced by issue #1395 B3.
+type b3MetricStore struct {
+	*state.MemStore
+	newErrors   int
+	coldWakePct float64
+	dailyCents  int64
+}
+
+func (s *b3MetricStore) CountNewErrorFingerprintsSince(context.Context, string, string, time.Time) (int, error) {
+	return s.newErrors, nil
+}
+
+func (s *b3MetricStore) ColdWakeRatePctSince(context.Context, string, string, time.Time) (float64, error) {
+	return s.coldWakePct, nil
+}
+
+func (s *b3MetricStore) DailyCostCents(context.Context, string, string, time.Time) (int64, error) {
+	return s.dailyCents, nil
+}
 
 // TestEvaluator_FailedDeployments mirrors TestEvaluator_FailedInvocations
 // for the new deployment_failed metric (issue #1233 / ADR-123).
@@ -152,5 +172,60 @@ func TestEvaluator_QueueDepth_DegradedSource(t *testing.T) {
 	}
 	if dispatch.callCount() != 0 {
 		t.Errorf("dispatch calls = %d; want 0 (degraded source must short-circuit)", dispatch.callCount())
+	}
+}
+
+func TestEvaluator_B3Metrics(t *testing.T) {
+	cases := []struct {
+		name      string
+		metric    state.AlertMetric
+		threshold float64
+		value     float64
+		prom      bool
+	}{
+		{name: "new error fingerprint", metric: state.AlertMetricNewErrorFingerprint, threshold: 0, value: 2},
+		{name: "cold wake rate", metric: state.AlertMetricColdWakeRatePct, threshold: 10, value: 12.5},
+		{name: "queue depth", metric: state.AlertMetricQueueDepth, threshold: 50, value: 75, prom: true},
+		{name: "daily cost", metric: state.AlertMetricDailyCostCents, threshold: 100, value: 250},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := state.NewMemStore()
+			rule, ident, _ := seedRule(t, base, tc.metric, state.AlertGt, tc.threshold)
+			store := &b3MetricStore{
+				MemStore:    base,
+				newErrors:   int(tc.value),
+				coldWakePct: tc.value,
+				dailyCents:  int64(tc.value),
+			}
+			dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
+			var prom appmetrics.PromQL
+			if tc.prom {
+				prom = &stubPromQL{value: tc.value}
+			}
+			ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
+				Store:      store,
+				PromQL:     prom,
+				Audit:      audit.New(store, discardLog(), nil, "meterd"),
+				Identity:   func() *age.X25519Identity { return ident },
+				Dispatcher: dispatch,
+				Now:        func() time.Time { return time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC) },
+				Log:        discardLog(),
+			})
+			stats, err := ev.RunOnce(context.Background())
+			if err != nil {
+				t.Fatalf("RunOnce: %v", err)
+			}
+			if stats.Fired != 1 || stats.Delivered != 1 {
+				t.Fatalf("stats = %+v; want Fired=1, Delivered=1", stats)
+			}
+			if dispatch.callCount() != 1 {
+				t.Fatalf("dispatch calls = %d; want 1", dispatch.callCount())
+			}
+			if rule.Metric != tc.metric {
+				t.Fatalf("seeded metric = %q; want %q", rule.Metric, tc.metric)
+			}
+		})
 	}
 }

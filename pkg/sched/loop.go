@@ -1503,10 +1503,11 @@ func (l *Loop) waitPrimes() {
 
 // handleNotification decodes the JSON payload and applies the policy.
 //
-//   - app_changed: `kind=parked` is actionable and tears down the app's live
-//     instances; lifecycle changes reconcile service replicas. Other app
-//     changes are informational. Wake materialises request-mode instances on
-//     demand (first request), so no eager instance creation is needed there.
+//   - app_changed: `kind=parked` tears down the app's live instances and
+//     `kind=restart` parks, snapshots, and queues one fresh wake; lifecycle
+//     changes reconcile service replicas. Other app changes are informational.
+//     Wake materialises request-mode instances on demand (first request), so
+//     no eager instance creation is needed there.
 //   - deployment_changed: a deployment becoming live reconciles its service
 //     replica target; other transitions remain informational.
 //   - snapshot_prime: imaged finished building a deployment's layer; boot it
@@ -1517,6 +1518,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		var p struct {
 			Kind             string `json:"kind"`
 			AppID            string `json:"app_id"`
+			WakeID           string `json:"wake_id"`
 			LifecycleChanged bool   `json:"lifecycle_changed"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
@@ -1533,6 +1535,26 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			} else {
 				l.log.Info("sched: parked app reconciled", "app", p.AppID, "instances", acted)
 			}
+			return
+		}
+		if p.Kind == "restart" {
+			if p.AppID == "" {
+				l.log.Warn("sched: restart app notification missing app_id")
+				return
+			}
+			// Restart can include a snapshot capture and a cold boot. Keep
+			// the notification loop responsive while the engine's restart
+			// single-flight coalesces duplicate requests for this app.
+			go func(appID, wakeID string) {
+				out, err := l.engine.RestartApp(context.WithoutCancel(ctx), appID, wakeID)
+				if err != nil {
+					l.log.Warn("sched: restart app failed", "app", appID, "err", err)
+					return
+				}
+				if out.Instance != nil {
+					l.log.Info("sched: app restarted", "app", appID, "wake_id", out.Instance.WakeID)
+				}
+			}(p.AppID, p.WakeID)
 			return
 		}
 		if p.LifecycleChanged && p.AppID != "" {
@@ -1937,6 +1959,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 				counter.Inc()
 			}
 		}
+		if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if counter := l.ops.EvictionFired(tier, "idle"); counter != nil {
+				counter.Inc()
+			}
+		}
 		// O(1) lookup via the hoisted instance→app map.
 		if appID, ok := instanceToApp[id]; ok {
 			idleParkByApp[appID] = struct{}{}
@@ -2005,6 +2032,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// non-zero rate over a 5-minute window.
 		if tier, ok := resolvePriority(snapshot, id); ok {
 			if counter := l.ops.EvictedPriority(tier, "eviction_ram"); counter != nil {
+				counter.Inc()
+			}
+		}
+		if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if counter := l.ops.EvictionFired(tier, "ram_pressure"); counter != nil {
 				counter.Inc()
 			}
 		}
@@ -2119,6 +2151,24 @@ func resolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) 
 			continue
 		}
 		return state.EvictionPriorityOrBestEffort(s.EvictionPriority), true
+	}
+	return "", false
+}
+
+// resolveTenantTier returns the plan label carried by an instance snapshot.
+// The boolean is false when the instance disappeared between snapshot and
+// park, which keeps metric counts tied to successful, identifiable operations.
+func resolveTenantTier(snapshot []InstanceInfo, instanceID string) (string, bool) {
+	for _, s := range snapshot {
+		if s.Instance != instanceID {
+			continue
+		}
+		switch s.Plan {
+		case api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale:
+			return string(s.Plan), true
+		default:
+			return "unknown", true
+		}
 	}
 	return "", false
 }
@@ -2281,6 +2331,11 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 			// the metric increments once per parked instance.
 			if tier, ok := resolvePriority(snapshot, id); ok {
 				if counter := l.ops.EvictedPriority(tier, "eviction_aggressive"); counter != nil {
+					counter.Inc()
+				}
+			}
+			if tier, ok := resolveTenantTier(snapshot, id); ok {
+				if counter := l.ops.EvictionFired(tier, "eviction_aggressive"); counter != nil {
 					counter.Inc()
 				}
 			}

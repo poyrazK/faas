@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"time"
 )
 
 // Config contains only non-secret placement settings and names of environment
@@ -19,7 +20,50 @@ type Config struct {
 	DefaultRegion          string            `json:"default_region"`
 	Defaults               map[string]string `json:"defaults"`
 	MaxDatabasesPerAccount int               `json:"max_databases_per_account"`
+	ProvisioningEnabled    bool              `json:"provisioning_enabled"`
+	Usage                  UsageConfig       `json:"usage"`
 	Backends               []BackendConfig   `json:"backends"`
+}
+
+// UsageConfig is the JSON-safe form of UsagePolicy. Prices are integer
+// millicents per CU-hour and GiB-hour of storage/history or GiB of egress so
+// operators never configure floating-point money.
+type UsageConfig struct {
+	Enabled                      bool  `json:"enabled"`
+	CollectionIntervalSeconds    int64 `json:"collection_interval_seconds"`
+	WindowSeconds                int64 `json:"window_seconds"`
+	StaleAfterSeconds            int64 `json:"stale_after_seconds"`
+	MaxMonthlyCostMillicents     int64 `json:"max_monthly_cost_millicents"`
+	MaxMonthlyComputeUnitSeconds int64 `json:"max_monthly_compute_unit_seconds"`
+	MaxMonthlyStorageByteSeconds int64 `json:"max_monthly_storage_byte_seconds"`
+	MaxMonthlyHistoryByteSeconds int64 `json:"max_monthly_history_byte_seconds"`
+	MaxMonthlyEgressBytes        int64 `json:"max_monthly_egress_bytes"`
+	ComputeUnitHourMillicents    int64 `json:"compute_unit_hour_millicents"`
+	StorageGiBHourMillicents     int64 `json:"storage_gib_hour_millicents"`
+	HistoryGiBHourMillicents     int64 `json:"history_gib_hour_millicents"`
+	EgressGiBMillicents          int64 `json:"egress_gib_millicents"`
+}
+
+func (c UsageConfig) policy() (UsagePolicy, error) {
+	policy := UsagePolicy{
+		Enabled:                      c.Enabled,
+		CollectionInterval:           time.Duration(c.CollectionIntervalSeconds) * time.Second,
+		Window:                       time.Duration(c.WindowSeconds) * time.Second,
+		StaleAfter:                   time.Duration(c.StaleAfterSeconds) * time.Second,
+		MaxMonthlyCostMillicents:     c.MaxMonthlyCostMillicents,
+		MaxMonthlyComputeUnitSeconds: c.MaxMonthlyComputeUnitSeconds,
+		MaxMonthlyStorageByteSeconds: c.MaxMonthlyStorageByteSeconds,
+		MaxMonthlyHistoryByteSeconds: c.MaxMonthlyHistoryByteSeconds,
+		MaxMonthlyEgressBytes:        c.MaxMonthlyEgressBytes,
+		ComputeUnitHourMillicents:    c.ComputeUnitHourMillicents,
+		StorageGiBHourMillicents:     c.StorageGiBHourMillicents,
+		HistoryGiBHourMillicents:     c.HistoryGiBHourMillicents,
+		EgressGiBMillicents:          c.EgressGiBMillicents,
+	}
+	if err := policy.Validate(); err != nil {
+		return UsagePolicy{}, errors.New("managed postgres: invalid usage policy")
+	}
+	return policy, nil
 }
 
 type BackendConfig struct {
@@ -45,6 +89,8 @@ type Factory func(BackendConfig, func(string) string) (Provider, error)
 type Registry struct {
 	DefaultRegion          string
 	MaxDatabasesPerAccount int
+	ProvisioningEnabled    bool
+	usage                  UsagePolicy
 	backends               map[string]Backend
 	defaults               map[string]string
 }
@@ -56,9 +102,15 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 	if config.MaxDatabasesPerAccount < 1 || config.MaxDatabasesPerAccount > 100 {
 		return nil, errors.New("managed postgres: invalid per-account database limit")
 	}
+	usagePolicy, err := config.Usage.policy()
+	if err != nil {
+		return nil, err
+	}
 	registry := &Registry{
 		DefaultRegion:          config.DefaultRegion,
 		MaxDatabasesPerAccount: config.MaxDatabasesPerAccount,
+		ProvisioningEnabled:    config.ProvisioningEnabled,
+		usage:                  usagePolicy,
 		backends:               make(map[string]Backend, len(config.Backends)),
 		defaults:               make(map[string]string, len(config.Defaults)),
 	}
@@ -108,6 +160,13 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 		return nil, errors.New("managed postgres: default_region is not configured")
 	}
 	return registry, nil
+}
+
+func (r *Registry) UsagePolicy() UsagePolicy {
+	if r == nil {
+		return UsagePolicy{}
+	}
+	return r.usage
 }
 
 func Load(getenv func(string) string, factories map[string]Factory) (*Registry, error) {

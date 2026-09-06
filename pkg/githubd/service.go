@@ -100,6 +100,15 @@ type WriteCheck func(ctx context.Context, repoFullName, commitSHA string, phase 
 
 type WriteAppCheckFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, summary string) error
 
+// WriteScopedAppCheckFunc is the scope-aware Check Run seam. The legacy
+// WriteAppCheckFunc remains supported for embedders that do not need named
+// environments yet.
+type WriteScopedAppCheckFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug, scope string, phase githubdgrpc.CheckPhase, summary string) error
+
+// WriteSkippedCheckForInstallationFunc writes the neutral production Check
+// Run used when a commit explicitly opts out of deployment.
+type WriteSkippedCheckForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error
+
 // WritePreviewCheck is the seam githubd uses to push PR-preview
 // Check Run updates back to GitHub (issue #272 / ADR-094). Wired
 // by cmd/githubd/main.go to ChecksAPI.WritePreviewCheck; nil-safe
@@ -148,15 +157,17 @@ type WritePreviewDestroyComment = WritePreviewDestroyCommentFunc
 // mode="error" / mode="breaker_open" metric labels rather than
 // silently downgrading to full fan-out.
 type Service struct {
-	Log           *slog.Logger
-	Bindings      AppBindingStore
-	Installs      InstallsLookup
-	Source        SourceFetcher
-	Reconcile     *reconcile.Service
-	Enqueuer      BuildEnqueuer
-	ChangedFiles  ChangedFilesClient
-	WriteCheck    WriteCheck
-	WriteAppCheck WriteAppCheckFunc
+	Log                              *slog.Logger
+	Bindings                         AppBindingStore
+	Installs                         InstallsLookup
+	Source                           SourceFetcher
+	Reconcile                        *reconcile.Service
+	Enqueuer                         BuildEnqueuer
+	ChangedFiles                     ChangedFilesClient
+	WriteCheck                       WriteCheck
+	WriteAppCheck                    WriteAppCheckFunc
+	WriteScopedAppCheck              WriteScopedAppCheckFunc
+	WriteSkippedCheckForInstallation WriteSkippedCheckForInstallationFunc
 	// Ops is the per-daemon Prometheus facade. Used by the
 	// push-dispatch path to increment
 	// githubd_path_filter_total{mode} after lookupChangedFiles
@@ -203,6 +214,23 @@ func NewService(log *slog.Logger) *Service {
 		log = slog.Default()
 	}
 	return &Service{Log: log}
+}
+
+type webhookDeliveryContextKey struct{}
+
+// HandleWebhookDelivery dispatches a durable inbox item. DeliveryID is kept
+// out of the GitHub JSON body and carried through context solely to stamp the
+// downstream per-app enqueue idempotency key.
+func (s *Service) HandleWebhookDelivery(ctx context.Context, delivery WebhookDelivery) error {
+	if delivery.DeliveryID != "" {
+		ctx = context.WithValue(ctx, webhookDeliveryContextKey{}, delivery.DeliveryID)
+	}
+	return s.HandleWebhookEvent(ctx, delivery.EventType, delivery.Payload)
+}
+
+func webhookDeliveryID(ctx context.Context) string {
+	deliveryID, _ := ctx.Value(webhookDeliveryContextKey{}).(string)
+	return deliveryID
 }
 
 // HandleWebhookEvent routes the standard X-GitHub-Event value. Keeping the
@@ -269,17 +297,78 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	branch := refToBranch(ev.Ref)
-	if branch == "" {
-		// Non-branch ref (tag push, etc.) — slice 7 only handles
-		// branch pushes. Tag pushes arrive in a future slice.
+	if ev.Deleted {
+		// GitHub represents a deleted branch or tag with an all-zero
+		// `after` SHA. Never feed that sentinel into source fetch or
+		// reconcile; deletion is not a deploy trigger.
 		return reconcile.Result{}, ErrNoBinding
+	}
+	branch := refToBranch(ev.Ref)
+	isTag := false
+	if branch == "" {
+		tag := refToTag(ev.Ref)
+		if tag == "" {
+			// Pull requests and other Git refs are not production
+			// deployment triggers.
+			return reconcile.Result{}, ErrNoBinding
+		}
+		if err := validateReleaseTag(tag, ev.Before, ev.Created, ev.Forced); err != nil {
+			// Release tags are a one-way promotion boundary. Reject
+			// malformed tags and moved tags before binding lookup,
+			// source fetch, or reconcile so an ignored delivery cannot
+			// cause any customer-side work.
+			return reconcile.Result{}, err
+		}
+		// A tag has no branch binding of its own. Resolve it against
+		// the repository's default branch; the normal reconcile guard
+		// still verifies that this is the configured production branch.
+		branch = ev.Repository.DefaultBranch
+		if branch == "" {
+			branch = defaultProductionBranch
+		}
+		isTag = true
 	}
 
 	// 1. Resolve the (repo, branch) binding. An empty BindingID
 	// is the canonical "no row" shape; ErrNoBinding covers both
 	// "store said not-found" and "store returned an empty row".
 	binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, branch, ev.Installation.ID)
+	if (err != nil || binding.BindingID == "") && !isTag && s.Reconcile != nil && s.Reconcile.Store != nil {
+		// A mapped non-production branch has no row in the legacy
+		// repo+production_branch binding index. Resolve the project by
+		// repository and synthesize the same binding shape so branch
+		// routing remains additive and old bindings continue to work.
+		project, projectErr := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		if projectErr == nil && project.AccountID != "" && project.ProductionBranch != "" {
+			binding = state.GitHubBinding{
+				BindingID:        "project-" + project.ID,
+				AccountID:        project.AccountID,
+				InstallID:        project.InstallID,
+				RepoFullName:     project.RepoFullName,
+				ProductionBranch: project.ProductionBranch,
+			}
+			err = nil
+		}
+	}
+	if (err != nil || binding.BindingID == "") && isTag && s.Reconcile != nil && s.Reconcile.Store != nil {
+		// A repository may intentionally deploy from a non-default
+		// production branch. The project row is the authoritative
+		// (installation, repository, production_branch) mapping, so
+		// use it as a tag fallback when the default-branch binding
+		// lookup cannot match.
+		project, projectErr := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		if projectErr == nil && project.AccountID != "" && project.ProductionBranch != "" {
+			binding = state.GitHubBinding{
+				BindingID:        "project-" + project.ID,
+				AccountID:        project.AccountID,
+				InstallID:        project.InstallID,
+				RepoFullName:     project.RepoFullName,
+				ProductionBranch: project.ProductionBranch,
+			}
+			branch = project.ProductionBranch
+			err = nil
+		}
+	}
 	if err != nil {
 		return reconcile.Result{}, ErrNoBinding
 	}
@@ -339,6 +428,29 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return reconcile.Result{}, ErrNoBinding
 	}
 
+	// An explicit commit marker is a customer-controlled no-op. Resolve the
+	// binding/install/project first so the neutral Check Run can use the
+	// installation-scoped token, then stop before source fetch, scan, or
+	// reconcile. Durable webhook deliveries treat ErrSkipDeploy as complete.
+	if marker := ev.DeploySkipMarker(); marker != "" {
+		s.Ops.ObserveGithubdPushSkipped(wire.PushSkippedReasonMarker)
+		if s.WriteSkippedCheckForInstallation != nil {
+			summary := fmt.Sprintf("Deployment skipped by commit marker %s.", marker)
+			if checkErr := s.WriteSkippedCheckForInstallation(ctx, install.InstallationID, ev.Repository.FullName, ev.After, summary); checkErr != nil {
+				return reconcile.Result{}, fmt.Errorf("githubd: write skipped check: %w", checkErr)
+			}
+		}
+		return reconcile.Result{}, ErrSkipDeploy
+	}
+
+	deploymentScope, reconcileBranch, err := s.scopeForPush(ctx, project, branch)
+	if err != nil {
+		if errors.Is(err, ErrIgnored) {
+			return reconcile.Result{}, ErrIgnored
+		}
+		return reconcile.Result{}, err
+	}
+
 	// 4. Fetch the source tree. The fetcher unseals the install
 	// token internally (cmd/githubd/source_fetcher.go) and
 	// returns a Tree whose Close() removes the temp dir.
@@ -364,7 +476,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	}
 	// githubd is push-driven (no --exclude analog on the webhook
 	// path); pass nil so workloadDiff's exclude filter is a no-op.
-	result, err := s.Reconcile.Reconcile(ctx, project, scan, ev.After, branch, nil)
+	result, err := s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, nil)
 	if err != nil {
 		if errors.Is(err, reconcile.ErrIgnored) {
 			// Defensive: ErrIgnored is the Plan-side sentinel;
@@ -397,9 +509,14 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	if enqueuer == nil {
 		enqueuer = NewNoopEnqueuer(s.Log)
 	}
-	touched := make([]state.App, 0, len(result.Added)+len(result.Changed))
-	touched = append(touched, result.Added...)
-	touched = append(touched, result.Changed...)
+	// Build selection starts from the full active project membership, not the
+	// reconcile metadata delta. A source-only commit does not change an app row,
+	// and a retried delivery sees an already-converged reconcile result; both
+	// still need the same path-filtered deployment fan-out.
+	touched, err := s.Reconcile.Store.AppsForProject(ctx, binding.AccountID, project.ID)
+	if err != nil {
+		return result, fmt.Errorf("githubd: list project apps for build fan-out: %w", err)
+	}
 
 	// Path-filter optimization (review #1): when the reconcile
 	// step produced zero apps (empty touched set, e.g. a default-
@@ -437,20 +554,25 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// path which short-circuited lookupChangedFiles.
 	s.ObserveFilterMode(filterMode)
 	toEnqueue, skipped := s.filterByPath(touched, changedFiles, filterMode)
+	deliveryID := webhookDeliveryID(ctx)
 
 	// Legacy embeddings expose one repository-wide check. Production uses the
 	// per-app writer below so monorepo workloads do not overwrite one another.
-	if s.WriteAppCheck == nil && s.WriteCheck != nil && len(toEnqueue) > 0 {
+	// Durable deliveries let the deployment outbox write the initial queued
+	// state; skipping the eager write prevents a reclaimed, already-live
+	// delivery from regressing its Check Run back to queued.
+	if deliveryID == "" && s.WriteAppCheck == nil && s.WriteScopedAppCheck == nil && s.WriteCheck != nil && len(toEnqueue) > 0 {
 		if werr := s.WriteCheck(ctx, ev.Repository.FullName, ev.After, githubdgrpc.CheckPhaseQueued); werr != nil {
 			s.Log.Warn("githubd: write queued check", "err", werr, "repo", ev.Repository.FullName, "sha", ev.After)
 		}
 	}
 
 	buildIDs := make([]string, 0, len(toEnqueue))
+	var deliveryErrors []error
 	for _, app := range toEnqueue {
-		if s.WriteAppCheck != nil {
-			if werr := s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-				app.Slug, githubdgrpc.CheckPhaseQueued, "Deployment queued."); werr != nil {
+		if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
+			if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+				app.Slug, deploymentScope, githubdgrpc.CheckPhaseQueued, fmt.Sprintf("Deployment queued (scope: %s).", deploymentScope)); werr != nil {
 				s.Log.Warn("githubd: write queued app check", "app_id", app.ID, "err", werr)
 			}
 		}
@@ -464,18 +586,23 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		sourcePath, sourceBytes, sourceURL, stageErr := s.stageAppSource(ctx, tree, app, project, ev.After, branch)
 		if stageErr != nil {
 			s.Log.Warn("githubd: stage app source", "app_id", app.ID, "err", stageErr, "repo", ev.Repository.FullName, "sha", ev.After)
-			if s.WriteAppCheck != nil {
-				_ = s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-					app.Slug, githubdgrpc.CheckPhaseFailed, "Source staging failed: "+stageErr.Error())
+			if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
+				_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, deploymentScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Source staging failed (scope: %s): %s", deploymentScope, stageErr.Error()))
+			}
+			if deliveryID != "" {
+				deliveryErrors = append(deliveryErrors, fmt.Errorf("stage app %s: %w", app.ID, stageErr))
 			}
 			continue
 		}
 		build, err := enqueuer.Enqueue(ctx, BuildSpec{
 			App:          app,
+			DeliveryID:   deliveryID,
 			CommitSHA:    ev.After,
 			RepoFullName: ev.Repository.FullName,
 			Ref:          ev.Ref,
 			Branch:       branch,
+			Scope:        deploymentScope,
 			Pusher:       ev.Pusher.Name,
 			SourcePath:   sourcePath,
 			SourceURL:    sourceURL,
@@ -487,15 +614,16 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			EventKind: githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH,
 		})
 		if err != nil {
-			// Best-effort: log + continue. The webhook
-			// contract is 200 OK with the partial build_ids
-			// list; failing the whole push because one of
-			// 50 builds was rejected is worse for the
-			// customer.
+			// Direct compatibility callers keep partial-success. Durable
+			// delivery dispatch aggregates the failure after fan-out so
+			// the inbox retries; already-successful apps are idempotent.
 			s.Log.Warn("githubd: enqueue build", "app_id", app.ID, "err", err, "repo", ev.Repository.FullName, "sha", ev.After)
-			if s.WriteAppCheck != nil {
-				_ = s.WriteAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-					app.Slug, githubdgrpc.CheckPhaseFailed, "Build enqueue failed: "+err.Error())
+			if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
+				_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, deploymentScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Build enqueue failed (scope: %s): %s", deploymentScope, err.Error()))
+			}
+			if deliveryID != "" {
+				deliveryErrors = append(deliveryErrors, fmt.Errorf("enqueue app %s: %w", app.ID, err))
 			}
 			continue
 		}
@@ -510,9 +638,13 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 	}
 	result.BuildIDs = buildIDs
+	if len(deliveryErrors) > 0 {
+		return result, fmt.Errorf("githubd: delivery %s incomplete: %w", deliveryID, errors.Join(deliveryErrors...))
+	}
 
 	s.Log.Info("githubd push → reconcile",
 		"repo", ev.Repository.FullName, "branch", branch,
+		"tag", isTag,
 		"sha", ev.After, "binding", binding.BindingID,
 		"added", len(result.Added), "changed", len(result.Changed),
 		"removed", len(result.Removed),
@@ -521,6 +653,43 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		"files", len(changedFiles),
 		"pusher", ev.Pusher.Name)
 	return result, nil
+}
+
+// scopeForPush resolves a branch to its deployment scope. The production
+// branch keeps the historical default scope when no explicit rule exists;
+// every other branch must be explicitly mapped before it can deploy. The
+// empty reconcile branch bypasses the legacy production-branch guard while
+// BuildSpec.Branch still records the real Git ref for provenance.
+func (s *Service) scopeForPush(ctx context.Context, project state.Project, branch string) (string, string, error) {
+	scope := state.DefaultEnvScope
+	reconcileBranch := branch
+	if branchesStore, ok := s.Reconcile.Store.(state.ProjectDeployBranchesStore); ok {
+		branches, err := branchesStore.ListProjectDeployBranches(ctx, project.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return "", branch, fmt.Errorf("githubd: resolve deploy branch scope: %w", err)
+		}
+		if mapped, exists := branches[branch]; exists {
+			scope = mapped
+			if branch != project.ProductionBranch {
+				reconcileBranch = ""
+			}
+			return scope, reconcileBranch, nil
+		}
+	}
+	if branch != project.ProductionBranch {
+		return "", branch, ErrIgnored
+	}
+	return scope, reconcileBranch, nil
+}
+
+func (s *Service) writeAppCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug, scope string, phase githubdgrpc.CheckPhase, summary string) error {
+	if s.WriteScopedAppCheck != nil {
+		return s.WriteScopedAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, scope, phase, summary)
+	}
+	if s.WriteAppCheck != nil {
+		return s.WriteAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, phase, summary)
+	}
+	return nil
 }
 
 // lookupChangedFiles calls the ChangedFilesClient (if wired) and
@@ -716,6 +885,20 @@ func (errNoBinding) Error() string { return "githubd: no binding for push" }
 // IsNoBinding reports whether err is the no-binding sentinel.
 func IsNoBinding(err error) bool {
 	return errors.As(err, new(errNoBinding))
+}
+
+// ErrSkipDeploy is returned when a push contains an explicit deployment
+// opt-out marker ([skip deploy] or [deploy skip]). The HTTP handler maps it to
+// a successful ignored response and the durable worker completes the inbox row
+// without retrying the delivery.
+var ErrSkipDeploy = errSkipDeploy{}
+
+type errSkipDeploy struct{}
+
+func (errSkipDeploy) Error() string { return "githubd: deployment skipped by commit marker" }
+
+func IsSkipDeploy(err error) bool {
+	return errors.As(err, new(errSkipDeploy))
 }
 
 // previewDefaultTTL is the wall-clock duration a preview app
@@ -1204,14 +1387,16 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	//    pipeline (a follow-up PR-A.1) will transition it to
 	//    `in_progress` / `completed`.
 	previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
-	if werr := s.writePreviewCheck(ctx, install.InstallationID,
-		ev.Repository.FullName, ev.PullRequest.HeadSHA,
-		githubdgrpc.CheckPhaseQueued, previewURL,
-		fmt.Sprintf("Preview provisioned for PR #%d against %q",
-			ev.Number, parentApp.Slug)); werr != nil {
-		s.Log.Warn("githubd: write queued preview check", "err", werr,
-			"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA,
-			"preview_slug", previewSlugVal)
+	if webhookDeliveryID(ctx) == "" {
+		if werr := s.writePreviewCheck(ctx, install.InstallationID,
+			ev.Repository.FullName, ev.PullRequest.HeadSHA,
+			githubdgrpc.CheckPhaseQueued, previewURL,
+			fmt.Sprintf("Preview provisioned for PR #%d against %q",
+				ev.Number, parentApp.Slug)); werr != nil {
+			s.Log.Warn("githubd: write queued preview check", "err", werr,
+				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA,
+				"preview_slug", previewSlugVal)
+		}
 	}
 
 	// Fetch, stage, and enqueue the preview's head revision. Older unit rigs
@@ -1237,6 +1422,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		}
 		build, enqueueErr := s.Enqueuer.Enqueue(ctx, BuildSpec{
 			App:          created,
+			DeliveryID:   webhookDeliveryID(ctx),
 			CommitSHA:    ev.PullRequest.HeadSHA,
 			RepoFullName: ev.Repository.FullName,
 			Ref:          "refs/heads/" + ev.PullRequest.HeadRef,
@@ -1283,14 +1469,25 @@ func IsIgnored(err error) bool {
 }
 
 // refToBranch converts "refs/heads/main" → "main". Returns "" for
-// refs that aren't a branch (e.g. refs/tags/v1.0 — slice 7 only
-// handles branch pushes; tag pushes arrive in a future slice).
+// refs that aren't a branch.
 func refToBranch(ref string) string {
 	const prefix = "refs/heads/"
 	if len(ref) <= len(prefix) {
 		return ""
 	}
 	if ref[:len(prefix)] != prefix {
+		return ""
+	}
+	return ref[len(prefix):]
+}
+
+// refToTag converts "refs/tags/v1.0.0" → "v1.0.0". GitHub sends
+// tag creation, update, and deletion through the same push webhook
+// shape as branch pushes. The caller decides whether a tag event is
+// deployable; an empty result means the ref is not a tag.
+func refToTag(ref string) string {
+	const prefix = "refs/tags/"
+	if len(ref) <= len(prefix) || !strings.HasPrefix(ref, prefix) {
 		return ""
 	}
 	return ref[len(prefix):]

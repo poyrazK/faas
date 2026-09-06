@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -481,6 +482,13 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// restartMu/restartInFlight coalesce duplicate restart notifications for
+	// one app. The notification is a best-effort hint and can be delivered
+	// more than once, so a second caller waits for the first park+fresh-wake
+	// operation and receives the same outcome.
+	restartMu        sync.Mutex
+	restartInFlight  map[string]*restartCall
+	restartCompleted map[string]string
 	// serviceAppMu serialises service replica allocation across all live
 	// deployments for an app. It is distinct from appMu because replica
 	// reconciliation invokes admission, which acquires appMu itself, and
@@ -677,23 +685,25 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		log = slog.Default()
 	}
 	e := &Engine{
-		store:           store,
-		ledger:          ledger,
-		vmm:             vmm,
-		notif:           notif,
-		fcVer:           fcVer,
-		log:             log,
-		jobContext:      ctx,
-		appMu:           map[string]*sync.Mutex{},
-		serviceAppMu:    map[string]*sync.Mutex{},
-		serviceMu:       map[string]*sync.Mutex{},
-		wakeCoord:       newWakeCoord(),
-		warmBroadcaster: newWarmHintBroadcaster(),
-		capacityTable:   newNodeCapacityTable(),
-		telemetryCache:  NewNodeTelemetryCache(),
-		nodePresence:    newNodePresenceTracker(),
-		usageCache:      NewNodeUsageCache(),
-		now:             time.Now, // tests override post-construction
+		store:            store,
+		ledger:           ledger,
+		vmm:              vmm,
+		notif:            notif,
+		fcVer:            fcVer,
+		log:              log,
+		jobContext:       ctx,
+		appMu:            map[string]*sync.Mutex{},
+		restartInFlight:  map[string]*restartCall{},
+		restartCompleted: map[string]string{},
+		serviceAppMu:     map[string]*sync.Mutex{},
+		serviceMu:        map[string]*sync.Mutex{},
+		wakeCoord:        newWakeCoord(),
+		warmBroadcaster:  newWarmHintBroadcaster(),
+		capacityTable:    newNodeCapacityTable(),
+		telemetryCache:   NewNodeTelemetryCache(),
+		nodePresence:     newNodePresenceTracker(),
+		usageCache:       NewNodeUsageCache(),
+		now:              time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB
 	// doesn't block the daemon's boot forever — the watchdog goroutine
@@ -1482,6 +1492,155 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	return e.admitAndDispatch(ctx, appID, trigger, false)
 }
 
+// requestedWakeIDKey carries an API-minted wake correlation id through the
+// restart notification. Ordinary wakes continue to mint their UUIDv7 inside
+// the admission window; restarts use this key so the 202 response can expose
+// the same id that schedd stamps on the new instance and wake events.
+type requestedWakeIDKey struct{}
+
+type restartCall struct {
+	done chan struct{}
+	out  CoordOutcome
+	err  error
+}
+
+func withRequestedWakeID(ctx context.Context, wakeID string) context.Context {
+	if wakeID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestedWakeIDKey{}, wakeID)
+}
+
+func requestedWakeID(ctx context.Context) string {
+	wakeID, _ := ctx.Value(requestedWakeIDKey{}).(string)
+	return wakeID
+}
+
+// RestartApp parks every live instance for an app, then ensures one fresh
+// instance is awake from the snapshot just captured. The app-level lock
+// serializes the park phase with normal wake/reaper work; EnsureWake provides
+// the existing per-app single-flight and wake-rate-limit behavior for the
+// replacement instance.
+//
+// This is invoked by schedd after apid emits app_changed{kind:"restart"}.
+// Apid writes the initial park intent; schedd owns instance transitions and
+// snapshot/VM operations, then reactivates the app before the replacement wake.
+func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (out CoordOutcome, err error) {
+	if e == nil || appID == "" {
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: empty app id")
+	}
+	// app_changed is delivered through pg_notify, so retries and duplicate
+	// notifications are expected. Coalesce them before doing any VM work.
+	e.restartMu.Lock()
+	if e.restartInFlight == nil {
+		e.restartInFlight = make(map[string]*restartCall)
+	}
+	if e.restartCompleted == nil {
+		e.restartCompleted = make(map[string]string)
+	}
+	if wakeID != "" && e.restartCompleted[appID] == wakeID {
+		e.restartMu.Unlock()
+		return CoordOutcome{}, nil
+	}
+	if call, ok := e.restartInFlight[appID]; ok {
+		e.restartMu.Unlock()
+		select {
+		case <-call.done:
+			return call.out, call.err
+		case <-ctx.Done():
+			return CoordOutcome{}, ctx.Err()
+		}
+	}
+	call := &restartCall{done: make(chan struct{})}
+	e.restartInFlight[appID] = call
+	e.restartMu.Unlock()
+	defer func() {
+		e.restartMu.Lock()
+		call.out, call.err = out, err
+		if err == nil && out.Instance != nil && wakeID != "" {
+			e.restartCompleted[appID] = out.Instance.WakeID
+		}
+		close(call.done)
+		delete(e.restartInFlight, appID)
+		e.restartMu.Unlock()
+	}()
+
+	// The owner gate mirrors EnsureWake/ParkApp in split-node deployments.
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: load app %s: %w", appID, err)
+	}
+	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+		return CoordOutcome{}, nil
+	}
+	if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
+		// Deleted or otherwise non-live apps cannot be restarted.
+		return CoordOutcome{}, nil
+	}
+
+	release := e.lockApp(appID)
+	app, err = e.store.AppByID(ctx, appID)
+	if err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: reload app %s: %w", appID, err)
+	}
+	if app.Status == state.AppActive {
+		parked := state.AppEvictedCold
+		if _, err := e.store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &parked}); err != nil {
+			release()
+			return CoordOutcome{}, fmt.Errorf("sched: restart app: park app %s: %w", appID, err)
+		}
+	} else if app.Status != state.AppEvictedCold {
+		release()
+		return CoordOutcome{}, nil
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: list instances %s: %w", appID, err)
+	}
+	for _, candidate := range instances {
+		fresh, readErr := e.store.InstanceByID(ctx, candidate.ID)
+		if readErr != nil {
+			if errors.Is(readErr, state.ErrNotFound) {
+				continue
+			}
+			release()
+			return CoordOutcome{}, fmt.Errorf("sched: restart app: reload instance %s: %w", candidate.ID, readErr)
+		}
+		switch state.State(fresh.State) {
+		case state.StateRunning:
+			if parkErr := e.snapshotAndPark(ctx, fresh); parkErr != nil {
+				release()
+				return CoordOutcome{}, fmt.Errorf("sched: restart app: park instance %s: %w", fresh.ID, parkErr)
+			}
+		case state.StateWaking, state.StateColdBooting:
+			if destroyErr := e.timedDestroy(ctx, fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
+				release()
+				return CoordOutcome{}, fmt.Errorf("sched: restart app: destroy instance %s: %w", fresh.ID, destroyErr)
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		}
+	}
+	active := state.AppActive
+	if _, err := e.store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &active}); err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: reactivate app %s: %w", appID, err)
+	}
+	release()
+
+	out, err = e.EnsureWake(withRequestedWakeID(ctx, wakeID), appID, TriggerAppRestart)
+	if err == nil && out.Instance != nil && e.audit != nil {
+		e.audit.Emit(ctx, "app.restarted", &app.AccountID, map[string]any{
+			"app_id":  appID,
+			"slug":    app.Slug,
+			"wake_id": out.Instance.WakeID,
+		})
+	}
+	return out, err
+}
+
 func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, ins state.Instance) bool {
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
@@ -1525,6 +1684,13 @@ func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, i
 //   - leader's *api.Problem: ledger / chooser / store error.
 //   - nil: the wake succeeded; Outcome.Instance is populated.
 func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOutcome, error) {
+	return e.EnsureWakeCapacity(ctx, appID, trigger, 1)
+}
+
+// EnsureWakeCapacity shares the existing wake coordinator and accepts a bounded
+// desired-capacity hint from a coalesced gateway burst. Followers inherit the
+// leader's actual results; unmet demand is reconciled by their ordinary path.
+func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, desired int) (CoordOutcome, error) {
 	if e == nil || e.wakeCoord == nil {
 		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: engine not fully constructed")
 	}
@@ -1579,6 +1745,9 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	// goroutine detach.
 	leaderCtx, cancel := context.WithTimeout(context.Background(), e.wakeCoord.TTL())
 	defer cancel()
+	// The coordinator deliberately detaches from the triggering request, but
+	// preserves the restart correlation id while doing so.
+	leaderCtx = withRequestedWakeID(leaderCtx, requestedWakeID(ctx))
 	out := CoordOutcome{}
 	defer func() {
 		call.Complete(out)
@@ -1590,7 +1759,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	// This is the load-bearing coordinated-wake invariant (spec
 	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
 	// goroutine detach.
-	res, err := e.Wake(leaderCtx, appID, "", "", trigger)
+	results, err := e.wakeInitialCapacity(leaderCtx, appID, trigger, desired)
 	if err != nil {
 		out.Err = err
 		return out, err
@@ -1603,17 +1772,13 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	// query. Forward the typed sentinel so the gateway retries
 	// against the existing live targets (per the AdmitInstance
 	// AtCapacity contract).
-	if res.AtCapacity {
+	if len(results) == 0 || results[0].AtCapacity {
 		out.Err = ErrAtCapacity
 		return out, ErrAtCapacity
 	}
-	out.Instance = &CoordInstance{
-		InstanceID:   res.InstanceID,
-		NodeID:       res.NodeID,
-		DeploymentID: res.DeploymentID,
-		WakeID:       res.WakeID,
-		Port:         int32(res.Port),
-		ColdBoot:     res.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT,
+	out.Instance = coordinateWakeResult(results[0])
+	for _, result := range results[1:] {
+		out.Additional = append(out.Additional, coordinateWakeResult(result))
 	}
 	return out, nil
 }
@@ -2113,22 +2278,28 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// in practice but the code carries the surface — on the
 	// essentially-zero error path we fall back to a v4 so a wake is
 	// never refused for ID-generation reasons.
-	wakeUUID, err := uuid.NewV7()
-	if err != nil {
-		// crypto/rand failure should be impossible in practice but
-		// the surface exists; fall back to v4 so a wake is never
-		// refused for ID-generation reasons. v4 breaks the
-		// time-ordering invariant the partial index is built on, so
-		// log + counter (review finding #6, gaps analysis
-		// 2026-07-23). Any non-zero rate is an alertable condition.
-		wakeUUID = uuid.New()
-		if e.ops != nil {
-			e.ops.WakeIDV4Fallback().Inc()
-		}
-		e.log.Warn("wake: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
-			"app", appID, "err", err)
+	wakeID := requestedWakeID(ctx)
+	if _, parseErr := uuid.Parse(wakeID); parseErr != nil {
+		wakeID = ""
 	}
-	wakeID := wakeUUID.String()
+	if wakeID == "" {
+		wakeUUID, err := uuid.NewV7()
+		if err != nil {
+			// crypto/rand failure should be impossible in practice but
+			// the surface exists; fall back to v4 so a wake is never
+			// refused for ID-generation reasons. v4 breaks the
+			// time-ordering invariant the partial index is built on, so
+			// log + counter (review finding #6, gaps analysis
+			// 2026-07-23). Any non-zero rate is an alertable condition.
+			wakeUUID = uuid.New()
+			if e.ops != nil {
+				e.ops.WakeIDV4Fallback().Inc()
+			}
+			e.log.Warn("wake: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
+				"app", appID, "err", err)
+		}
+		wakeID = wakeUUID.String()
+	}
 
 	// Consult the per-deployment snapshot-miss backoff before touching the
 	// snapshot cache. Repeated cache misses must be visible as bounded 503s;
@@ -2577,6 +2748,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 	}
 
+	signalAdmissionReady(ctx)
+
 	// ── Phase 3: drop the lock, do the slow vmmd RPC ──────────────
 	var out *WakeOutcome
 	bootCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput))
@@ -2683,8 +2856,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// cold-boot-regression surfaced during the #121
 		// exploration (wake had been sending an empty
 		// VMStatePath since migration 23 dropped snapshots.path).
-		vmstatePath := e.vmstateHostPathFor(bootInput.depID)
-		vmstateStorageKey := e.vmstateStorageKeyFor(bootInput.nodeID, bootInput.depID)
+		vmstatePath, vmstateStorageKey := e.snapshotStateLocators(bootInput.nodeID, state.Snapshot{
+			DeploymentID: bootInput.depID, StorageKey: bootInput.snapKey,
+		})
 		// Issue #555 PR-3: vmmd.create_from_snapshot child span.
 		// The vmmd-side gRPC stats handler (otelgrpc) starts a
 		// server span for the CreateFromSnapshot RPC; this client
@@ -5548,27 +5722,10 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 			}
 		}
 	}
-	// vmstate is a small JSON the FC socket writes to during pause; we
-	// give it a host path under the snap dir (the local driver maps the
-	// storage_key back to this exact location on the next restore, so
-	// the two paths must agree).
-	//
-	// #121 / ADR-025 axis 2 slice 4 — remote nodes no longer need a
-	// host path: the engine also computes vmstateStorageKey below and
-	// threads it; vmmd chooses which carrier to use based on the
-	// field's empty/non-empty value. Default-local always sends empty
-	// vmstateStorageKey and the legacy host-path branch is taken
-	// bit-for-bit.
-	vmstate := SnapDir() + "/" + ins.DeploymentID + "/vmstate"
-	// #96 / ADR-025 axis 2: the canonical storage key under which vmmd
-	// publishes the mem blob via the StorageBackend. The local driver
-	// maps "snap/<dep>/mem" to /srv/fc/snap/<dep>/mem; the OCI driver
-	// streams the bytes over HTTP.
-	storageKey := state.SnapMemKey(ins.DeploymentID)
-	// #121 / ADR-025 axis 2 slice 4: canonical StorageBackend key for
-	// the vmstate blob when the new carrier is in scope. Empty for
-	// default-local; populated for remote nodes.
-	vmstateStorageKey := e.vmstateStorageKeyFor(ins.NodeID, ins.DeploymentID)
+	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())
+	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
+	vmstate := filepath.Join(SnapDir(), strings.TrimPrefix(vmstateKey, "snap/"))
+	vmstateStorageKey := vmstateKey
 	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
 	// Stamp parked_at on entry into SNAPSHOTTING so the §6.1 watchdog
 	// (commit 3) has an "age of state" anchor for the row.
@@ -5622,7 +5779,10 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	snapBudget := SnapshotBudgetFor(ins.RAMMB)
 	snapCtx, snapCancel := context.WithTimeout(ctx, snapBudget)
 	snapStart := time.Now()
-	b, err := e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey)
+	b, reused, err := e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey)
+	if reused != nil {
+		storageKey = reused.StorageKey
+	}
 	snapCancel()
 	// The park path has no phase instrumentation (unlike wakePhases on
 	// the boot path), so at minimum record how long the capture ran
@@ -5674,7 +5834,9 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	// success path so imaged writes both rows. The engine does NOT
 	// write the warm row directly to avoid a unique-violation on
 	// (deployment_id, tier) between engine and imaged.
-	e.emitSnapshotWritten(ctx, ins.DeploymentID, ins.NodeID, vmstate, b, state.SnapshotTierInit)
+	if reused == nil {
+		e.emitSnapshotWritten(ctx, ins.DeploymentID, ins.NodeID, vmstate, storageKey, b, state.SnapshotTierInit)
+	}
 	return nil
 }
 
@@ -5783,7 +5945,11 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	// Compute the per-tier storage keys. The /warm/ segment keeps
 	// the blobs physically separate from the init tier so imaged's
 	// per-tier GC (PR C) can keep 2+2 without conflating them.
-	warmMemKey, warmVMStateStorageKey := e.warmKeysFor(ins.NodeID, ins.DeploymentID)
+	if _, ok := e.reusableSnapshot(ctx, ins.DeploymentID, state.SnapshotTierWarm); ok {
+		return SnapshotBytes{}, nil
+	}
+	warmMemKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierWarm, uuid.NewString())
+	warmVMStateStorageKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: warmMemKey})
 
 	warmCtx, warmCancel := context.WithTimeout(ctx, SnapshotBudgetFor(ins.RAMMB))
 	b, err := e.vmm.WarmSnapshot(warmCtx, ins.NodeID, ins.ID, warmMemKey, warmVMStateStorageKey)
@@ -5814,8 +5980,8 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	// fans both out into distinct rows. We do NOT call
 	// store.CreateSnapshot tier=warm here to avoid a unique-
 	// violation on (deployment_id, tier) with imaged's row.
-	vmstatePath := SnapDir() + "/" + ins.DeploymentID + "/warm/vmstate"
-	e.emitSnapshotWritten(ctx, ins.DeploymentID, ins.NodeID, vmstatePath, b, state.SnapshotTierWarm)
+	vmstatePath := filepath.Join(SnapDir(), strings.TrimPrefix(warmVMStateStorageKey, "snap/"))
+	e.emitSnapshotWritten(ctx, ins.DeploymentID, ins.NodeID, vmstatePath, warmMemKey, b, state.SnapshotTierWarm)
 	// Issue #470 / PR C / ADR-074: emit app.warm_snapshot_promoted
 	// so operators can grep gregale audit-events --kind-prefix
 	// warm_snapshot to see lifecycle activity. Subject is
@@ -5849,35 +6015,6 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		})
 	}
 	return b, nil
-}
-
-// warmKeysFor returns the canonical StorageBackend keys the
-// warm-tier capture publishes the mem + vmstate blobs under.
-// Symmetric with vmstateStorageKeyFor: empty result for
-// default-local (vmmd's legacy host-path branch), populated for
-// remote nodes (StorageBackend publish path). Empty nodeID is
-// treated as a misroute (Warn + return "") matching the legacy
-// helper's defensive posture so a placement decision that
-// omits node_id at the source surfaces in logs rather than
-// silently picking the wrong storage carrier.
-//
-// The /warm/ segment lives under pkg/state.WarmSnapMemKey /
-// WarmSnapVMStateKey so PR-C's per-tier GC keeps 2 warm + 2 init
-// per app without conflating tiers. Mem and vmstate always share
-// the same local/remote branch — the carrier is a per-node
-// decision, not a per-blob one.
-func (e *Engine) warmKeysFor(nodeID, depID string) (memKey, vmstateKey string) {
-	if nodeID == "" {
-		if e.log != nil {
-			e.log.Warn("engine: warmKeysFor called with empty nodeID; routing to host-path fallback",
-				"deployment_id", depID)
-		}
-		return "", ""
-	}
-	if nodeID == e.defaultLocalNodeID {
-		return "", ""
-	}
-	return state.WarmSnapMemKey(depID), state.WarmSnapVMStateKey(depID)
 }
 
 // resolveApp loads the app, account, plan limits, and current live deployment a
@@ -7248,7 +7385,7 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 // tier="warm" when the engine captured a warm snapshot and tier="init"
 // for the legacy cold capture. imaged's subscriber reads the field
 // from the JSON and writes the matching snapshots.tier column.
-func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, vmstatePath string, b SnapshotBytes, tier string) {
+func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, vmstatePath, storageKey string, b SnapshotBytes, tier string) {
 	if e.notif == nil {
 		return
 	}
@@ -7259,7 +7396,7 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 		"deployment_id": deploymentID,
 		"node_id":       nodeID,
 		"vmstate_path":  vmstatePath,
-		"storage_key":   state.SnapMemKey(deploymentID),
+		"storage_key":   storageKey,
 		"mem_bytes":     b.MemBytes,
 		"vmstate_bytes": b.VMStateBytes,
 		"fc_version":    e.fcVer,

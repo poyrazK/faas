@@ -92,6 +92,14 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	if mode == modeApp {
+		// Disk usage is an app-runtime signal. Jobs and builder VMs are
+		// single-purpose artifacts whose writable space is not part of the
+		// stateless app telemetry contract.
+		diskCtx, diskCancel := context.WithCancel(context.Background())
+		defer diskCancel()
+		startDiskTelemetry(diskCtx)
+	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's
 	// command, ship the vsock DGRAM, poweroff. No readiness
@@ -332,7 +340,8 @@ func runAppWithEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 // runAppWithRAM is the workload-aware variant of runAppWithEnv. ramMB is
 // supplied by the workload roster when present; zero preserves the legacy
 // single-workload path, whose host-side cgroup is the authoritative cap.
-func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int) error {
+// An optional CPU value adds the matching per-workload cpu.max leaf.
+func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = m.EffectiveWorkingDir()
@@ -391,7 +400,7 @@ func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 	// single-workload wakes have no per-workload RAM value
 	// and therefore skip this child leaf; the host-side
 	// writePlanCgroup remains their authoritative cap.
-	mainLeaf, cgroupErr := prepareWorkloadCgroup("main", "app", ramMB, slog.Default())
+	mainLeaf, cgroupErr := prepareWorkloadCgroup("main", "app", ramMB, slog.Default(), cpuMillicoresOpt...)
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare main workload cgroup: %w", cgroupErr)
 	}

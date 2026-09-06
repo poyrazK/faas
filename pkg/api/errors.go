@@ -205,8 +205,14 @@ func (p *Problem) Error() string {
 }
 
 // WriteProblem renders p as an RFC 7807 problem+json response with its status
-// code. Every HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
+// code. Gateway requests that explicitly accept text/html receive the safe
+// browser error page instead; API handlers continue to receive JSON. Every
+// HTTP surface (gatewayd-internal, apid) uses this so error shape is uniform.
 func WriteProblem(w http.ResponseWriter, p *Problem) {
+	if req, ok := w.(interface{ ProblemHTMLRequest() *http.Request }); ok && AcceptsHTML(req.ProblemHTMLRequest()) {
+		writeProblemHTML(w, p)
+		return
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	for k, vs := range p.extraHeaders {
 		for _, v := range vs {
@@ -327,6 +333,7 @@ func (p *Problem) HasHeader(key string) []string {
 // the CLI's exit-code mapping.
 const (
 	CodePlanLimitApps          = "plan_limit_apps"
+	CodePlanLimitDeveloperApps = "plan_limit_developer_apps"
 	CodePlanLimitRAM           = "plan_limit_ram"
 	CodePlanLimitConcur        = "plan_limit_concurrency"
 	CodeInvalidAppCPU          = "invalid_cpu_millicores"
@@ -925,14 +932,15 @@ const (
 	// per-plan tier-ups (PR-A does NOT apply the plan gate; the
 	// code is reserved so a follow-up PR doesn't have to invent
 	// a new one).
-	CodeSidecarCapExceeded      = "sidecar_cap_exceeded"
-	CodeSidecarInvalidType      = "sidecar_invalid_type"
-	CodeSidecarInvalidImage     = "sidecar_invalid_image"
-	CodeSidecarStatefulDenied   = "sidecar_stateful_denied"
-	CodeSidecarInvalidName      = "sidecar_invalid_name"
-	CodeSidecarInvalidPort      = "sidecar_invalid_port"
-	CodeSidecarInvalidRamMB     = "sidecar_invalid_ram_mb"
-	CodeSidecarNotAllowedOnPlan = "sidecar_not_allowed_on_plan"
+	CodeSidecarCapExceeded          = "sidecar_cap_exceeded"
+	CodeSidecarInvalidType          = "sidecar_invalid_type"
+	CodeSidecarInvalidImage         = "sidecar_invalid_image"
+	CodeSidecarStatefulDenied       = "sidecar_stateful_denied"
+	CodeSidecarInvalidName          = "sidecar_invalid_name"
+	CodeSidecarInvalidPort          = "sidecar_invalid_port"
+	CodeSidecarInvalidRamMB         = "sidecar_invalid_ram_mb"
+	CodeSidecarInvalidCPUMillicores = "sidecar_invalid_cpu_millicores"
+	CodeSidecarNotAllowedOnPlan     = "sidecar_not_allowed_on_plan"
 
 	// CodeInitSidecarFailed (issue #463 / ADR-069 / PR-B AC #1) is
 	// the RFC 7807 stable code vmmd stamps onto a deployments row
@@ -1540,7 +1548,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodePlanLimitApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
@@ -1970,6 +1978,16 @@ func ErrPlanLimitApps(l Limits, observed int) *Problem {
 		WithDocs(docsBase + "/plans#apps")
 }
 
+// ErrPlanLimitDeveloperApps is returned when a developer session would exceed
+// the separate per-plan development-environment cap.
+func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperApps,
+		"Developer environment limit reached",
+		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
+		WithLimit(int64(l.DeveloperApps), int64(observed)).
+		WithDocs(docsBase + "/plans#developer-environments")
+}
+
 // ErrPlanLimitRAM is returned when a requested ram_mb exceeds the plan cap.
 func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanLimitRAM,
@@ -1979,15 +1997,16 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		WithDocs(docsBase + "/plans#ram")
 }
 
-// ErrAppLayerTooLarge is returned when the built app layer (deps + code) exceeds
-// the plan's drive1 cap (spec §4.6). The message names the cap and observed size
-// so the deploy failure is actionable.
+// ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
+// exceed the plan's writable ephemeral drive1 capacity (spec §4.6). The
+// legacy problem code remains stable for clients; the message names both the
+// app-layer build boundary and its runtime-disk meaning.
 func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
-	capBytes := int64(l.AppLayerMaxMB) * 1024 * 1024
+	capBytes := l.EphemeralDiskMaxBytes()
 	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
 		"App too large",
-		fmt.Sprintf("%s plan caps the app layer at %d MB; built layer is %.1f MB.",
-			l.Plan, l.AppLayerMaxMB, float64(observedBytes)/(1024*1024))).
+		fmt.Sprintf("%s plan caps the writable ephemeral app disk at %d MB (app-layer build cap); built layer is %.1f MB.",
+			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits#app-layer")
 }
@@ -2205,6 +2224,76 @@ func ErrSourceInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSourceInvalid,
 		"Source invalid", reason).
 		WithDocs(docsBase + "/build/source")
+}
+
+// ErrUploadSessionNotFound is returned by the upload-session endpoints
+// when the supplied upload_id does not resolve. cmd/apid/
+// handlers_upload_session.go emits this on PATCH / POST-commit / DELETE
+// against an unknown id. The CLI (PR-2) maps this to "session vanished"
+// and surfaces a fresh upload prompt.
+func ErrUploadSessionNotFound(uploadID string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeUploadSessionNotFound,
+		"Upload session not found",
+		fmt.Sprintf("No open upload session with id %q; it may have been committed, cancelled, or reaped.", uploadID)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionOffsetConflict is returned when the atomic CAS in
+// AppendUploadBytes fails. currentOffset is the row's actual
+// received_bytes at the moment of the UPDATE; the message body carries
+// the value so the CLI can resume from the right byte without an
+// extra header.
+func ErrUploadSessionOffsetConflict(uploadID string, expected, current int64) *Problem {
+	return NewProblem(http.StatusConflict, CodeUploadSessionOffsetConflict,
+		"Upload session offset conflict",
+		fmt.Sprintf("Upload session %q expected offset %d but server is at %d; resume from current offset.", uploadID, expected, current)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionExpired is returned when the reaper has marked the
+// row expired (or the request arrives after its TTL before the next
+// sweep). The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
+// this code (cmd/gregale/upload_session.go, PR-2). 410 Gone so the
+// CLI can distinguish from 404 NotFound (id never existed).
+func ErrUploadSessionExpired(uploadID string) *Problem {
+	return NewProblem(http.StatusGone, CodeUploadSessionExpired,
+		"Upload session expired",
+		fmt.Sprintf("Upload session %q expired (24h TTL) and was reaped.", uploadID)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionTooMany is returned by POST /v1/uploads when the
+// per-(account_id, app_slug) open-session cap (5) or the per-account
+// open-spool budget (4 × SourceTarballMaxMB) is exceeded. limitBytes
+// and observedBytes flow into the body via WithLimit so the dashboard
+// can render the same shape as CodePlanLimitApps.
+func ErrUploadSessionTooMany(detail string, limitBytes, observedBytes int64) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeUploadSessionTooMany,
+		"Too many upload sessions",
+		detail).
+		WithLimit(limitBytes, observedBytes).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionAlreadyCommitted is returned by POST /v1/uploads/{id}/commit
+// on retry-after-success. The handler reads upload_commit_outcomes
+// for the original deployment_id and returns it in the message body;
+// the CLI treats this as a successful 201 (no retry needed).
+func ErrUploadSessionAlreadyCommitted(uploadID, deploymentID string) *Problem {
+	return NewProblem(http.StatusConflict, CodeUploadSessionAlreadyCommitted,
+		"Upload session already committed",
+		fmt.Sprintf("Upload session %q was already committed as deployment %s.", uploadID, deploymentID)).
+		WithDocs(docsBase + "/build/uploads")
+}
+
+// ErrUploadSessionAlreadyCancelled is returned by DELETE on a session
+// that is no longer open. The .part file is already gone; the operator's
+// fix is to start a fresh upload session.
+func ErrUploadSessionAlreadyCancelled(uploadID string) *Problem {
+	return NewProblem(http.StatusConflict, CodeUploadSessionAlreadyCancelled,
+		"Upload session not open",
+		fmt.Sprintf("Upload session %q is not in 'open' status; the .part file is gone.", uploadID)).
+		WithDocs(docsBase + "/build/uploads")
 }
 
 // ErrDevSourceBaseMissing tells an incremental-sync client to retry the same
@@ -2937,6 +3026,46 @@ const (
 	// apid-validate pipeline uses it for any future surface that
 	// accepts a lifecycle payload from the operator UI.
 	CodeNodeLifecycleInvalid = "node_lifecycle_invalid"
+	// CodeUploadSessionNotFound (issue #1182 §P1 packaging
+	// follow-up, PR-1 of 3) is the 404 the upload-session
+	// endpoints emit when the supplied upload_id does not
+	// resolve. Distinct from CodeNotFound because the legacy
+	// deployment endpoints still use CodeNotFound; the new
+	// resumable surface needs its own wire-stable sentinel so
+	// the CLI can branch on a 404 from POST /v1/uploads vs
+	// 404 from POST /v1/apps/{slug}/deployments/{id} without
+	// inspecting the URL.
+	CodeUploadSessionNotFound = "upload_session_not_found"
+	// CodeUploadSessionOffsetConflict is the 409 the PATCH
+	// /v1/uploads/{id} handler emits when the atomic CAS in
+	// AppendUploadBytes fails (received_bytes has already
+	// advanced). Body carries the actual current received_bytes
+	// in extra.current_offset so the CLI knows where to resume.
+	CodeUploadSessionOffsetConflict = "upload_session_offset_conflict"
+	// CodeUploadSessionExpired is the 410 the upload-session
+	// endpoints emit when the reaper has deleted the row. The
+	// CLI auto-rolls to a fresh POST /v1/uploads and restarts
+	// from byte 0 (cmd/gregale/upload_session.go, PR-2).
+	CodeUploadSessionExpired = "upload_session_expired"
+	// CodeUploadSessionTooMany is the 429 emitted by POST
+	// /v1/uploads when the per-(account_id, app_slug) open-
+	// session cap (5) or the per-account open-spool budget
+	// (4 × SourceTarballMaxMB) is exceeded. Distinct from
+	// CodePlanLimitApps so the dashboard can render a "cancel
+	// an in-progress upload" CTA rather than a generic 429.
+	CodeUploadSessionTooMany = "upload_session_too_many"
+	// CodeUploadSessionAlreadyCommitted is the 409 emitted by
+	// POST /v1/uploads/{id}/commit on retry-after-success.
+	// Handled via the upload_commit_outcomes companion table:
+	// the handler reads the original deployment_id and returns
+	// the stored outcome with this code, NOT a fresh 201.
+	CodeUploadSessionAlreadyCommitted = "upload_session_already_committed"
+	// CodeUploadSessionAlreadyCancelled is the 409 emitted by
+	// DELETE /v1/uploads/{id} when the session is already
+	// committed / cancelled / expired. The .part file is
+	// already gone; the operator's fix is to start a fresh
+	// upload session.
+	CodeUploadSessionAlreadyCancelled = "upload_session_already_cancelled"
 )
 
 // ErrPlanCronsNotAllowed is returned by apid's createCron handler
@@ -3630,6 +3759,16 @@ func ErrSecretNotFound(key string) *Problem {
 		WithDocs(docsBase + "/secrets")
 }
 
+// ErrManagedSecretConflict protects an environment key owned by an active
+// managed PostgreSQL binding. CodeConflict is intentional until the managed
+// database API introduces its own stable public error vocabulary.
+func ErrManagedSecretConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict,
+		"Secret is managed",
+		"This environment key is controlled by an active managed PostgreSQL binding. Delete the binding before changing the secret.").
+		WithDocs(docsBase + "/postgres#bindings")
+}
+
 // ErrPlanLimitEnvVars is returned when an env PUT would exceed the plan's
 // per-app env-var count (issue #395 / ADR-045). Observed is the post-write
 // count. The 403 mirrors ErrPlanLimitSecrets so the SDK's error decoder can
@@ -4206,6 +4345,14 @@ func ErrSidecarInvalidRamMB(ramMB int) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSidecarInvalidRamMB,
 		"Invalid sidecar ram_mb",
 		fmt.Sprintf("sidecar ram_mb %d must be 0 (inherit plan RAM) or in [32, 512].", ramMB))
+}
+
+// ErrSidecarInvalidCPUMillicores is returned when the sidecar
+// cpu_millicores is out of the accepted set.
+func ErrSidecarInvalidCPUMillicores(cpuMillicores int) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeSidecarInvalidCPUMillicores,
+		"Invalid sidecar cpu_millicores",
+		fmt.Sprintf("sidecar cpu_millicores %d must be 0 (inherit app cpu) or one of 250, 500, 1000.", cpuMillicores))
 }
 
 // ErrSidecarNotAllowedOnPlan is reserved for a future per-plan

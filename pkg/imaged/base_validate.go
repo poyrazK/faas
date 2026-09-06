@@ -74,7 +74,10 @@ func requiredBaseArtifactPaths(baseKey string) []string {
 	case strings.Contains(baseKey, "runner-python"):
 		return []string{"/sbin/init", "/usr/local/bin/python3", "/etc/passwd"}
 	case strings.Contains(baseKey, "runner-go"):
-		return []string{"/sbin/init", "/usr/local/go/bin/go", "/etc/passwd"}
+		// Both Go runtime images deliberately remove the build toolchain.
+		// Customer binaries and the function shim arrive on the app drive;
+		// the shared base supplies the boot files and runtime shell.
+		return []string{"/sbin/init", "/bin/sh", "/etc/passwd"}
 	case strings.Contains(baseKey, "base-amd64") || strings.Contains(baseKey, "base-arm64"):
 		return []string{"/sbin/init", "/bin/busybox", "/bin/sh", "/etc/passwd"}
 	default:

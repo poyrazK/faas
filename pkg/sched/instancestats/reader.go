@@ -161,6 +161,11 @@ type InstanceStat struct {
 	// RX is the validity of RXBytes. Mirrors TX semantics:
 	// Unknown on first sample / regression / cache miss.
 	RX Validity
+	// DiskUsedBytes and DiskCapacityBytes are the latest guest writable-root
+	// filesystem sample. DiskValid is false until both values arrive.
+	DiskUsedBytes     int64
+	DiskCapacityBytes int64
+	DiskValid         bool
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is
 	// the per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Nil/empty = legacy
@@ -202,6 +207,7 @@ type Reader struct {
 type requestRateSample struct {
 	count   uint64
 	sampled time.Time
+	rate    requestRate
 }
 
 type requestRate struct {
@@ -262,15 +268,19 @@ func (r *Reader) updateRequestRates(rows []InstanceStat) {
 		}
 		current := requestRateSample{count: row.RequestCountTotal, sampled: row.SampledAt}
 		previous, ok := r.previousRate[row.InstanceID]
-		if ok && current.sampled.After(previous.sampled) && current.count >= previous.count {
+		if ok && current.sampled.Equal(previous.sampled) && current.count == previous.count {
+			// The 200 ms projection can read the same one-second node frame
+			// repeatedly. Keep its derived rate until a new frame or eviction.
+			current.rate = previous.rate
+		} else if ok && current.sampled.After(previous.sampled) && current.count >= previous.count {
 			elapsed := current.sampled.Sub(previous.sampled).Seconds()
-			if elapsed > 0 {
-				rate := float64(current.count-previous.count) / elapsed
-				value := nextRates[row.AppID]
-				value.rps += rate
-				value.valid = true
-				nextRates[row.AppID] = value
-			}
+			current.rate = requestRate{rps: float64(current.count-previous.count) / elapsed, valid: true}
+		}
+		if current.rate.valid {
+			value := nextRates[row.AppID]
+			value.rps += current.rate.rps
+			value.valid = true
+			nextRates[row.AppID] = value
 		}
 		r.previousRate[row.InstanceID] = current
 	}

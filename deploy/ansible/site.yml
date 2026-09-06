@@ -33,3 +33,47 @@
       run_once: true
   roles:
     - role: promtail
+
+# Keep the M8 restore-drill prerequisites converged when operators run the
+# observability overlay after bootstrap. `bootstrap.yml` remains the canonical
+# host bootstrap and runs this role in the control-plane play; repeating the
+# role here is safe because every task is idempotent and gives the documented
+# `site.yml` entrypoint an explicit restore-drill wiring.
+- name: Converge Postgres backup for the M8 restore drill
+  hosts: control_plane
+  gather_facts: true
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  vars_files:
+    - group_vars/control_plane/off_host_backup.yml
+  roles:
+    - role: postgres_backup
+      tags: [postgres_backup, restore-drill]
+      when: not (faas_image_seed | default(false) | bool)
+
+# Issue #252 / M8: make the current Caddy/Cloudflare TLS drill available on
+# the reference control-plane host. The helper is safe to run repeatedly; it
+# defaults to dry-run and only writes its durable state file when an operator
+# explicitly invokes `--execute`.
+- name: Install the current-edge TLS cutover drill helper
+  hosts: control_plane
+  gather_facts: true
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Install faas TLS cutover drill helper
+      ansible.builtin.copy:
+        src: ../scripts/faas-tls-cutover-drill.sh
+        dest: /usr/local/sbin/faas-tls-cutover-drill
+        owner: root
+        group: root
+        mode: "0755"
+    - name: Create TLS cutover state directory
+      ansible.builtin.file:
+        path: /var/lib/faas
+        state: directory
+        owner: faas
+        group: faas
+        mode: "0750"

@@ -632,17 +632,16 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 		return nil
 	}
 	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
-	if err := writeWorkloadCgroup(parentScope, WorkloadNameMain, l.MemoryMaxMiB); err != nil {
+	if err := writeWorkloadCgroup(parentScope, WorkloadNameMain, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
 		return err
 	}
 	for _, workload := range workloads[1:] {
-		// RamMB=0 means inherit the parent plan cap; no child leaf is
-		// needed and treating zero as 1 MiB would make the workload
-		// unusable.
-		if workload.RamMB == 0 {
+		// Zero values inherit the parent limits; no child leaf is
+		// needed when neither resource has an override.
+		if workload.RamMB == 0 && workload.CPUMillicores == 0 {
 			continue
 		}
-		if err := writeWorkloadCgroup(parentScope, workload.Name, workload.RamMB); err != nil {
+		if err := writeWorkloadCgroup(parentScope, workload.Name, workload.RamMB, workload.CPUMillicores); err != nil {
 			return err
 		}
 	}
@@ -1280,6 +1279,11 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 // for the vmmd side, distinct from the engine's Destroy-the-VM
 // failure handler in pkg/sched.engine.captureWarmSnapshotLocked).
 func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec SnapshotSpec) (info SnapshotInfo, retErr error) {
+	defer func() {
+		if retErr != nil {
+			v.cleanupFailedSnapshotCapture(ctx, spec)
+		}
+	}()
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
@@ -2254,14 +2258,15 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	// need that contract here (guest-init parses each file once
 	// at boot) but the determinism is free.
 	manifest := workloadManifest{
-		Name:       w.Name,
-		Type:       w.Type,
-		RamMB:      w.RamMB,
-		Port:       w.Port,
-		Essential:  w.Essential,
-		Cmd:        w.Cmd,
-		Entrypoint: w.Entrypoint,
-		DependsOn:  w.DependsOn,
+		Name:          w.Name,
+		Type:          w.Type,
+		RamMB:         w.RamMB,
+		CPUMillicores: w.CPUMillicores,
+		Port:          w.Port,
+		Essential:     w.Essential,
+		Cmd:           w.Cmd,
+		Entrypoint:    w.Entrypoint,
+		DependsOn:     w.DependsOn,
 		// StorageKey is omitted: the guest doesn't need to know
 		// the host-side path; it just reads the workload spec
 		// from the manifest and ignores the storage key. ADR-069
@@ -2298,7 +2303,7 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 //
 // Layout:
 //
-//	{"essential":BOOL,"name":"...","port":INT,"ram_mb":INT,"type":"...",
+//	{"cpu_millicores":INT,"essential":BOOL,"name":"...","port":INT,"ram_mb":INT,"type":"...",
 //	 "cmd":[...],"entrypoint":[...],"depends_on":[...]}
 //
 // Braces, colons, commas, and quoted keys/values dominate the
@@ -2330,7 +2335,7 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	for _, dep := range w.DependsOn {
 		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
 	}
-	// Two int fields (port, ram_mb) and a bool + 2 array
+	// Three int fields (port, ram_mb, cpu_millicores) and a bool + 2 array
 	// fields. 11 bytes per int is the worst case for a 32-bit
 	// value; 5 bytes for "false". The 5 quoted keys + 2 numeric
 	// values + 1 bool + 2 array brackets contribute a fixed
@@ -2392,14 +2397,15 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // must be a single PR that updates both sides + the projection
 // helper.
 type workloadManifest struct {
-	Cmd        []string                 `json:"cmd,omitempty"`
-	DependsOn  []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint []string                 `json:"entrypoint,omitempty"`
-	Essential  bool                     `json:"essential"`
-	Name       string                   `json:"name"`
-	Port       int                      `json:"port"`
-	RamMB      int                      `json:"ram_mb"`
-	Type       string                   `json:"type"`
+	Cmd           []string                 `json:"cmd,omitempty"`
+	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
+	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint    []string                 `json:"entrypoint,omitempty"`
+	Essential     bool                     `json:"essential"`
+	Name          string                   `json:"name"`
+	Port          int                      `json:"port"`
+	RamMB         int                      `json:"ram_mb"`
+	Type          string                   `json:"type"`
 }
 
 // workloadRosterPath is the in-guest location guest-init reads
@@ -2464,24 +2470,26 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 
 	roster := workloadRoster{
 		Main: workloadManifest{
-			Name:      main.Name,
-			Type:      main.Type,
-			RamMB:     main.RamMB,
-			Port:      main.Port,
-			Essential: main.Essential,
-			DependsOn: main.DependsOn,
+			Name:          main.Name,
+			Type:          main.Type,
+			RamMB:         main.RamMB,
+			CPUMillicores: main.CPUMillicores,
+			Port:          main.Port,
+			Essential:     main.Essential,
+			DependsOn:     main.DependsOn,
 		},
 	}
 	for _, sc := range sidecars {
 		roster.Sidecars = append(roster.Sidecars, workloadManifest{
-			Name:       sc.Name,
-			Type:       sc.Type,
-			RamMB:      sc.RamMB,
-			Port:       sc.Port,
-			Essential:  sc.Essential,
-			Cmd:        sc.Cmd,
-			Entrypoint: sc.Entrypoint,
-			DependsOn:  sc.DependsOn,
+			Name:          sc.Name,
+			Type:          sc.Type,
+			RamMB:         sc.RamMB,
+			CPUMillicores: sc.CPUMillicores,
+			Port:          sc.Port,
+			Essential:     sc.Essential,
+			Cmd:           sc.Cmd,
+			Entrypoint:    sc.Entrypoint,
+			DependsOn:     sc.DependsOn,
 		})
 	}
 	blob, err := json.Marshal(roster)

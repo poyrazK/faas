@@ -34,6 +34,11 @@ type Provider interface {
 	ListObjects(context.Context, string, string, string, int32) (ObjectPage, error)
 	DeleteObject(context.Context, string, string) error
 	Presign(context.Context, string, SignRequest) (SignedRequest, error)
+	EnsureMultipartUpload(context.Context, string, MultipartCreateRequest) (string, error)
+	PresignMultipartPart(context.Context, string, MultipartPartRequest) (SignedRequest, error)
+	ListMultipartParts(context.Context, string, MultipartListPartsRequest) (MultipartPartsPage, error)
+	CompleteMultipartUpload(context.Context, string, MultipartCompleteRequest) error
+	AbortMultipartUpload(context.Context, string, MultipartAbortRequest) error
 }
 
 type Object struct {
@@ -60,15 +65,7 @@ func (r SignRequest) Validate(maxBytes int64) error {
 	if r.Method == http.MethodGet && (r.SizeBytes != nil || r.ContentType != "") {
 		return ErrInvalid
 	}
-	if len(r.ContentType) > 255 {
-		return ErrInvalid
-	}
-	for _, c := range r.ContentType {
-		if c < 32 || c == 127 {
-			return ErrInvalid
-		}
-	}
-	return nil
+	return ValidateContentType(r.ContentType)
 }
 
 func ValidKey(key string) bool {
@@ -84,6 +81,76 @@ func ValidKey(key string) bool {
 }
 
 type SignedRequest = api.ObjectSignedRequest
+
+// MultipartCreateRequest contains only provider-facing data. SessionID is
+// persisted as object metadata so a completion response lost between S3 and
+// Gregale can be verified without exposing the provider upload ID.
+type MultipartCreateRequest struct {
+	SessionID   string
+	Key         string
+	SizeBytes   int64
+	ContentType string
+}
+
+type MultipartPartRequest struct {
+	Key              string
+	ProviderUploadID string
+	PartNumber       int32
+	SizeBytes        int64
+	ExpiresIn        int64
+}
+
+// MultipartListPartsRequest asks a provider for the parts that have actually
+// reached the upstream upload. PartNumberMarker is zero for the first page;
+// providers must not expose their native upload identity in the response.
+type MultipartListPartsRequest struct {
+	Key              string
+	ProviderUploadID string
+	PartNumberMarker int32
+	Limit            int32
+}
+
+type MultipartPart struct {
+	PartNumber   int32
+	ETag         string
+	SizeBytes    int64
+	LastModified time.Time
+}
+
+type MultipartPartsPage struct {
+	Items                []MultipartPart
+	NextPartNumberMarker int32
+}
+
+type CompletedPart struct {
+	PartNumber int32
+	ETag       string
+}
+
+type MultipartCompleteRequest struct {
+	SessionID        string
+	Key              string
+	ProviderUploadID string
+	SizeBytes        int64
+	Parts            []CompletedPart
+}
+
+type MultipartAbortRequest struct {
+	Key              string
+	ProviderUploadID string
+}
+
+func ValidateContentType(contentType string) error {
+	if len(contentType) > 255 {
+		return ErrInvalid
+	}
+	for _, c := range contentType {
+		if c < 32 || c == 127 {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
 
 type Backend struct {
 	ID          string

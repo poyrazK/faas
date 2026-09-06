@@ -33,6 +33,111 @@ die() {
     exit 1
 }
 
+# GitHub-native visibility is deliberately best-effort. A customer may use a
+# token that cannot write Checks, or run the action outside GitHub Actions; in
+# either case the Gregale deployment must keep working and the deployment URL
+# remains available through the action output.
+write_step_summary() {
+	local status="$1" dep_id="$2" url="$3"
+	if [ -z "${GITHUB_STEP_SUMMARY:-}" ]; then
+		return
+	fi
+	{
+		echo "### Gregale deployment"
+		echo
+		echo "- **Status:** \`$status\`"
+		echo "- **Deployment:** [$dep_id]($url)"
+		if [ "$status" = "queued" ]; then
+			echo "- The workflow returned without waiting; follow the deployment link for live progress."
+		fi
+	} >> "$GITHUB_STEP_SUMMARY"
+}
+
+check_run_request() {
+	local status="$1" conclusion="$2" dep_id="$3" url="$4" title="$5"
+	local display_status="${6:-$status}"
+	local repo="${GITHUB_REPOSITORY:-}" sha="${GITHUB_SHA:-}" token="${GITHUB_TOKEN:-}"
+	local api_base="${GITHUB_API_URL:-https://api.github.com}"
+	if [ -z "$repo" ] || [ -z "$sha" ] || [ -z "$token" ]; then
+		return
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "::warning::jq is unavailable; skipped GitHub Check Run publication" >&2
+		return
+	fi
+
+	local payload response_file http_status
+	if [ "$status" = "completed" ]; then
+		payload="$(jq -n \
+			--arg name "Gregale deployment" \
+			--arg head_sha "$sha" \
+			--arg status "$status" \
+			--arg conclusion "$conclusion" \
+			--arg details_url "$url" \
+			--arg title "$title" \
+			--arg summary "Deployment ${dep_id} is ${display_status}." \
+			'{name:$name, head_sha:$head_sha, status:$status, conclusion:$conclusion, details_url:$details_url, output:{title:$title, summary:$summary}}')"
+	else
+		payload="$(jq -n \
+		--arg name "Gregale deployment" \
+		--arg head_sha "$sha" \
+		--arg status "$status" \
+		--arg details_url "$url" \
+		--arg title "$title" \
+		--arg summary "Deployment ${dep_id} is ${display_status}." \
+		'{name:$name, head_sha:$head_sha, status:$status, details_url:$details_url, output:{title:$title, summary:$summary}}')"
+	fi
+	response_file="${RUNNER_TEMP:-/tmp}/gregale-check-run-${BASHPID}.json"
+	http_status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+		--request POST \
+		-H "Accept: application/vnd.github+json" \
+		-H "Authorization: Bearer ${token}" \
+		-H "X-GitHub-Api-Version: 2022-11-28" \
+		-H "Content-Type: application/json" \
+		--data "$payload" \
+		"${api_base%/}/repos/${repo}/check-runs" 2>/dev/null || true)"
+	if [[ "$http_status" != 2?? ]]; then
+		echo "::warning::GitHub Check Run was not created (HTTP ${http_status:-unknown}); grant checks: write to enable it" >&2
+		rm -f "$response_file"
+		return
+	fi
+	GITHUB_CHECK_RUN_ID="$(jq -r '.id // empty' "$response_file")"
+	rm -f "$response_file"
+	if [ -n "$GITHUB_CHECK_RUN_ID" ]; then
+		echo "check-run-id=$GITHUB_CHECK_RUN_ID" >> "$GITHUB_OUTPUT"
+	fi
+}
+
+check_run_update() {
+	local status="$1" conclusion="$2" dep_id="$3" url="$4" title="$5"
+	local repo="${GITHUB_REPOSITORY:-}" token="${GITHUB_TOKEN:-}" check_id="${GITHUB_CHECK_RUN_ID:-}"
+	local api_base="${GITHUB_API_URL:-https://api.github.com}"
+	if [ -z "$repo" ] || [ -z "$token" ] || [ -z "$check_id" ] || ! command -v jq >/dev/null 2>&1; then
+		return
+	fi
+
+	local payload
+	payload="$(jq -n \
+		--arg status "$status" \
+		--arg conclusion "$conclusion" \
+		--arg details_url "$url" \
+		--arg title "$title" \
+		--arg summary "Deployment ${dep_id} is ${status}." \
+		'{status:$status, conclusion:$conclusion, details_url:$details_url, output:{title:$title, summary:$summary}}')"
+	local http_status
+	http_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+		--request PATCH \
+		-H "Accept: application/vnd.github+json" \
+		-H "Authorization: Bearer ${token}" \
+		-H "X-GitHub-Api-Version: 2022-11-28" \
+		-H "Content-Type: application/json" \
+		--data "$payload" \
+		"${api_base%/}/repos/${repo}/check-runs/${check_id}" 2>/dev/null || true)"
+	if [[ "$http_status" != 2?? ]]; then
+		echo "::warning::GitHub Check Run ${check_id} could not be updated (HTTP ${http_status:-unknown})" >&2
+	fi
+}
+
 cmd_validate() {
     if [ -z "${INPUT_APP:-}" ]; then
         die "missing required input: app"
@@ -184,6 +289,21 @@ cmd_deploy() {
     local api_base="${FAAS_API:-https://api.gregale.dev}"
     api_base="${api_base%/}"
     echo "url=${api_base}/v1/apps/${INPUT_APP}/deployments/${dep_id}" >> "$GITHUB_OUTPUT"
+	local deployment_url="${api_base}/v1/apps/${INPUT_APP}/deployments/${dep_id}"
+	local check_status="queued"
+	if [ "${INPUT_WAIT:-true}" = "true" ]; then
+		check_status="in_progress"
+	fi
+	GITHUB_CHECK_RUN_ID=""
+	if [ "$check_status" = "queued" ]; then
+		# A non-blocking action cannot update the Check Run after the workflow
+		# exits. Mark the request neutral and link to the live Gregale record
+		# instead of leaving an indefinitely pending check.
+		check_run_request "completed" "neutral" "$dep_id" "$deployment_url" "Gregale deployment queued" "queued"
+	else
+		check_run_request "in_progress" "" "$dep_id" "$deployment_url" "Gregale deployment in progress" "in_progress"
+	fi
+	write_step_summary "$check_status" "$dep_id" "$deployment_url"
 
     # 4. Optionally wait. The vendored CLI tails the SSE build log
     #    when --wait is set; we use a separate mode here so the
@@ -228,10 +348,20 @@ cmd_deploy() {
 				status="timeout"
 			fi
             echo "status=$status" >> "$GITHUB_OUTPUT"
+			local conclusion="failure"
+			case "$status" in
+				cancelled) conclusion="cancelled" ;;
+				timeout) conclusion="timed_out" ;;
+				superseded) conclusion="stale" ;;
+			esac
+			check_run_update "completed" "$conclusion" "$dep_id" "$deployment_url" "Gregale deployment ${status}"
+			write_step_summary "$status" "$dep_id" "$deployment_url"
 			echo "$wait_output" > "${RUNNER_TEMP:-/tmp}/gregale-deploy-action.stderr"
 			die "deployment $dep_id finished with status $status"
         fi
 		echo "status=live" >> "$GITHUB_OUTPUT"
+		check_run_update "completed" "success" "$dep_id" "$deployment_url" "Gregale deployment live"
+		write_step_summary "live" "$dep_id" "$deployment_url"
 	else
 		echo "status=queued" >> "$GITHUB_OUTPUT"
     fi

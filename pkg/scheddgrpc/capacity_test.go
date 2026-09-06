@@ -268,12 +268,15 @@ func TestReportCapacity_BatchedTelemetryReachesCacheSink(t *testing.T) {
 		NodeId:          "node-a",
 		SampledAtUnixMs: 1730000000000,
 		Instances: []*scheddpb.InstanceTelemetry{{
-			InstanceId:       "vm-1",
-			ResidentBytes:    wrapperspb.Int64(128 << 20),
-			CpuPct:           wrapperspb.Double(4.5),
-			InflightRequests: 7,
-			OpenConns:        2,
-			LastRequestAt:    timestamppb.New(time.Unix(123, 0)),
+			InstanceId:        "vm-1",
+			ResidentBytes:     wrapperspb.Int64(128 << 20),
+			CpuPct:            wrapperspb.Double(4.5),
+			InflightRequests:  7,
+			RequestCountTotal: wrapperspb.Int64(123),
+			DiskUsedBytes:     wrapperspb.Int64(80),
+			DiskCapacityBytes: wrapperspb.Int64(100),
+			OpenConns:         2,
+			LastRequestAt:     timestamppb.New(time.Unix(123, 0)),
 		}},
 	}); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -287,7 +290,7 @@ func TestReportCapacity_BatchedTelemetryReachesCacheSink(t *testing.T) {
 		t.Fatalf("telemetry = node=%q rows=%d, want node-a/1", engine.nodeID, len(engine.rows))
 	}
 	row := engine.rows[0]
-	if row.InstanceID != "vm-1" || row.ResidentBytes == nil || *row.ResidentBytes != 128<<20 || row.CPUPct == nil || *row.CPUPct != 4.5 || row.InflightRequests != 7 || row.OpenConns != 2 {
+	if row.InstanceID != "vm-1" || row.ResidentBytes == nil || *row.ResidentBytes != 128<<20 || row.CPUPct == nil || *row.CPUPct != 4.5 || row.InflightRequests != 7 || row.RequestCountTotal == nil || *row.RequestCountTotal != 123 || row.OpenConns != 2 || row.DiskUsedBytes == nil || *row.DiskUsedBytes != 80 || row.DiskCapacityBytes == nil || *row.DiskCapacityBytes != 100 {
 		t.Fatalf("telemetry row = %+v, want vm-1 resident=128MiB cpu=4.5 inflight=7 open_conns=2", row)
 	}
 }

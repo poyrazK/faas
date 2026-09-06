@@ -572,6 +572,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)
+		go srv.runManagedPostgresReconciler(ctx)
+		go srv.runManagedPostgresBindingReconciler(ctx)
+		go srv.runManagedPostgresUsageCollector(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -592,6 +595,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if srv.rekeyRunner != nil {
 			go func() { _ = srv.rekeyRunner.Run(ctx) }()
 		}
+		// PR-1 of issue #1182 §P1 packaging follow-up —
+		// in-process upload_sessions reaper. 5-minute ticker,
+		// bounds the 24h TTL to within 5 minutes of staleness.
+		// Mirrors rekeyRunner.Run pattern above.
+		go func() {
+			if err := runUploadSessionReaper(ctx, srv, log); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("upload session reaper exited", "err", err)
+			}
+		}()
 		// Move 3 (M7.5 prep): bridge pg_notify → in-process broadcaster.
 		// Runs as a background goroutine for the daemon's lifetime; the
 		// SubscribeWithReconnect wrapper reconnects across Postgres
@@ -601,6 +613,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// because production-run holds the *pgxpool.Pool and the test
 		// seam in runWithDeps doesn't.
 		go sseFanIn(ctx, log, pool, srv.events, nil)
+		// I1 / issue #1397: deployments.status='failed' is the durable
+		// trigger for the deployer notification. The database trigger
+		// emits deployment_changed after commit, and this subscriber
+		// performs the account lookup, hourly app cooldown claim, and
+		// redacted email send.
+		go func() {
+			if err := runDeployFailedEmailSubscriber(ctx, pool, srv, log); err != nil && ctx.Err() == nil {
+				log.Error("deploy_failed_email: subscriber exited", "err", err)
+			}
+		}()
 		startDNSPoller(ctx, srv, log)
 		// ADR-127 PR-B: regression detector. Mirrors the dns_poller's
 		// shape — first-pass-immediate + ticker + ctx-cancel. The
@@ -1213,6 +1235,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log)
+	if err != nil {
+		return fmt.Errorf("apid managed postgres configuration: %w", err)
+	}
+	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector)
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the
@@ -1316,6 +1343,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// unset (the daemon stays up; only the listener is skipped below).
 	wire.BootStamps(ctx, "apid", ops)
 	wire.RegisterDefaultOps(ops)
+	// Issue #1182 §P1 PR-1: wire the 5 apid_upload_session_*
+	// counters from (*OpsMetrics) into the package-level state the
+	// upload handlers read via uploadSessionCreatedTotal() etc.
+	// Without this, the package-level noop default absorbs every
+	// increment and /metrics shows zero series — see
+	// cmd/apid/handlers_upload_session.go:SetUploadSessionCounters.
+	SetUploadSessionCounters(uploadSessionCounters{
+		CreatedTotal:           promCounterVecAdapter{ops.UploadSessionCreatedTotal()},
+		CommittedTotal:         promCounterVecAdapter{ops.UploadSessionCommittedTotal()},
+		ExpiredTotal:           promCounterAdapter{c: ops.UploadSessionExpiredTotal()},
+		ReaperRowsDeletedTotal: promCounterAdapter{c: ops.UploadSessionReaperRowsDeletedTotal()},
+		ReaperFailedTotal:      promCounterAdapter{c: ops.UploadSessionReaperFailedTotal()},
+	})
 	srv.WithOpsMetrics(ctx, ops)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid

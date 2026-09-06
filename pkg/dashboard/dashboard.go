@@ -90,8 +90,10 @@ type DPAView struct {
 
 // IndexData is the /dashboard/ overview payload.
 type IndexData struct {
-	DeployedAppCount int
-	Plan             string
+	DeployedAppCount   int
+	DeveloperAppCount  int
+	DeveloperAppsLimit int
+	Plan               string
 }
 
 // AppListItem is one row on /dashboard/apps.
@@ -287,6 +289,18 @@ type PreviewItem struct {
 	StateClass string // CSS class matching PrState for the chip
 }
 
+// DomainItem is the compact durable custom-domain projection rendered on an
+// app detail page. The cert fields come from custom_domains, so a dashboard
+// refresh does not block on a live TLS handshake.
+type DomainItem struct {
+	Domain           string
+	Verified         bool
+	CertStatus       string
+	CertExpiresAt    string
+	CertLastError    string
+	DNSLastCheckedAt string
+}
+
 // CronItem is one row on the app detail page's crons tab
 // (issue #791 PR-E / ADR-090 §"Sub-decision 7"). The inline runs
 // panel + fire-now form are projected into the same struct so the
@@ -355,6 +369,9 @@ type AppDetailData struct {
 	// surfaces its previews) so a preview-of-preview loop can't
 	// occur.
 	Previews []PreviewItem
+	// Domains carries the app's legacy custom-domain bindings and their
+	// durable certificate lifecycle (issue #1397 / F1).
+	Domains []DomainItem
 	// FiredFlash is the post-redirect banner surfaced after a
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1
@@ -363,6 +380,12 @@ type AppDetailData struct {
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
 	FiredFlash string
+	// RollbackConfirmToken is the named CSRF token shared by the
+	// deployment rollback forms on the app detail page.
+	RollbackConfirmToken string
+	// RollbackFlash is the post-redirect banner for the app rollback form.
+	// Values are "ok", "error", or empty.
+	RollbackFlash string
 	// RecentInstances is the most recent N wake rows for this app
 	// (parked → waking → running → …). Each carries its WakeID so
 	// operators can paste the ID from a gateway response header
@@ -1314,6 +1337,10 @@ type AccountData struct {
 	// faas_csrf sidecar cookie. Same envelope shape as the delete /
 	// restore tokens above — sealed by (action, account_id).
 	ConnectGithubConfirmToken string
+	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
+	// a dedicated cookie name because the account page renders several
+	// independently action-bound forms at once.
+	PlanConfirmToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a
@@ -1352,6 +1379,15 @@ type AccountData struct {
 type AuthCapabilitiesView struct {
 	GoogleEnabled bool
 	GitHubEnabled bool
+}
+
+// AdminData is the operator-only dashboard payload. It currently carries the
+// durable TLS cutover state so an operator can see that a rollback was tested
+// without losing the context when the edge returns to its normal state.
+type AdminData struct {
+	TLSCutover          TLSCutoverState
+	TLSCutoverStateFile string
+	TLSCutoverPresent   bool
 }
 
 // Render writes the page to w. It parses the templates on first use

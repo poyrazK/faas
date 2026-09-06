@@ -354,7 +354,7 @@ __gregale_cache_slugs apps
 // TestPowershell_AppCommandHasSubcommandAndSlugEntries is the
 // regression test for the `len(c.Positionals) == 0` gate that
 // suppressed subcommand completion for commands with BOTH
-// subcommands (scale/rename/security) AND a <slug> positional.
+// subcommands (scale/rename/restart/security) AND a <slug> positional.
 // The fix drops the positionals gate; the rendered PowerShell
 // script must now contain subcommand entries for `app`.
 func TestPowershell_AppCommandHasSubcommandAndSlugEntries(t *testing.T) {
@@ -367,7 +367,7 @@ func TestPowershell_AppCommandHasSubcommandAndSlugEntries(t *testing.T) {
 	if !strings.Contains(out, "__gregaleCacheSlugs 'apps'") {
 		t.Fatalf("app slug-cache completion missing — hasSlugFirst not honoured:\n%s", out)
 	}
-	for _, sub := range []string{"scale", "rename", "security"} {
+	for _, sub := range []string{"scale", "rename", "restart", "security"} {
 		// Go's %q renders a string with double quotes (no escape
 		// needed for simple ASCII), so we match either quote style.
 		dq := `"` + sub + `"`

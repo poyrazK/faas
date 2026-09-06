@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -63,6 +64,33 @@ func TestDevSessionRejectsFunctionWithoutRuntime(t *testing.T) {
 	rec := e.do(t, "PUT", "/v1/dev/sessions/my-function", api.UpsertDevSessionRequest{Type: "function"}, nil)
 	if rec.Code != 400 {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDevSessionUsesSeparateQuota(t *testing.T) {
+	e := setup(t, api.PlanFree)
+
+	first := e.do(t, "PUT", "/v1/dev/sessions/first-app", api.UpsertDevSessionRequest{}, nil)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first developer session status = %d, want 201: %s", first.Code, first.Body.String())
+	}
+	// A Free account can still create its normal deployed-app slot while the
+	// developer environment is live: the two budgets are intentionally split.
+	production := state.App{AccountID: e.acct.ID, Slug: "production-app", Status: state.AppActive}
+	if _, err := e.store.CreateAppIfUnderQuota(t.Context(), production, api.MustLimitsFor(api.PlanFree)); err != nil {
+		t.Fatalf("production app was blocked by developer session: %v", err)
+	}
+
+	second := e.do(t, "PUT", "/v1/dev/sessions/second-app", api.UpsertDevSessionRequest{}, nil)
+	if second.Code != http.StatusForbidden {
+		t.Fatalf("second developer session status = %d, want 403: %s", second.Code, second.Body.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(second.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode developer quota problem: %v", err)
+	}
+	if problem.Code != api.CodePlanLimitDeveloperApps || problem.Limit == nil || *problem.Limit != 1 || problem.Observed == nil || *problem.Observed != 1 {
+		t.Fatalf("developer quota problem = %+v", problem)
 	}
 }
 

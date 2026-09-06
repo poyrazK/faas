@@ -331,14 +331,47 @@ func (c *ChecksAPI) WriteCheck(ctx context.Context, repoFullName, commitSHA stri
 	})
 }
 
+// WriteSkippedCheckForInstallation posts a completed neutral production check
+// when a commit explicitly opts out of deployment with [skip deploy] or
+// [deploy skip]. The installation-scoped token keeps the acknowledgement
+// least-privilege and matches the push dispatcher's binding resolution.
+func (c *ChecksAPI) WriteSkippedCheckForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
+	if repoFullName == "" || commitSHA == "" {
+		return fmt.Errorf("githubd: repo and sha required for skipped check-run")
+	}
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, prodCheckName, checkRunRequest{
+		Name:       prodCheckName,
+		HeadSHA:    commitSHA,
+		Status:     statusCompleted,
+		Conclusion: previewCheckConclusionNeutral,
+		Output: &checkRunOutput{
+			Title:   "Deployment skipped",
+			Summary: summary,
+		},
+		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
+	})
+}
+
 // WriteAppCheck writes the independent lifecycle row for one workload in a
 // monorepo. The exact installation ID comes from the authenticated webhook or
 // durable deployment binding, avoiding an unscoped repo reverse lookup.
 func (c *ChecksAPI) WriteAppCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, logsURL, summary string) error {
+	return c.WriteScopedAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, "", phase, logsURL, summary)
+}
+
+// WriteScopedAppCheck writes a workload Check Run whose name and external ID
+// include the deployment scope, preventing production and staging updates for
+// the same commit from coalescing into one GitHub check.
+func (c *ChecksAPI) WriteScopedAppCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug, scope string, phase githubdgrpc.CheckPhase, logsURL, summary string) error {
 	if repoFullName == "" || commitSHA == "" || appSlug == "" {
 		return fmt.Errorf("githubd: repo, sha, and app slug required for app check-run")
 	}
 	checkName := "gregale / " + appSlug
+	externalID := fmt.Sprintf("faas/%s/%s/%s", repoFullName, appSlug, commitSHA)
+	if scope != "" {
+		checkName += " / " + scope
+		externalID = fmt.Sprintf("faas/%s/%s/%s/%s", repoFullName, appSlug, scope, commitSHA)
+	}
 	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, checkName, checkRunRequest{
 		Name:       checkName,
 		HeadSHA:    commitSHA,
@@ -349,7 +382,7 @@ func (c *ChecksAPI) WriteAppCheck(ctx context.Context, installationID int64, rep
 			Title:   phaseTitle(phase),
 			Summary: summary,
 		},
-		ExternalID: fmt.Sprintf("faas/%s/%s/%s", repoFullName, appSlug, commitSHA),
+		ExternalID: externalID,
 	})
 }
 

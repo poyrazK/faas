@@ -226,7 +226,11 @@ func (d *DiskDrift) Tick(ctx context.Context) (int, error) {
 	// when scanning the disk tree; rows is small (~tens per box).
 	expected := make(map[string]state.SnapshotForGC, len(rows))
 	for _, r := range rows {
-		expected[r.DeploymentID] = r
+		directory := r.DeploymentID
+		if strings.HasPrefix(r.StorageKey, "snap/") && strings.HasSuffix(r.StorageKey, "/mem") {
+			directory = strings.TrimSuffix(strings.TrimPrefix(r.StorageKey, "snap/"), "/mem")
+		}
+		expected[directory] = r
 	}
 
 	// When a storage backend is wired, prefer backend.List over
@@ -283,7 +287,7 @@ func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs 
 				"err", err, "drift", drift, "rows_processed", len(seen))
 			return drift, nil
 		}
-		seen[depID] = struct{}{}
+		seen[strings.SplitN(depID, "/", 2)[0]] = struct{}{}
 		drift += d.checkDepDir(depID, row)
 	}
 

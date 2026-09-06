@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -43,9 +44,14 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	objectStorage *objectstorage.Registry
-	store         state.Store
-	log           *slog.Logger
+	objectStorage                    *objectstorage.Registry
+	managedPostgres                  *managedpostgres.Service
+	managedPostgresReconciler        *managedpostgres.Reconciler
+	managedPostgresBindings          *managedpostgres.BindingService
+	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
+	managedPostgresUsageCollector    *managedpostgres.UsageCollector
+	store                            state.Store
+	log                              *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
 	// cross-node coordination and never guards customer-intent state.
@@ -961,6 +967,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageReadSurface...)(s.listBucketObjects))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.deleteBucketObject))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeStorageRead, api.ScopeStorageWrite)(s.signBucketObject))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.listObjectMultipartUploads))))
+	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.createObjectMultipartUpload))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.getObjectMultipartUpload))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.abortObjectMultipartUpload))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.listObjectMultipartParts))))
+	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.signObjectMultipartPart))))
+	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.completeObjectMultipartUpload))))
 	// Account. The /v1/account/plan change is destructive across the
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).
@@ -1264,7 +1277,25 @@ func (s *server) handler() http.Handler {
 	// fetch. See docs/adr/0XX-local-tarball-deploy-trust-root.md.
 	// Parallel to source-ref, not a replacement — that gate stays
 	// load-bearing for `--repo X --ref SHA` semantics.
-	mux.HandleFunc("POST /v1/apps/{slug}/deployments/source-tarball", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.handleSourceTarballDeploy))))))
+	// The legacy multipart path remains available during the resumable-upload
+	// migration, but advertise the successor on every response (including
+	// auth failures) so older clients can move to POST /v1/uploads.
+	mux.Handle("POST /v1/apps/{slug}/deployments/source-tarball", s.withDeprecationHTTP(`</v1/uploads>; rel="successor-version"`, s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.handleSourceTarballDeploy)))))))
+	// PR-1 of issue #1182 §P1 packaging follow-up — resumable
+	// upload protocol. The legacy endpoint above stays active;
+	// PR-2 wires the CLI to these 4 endpoints; PR-3 deprecates
+	// the legacy one with RFC 8594 Sunset headers.
+	//
+	// upload_sessions.id IS the dedupe key for commit retries
+	// (see upload_commit_outcomes companion table), so the
+	// Idempotency-Key middleware is intentionally NOT wired
+	// here — it would short-circuit a *new* session creation
+	// that should otherwise succeed.
+	mux.HandleFunc("POST /v1/uploads", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleStartUpload))))
+	mux.HandleFunc("GET /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleGetUpload))))
+	mux.HandleFunc("PATCH /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleAppendUpload))))
+	mux.HandleFunc("POST /v1/uploads/{id}/commit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleCommitUpload))))
+	mux.HandleFunc("DELETE /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleCancelUpload))))
 	// PR-1 of the deploy-diff cluster — server-side pre-deploy
 	// preview. Read-only (no DB writes, no audit row, no deployment
 	// row), so the auth chain matches GET /v1/apps/{slug}/metrics
@@ -1426,6 +1457,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/rollouts/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverRollout)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/park", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.parkApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.wakeApp))))
+	mux.HandleFunc("POST /v1/apps/{slug}/restart", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.restartApp)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/cache", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.purgeAppCache))))
 	mux.HandleFunc("POST /v1/apps/{slug}/rename", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.renameApp)))))
 
 	// Instances (read-only here; schedd is the writer).
@@ -2362,6 +2395,10 @@ func (s *server) handler() http.Handler {
 	// dashboard. The handler verifies its dedicated named CSRF cookie and
 	// a typed key-prefix confirmation before calling the REST revocation core.
 	mux.Handle("POST /dashboard/account/keys/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteKey))))
+	// Issue #248 slice B: route account-page plan changes through the
+	// provider-confirmed checkout or portal flow. The local plan changes
+	// only after the provider webhook confirms the operation.
+	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardAccountPlan))))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).
 	// Step-up gate matches dashboardDelete: a hostile actor with a
@@ -2384,6 +2421,9 @@ func (s *server) handler() http.Handler {
 	// (Go 1.22+ mux needs concrete segment counts; the
 	// /crons/{id}/fire-now suffix is the path tail).
 	mux.Handle("POST /dashboard/apps/{slug}/crons/{id}/fire-now", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardFireCron))))
+	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
+	// named CSRF cookie and the same rollback core as the REST endpoint.
+	mux.Handle("POST /dashboard/apps/{slug}/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollback))))
 	// ADR-117 §Production-ready follow-on, C4 — dashboard-side
 	// retry form handler. The form is <form method="POST"> (not
 	// XHR), so the endpoint takes the CSRF sealed-envelope path

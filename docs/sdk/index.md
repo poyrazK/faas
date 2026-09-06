@@ -1,12 +1,18 @@
 # SDKs
 
-Three first-class SDKs are published from this repo:
+Three first-class SDKs are built from this repo. **None of them is published
+to a public registry yet** — see [publishing](../../sdk/README-publishing.md)
+for the current install paths and what is still blocking release.
 
-| Language | Module / package    | Source                       | Generator                          |
-|----------|---------------------|------------------------------|------------------------------------|
-| Go       | `faas-go`           | `sdk/go/internal/`           | hand-written (extracted from `pkg/api/` in PR 2) |
-| Node     | `@gregale/skd-node` | `sdk/node/src/generated/`    | `openapi-typescript-codegen@0.72.1` |
-| Python   | `faas_sdk`          | `sdk/python/faas_sdk/`       | `openapi-python-client==0.29.0`     |
+| Language | Install name            | Import as        | Source                    | Generator                          |
+|----------|-------------------------|------------------|---------------------------|------------------------------------|
+| Go       | `github.com/poyrazK/faas/sdk/go` | `faas`  | `sdk/go/internal/`        | hand-written (extracted from `pkg/api/` in PR 2) |
+| Node     | `@gregale/sdk-node`     | `@gregale/sdk-node` | `sdk/node/src/generated/` | `openapi-typescript-codegen@0.72.1` |
+| Python   | `gregale-sdk`           | `faas_sdk`       | `sdk/python/faas_sdk/`    | `openapi-python-client==0.29.0`     |
+
+The Python install name and import name differ on purpose (`pip install
+gregale-sdk` → `import faas_sdk`), because `faas-sdk` on PyPI is an unrelated
+package owned by Sonra Intelligence Ltd.
 
 All three consume the same canonical OpenAPI contract the apid daemon serves
 (`api/openapi.yaml`). Generated output is committed per ADR-013.

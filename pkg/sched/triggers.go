@@ -58,4 +58,9 @@ const (
 	// TriggerServiceReplica — replacement admission for a service deployment
 	// whose live count fell below its desired replica count.
 	TriggerServiceReplica = "service.replica"
+
+	// TriggerAppRestart — explicit customer-requested app restart. The
+	// restart parks the current instance(s), captures a fresh snapshot, and
+	// wakes one replacement instance.
+	TriggerAppRestart = "app.restart"
 )

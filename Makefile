@@ -10,6 +10,7 @@ GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)
 GOARCH  ?= $(shell $(GO) env GOARCH)
 export GOOS GOARCH
+TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
 DAEMONS := apid gatewayd-public gatewayd-internal schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-stream-bridge builderd imaged meterd githubd hostage-gen
@@ -20,6 +21,15 @@ GOVULNCHECK_VERSION ?= 1.7.0
 CLIS := gregale gregalectl
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION)
+# Release artifacts must not contain host-specific source paths or automatic
+# VCS metadata. The release workflow supplies VERSION from the tag commit;
+# these flags make the bytes independent of the runner checkout path and
+# whether the checkout has a .git directory.
+GO_BUILD_FLAGS := -trimpath -buildvcs=false
+# Keep the build target's cgo setting separate from the test environment.
+# `make test` needs the host default for race-enabled tests, while release
+# binaries are always static.
+BUILD_CGO_ENABLED ?= 0
 BINDIR  := bin
 # Always use the repository's Ansible configuration.  Ansible only discovers
 # ansible.cfg from the current directory (or its parents); the playbook lives
@@ -42,14 +52,14 @@ build: guest-runners ## Build every daemon + CLIs + guest init + function runner
 	@mkdir -p $(BINDIR)
 	@for d in $(DAEMONS); do \
 	  echo "building $$d"; \
-	  $(GO) build -tags metal -ldflags '$(LDFLAGS)' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
+	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
 	done
 	@for c in $(CLIS); do \
 	  echo "building $$c (CLI)"; \
-	  $(GO) build -ldflags '$(LDFLAGS)' -o $(BINDIR)/$$c ./cmd/$$c || exit 1; \
+	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$c ./cmd/$$c || exit 1; \
 	done
 	@echo "building init (guest PID 1)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $(BINDIR)/init ./guest/init
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
 	@install -m 0755 scripts/schedd-brokerq-apply $(BINDIR)/schedd-brokerq-apply
 
 # Function-runner shims live in the guest at /usr/local/bin/faas-runner and
@@ -67,8 +77,8 @@ guest-runners: ## Build function-runner shims into ./bin/runners/<runtime>/faas-
 	  mkdir -p $(BINDIR)/runners/$$rt; \
 	  source_rt=$$rt; \
 	  if [ "$$rt" = go124-alpine ]; then source_rt=go124; fi; \
-	  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-	    $(GO) build -trimpath -o $(BINDIR)/runners/$$rt/faas-runner \
+	  GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) \
+	    $(GO) build $(GO_BUILD_FLAGS) -o $(BINDIR)/runners/$$rt/faas-runner \
 	      ./guest/runners/$$source_rt || exit 1; \
 	done
 
@@ -290,7 +300,7 @@ gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; 
 .PHONY: test-metal
 test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
-	  CGO_ENABLED=0 $(GO) build -trimpath -o "$$helper_dir/vmmd" ./cmd/vmmd; \
+	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) $(PKGS)
 
 .PHONY: test-metal-builder
@@ -302,7 +312,7 @@ test-metal-builder: ## Native KVM builder acceptance — requires staged release
 	@test -r "$$FAAS_BUILDER_BASE_PATH" || (echo "FAAS_BUILDER_BASE_PATH must name the staged builder base" >&2; exit 1)
 	@test -n "$$FAAS_TEST_FC_VERSION" || (echo "FAAS_TEST_FC_VERSION must match the installed Firecracker release" >&2; exit 1)
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
-	  CGO_ENABLED=0 $(GO) build -trimpath -o "$$helper_dir/vmmd" ./cmd/vmmd; \
+	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" FAAS_METAL_BUILD_ACCEPTANCE=1 \
 	  $(GO) test -tags metal -race -count=1 -run '^TestMetalBuilderAcceptance$$' \
 	  -v -timeout "$${METAL_BUILDER_TIMEOUT:-30m}" ./pkg/fcvm
@@ -359,11 +369,28 @@ backup-pg: ## Take a Postgres base backup into /var/lib/pgsql/basebackup/basebac
 
 .PHONY: backup-restore-drill
 backup-restore-drill: ## Run the M8 restore drill end-to-end (must run on EX44 as root)
-	sudo bash deploy/scripts/faas-m8-restore-drill.sh
+	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh"
 
 .PHONY: lint-drill
-lint-drill: ## Static lint of the restore drill script + record template shape (spec §14 M8)
+lint-drill: ## Static lint of the M8 restore and TLS cutover drill scripts
 	bash deploy/scripts/faas-m8-restore-drill_test.sh
+	bash deploy/scripts/faas-tls-cutover-drill_test.sh
+
+.PHONY: m8-evidence-check
+m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
+	bash deploy/scripts/check-restore-drill-evidence.sh
+
+.PHONY: eviction-dryrun
+eviction-dryrun: ## Issue #255: deterministic RAM-pressure eviction drill + evidence record
+	$(GO) run ./cmd/eviction-dryrun
+
+.PHONY: tls-cutover-drill
+tls-cutover-drill: ## Issue #252: current-edge TLS cutover drill (dry-run by default)
+	@case "$(TLS_CUTOVER_MODE)" in \
+	  dry-run|execute) ;; \
+	  *) echo "TLS_CUTOVER_MODE must be dry-run or execute" >&2; exit 2 ;; \
+	esac
+	bash deploy/scripts/faas-tls-cutover-drill.sh --$(TLS_CUTOVER_MODE)
 
 .PHONY: backup-push-pg
 backup-push-pg: ## Push the latest basebackup to Hetzner Storage Box (issue #250)

@@ -28,11 +28,12 @@ type Layer struct {
 // Config is the subset of the OCI image config we need: the exec contract and
 // the ordered diff_ids that identify each layer bottom-to-top.
 type Config struct {
-	Env        map[string]string // flattened "KEY=VALUE" entries
-	Entrypoint []string
-	Cmd        []string
-	WorkingDir string
-	User       string
+	Env          map[string]string // flattened "KEY=VALUE" entries
+	Entrypoint   []string
+	Cmd          []string
+	WorkingDir   string
+	User         string
+	ExposedPorts map[string]struct{}
 	// Healthcheck mirrors the OCI HEALTHCHECK shape; nil if absent
 	// (the field is only populated when the image declares one).
 	// Runtime wiring of the polling loop lands in M-2 (ADR-X5).
@@ -98,11 +99,51 @@ func ParseConfig(r io.Reader) (Config, error) {
 		Cmd:              f.Cmd,
 		WorkingDir:       f.WorkingDir,
 		User:             f.User,
+		ExposedPorts:     clonePortSet(f.ExposedPorts),
 		Healthcheck:      healthcheckFromRaw(raw.resolvedHealthcheck()),
 		StopSignal:       raw.resolvedStopSignal(),
 		StopGracePeriodS: stopGraceFromRaw(raw),
 		DiffIDs:          raw.RootFS.DiffIDs,
 	}, nil
+}
+
+// SingleTCPExposedPort returns the one valid TCP port declared by an image.
+// UDP declarations and malformed entries are ignored. Multiple distinct TCP
+// ports are ambiguous and therefore do not select a serving port.
+func SingleTCPExposedPort(exposed map[string]struct{}) (int, bool) {
+	var port int
+	for spec := range exposed {
+		parts := strings.Split(spec, "/")
+		if len(parts) != 2 || !strings.EqualFold(parts[1], "tcp") {
+			continue
+		}
+		candidate, err := strconv.Atoi(parts[0])
+		if err != nil || candidate < 1 || candidate > 65535 {
+			continue
+		}
+		if port == 0 {
+			port = candidate
+			continue
+		}
+		if port != candidate {
+			return 0, false
+		}
+	}
+	if port == 0 {
+		return 0, false
+	}
+	return port, true
+}
+
+func clonePortSet(m map[string]struct{}) map[string]struct{} {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(m))
+	for k := range m {
+		out[k] = struct{}{}
+	}
+	return out
 }
 
 // LayersAboveBase returns the app's diff_ids that sit above the base image. It
@@ -143,6 +184,8 @@ func LayersAboveBase(baseDiffIDs, appDiffIDs []string) ([]string, error) {
 // Healthcheck/StopSignal/StopGracePeriod are surfaced onto the AppManifest
 // additively (ADR-136 §Decision 3-4) — runtime wiring of those fields lands
 // in M-2; this function only projects the wire shape.
+// A single valid TCP ExposedPorts entry also seeds the serving port; callers
+// may replace it later with an explicit deployment override.
 func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
 	if len(cfg.Entrypoint) == 0 && len(cfg.Cmd) == 0 {
 		return api.AppManifest{}, fmt.Errorf("%w: image declares neither Entrypoint nor Cmd", ErrImageManifestInvalid)
@@ -163,6 +206,9 @@ func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
 		Env:        cfg.Env, // already a map at this layer; ParseConfig flattens once
 		WorkingDir: cfg.WorkingDir,
 		User:       normalizeUser(cfg.User),
+	}
+	if port, ok := SingleTCPExposedPort(cfg.ExposedPorts); ok {
+		m.Port = port
 	}
 	if cfg.Healthcheck != nil {
 		m.Healthcheck = &api.AppManifestHealthcheck{

@@ -493,7 +493,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// name `evts.ProxyFirstByte` is still reachable
 			// inside the if-block (the local parameter
 			// otherwise shadows the package).
-			if evs := events; evs != nil {
+			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
 				evs.Emit(r.Context(), evts.ProxyFirstByte{
 					EmitAt:     time.Now().UTC(),
@@ -793,7 +793,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// wake.proxy_first_byte on the first downstream
 			// byte. nil events opts out (legacy callers and
 			// the test corpus).
-			if evs := events; evs != nil {
+			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
 				evs.Emit(r.Context(), evts.ProxyFirstByte{
 					EmitAt:     time.Now().UTC(),

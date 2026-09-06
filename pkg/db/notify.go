@@ -71,7 +71,8 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 // Payload contracts (JSON, all optional fields may be omitted):
 //
 //	NotifyAppChanged        {"app_id":uuid,
-//	                         "kind":"updated|parked|...",
+//	                         "kind":"updated|parked|woken|restart|...",
+//	                         "wake_id":uuid           // restart correlation id
 //	                         "lifecycle_changed":bool} // lifecycle fields changed
 //	NotifyDeploymentChanged {"kind":"image|tarball|dockerfile|function|
 //	                         rollback|superseded",
@@ -328,10 +329,10 @@ const (
 	// NotifyComputeNodeChanged {"node_id":uuid, "active":bool}
 	// schedd (SetComputeNodeActive + UpsertComputeNode) →
 	// gatewayd-internal (NodeClientCache.Evict). gatewayd-internal's per-node
-	// *grpc.ClientConn must drop on every UPSERT (admin UPDATE)
-	// and every active=false (heartbeat watchdog), so a future
-	// request to the same node re-dials against the fresh row.
-	// Issue #98 / ADR-028.
+	// *grpc.ClientConn drops on effective configuration and lifecycle changes,
+	// so the next request re-dials against the fresh row. ADR-161 suppresses
+	// heartbeat-only and no-op updates to preserve in-flight RPCs.
+	// Issue #98 / ADR-028; lifecycle is also present in the JSON payload.
 	//
 	// NotifyInvocationDue {"invocation_id":uuid, "app_id":uuid,
 	//                     "source":"async_invoke|queue|delayed_task|cron"}
@@ -413,6 +414,10 @@ const (
 	//   against notify loss. Consumed by cmd/gatewayd-internal/
 	//   backend.go (PR 8).
 	NotifyEdgeRuleChanged = "edge_rule_changed"
+	// NotifyCachePurge is emitted by the explicit per-app cache purge API.
+	// Payload: {"app_id":uuid,"path_glob":string}; an empty glob purges
+	// the app's complete response cache.
+	NotifyCachePurge = "cache_purge_requested"
 	// NotifyAppOpenAPIDocChanged (ADR-126 / issue #975 item #2)
 	// {"app_id":uuid, "op":"created|replaced|deleted"}.
 	//   apid is the only listener (cmd/apid/openapi_doc_subscriber.go

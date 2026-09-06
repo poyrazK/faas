@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { AccountLimits } from './AccountLimits.js';
 /**
- * Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, and total app count.
+ * Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count.
  */
 export type AccountResponse = {
   id: string;
@@ -19,6 +19,10 @@ export type AccountResponse = {
   limits: AccountLimits;
   usage_gb_hours: number;
   app_count: number;
+  /**
+   * Live `gregale dev` environments; these do not consume deployed_apps slots.
+   */
+  developer_app_count: number;
   github_install_id?: string | null;
   plan_change_status?: string;
   requested_plan?: 'free' | 'hobby' | 'pro' | 'scale';

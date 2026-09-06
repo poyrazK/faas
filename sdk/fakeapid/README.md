@@ -61,7 +61,7 @@ does not.
 ## Why stdlib-only
 
 `go.mod` declares no requires. The fixture must not depend on
-`github.com/poyrazK/faas-go` (the SDK module) or any other
+`github.com/poyrazK/faas/sdk/go` (the SDK module) or any other
 non-stdlib package, because Node and Python SDKs spawn the
 *same* binary from their own CI without a Go module dependency.
 

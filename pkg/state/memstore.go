@@ -100,17 +100,18 @@ type auditEventOutboxRow struct {
 // (unique email, unique slug, unique key hash) so tests exercise real error
 // paths. It is NOT durable — production uses the Postgres store.
 type MemStore struct {
-	objectBuckets        map[string]ObjectBucket
-	objectUsage          map[string]ObjectBucketUsage
-	objectGrants         map[string]map[string]int64
-	objectReports        []api.ObjectStorageUsageReport
-	objectAuthorizations map[string]int64
-	objectAccessGrants   map[string]ObjectBucketAccessGrant
-	mu                   sync.Mutex
-	accounts             map[string]Account
-	keys                 map[string]APIKey
-	keyByHash            map[string]APIKey
-	apps                 map[string]App
+	objectBuckets          map[string]ObjectBucket
+	objectUsage            map[string]ObjectBucketUsage
+	objectGrants           map[string]map[string]int64
+	objectReports          []api.ObjectStorageUsageReport
+	objectAuthorizations   map[string]int64
+	objectAccessGrants     map[string]ObjectBucketAccessGrant
+	objectMultipartUploads map[string]ObjectMultipartUpload
+	mu                     sync.Mutex
+	accounts               map[string]Account
+	keys                   map[string]APIKey
+	keyByHash              map[string]APIKey
+	apps                   map[string]App
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -146,7 +147,10 @@ type MemStore struct {
 	// row so RecordMailSuppression can dedupe the same way
 	// the (source, provider_event_id) unique index does.
 	mailSuppressions map[string]mailSuppressionRow
-	deployments      map[string]Deployment
+	// deployFailedEmailAt mirrors apps.last_deploy_failed_email_at for
+	// the in-memory implementation of the I1 cooldown gate.
+	deployFailedEmailAt map[string]time.Time
+	deployments         map[string]Deployment
 	// statusIncidents (issue #599 / ADR-130) is the in-memory
 	// mirror of the status_incidents table (migrations/00412).
 	// Append-only + resolved_at-stamped; the partial-index read
@@ -230,6 +234,14 @@ type MemStore struct {
 	// project, slug) UNIQUE invariant is enforced at insert time
 	// in CreateDeploymentScopeExclusion below.
 	deploymentScopeExclusions map[string]DeploymentScopeExclusion
+	// Issue #1182 §P1 packaging follow-up (PR-1 of 3): in-memory
+	// backing for the upload-session Store methods. Keyed by upload_id
+	// (text). Backs the resumable upload protocol's handler unit
+	// tests; production uses *PgStore against the upload_sessions
+	// table (migrations/20260905120000000_upload_sessions.sql). Mutex is the
+	// existing m.mu — no new lock.
+	uploadSessions       map[string]sqlc.UploadSession
+	uploadCommitOutcomes map[string]sqlc.UploadCommitOutcome
 	// alertClaimKeys tracks the (ruleID, idempotency_key) → claimTime
 	// pair so MemStore mirrors the Postgres UNIQUE(idempotency_key)
 	// + last_fired_at dedupe behaviour. Two claims with the SAME
@@ -283,7 +295,7 @@ type MemStore struct {
 	// alertPresets mirrors alert_presets (issue #1233 / ADR-123).
 	// System-owned catalog; only the seed migrations write these.
 	// Keyed by preset.ID — the apid enable handler reads via
-	// AlertPresetByName which scans the map (8 rows, O(N) is fine).
+	// AlertPresetByName which scans the map (10 rows, O(N) is fine).
 	alertPresets map[string]AlertPreset
 	// accountSpendSnapshots mirrors account_spend_snapshot
 	// (migrations/00420 in this branch's renumber). meterd appends
@@ -539,6 +551,9 @@ type MemStore struct {
 	projects              map[string]Project
 	projectsByAccountSlug map[string]map[string]string // account_id → slug → id
 	projectsByInstallRepo map[installRepoKey]string    // install_id, repo_full_name → id
+	// githubDeployBranches stores the optional branch→scope rules keyed by
+	// project ID. It mirrors github_deploy_branches in Postgres.
+	githubDeployBranches map[string]map[string]string
 	// clock is the seam CurrentMonthOverageCents uses to compute the
 	// UTC month-start cutoff. Default is time.Now (production); tests
 	// install a fixture via SetClockForTest so a usage row planted at
@@ -697,21 +712,24 @@ type builderUsageRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		objectAccessGrants: map[string]ObjectBucketAccessGrant{},
-		accounts:           map[string]Account{},
-		keys:               map[string]APIKey{},
-		keyByHash:          map[string]APIKey{},
-		apps:               map[string]App{},
-		githubBindings:     map[string]GitHubBinding{},
-		githubInstalls:     map[string]GitHubInstall{},
+		objectAccessGrants:     map[string]ObjectBucketAccessGrant{},
+		objectMultipartUploads: map[string]ObjectMultipartUpload{},
+		accounts:               map[string]Account{},
+		keys:                   map[string]APIKey{},
+		keyByHash:              map[string]APIKey{},
+		apps:                   map[string]App{},
+		githubDeployBranches:   map[string]map[string]string{},
+		githubBindings:         map[string]GitHubBinding{},
+		githubInstalls:         map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
 		githubWebhookSecretMeta: map[int64]webhookSecretMeta{},
 		// Issue #246 acceptance item 7: mail suppression list mirror.
-		mailSuppressions: map[string]mailSuppressionRow{},
-		deployments:      map[string]Deployment{},
-		builds:           map[string]Build{},
+		mailSuppressions:    map[string]mailSuppressionRow{},
+		deployFailedEmailAt: map[string]time.Time{},
+		deployments:         map[string]Deployment{},
+		builds:              map[string]Build{},
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
 		// build_id (mirrors the build_provenance.build_id UNIQUE).
 		// Starts empty; CreateBuildProvenance fills it.
@@ -750,6 +768,8 @@ func NewMemStore() *MemStore {
 		appWebhooks:               map[string]AppWebhook{},
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
 		deploymentScopeExclusions: map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
+		uploadSessions:            map[string]sqlc.UploadSession{},
+		uploadCommitOutcomes:      map[string]sqlc.UploadCommitOutcome{},
 		alertClaimKeys:            map[string]time.Time{},
 		edgeRules:                 map[string]EdgeRule{},
 		corsPresets:               map[string]CorsPreset{},
@@ -2557,16 +2577,30 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
-	// 1. Authoritative count under the same lock. Mirrors the predicate
-	//    PgStore uses against the apps table.
+	// 1. Authoritative count under the same lock. Mirrors the PgStore
+	//    predicates, including the separate developer-environment cap.
 	observed := 0
+	developer := IsDeveloperApp(app)
 	for _, a := range m.apps {
-		if a.AccountID == app.AccountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
-			observed++
+		if a.AccountID != app.AccountID || (a.Status != AppActive && a.Status != AppEvictedCold) {
+			continue
 		}
+		if developer != IsDeveloperApp(a) {
+			continue
+		}
+		observed++
 	}
-	if observed >= limits.DeployedApps {
-		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	limit := limits.DeployedApps
+	kind := QuotaErrorKindApps
+	if developer {
+		limit = limits.DeveloperApps
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindDeveloperApps
+	}
+	if observed >= limit {
+		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
 	// 2. Conditional insert. Slug uniqueness is enforced by the same
 	//    loop CreateApp uses; returning ErrConflict keeps the wire
@@ -3633,7 +3667,19 @@ func (m *MemStore) CountDeployedApps(_ context.Context, accountID string) (int, 
 	defer m.mu.Unlock()
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
+		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && !IsDeveloperApp(a) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *MemStore) CountDeveloperApps(_ context.Context, accountID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, a := range m.apps {
+		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && IsDeveloperApp(a) {
 			n++
 		}
 	}
@@ -4395,6 +4441,11 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, ErrNotFound
 	}
+	if d.ID != "" {
+		if _, exists := m.deployments[d.ID]; exists {
+			return Deployment{}, ErrConflict
+		}
+	}
 	if d.CanaryPreset == "" {
 		d.CanaryPreset = "none"
 	}
@@ -4410,7 +4461,9 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.RolloutStartedAt = &now
 	}
 
-	// Find the most-recent non-terminal deployment row for this app.
+	// Find the most-recent non-terminal deployment row for this app and
+	// deployment scope. Production and staging are independent rollout
+	// lanes; a staging push must never supersede production.
 	// O(N) over the map is fine at one-box scale; spec §6 keeps the
 	// rows-per-app bounded by the build cadence.
 	var (
@@ -4419,7 +4472,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	)
 	var maxCreated time.Time
 	for id, existing := range m.deployments {
-		if existing.AppID != d.AppID {
+		if existing.AppID != d.AppID || normalizedDeploymentScope(existing.Scope) != normalizedDeploymentScope(d.Scope) {
 			continue
 		}
 		// Same narrow set as PgStore (PR-B): only flip pending/live
@@ -4464,7 +4517,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		// revision live and later collide with the one-live index when
 		// the new row is activated.
 		for otherID, other := range m.deployments {
-			if other.AppID != d.AppID || other.Status != DeployLive || otherID == priorID {
+			if other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive || otherID == priorID {
 				continue
 			}
 			other.Status = DeploySuperseded
@@ -6407,6 +6460,27 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	return d, nil
 }
 
+// ClaimDeployFailedEmail mirrors PgStore.ClaimDeployFailedEmail while
+// preserving the same atomic check-and-stamp under the MemStore mutex.
+func (m *MemStore) ClaimDeployFailedEmail(_ context.Context, appID string, at time.Time) (bool, error) {
+	if appID == "" {
+		return false, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if app, ok := m.apps[appID]; !ok || app.Status == AppDeleted {
+		return false, ErrNotFound
+	}
+	if m.deployFailedEmailAt == nil {
+		m.deployFailedEmailAt = make(map[string]time.Time)
+	}
+	if last, ok := m.deployFailedEmailAt[appID]; ok && !last.Before(at.UTC().Add(-time.Hour)) {
+		return false, nil
+	}
+	m.deployFailedEmailAt[appID] = at.UTC()
+	return true, nil
+}
+
 // SetDeploymentFailedEx is the error-explanations cluster (spec §6.4
 // amendment 1) extension of SetDeploymentFailed. Writes the four
 // customer-facing prose fields alongside the RFC 7807 code so the
@@ -6937,7 +7011,7 @@ func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token st
 	if _, dup := m.domains[domain]; dup {
 		return CustomDomain{}, fmt.Errorf("state: domain %q already exists", domain)
 	}
-	d := CustomDomain{Domain: domain, AppID: appID, ChallengeToken: token}
+	d := CustomDomain{Domain: domain, AppID: appID, ChallengeToken: token, CertStatus: CustomDomainCertPending}
 	m.domains[domain] = d
 	return d, nil
 }
@@ -6994,6 +7068,21 @@ func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 	return nil
 }
 
+func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.domains[domain]
+	if !ok {
+		return ErrNotFound
+	}
+	d.CertStatus = status
+	d.CertExpiresAt = expiresAt
+	d.CertLastError = lastError
+	d.DNSLastCheckedAt = dnsCheckedAt
+	m.domains[domain] = d
+	return nil
+}
+
 func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -7041,6 +7130,22 @@ func (m *MemStore) ListAllCustomDomainsForDoctor(_ context.Context) ([]string, e
 			out = append(out, h.Hostname)
 		}
 	}
+	return out, nil
+}
+
+// ListUnverifiedCustomDomains is the bounded poller's read seam. It is kept
+// outside Store for compatibility with narrow test doubles; production PgStore
+// and MemStore both expose it for the optional type assertion in dns_poller.
+func (m *MemStore) ListUnverifiedCustomDomains(_ context.Context) ([]CustomDomain, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]CustomDomain, 0)
+	for _, d := range m.domains {
+		if !d.Verified() {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
 	return out, nil
 }
 
@@ -12903,6 +13008,9 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
+	}
 	existing.Ciphertext = ciphertext
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
@@ -12928,6 +13036,9 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	}
 	if existing.AccountID != accountID {
 		return ErrNotFound
+	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -12960,11 +13071,79 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
+	if existing.ManagedPostgresBindingID != "" {
+		return ErrConflict
+	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
 	existing.ValueHash = valueHash
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
+	return nil
+}
+
+// ResealAppSecretWithKidAndValueHashInScope is the maintenance-only update
+// used by the host-key replayer. Unlike a customer upsert, it may replace the
+// encrypted envelope of a managed row and always preserves ownership fields.
+func (m *MemStore) ResealAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: appID, Scope: scope, Key: key}
+	existing, ok := m.secrets[k]
+	if !ok || existing.AccountID != accountID {
+		return ErrNotFound
+	}
+	existing.Ciphertext = ciphertext
+	existing.Kid = kid
+	existing.ValueHash = valueHash
+	existing.UpdatedAt = time.Now()
+	m.secrets[k] = existing
+	return nil
+}
+
+func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret) error {
+	if secret.AccountID == "" || secret.AppID == "" || secret.Scope == "" || secret.Key == "" ||
+		len(secret.Ciphertext) == 0 || secret.ManagedPostgresBindingID == "" ||
+		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
+	existing, ok := m.secrets[k]
+	if ok && (existing.ManagedPostgresBindingID != secret.ManagedPostgresBindingID ||
+		existing.ManagedCredentialGeneration > secret.ManagedCredentialGeneration ||
+		(existing.ManagedCredentialGeneration == secret.ManagedCredentialGeneration && existing.ManagedCredentialRef != secret.ManagedCredentialRef)) {
+		return ErrConflict
+	}
+	for existingKey, candidate := range m.secrets {
+		if existingKey != k && candidate.ManagedCredentialRef == secret.ManagedCredentialRef {
+			return ErrConflict
+		}
+	}
+	now := time.Now()
+	if ok {
+		secret.CreatedAt = existing.CreatedAt
+	} else {
+		secret.CreatedAt = now
+	}
+	secret.UpdatedAt = now
+	m.secrets[k] = secret
+	return nil
+}
+
+func (m *MemStore) DeleteManagedPostgresSecret(_ context.Context, credentialRef string) error {
+	if credentialRef == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, secret := range m.secrets {
+		if secret.ManagedCredentialRef == credentialRef {
+			delete(m.secrets, key)
+			return nil
+		}
+	}
 	return nil
 }
 
@@ -13011,6 +13190,9 @@ func (m *MemStore) DeleteAppSecretInScope(_ context.Context, accountID, appID, s
 	row, ok := m.secrets[k]
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
+	}
+	if row.ManagedPostgresBindingID != "" {
+		return ErrConflict
 	}
 	delete(m.secrets, k)
 	return nil
@@ -13690,6 +13872,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for grantKey, grant := range m.objectAccessGrants {
 		if grant.AccountID == id {
 			delete(m.objectAccessGrants, grantKey)
+		}
+	}
+	for uploadID, upload := range m.objectMultipartUploads {
+		if upload.AccountID == id {
+			delete(m.objectMultipartUploads, uploadID)
 		}
 	}
 	reports := m.objectReports[:0]
@@ -14711,7 +14898,7 @@ func (m *MemStore) SeedAlertPresetForTest(p AlertPreset) {
 	m.alertPresets[p.Name] = p
 }
 
-// AlertPresetByName scans the map (8 rows). O(N) is acceptable
+// AlertPresetByName scans the map (10 rows). O(N) is acceptable
 // for the catalog cardinality. Returns ErrNotFound on no match.
 func (m *MemStore) AlertPresetByName(_ context.Context, name string) (AlertPreset, error) {
 	m.mu.Lock()
@@ -17798,4 +17985,277 @@ func (m *MemStore) ListExpiredTriggerRecordsForReaper(_ context.Context, _ time.
 // MemStore for the same reason — see ListExpiredTriggerRecordsForReaper.
 func (m *MemStore) DeleteTriggerRecordsByIDs(_ context.Context, _ []string) (int, error) {
 	return 0, nil
+}
+
+// Issue #1182 §P1 packaging follow-up (PR-1 of 3): in-memory
+// implementations of the upload-session Store methods. Production
+// uses *PgStore against the upload_sessions table; these memstore
+// impls back handler unit tests so the test author doesn't need a
+// live DB to exercise the CAS / dedupe / cap logic. Minimal — just
+// enough to satisfy the Store interface and pass the round-trip
+// tests in cmd/apid/handlers_upload_session_test.go.
+
+// CreateUploadSession inserts a fresh upload_sessions row. Mirrors
+// pgstore + sqlc.CreateUploadSession but defaults created_at,
+// last_patched_at, expires_at, and status to the same server-stamped
+// values the live DB provides.
+func (m *MemStore) CreateUploadSession(_ context.Context, in sqlc.CreateUploadSessionParams) (sqlc.UploadSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	row := sqlc.UploadSession{
+		ID:            in.ID,
+		AccountID:     in.AccountID,
+		AppSlug:       in.AppSlug,
+		TotalSize:     in.TotalSize,
+		ReceivedBytes: 0,
+		ChunkSize:     in.ChunkSize,
+		Sha256Hex:     in.Sha256Hex,
+		PartPath:      in.PartPath,
+		DeployOptions: append([]byte(nil), in.DeployOptions...),
+		Status:        "open",
+		CreatedAt:     pgtype.Timestamptz{Time: now, Valid: true},
+		LastPatchedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		ExpiresAt:     pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		DeploymentID:  pgtype.Text{String: "", Valid: false},
+	}
+	m.uploadSessions[row.ID] = row
+	return row, nil
+}
+
+// GetUploadSession reads a single upload_sessions row by id.
+// Returns ErrNotFound (the wire-stable sentinel; the handler maps
+// it to api.ErrUploadSessionNotFound) when the id doesn't resolve.
+func (m *MemStore) GetUploadSession(_ context.Context, id string) (sqlc.UploadSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[id]
+	if !ok {
+		return sqlc.UploadSession{}, ErrNotFound
+	}
+	return row, nil
+}
+
+// AppendUploadBytes is the atomic CAS that backs PATCH /v1/uploads/{id}.
+// The expectedOffset must equal the row's current received_bytes or
+// the call returns ErrConflict (mapped by the handler to
+// api.ErrUploadSessionOffsetConflict with the actual current
+// received_bytes in the body).
+func (m *MemStore) AppendUploadBytes(_ context.Context, in sqlc.AppendUploadBytesParams) (sqlc.AppendUploadBytesRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[in.ID]
+	if !ok {
+		return sqlc.AppendUploadBytesRow{}, ErrNotFound
+	}
+	if row.Status != "open" ||
+		(row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now())) ||
+		row.ReceivedBytes != in.ReceivedBytes_2 {
+		return sqlc.AppendUploadBytesRow{
+			ReceivedBytes: row.ReceivedBytes,
+			TotalSize:     row.TotalSize,
+		}, ErrConflict
+	}
+	row.ReceivedBytes = in.ReceivedBytes
+	row.LastPatchedAt = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+	m.uploadSessions[in.ID] = row
+	return sqlc.AppendUploadBytesRow{
+		ReceivedBytes: row.ReceivedBytes,
+		TotalSize:     row.TotalSize,
+	}, nil
+}
+
+// MarkUploadSessionCommitted transitions open → committed and stamps
+// the deployment_id. Returns ErrConflict when the row is not open
+// (terminal-state guard; the upload_commit_outcomes companion is the
+// canonical dedupe).
+func (m *MemStore) MarkUploadSessionCommitted(_ context.Context, in sqlc.MarkUploadSessionCommittedParams) (sqlc.MarkUploadSessionCommittedRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[in.ID]
+	if !ok {
+		return sqlc.MarkUploadSessionCommittedRow{}, ErrNotFound
+	}
+	if row.Status != "open" {
+		return sqlc.MarkUploadSessionCommittedRow{}, ErrConflict
+	}
+	row.Status = "committed"
+	row.DeploymentID = in.DeploymentID
+	m.uploadSessions[in.ID] = row
+	return sqlc.MarkUploadSessionCommittedRow{
+		ID:           row.ID,
+		Status:       row.Status,
+		DeploymentID: row.DeploymentID,
+	}, nil
+}
+
+// CancelUploadSession transitions open → cancelled. The accountID
+// predicate is a defense-in-depth check (the auth chain at
+// cmd/apid/server.go already enforces account scoping; this makes
+// accidental misuse crash-loud).
+func (m *MemStore) CancelUploadSession(_ context.Context, in sqlc.CancelUploadSessionParams) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[in.ID]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.Status != "open" {
+		return ErrConflict
+	}
+	if row.AccountID != in.Column2 {
+		return ErrConflict
+	}
+	row.Status = "cancelled"
+	m.uploadSessions[in.ID] = row
+	return nil
+}
+
+// ReapExpiredUploadSessions scans up to 100 expired open sessions
+// for the in-process reaper. Walks m.uploadSessions (the memstore
+// is a test fixture, not the production hot path; no index
+// discipline).
+func (m *MemStore) ReapExpiredUploadSessions(_ context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []sqlc.ReapExpiredUploadSessionsRow
+	now := time.Now().UTC()
+	for _, row := range m.uploadSessions {
+		if row.Status == "open" && row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(now) {
+			out = append(out, sqlc.ReapExpiredUploadSessionsRow{
+				ID:       row.ID,
+				PartPath: row.PartPath,
+			})
+			if len(out) >= 100 {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// ReapStaleUploadPartFiles returns terminal-row sessions whose
+// part_path cleanup marker is set and last_patched_at < now() - 1h.
+// Bounded by 100 rows. The 1h grace matches the production query —
+// kept identical so the whitebox reaper tests exercise the same
+// predicate.
+func (m *MemStore) ReapStaleUploadPartFiles(_ context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []sqlc.ReapStaleUploadPartFilesRow
+	cutoff := time.Now().UTC().Add(-1 * time.Hour)
+	for _, row := range m.uploadSessions {
+		if row.Status != "committed" && row.Status != "cancelled" && row.Status != "expired" {
+			continue
+		}
+		if row.PartPath == "" {
+			continue
+		}
+		if row.LastPatchedAt.Valid && row.LastPatchedAt.Time.Before(cutoff) {
+			out = append(out, sqlc.ReapStaleUploadPartFilesRow{
+				ID:       row.ID,
+				PartPath: row.PartPath,
+			})
+			if len(out) >= 100 {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// ClearUploadSessionPartPath records that a terminal session's
+// spool file has been removed. The empty path is a durable cleanup
+// marker so subsequent reaper sweeps do not rediscover the row.
+func (m *MemStore) ClearUploadSessionPartPath(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.Status != "committed" && row.Status != "cancelled" && row.Status != "expired" {
+		return ErrConflict
+	}
+	row.PartPath = ""
+	m.uploadSessions[id] = row
+	return nil
+}
+
+// ExpireUploadSession marks a single session expired. Idempotent —
+// if the row is no longer open (committed / cancelled / already
+// expired), returns nil and leaves the row untouched.
+func (m *MemStore) ExpireUploadSession(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadSessions[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.Status != "open" {
+		return nil
+	}
+	row.Status = "expired"
+	m.uploadSessions[id] = row
+	return nil
+}
+
+// RecordUploadCommitOutcome inserts a row into the
+// upload_commit_outcomes companion table. Returns ErrConflict when
+// the row already exists (ON CONFLICT DO NOTHING).
+func (m *MemStore) RecordUploadCommitOutcome(_ context.Context, in sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.uploadCommitOutcomes[in.UploadID]; exists {
+		return sqlc.UploadCommitOutcome{}, ErrConflict
+	}
+	row := sqlc.UploadCommitOutcome{
+		UploadID:     in.UploadID,
+		DeploymentID: in.DeploymentID,
+		BuildID:      in.BuildID,
+		FinalizedAt:  pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+	}
+	m.uploadCommitOutcomes[in.UploadID] = row
+	return row, nil
+}
+
+// GetUploadCommitOutcome reads the dedupe row for a retry of POST
+// /v1/uploads/{id}/commit.
+func (m *MemStore) GetUploadCommitOutcome(_ context.Context, uploadID string) (sqlc.UploadCommitOutcome, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.uploadCommitOutcomes[uploadID]
+	if !ok {
+		return sqlc.UploadCommitOutcome{}, ErrNotFound
+	}
+	return row, nil
+}
+
+// CountOpenUploadSessionsByAccountApp backs the per-(account_id,
+// app_slug) open-session cap check (5) at the top of POST /v1/uploads.
+func (m *MemStore) CountOpenUploadSessionsByAccountApp(_ context.Context, in sqlc.CountOpenUploadSessionsByAccountAppParams) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var count int64
+	for _, row := range m.uploadSessions {
+		if row.Status == "open" && row.AccountID == in.Column1 && row.AppSlug == in.AppSlug {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// SumOpenUploadSessionBytesByAccount backs the per-account open-
+// spool budget check (4 × SourceTarballMaxMB) at the top of POST
+// /v1/uploads.
+func (m *MemStore) SumOpenUploadSessionBytesByAccount(_ context.Context, accountID pgtype.UUID) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var total int64
+	for _, row := range m.uploadSessions {
+		if row.Status == "open" && row.AccountID == accountID {
+			total += row.TotalSize
+		}
+	}
+	return total, nil
 }

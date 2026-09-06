@@ -900,6 +900,14 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 	for inst, b := range resident {
 		total += b
 		row := buildInstanceStatsRow(inst, b, s.cpuCache, s.netCache, s.activity, s.ops)
+		if provider, ok := s.vmm.(interface {
+			DiskUsage(string) (fcvm.DiskUsage, bool)
+		}); ok {
+			if usage, present := provider.DiskUsage(inst); present {
+				row.DiskUsedBytes = wrapperspb.Int64(usage.UsedBytes)
+				row.DiskCapacityBytes = wrapperspb.Int64(usage.CapacityBytes)
+			}
+		}
 		row.OpenConns = openConns[inst]
 		resp.Instances = append(resp.Instances, row)
 	}

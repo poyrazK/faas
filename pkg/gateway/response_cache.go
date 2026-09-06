@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sync"
 	"time"
 
@@ -348,6 +349,46 @@ func (c *ResponseCache) InvalidateByApp(appID string) {
 	if c.bytes < 0 {
 		c.bytes = 0
 	}
+}
+
+// InvalidateByAppPath drops cached entries for appID whose normalized path
+// matches pathGlob. An empty glob or "*" is an app-wide purge. The glob uses
+// the same path.Match semantics as edge-rule path matching.
+func (c *ResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
+	if c == nil {
+		return nil
+	}
+	if appID == "" {
+		return fmt.Errorf("cache purge app id is required")
+	}
+	if pathGlob == "" || pathGlob == "*" {
+		c.InvalidateByApp(appID)
+		return nil
+	}
+	if _, err := pathGlobMatch(pathGlob, "/"); err != nil {
+		return fmt.Errorf("invalid cache path glob %q: %w", pathGlob, err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, el := range c.data {
+		entry := el.Value.(*cacheEntry)
+		if entry.key.AppID != appID {
+			continue
+		}
+		matches, err := pathGlobMatch(pathGlob, entry.key.NormalizedPath)
+		if err != nil {
+			return fmt.Errorf("invalid cache path glob %q: %w", pathGlob, err)
+		}
+		if matches {
+			c.bytes -= len(entry.body)
+			c.list.Remove(el)
+			delete(c.data, k)
+		}
+	}
+	if c.bytes < 0 {
+		c.bytes = 0
+	}
+	return nil
 }
 
 // InvalidateAll drops every cached entry. Used by the

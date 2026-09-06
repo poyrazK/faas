@@ -27,6 +27,11 @@ type ResourceProfileSpec struct {
 	CPUMillicores int
 }
 
+// AppRestartResponse is returned when a customer restart request is accepted.
+type AppRestartResponse struct {
+	WakeID string `json:"wake_id"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug            string `json:"slug"`
@@ -157,6 +162,7 @@ type RenameAppRequest struct {
 type AppEffectiveLimits struct {
 	MemoryLimitMB          int   `json:"memory_limit_mb"`
 	PlanMemoryMaxMB        int   `json:"plan_memory_max_mb"`
+	EphemeralDiskMaxMB     int   `json:"ephemeral_disk_max_mb"`
 	GuestVCPUs             int   `json:"guest_vcpus"`
 	CPULimitMillicores     int   `json:"cpu_limit_millicores"`
 	PlanCPUMaxMillicores   int   `json:"plan_cpu_max_millicores"`
@@ -343,29 +349,32 @@ type UpdateDeploymentTrafficRequest struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
-	ID               string        `json:"id"`
-	Email            string        `json:"email"`
-	Plan             string        `json:"plan"`
-	Status           string        `json:"status"`
-	Limits           AccountLimits `json:"limits"`
-	UsageGBHours     float64       `json:"usage_gb_hours"`
-	AppCount         int           `json:"app_count"`
-	GitHubInstall    string        `json:"github_install_id,omitempty"`
-	PlanChangeStatus string        `json:"plan_change_status,omitempty"`
-	RequestedPlan    string        `json:"requested_plan,omitempty"`
-	EffectiveAt      *time.Time    `json:"effective_at,omitempty"`
+	ID                string        `json:"id"`
+	Email             string        `json:"email"`
+	Plan              string        `json:"plan"`
+	Status            string        `json:"status"`
+	Limits            AccountLimits `json:"limits"`
+	UsageGBHours      float64       `json:"usage_gb_hours"`
+	AppCount          int           `json:"app_count"`
+	DeveloperAppCount int           `json:"developer_app_count"`
+	GitHubInstall     string        `json:"github_install_id,omitempty"`
+	PlanChangeStatus  string        `json:"plan_change_status,omitempty"`
+	RequestedPlan     string        `json:"requested_plan,omitempty"`
+	EffectiveAt       *time.Time    `json:"effective_at,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan            string `json:"plan"`
-	RAMMB           int    `json:"ram_mb"`
-	MaxConcurrency  int    `json:"max_concurrency"`
-	DeployedApps    int    `json:"deployed_apps"`
-	IncludedGBHours int64  `json:"included_gb_hours"`
-	AppLayerMaxMB   int    `json:"app_layer_max_mb"`
+	Plan               string `json:"plan"`
+	RAMMB              int    `json:"ram_mb"`
+	MaxConcurrency     int    `json:"max_concurrency"`
+	DeployedApps       int    `json:"deployed_apps"`
+	DeveloperApps      int    `json:"developer_apps"`
+	IncludedGBHours    int64  `json:"included_gb_hours"`
+	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
+	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext
@@ -1064,7 +1073,7 @@ type AccountSLOResponse struct {
 // fails on any spec-route/method drift, which is the contract
 // we're upholding here. The redeclaration (rather than type-aliasing)
 // is forced by the separate-module layout: sdk/go is its own Go
-// module (module github.com/poyrazK/faas-go) and cannot import
+// module (module github.com/poyrazK/faas/sdk/go) and cannot import
 // pkg/api (which lives in module github.com/onebox-faas/faas).
 
 // CreateOrgRequest is the body of POST /v1/orgs.

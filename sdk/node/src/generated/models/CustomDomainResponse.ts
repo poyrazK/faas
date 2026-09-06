@@ -25,8 +25,20 @@ export type CustomDomainResponse = {
    */
   cert_sans?: Array<string>;
   /**
-   * One of `issued` | `pending` | `dial_failed:<reason>`. The show endpoint surfaces this verbatim so the customer can distinguish DNS-not-propagated from cert-not-yet-issued from TLS-handshake-refused. Issue #961 / Mega-A PR-3 code-review round (MED-4).
+   * Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, or failed; issue #1397 / F1). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge.
    */
   cert_status?: string | null;
+  /**
+   * Durable certificate expiry timestamp recorded by the cert observer.
+   */
+  cert_expires_at?: string | null;
+  /**
+   * Most recent certificate issuance/renewal error, when cert_status is failed.
+   */
+  cert_last_error?: string | null;
+  /**
+   * Timestamp of the most recent DNS verification/doctor probe.
+   */
+  dns_last_checked_at?: string | null;
 };
 

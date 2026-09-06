@@ -31,7 +31,13 @@ const (
 	DefaultObjectBucketsPerApp                = 10
 	MaxObjectBucketsPerApp                    = 100
 	DefaultObjectUploadBytes            int64 = 100 << 20
-	MaxObjectUploadBytes                int64 = 5 << 30
+	MaxObjectSinglePutBytes             int64 = 5 << 30
+	MaxObjectUploadBytes                int64 = 5 << 40
+	DefaultMultipartPartBytes           int64 = 64 << 20
+	MinMultipartPartBytes               int64 = 5 << 20
+	MaxMultipartParts                         = 10000
+	MaxActiveMultipartUploadsPerBucket        = 100
+	ObjectMultipartUploadTTL                  = 24 * time.Hour
 	// SourceArchiveMaxEntries is shared by ordinary source validation and
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.
@@ -218,7 +224,10 @@ type Limits struct {
 	Plan Plan
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
-	DeployedApps       int // max apps in state active|evicted_cold
+	DeployedApps int // max apps in state active|evicted_cold
+	// DeveloperApps is the separate cap for expiring `gregale dev`
+	// environments. These sessions do not consume DeployedApps slots.
+	DeveloperApps      int
 	MaxConcurrency     int // max instances of one app in {WAKING,COLD_BOOTING,RUNNING}
 	RAMMB              int // max ram_mb per app (memory.max = RAMMB + PerVMOverheadMB)
 	AppLayerMaxMB      int // drive1 ext4 cap (spec §4.6)
@@ -714,7 +723,7 @@ type Limits struct {
 	// in the alert_presets catalog. NOT a per-app cap — instantiating
 	// a preset counts toward the existing AlertRuleLimitPerApp /
 	// AlertRuleLimitPerAccount. Default 0 (no catalog seeded); the
-	// PR-A seed inserts 8 rows so every plan gets 8. Surfaced via
+	// PR-A/B3 seeds insert 10 rows so every plan gets 10. Surfaced via
 	// the GET /v1/alert-presets response so the CLI / dashboard can
 	// render "8 presets available" without hardcoding the seed
 	// count — a future ADR that re-seeds the catalog only has to
@@ -1499,6 +1508,25 @@ type Limits struct {
 	WorkflowMaxWaitDays int
 }
 
+// EphemeralDiskMaxMB returns the maximum writable runtime disk capacity
+// represented by the per-app drive1 ext4 image. The storage contract has
+// historically exposed this boundary as AppLayerMaxMB because the same cap
+// is checked while building the image. Keep one source of truth while giving
+// runtime and API callers the storage-specific name.
+func (l Limits) EphemeralDiskMaxMB() int {
+	return l.AppLayerMaxMB
+}
+
+// EphemeralDiskMaxBytes returns EphemeralDiskMaxMB in bytes. A zero result
+// means the limits value is unset or invalid; callers should fail closed
+// rather than treating it as unlimited.
+func (l Limits) EphemeralDiskMaxBytes() int64 {
+	if l.EphemeralDiskMaxMB() <= 0 {
+		return 0
+	}
+	return int64(l.EphemeralDiskMaxMB()) * 1024 * 1024
+}
+
 // UpstreamProbeMaxConcurrent (ADR-098 §D2) is the global worker-pool
 // cap on meterd's upstream-probe loop. Read by cmd/meterd at boot
 // time and by pkg/meter/upstream_probe.go on each loop tick. NOT a
@@ -1539,6 +1567,7 @@ var planLimits = map[Plan]Limits{
 	PlanFree: {
 		Plan:           PlanFree,
 		DeployedApps:   1,
+		DeveloperApps:  1,
 		MaxConcurrency: 1,
 		RAMMB:          128,
 		// ConcurrencyPerVMBound (issue #559): Free is the
@@ -1893,6 +1922,7 @@ var planLimits = map[Plan]Limits{
 	PlanHobby: {
 		Plan:                  PlanHobby,
 		DeployedApps:          5,
+		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 256,
 		AppLayerMaxMB:         512,
@@ -2261,6 +2291,7 @@ var planLimits = map[Plan]Limits{
 	PlanPro: {
 		Plan:                  PlanPro,
 		DeployedApps:          25,
+		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 512,
 		AppLayerMaxMB:         1024,
@@ -2602,6 +2633,7 @@ var planLimits = map[Plan]Limits{
 	PlanScale: {
 		Plan:                  PlanScale,
 		DeployedApps:          100,
+		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 1024,
 		AppLayerMaxMB:         2048,
@@ -3122,7 +3154,11 @@ const (
 
 	// Edge request caps (spec §4.1).
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
-	WakeQueueCap        = 512              // per-app wake queue
+	// WakePageAfterMs is the browser-only grace period before the gateway
+	// returns its 200 "Waking up" page. API clients keep the normal wake
+	// wait/error contract; the page is an edge UX affordance only.
+	WakePageAfterMs     = 1500
+	WakeQueueCap        = 512 // per-app wake queue
 	WakeQueueTTLSeconds = 30
 
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake

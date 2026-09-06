@@ -35,7 +35,7 @@ await generate({
 const importsChanged = await rewriteImportsToJs(outDir);
 
 // Post-process pass 2: write the models barrel so customers can
-// `import type { AppResponse } from 'gregale/skd-node'`.
+// `import type { AppResponse } from '@gregale/sdk-node'`.
 const modelsDir = resolve(outDir, 'models');
 const barrelEntries = await writeModelsBarrel(modelsDir);
 

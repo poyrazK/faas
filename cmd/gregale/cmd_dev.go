@@ -271,6 +271,13 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 // deployable files change. --once is useful for scripts; --stop tears the
 // environment down explicitly instead of waiting for its lease to expire.
 func cmdDev(args []string) int {
+	if len(args) > 0 && args[0] == "status" {
+		if len(args) != 1 {
+			PrintUsage(osStderr, "usage: gregale dev status", "dev")
+			return 1
+		}
+		return cmdDevStatus()
+	}
 	fs := flag.NewFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
@@ -474,6 +481,45 @@ func cmdDev(args []string) int {
 			return printErr("Could not watch developer source", waitErr)
 		},
 	})
+}
+
+// cmdDevStatus reports the account-wide developer-environment budget. It is
+// intentionally sourced from whoami so scripts and the dashboard use the
+// same authoritative count and plan limit without needing to know workspace
+// identity details.
+func cmdDevStatus() int {
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	account, err := client.Whoami(ctx)
+	if err != nil {
+		return printErr("Could not load developer environment status", err)
+	}
+	status := struct {
+		Plan      string `json:"plan"`
+		Used      int    `json:"used"`
+		Limit     int    `json:"limit"`
+		Available int    `json:"available"`
+	}{
+		Plan:      account.Plan,
+		Used:      account.DeveloperAppCount,
+		Limit:     account.Limits.DeveloperApps,
+		Available: account.Limits.DeveloperApps - account.DeveloperAppCount,
+	}
+	if status.Available < 0 {
+		status.Available = 0
+	}
+	if jsonOutput {
+		if err := writeJSON(status); err != nil {
+			return jsonOut(err)
+		}
+		return 0
+	}
+	PrintOK(osStdout, "Developer environments: %d/%d used (%d available).", status.Used, status.Limit, status.Available)
+	return 0
 }
 
 func devDeploymentAlreadyTerminal(err error) bool {

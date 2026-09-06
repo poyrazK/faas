@@ -275,14 +275,7 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 		}
 		return repoApps, tag, nil
 	case repoSnap:
-		// snap/<dep>/{mem|vmstate} → repo "snap-<dep>", tag "mem"|"vmstate"
-		if len(parts) != 3 || (parts[2] != "mem" && parts[2] != "vmstate") {
-			return "", "", fmt.Errorf("%w: %q does not match snap/<dep>/{mem|vmstate}", ErrInvalidKey, key)
-		}
-		if !depIDCharset.MatchString(parts[1]) {
-			return "", "", fmt.Errorf("%w: snap dep %q fails hex charset", ErrInvalidKey, parts[1])
-		}
-		return "snap-" + parts[1], parts[2], nil
+		return planSnapshotKey(key, parts)
 	case repoBase:
 		// base/<runtime>.ext4 → repo "base", tag "<runtime>"
 		// base/<runtime>.ext4.digest → repo "base", tag "<runtime>-digest"
@@ -435,7 +428,7 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 
 	// Push the image manifest last so a partially-written key isn't
 	// visible until the layer blob is committed.
-	manifestJSON, err := buildImageManifest(configDigest, "sha256:"+digestHex, tmpPathSize(tmpPath))
+	manifestJSON, err := buildImageManifest(configDigest, "sha256:"+digestHex, tmpPathSize(tmpPath), key)
 	if err != nil {
 		return fmt.Errorf("storage: oci put %q: build manifest: %w", key, err)
 	}
@@ -619,6 +612,10 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(prefix string) []string {
 	case repoSources:
 		return []string{repoSources}
 	default:
+		parts := strings.Split(prefix, "/")
+		if len(parts) >= 2 && parts[0] == repoSnap && depIDCharset.MatchString(parts[1]) {
+			return []string{"snap-" + parts[1]}
+		}
 		return nil
 	}
 }
@@ -669,8 +666,7 @@ func (o *OCIRegistryStorageBackend) unplan(repo, tag string) (string, bool) {
 			return repo + "/" + tag, true
 		}
 		if strings.HasPrefix(repo, "snap-") {
-			dep := strings.TrimPrefix(repo, "snap-")
-			return "snap/" + dep + "/" + tag, true
+			return unplanSnapshotKey(strings.TrimPrefix(repo, "snap-"), tag)
 		}
 		return "", false
 	}
@@ -721,8 +717,9 @@ const configStubJSON = `{"architecture":"amd64","os":"linux"}`
 // imageManifest is the subset of an OCI image manifest v1 we care
 // about. The schema is small; we don't bother with full struct tags.
 type imageManifest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	MediaType     string `json:"mediaType"`
+	Annotations   map[string]string `json:"annotations,omitempty"`
+	SchemaVersion int               `json:"schemaVersion"`
+	MediaType     string            `json:"mediaType"`
 	Config        struct {
 		MediaType string `json:"mediaType"`
 		Digest    string `json:"digest"`
@@ -738,10 +735,16 @@ type imageManifest struct {
 // buildImageManifest renders the single-arch image manifest v1 JSON.
 // digest is the layer's "sha256:<hex>" form; configDigest is the same
 // for the config blob; size is the layer's byte count.
-func buildImageManifest(configDigest, layerDigest string, size int64) ([]byte, error) {
+func buildImageManifest(configDigest, layerDigest string, size int64, key string) ([]byte, error) {
 	m := imageManifest{
 		SchemaVersion: 2,
 		MediaType:     imageManifestMediaType,
+	}
+	// Deletion addresses manifests by digest. Include the capture key so
+	// identical payloads under different immutable keys never alias the same
+	// manifest; blob layers remain content-addressed and deduplicated.
+	if strings.HasPrefix(key, "snap/") && strings.Contains(key, "/captures/") {
+		m.Annotations = map[string]string{"dev.gregale.snapshot.key": key}
 	}
 	m.Config.MediaType = configMediaType
 	m.Config.Digest = configDigest
@@ -1671,6 +1674,7 @@ func (o *OCIRegistryStorageBackend) invalidateToken(scope string) {
 // copyContext so cancellation responsiveness is consistent across the
 // two drivers.
 func copyContextHash(ctx context.Context, dst io.Writer, src io.Reader, h io.Writer) (int64, error) {
+	dst = boundedFileWrites(dst)
 	const copyQuantum = 256 * 1024
 	buf := make([]byte, copyQuantum)
 	var written int64

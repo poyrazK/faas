@@ -537,6 +537,9 @@ message SidecarSpec {
   string type       = 3;
   // ram_mb is the per-sidecar cgroup memory.max (32..512).
   int32  ram_mb     = 4;
+  // cpu_millicores is the per-sidecar sustained CPU quota.
+  // 0 preserves the parent app quota for legacy callers.
+  int32  cpu_millicores = 11;
   // port is the listen port inside the guest netns (1..65535).
   // 0 means "absent / inherit the main workload's port".
   uint32 port       = 5;
@@ -1008,6 +1011,10 @@ message InstanceStats {
   // (root → guest = ingress). Same wrapper/regression contract as
   // net_tx_bytes; meterd computes interval deltas from both counters.
   google.protobuf.Int64Value net_rx_bytes = 13;
+  // Writable application filesystem usage sampled by guest-init. Wrapper
+  // fields keep an unavailable sample distinct from a real zero.
+  google.protobuf.Int64Value disk_used_bytes = 14;
+  google.protobuf.Int64Value disk_capacity_bytes = 15;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the

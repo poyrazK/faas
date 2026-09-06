@@ -42,6 +42,32 @@ type Store interface {
 	ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error)
 }
 
+// MirrorSummary is the aggregate signal used by a mirror_clean stage
+// condition. It deliberately mirrors only the fields needed by the
+// progression decision so pkg/canary stays independent of pkg/state.
+type MirrorSummary struct {
+	TotalInvocations int
+	StatusDiffCount  int
+	SchemaDiffCount  int
+	BodyDiffCount    int
+	CrashCount       int
+}
+
+// MirrorSummaryStore is an optional extension implemented by the meterd
+// adapter. Keeping it separate from Store preserves the small test seam for
+// deployments that do not use traffic mirroring.
+type MirrorSummaryStore interface {
+	MirrorSummaryForDeployment(ctx context.Context, appID, deploymentID string, since time.Time) (MirrorSummary, error)
+}
+
+// rolloutRecoveryClient is the optional APID recovery surface used when a
+// mirror_clean condition observes a drift. The production api.Client
+// implements it; tests that exercise ordinary wall-clock progression do not
+// need to grow their fake.
+type rolloutRecoveryClient interface {
+	RecoverRollout(ctx context.Context, slug, action, reason string) (api.RolloutTransitionResponse, error)
+}
+
 // CanaryRow is the subset of state.Deployment the runtime reads.
 // Mirrors the column names from migration 00480 so pkg/canary has
 // zero dependency on pkg/state's package-level types. pkg/state.Store
@@ -50,6 +76,7 @@ type Store interface {
 type CanaryRow struct {
 	ID                string
 	AppID             string
+	AppSlug           string
 	CanaryPreset      string
 	CanaryStep        int
 	CanaryTotalSteps  int
@@ -115,13 +142,16 @@ func NewProgression(store Store, apid APIDClient, ops *wire.OpsMetrics, log *slo
 //     have excluded it).
 //  3. Compute next step = canary_step + 1. If next >= total, this
 //     is the terminal step → APID completes the rollout in the same write.
-//  4. Compare elapsed = Now() - canary_step_started_at against the
+//  4. If the current stage declares mirror_clean, require the configured
+//     clean mirror window before considering the wall-clock boundary. A
+//     diff aborts through the rollout recovery endpoint.
+//  5. Compare elapsed = Now() - canary_step_started_at against the
 //     current stage's Duration. If < Duration → still on this step,
 //     skip.
-//  5. Call APID.AdvanceCanary(deployment_id, expected_step).
+//  6. Call APID.AdvanceCanary(deployment_id, expected_step).
 //     APID derives the next percentage and commits the CAS + traffic + audit
 //     atomically. On error → log warn + skip.
-//  6. Increment ops.CanaryProgressionAdvancedTotal().
+//  7. Increment ops.CanaryProgressionAdvancedTotal().
 func (p *Progression) Once(ctx context.Context) (Stats, error) {
 	if p.Store == nil {
 		return Stats{}, errors.New("canary: nil Store")
@@ -224,6 +254,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 				}
 			}
 		}
+		if currentStage.MirrorClean != nil && !p.mirrorCleanReady(ctx, row, currentStage.MirrorClean, now, &stats) {
+			continue
+		}
 		elapsed := now.Sub(row.CanaryStepStarted)
 		if elapsed < currentStage.Duration {
 			stats.SkippedNotElapsed++
@@ -255,6 +288,51 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 	return stats, nil
 }
 
+func (p *Progression) mirrorCleanReady(ctx context.Context, row CanaryRow, condition *canarycatalog.MirrorCleanCondition, now time.Time, stats *Stats) bool {
+	checker, ok := p.Store.(MirrorSummaryStore)
+	if !ok {
+		p.Log.Warn("canary: mirror_clean condition unavailable; store has no mirror summary reader",
+			"deployment_id", row.ID)
+		stats.Errors++
+		return false
+	}
+	summary, err := checker.MirrorSummaryForDeployment(ctx, row.AppID, row.ID, now.Add(-time.Duration(condition.WindowSeconds)*time.Second))
+	if err != nil {
+		p.Log.Warn("canary: mirror_clean summary failed",
+			"deployment_id", row.ID, "err", err)
+		stats.Errors++
+		return false
+	}
+	if summary.StatusDiffCount > 0 || summary.SchemaDiffCount > 0 || summary.BodyDiffCount > 0 || summary.CrashCount > 0 {
+		p.abortMirrorDrift(ctx, row, condition.WindowSeconds, summary, stats)
+		return false
+	}
+	if summary.TotalInvocations < condition.MinInvocations {
+		stats.SkippedMirrorNotReady++
+		return false
+	}
+	return true
+}
+
+func (p *Progression) abortMirrorDrift(ctx context.Context, row CanaryRow, windowSeconds int, summary MirrorSummary, stats *Stats) {
+	recovery, ok := p.APID.(rolloutRecoveryClient)
+	if !ok || row.AppSlug == "" {
+		p.Log.Warn("canary: mirror_clean drift cannot abort rollout; recovery client or app slug unavailable",
+			"deployment_id", row.ID, "app_slug", row.AppSlug)
+		stats.Errors++
+		return
+	}
+	reason := fmt.Sprintf("mirror_clean failed: total_invocations=%d status_diff_count=%d schema_diff_count=%d body_diff_count=%d crash_count=%d window_s=%d",
+		summary.TotalInvocations, summary.StatusDiffCount, summary.SchemaDiffCount, summary.BodyDiffCount, summary.CrashCount, windowSeconds)
+	if _, err := recovery.RecoverRollout(ctx, row.AppSlug, "abort", reason); err != nil {
+		p.Log.Warn("canary: mirror_clean rollout abort failed",
+			"deployment_id", row.ID, "app_slug", row.AppSlug, "err", err)
+		stats.Errors++
+		return
+	}
+	stats.Aborted++
+}
+
 func (p *Progression) now() time.Time {
 	if p.Now == nil {
 		return time.Now()
@@ -269,8 +347,10 @@ func (p *Progression) now() time.Time {
 type Stats struct {
 	Advanced               int
 	Errors                 int
+	Aborted                int
 	SkippedUnknownPreset   int
 	SkippedOutOfBounds     int
 	SkippedAlreadyTerminal int
 	SkippedNotElapsed      int
+	SkippedMirrorNotReady  int
 }

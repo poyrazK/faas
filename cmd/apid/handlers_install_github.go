@@ -30,12 +30,15 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // stripLogCRLF strips CR and LF from s in two SEPARATE calls. The CodeQL
@@ -77,6 +80,9 @@ type installBindRequest struct {
 	InstallationID   int64  `json:"installation_id"`
 	RepoFullName     string `json:"repo_full_name"`
 	ProductionBranch string `json:"production_branch"`
+	// DeployBranches maps GitHub branches to named deployment scopes. A
+	// non-nil empty map deliberately clears the existing routing rules.
+	DeployBranches map[string]string `json:"deploy_branches"`
 }
 
 // installBindResponse is the body the dashboard parses after a
@@ -84,9 +90,30 @@ type installBindRequest struct {
 // persisted (the request value when supplied, otherwise the
 // install's default_branch from /installations/{id}).
 type installBindResponse struct {
-	BindingID        string `json:"binding_id"`
-	RepoFullName     string `json:"repo_full_name"`
-	ProductionBranch string `json:"production_branch"`
+	BindingID        string            `json:"binding_id"`
+	RepoFullName     string            `json:"repo_full_name"`
+	ProductionBranch string            `json:"production_branch"`
+	DeployBranches   map[string]string `json:"deploy_branches,omitempty"`
+}
+
+func validateDeployBranches(branches map[string]string) error {
+	if len(branches) > 32 {
+		return errors.New("deploy_branches may contain at most 32 entries")
+	}
+	for branch, scope := range branches {
+		if branch == "" || len(branch) > 255 {
+			return fmt.Errorf("invalid deploy branch %q", branch)
+		}
+		for _, r := range branch {
+			if unicode.IsControl(r) {
+				return fmt.Errorf("invalid deploy branch %q", branch)
+			}
+		}
+		if api.ValidateScope(scope) != nil {
+			return fmt.Errorf("invalid deployment scope %q for branch %q", scope, branch)
+		}
+	}
+	return nil
 }
 
 // listInstallableRepos is GET-list-equivalent for the dashboard
@@ -236,6 +263,13 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 			"Missing repo_full_name", "the body must include a non-empty repo_full_name (owner/name)"))
 		return
 	}
+	if req.DeployBranches != nil {
+		if err := validateDeployBranches(req.DeployBranches); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
+				"Invalid deploy_branches", err.Error()))
+			return
+		}
+	}
 
 	expectedLogin, ok := s.sessionGithubLogin(w, r)
 	if !ok {
@@ -289,6 +323,22 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 	if branch == "" {
 		branch = defaultBranch
 	}
+	if req.DeployBranches != nil {
+		branchesStore, ok := s.store.(state.ProjectDeployBranchesStore)
+		if !ok || app.ProjectID == "" {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "project_required",
+				"Project required", "branch deployment scopes are available for project-backed apps only"))
+			return
+		}
+		if err := branchesStore.ReplaceProjectDeployBranches(r.Context(), acct.ID, app.ProjectID, req.DeployBranches); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "not_found", "Project not found", "the app project no longer exists"))
+			} else {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request", "Invalid deploy_branches", err.Error()))
+			}
+			return
+		}
+	}
 
 	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, req.InstallationID, req.RepoFullName, branch)
 	if err != nil {
@@ -321,6 +371,7 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 		BindingID:        bindingID,
 		RepoFullName:     req.RepoFullName,
 		ProductionBranch: branch,
+		DeployBranches:   req.DeployBranches,
 	})
 }
 

@@ -77,6 +77,7 @@ from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
 from .app_response_type import AppResponseType
+from .app_restart_response import AppRestartResponse
 from .app_routes_response import AppRoutesResponse
 from .app_routes_response_source import AppRoutesResponseSource
 from .app_secret_export_response import AppSecretExportResponse
@@ -151,6 +152,7 @@ from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .cors_preset_list_response import CorsPresetListResponse
@@ -198,6 +200,7 @@ from .create_key_request import CreateKeyRequest
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
+from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
@@ -460,6 +463,7 @@ from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
+from .mirror_clean_condition import MirrorCleanCondition
 from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
@@ -471,6 +475,13 @@ from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
 from .object_bucket_list import ObjectBucketList
 from .object_bucket_state import ObjectBucketState
+from .object_multipart_completed_part import ObjectMultipartCompletedPart
+from .object_multipart_part import ObjectMultipartPart
+from .object_multipart_part_list import ObjectMultipartPartList
+from .object_multipart_part_sign_request import ObjectMultipartPartSignRequest
+from .object_multipart_upload import ObjectMultipartUpload
+from .object_multipart_upload_list import ObjectMultipartUploadList
+from .object_multipart_upload_state import ObjectMultipartUploadState
 from .object_sign_request import ObjectSignRequest
 from .object_sign_request_method import ObjectSignRequestMethod
 from .object_signed_request import ObjectSignedRequest
@@ -632,6 +643,7 @@ from .set_object_bucket_access_grant_request_permission import SetObjectBucketAc
 from .set_password_request import SetPasswordRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
+from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_env import SidecarEnv
 from .sidecar_type import SidecarType
 from .slo_duration import SLODuration
@@ -726,6 +738,11 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .upload_deploy_options import UploadDeployOptions
+from .upload_session_response import UploadSessionResponse
+from .upload_session_response_status import UploadSessionResponseStatus
+from .upload_start_request import UploadStartRequest
+from .upload_start_response import UploadStartResponse
 from .upsert_dev_session_request import UpsertDevSessionRequest
 from .upsert_dev_session_request_runtime import UpsertDevSessionRequestRuntime
 from .upsert_dev_session_request_type import UpsertDevSessionRequestType
@@ -836,6 +853,7 @@ __all__ = (
     "AppResponseEvictionPriority",
     "AppResponseRuntime",
     "AppResponseType",
+    "AppRestartResponse",
     "AppRoutesResponse",
     "AppRoutesResponseSource",
     "AppSecretExportResponse",
@@ -907,6 +925,7 @@ __all__ = (
     "ChangePlanRequestPlan",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CompleteObjectMultipartUploadRequest",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "CorsPresetListResponse",
@@ -954,6 +973,7 @@ __all__ = (
     "CreateKeyRequestScopesItem",
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
+    "CreateObjectMultipartUploadRequest",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
@@ -1208,6 +1228,7 @@ __all__ = (
     "MFARecoverResponse",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
+    "MirrorCleanCondition",
     "MirrorRuleListResponse",
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
@@ -1219,6 +1240,13 @@ __all__ = (
     "ObjectBucketAccessGrantPermission",
     "ObjectBucketList",
     "ObjectBucketState",
+    "ObjectMultipartCompletedPart",
+    "ObjectMultipartPart",
+    "ObjectMultipartPartList",
+    "ObjectMultipartPartSignRequest",
+    "ObjectMultipartUpload",
+    "ObjectMultipartUploadList",
+    "ObjectMultipartUploadState",
     "ObjectSignedRequest",
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",
@@ -1376,6 +1404,7 @@ __all__ = (
     "SetPasswordRequest",
     "SeverityCounts",
     "Sidecar",
+    "SidecarCpuMillicores",
     "SidecarEnv",
     "SidecarType",
     "SLODuration",
@@ -1466,6 +1495,11 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UploadDeployOptions",
+    "UploadSessionResponse",
+    "UploadSessionResponseStatus",
+    "UploadStartRequest",
+    "UploadStartResponse",
     "UpsertDevSessionRequest",
     "UpsertDevSessionRequestRuntime",
     "UpsertDevSessionRequestType",

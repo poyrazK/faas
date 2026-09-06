@@ -36,6 +36,12 @@ drv = "vmmd"
 # it to fetch the cache hit. The dir must be writable by faas-builderd.
 build_staging_root = "/srv/fc/builder"
 
+# Split-box source archives are retained in the configured object store until
+# this age. Queued and running builds are protected; terminal and orphaned
+# uploads are removed by builderd's daily source sweep.
+source_max_age = "24h"
+source_gc_sweep_interval = "24h"
+
 # MemoryMax=512M is enforced by the unit (above). The build VM
 # (spec §4.5) gets 2 vCPU / 2048 MB / 15 minutes — wired by
 # vmmd's Wake RPC, not by builderd's TOML.

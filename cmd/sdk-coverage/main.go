@@ -187,6 +187,22 @@ var routeExclude = map[string]bool{
 	// typed wrapper. Mirror in cmd/apid/spec_compliance_test.go::
 	// routeExclude; the two lists must move together.
 	"POST /v1/otel/v1/traces": true,
+
+	// Issue #1182 §P1 PR-1 — resumable upload protocol (server-only
+	// foundation). The 4 routes below ship in PR-1 but the SDK
+	// methods (PostUploads, PatchUploadsId, PostUploadsIdCommit,
+	// DeleteUploadsId) are NOT added until PR-2 wires the CLI's
+	// uploadWithResume orchestrator. Excluding here keeps the gate
+	// green for PR-1's "no CLI change" boundary; PR-2 must (a) add
+	// the 4 SDK methods and (b) delete this block. Mirrors the
+	// "no SDK method by design" pattern used for the cookie-only
+	// /v1/auth/* routes above — same "B Bearer-key caller cannot
+	// model the surface" rationale, applied to the PR-boundary
+	// case instead.
+	"POST /v1/uploads":             true, // issue #1182 §P1 PR-1
+	"PATCH /v1/uploads/{id}":       true, // issue #1182 §P1 PR-1
+	"POST /v1/uploads/{id}/commit": true, // issue #1182 §P1 PR-1
+	"DELETE /v1/uploads/{id}":      true, // issue #1182 §P1 PR-1
 }
 
 // sdkMethodExclude lists methods on *Client that aren't a 1:1 wire
@@ -231,11 +247,14 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/instances":               "ListInstances",
 	"POST /v1/apps/{slug}/park":                   "Park",
 	"POST /v1/apps/{slug}/wake":                   "Wake",
+	"POST /v1/apps/{slug}/restart":                "RestartApp",
+	"DELETE /v1/apps/{slug}/cache":                "PurgeAppCache",
 	"POST /v1/apps/{slug}/rollback":               "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
 	"POST /v1/apps/{slug}/deployments":            "Deploy",
 	"POST /v1/apps/{slug}/deployments/dev-source": "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref": "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
+	"GET /v1/uploads/{id}":                        "GetUploadSession",    // issue #1182; resumable session discovery after restart
 	"POST /v1/apps/{slug}/diff":                   "Diff",                // PR-1 of deploy-diff cluster; CI gate input
 	// Issue #961 / Mega-C PR-1 / leaf 3 — preview-destroy route.
 	// Auto-derivation would produce "PostPreviewSlugDestroy" (the
@@ -409,22 +428,29 @@ var methodRouteMap = map[string]string{
 	// as alerts/edge-rules/webhooks above. The PUT route is the
 	// upsert/create verb (the spec writes a single row per (kind, host,
 	// port) tuple, with the response carrying the persisted id).
-	"GET /v1/apps/{slug}/upstreams":                               "ListAppDataUpstreams",
-	"GET /v1/apps/{slug}/upstreams/{id}":                          "GetAppDataUpstream",
-	"PUT /v1/apps/{slug}/upstreams":                               "CreateAppDataUpstream",
-	"DELETE /v1/apps/{slug}/upstreams/{id}":                       "DeleteAppDataUpstream",
-	"GET /v1/keys":                                                "ListKeys",
-	"GET /v1/apps/{slug}/buckets":                                 "ListObjectBuckets",
-	"GET /v1/account/object-storage-usage":                        "GetObjectStorageUsage",
-	"POST /v1/admin/object-storage/usage-reports":                 "RecordObjectStorageUsage",
-	"POST /v1/apps/{slug}/buckets":                                "CreateObjectBucket",
-	"DELETE /v1/apps/{slug}/buckets/{bucket}":                     "DeleteObjectBucket",
-	"GET /v1/apps/{slug}/buckets/{bucket}/access-grants":          "ListObjectBucketAccessGrants",
-	"PUT /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":    "SetObjectBucketAccessGrant",
-	"DELETE /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}": "DeleteObjectBucketAccessGrant",
-	"GET /v1/apps/{slug}/buckets/{bucket}/objects":                "ListBucketObjects",
-	"DELETE /v1/apps/{slug}/buckets/{bucket}/objects":             "DeleteBucketObject",
-	"POST /v1/apps/{slug}/buckets/{bucket}/signed-url":            "SignBucketObject",
+	"GET /v1/apps/{slug}/upstreams":                                                            "ListAppDataUpstreams",
+	"GET /v1/apps/{slug}/upstreams/{id}":                                                       "GetAppDataUpstream",
+	"PUT /v1/apps/{slug}/upstreams":                                                            "CreateAppDataUpstream",
+	"DELETE /v1/apps/{slug}/upstreams/{id}":                                                    "DeleteAppDataUpstream",
+	"GET /v1/keys":                                                                             "ListKeys",
+	"GET /v1/apps/{slug}/buckets":                                                              "ListObjectBuckets",
+	"GET /v1/account/object-storage-usage":                                                     "GetObjectStorageUsage",
+	"POST /v1/admin/object-storage/usage-reports":                                              "RecordObjectStorageUsage",
+	"POST /v1/apps/{slug}/buckets":                                                             "CreateObjectBucket",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}":                                                  "DeleteObjectBucket",
+	"GET /v1/apps/{slug}/buckets/{bucket}/access-grants":                                       "ListObjectBucketAccessGrants",
+	"PUT /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                                 "SetObjectBucketAccessGrant",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                              "DeleteObjectBucketAccessGrant",
+	"GET /v1/apps/{slug}/buckets/{bucket}/objects":                                             "ListBucketObjects",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/objects":                                          "DeleteBucketObject",
+	"POST /v1/apps/{slug}/buckets/{bucket}/signed-url":                                         "SignBucketObject",
+	"GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads":                                   "ListObjectMultipartUploads",
+	"POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads":                                  "CreateObjectMultipartUpload",
+	"GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts":                    "ListObjectMultipartParts",
+	"GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}":                          "GetObjectMultipartUpload",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}":                       "AbortObjectMultipartUpload",
+	"POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url": "SignObjectMultipartPart",
+	"POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete":                "CompleteObjectMultipartUpload",
 	"POST /v1/keys": "CreateKey",
 	// Move 2 routes — the auto-derivation produces names with literal
 	// hyphens (e.g. "DeleteDelayed-tasksId") because the spec path uses

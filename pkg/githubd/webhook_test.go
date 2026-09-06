@@ -76,6 +76,24 @@ func TestRefToBranch(t *testing.T) {
 	}
 }
 
+func TestRefToTag(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		ref, want string
+	}{
+		{ref: "refs/tags/v1.2.3", want: "v1.2.3"},
+		{ref: "refs/tags/release/candidate", want: "release/candidate"},
+		{ref: "refs/heads/main", want: ""},
+		{ref: "refs/tags/", want: ""},
+		{ref: "", want: ""},
+	}
+	for _, tc := range cases {
+		if got := refToTag(tc.ref); got != tc.want {
+			t.Errorf("refToTag(%q) = %q, want %q", tc.ref, got, tc.want)
+		}
+	}
+}
+
 // Sentinel check — IsNoBinding must return true for the typed
 // error and false for unrelated errors.
 func TestIsNoBinding(t *testing.T) {

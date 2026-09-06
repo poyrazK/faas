@@ -25,19 +25,21 @@ source cache is disposable: after a restart, eviction, or cross-host request,
 the CLI automatically resends the complete snapshot. A new `gregale dev`
 invocation also starts safely with a complete sync.
 
-Railpack developer builds keep their Firecracker VM isolation but reuse a
-tenant- and workspace-scoped BuildKit dependency cache between syncs. When the
-runtime and lockfiles are unchanged, matching install layers are restored; a
-dependency or runtime change is validated by BuildKit and rebuilds only the
-invalidated layers. The CLI prints whether the dependency cache was restored
-and the total time until the new version is live. Dockerfile builds remain on
-the cold path for now.
+Railpack and Dockerfile developer builds keep their Firecracker VM isolation
+but reuse a tenant- and workspace-scoped BuildKit dependency cache between
+syncs. When the runtime, Dockerfile, and lockfiles are unchanged, matching
+layers are restored; a dependency, build-input, or runtime change is validated
+by BuildKit and rebuilds only the invalidated layers. Cache import, export, and
+validation failures fall back to a cold build. The CLI prints whether the
+dependency cache was restored and the total time until the new version is
+live.
 
 ```sh
 gregale dev --once             # sync once, do not watch
 gregale dev --path apps/api    # select one workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
+gregale dev status             # show developer-environment quota usage
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
 ```
@@ -69,5 +71,7 @@ expired environment. Stopping the watcher with Ctrl-C leaves the environment
 available—use `--stop` from the same source directory when it should be removed
 immediately.
 
-Developer environments currently consume the same deployed-app quota as pull
-request previews. Separate development quotas remain a follow-up improvement.
+Developer environments have a separate per-plan quota from production apps and
+pull-request previews. They are still backed by the same preview lifecycle and
+24-hour lease; `gregale dev status` reports the account-wide budget so a local
+workspace cannot unexpectedly block a deploy or PR preview.

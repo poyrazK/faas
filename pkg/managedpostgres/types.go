@@ -18,6 +18,7 @@ var (
 	ErrInvalid       = errors.New("invalid managed postgres request")
 	ErrUnsupported   = errors.New("managed postgres feature unsupported")
 	ErrQuotaExceeded = errors.New("managed postgres quota exceeded")
+	ErrUsageStale    = errors.New("managed postgres usage is stale")
 )
 
 type State string
@@ -104,8 +105,26 @@ type ObservedDatabase struct {
 }
 
 type DeleteRequest struct {
+	// ResourceID is Gregale's stable logical identity. Providers use it to
+	// discover an upstream resource when creation may have succeeded before
+	// its opaque provider ID could be persisted.
+	ResourceID         string
 	ProviderResourceID string
-	IdempotencyKey     string
+	// RestoreSourceResourceID lets an adapter recover a restore branch when
+	// the target provider ID was not persisted before a worker crashed.
+	RestoreSourceResourceID string
+	IdempotencyKey          string
+}
+
+// RestoreRequest creates a new logical database from a source provider
+// resource at a point in time. The source is never mutated and the target
+// receives its own provider resource identity and credential bindings.
+type RestoreRequest struct {
+	ResourceID       string
+	SourceResourceID string
+	Spec             Spec
+	PointInTime      time.Time
+	IdempotencyKey   string
 }
 
 type DeleteResult struct {
@@ -137,6 +156,10 @@ type Endpoint struct {
 // must be handed directly to a CredentialSink and never written to the
 // managed_postgres_databases or managed_postgres_bindings catalog rows.
 type CredentialMaterial struct {
+	// ProviderIdentityID is the provider's opaque, non-secret identity for
+	// this credential. It is persisted for lifecycle audit; passwords and
+	// connection URLs never are.
+	ProviderIdentityID string
 	Username           string
 	Password           string
 	Database           string
@@ -150,7 +173,7 @@ func (CredentialMaterial) String() string { return "[REDACTED]" }
 func (CredentialMaterial) GoString() string { return "managedpostgres.CredentialMaterial{[REDACTED]}" }
 
 func (c CredentialMaterial) Validate() error {
-	if c.Username == "" || c.Password == "" || c.Database == "" || len(c.Endpoints) == 0 {
+	if !validOpaqueID(c.ProviderIdentityID) || c.Username == "" || c.Password == "" || c.Database == "" || len(c.Endpoints) == 0 {
 		return ErrInvalid
 	}
 	if c.TLSMode != "require" && c.TLSMode != "verify-ca" && c.TLSMode != "verify-full" {
@@ -174,9 +197,12 @@ func (c CredentialMaterial) Validate() error {
 
 type CredentialRequest struct {
 	ProviderResourceID string
-	IdentityKey        string
-	Access             CredentialAccess
-	IdempotencyKey     string
+	// IdentityKey is a stable, non-secret identity for one credential
+	// generation. Rotation uses a new key; revocation repeats the key that
+	// created the credential.
+	IdentityKey    string
+	Access         CredentialAccess
+	IdempotencyKey string
 }
 
 type Meter string
@@ -224,13 +250,107 @@ func (u Usage) Validate() error {
 	return nil
 }
 
+// UsagePolicy is the operator-owned safety policy for the dark managed
+// PostgreSQL preview. It deliberately uses canonical Gregale meters rather
+// than provider SKU names. A zero policy is disabled; enabling it requires a
+// finite collection window and stale-data bound.
+type UsagePolicy struct {
+	Enabled                      bool
+	CollectionInterval           time.Duration
+	Window                       time.Duration
+	StaleAfter                   time.Duration
+	MaxMonthlyCostMillicents     int64
+	MaxMonthlyComputeUnitSeconds int64
+	MaxMonthlyStorageByteSeconds int64
+	MaxMonthlyHistoryByteSeconds int64
+	MaxMonthlyEgressBytes        int64
+	ComputeUnitHourMillicents    int64
+	StorageGiBHourMillicents     int64
+	HistoryGiBHourMillicents     int64
+	EgressGiBMillicents          int64
+}
+
+func (p UsagePolicy) Validate() error {
+	if !p.Enabled {
+		return nil
+	}
+	if p.CollectionInterval < time.Minute || p.Window < time.Hour || p.Window > 24*time.Hour || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
+		return ErrInvalid
+	}
+	if p.MaxMonthlyCostMillicents <= 0 || p.MaxMonthlyComputeUnitSeconds <= 0 || p.MaxMonthlyStorageByteSeconds <= 0 || p.MaxMonthlyEgressBytes <= 0 {
+		return ErrInvalid
+	}
+	if p.MaxMonthlyHistoryByteSeconds < 0 || p.ComputeUnitHourMillicents < 0 || p.StorageGiBHourMillicents < 0 || p.HistoryGiBHourMillicents < 0 || p.EgressGiBMillicents < 0 {
+		return ErrInvalid
+	}
+	return nil
+}
+
+// UsageRecord is one provider observation for one complete window and meter.
+// The database key plus window makes recording idempotent; a later provider
+// correction replaces the quantity instead of double-counting it.
+type UsageRecord struct {
+	AccountID          string
+	DatabaseID         string
+	BackendID          string
+	BackendFingerprint string
+	WindowFrom         time.Time
+	WindowTo           time.Time
+	ObservedAt         time.Time
+	Meter              Meter
+	Quantity           int64
+	CostMillicents     int64
+}
+
+func (r UsageRecord) Validate() error {
+	if r.AccountID == "" || r.DatabaseID == "" || !ValidName(r.BackendID) || len(r.BackendFingerprint) != 64 ||
+		r.WindowFrom.IsZero() || !r.WindowTo.After(r.WindowFrom) || r.ObservedAt.IsZero() ||
+		!validMeter(r.Meter) || r.Quantity < 0 || r.CostMillicents < 0 {
+		return ErrInvalid
+	}
+	return nil
+}
+
+type UsageSnapshot struct {
+	PeriodStart        time.Time
+	LastObservedAt     time.Time
+	ReadyDatabases     int
+	ComputeUnitSeconds int64
+	StorageByteSeconds int64
+	HistoryByteSeconds int64
+	EgressBytes        int64
+	CostMillicents     int64
+}
+
+func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
+	if !policy.Enabled || s.ReadyDatabases == 0 {
+		return false
+	}
+	return s.LastObservedAt.IsZero() || now.Sub(s.LastObservedAt) > policy.StaleAfter
+}
+
+func (s UsageSnapshot) Exceeds(policy UsagePolicy) bool {
+	if !policy.Enabled {
+		return false
+	}
+	return s.CostMillicents >= policy.MaxMonthlyCostMillicents ||
+		s.ComputeUnitSeconds >= policy.MaxMonthlyComputeUnitSeconds ||
+		s.StorageByteSeconds >= policy.MaxMonthlyStorageByteSeconds ||
+		(policy.MaxMonthlyHistoryByteSeconds > 0 && s.HistoryByteSeconds >= policy.MaxMonthlyHistoryByteSeconds) ||
+		s.EgressBytes >= policy.MaxMonthlyEgressBytes
+}
+
 type Capabilities struct {
-	PostgresMajors          []int
-	ServiceClasses          []ServiceClass
-	Availability            []Availability
-	ScaleToZero             bool
-	PooledConnections       bool
-	PointInTimeRestore      bool
+	PostgresMajors     []int
+	ServiceClasses     []ServiceClass
+	Availability       []Availability
+	ScaleToZero        bool
+	PooledConnections  bool
+	PointInTimeRestore bool
+	// RestoreUsageIsolated means a provider can meter a restored target
+	// independently. Providers that implement restore with a shared project
+	// or cluster must keep this false until usage allocation is qualified.
+	RestoreUsageIsolated    bool
 	MaxRestoreWindowSeconds int64
 	MaxStorageBytes         int64
 	UsageMeters             []Meter
@@ -288,38 +408,43 @@ func (c Capabilities) Supports(spec Spec) error {
 	return nil
 }
 
-// Provider is the complete vendor boundary. Methods must be idempotent for
-// their supplied key, return opaque resource IDs, normalize errors to the
-// package sentinels, and never include credentials in an error.
+// Provider is the complete vendor boundary. Mutating methods must be
+// idempotent for their supplied key, return opaque resource IDs, normalize
+// errors to the package sentinels, and never include credentials in an error.
 type Provider interface {
 	Capabilities() Capabilities
 	Provision(context.Context, ProvisionRequest) (ObservedDatabase, error)
+	Restore(context.Context, RestoreRequest) (ObservedDatabase, error)
 	Inspect(context.Context, string) (ObservedDatabase, error)
 	Update(context.Context, UpdateRequest) (ObservedDatabase, error)
 	Delete(context.Context, DeleteRequest) (DeleteResult, error)
 	IssueCredentials(context.Context, CredentialRequest) (CredentialMaterial, error)
+	RevokeCredentials(context.Context, CredentialRequest) error
 	Usage(context.Context, string, UsageWindow) (Usage, error)
 }
 
 type Database struct {
-	ID                 string
-	AccountID          string
-	Name               string
-	Spec               Spec
-	BackendID          string
-	BackendFingerprint string
-	ProviderResourceID string
-	State              State
-	DesiredGeneration  int64
-	ObservedGeneration int64
-	LastErrorCode      string
-	LeaseToken         string
-	LeaseUntil         time.Time
-	AttemptCount       int32
-	RetryAt            time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	DeletedAt          *time.Time
+	ID                      string
+	AccountID               string
+	Name                    string
+	Spec                    Spec
+	BackendID               string
+	BackendFingerprint      string
+	ProviderResourceID      string
+	RestoreSourceDatabaseID string
+	RestoreSourceResourceID string
+	RestorePointInTime      time.Time
+	State                   State
+	DesiredGeneration       int64
+	ObservedGeneration      int64
+	LastErrorCode           string
+	LeaseToken              string
+	LeaseUntil              time.Time
+	AttemptCount            int32
+	RetryAt                 time.Time
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+	DeletedAt               *time.Time
 }
 
 type BindingState string
@@ -339,10 +464,16 @@ type Binding struct {
 	AppID                string
 	Scope                string
 	EnvironmentKey       string
+	Access               CredentialAccess
 	ProviderIdentityID   string
 	CredentialRef        string
 	CredentialGeneration int64
 	State                BindingState
+	LastErrorCode        string
+	LeaseToken           string
+	LeaseUntil           time.Time
+	AttemptCount         int32
+	RetryAt              time.Time
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	DeletedAt            *time.Time
@@ -353,7 +484,9 @@ type Binding struct {
 // binding ID + generation. It is intentionally separate from Store.
 type CredentialSink interface {
 	Put(context.Context, Binding, CredentialMaterial) (string, error)
-	Delete(context.Context, string) error
+	// Delete receives the whole binding so a sink can recover the
+	// deterministic reference after a crash between Put and catalog commit.
+	Delete(context.Context, Binding) error
 }
 
 type Store interface {
@@ -369,12 +502,63 @@ type Store interface {
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
 }
 
+// UsageStore is the durable metering boundary. It is separate from Store so
+// lifecycle test doubles remain small while production PostgreSQL can provide
+// an atomic, idempotent usage ledger and account snapshot.
+type UsageStore interface {
+	ListUsageDatabases(context.Context, int) ([]Database, error)
+	RecordUsage(context.Context, []UsageRecord) error
+	UsageSnapshot(context.Context, string, time.Time) (UsageSnapshot, error)
+}
+
+// BindingStore persists the saga that connects one ready database to one app
+// secret target. The lease token fences stale reconcilers; credential material
+// itself never crosses this interface.
+type BindingStore interface {
+	ReserveBinding(context.Context, Binding) (Binding, bool, error)
+	GetBinding(context.Context, string, string) (Binding, error)
+	ListBindings(context.Context, string, string) ([]Binding, error)
+	DueBindings(context.Context, bool, int, time.Time) ([]Binding, error)
+	ClaimBinding(context.Context, string, string, string, BindingState, time.Time, time.Time) (Binding, error)
+	FinishBindingProvision(context.Context, string, string, string, string, time.Time) (Binding, error)
+	ReleaseBinding(context.Context, string, string, BindingState, string, time.Time, time.Time) error
+	FinishBindingDelete(context.Context, string, string, time.Time) (Binding, error)
+}
+
 func ValidName(name string) bool {
 	if !utf8.ValidString(name) {
 		return false
 	}
 	validName := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	return validName.MatchString(name)
+}
+
+func validBindingScope(scope string) bool {
+	if !utf8.ValidString(scope) {
+		return false
+	}
+	validScope := regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+	return validScope.MatchString(scope)
+}
+
+func validEnvironmentKey(key string) bool {
+	if !utf8.ValidString(key) {
+		return false
+	}
+	validKey := regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,126}$`)
+	return validKey.MatchString(key)
+}
+
+func validOpaqueID(value string) bool {
+	if value == "" || len(value) > 255 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func validErrorCode(code string) bool {

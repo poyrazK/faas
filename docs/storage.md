@@ -20,6 +20,22 @@ reuse only works because instances are interchangeable. Local
 filesystem state is ephemeral by design; every wake is a fresh
 boot.
 
+## Ephemeral disk boundary
+
+Each app's main `drive1` is a writable ext4 upper layer. Its capacity is
+bounded by the plan's ephemeral disk ceiling, exposed as
+`ephemeral_disk_max_mb` in account and app effective-limit responses. The
+legacy `app_layer_max_mb` field remains for compatibility; both names refer to
+the same physical cap. Image builds enforce the ceiling before a snapshot is
+created, so a deployment cannot boot with a larger writable app layer than the
+plan allows.
+
+`/tmp` is a separate tmpfs and is also lost when the instance parks. Sidecar
+drives are read-only. Gregale does not attach durable customer volumes, and
+the API currently reports the per-plan ceiling rather than live free-space
+samples from a guest. Use object storage or an external database for state that
+must survive a wake/park cycle.
+
 The platform's deny-list (see `pkg/imaged/base.go` and the
 `stateless_only_violation` 422) rejects stateful base images at
 accept time: `postgres:16`, `mysql:8`, `redis:7`, `mongo:7`, and

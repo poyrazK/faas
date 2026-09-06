@@ -330,15 +330,17 @@ var ErrPriorityOutOfRange = errors.New("state: priority must be in [0, 1000]")
 // the observed count so apid can include it in the 403 envelope via
 // api.ErrPlanLimitApps without re-running the count.
 // QuotaErrorKind names the cap that tripped. "apps" is the
-// Limits.DeployedApps cap; "crons" is Limits.CronLimitPerAccount.
+// Limits.DeployedApps cap; "developer_apps" is Limits.DeveloperApps;
+// "crons" is Limits.CronLimitPerAccount.
 // "apps" is the zero value so existing call sites that build a
 // QuotaError without a Kind keep behaving the same.
 type QuotaErrorKind string
 
 const (
-	QuotaErrorKindApps   QuotaErrorKind = "apps"
-	QuotaErrorKindCrons  QuotaErrorKind = "crons"
-	QuotaErrorKindMemory                = "memory" // reserved for ADR-046 follow-on
+	QuotaErrorKindApps          QuotaErrorKind = "apps"
+	QuotaErrorKindDeveloperApps QuotaErrorKind = "developer_apps"
+	QuotaErrorKindCrons         QuotaErrorKind = "crons"
+	QuotaErrorKindMemory                       = "memory" // reserved for ADR-046 follow-on
 	// QuotaErrorKindMirror (issue #72 / ADR-125) trips when a
 	// Pro/Scale customer tries to create more than
 	// limits.MirrorTargetsPerApp mirror rules on one app. Free /
@@ -367,6 +369,8 @@ type QuotaError struct {
 
 func (e *QuotaError) Error() string {
 	switch e.Kind {
+	case QuotaErrorKindDeveloperApps:
+		return fmt.Sprintf("state: developer environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindCrons:
 		if e.NotAllowed {
 			return "state: crons not allowed on this plan"
@@ -1823,6 +1827,10 @@ type Store interface {
 	// CountDeployedApps counts apps that occupy a deploy slot (active or
 	// evicted_cold) for quota enforcement (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
+	// CountDeveloperApps counts live `gregale dev` environments. These are
+	// deliberately separate from the deployed-app quota so local development
+	// cannot consume production or preview slots.
+	CountDeveloperApps(ctx context.Context, accountID string) (int, error)
 	// CountAppsWithEvictionPriority returns the per-account count of
 	// apps whose eviction_priority equals the given tier (issue #475).
 	// Counts APPS (not instances) — the per-account cap
@@ -2816,6 +2824,9 @@ type Store interface {
 	ListDomainsForApp(ctx context.Context, appID string) ([]CustomDomain, error)
 	ListDomainsForAccount(ctx context.Context, accountID string) ([]CustomDomain, error)
 	MarkDomainVerified(ctx context.Context, domain string) error
+	// UpdateCustomDomainCertStatus persists the certmagic/doctor observation
+	// for a legacy custom domain. Zero timestamps clear the nullable columns.
+	UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error
 	DeleteCustomDomain(ctx context.Context, domain string) error
 
 	// Domain doctor observations (ADR-120). The dns_poller
@@ -3424,6 +3435,22 @@ type Store interface {
 	// Used by the alert evaluator's account_spend_eur metric
 	// branch (issue #1233, ADR-123).
 	MTDSpendEurCents(ctx context.Context, accountID string) (int64, error)
+
+	// CountNewErrorFingerprintsSince counts distinct app error groups first
+	// observed since the supplied instant. An empty appID scopes the count to
+	// every app in the account. Used by the issue #1395 B3 alert metric.
+	CountNewErrorFingerprintsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
+
+	// ColdWakeRatePctSince returns the percentage of request_telemetry rows
+	// marked cold_boot since the supplied instant, weighted by each row's count
+	// field. An empty appID scopes the rate to the account.
+	ColdWakeRatePctSince(ctx context.Context, accountID, appID string, since time.Time) (float64, error)
+
+	// DailyCostCents returns the estimated raw usage cost for the UTC day that
+	// contains day, derived from usage_daily.mb_seconds. An empty appID scopes
+	// the sum to the account. The result is in integer EUR cents before any
+	// monthly included allowance is applied.
+	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 
 	// UpsertAccountSpendSnapshot is called by the meterd tick
 	// loop on every AlertEvalInterval. Idempotent via the
@@ -4944,6 +4971,15 @@ type Store interface {
 	// legacy UpsertAppSecretWithKidInScope stays for callers
 	// that don't carry the field.
 	UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
+	// ResealAppSecretWithKidAndValueHashInScope is reserved for the host-key
+	// maintenance replayer. It updates an existing encrypted row while
+	// preserving managed credential ownership metadata.
+	ResealAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
+	// PutManagedPostgresSecret writes an already-sealed credential owned by a
+	// managed PostgreSQL binding. DeleteManagedPostgresSecret is idempotent so
+	// a deletion reconciler can safely resume after a crash.
+	PutManagedPostgresSecret(ctx context.Context, secret AppSecret) error
+	DeleteManagedPostgresSecret(ctx context.Context, credentialRef string) error
 	// GetAppSecretInScope is the scope-aware sibling of
 	// GetAppSecret (ADR-092 PR-A). Returns ErrNotFound when no
 	// row exists at (account_id, app_id, scope, key).
@@ -5714,4 +5750,120 @@ type Store interface {
 	// `gregale deploy` without --exclude still honors the persisted
 	// set. Sorted by created_at DESC for stable apply ordering.
 	LookupDeploymentScopeExclusions(ctx context.Context, accountID, projectID string) ([]DeploymentScopeExclusion, error)
+
+	// ----------------------------------------------------------------------------
+	// Issue #1182 §P1 packaging follow-up: resumable upload session
+	// protocol (PR-1 of 3, server-only foundation). Eleven methods
+	// backing the four upload-session endpoints:
+	//
+	//   POST   /v1/uploads                   → CreateUploadSession
+	//   PATCH  /v1/uploads/{id}              → AppendUploadBytes (atomic CAS)
+	//   POST   /v1/uploads/{id}/commit       → MarkUploadSessionCommitted
+	//   DELETE /v1/uploads/{id}              → CancelUploadSession
+	//
+	// Returns sqlc.UploadSession / sqlc.UploadCommitOutcome structs
+	// (generated pkg/state/sqlc/models.go). The handler layer at
+	// cmd/apid/handlers_upload_session.go translates these into the
+	// wire-stable JSON envelope. ErrNotFound is returned when no
+	// row matches the supplied id — the handler maps that to
+	// api.ErrUploadSessionNotFound (404).
+	// ----------------------------------------------------------------------------
+
+	// CreateUploadSession inserts a fresh upload_sessions row.
+	// The handler is responsible for the per-plan SourceTarballMaxMB
+	// cap (pkg/api/limits.go) and the per-account open-session /
+	// open-spool budget checks BEFORE calling this — the store does
+	// not enforce limits. Returns the populated UploadSession
+	// including the server-stamped created_at, last_patched_at,
+	// expires_at, and the default chunk_size (8 MiB for free/hobby/
+	// pro, 16 MiB for scale — derived from limits in the handler).
+	CreateUploadSession(ctx context.Context, in sqlc.CreateUploadSessionParams) (sqlc.UploadSession, error)
+	// GetUploadSession reads a single upload_sessions row by id.
+	// Used by the handler's POST /commit pre-check (validate status
+	// ='open', received_bytes == total_size before validating tar
+	// shape) AND by the CLI's resume-after-network-drop path (PR-2
+	// cmd/gregale/upload_session.go) to learn the server's current
+	// received_bytes. Returns ErrNotFound when the id doesn't
+	// resolve.
+	GetUploadSession(ctx context.Context, id string) (sqlc.UploadSession, error)
+	// AppendUploadBytes is the atomic CAS that makes the resumable
+	// protocol safe under concurrent PATCHes on the same upload_id.
+	// The sqlc AppendUploadBytesParams struct carries (id,
+	// expectedOffset, newReceivedBytes); the store's UPDATE WHERE
+	// clause pins the row to received_bytes == expectedOffset,
+	// returning 0 rows on a CAS miss. The handler maps 0 rows to
+	// api.ErrUploadSessionOffsetConflict (409) with the actual
+	// current received_bytes in the body.
+	AppendUploadBytes(ctx context.Context, in sqlc.AppendUploadBytesParams) (sqlc.AppendUploadBytesRow, error)
+	// MarkUploadSessionCommitted transitions an open session to
+	// committed and stamps the deployment_id. The WHERE status=
+	// 'open' predicate is the second-line idempotency guard against
+	// commit-after-commit races; the upload_commit_outcomes
+	// companion table is the canonical dedupe (see
+	// RecordUploadCommitOutcome / GetUploadCommitOutcome). Returns
+	// ErrConflict when the row is already terminal.
+	MarkUploadSessionCommitted(ctx context.Context, in sqlc.MarkUploadSessionCommittedParams) (sqlc.MarkUploadSessionCommittedRow, error)
+	// CancelUploadSession transitions an open session to cancelled.
+	// The sqlc CancelUploadSessionParams struct carries (id,
+	// accountID pgtype.UUID). The accountID predicate is matched in
+	// the WHERE clause as a defense-in-depth check against cross-
+	// account delete (the auth chain at cmd/apid/server.go already
+	// enforces account scoping, but the store-side predicate makes
+	// accidental misuse crash-loud).
+	CancelUploadSession(ctx context.Context, in sqlc.CancelUploadSessionParams) error
+	// ReapExpiredUploadSessions scans up to 100 expired open
+	// sessions for the reaper goroutine
+	// (cmd/apid/upload_session_reaper.go). The partial index
+	// upload_sessions_expires_idx makes this an index-only scan.
+	// The handler then UPDATEs each row via ExpireUploadSession
+	// and removes the .part file via os.Remove AFTER the UPDATE
+	// commits — see ExpireUploadSession's doc for the race-safe
+	// sequencing rationale.
+	ReapExpiredUploadSessions(ctx context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error)
+	// ReapStaleUploadPartFiles scans up to 100 terminal-row
+	// sessions (status ∈ committed, cancelled, expired) whose
+	// last_patched_at < now() - 1h. The 1h grace bounds the leak
+	// of .part files left in place after a commit for builderd
+	// to consume (pkg/builderd/builderd.go:407). Bounded by 100
+	// rows/tick to mirror ReapExpiredUploadSessions's memory
+	// guarantee. The reaper os.Removes the .part file in place and
+	// clears the durable part_path cleanup marker afterward.
+	ReapStaleUploadPartFiles(ctx context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error)
+	// ClearUploadSessionPartPath records that the terminal session's
+	// spool file has been removed. Reaper and cancel cleanup call this
+	// after a successful remove (or ErrNotExist) so subsequent sweeps
+	// do not rediscover the same row.
+	ClearUploadSessionPartPath(ctx context.Context, id string) error
+	// ExpireUploadSession marks a single session expired after the
+	// reaper deletes its .part file. The status='open' predicate
+	// means a session that was committed / cancelled between the
+	// reaper's scan and this UPDATE is left untouched — its
+	// .part file was already gone, so os.Remove's ErrNotExist is
+	// logged + skipped upstream.
+	ExpireUploadSession(ctx context.Context, id string) error
+	// RecordUploadCommitOutcome inserts a row into the
+	// upload_commit_outcomes companion table ON CONFLICT DO NOTHING.
+	// The handler calls this AFTER a successful apidsource.Enqueue
+	// so a retry of POST /v1/uploads/{id}/commit returns the same
+	// deployment_id via GetUploadCommitOutcome. Returns
+	// (sqlc.UploadCommitOutcome{}, ErrConflict) when the row
+	// already exists; the handler interprets ErrConflict as
+	// "another commit already won" and reads via
+	// GetUploadCommitOutcome to surface the stored deployment_id.
+	RecordUploadCommitOutcome(ctx context.Context, in sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error)
+	// GetUploadCommitOutcome reads the dedupe row for a retry of
+	// POST /v1/uploads/{id}/commit. Returns ErrNotFound when the
+	// commit never wrote (operator error path: the prior
+	// MarkUploadSessionCommitted UPDATE also failed).
+	GetUploadCommitOutcome(ctx context.Context, uploadID string) (sqlc.UploadCommitOutcome, error)
+	// CountOpenUploadSessionsByAccountApp backs the per-(account_id,
+	// app_slug) open-session cap check (5) at the top of POST
+	// /v1/uploads. Hits the partial index
+	// upload_sessions_account_open_idx.
+	CountOpenUploadSessionsByAccountApp(ctx context.Context, in sqlc.CountOpenUploadSessionsByAccountAppParams) (int64, error)
+	// SumOpenUploadSessionBytesByAccount backs the per-account
+	// open-spool budget check (4 × SourceTarballMaxMB) at the top
+	// of POST /v1/uploads. Hits the partial index; returns 0 when
+	// no open sessions.
+	SumOpenUploadSessionBytesByAccount(ctx context.Context, accountID pgtype.UUID) (int64, error)
 }

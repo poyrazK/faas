@@ -76,10 +76,13 @@ func (r *NodeRegistry) Snapshot() []state.ComputeNode {
 type NodeTelemetry struct {
 	InstanceID          string
 	ResidentBytes       *int64
+	DiskUsedBytes       *int64
+	DiskCapacityBytes   *int64
 	CPUPct              *float64
 	CPUSeconds          *float64
 	CPUThrottledSeconds *float64
 	InflightRequests    int64
+	RequestCountTotal   *int64
 	LastRequestAt       time.Time
 	NetTxBytes          *int64
 	NetRxBytes          *int64

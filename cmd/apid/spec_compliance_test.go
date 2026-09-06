@@ -55,6 +55,7 @@ const (
 	operatorConfigFile    = "operator_config.go" // ADR-132 — operator runtime configuration
 	obsFile               = "obs.go"             // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
 	corsPresetsFile       = "cors_preset_dto.go" // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
+	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -132,12 +133,14 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/":                                         true, // HTML dashboard
 	"POST /dashboard/account/delete":                          true, // HTML form
 	"POST /dashboard/account/keys/{id}/delete":                true, // HTML form (issue #248)
+	"POST /dashboard/account/plan":                            true, // HTML form (issue #248)
 	"POST /dashboard/account/restore":                         true, // HTML form
 	"GET /dashboard/account/export":                           true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/dpa":                              true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                       true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                 true, // HTML form (hosted-checkout hand-off)
 	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":         true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
+	"POST /dashboard/apps/{slug}/rollback":                    true, // HTML form, app rollback (issue #248)
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":      true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable": true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
@@ -810,6 +813,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", obsFile),
 		filepath.Join(root, "pkg", "api", corsPresetsFile),
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
+		filepath.Join(root, "pkg", "api", uploadSessionFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

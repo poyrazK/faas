@@ -107,6 +107,23 @@ See [`docs/source-ref.md`](../source-ref.md) for the
 `--repo OWNER/NAME --ref $SHA` shape and the install-token trust
 boundary.
 
+## GitHub release tags
+
+After an app is connected to GitHub, a push to the configured production
+branch still deploys as before. A newly-created SemVer release tag also
+deploys through GitHub's normal `push` webhook: use the conventional
+`vMAJOR.MINOR.PATCH` shape (for example `v1.4.0` or `v1.4.0-rc.1`). githubd
+uses the tag's immutable `after` SHA and applies the repository's production
+binding.
+
+Release tags are a one-way promotion boundary. Moving or force-updating an
+existing tag is ignored, so a release cannot silently change underneath a
+customer's deployment history; publish a new version instead. Tags that do
+not satisfy SemVer, tag deletion webhooks, and malformed tag deliveries are
+also ignored before source fetch or build enqueue. The repository default
+branch is the initial lookup key, with the project's configured production
+branch as the authoritative fallback.
+
 ## Reproducibility note
 
 Three flavors of "what was deployed", pinned differently:

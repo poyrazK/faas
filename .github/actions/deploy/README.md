@@ -13,6 +13,7 @@ jobs:
     environment: production
     permissions:
       contents: read
+      checks: write
       id-token: write
     steps:
       - uses: poyrazK/faas/.github/actions/deploy@v1
@@ -20,7 +21,8 @@ jobs:
           api-base: https://api.gregale.dev
           app: my-app
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
-          wait: "true"
+          # Queue the deployment and continue; set wait: "true" to block until live.
+          wait: "false"
 ```
 
 ## Generate a starter workflow
@@ -44,7 +46,7 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 | `repo` | OWNER/NAME of the source GitHub repo. | no | `${{ github.repository }}` |
 | `ref` | git ref — branch, tag, or 40-char SHA. | no | `${{ github.sha }}` |
 | `format` | Source format passed to the source-ref endpoint. | no | `tarball` |
-| `wait` | If `true`, block until the deployment is ready (or fails). | no | `true` |
+| `wait` | If `true`, block until the deployment is live (or fails); if `false`, queue it and return immediately. | no | `false` |
 | `wait-timeout` | Maximum seconds to wait when `wait=true`. | no | `600` |
 
 ## Outputs
@@ -55,7 +57,15 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 | `app-slug` | Echo of the input `app` slug. |
 | `status` | Observed status: `live` when waiting succeeds, `queued` when waiting is disabled, or the terminal failure/timeout status. |
 | `url` | URL of the deployment record on the control-plane API (`{api-base}/v1/apps/{slug}/deployments/{id}`). |
+| `check-run-id` | GitHub Check Run id containing the deployment link; empty if the workflow cannot write Checks. |
 | `cli-version` | Bundled `gregale` CLI version (verifies the vendored binary). |
+
+When `checks: write` is granted, the action creates a **Gregale deployment**
+Check Run with a direct link to the control-plane deployment record. The Check
+Run is completed with a neutral result for the asynchronous default (the
+deployment itself may still be building), and is updated to the terminal result
+when `wait: "true"` is used. It is best-effort, so missing permission never
+blocks the deployment.
 
 ## Pin reproducibility
 

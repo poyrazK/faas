@@ -1718,7 +1718,12 @@ CREATE TABLE public.custom_domains (
     verified_at timestamp with time zone,
     challenge_token text DEFAULT ''::text NOT NULL,
     app_id_redirect uuid,
-    org_id uuid
+    org_id uuid,
+    cert_status text DEFAULT 'pending'::text NOT NULL,
+    cert_expires_at timestamp with time zone,
+    cert_last_error text,
+    dns_last_checked_at timestamp with time zone,
+    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text])))
 );
 
 
@@ -5251,6 +5256,11 @@ CREATE INDEX custom_domains_org_id_idx ON public.custom_domains USING btree (org
 
 CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree (domain) WHERE (verified_at IS NULL);
 
+-- Name: custom_domains_cert_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_cert_expiry_idx ON public.custom_domains USING btree (cert_expires_at) WHERE (cert_status = ANY (ARRAY['issued'::text, 'renewing'::text]));
+
 
 --
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
@@ -8181,7 +8191,7 @@ CREATE TABLE IF NOT EXISTS object_storage_bucket_usage (
 CREATE TABLE IF NOT EXISTS object_storage_key_grants (
     bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
     key_hash text NOT NULL CHECK (length(key_hash) = 64),
-    max_bytes bigint NOT NULL CHECK (max_bytes BETWEEN 0 AND 5368709120),
+    max_bytes bigint NOT NULL CHECK (max_bytes BETWEEN 0 AND 5497558138880),
     PRIMARY KEY (bucket_id, key_hash)
 );
 CREATE TABLE IF NOT EXISTS object_storage_authorizations (
@@ -8219,3 +8229,122 @@ CREATE TABLE IF NOT EXISTS object_storage_usage_heads (
     FOREIGN KEY (account_id, backend_id, period_start, observed_at)
         REFERENCES object_storage_usage_reports(account_id, backend_id, period_start, observed_at) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS object_storage_multipart_uploads (
+    id uuid PRIMARY KEY,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
+    object_key text NOT NULL CHECK (length(object_key) BETWEEN 1 AND 1024),
+    size_bytes bigint NOT NULL CHECK (size_bytes BETWEEN 1 AND 5497558138880),
+    part_size_bytes bigint NOT NULL CHECK (part_size_bytes BETWEEN 1 AND 5368709120),
+    part_count integer NOT NULL CHECK (part_count BETWEEN 1 AND 10000),
+    content_type text NOT NULL DEFAULT '' CHECK (length(content_type) <= 255),
+    provider_upload_id text NOT NULL DEFAULT '' CHECK (length(provider_upload_id) <= 4096),
+    completion_parts jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(completion_parts) = 'array'),
+    state text NOT NULL DEFAULT 'initiating' CHECK (state IN ('initiating','active','completing','aborting','completed','aborted')),
+    expires_at timestamptz NOT NULL,
+    lease_token text,
+    lease_until timestamptz,
+    attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 30),
+    retry_at timestamptz NOT NULL DEFAULT now(),
+    last_error_code text NOT NULL DEFAULT '' CHECK (length(last_error_code) <= 32),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CHECK ((lease_token IS NULL) = (lease_until IS NULL)),
+    CHECK (state = 'initiating' OR provider_upload_id <> '')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS object_storage_multipart_live_key_idx
+    ON object_storage_multipart_uploads (bucket_id, object_key)
+    WHERE state IN ('initiating','active','completing','aborting');
+CREATE INDEX IF NOT EXISTS object_storage_multipart_retry_idx
+    ON object_storage_multipart_uploads (retry_at, id)
+    WHERE state IN ('initiating','completing','aborting');
+CREATE INDEX IF NOT EXISTS object_storage_multipart_expiry_idx
+    ON object_storage_multipart_uploads (expires_at, id)
+    WHERE state = 'active';
+
+-- Name: upload_commit_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upload_commit_outcomes (
+    upload_id text NOT NULL,
+    deployment_id text NOT NULL,
+    build_id text NOT NULL,
+    finalized_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: upload_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upload_sessions (
+    id text NOT NULL,
+    account_id uuid NOT NULL,
+    app_slug text NOT NULL,
+    total_size bigint NOT NULL,
+    received_bytes bigint DEFAULT 0 NOT NULL,
+    chunk_size integer DEFAULT 8388608 NOT NULL,
+    sha256_hex text,
+    part_path text NOT NULL,
+    status text DEFAULT 'open' NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_patched_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone DEFAULT (now() + '00:24:00'::interval) NOT NULL,
+    deployment_id text,
+    deploy_options jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT upload_sessions_chunk_size_check CHECK ((chunk_size > 0) AND (chunk_size <= 67108864)),
+    CONSTRAINT upload_sessions_received_bytes_check CHECK ((received_bytes >= 0) AND (received_bytes <= total_size)),
+    CONSTRAINT upload_sessions_status_check CHECK ((status = ANY (ARRAY['open'::text, 'committed'::text, 'cancelled'::text, 'expired'::text]))),
+    CONSTRAINT upload_sessions_total_size_check CHECK ((total_size > 0) AND (total_size <= 1073741824))
+);
+
+
+--
+-- Name: upload_commit_outcomes upload_commit_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_commit_outcomes
+    ADD CONSTRAINT upload_commit_outcomes_pkey PRIMARY KEY (upload_id);
+
+
+--
+-- Name: upload_sessions upload_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_sessions
+    ADD CONSTRAINT upload_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: upload_sessions upload_sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_sessions
+    ADD CONSTRAINT upload_sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: upload_sessions_account_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upload_sessions_account_open_idx ON public.upload_sessions USING btree (account_id, app_slug) WHERE (status = 'open'::text);
+
+
+--
+-- Name: upload_sessions_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upload_sessions_expires_idx ON public.upload_sessions USING btree (expires_at) WHERE (status = 'open'::text);
+
+
+--
+-- Name: upload_commit_outcomes upload_commit_outcomes_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_commit_outcomes
+    ADD CONSTRAINT upload_commit_outcomes_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.upload_sessions(id) ON DELETE CASCADE;
+
+
+--

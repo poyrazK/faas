@@ -615,7 +615,7 @@ func TestMakeGoHandlerLayerExtractsExecutableServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = file.Close() }()
-	result, cleanup, err := makeGoHandlerLayer([]io.ReadCloser{file})
+	result, cleanup, err := makeGoHandlerLayer([]io.ReadCloser{file}, "/app/server")
 	if err != nil {
 		t.Fatal(err)
 	}

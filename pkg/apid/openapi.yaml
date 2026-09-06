@@ -42,6 +42,15 @@ tags:
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
     description: App lifecycle (create, update, delete, wake, park).
+  - name: uploads
+    description: |
+      Resumable upload sessions (issue #1182 §P1 / ADR-115). A session
+      opens at POST /v1/uploads, accepts byte-range PATCHes, and
+      finalizes via POST /v1/uploads/{id}/commit. Per-account open-
+      session cap is 5; per-plan SourceTarballMaxMB caps total_size
+      (Free/Hobby 100 MB, Pro/Scale 250 MB). The legacy single-shot
+      `source-tarball` endpoint stays active in PR-1; PR-3 deprecates
+      it with RFC 8594 Sunset headers.
   - name: previews
     description: |
       Preview environments (issue #961 / ADR-095). A preview is a
@@ -496,6 +505,185 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads:
+    parameters:
+      - { name: slug, description: App containing the multipart upload target., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Identifier of the bucket receiving the multipart object., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectMultipartUploads
+      summary: List durable resumable upload sessions
+      description: Requires storage:write or admin and a matching bucket grant. The provider upload ID is never returned. Use cursor to recover sessions after a client loses its local session identifier.
+      tags: [storage]
+      parameters:
+        - { name: limit, description: Maximum number of sessions to return., in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
+        - { name: cursor, description: UUID cursor returned by the previous page., in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Durable upload sessions; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUploadList' }
+        default:
+          description: Invalid cursor, access denial, or backend placement unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createObjectMultipartUpload
+      summary: Start or recover a resumable multipart upload
+      description: |
+        Requires storage:write or admin and a matching bucket grant. Gregale
+        reserves the complete declared size before creating billable provider
+        parts. A retry with the same live bucket/key, size, and content type
+        returns the existing session; conflicting parameters return 409. The
+        provider upload ID remains private. Sessions expire after 24 hours.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateObjectMultipartUploadRequest' }
+      responses:
+        '201':
+          description: Multipart upload initiated; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        '200':
+          description: Existing compatible live session returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Invalid request, stale accounting, capacity limit, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts:
+    parameters:
+      - { name: slug, description: App authorizing multipart recovery., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket containing the provider-confirmed parts., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale session whose provider parts are being recovered., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectMultipartParts
+      summary: List parts confirmed by the storage provider
+      description: Requires storage:write or admin and a matching bucket grant. Returns provider-confirmed ETags so an interrupted client can resume completion without exposing provider credentials or upload IDs.
+      tags: [storage]
+      parameters:
+        - { name: part_number_marker, description: Return parts after this part number., in: query, required: false, schema: { type: integer, minimum: 0, maximum: 10000, default: 0 } }
+        - { name: limit, description: Maximum number of provider parts to return., in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 } }
+      responses:
+        '200':
+          description: Provider-confirmed uploaded parts; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartPartList' }
+        default:
+          description: Session missing, not recoverable, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}:
+    parameters:
+      - { name: slug, description: App containing the durable upload session., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket containing the multipart session., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier; this is not the provider upload ID., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectMultipartUpload
+      summary: Read resumable upload state and part layout
+      description: Requires storage:write or admin and a matching bucket grant. Provider credentials and upload IDs are never returned.
+      tags: [storage]
+      responses:
+        '200':
+          description: Durable session state; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Session missing, access denied, or backend placement unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: abortObjectMultipartUpload
+      summary: Abort a multipart upload and release provider-side parts
+      description: Requires storage:write or admin and a matching bucket grant. Repeating an already-finished abort is safe. Failed aborts are retried by the recovery worker.
+      tags: [storage]
+      responses:
+        '204': { description: Upload aborted or was already aborted }
+        default:
+          description: Session busy/completed, access denied, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url:
+    parameters:
+      - { name: slug, description: App authorizing the multipart part capability., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket receiving this upload part., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: part, description: One-based part number from the session layout., in: path, required: true, schema: { type: integer, minimum: 1, maximum: 10000 } }
+    post:
+      operationId: signObjectMultipartPart
+      summary: Issue an exact-length direct upload URL for one part
+      description: |
+        Requires storage:write or admin and a matching bucket grant. The URL
+        binds the server-calculated byte length for this part and expires within
+        15 minutes. Upload it without Gregale credentials and retain the ETag
+        response header for completion. Every issued part URL consumes the
+        authorization safety budget.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectMultipartPartSignRequest' }
+      responses:
+        '200':
+          description: Temporary provider capability; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectSignedRequest' }
+        default:
+          description: Invalid part, expired session, stale accounting, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete:
+    parameters:
+      - { name: slug, description: App finalizing the multipart upload., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket receiving the completed object., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: upload, description: Gregale multipart session identifier to complete., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: completeObjectMultipartUpload
+      summary: Assemble all uploaded parts into the final object
+      description: |
+        Requires storage:write or admin and a matching bucket grant. Supply one
+        ETag for every part in ascending order. Completion intent is persisted
+        before contacting the provider and recovered after crashes. An identical
+        retry after completion returns the completed session without repeating
+        the provider operation.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteObjectMultipartUploadRequest' }
+      responses:
+        '200':
+          description: Object completed; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        default:
+          description: Invalid/missing parts, expired or conflicting session, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/account/object-storage-usage:
     get:
       operationId: getObjectStorageUsage
@@ -719,7 +907,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"developer_apps":2,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"developer_app_count":1,"github_install_id":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -770,7 +958,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","email_verified":true,"plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"developer_apps":2,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"developer_app_count":1,"github_install_id":null}
         '202':
           description: The provider accepted a deferred plan change; the current local entitlement remains active until the provider webhook confirms it.
           content:
@@ -885,7 +1073,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"developer_apps":2,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"developer_app_count":1,"github_install_id":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
 
@@ -3217,11 +3405,16 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
     post:
+      deprecated: true
       tags: [deployments]
       operationId: createDeploymentFromSourceTarball
       summary: Create a deployment from a CLI-uploaded local tarball (zero-config).
       description: |
         Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+        This multipart endpoint is deprecated for new clients. Use the
+        resumable upload session endpoints under `/v1/uploads` for progress,
+        retry-safe chunking, and commit deduplication; this route remains
+        available during the migration window.
         The CLI uploads a gzipped tar via the `tarball` form field and
         an optional informational `{repo, ref}` JSON sidecar. The CLI
         binary is the trust root: apid does NOT consult
@@ -3304,6 +3497,107 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # Issue #1182 §P1 PR-1 — resumable upload protocol (server-only
+  # foundation; CLI wiring lands in PR-2). Legacy `source-tarball`
+  # endpoint above stays active in PR-1; PR-3 deprecates it with
+  # RFC 8594 Sunset headers.
+  /v1/uploads:
+    post:
+      tags: [uploads]
+      operationId: startUpload
+      summary: Open a resumable upload session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadStartRequest' }
+      responses:
+        '201':
+          description: Session opened.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadStartResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/uploads/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Upload session id (returned by POST /v1/uploads).
+    get:
+      tags: [uploads]
+      operationId: getUploadSession
+      summary: Discover resumable session state and current offset.
+      responses:
+        '200':
+          description: Current session state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSessionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [uploads]
+      operationId: appendUpload
+      summary: Append a chunk to an open session.
+      parameters:
+        - name: Upload-Offset
+          in: header
+          required: true
+          schema: { type: integer, minimum: 0 }
+          description: Absolute byte offset the client claims the server is at.
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Bytes accepted.
+          headers:
+            Upload-Offset:
+              schema: { type: integer, minimum: 0 }
+              description: New absolute offset after the append.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+    delete:
+      tags: [uploads]
+      operationId: cancelUpload
+      summary: Cancel an open session (removes the .part file).
+      responses:
+        '204':
+          description: Session cancelled.
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/uploads/{id}/commit:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Upload session id to finalize (returned by POST /v1/uploads).
+    post:
+      tags: [uploads]
+      operationId: commitUpload
+      summary: Finalize the session, validate the tarball, enqueue the build.
+      responses:
+        '201':
+          description: Deployment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
 
   # ADR-122 — endpoint discovery. Captured OpenAPI doc per deployment.
   /v1/apps/{slug}/deployments/{deployment}/openapi:
@@ -3800,6 +4094,58 @@ paths:
         # so scripts can compute "how much to raise" without
         # parsing prose.
         '402': { $ref: '#/components/responses/AdmissionRefused' }
+
+  /v1/apps/{slug}/restart:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: restartApp
+      summary: Restart an app from a fresh snapshot.
+      description: |
+        Parks every live instance, captures a fresh snapshot, and queues one
+        replacement wake. Requests are single-flight per app; the returned
+        wake_id identifies the replacement wake in the wake timeline.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Restart accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppRestartResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '402': { $ref: '#/components/responses/AdmissionRefused' }
+
+  /v1/apps/{slug}/cache:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    delete:
+      tags: [apps]
+      operationId: purgeAppCache
+      summary: Purge cached responses for an app.
+      description: |
+        Requests an in-process response-cache purge on every gateway. The
+        optional path glob limits the purge to matching normalized request
+        paths; omit it to purge the complete app cache.
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema: { type: string }
+          description: Optional normalized request path glob (for example `/products/*`).
+      responses:
+        '204': { description: Purge requested. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account/overage-cap:
     post:
@@ -11853,6 +12199,83 @@ components:
         headers: { type: object, additionalProperties: { type: string } }
         expires_at: { type: string, format: date-time }
 
+    ObjectMultipartUpload:
+      description: Durable provider-neutral resumable upload session. The provider upload ID is private.
+      type: object
+      required: [id, key, size_bytes, part_size_bytes, part_count, content_type, state, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
+        part_size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5368709120 }
+        part_count: { type: integer, minimum: 1, maximum: 10000 }
+        content_type: { type: string, maxLength: 255 }
+        state: { type: string, enum: [initiating, active, completing, aborting, completed, aborted] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    ObjectMultipartUploadList:
+      description: A page of durable provider-neutral resumable upload sessions.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectMultipartUpload' }
+        next_cursor: { type: string, format: uuid }
+    CreateObjectMultipartUploadRequest:
+      description: Final object identity and total size for a resumable upload.
+      type: object
+      additionalProperties: false
+      required: [key, size_bytes]
+      properties:
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
+        content_type: { type: string, maxLength: 255 }
+    ObjectMultipartPartSignRequest:
+      description: Requested lifetime for one exact-length part capability.
+      type: object
+      additionalProperties: false
+      properties:
+        expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
+    ObjectMultipartCompletedPart:
+      description: Provider ETag returned after uploading one numbered part.
+      type: object
+      additionalProperties: false
+      required: [part_number, etag]
+      properties:
+        part_number: { type: integer, minimum: 1, maximum: 10000 }
+        etag: { type: string, minLength: 1, maxLength: 256 }
+    ObjectMultipartPart:
+      description: A part confirmed by the upstream object storage provider.
+      type: object
+      additionalProperties: false
+      required: [part_number, etag, size_bytes, last_modified]
+      properties:
+        part_number: { type: integer, minimum: 1, maximum: 10000 }
+        etag: { type: string, minLength: 1, maxLength: 256 }
+        size_bytes: { type: integer, format: int64, minimum: 1 }
+        last_modified: { type: string, format: date-time }
+    ObjectMultipartPartList:
+      description: A page of provider-confirmed parts for an active upload.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectMultipartPart' }
+        next_part_number_marker: { type: integer, minimum: 1, maximum: 10000 }
+    CompleteObjectMultipartUploadRequest:
+      description: Complete ordered ETag manifest for every part in the session.
+      type: object
+      additionalProperties: false
+      required: [parts]
+      properties:
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items: { $ref: '#/components/schemas/ObjectMultipartCompletedPart' }
+
     OperatorRuntimeConfig:
       description: "One entry from the closed operator runtime-configuration catalog."
       type: object
@@ -12107,6 +12530,13 @@ components:
         installation_id: { type: integer, format: int64, minimum: 1 }
         repo_full_name: { type: string, pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' }
         production_branch: { type: string, maxLength: 256 }
+        deploy_branches:
+          type: object
+          maxProperties: 32
+          additionalProperties:
+            type: string
+            pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          description: GitHub branch names mapped to deployment environment scopes. An empty object clears existing rules.
 
     InstallBindResponse:
       description: "Successful bind. `binding_id` is the deterministic `bind-<appID>-<repo>` form used in audit log entries."
@@ -12116,6 +12546,9 @@ components:
         binding_id: { type: string }
         repo_full_name: { type: string }
         production_branch: { type: string }
+        deploy_branches:
+          type: object
+          additionalProperties: { type: string }
 
     RepoResponse:
       description: |
@@ -12134,9 +12567,9 @@ components:
     # ─── Account ──────────────────────────────────────────────────────────
 
     AccountResponse:
-      description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, and total app count."
+      description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
       type: object
-      required: [id, email, email_verified, plan, status, limits, usage_gb_hours, app_count]
+      required: [id, email, email_verified, plan, status, limits, usage_gb_hours, app_count, developer_app_count]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         email: { type: string, format: email }
@@ -12150,22 +12583,25 @@ components:
         limits: { $ref: '#/components/schemas/AccountLimits' }
         usage_gb_hours: { type: number }
         app_count: { type: integer }
+        developer_app_count: { type: integer, description: "Live `gregale dev` environments; these do not consume deployed_apps slots." }
         github_install_id: { type: [string, "null"] }
         plan_change_status: { type: string }
         requested_plan: { type: string, enum: [free, hobby, pro, scale] }
         effective_at: { type: string, format: date-time }
 
     AccountLimits:
-      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and max app-layer bytes per build."
+      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and writable ephemeral app-disk capacity."
       type: object
-      required: [plan, ram_mb, max_concurrency, deployed_apps, included_gb_hours, app_layer_max_mb]
+      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
+        developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
+        ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
 
     ChangePlanRequest:
       description: "Target plan for the change."
@@ -12713,10 +13149,11 @@ components:
     AppEffectiveLimits:
       description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
       type: object
-      required: [memory_limit_mb, plan_memory_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
+      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
       properties:
         memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
         plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
+        ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity for this app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
         guest_vcpus: { type: integer, description: "Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit." }
         cpu_limit_millicores: { type: integer, description: "Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores." }
         plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
@@ -13029,6 +13466,13 @@ components:
           type: string
           enum: [http1, http2, grpc]
           example: http1
+
+    AppRestartResponse:
+      description: "Correlation handle for an accepted app restart."
+      type: object
+      required: [wake_id]
+      properties:
+        wake_id: { type: string, format: uuid, description: "Wake id stamped on the replacement instance and wake timeline." }
 
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
@@ -13721,6 +14165,68 @@ components:
           type: string
           enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
           description: "Closed-6 stage vocabulary. `source_download` re-runs the whole pipeline (intentional retry-from-top); any other value resumes from that stage with all prior inputs copied from the source row."
+
+    # Issue #1182 §P1 PR-1 — resumable upload protocol (server-only).
+    # PR-2 wires the CLI; PR-3 deprecates the legacy single-shot
+    # source-tarball endpoint with RFC 8594 Sunset headers.
+    UploadStartRequest:
+      description: "Body of POST /v1/uploads. `total_size` must be ≤ the per-plan SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 + `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row only — the server does NOT re-verify it at commit time (ADR-115 trust boundary)."
+      type: object
+      required: [app_slug, total_size]
+      properties:
+        app_slug:
+          { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$', example: "my-app" }
+        total_size:
+          { type: integer, minimum: 1, maximum: 1073741824, description: "Total tarball bytes after gzip. Hard ceiling is 1 GiB; per-plan cap is enforced by the handler." }
+        sha256_hex:
+          { type: [string, "null"], pattern: '^[a-f0-9]{64}$', description: "Optional sha256 of the tarball for build_provenance. Server does not verify." }
+        deploy_options:
+          { $ref: '#/components/schemas/UploadDeployOptions' }
+
+    UploadDeployOptions:
+      type: object
+      additionalProperties: false
+      description: "Deployment metadata persisted with the upload session and applied at commit."
+      properties:
+        runtime: { type: string }
+        handler: { type: string }
+        dockerfile: { type: boolean }
+        source_root: { type: string }
+        reason: { type: string, maxLength: 280 }
+        tag: { type: string }
+        deployed_by: { type: string }
+        pr_number: { type: integer, minimum: 1 }
+        workflows:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowSpec' }
+
+    UploadStartResponse:
+      description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
+      type: object
+      required: [upload_id, chunk_size, total_size, expires_at]
+      properties:
+        upload_id:
+          { type: string, example: "a1b2c3d4e5f6" }
+        chunk_size:
+          { type: integer, minimum: 1, maximum: 67108864, description: "Server-decided chunk size in bytes. Default 8 MiB; 16 MiB for Scale." }
+        total_size:
+          { type: integer, description: "Echo of the requested total_size for client confirmation." }
+        expires_at:
+          { type: string, format: date-time, description: "ISO 8601 UTC timestamp; PATCH after this returns 410 Gone." }
+
+    UploadSessionResponse:
+      description: "Current resumable upload state. The received_bytes value is the next Upload-Offset a client should use."
+      type: object
+      required: [upload_id, app_slug, chunk_size, total_size, received_bytes, status, expires_at]
+      properties:
+        upload_id: { type: string }
+        app_slug: { type: string }
+        chunk_size: { type: integer, minimum: 1 }
+        total_size: { type: integer, minimum: 1 }
+        received_bytes: { type: integer, minimum: 0 }
+        status: { type: string, enum: [open, committed, cancelled, expired] }
+        expires_at: { type: string, format: date-time }
+        deployment_id: { type: [string, "null"] }
 
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
@@ -14984,6 +15490,27 @@ components:
           type: string
           description: "Wall-clock dwell at this stage, in time.ParseDuration form (e.g. '30s', '2m'). '0s' for the terminal hop."
           example: "2m"
+        mirror_clean:
+          oneOf:
+            - $ref: '#/components/schemas/MirrorCleanCondition'
+            - type: 'null'
+          description: "Require a clean traffic-mirror window before advancing out of this stage. Any status, schema, body, or crash diff aborts the rollout."
+
+    MirrorCleanCondition:
+      description: "Mirror quality gate for a canary stage (issue #1395 B1)."
+      type: object
+      required: [min_invocations, window_s]
+      properties:
+        min_invocations:
+          type: integer
+          minimum: 1
+          description: "Minimum completed mirror comparisons required in the window."
+          example: 100
+        window_s:
+          type: integer
+          minimum: 1
+          description: "Trailing mirror-summary window in seconds."
+          example: 300
 
     CanaryPresetSpec:
       description: |
@@ -15269,6 +15796,7 @@ components:
           any log, audit, or error.
         - `port` ∈ {0, 1..65535}. 0 = absent.
         - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
+        - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
         - `essential` defaults to true. If true and the workload
           exits non-zero, the dependency set fails
           (`failure_class=user_error`) and essential long-running
@@ -15314,6 +15842,11 @@ components:
           minimum: 0
           maximum: 512
           description: "Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API."
+        cpu_millicores:
+          type: integer
+          enum: [0, 250, 500, 1000]
+          default: 0
+          description: "Sustained cgroup CPU allowance in millicores. 0 = inherit app CPU quota."
         essential:
           type: boolean
           description: "Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."
@@ -15422,7 +15955,10 @@ components:
         default: { type: boolean, description: "True when this domain is the app's default (issue #961 / Mega-A PR-3). Set via `gregale domains set-default`." }
         cert_not_after: { type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field." }
         cert_sans: { type: array, items: { type: string }, description: "Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME points at a CDN, the SANs reveal which CDN." }
-        cert_status: { type: [string, "null"], description: "One of `issued` | `pending` | `dial_failed:<reason>`. The show endpoint surfaces this verbatim so the customer can distinguish DNS-not-propagated from cert-not-yet-issued from TLS-handshake-refused. Issue #961 / Mega-A PR-3 code-review round (MED-4)." }
+        cert_status: { type: [string, "null"], description: "Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, or failed; issue #1397 / F1). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge." }
+        cert_expires_at: { type: [string, "null"], format: date-time, description: "Durable certificate expiry timestamp recorded by the cert observer." }
+        cert_last_error: { type: [string, "null"], description: "Most recent certificate issuance/renewal error, when cert_status is failed." }
+        dns_last_checked_at: { type: [string, "null"], format: date-time, description: "Timestamp of the most recent DNS verification/doctor probe." }
 
     CreateCustomDomainRequest:
       description: "Bind a custom domain to an app."
@@ -16868,6 +17404,14 @@ components:
             - cold_start_pct
             - request_count
             - failed_invocations
+            - api_up
+            - account_spend_eur
+            - deployment_failed
+            - cert_expiry_seconds
+            - queue_depth
+            - new_error_fingerprint
+            - cold_wake_rate_pct
+            - daily_cost_cents
         comparison:
           type: string
           enum: [gt, gte, lt, lte]
@@ -16913,7 +17457,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -16948,7 +17492,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -21960,6 +22504,24 @@ components:
 
     Conflict:
       description: 'code: conflict'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    BadRequest:
+      description: 'code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as `source_too_large`) ship as the `code` field.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    Gone:
+      description: 'code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PayloadTooLarge:
+      description: 'code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from `source_too_large` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer''s chunk size or accumulated spool crosses the limit.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

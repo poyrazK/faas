@@ -309,6 +309,73 @@ type LivenessMetrics struct {
 	consecutiveGF *prometheus.GaugeVec
 }
 
+// DiskMetrics exposes the latest guest writable-root sample on a dedicated
+// vmmd registry. Per-instance labels are deleted when a VM is destroyed by
+// the Manager, so the label set remains bounded by live concurrency.
+type DiskMetrics struct {
+	reg      *prometheus.Registry
+	used     *prometheus.GaugeVec
+	capacity *prometheus.GaugeVec
+	pressure *prometheus.GaugeVec
+}
+
+func NewDiskMetrics() *DiskMetrics {
+	reg := prometheus.NewRegistry()
+	m := &DiskMetrics{
+		reg: reg,
+		used: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "vmmd_guest_disk_used_bytes",
+			Help: "Writable application filesystem bytes used inside the guest, sampled from the merged root.",
+		}, []string{"instance"}),
+		capacity: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "vmmd_guest_disk_capacity_bytes",
+			Help: "Writable application filesystem capacity inside the guest.",
+		}, []string{"instance"}),
+		pressure: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "vmmd_guest_disk_pressure",
+			Help: "Current writable filesystem pressure class (normal, near_full, full) per live instance.",
+		}, []string{"instance", "level"}),
+	}
+	reg.MustRegister(m.used, m.capacity, m.pressure)
+	return m
+}
+
+func (m *DiskMetrics) Registry() *prometheus.Registry {
+	if m == nil {
+		return prometheus.NewRegistry()
+	}
+	return m.reg
+}
+
+func (m *DiskMetrics) Observe(instance string, used, capacity int64, pressure DiskPressure) {
+	if m == nil {
+		return
+	}
+	if instance == "" {
+		instance = metricLabelUnknown
+	}
+	m.used.WithLabelValues(instance).Set(float64(used))
+	m.capacity.WithLabelValues(instance).Set(float64(capacity))
+	for _, level := range []DiskPressure{DiskPressureNormal, DiskPressureNearFull, DiskPressureFull} {
+		value := 0.0
+		if level == pressure {
+			value = 1
+		}
+		m.pressure.WithLabelValues(instance, level.String()).Set(value)
+	}
+}
+
+func (m *DiskMetrics) Delete(instance string) {
+	if m == nil || instance == "" {
+		return
+	}
+	m.used.DeleteLabelValues(instance)
+	m.capacity.DeleteLabelValues(instance)
+	for _, level := range []DiskPressure{DiskPressureNormal, DiskPressureNearFull, DiskPressureFull} {
+		m.pressure.DeleteLabelValues(instance, level.String())
+	}
+}
+
 // NewLivenessMetrics registers the two vmmd_guest_liveness_*
 // collectors on a fresh per-daemon registry. Pass the returned struct
 // to fcvm.NewManager.WithLivenessMetrics (the writer) AND to the

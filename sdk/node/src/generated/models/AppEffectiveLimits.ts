@@ -15,6 +15,10 @@ export type AppEffectiveLimits = {
    */
   plan_memory_max_mb: number;
   /**
+   * Maximum writable ephemeral app-disk capacity for this app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb.
+   */
+  ephemeral_disk_max_mb: number;
+  /**
    * Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit.
    */
   guest_vcpus: number;

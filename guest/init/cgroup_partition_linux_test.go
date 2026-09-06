@@ -45,6 +45,17 @@ func TestPrepareWorkloadCgroupUsesRequestedMemory(t *testing.T) {
 	if string(body) != want {
 		t.Fatalf("main memory.max = %q, want %q", body, want)
 	}
+	cpuLeaf, err := prepareWorkloadCgroup("sidecar", "metrics", 0, slog.Default(), 500)
+	if err != nil {
+		t.Fatalf("prepareWorkloadCgroup cpu-only: %v", err)
+	}
+	cpuBody, err := os.ReadFile(filepath.Join(cpuLeaf, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read sidecar cpu.max: %v", err)
+	}
+	if got, want := string(cpuBody), "50000 100000\n"; got != want {
+		t.Fatalf("sidecar cpu.max = %q, want %q", got, want)
+	}
 	if got, err := prepareWorkloadCgroup("main", "app", 0, slog.Default()); err != nil || got != "" {
 		t.Fatalf("zero RAM should skip the child cgroup, got %q", got)
 	}

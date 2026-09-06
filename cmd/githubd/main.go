@@ -187,6 +187,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	source := newInstallationSourceFetcher(installsAdapter, gitFetcher, identity, log)
 	webhookSecret := loadGithubWebhookSecret(os.Getenv)
 	deliveryStore := githubd.NewPGWebhookDeliveryStore(pool)
+	ops.Registry().MustRegister(githubd.NewRecoveryCollector(pool))
 
 	// Legacy installation-scoped webhook secret resolver. The
 	// pool is the same one state.Store wires through; the adapter
@@ -389,6 +390,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				webhookSvc.WriteAppCheck = func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug string, phase githubdgrpc.CheckPhase, summary string) error {
 					return checks.WriteAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, phase, "", summary)
 				}
+				webhookSvc.WriteScopedAppCheck = func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug, scope string, phase githubdgrpc.CheckPhase, summary string) error {
+					return checks.WriteScopedAppCheck(ctx, installationID, repoFullName, commitSHA, appSlug, scope, phase, "", summary)
+				}
+				webhookSvc.WriteSkippedCheckForInstallation = checks.WriteSkippedCheckForInstallation
 				// PR-A's preview Check Run seams were
 				// declared on Service but never wired to the
 				// live ChecksAPI — every preview event
@@ -415,15 +420,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	if checks != nil {
-		checkNotifications, subErr := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyGithubDeploymentChanged}, log)
-		if subErr != nil {
-			return fmt.Errorf("githubd: subscribe deployment checks: %w", subErr)
-		}
-		go func() {
-			for notification := range checkNotifications {
-				syncDeploymentCheck(ctx, pool, checks, notification.Payload, log)
-			}
-		}()
+		checkUpdates := githubd.NewPGCheckUpdateStore(pool)
+		go githubd.RunCheckUpdateWorker(ctx, checkUpdates, func(workerCtx context.Context, deploymentID string) error {
+			return syncDeploymentCheck(workerCtx, pool, checks, deploymentID)
+		}, log)
 	}
 
 	// The gRPC server hands out the RealService (full slice 8

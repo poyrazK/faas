@@ -1095,6 +1095,13 @@ type App struct {
 	CreatedAt          time.Time
 }
 
+// IsDeveloperApp reports whether an app is the expiring environment created
+// by `gregale dev`. Developer sessions reuse preview storage, but PR previews
+// have a positive PR number and remain on the normal deployed-app quota.
+func IsDeveloperApp(app App) bool {
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0
+}
+
 // EvictionPriorityOrBestEffort (issue #475) snaps the empty Go zero
 // to the schema DEFAULT 'best_effort' so the INSERT path never trips
 // the CHECK constraint apps_eviction_priority_chk on a missing column.
@@ -2004,13 +2011,28 @@ type BuildProvenance struct {
 	FrameworkVer string
 }
 
+// CustomDomainCertStatus is the durable TLS lifecycle for a legacy custom
+// domain. The values intentionally match the API contract from issue #1397.
+type CustomDomainCertStatus string
+
+const (
+	CustomDomainCertPending  CustomDomainCertStatus = "pending"
+	CustomDomainCertIssued   CustomDomainCertStatus = "issued"
+	CustomDomainCertRenewing CustomDomainCertStatus = "renewing"
+	CustomDomainCertFailed   CustomDomainCertStatus = "failed"
+)
+
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
-	Domain         string
-	AppID          string
-	ChallengeToken string
-	VerifiedAt     time.Time // zero = unverified
+	Domain           string
+	AppID            string
+	ChallengeToken   string
+	VerifiedAt       time.Time // zero = unverified
+	CertStatus       CustomDomainCertStatus
+	CertExpiresAt    time.Time
+	CertLastError    string
+	DNSLastCheckedAt time.Time
 }
 
 // Verified reports whether the TXT challenge has been satisfied.
@@ -2178,21 +2200,26 @@ type OperatorIntent struct {
 // cert_expiry_seconds / queue_depth). The pkg/api.AllowedAlertRuleMetrics
 // slice and the alert_rules_metric_chk DB CHECK mirror these byte-for-byte
 // (migrations/00349_alert_rules_extend_metrics_chk.sql).
+// Issue #1395 B3 adds new_error_fingerprint, cold_wake_rate_pct, and
+// daily_cost_cents from the durable observability rollups.
 type AlertMetric string
 
 const (
-	AlertMetricErrorRate         AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50        AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95        AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99        AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct      AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount      AlertMetric = "request_count"
-	AlertMetricFailedInvocs      AlertMetric = "failed_invocations"
-	AlertMetricAPIUp             AlertMetric = "api_up"
-	AlertMetricAccountSpendEUR   AlertMetric = "account_spend_eur"
-	AlertMetricFailedDeployments AlertMetric = "deployment_failed"
-	AlertMetricCertExpirySeconds AlertMetric = "cert_expiry_seconds"
-	AlertMetricQueueDepth        AlertMetric = "queue_depth"
+	AlertMetricErrorRate           AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50          AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95          AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99          AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct        AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount        AlertMetric = "request_count"
+	AlertMetricFailedInvocs        AlertMetric = "failed_invocations"
+	AlertMetricAPIUp               AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR     AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments   AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds   AlertMetric = "cert_expiry_seconds"
+	AlertMetricQueueDepth          AlertMetric = "queue_depth"
+	AlertMetricNewErrorFingerprint AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct     AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents      AlertMetric = "daily_cost_cents"
 	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
 	// Prometheus-counter-backed tripwire for a canary sitting at the
 	// same step past StuckAfterDuration. The actual firing happens
@@ -4580,8 +4607,14 @@ type AppSecret struct {
 	// probabilistically non-deterministic, so a
 	// ciphertext-derived hash would diverge for every row).
 	ValueHash string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// ManagedPostgresBindingID and its opaque credential fields are populated
+	// only by the managed PostgreSQL credential sink. Customer writes cannot
+	// replace or delete an owned row while its binding is active.
+	ManagedPostgresBindingID    string
+	ManagedCredentialRef        string
+	ManagedCredentialGeneration int64
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 // AccountAppSecret is the per-row shape returned by

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,19 +39,12 @@ var resumableOffsetRE = regexp.MustCompile(`server is at ([0-9]+)`)
 // request is retried or the server has to resume from a CAS conflict.
 type resumableUploadProgress func(uploaded, total int64)
 
-// canUseResumableUpload reports whether the PR-1 server commit surface can
-// represent this deploy without dropping options. Runtime/handler,
-// Dockerfile mode, canaries, traffic weights, and deployment annotations are
-// intentionally left on the multipart path until the upload commit request
-// carries those fields too. A non-empty source root also stays on multipart
-// because the resumable commit protocol has no source-context field.
+// canUseResumableUpload reports whether the resumable session can represent
+// this deploy. Metadata is persisted with the session; traffic/canary remain
+// on the legacy path until the rollout mutation is made transactional with
+// upload commit.
 func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
-	return sh == shapeApp &&
-		runtime == "" &&
-		handler == "" &&
-		!dockerfile &&
-		sourceRoot == "" &&
-		ann.Reason == "" && ann.Tag == "" && ann.DeployedBy == "" && ann.PRNumber == 0 && len(ann.Workflows) == 0 &&
+	return (sh == shapeApp || sh == shapeFunction) &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&
 		canaryStages == ""
@@ -57,9 +52,10 @@ func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, s
 
 // DeployResumableTarball streams a local archive through the resumable upload
 // protocol. supported=false means the API is an older server and the caller
-// should use the legacy multipart endpoint. The archive is never buffered in
-// memory; only the server-selected chunk and the SHA-256 state are retained.
-func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
+// should use the legacy multipart endpoint. A small local state record keeps
+// the server session alive across CLI process restarts; the archive itself is
+// never copied to the local state directory.
+func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress, options ...api.UploadDeployOptions) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
 	f, err := openCustomerFile(path)
 	if err != nil {
 		return api.DeploymentResponse{}, "", true, err
@@ -72,36 +68,153 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 	if info.Size() <= 0 {
 		return api.DeploymentResponse{}, "", true, errors.New("tarball is empty")
 	}
+	archivePath, err := filepath.Abs(path)
+	if err != nil {
+		return api.DeploymentResponse{}, "", true, fmt.Errorf("absolutize tarball: %w", err)
+	}
+	archiveSHA256, err := hashUploadArchive(f)
+	if err != nil {
+		return api.DeploymentResponse{}, "", true, err
+	}
+	optionsSHA256, err := deployOptionsFingerprint(options)
+	if err != nil {
+		return api.DeploymentResponse{}, "", true, err
+	}
+	statePath, err := uploadStatePath(slug, archivePath)
+	if err != nil {
+		return api.DeploymentResponse{}, "", true, err
+	}
+	stateLock, err := lockResumableUploadState(ctx, statePath)
+	if err != nil {
+		return api.DeploymentResponse{}, "", true, err
+	}
+	defer func() {
+		_ = stateLock.Unlock()
+		_ = stateLock.Close()
+	}()
+
+	state, stateFound, stateErr := loadResumableUploadState(statePath)
+	if stateErr != nil {
+		// A corrupt local record cannot safely be resumed. It is only
+		// recovery metadata, so discard it and start a clean session.
+		if stateFound {
+			removeResumableUploadState(statePath)
+		}
+		stateFound = false
+		if !jsonOutput {
+			PrintWarn(osStderr, "ignoring invalid upload recovery state: %v", stateErr)
+		}
+	}
+	if stateFound && !uploadStateMatches(state, slug, archivePath, info, archiveSHA256, optionsSHA256) {
+		// Do not leave an old spool consuming the account's upload budget
+		// when the same local path now contains a different archive.
+		if !jsonOutput {
+			PrintWarn(osStderr, "upload recovery state does not match this archive or deploy options; starting a new upload")
+		}
+		cancelUploadBestEffort(ctx, c, state.UploadID)
+		removeResumableUploadState(statePath)
+		stateFound = false
+	}
 
 	for restart := 0; restart <= resumableUploadMaxRestarts; restart++ {
-		if restart > 0 {
-			if _, err := f.Seek(0, io.SeekStart); err != nil {
-				return api.DeploymentResponse{}, "", true, fmt.Errorf("rewind tarball: %w", err)
-			}
-			if !jsonOutput {
-				PrintWarn(osStderr, "upload session ended; restarting source upload (%d/%d)", restart, resumableUploadMaxRestarts)
+		var session api.ResumableUploadSession
+		statePersisted := false
+		if restart == 0 && stateFound {
+			remote, discoverErr := c.GetUploadSession(ctx, state.UploadID)
+			if discoverErr == nil {
+				switch strings.ToLower(remote.Status) {
+				case "committed", "complete", "completed":
+					if remote.DeploymentID == nil || *remote.DeploymentID == "" {
+						return api.DeploymentResponse{}, "", true, errors.New("upload session is committed without a deployment id")
+					}
+					dep, err := c.GetDeployment(ctx, *remote.DeploymentID)
+					if err != nil {
+						return api.DeploymentResponse{}, "", true, fmt.Errorf("recover committed upload deployment: %w", err)
+					}
+					removeResumableUploadState(statePath)
+					return dep, archiveSHA256, true, nil
+				case "open", "":
+					if err := validateDiscoveredUpload(state, remote, info.Size()); err != nil {
+						cancelUploadBestEffort(ctx, c, state.UploadID)
+						removeResumableUploadState(statePath)
+						stateFound = false
+					} else {
+						session = api.ResumableUploadSession{
+							UploadID: remote.UploadID, AppSlug: remote.AppSlug,
+							ChunkSize: int64(remote.ChunkSize), TotalSize: remote.TotalSize,
+							ReceivedBytes: remote.ReceivedBytes, Status: remote.Status,
+							ExpiresAt: remote.ExpiresAt, DeploymentID: remote.DeploymentID,
+						}
+						statePersisted = true
+					}
+				default:
+					removeResumableUploadState(statePath)
+					stateFound = false
+				}
+			} else if isUploadSessionRestart(discoverErr) {
+				removeResumableUploadState(statePath)
+				stateFound = false
+			} else {
+				return api.DeploymentResponse{}, "", true, fmt.Errorf("discover upload session: %w", discoverErr)
 			}
 		}
 
-		session, err := c.StartUpload(ctx, slug, info.Size(), "")
-		if err != nil {
-			if errors.Is(err, api.ErrResumableUploadUnsupported) {
-				return api.DeploymentResponse{}, "", false, nil
+		if session.UploadID == "" {
+			if restart > 0 {
+				if _, err := f.Seek(0, io.SeekStart); err != nil {
+					return api.DeploymentResponse{}, "", true, fmt.Errorf("rewind tarball: %w", err)
+				}
+				if !jsonOutput {
+					PrintWarn(osStderr, "upload session ended; restarting source upload (%d/%d)", restart, resumableUploadMaxRestarts)
+				}
 			}
-			return api.DeploymentResponse{}, "", true, err
+			session, err = c.StartUpload(ctx, slug, info.Size(), archiveSHA256, options...)
+			if err != nil {
+				if errors.Is(err, api.ErrResumableUploadUnsupported) {
+					return api.DeploymentResponse{}, "", false, nil
+				}
+				return api.DeploymentResponse{}, "", true, err
+			}
+			state = resumableUploadState{
+				Version: resumableUploadStateVersion, UploadID: session.UploadID,
+				AppSlug: slug, APIBase: apiBase(), ArchivePath: archivePath, ArchiveSize: info.Size(),
+				ArchiveSHA256: archiveSHA256, ArchiveModTimeUnixNano: info.ModTime().UnixNano(),
+				DeployOptionsSHA256: optionsSHA256, TotalSize: session.TotalSize,
+				ChunkSize: session.ChunkSize, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			}
+			if err := saveResumableUploadState(statePath, state); err != nil {
+				if !jsonOutput {
+					PrintWarn(osStderr, "upload recovery will not survive a CLI restart: %v", err)
+				}
+			} else {
+				statePersisted = true
+			}
 		}
+
 		if session.TotalSize != info.Size() {
 			cancelUploadBestEffort(ctx, c, session.UploadID)
+			if statePersisted {
+				removeResumableUploadState(statePath)
+			}
 			return api.DeploymentResponse{}, "", true, fmt.Errorf("upload session size mismatch: server=%d local=%d", session.TotalSize, info.Size())
 		}
 		if session.ChunkSize <= 0 || session.ChunkSize > resumableUploadMaxChunkSize {
 			cancelUploadBestEffort(ctx, c, session.UploadID)
+			if statePersisted {
+				removeResumableUploadState(statePath)
+			}
 			return api.DeploymentResponse{}, "", true, fmt.Errorf("upload session returned invalid chunk size %d", session.ChunkSize)
 		}
 
-		digest, err := uploadSessionChunks(ctx, c, session, f, progress)
+		if session.ReceivedBytes > 0 && progress != nil {
+			progress(session.ReceivedBytes, session.TotalSize)
+		}
+		err = uploadSessionChunks(ctx, c, session, f, progress)
 		if err != nil {
 			cancelUploadBestEffort(ctx, c, session.UploadID)
+			if statePersisted {
+				removeResumableUploadState(statePath)
+			}
 			if ctx.Err() != nil {
 				return api.DeploymentResponse{}, "", true, ctx.Err()
 			}
@@ -113,13 +226,16 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 
 		dep, err := commitUploadWithRetry(ctx, c, session.UploadID)
 		if err == nil {
-			return dep, digest, true, nil
+			removeResumableUploadState(statePath)
+			return dep, archiveSHA256, true, nil
 		}
 		if ctx.Err() != nil {
 			return api.DeploymentResponse{}, "", true, ctx.Err()
 		}
 		if isUploadSessionRestart(err) && restart < resumableUploadMaxRestarts {
 			cancelUploadBestEffort(ctx, c, session.UploadID)
+			removeResumableUploadState(statePath)
+			stateFound = false
 			continue
 		}
 		return api.DeploymentResponse{}, "", true, err
@@ -127,10 +243,61 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 	return api.DeploymentResponse{}, "", true, errors.New("resumable upload exhausted its restart budget")
 }
 
-func uploadSessionChunks(ctx context.Context, c *Client, session api.ResumableUploadSession, f *os.File, progress resumableUploadProgress) (string, error) {
+func hashUploadArchive(f *os.File) (string, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("rewind tarball for fingerprint: %w", err)
+	}
 	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("fingerprint tarball: %w", err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("rewind tarball after fingerprint: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func uploadStateMatches(state resumableUploadState, slug, archivePath string, info os.FileInfo, archiveSHA256, optionsSHA256 string) bool {
+	if state.Version != resumableUploadStateVersion || state.UploadID == "" || state.AppSlug != slug || state.APIBase != apiBase() || state.ArchivePath != archivePath || state.ArchiveSize != info.Size() || state.DeployOptionsSHA256 != optionsSHA256 {
+		return false
+	}
+	if state.ArchiveSHA256 != "" {
+		return strings.EqualFold(state.ArchiveSHA256, archiveSHA256)
+	}
+	return state.ArchiveModTimeUnixNano == info.ModTime().UnixNano()
+}
+
+func validateDiscoveredUpload(state resumableUploadState, remote api.UploadSessionResponse, localSize int64) error {
+	if remote.UploadID == "" {
+		return errors.New("server returned an empty upload id")
+	}
+	if remote.UploadID != state.UploadID {
+		return fmt.Errorf("server returned upload id %q, want %q", remote.UploadID, state.UploadID)
+	}
+	if remote.AppSlug != "" && remote.AppSlug != state.AppSlug {
+		return fmt.Errorf("server returned app %q, want %q", remote.AppSlug, state.AppSlug)
+	}
+	if remote.TotalSize != localSize || remote.TotalSize != state.TotalSize {
+		return fmt.Errorf("server returned upload size %d, want %d", remote.TotalSize, localSize)
+	}
+	if remote.ChunkSize <= 0 || (state.ChunkSize > 0 && int64(remote.ChunkSize) != state.ChunkSize) {
+		return fmt.Errorf("server returned chunk size %d, want %d", remote.ChunkSize, state.ChunkSize)
+	}
+	if remote.ReceivedBytes < 0 || remote.ReceivedBytes > remote.TotalSize {
+		return fmt.Errorf("server returned received offset %d for size %d", remote.ReceivedBytes, remote.TotalSize)
+	}
+	return nil
+}
+
+func uploadSessionChunks(ctx context.Context, c *Client, session api.ResumableUploadSession, f *os.File, progress resumableUploadProgress) error {
+	if session.ReceivedBytes < 0 || session.ReceivedBytes > session.TotalSize {
+		return fmt.Errorf("upload session returned invalid received offset %d", session.ReceivedBytes)
+	}
+	if _, err := f.Seek(session.ReceivedBytes, io.SeekStart); err != nil {
+		return fmt.Errorf("seek tarball to upload offset %d: %w", session.ReceivedBytes, err)
+	}
 	buf := make([]byte, int(session.ChunkSize))
-	offset := int64(0)
+	offset := session.ReceivedBytes
 	for offset < session.TotalSize {
 		want := session.TotalSize - offset
 		if want > int64(len(buf)) {
@@ -138,24 +305,23 @@ func uploadSessionChunks(ctx context.Context, c *Client, session api.ResumableUp
 		}
 		n, readErr := io.ReadFull(f, buf[:int(want)])
 		if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) && !errors.Is(readErr, io.EOF) {
-			return "", fmt.Errorf("read tarball at offset %d: %w", offset, readErr)
+			return fmt.Errorf("read tarball at offset %d: %w", offset, readErr)
 		}
 		if int64(n) != want {
-			return "", fmt.Errorf("tarball changed during upload: read %d bytes at offset %d, wanted %d", n, offset, want)
+			return fmt.Errorf("tarball changed during upload: read %d bytes at offset %d, wanted %d", n, offset, want)
 		}
 
 		chunk := buf[:n]
 		next, err := appendUploadWithRetry(ctx, c, session.UploadID, offset, chunk)
 		if err != nil {
-			return "", err
+			return err
 		}
-		_, _ = h.Write(chunk)
 		offset = next
 		if progress != nil {
 			progress(offset, session.TotalSize)
 		}
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return nil
 }
 
 func appendUploadWithRetry(ctx context.Context, c *Client, uploadID string, offset int64, chunk []byte) (int64, error) {
@@ -239,8 +405,11 @@ func committedDeploymentID(err error) string {
 }
 
 func isUploadSessionRestart(err error) bool {
-	return isUploadProblem(err, uploadSessionExpiredCode) ||
-		isUploadProblem(err, uploadSessionNotFoundCode)
+	if isUploadProblem(err, uploadSessionExpiredCode) || isUploadProblem(err, uploadSessionNotFoundCode) {
+		return true
+	}
+	var ae *api.APIError
+	return errors.As(err, &ae) && (ae.Problem.Status == http.StatusNotFound || ae.Problem.Status == http.StatusGone)
 }
 
 func isUploadProblem(err error, code string) bool {

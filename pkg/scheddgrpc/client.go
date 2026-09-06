@@ -292,15 +292,16 @@ func (c *Client) AdmitMirrorInstance(ctx context.Context, appID, mirrorDeploymen
 	return resp.GetInstanceId(), resp.GetWakeId(), nil
 }
 
-// ReportActivity flushes a batch of last_request_at touches to schedd. Returns
+// ReportActivity flushes batched last_request_at and request-count deltas to schedd. Returns
 // the number of rows schedd applied (touches for parked/gone instances are
 // silently dropped on its side).
 func (c *Client) ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error) {
 	pb := make([]*scheddpb.Touch, 0, len(touches))
 	for _, t := range touches {
 		pb = append(pb, &scheddpb.Touch{
-			InstanceId: t.InstanceID,
-			UnixMs:     t.LastRequest.UnixMilli(),
+			InstanceId:   t.InstanceID,
+			UnixMs:       t.LastRequest.UnixMilli(),
+			RequestDelta: t.RequestDelta,
 		})
 	}
 	resp, err := c.cli.ReportActivity(ctx, &scheddpb.ReportActivityRequest{Touches: pb})
@@ -452,8 +453,11 @@ type InstanceStatsRow struct {
 	// Same kernel counter family (interface bytes, includes
 	// Ethernet framing); same TxValid gate as egress (a cache
 	// regression / first-sample state zeroes BOTH columns).
-	NetRxBytes uint64
-	RxValid    uint32
+	NetRxBytes        uint64
+	RxValid           uint32
+	DiskUsedBytes     int64
+	DiskCapacityBytes int64
+	DiskValid         bool
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is the
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Empty/nil when the
@@ -481,7 +485,7 @@ func (c *Client) ListInstanceStats(ctx context.Context) ([]InstanceStatsRow, err
 		for _, v := range r.GetSidecarRamMbs() {
 			sidecarMBs = append(sidecarMBs, int(v))
 		}
-		out = append(out, InstanceStatsRow{
+		row := InstanceStatsRow{
 			InstanceID:   r.GetInstanceId(),
 			AppID:        r.GetAppId(),
 			SidecarMBs:   sidecarMBs,
@@ -492,7 +496,13 @@ func (c *Client) ListInstanceStats(ctx context.Context) ([]InstanceStatsRow, err
 			TxValid:      r.GetTxValid(),
 			NetRxBytes:   r.GetNetRxBytes(),
 			RxValid:      r.GetRxValid(),
-		})
+		}
+		if used, capacity := r.GetDiskUsedBytes(), r.GetDiskCapacityBytes(); used != nil && capacity != nil && capacity.GetValue() > 0 && used.GetValue() >= 0 && used.GetValue() <= capacity.GetValue() {
+			row.DiskUsedBytes = used.GetValue()
+			row.DiskCapacityBytes = capacity.GetValue()
+			row.DiskValid = true
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }

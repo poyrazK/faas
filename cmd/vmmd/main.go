@@ -669,6 +669,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Manager side, so a producer binary that doesn't wire
 	// metrics still runs.
 	frm := fcvm.NewFrameworkReadyMetrics()
+	dsm := fcvm.NewDiskMetrics()
 	// ADR-098 C11: wake-phase histogram (vmmd_wake_phase_duration_seconds).
 	// Mirrors frm / cbm — dedicated per-vmmd registry, mounted
 	// alongside on the cmd-side mux below.
@@ -800,6 +801,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
+		WithDiskMetrics(dsm).
 		SetWakePhaseMetrics(wpm).
 		// Issue #470 / PR #470-FU-B: attach the SQL persistence
 		// seam so the framework_ready DGRAM receipt path can
@@ -1213,7 +1215,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Optional /metrics endpoint.
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
-		mux := newMetricsMux(ops, cbm, frm, wpm)
+		mux := newMetricsMux(ops, cbm, frm, wpm, dsm)
 		// Issue #571 PR-A2: /healthz + /readyz on the metrics mux
 		// (operator-side, loopback-only) for the LB scrape and
 		// on-box monitoring. Source of truth is the same

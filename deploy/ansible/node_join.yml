@@ -654,6 +654,32 @@
         - faas-builderd.service
         - faas-imaged.service
 
+    # `systemctl is-active` only proves that a process is alive. A restart
+    # failure or an out-of-band service override could leave an older daemon
+    # running after /opt/faas/current moved. Check the process executable
+    # against both the requested release directory and the current symlink so
+    # activation cannot promote a host that is serving an older release.
+    - name: Require active compute daemons to execute the installed release  # noqa command-instead-of-shell — process identity requires shell variables
+      ansible.builtin.shell: |
+        set -euo pipefail
+        pid="$(systemctl show -p MainPID --value "faas-{{ item }}.service")"
+        test "$pid" -gt 1
+        expected="/opt/faas/releases/{{ faas_join_release_git_sha }}/bin/{{ item }}"
+        current="$(readlink -f "/opt/faas/current/bin/{{ item }}")"
+        running="$(readlink -f "/proc/${pid}/exe")"
+        if [[ "$current" != "$expected" || "$running" != "$current" ]]; then
+          echo "expected=$expected current=$current running=$running" >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+      loop:
+        - vmmd
+        - gatewayd-internal
+        - builderd
+        - imaged
+
     - name: Report local node readiness to the controller
       ansible.builtin.debug:
         msg: >-

@@ -9,7 +9,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`apps`](#apps) | List your apps |
-| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|--profile NAME\|--ram N\|…]) |
+| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|restart\|--profile NAME\|--ram N\|…]) |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Build provenance + sbom (build provenance &lt;id&gt;\|build sbom &lt;id&gt;) |
@@ -72,6 +72,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
 | [`mirror`](#mirror) | Manage traffic mirroring (mirror list\|create\|info\|update\|rm\|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only) |
+| [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
@@ -228,7 +229,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 ## app
 
-Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|--profile NAME|--ram N|…])
+Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
 `gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>]`
 
@@ -246,6 +247,10 @@ Set max_concurrency / resource profile / RAM / CPU
 ### app rename
 
 Rename an app
+
+### app restart
+
+Park and wake from a fresh snapshot
 
 ### app security
 
@@ -752,6 +757,10 @@ Re-verify DNS + cert for a domain
 
 Show a domain&#39;s cert details
 
+### domains status
+
+Show durable TLS status for all domains
+
 ### domains doctor
 
 5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)
@@ -761,7 +770,7 @@ Show a domain&#39;s cert details
 
 Sync the dirty working tree to a stable remote developer environment
 
-`gregale dev [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--once] [--stop] [--no-logs]`
+`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--once] [--stop] [--no-logs]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -771,6 +780,10 @@ Sync the dirty working tree to a stable remote developer environment
 | `--once` | deploy once and exit |  |
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
+
+### dev status
+
+show developer-environment quota usage
 
 
 ## preview
@@ -1553,6 +1566,21 @@ Aggregate mirror drift counts over a window
 | `--app <slug>` | app slug | required |
 | `--id <ID>` | mirror rule id | required |
 | `--window <WINDOW>` | summary window: 1h \| 24h \| 7d (default 1h) | one of `1h` · `24h` · `7d` |
+
+
+## cache
+
+Manage response cache (cache purge &lt;slug&gt; [--path GLOB])
+
+`gregale cache [<subcommand>] <slug>`
+
+### cache purge
+
+Purge cached responses for an app
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <GLOB>` | optional normalized request path glob |  |
 
 
 ## webhooks

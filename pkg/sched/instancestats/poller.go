@@ -273,6 +273,10 @@ func (p *Poller) decodeTelemetrySnapshot(
 			CPUSeconds:       math.NaN(),
 			ThrottledUsec:    math.NaN(),
 		}
+		if in.RequestCountTotal != nil && *in.RequestCountTotal >= 0 {
+			row.RequestCountTotal = uint64(*in.RequestCountTotal)
+			row.RequestCountValid = true
+		}
 		if in.CPUPct != nil {
 			row.CPUPct = *in.CPUPct
 			row.CPU = Valid
@@ -293,6 +297,13 @@ func (p *Poller) decodeTelemetrySnapshot(
 		if in.NetRxBytes != nil {
 			row.RXBytes = uint64(*in.NetRxBytes)
 			row.RX = Valid
+		}
+		if in.DiskUsedBytes != nil && in.DiskCapacityBytes != nil &&
+			*in.DiskUsedBytes >= 0 && *in.DiskCapacityBytes > 0 &&
+			*in.DiskUsedBytes <= *in.DiskCapacityBytes {
+			row.DiskUsedBytes = *in.DiskUsedBytes
+			row.DiskCapacityBytes = *in.DiskCapacityBytes
+			row.DiskValid = true
 		}
 		if in.ResidentBytes != nil {
 			mib := float64(*in.ResidentBytes) / float64(1024*1024)
@@ -476,6 +487,13 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		if in.NetRxBytes != nil {
 			row.RXBytes = uint64(*in.NetRxBytes)
 			row.RX = Valid
+		}
+		if in.DiskUsedBytes != nil && in.DiskCapacityBytes != nil &&
+			*in.DiskUsedBytes >= 0 && *in.DiskCapacityBytes > 0 &&
+			*in.DiskUsedBytes <= *in.DiskCapacityBytes {
+			row.DiskUsedBytes = *in.DiskUsedBytes
+			row.DiskCapacityBytes = *in.DiskCapacityBytes
+			row.DiskValid = true
 		}
 		// RSS: wire sends *int64. nil → Unknown; non-nil →
 		// convert bytes → MiB.

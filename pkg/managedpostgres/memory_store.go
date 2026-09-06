@@ -13,10 +13,19 @@ type MemoryStore struct {
 	mu        sync.Mutex
 	databases map[string]Database
 	names     map[string]string
+	bindings  map[string]Binding
+	targets   map[string]string
+	usage     map[usageKey]UsageRecord
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{databases: map[string]Database{}, names: map[string]string{}}
+	return &MemoryStore{
+		databases: map[string]Database{},
+		names:     map[string]string{},
+		bindings:  map[string]Binding{},
+		targets:   map[string]string{},
+		usage:     map[usageKey]UsageRecord{},
+	}
 }
 
 func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (Database, bool, error) {
@@ -235,6 +244,11 @@ func (s *MemoryStore) FinishDelete(_ context.Context, databaseID, leaseToken str
 	}
 	if database.State != StateDeleting || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return Database{}, ErrConflict
+	}
+	for _, candidate := range s.databases {
+		if candidate.RestoreSourceDatabaseID == database.ID && candidate.State != StateDeleted {
+			return Database{}, ErrConflict
+		}
 	}
 	database.State = StateDeleted
 	database.LastErrorCode = ""

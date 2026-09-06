@@ -444,11 +444,11 @@
     state: directory
     owner: faas-imaged
     group: faas
-    mode: "0770"
+    mode: "2770"
 
 - name: compute_only_service — normalize existing OCI cache shard directories
   ansible.builtin.command:
-    cmd: "find /var/lib/faas/cache -type d -exec chown faas-imaged:faas {} + -exec chmod 0770 {} +"
+    cmd: "find /var/lib/faas/cache -type d -exec chown faas-imaged:faas {} + -exec chmod 2770 {} +"
   changed_when: false
 
 # Tier 3 / ADR-038 §Phase 3 — cosign sign-keypair (build attestation).

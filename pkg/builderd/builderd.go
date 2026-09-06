@@ -461,8 +461,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		recipe.BuilderBaseIdentity = buildEnvironment.BuilderBaseIdentity
 		recipe.TargetPlatform = buildEnvironment.TargetPlatform
 	}
-	if cached, ok := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable); ok {
+	if cached, ok := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID); ok {
 		if b.stopIfBuildCancelled(ctx, build.ID) {
+			b.cache.ReleaseLease(cached.Path)
 			return BuildResult{}, nil
 		}
 		// Cache hit is one of the two real "build started" sites
@@ -474,8 +475,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		buildStart = time.Now()
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("cache hit (%s, %d bytes) — skipping vm spawn\n", cached.Path, cached.Bytes))
-		return b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
+		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, buildStart)
+		if completeErr != nil || completed.BuildID == "" {
+			b.cache.ReleaseLease(cached.Path)
+		}
+		return completed, completeErr
 
 	}
 
@@ -712,15 +717,20 @@ func (b *Builderd) buildEnvironmentStillCurrent(want BuildEnvironment) bool {
 	return true
 }
 
-func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment BuildEnvironment, available bool) (CacheEntry, bool) {
+func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment BuildEnvironment, available bool, deploymentID string) (CacheEntry, bool) {
 	if !available {
 		return CacheEntry{}, false
 	}
-	cached, ok := b.cache.LookupBuild(recipe)
+	cached, ok, err := b.cache.LeaseBuild(recipe, deploymentID)
+	if err != nil {
+		b.log.Warn("builderd: build cache lease failed; rebuilding", "deployment", deploymentID, "err", err)
+		return CacheEntry{}, false
+	}
 	if !ok {
 		return CacheEntry{}, false
 	}
 	if !b.buildEnvironmentStillCurrent(environment) {
+		b.cache.ReleaseLease(cached.Path)
 		return CacheEntry{}, false
 	}
 	return cached, true

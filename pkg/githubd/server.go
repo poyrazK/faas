@@ -416,6 +416,20 @@ func (s *Server) writeWebhookResult(w http.ResponseWriter, result reconcile.Resu
 			observe(nil)
 			return
 		}
+		if IsSkipDeploy(err) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ignored","reason":"skip_marker"}`))
+			observe(nil)
+			return
+		}
+		if isReleaseTagRejected(err) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(w, `{"status":"ignored","reason":%q}`, releaseTagRejectReason(err))
+			observe(nil)
+			return
+		}
 		s.Log.Error("githubd webhook handle", "err", err)
 		http.Error(w, "internal", http.StatusInternalServerError)
 		observe(err)

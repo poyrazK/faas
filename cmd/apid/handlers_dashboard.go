@@ -155,6 +155,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// (in-flight rollouts / recent audit / active alerts);
 			// bounded by safedeploy_in_flight_rollouts gauge.
 			s.renderSafeReleasesDashboard(w, r, log, acct)
+		case path == "/dashboard/admin":
+			s.renderAdminDashboard(w, r, log, acct)
 		case strings.HasPrefix(path, "/dashboard/alerts/"):
 			// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122):
 			// per-alert-rule drill-down. URL shape:
@@ -248,10 +250,18 @@ func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.L
 		log.Warn("dashboard renderIndex: count deployed apps", "account_id", acct.ID, "err", err)
 		appCount = 0
 	}
+	developerAppCount, err := s.store.CountDeveloperApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderIndex: count developer apps", "account_id", acct.ID, "err", err)
+		developerAppCount = 0
+	}
+	limits := api.MustLimitsFor(acct.Plan)
 	av := dashboardAccountView(view, appCount)
 	page := dashboard.Page{Title: "Overview", Body: "index", Account: av, Data: dashboard.IndexData{
-		DeployedAppCount: av.AppCount,
-		Plan:             string(acct.Plan),
+		DeployedAppCount:   av.AppCount,
+		DeveloperAppCount:  developerAppCount,
+		DeveloperAppsLimit: limits.DeveloperApps,
+		Plan:               string(acct.Plan),
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
@@ -486,6 +496,22 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 		})
 	}
+	rollbackCSRFToken, err := middleware.IssueForAuthenticatedNamed(
+		s.sessions, dashboardRollbackAction, acct.ID, dashboardRollbackCSRFCookie)
+	if err != nil {
+		log.Error("dashboard renderAppDetail: csrf issue rollback", "app_id", app.ID, "err", err)
+		rollbackCSRFToken = ""
+	} else {
+		http.SetCookie(w, &http.Cookie{
+			Name:     dashboardRollbackCSRFCookie,
+			Value:    rollbackCSRFToken,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   s.domain != "",
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+		})
+	}
 	cronItems := make([]dashboard.CronItem, 0, len(crons))
 	for _, c := range crons {
 		item := dashboard.CronItem{
@@ -613,6 +639,28 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			previews = projectPreviewItems(previewRows, app.Slug, s.domain)
 		}
 	}
+	// F1 / issue #1397: durable custom-domain TLS state. This is a
+	// best-effort read like the other detail panels; a transient domains
+	// query failure must not take down the app page.
+	var domainItems []dashboard.DomainItem
+	if domains, derr := s.store.ListDomainsForApp(ctx, app.ID); derr != nil {
+		log.Warn("dashboard renderAppDetail: list domains", "account_id", acct.ID, "app_id", app.ID, "err", derr)
+	} else {
+		domainItems = make([]dashboard.DomainItem, 0, len(domains))
+		for _, d := range domains {
+			item := dashboard.DomainItem{
+				Domain: d.Domain, Verified: d.Verified(), CertStatus: string(d.CertStatus),
+				CertLastError: d.CertLastError,
+			}
+			if !d.CertExpiresAt.IsZero() {
+				item.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)
+			}
+			if !d.DNSLastCheckedAt.IsZero() {
+				item.DNSLastCheckedAt = d.DNSLastCheckedAt.UTC().Format(time.RFC3339)
+			}
+			domainItems = append(domainItems, item)
+		}
+	}
 	analyticsRoute, analyticsMethod, _ := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("analytics_route"), r.URL.Query().Get("analytics_method"))
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
 		App:             appRow,
@@ -625,13 +673,16 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		Crons:           cronItems,
 		Workflows:       workflowItems,
 		Previews:        previews,
+		Domains:         domainItems,
 		RecentInstances: recentItems,
 		// Issue #791 PR-E / ADR-090 closure — cron fire-now
 		// post-redirect banner. Reads ?fired=1 / ?fired=error and
 		// forwards through to the template's flash block.
 		// Anything other than the canonical values collapses to
 		// empty so a stale "?fired=" doesn't render an empty banner.
-		FiredFlash: firedFlash(r),
+		FiredFlash:           firedFlash(r),
+		RollbackConfirmToken: rollbackCSRFToken,
+		RollbackFlash:        rollbackFlash(r),
 		// Issue #273 / ADR-042 — best-effort metrics snapshot.
 		// Failure is non-fatal: Prometheus being down renders the
 		// "degraded" empty state rather than blocking the whole
@@ -752,6 +803,17 @@ func dashboardWorkflowError(err *string) string {
 // Issue #791 PR-E / ADR-090.
 func firedFlash(r *http.Request) string {
 	switch r.URL.Query().Get("fired") {
+	case "1":
+		return "ok"
+	case "error":
+		return "error"
+	default:
+		return ""
+	}
+}
+
+func rollbackFlash(r *http.Request) string {
+	switch r.URL.Query().Get("rollback") {
 	case "1":
 		return "ok"
 	case "error":
@@ -1521,6 +1583,23 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 	})
 	data.KeyDeleteConfirmToken = keyDeleteTok
+	planTok, err := middleware.IssueForAuthenticatedNamed(
+		s.sessions, dashboardAccountPlanAction, view.ID, dashboardAccountPlanCSRFCookie)
+	if err != nil {
+		log.Error("dashboard renderAccount: csrf issue plan", "err", err, "account_id", view.ID)
+		renderProblem(w, log, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     dashboardAccountPlanCSRFCookie,
+		Value:    planTok,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.domain != "",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+	})
+	data.PlanConfirmToken = planTok
 	// Wire to .Data.ConnectGithubConfirmToken in account.html; the
 	// form action is /dashboard/install/connect (handlers_oauth_code_callback.go).
 	data.ConnectGithubConfirmToken = connectGithubTok
@@ -1542,6 +1621,12 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 	switch r.URL.Query().Get("key_revoked") {
 	case "1":
 		data.FlashSurface = "API key revoked."
+	}
+	switch r.URL.Query().Get("plan") {
+	case "unchanged":
+		data.FlashSurface = "Your account is already on that plan."
+	case "unavailable":
+		data.FlashSurface = "Plan changes are unavailable until billing is configured."
 	}
 	// Issue #695 / ADR-080: per-account apps-auth-default
 	// grand-father banner. Renders when the account has at

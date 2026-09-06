@@ -443,10 +443,8 @@ func parseImageConfig(b []byte) (ImageConfig, error) {
 		return ImageConfig{}, err
 	}
 	f := raw.resolved()
-	var exposed map[string]struct{}
 	var volumes map[string]struct{}
 	if raw.Config != nil {
-		exposed = raw.Config.ExposedPorts
 		volumes = raw.Config.Volumes
 	}
 	return ImageConfig{
@@ -462,7 +460,7 @@ func parseImageConfig(b []byte) (ImageConfig, error) {
 		Healthcheck:      healthcheckFromRaw(raw.resolvedHealthcheck()),
 		StopSignal:       raw.resolvedStopSignal(),
 		StopGracePeriodS: stopGraceFromRaw(raw),
-		ExposedPorts:     exposed,
+		ExposedPorts:     clonePortSet(f.ExposedPorts),
 	}, nil
 }
 

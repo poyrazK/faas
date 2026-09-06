@@ -33,6 +33,7 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * any log, audit, or error.
  * - `port` ∈ {0, 1..65535}. 0 = absent.
  * - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
+ * - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
  * - `essential` defaults to true. If true and the workload
  * exits non-zero, the dependency set fails
  * (`failure_class=user_error`) and essential long-running
@@ -74,6 +75,10 @@ export type Sidecar = {
    * Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API.
    */
   ram_mb?: number;
+  /**
+   * Sustained cgroup CPU allowance in millicores. 0 = inherit app CPU quota.
+   */
+  cpu_millicores?: 0 | 250 | 500 | 1000;
   /**
    * Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained.
    */

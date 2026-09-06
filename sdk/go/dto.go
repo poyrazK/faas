@@ -1,6 +1,6 @@
 package faas
 
-import "github.com/poyrazK/faas-go/internal/api"
+import "github.com/poyrazK/faas/sdk/go/internal/api"
 
 // Type aliases for every request/response DTO the Client methods
 // accept and return. The aliases preserve identity (a faas.App

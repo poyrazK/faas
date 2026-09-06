@@ -205,7 +205,7 @@ func TestPresetValidate_NegativeDuration(t *testing.T) {
 // validates the ladder before returning a Preset.
 func TestLookupCustomPreset_HappyPath(t *testing.T) {
 	got, err := LookupCustomPreset([]CustomStage{
-		{Percent: 1, Duration: "30s"},
+		{Percent: 1, Duration: "30s", MirrorClean: &MirrorCleanCondition{MinInvocations: 25, WindowSeconds: 300}},
 		{Percent: 10, Duration: "2m"},
 		{Percent: 50, Duration: "1m"},
 		{Percent: 100, Duration: "0s"},
@@ -223,9 +223,25 @@ func TestLookupCustomPreset_HappyPath(t *testing.T) {
 	if !ok || first.Percent != 1 || first.Duration != 30*time.Second {
 		t.Errorf("StageAt(0) = %+v; want {1, 30s}", first)
 	}
+	if first.MirrorClean == nil || first.MirrorClean.MinInvocations != 25 || first.MirrorClean.WindowSeconds != 300 {
+		t.Errorf("StageAt(0).MirrorClean = %+v; want min=25 window=300", first.MirrorClean)
+	}
 	terminal, ok := got.StageAt(3)
 	if !ok || terminal.Percent != 100 || terminal.Duration != 0 {
 		t.Errorf("StageAt(3) terminal = %+v; want {100, 0}", terminal)
+	}
+}
+
+func TestLookupCustomPreset_MirrorCleanValidation(t *testing.T) {
+	cases := []CustomStage{
+		{Percent: 1, Duration: "30s", MirrorClean: &MirrorCleanCondition{MinInvocations: 0, WindowSeconds: 300}},
+		{Percent: 1, Duration: "30s", MirrorClean: &MirrorCleanCondition{MinInvocations: 10, WindowSeconds: 0}},
+	}
+	for i, stage := range cases {
+		_, err := LookupCustomPreset([]CustomStage{stage, {Percent: 100, Duration: "0s"}})
+		if err == nil {
+			t.Errorf("case %d accepted invalid mirror_clean condition", i)
+		}
 	}
 }
 

@@ -352,6 +352,9 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 	// env-diff endpoint reads. Stamped alongside ciphertext so the
 	// row is usable by the diff surface immediately.
 	if err := s.store.UpsertAppSecretWithKidAndValueHashInScope(c, acct.ID, app.ID, scope, key, kid, valueHash, ciphertext); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			return api.ErrManagedSecretConflict()
+		}
 		return api.ErrCapacity("could not persist secret")
 	}
 	return nil
@@ -415,6 +418,10 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	if err := s.store.DeleteAppSecretInScope(r.Context(), acct.ID, app.ID, scope, key); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrSecretNotFound(key))
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.ErrManagedSecretConflict())
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not delete secret"))

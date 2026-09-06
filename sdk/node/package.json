@@ -1,8 +1,17 @@
 {
-  "name": "gregale/skd-node",
+  "name": "@gregale/sdk-node",
   "version": "0.1.0",
-  "description": "Node SDK for the one-box FaaS platform. Generated from api/openapi.yaml.",
-  "private": true,
+  "description": "Node SDK for the Gregale FaaS platform. Generated from api/openapi.yaml.",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://gregale.dev/docs/cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/poyrazK/faas.git",
+    "directory": "sdk/node"
+  },
+  "bugs": {
+    "url": "https://github.com/poyrazK/faas/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,6 +34,7 @@
     "registry": "https://registry.npmjs.org",
     "access": "restricted"
   },
+  "//publishConfig": "access stays 'restricted' while LICENSE is LicenseRef-onebox-internal (proprietary, non-redistributable). Flip to 'public' only alongside a customer-redistributable license — see sdk/README-publishing.md.",
   "scripts": {
     "gen": "node scripts/gen.mjs",
     "gen:check": "node scripts/gen.mjs && git diff --exit-code -- src/generated",

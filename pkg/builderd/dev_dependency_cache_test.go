@@ -35,6 +35,7 @@ func TestDependencyCacheKeyForAppIsDeveloperScoped(t *testing.T) {
 		{name: "workspace app", app: state.App{ID: "app-b", AccountID: "account-a", PreviewOfSlug: "project"}, fw: FrameworkNode, root: "apps/api", base: "runner-a"},
 		{name: "member", app: dev, fw: FrameworkNode, root: "apps/web", base: "runner-a"},
 		{name: "framework", app: dev, fw: FrameworkPython, root: "apps/api", base: "runner-a"},
+		{name: "dockerfile", app: dev, fw: FrameworkDocker, root: "apps/api", base: "runner-a"},
 		{name: "runtime base", app: dev, fw: FrameworkNode, root: "apps/api", base: "runner-b"},
 	}
 	for _, variant := range variants {
@@ -56,8 +57,8 @@ func TestDependencyCacheKeyForAppIsDeveloperScoped(t *testing.T) {
 	if got := dependencyCacheKeyForApp(preview, FrameworkNode, "", "runner-a"); got != "" {
 		t.Fatalf("pull-request preview key = %q, want disabled", got)
 	}
-	if got := dependencyCacheKeyForApp(dev, FrameworkDocker, "", "runner-a"); got != "" {
-		t.Fatalf("Dockerfile key = %q, want disabled", got)
+	if got := dependencyCacheKeyForApp(dev, FrameworkDocker, "", "runner-a"); got == "" || got == base {
+		t.Fatalf("Dockerfile key = %q, want a developer-scoped key distinct from Railpack", got)
 	}
 }
 

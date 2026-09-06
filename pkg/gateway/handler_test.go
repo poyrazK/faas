@@ -200,7 +200,13 @@ func (b *fakeBackend) Admit(_ context.Context, _, _, _, _ string, maxConcurrency
 	b.running = true // legacy-mode flag — also seeded via setLegacyHot in tests
 	// Mint a fresh per-admit Target so the round-robin fans out
 	// across admits (issue #168).
-	t := Target{NodeID: b.upstream, InstanceID: "i-" + itoa(uint64(seq)), WakeID: "fake-wake-id"}
+	wakeID := b.wakeIDOut
+	if wakeID == "" {
+		wakeID = "fake-wake-id"
+	}
+	// Match the production contract: the cached VM and admission result
+	// refer to the same wake, including when a test pins a UUID.
+	t := Target{NodeID: b.upstream, InstanceID: "i-" + itoa(uint64(seq)), WakeID: wakeID}
 	b.targets = append(b.targets, t)
 	// Pick the WakeMethod the test pinned (zero value = ColdBoot, so
 	// every existing test continues to drive the cold-boot chokepoint).
@@ -208,10 +214,7 @@ func (b *fakeBackend) Admit(_ context.Context, _, _, _, _ string, maxConcurrency
 	if method == WakeMethodUnspecified {
 		method = WakeMethodColdBoot
 	}
-	if b.wakeIDOut != "" {
-		return b.wakeIDOut, method, false, nil
-	}
-	return "fake-wake-id", method, false, nil
+	return wakeID, method, false, nil
 }
 
 // Admits returns the AdmitInstance() call count (test assertion hook).
@@ -3789,5 +3792,34 @@ func TestStampRequestBudget_DoesNotCancelImmediately(t *testing.T) {
 	cancelStampedRequestBudget(req.Context())
 	if err := req.Context().Err(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelStampedRequestBudget error = %v, want context.Canceled", err)
+	}
+}
+
+func TestWarmForwardingDoesNotReuseCachedWakeTimeline(t *testing.T) {
+	b := &warmPathBackend{
+		fakeBackend: &fakeBackend{app: App{ID: "app-warm", AccountID: "acct-1", Plan: api.PlanScale}, host: "warm.apps.dom"},
+		warmPick:    PickResult{Target: Target{NodeID: "node-1", InstanceID: "instance-warm", WakeID: "old-wake"}, OK: true},
+	}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.WithForwarding(func(target Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if target.WakeID != "" {
+				t.Errorf("warm request reused wake %q", target.WakeID)
+			}
+			if r.Header.Get("x-faas-app") != "app-warm" {
+				t.Errorf("app attribution = %q", r.Header.Get("x-faas-app"))
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://warm.apps.dom/", nil)
+	req.Header.Set("x-faas-app", "untrusted-app")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	if b.warmPick.Target.WakeID != "old-wake" {
+		t.Fatal("request mutated cached target")
 	}
 }
