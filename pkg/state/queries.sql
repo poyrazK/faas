@@ -2207,8 +2207,8 @@ WHERE id = $1;
 -- the client's Upload-Offset header (the offset the client claims
 -- the server is currently at) and the chunk_size it sent, then
 -- computes expected_new = client_offset + chunk_bytes. The WHERE
--- clause pins the row to (id=$1 AND status='open' AND
--- expires_at > now() AND received_bytes=$3) — a row whose received_bytes has already
+-- clause pins the row to the upload id and the explicitly named expected
+-- offset — a row whose received_bytes has already
 -- advanced (e.g., a racing PATCH from a retry) returns 0 rows and
 -- the handler maps that to 409 Conflict with the actual current
 -- offset in the body.
@@ -2218,12 +2218,12 @@ WHERE id = $1;
 -- bumped to now() so the reaper's idle-aware expiry (NOT in PR-1;
 -- deferred — see plan "Out of scope") has a fresh anchor.
 UPDATE upload_sessions
-   SET received_bytes = $3,
+   SET received_bytes = sqlc.arg(new_received_bytes),
        last_patched_at = now()
- WHERE id = $1
+ WHERE id = sqlc.arg(id)
    AND status = 'open'
    AND expires_at > now()
-   AND received_bytes = $2
+   AND received_bytes = sqlc.arg(expected_received_bytes)
 RETURNING received_bytes, total_size;
 
 -- name: MarkUploadSessionCommitted :one
