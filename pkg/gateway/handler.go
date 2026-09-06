@@ -4751,7 +4751,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// than inside stampRequestBudget itself. This keeps cold-start and proxy
 	// work alive for the allotted budget while still releasing the timer on
 	// every return path.
-	defer func(ctx context.Context) { cancelStampedRequestBudget(ctx) }(r.Context())
+	defer func() { cancelStampedRequestBudget(r.Context()) }() //nolint:contextcheck // evaluate the rebound request context at handler return.
 
 	// Drain tracker (issue #587 / PR-A): the returned closure fires
 	// on every return path below, including the early-out problem
@@ -5607,19 +5607,10 @@ haveApp:
 
 	if isStreaming {
 		writeTimeout := app.Plan.ResponseWriteTimeout()
-		// ADR-093 / PR-C: clamp the per-flush writeTimeout to the
-		// inbound budget's remaining time when one is attached.
-		// The flush loop re-installs the deadline on every flush
-		// (statusRecorder.installFlushHook), so capping the
-		// initial value caps the entire session's wall-clock
-		// budget. The plan's ResponseWriteTimeout is the absolute
-		// ceiling — the budget can only shorten it. When no
-		// Budget is on ctx the per-flush deadline is unchanged.
-		if b, ok := reqbudget.FromContext(r.Context()); ok { //nolint:contextcheck // request ctx at handler boundary; budget lookup is a reader (ctx.Value equivalent).
-			if rem := b.Remaining(time.Time{}); rem > 0 && rem < writeTimeout {
-				writeTimeout = rem
-			}
-		}
+		// The request budget still governs admission and the first
+		// response headers. The stream forwarder detaches it once those
+		// headers are committed, so the per-flush deadline remains the
+		// plan's independent write-safety bound for the session.
 		w = h.setupStreamingWriter(w, rec, app, target, decision.Cap, writeTimeout)
 		// Internal header stamp (PR-B + PR-C / ADR-047). The
 		// forwarder (pkg/gateway/forwardproxy.go) reads this to

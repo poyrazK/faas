@@ -291,6 +291,35 @@ func TestInternalReverseProxy_BudgetExpiry_504NotBadGateway(t *testing.T) {
 	}
 }
 
+func TestInternalReverseProxy_LongLivedResponseDetachesBudget(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(api.StreamingStatusHeader, string(api.StreamingStatusStreaming))
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		time.Sleep(120 * time.Millisecond)
+		_, _ = io.WriteString(w, "stream-complete")
+	}))
+	defer upstream.Close()
+
+	dialer := &stubDialer{server: upstream}
+	p := NewInternalReverseProxy(dialer, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	ctx, cancel, _ := reqbudget.WithRemaining(req.Context(), 50*time.Millisecond,
+		api.RequestBudgetMax, "forward", "GET:/stream")
+	defer cancel()
+	rr := httptest.NewRecorder()
+	p.ServeHTTP(rr, req.WithContext(ctx))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if got := rr.Body.String(); got != "stream-complete" {
+		t.Fatalf("body = %q, want stream-complete", got)
+	}
+}
+
 // A RoundTrip failure with NO budget attached must still be a 502 —
 // the fix must not swallow genuine upstream faults. Without this the
 // budget check could regress into "every transport error is a 504".
