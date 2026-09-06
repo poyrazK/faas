@@ -35,8 +35,8 @@ class AccountExportResponse:
 
     exported_at: datetime.datetime
     account: AccountResponse
-    """Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, and total
-    app count."""
+    """Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-
+    app count, and developer-environment count."""
     apps: list[AppResponse]
     deployments: list[DeploymentResponse]
     builds: list[BuildExportResponse]

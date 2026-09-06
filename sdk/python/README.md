@@ -1,25 +1,5 @@
-# gregale-sdk
-
-Python client library for the Gregale FaaS platform.
-
-Install name and import name differ on purpose:
-
-```sh
-pip install gregale-sdk     # distribution name
-```
-```python
-import faas_sdk            # import package
-```
-
-`faas-sdk` on PyPI is an **unrelated** package owned by Sonra Intelligence
-Ltd — do not install it expecting this client.
-
-**Not published yet.** Until it is, build and install locally:
-
-```sh
-cd sdk/python && poetry build -f wheel
-pip install dist/gregale_sdk-0.1.0-py3-none-any.whl
-```
+# faas_sdk
+A client library for accessing one-box FaaS REST API
 
 ## Usage
 First, create a client:

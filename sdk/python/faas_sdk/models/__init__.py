@@ -198,6 +198,11 @@ from .create_job_run_request import CreateJobRunRequest
 from .create_job_run_request_env_overrides import CreateJobRunRequestEnvOverrides
 from .create_key_request import CreateKeyRequest
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
+from .create_managed_postgres_binding_request import CreateManagedPostgresBindingRequest
+from .create_managed_postgres_binding_request_access import CreateManagedPostgresBindingRequestAccess
+from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
+from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
+from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
@@ -377,7 +382,9 @@ from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
 from .install_bind_request import InstallBindRequest
+from .install_bind_request_deploy_branches import InstallBindRequestDeployBranches
 from .install_bind_response import InstallBindResponse
+from .install_bind_response_deploy_branches import InstallBindResponseDeployBranches
 from .instance_response import InstanceResponse
 from .instance_response_execution_mode_type_1 import InstanceResponseExecutionModeType1
 from .instance_response_execution_mode_type_2_type_1 import InstanceResponseExecutionModeType2Type1
@@ -453,6 +460,15 @@ from .log_excerpt import LogExcerpt
 from .log_excerpt_level import LogExcerptLevel
 from .log_excerpt_source import LogExcerptSource
 from .magic_link_signup_request import MagicLinkSignupRequest
+from .managed_postgres_binding import ManagedPostgresBinding
+from .managed_postgres_binding_access import ManagedPostgresBindingAccess
+from .managed_postgres_binding_list import ManagedPostgresBindingList
+from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_database import ManagedPostgresDatabase
+from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
+from .managed_postgres_database_list import ManagedPostgresDatabaseList
+from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
+from .managed_postgres_database_state import ManagedPostgresDatabaseState
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -603,6 +619,7 @@ from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesRes
 from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
 from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
 from .resource_profile import ResourceProfile
+from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
@@ -972,6 +989,11 @@ __all__ = (
     "CreateJobRunRequestEnvOverrides",
     "CreateKeyRequest",
     "CreateKeyRequestScopesItem",
+    "CreateManagedPostgresBindingRequest",
+    "CreateManagedPostgresBindingRequestAccess",
+    "CreateManagedPostgresDatabaseRequest",
+    "CreateManagedPostgresDatabaseRequestAvailability",
+    "CreateManagedPostgresDatabaseRequestServiceClass",
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
@@ -1143,7 +1165,9 @@ __all__ = (
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
     "InstallBindRequest",
+    "InstallBindRequestDeployBranches",
     "InstallBindResponse",
+    "InstallBindResponseDeployBranches",
     "InstanceResponse",
     "InstanceResponseExecutionModeType1",
     "InstanceResponseExecutionModeType2Type1",
@@ -1219,6 +1243,15 @@ __all__ = (
     "LogExcerptLevel",
     "LogExcerptSource",
     "MagicLinkSignupRequest",
+    "ManagedPostgresBinding",
+    "ManagedPostgresBindingAccess",
+    "ManagedPostgresBindingList",
+    "ManagedPostgresBindingState",
+    "ManagedPostgresDatabase",
+    "ManagedPostgresDatabaseAvailability",
+    "ManagedPostgresDatabaseList",
+    "ManagedPostgresDatabaseServiceClass",
+    "ManagedPostgresDatabaseState",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
@@ -1367,6 +1400,7 @@ __all__ = (
     "RequestAnalyticsTimeseriesResponseBucket",
     "RequestAnalyticsTimeseriesResponseMethod",
     "ResourceProfile",
+    "RestoreManagedPostgresDatabaseRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",
