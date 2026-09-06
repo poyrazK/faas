@@ -1,5 +1,9 @@
 # Pre-1.0 Release Candidate & Fleet Operational Runbook
 
+The GitHub-controlled production approval and CI gate are documented in
+[`docs/process/release.md`](../process/release.md). Complete that workflow
+before using the host-level checks below.
+
 This document defines the authoritative checklist and operational runbook for cutting a **pre-1.0 release candidate** (e.g. `v0.1.3-rc.1`), validating the split-box deployment manifest, signing release artifacts, installing bundles across production nodes, and executing verification gates.
 
 > [!IMPORTANT]
@@ -46,6 +50,11 @@ exact tag when dispatching `cd-controlplane`:
 ```bash
 gh workflow run cd-controlplane.yml --ref main -f release_tag=v0.1.18-rc.1
 ```
+
+`cd-controlplane` first verifies a successful `ci.yml` run for the exact tag
+commit, then pauses at the protected `production` environment for reviewer
+approval. Dispatches are serialized, so a second release waits for the first
+to finish instead of cancelling it.
 
 The workflow verifies the release checksum, Cosign identity, embedded release
 manifest, and production-manifest hash before staging anything on the host.

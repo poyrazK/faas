@@ -17,7 +17,10 @@
 #   4. Runs pending DB migrations
 #   5. Restarts all FaaS services
 #
-# The existing ci.yml must pass first (needs: [test] from ci.yml).
+# The signed release commit must have a successful ci.yml run before the
+# production environment can be approved. The preflight below performs this
+# cross-workflow check; a job-level `needs: test` cannot reference another
+# workflow's job.
 
 name: cd-controlplane
 
@@ -30,17 +33,75 @@ on:
         type: string
 
 concurrency:
-  group: cd-cp-${{ inputs.release_tag }}
+  # All control-plane changes share one queue. Grouping by release tag would
+  # allow two different releases to mutate the same host concurrently.
+  group: cd-controlplane-production
   # A production deployment must finish or fail visibly; cancelling it
   # midway can leave binaries, migrations, and systemd state out of sync.
   cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  ci_gate:
+    name: Verify CI for release commit
+    runs-on: ubuntu-latest
+    if: github.repository == 'poyrazK/faas'
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out the selected release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Require a successful main CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          TAG_COMMIT="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          echo "release ${RELEASE_TAG} resolves to ${TAG_COMMIT}"
+
+          # A release is deployable only when the exact commit has a completed
+          # push-triggered CI run from main. This prevents a successful manual
+          # dispatch from bypassing a red or missing post-merge CI run.
+          RUNS_JSON="$(gh api --paginate --slurp \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${TAG_COMMIT}&per_page=100")"
+          SUCCESS_RUN="$(jq -r --arg sha "$TAG_COMMIT" '
+            [.[].workflow_runs[]
+              | select(.name == "ci"
+                  and .event == "push"
+                  and .head_branch == "main"
+                  and .head_sha == $sha
+                  and .status == "completed"
+                  and .conclusion == "success")]
+            | sort_by(.run_started_at)
+            | last
+            | (.html_url // empty)
+          ' <<<"$RUNS_JSON")"
+
+          if [[ -z "$SUCCESS_RUN" ]]; then
+            echo "::error::No successful push-triggered ci.yml run exists for ${TAG_COMMIT}." >&2
+            jq -r --arg sha "$TAG_COMMIT" '
+              .[].workflow_runs[]
+              | select(.name == "ci" and .head_sha == $sha)
+              | "status=\(.status) conclusion=\(.conclusion) event=\(.event) branch=\(.head_branch) url=\(.html_url)"
+            ' <<<"$RUNS_JSON" >&2
+            exit 1
+          fi
+
+          echo "verified successful CI run: ${SUCCESS_RUN}"
+
   deploy:
     name: Deploy to Control Plane Host
+    needs: ci_gate
     environment: production
     runs-on: ubuntu-latest
     env:
@@ -51,10 +112,7 @@ jobs:
       # pkg/daemonunitspec (Entry.Critical) and shipped as
       # deploy/etc/daemons.json; the env lists that used to live here were
       # read by nothing (ADR-143 dead-config sweep).
-    # Only deploy if the CI workflow's test job succeeded.
-    # If ci.yml doesn't exist yet or the test job name differs, remove this.
-    # needs: test
-    if: github.repository == 'poyrazK/faas'
+    if: github.repository == 'poyrazK/faas' && needs.ci_gate.result == 'success'
     timeout-minutes: 15
 
     steps:
