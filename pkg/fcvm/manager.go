@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -809,7 +810,9 @@ type Manager struct {
 	// lifecycleCtx is vmmd's daemon context. Per-instance liveness loops
 	// must be children of this context, not of the short-lived Wake RPC
 	// context; the latter is normally canceled as soon as Wake returns.
-	lifecycleCtx context.Context
+	lifecycleCtx         context.Context
+	frameworkReadyReader func(context.Context, string) (frameworkready.Status, error)
+	frameworkReadyRuns   map[string]*frameworkReadyRun
 	// hostIdentities is the slice of X25519 secret keys used to
 	// unseal per-app sealed env blobs at wake time (spec §11/G2).
 	// Holds the current identity alone in the normal pre-rotation
@@ -1483,6 +1486,7 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 	// the first destroy is still in flight.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelFrameworkReadyLoop(instance)
 
 	if lifecycle == nil {
 		lifecycle = context.Background()
@@ -2018,24 +2022,14 @@ func (m *Manager) MarkInstanceFrameworkReady(ctx context.Context, instance strin
 	appID = inst.AppID
 	runtime = inst.Runtime
 	m.mu.Unlock()
-	// Persist the stamp to the SQL column so the engine's
-	// captureWarmSnapshot (PR #470-FU-A) can read it back on
-	// the next wake. The in-memory stamp is the load-bearing
-	// signal for the histogram; the SQL column is the durable
-	// record. Errors are logged Warn and ignored — a transient
-	// PG hiccup must not lose the receipt.
+	// Publish through the scheduler-owned persistence seam. Surface errors so
+	// the bounded observer can retry instead of losing warm eligibility.
 	if m.frameworkReadyStamper != nil {
 		if perr := m.frameworkReadyStamper.SetFrameworkReadyAt(ctx, instance, stampTime); perr != nil {
-			// Conservative: don't fail the receipt — the
-			// histogram + in-memory stamp already observed
-			// the signal. Just surface as a Warn so the
-			// gate can be debugged.
-			// Note: we don't have a logger here without a
-			// wider wiring change; the cmd's DGRAM loop
-			// catches the equivalent error at the rpc level.
-			_ = perr
+			return false, appID, runtime, perr
 		}
 	}
+
 	if warmupMs > 0 {
 		m.frameworkReadyMetrics.ObserveWarmup(runtime, appID, float64(warmupMs)/1000.0)
 	}
@@ -3712,6 +3706,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// survives the short-lived Wake RPC and exits with vmmd shutdown
 	// or explicit instance teardown.
 	m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
+	m.startFrameworkReadyLoop(ctx, req.Instance)
 	return inst, nil
 }
 
@@ -3966,6 +3961,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	// race this teardown and report a second failure for the same instance.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelFrameworkReadyLoop(instance)
 
 	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
 	// Release resources on both outcomes. A failed capture can leave a paused
@@ -4064,6 +4060,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	}
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err == nil {
 		return info, nil
@@ -4076,6 +4073,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
+	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
 	return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: snapshot: %w", instance, err)
 }
 
@@ -4099,6 +4097,7 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
+	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
 	return nil
 }
 
@@ -4139,6 +4138,7 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // Returns (false, 0, nil) when the instance is unknown to the
 // Manager — same idempotent-on-unknown contract as Destroy.
 func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	m.cancelFrameworkReadyLoop(instance)
 	m.mu.Lock()
 	// Builder Destroy removes live before waiting. Keep its export registration
 	// until cleanup finishes, and interrupt without starting another teardown.
@@ -4185,6 +4185,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	// branch so an idempotent destroy also cleans up a stale registration.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelFrameworkReadyLoop(instance)
 
 	m.mu.Lock()
 	inst, ok := m.live[instance]

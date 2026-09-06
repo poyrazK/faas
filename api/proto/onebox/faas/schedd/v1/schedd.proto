@@ -60,6 +60,9 @@ service Schedd {
   // schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
   // the gateway keeps the batch in memory between flushes (ADR-018).
   rpc ReportActivity(ReportActivityRequest) returns (ReportActivityResponse);
+  // VMMD reports readiness observed on an instance-bound guest channel.
+  // Schedd owns the persisted timestamp and serializes it against park/destroy.
+  rpc ReportFrameworkReady(FrameworkReadyReport) returns (FrameworkReadyAck);
 
   // ParkInstance forces an instance to its parked state. Added in M7 so
   // meterd's Free-tier hard-stop can park every live instance on a
@@ -1044,3 +1047,6 @@ message EnsureWakeResponse {
   // Independently ready siblings. Old clients retain the primary fields.
   repeated AdmitInstanceResponse additional_instances = 8;
 }
+
+message FrameworkReadyReport { string instance_id = 1; }
+message FrameworkReadyAck {}

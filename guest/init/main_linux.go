@@ -170,21 +170,6 @@ func boot() error {
 		slog.Default().Warn("stateless advisory unavailable", "err", err)
 	}
 
-	// PR #470-FU-B (issue #470): the framework-ready unix-socket
-	// proxy. The proxy at /run/guest-init/framework-ready.sock is
-	// the runner-facing entry point — runners connect to it with
-	// one line ("<runtime> <warmup_ms>") and the proxy frames the
-	// vsock DGRAM (port 1027, msg_type 4) payload and forwards to
-	// the host. The proxy must start BEFORE the supervisor starts
-	// the runners so the first request can't race the proxy coming
-	// up. Soft-fail: bind errors log at Warn and the platform
-	// contract is "no warm-capture signal" not "won't boot" — the
-	// engine's warm-capture wait in PR #470-FU-A times out and
-	// falls through to init-tier.
-	if err := startFrameworkReadyProxy(slog.Default()); err != nil {
-		slog.Default().Warn("framework_ready proxy unavailable", "err", err)
-	}
-
 	// Issue #667 / ADR-078 (consolidated follow-up PR): the
 	// tail-events unix-socket proxy. The proxy at
 	// /run/guest-init/tail-events.sock is the runner-facing entry
@@ -227,6 +212,11 @@ func boot() error {
 	_ = f.Close()
 	if err != nil {
 		return err
+	}
+	// Bind before starting the workload and grant only its configured group
+	// access to the local signal socket. The runner does not inherit root UID.
+	if err := startFrameworkReadyProxy(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
+		slog.Default().Warn("framework_ready proxy unavailable", "err", err)
 	}
 
 	// G2: read /etc/faas/secrets.env (unsealed JSON, written by vmmd at

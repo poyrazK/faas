@@ -27,10 +27,11 @@ import (
 )
 
 type fakeEngine struct {
-	wakeFn          func(ctx context.Context, appID, deploymentID, scope string) (sched.WakeResult, error)
-	admitInstanceFn func(ctx context.Context, appID, scope string) (sched.WakeResult, error)
-	reportFn        func(ctx context.Context, touches []state.InstanceTouch) (int, error)
-	parkFn          func(ctx context.Context, instanceID, reason string) error
+	frameworkReadyFn func(context.Context, string) error
+	wakeFn           func(ctx context.Context, appID, deploymentID, scope string) (sched.WakeResult, error)
+	admitInstanceFn  func(ctx context.Context, appID, scope string) (sched.WakeResult, error)
+	reportFn         func(ctx context.Context, touches []state.InstanceTouch) (int, error)
+	parkFn           func(ctx context.Context, instanceID, reason string) error
 	// streamLogFn (issue #254 / Move 4) drives the per-frame fan-out
 	// in the StreamAppLogs handler tests. Default nil = no-op
 	// (returns nil immediately), so the existing test suite stays
@@ -650,4 +651,11 @@ func TestWake_DeploymentIDEmptyPreserved(t *testing.T) {
 	if got := resp.GetDeploymentId(); got != "" {
 		t.Errorf("response deployment_id = %q, want \"\" (legacy mode)", got)
 	}
+}
+
+func (f *fakeEngine) ReportFrameworkReady(ctx context.Context, id string) error {
+	if f.frameworkReadyFn != nil {
+		return f.frameworkReadyFn(ctx, id)
+	}
+	return nil
 }

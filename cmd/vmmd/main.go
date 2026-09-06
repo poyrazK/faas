@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 	"github.com/onebox-faas/faas/pkg/fcvm/cpustats"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
+	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -807,14 +808,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	).WithFrameworkReady(frm).
 		WithDiskMetrics(dsm).
 		SetWakePhaseMetrics(wpm).
-		// Issue #470 / PR #470-FU-B: attach the SQL persistence
-		// seam so the framework_ready DGRAM receipt path can
-		// stamp the `instances.framework_ready_at` column. A
-		// small adapter wraps the pgstore SetInstanceFrameworkReadyAt
-		// to the local FrameworkReadyStamper interface (we
-		// don't want the Manager to depend on the full
-		// pkg/state surface).
-		WithFrameworkReadyStamper(tailStamper).
+		// Configure the owner RPC after loading scheduler TLS, before serving.
+		WithFrameworkReadyStamper(&frameworkReadyReporter{}).
 		// Issue #667 / ADR-078: same adapter also implements
 		// the TailTerminalStamper interface so the type=0x04
 		// tail_event DGRAM receipt path mirrors the
@@ -1155,6 +1150,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	scheddClientRotator.Set(scheddClientTLS)
 	deps.scheddClientTLS = scheddClientTLS
+	// Framework-ready replies are read through each VM's Firecracker bridge.
+	mgr.WithFrameworkReadyStamper(&frameworkReadyReporter{target: deps.scheddTarget, tlsConfig: deps.scheddClientTLS})
+	mgr.WithFrameworkReadyReader(func(ctx context.Context, instance string) (frameworkready.Status, error) {
+		return fcvm.ReadFrameworkReady(ctx, jailer.VsockUDSSocketPath(instance))
+	})
+
 	lis, err := deps.listen(ctx, listenTarget, serverTLS, cfg.OwnerUser)
 	if err != nil {
 		return fmt.Errorf("vmmd: listen %s: %w", listenTarget, err)
