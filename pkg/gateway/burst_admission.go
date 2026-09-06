@@ -85,9 +85,10 @@ func desiredBurstInstances(inflight int64, perVM, maxInstances int) int {
 // This is the important distinction between a burst signal and burst
 // admission: a request must not consume its entire wall-clock budget while
 // extra capacity is merely being created in the background.
-func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances, perVM int) error {
+// waited tells the caller to discard any target selected before reconciliation.
+func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances, perVM int) (waited bool, err error) {
 	if h == nil || h.backend == nil || h.burstPressure == nil || app.ID == "" || maxInstances <= 0 || perVM <= 0 {
-		return nil
+		return waited, nil
 	}
 	// Match schedd's effective ceiling, including legacy zero values and
 	// apps whose saved limit exceeds a downgraded plan.
@@ -96,18 +97,18 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 	}
 	admitter, ok := h.backend.(burstCapacityAdmitter)
 	if !ok {
-		return nil
+		return waited, nil
 	}
 	state := h.burstPressure.state(app.ID)
 	if state == nil {
-		return nil
+		return waited, nil
 	}
 	for {
 		inflight := state.inflight.Load()
 		healthy := h.backend.HealthyCount(app.ID)
 		desired := desiredBurstInstances(inflight, perVM, maxInstances)
 		if desired <= healthy {
-			return nil
+			return waited, nil
 		}
 
 		state.mu.Lock()
@@ -119,21 +120,22 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 		}
 		state.mu.Unlock()
 
+		waited = true
 		select {
 		case <-generation.done:
 			// A scheduler refusal to expand does not invalidate targets that
 			// already exist. Let the normal forwarding limits and request
 			// budget bound their work instead of failing the whole burst.
 			if errors.Is(generation.err, errBurstCapacityStalled) && h.backend.HealthyCount(app.ID) > 0 {
-				return nil
+				return waited, nil
 			}
 			if generation.err != nil {
-				return generation.err
+				return waited, generation.err
 			}
 			// The worker may have observed a lower demand after some
 			// callers completed. Re-read pressure before forwarding.
 		case <-ctx.Done():
-			return ctx.Err()
+			return waited, ctx.Err()
 		}
 	}
 }
