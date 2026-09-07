@@ -982,7 +982,7 @@ func copyTrustBundle(source, destination, hostRole string, extraSANs pki.AltName
 		}
 		for _, role := range pki.RolesForBox(hostRole) {
 			var issuanceErr error
-			if hostRole == roleComputeOnly && role.Directory == "vmmd" {
+			if hostRole == roleComputeOnly && pki.RoleUsesNodeIdentity(role) {
 				issuanceErr = pki.EnsureLeafWithCNAndSANs(source, role, nodeCN, caCert, caKey, false, extraSANs)
 			} else {
 				issuanceErr = pki.EnsureLeafWithSANs(source, role, caCert, caKey, false, extraSANs)

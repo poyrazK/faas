@@ -93,12 +93,11 @@ func renderPKITrustOnly(rootDir, hostName, hostRole string, extraSANs pki.AltNam
 	return out, nil
 }
 
-// ensureHostLeaf keeps the canonical daemon CNs for every leaf except the
-// compute-only vmmd leaves. Those leaves also carry the daemon SANs, but their
-// subject must be the node identity that appears in compute_nodes so the
-// mTLS verifier can bind a report to the box that sent it.
+// ensureHostLeaf keeps the canonical daemon CNs except on compute-only leaves
+// that authenticate the host itself to a control-plane verifier. Those leaves
+// still carry the daemon SANs, while their subject matches compute_nodes.name.
 func ensureHostLeaf(rootDir string, role pki.Role, hostName, hostRole string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, force bool, extraSANs pki.AltNames) error {
-	if nodeCN := nodeCommonName(hostName, hostRole); nodeCN != "" && role.Directory == "vmmd" {
+	if nodeCN := nodeCommonName(hostName, hostRole); nodeCN != "" && pki.RoleUsesNodeIdentity(role) {
 		return pki.EnsureLeafWithCNAndSANs(rootDir, role, nodeCN, caCert, caKey, force, extraSANs)
 	}
 	return pki.EnsureLeafWithSANs(rootDir, role, caCert, caKey, force, extraSANs)
