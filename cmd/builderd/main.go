@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -296,7 +297,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// burst cannot create an unbounded number of goroutines. Dropped build
 	// notifications are recovered by workerLoop; cancellation remains fenced by
 	// the durable deployment/build status and can be retried by a later event.
-	notificationCtx, stopNotificationWorkers := context.WithCancel(ctx)
+	runCtx, stopRun := context.WithCancel(ctx)
+	defer stopRun()
+	notificationCtx, stopNotificationWorkers := context.WithCancel(runCtx)
 	defer stopNotificationWorkers()
 	buildQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
 		if _, err := b.ProcessOne(workCtx, buildID); err != nil {
@@ -320,7 +323,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
 	}
-	go workerLoop(ctx, b, pollInterval, log)
+	go workerLoop(runCtx, b, pollInterval, log)
 
 	// Stuck-running build reaper (issue #195 B1.4). Free-function
 	// goroutine next to workerLoop; cadence + threshold come from
@@ -335,7 +338,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if reapThreshold <= 0 {
 		reapThreshold = 15 * time.Minute
 	}
-	go builderdpkg.ReaperLoop(ctx, store, reapInterval, reapThreshold, log)
+	go builderdpkg.ReaperLoop(runCtx, store, reapInterval, reapThreshold, log)
 
 	// Build cache GC (issue #196 B2.1). Content-addressed cache at
 	// cfg.CacheDir grows forever as builds accumulate; a daily sweep
@@ -346,7 +349,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if gcInterval <= 0 {
 		gcInterval = 24 * time.Hour
 	}
-	go builderdpkg.CacheGCSweepLoop(ctx, cache, gcInterval, cfg.CacheMaxBytes, cfg.CacheMaxAge, log)
+	go builderdpkg.CacheGCSweepLoop(runCtx, cache, gcInterval, cfg.CacheMaxBytes, cfg.CacheMaxAge, log)
 
 	// Split-box source retention. apid publishes sources/<build>.tar.gz
 	// before it creates the durable build row, so an apid crash can leave a
@@ -363,27 +366,47 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if sourceMaxAge <= 0 {
 			sourceMaxAge = 24 * time.Hour
 		}
-		go builderdpkg.SourceGCSweepLoop(ctx, sourceStorage, store, sourceGCInterval, sourceMaxAge, log)
+		go builderdpkg.SourceGCSweepLoop(runCtx, sourceStorage, store, sourceGCInterval, sourceMaxAge, log)
+	}
+
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			builderdProbe.Drain("builderd", log)
+			// Stop queue handlers before waiting on builderd so their
+			// already-cancelled work contexts can unwind and requeue claims.
+			stopNotificationWorkers()
+			stopRun()
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer shutdownCancel()
+			if err := b.Drain(shutdownCtx); err != nil {
+				log.Warn("builderd: build drain incomplete", "err", err)
+			}
+			if err := buildQueue.WaitContext(shutdownCtx); err != nil {
+				log.Warn("builderd: notification queue drain incomplete", "queue", "build", "err", err)
+			}
+			if err := cancelQueue.WaitContext(shutdownCtx); err != nil {
+				log.Warn("builderd: notification queue drain incomplete", "queue", "cancel", "err", err)
+			}
+			if httpSrv != nil {
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				//nolint:contextcheck // shutdown ctx must outlive the already-cancelled caller ctx.
+				if err := httpSrv.Shutdown(stopCtx); err != nil {
+					log.Warn("builderd: metrics shutdown", "err", err)
+				}
+				stopCancel()
+			}
+		})
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			// ADR-122 / builderd shutdown fix: drain the
-			// metrics listener so a cancel doesn't leak
-			// an open *http.Server. 5s matches the meterd
-			// precedent at cmd/meterd/main.go:978-983.
-			// net/http Shutdown requires a non-Done parent
-			// ctx — branch off Background here.
-			if httpSrv != nil {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				//nolint:contextcheck // shutdown ctx must outlive the already-cancelled caller ctx.
-				_ = httpSrv.Shutdown(stopCtx)
-				stopCancel()
-			}
+			shutdown()
 			return nil
 		case n, ok := <-notifCh:
 			if !ok {
+				shutdown()
 				return nil
 			}
 			if n.Channel != db.NotifyBuildQueued {
@@ -465,6 +488,9 @@ func workerLoop(ctx context.Context, b *builderdpkg.Builderd, interval time.Dura
 		_, err := b.ProcessNext(ctx)
 		if err == nil {
 			continue
+		}
+		if errors.Is(err, builderdpkg.ErrDraining) || errors.Is(err, context.Canceled) {
+			return
 		}
 		// Distinguish the two "nothing to do" cases at the worker's
 		// eye line: an empty queue is normal idle (claim itself

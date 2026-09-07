@@ -85,3 +85,25 @@ func (q *idWorkQueue) Wait() {
 		q.wg.Wait()
 	}
 }
+
+// WaitContext waits for queue workers to stop without allowing a broken VM
+// driver or handler to hold daemon shutdown forever.
+func (q *idWorkQueue) WaitContext(ctx context.Context) error {
+	if q == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan struct{})
+	go func() {
+		q.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
