@@ -1706,7 +1706,9 @@ CREATE TABLE public.crons (
     enabled boolean DEFAULT true NOT NULL,
     last_fired_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid
+    org_id uuid,
+    timezone text DEFAULT 'UTC'::text NOT NULL,
+    skip_if_running boolean DEFAULT false NOT NULL
 );
 
 
@@ -4002,6 +4004,14 @@ ALTER TABLE ONLY public.cron_fire_now_requests
 
 ALTER TABLE ONLY public.crons
     ADD CONSTRAINT crons_app_schedule_path_unique UNIQUE (app_id, schedule, path);
+
+
+--
+-- Name: crons crons_timezone_nonempty_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crons
+    ADD CONSTRAINT crons_timezone_nonempty_check CHECK ((btrim(timezone) <> ''::text));
 
 
 --

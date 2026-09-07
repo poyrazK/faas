@@ -545,14 +545,16 @@ type CreditLedger struct {
 }
 
 type Cron struct {
-	ID          pgtype.UUID
-	AppID       pgtype.UUID
-	Schedule    string
-	Path        string
-	Enabled     bool
-	LastFiredAt pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
-	OrgID       pgtype.UUID
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	Schedule      string
+	Path          string
+	Enabled       bool
+	LastFiredAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	OrgID         pgtype.UUID
+	Timezone      string
+	SkipIfRunning bool
 }
 
 type CronFireNowRequest struct {

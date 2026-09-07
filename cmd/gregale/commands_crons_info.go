@@ -75,6 +75,8 @@ func renderCronInfo(w io.Writer, c api.CronResponse) {
 	_, _ = fmt.Fprintf(w, "  schedule: %s\n", c.Schedule)
 	_, _ = fmt.Fprintf(w, "  path:     %s\n", c.Path)
 	_, _ = fmt.Fprintf(w, "  enabled:  %t\n", c.Enabled)
+	_, _ = fmt.Fprintf(w, "  timezone: %s\n", c.Timezone)
+	_, _ = fmt.Fprintf(w, "  skip_if_running: %t\n", c.SkipIfRunning)
 	_, _ = fmt.Fprintf(w, "  app:      %s\n", c.AppID)
 	last := c.LastFiredAt
 	if last == "" {

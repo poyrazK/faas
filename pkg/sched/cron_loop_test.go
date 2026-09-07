@@ -282,6 +282,41 @@ func TestCronDispatch_FiresOncePerBoundary(t *testing.T) {
 	}
 }
 
+func TestCronDispatch_SkipIfRunningConsumesBoundary(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "skip@example.com", api.PlanHobby)
+	app, cronRow := newAppAndCron(t, store, acct.ID, true)
+	skip := true
+	if _, err := store.UpdateCronWithOptions(ctx, cronRow.ID, nil, nil, nil, nil, &skip, nil); err != nil {
+		t.Fatalf("enable skip_if_running: %v", err)
+	}
+	cronID := cronRow.ID
+	if _, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AppID: app.ID, AccountID: acct.ID, Source: state.InvocationCron,
+		State: state.InvocationPending, CronID: &cronID, DueAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed active invocation: %v", err)
+	}
+	vmm := &fakeWakeVMM{}
+	eng, _ := makeEngine(t, store, vmm)
+	synth := &recordingSynth{}
+	now := time.Date(2026, 7, 17, 12, 2, 0, 0, time.UTC)
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth).WithClock(func() time.Time { return now })
+	loop.runCronTick(ctx)
+	if got := synth.calls.Load(); got != 0 {
+		t.Fatalf("synth calls = %d, want 0 while prior run is active", got)
+	}
+	got, err := store.CronByID(ctx, cronRow.ID)
+	if err != nil {
+		t.Fatalf("reload cron: %v", err)
+	}
+	if got.LastFiredAt.IsZero() {
+		t.Fatal("skipped boundary did not advance LastFiredAt")
+	}
+}
+
 // TestCronDispatch_SuspendedAccountSkipped pins the §11 abuse guard:
 // suspended accounts get no cron traffic. The loop must short-circuit
 // before Wake so we don't gratuitously boot a VM only to park it.

@@ -2448,6 +2448,20 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 
 // --- crons -----------------------------------------------------------------
 
+const defaultCronTimezone = "UTC"
+
+func normalizeCronTimezone(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultCronTimezone, nil
+	}
+	loc, err := time.LoadLocation(raw)
+	if err != nil {
+		return "", err
+	}
+	return loc.String(), nil
+}
+
 func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -2456,6 +2470,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	if !validCron(req.Schedule) {
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
+		return
+	}
+	timezone, err := normalizeCronTimezone(req.Timezone)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
 		return
 	}
 	// Plan-tier gate (spec §4.4 / paid-only event-shaped primitives).
@@ -2492,7 +2511,13 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if path == "" {
 		path = "/"
 	}
-	c, err := s.store.CreateCronIfUnderQuota(r.Context(), app.ID, req.Schedule, path, enabled, limits)
+	skipIfRunning := false
+	if req.SkipIfRunning != nil {
+		skipIfRunning = *req.SkipIfRunning
+	}
+	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
+		Timezone: timezone, SkipIfRunning: skipIfRunning,
+	})
 	if err != nil {
 		var qe *state.CronQuotaError
 		switch {
@@ -2513,11 +2538,13 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	// gets a 402 and never reaches this line, so no audit row is
 	// emitted for the rejected attempt.
 	s.audit.Emit(r.Context(), "cron.created", &acct.ID, map[string]any{
-		"cron_id":  c.ID,
-		"app_id":   c.AppID,
-		"schedule": c.Schedule,
-		"path":     c.Path,
-		"enabled":  c.Enabled,
+		"cron_id":         c.ID,
+		"app_id":          c.AppID,
+		"schedule":        c.Schedule,
+		"path":            c.Path,
+		"enabled":         c.Enabled,
+		"timezone":        c.Timezone,
+		"skip_if_running": c.SkipIfRunning,
 	})
 	writeJSON(w, http.StatusCreated, cronResponse(c))
 }
@@ -2553,6 +2580,15 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
 		return
 	}
+	var timezone string
+	if req.Timezone != nil {
+		var err error
+		timezone, err = normalizeCronTimezone(*req.Timezone)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
+			return
+		}
+	}
 	c, err := s.store.CronByID(r.Context(), id)
 	if err != nil {
 		s.notFound(w, "no such cron")
@@ -2563,7 +2599,11 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such cron")
 		return
 	}
-	updated, err := s.store.UpdateCron(r.Context(), id, req.Schedule, req.Path, req.Enabled, nil)
+	var timezonePatch *string
+	if req.Timezone != nil {
+		timezonePatch = &timezone
+	}
+	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
@@ -2587,6 +2627,14 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Enabled != nil {
 		oldCron["enabled"] = c.Enabled
 		newCron["enabled"] = updated.Enabled
+	}
+	if req.Timezone != nil {
+		oldCron["timezone"] = c.Timezone
+		newCron["timezone"] = updated.Timezone
+	}
+	if req.SkipIfRunning != nil {
+		oldCron["skip_if_running"] = c.SkipIfRunning
+		newCron["skip_if_running"] = updated.SkipIfRunning
 	}
 	s.audit.Emit(r.Context(), "cron.updated", &acct.ID, map[string]any{
 		"cron_id": updated.ID,
@@ -4330,13 +4378,18 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 }
 
 func cronResponse(c state.Cron) api.CronResponse {
+	if c.Timezone == "" {
+		c.Timezone = defaultCronTimezone
+	}
 	resp := api.CronResponse{
-		ID:        c.ID,
-		AppID:     c.AppID,
-		Schedule:  c.Schedule,
-		Path:      c.Path,
-		Enabled:   c.Enabled,
-		CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
+		ID:            c.ID,
+		AppID:         c.AppID,
+		Schedule:      c.Schedule,
+		Path:          c.Path,
+		Enabled:       c.Enabled,
+		Timezone:      c.Timezone,
+		SkipIfRunning: c.SkipIfRunning,
+		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
