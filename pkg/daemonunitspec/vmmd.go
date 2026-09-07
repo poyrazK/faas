@@ -133,7 +133,7 @@ func UnitVmmd() daemonunit.Unit {
 
 		// vmmd owns the node-local snapshot fan-out worker, so it must see
 		// the same shared OCI registry configuration as the control plane.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env",
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/srv/fc/base"},
 			// Public half of the host X25519 age key — read by vmmd's

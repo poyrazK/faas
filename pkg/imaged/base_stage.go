@@ -169,10 +169,13 @@ func (h *Handler) EnsureBaseExt4(
 					// from the legacy compatibility path. Refresh a sidecar that
 					// does not record the canonical scan source; once refreshed,
 					// subsequent restarts keep the cheap idempotent path.
-					if !h.scanSidecarSourceCurrent(ctx, be, baseKey, outImage) {
+					scanCurrent := h.scanSidecarSourceCurrent(ctx, be, baseKey, outImage, ref)
+					if !scanCurrent {
 						if scanErr := h.writeScanSidecar(ctx, baseKey, ref, outImage); scanErr != nil {
 							h.log.Warn("imaged: refresh grype scan sidecar", "key", wire.ScanKeyForBaseKey(baseKey), "err", scanErr)
 						}
+					} else if markErr := markCachedBaseGeneration(be, baseKey, ref); markErr != nil {
+						h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 					}
 					return BaseStageResult{
 						OutImage:     outImage,
@@ -670,6 +673,20 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, ref, outImage s
 	if err := be.Put(ctx, scanKey, bytes.NewReader(scanBlob)); err != nil {
 		return fmt.Errorf("imaged: write scan sidecar %q: %w", scanKey, err)
 	}
+	if err := markCachedBaseGeneration(be, baseKey, ref); err != nil {
+		return err
+	}
+	return nil
+}
+
+func markCachedBaseGeneration(be storage.StorageBackend, baseKey, generation string) error {
+	cache, cacheKey, err := storage.CacheBackendForKey(be, baseKey)
+	if err != nil || cache == nil {
+		return err
+	}
+	if err := cache.MarkGeneration(cacheKey, generation); err != nil {
+		return fmt.Errorf("imaged: mark cached base generation %q: %w", baseKey, err)
+	}
 	return nil
 }
 
@@ -695,7 +712,7 @@ func scanSourceForBase(be storage.StorageBackend, baseKey, outImage string) (str
 // repairs the scanner database or binary, the next imaged restart must be
 // able to replace CRITICAL=9999 rather than preserving a transient outage as
 // a permanent boot refusal.
-func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.StorageBackend, baseKey, outImage string) bool {
+func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.StorageBackend, baseKey, outImage, ref string) bool {
 	source, err := scanSourceForBase(be, baseKey, outImage)
 	if err != nil {
 		return false
@@ -706,6 +723,7 @@ func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.Stora
 	}
 	defer func() { _ = rc.Close() }()
 	var sidecar struct {
+		Image                string         `json:"image"`
 		Source               string         `json:"source"`
 		Findings             map[string]int `json:"findings"`
 		FixAvailableFindings map[string]int `json:"fix_available_findings"`
@@ -722,7 +740,7 @@ func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.Stora
 	if sidecar.FixAvailableFindings == nil {
 		return false
 	}
-	return sidecar.Source != "" && sidecar.Source == source
+	return sidecar.Image == ref && sidecar.Source != "" && sidecar.Source == source
 }
 
 // RuntimeBaseRef pairs a runtime id with its default OCI ref and the

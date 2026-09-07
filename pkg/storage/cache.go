@@ -379,6 +379,7 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 		return nil // spool file is removed by the deferred cleanup
 	}
 	keep = true
+	_ = os.Remove(path + ".generation")
 	_ = os.Chmod(path, 0o644)
 	if err := os.WriteFile(metaPath, []byte(key), 0o644); err != nil {
 		// Sidecar failure is non-fatal but degrades List.
@@ -420,10 +421,20 @@ var errCacheBlobOversized = errors.New("storage: cache: blob exceeds maxBytes")
 // stale bytes. Cache hits and parent misses are file-backed so large
 // OCI layers never become a heap-sized byte slice.
 func (c *LocalCacheBackend) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	return c.get(ctx, key, c.refresh())
+}
+
+// Refresh bypasses an existing local entry, reads the canonical parent, and
+// replaces the cache before returning it. Unlike the legacy environment seam,
+// this operation is scoped to one call and is safe for a live daemon.
+func (c *LocalCacheBackend) Refresh(ctx context.Context, key string) (io.ReadCloser, error) {
+	return c.get(ctx, key, true)
+}
+
+func (c *LocalCacheBackend) get(ctx context.Context, key string, refresh bool) (io.ReadCloser, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
 	}
-	refresh := c.refresh()
 	if !refresh {
 		if cached, ok := c.openCache(key); ok {
 			return cached, nil
@@ -448,6 +459,64 @@ func (c *LocalCacheBackend) Get(ctx context.Context, key string) (io.ReadCloser,
 		return nil, fmt.Errorf("storage: cache: get %q: parent read: %w", key, err)
 	}
 	return cached, nil
+}
+
+// CachedGeneration reports which immutable release reference has been
+// committed for key in this node's cache. Generation markers are local cache
+// metadata; they are never written to the parent backend.
+func (c *LocalCacheBackend) CachedGeneration(key string) (string, bool, error) {
+	if err := validateKey(key); err != nil {
+		return "", false, err
+	}
+	path, _ := c.cacheFileFor(key)
+	b, err := os.ReadFile(path + ".generation")
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("storage: cache: read generation %q: %w", key, err)
+	}
+	generation := strings.TrimSpace(string(b))
+	return generation, generation != "", nil
+}
+
+// MarkGeneration atomically records that the caller has published or
+// refreshed the complete artifact group for key and verified generation.
+func (c *LocalCacheBackend) MarkGeneration(key, generation string) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	generation = strings.TrimSpace(generation)
+	if generation == "" || len(generation) > 2048 || strings.ContainsAny(generation, "\r\n\x00") {
+		return fmt.Errorf("storage: cache: invalid generation for %q", key)
+	}
+	path, _ := c.cacheFileFor(key)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("storage: cache: mark generation %q without cached blob: %w", key, err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".faas-cache-generation-*")
+	if err != nil {
+		return fmt.Errorf("storage: cache: create generation marker %q: %w", key, err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := io.WriteString(tmp, generation+"\n"); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("storage: cache: write generation marker %q: %w", key, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("storage: cache: sync generation marker %q: %w", key, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("storage: cache: close generation marker %q: %w", key, err)
+	}
+	if err := os.Rename(tmpPath, path+".generation"); err != nil {
+		return fmt.Errorf("storage: cache: install generation marker %q: %w", key, err)
+	}
+	return nil
 }
 
 // refresh reports whether the next Get must read the parent and replace the
@@ -668,6 +737,7 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 	}
 	_ = os.Chmod(path, 0o664)
 	keep = true
+	_ = os.Remove(path + ".generation")
 	if err := os.WriteFile(metaPath, []byte(key), 0o644); err != nil {
 		// The blob remains usable; without its sidecar it is simply
 		// invisible to List and will be treated as a cache miss later.
@@ -710,6 +780,9 @@ func (c *LocalCacheBackend) evictCache(key string) {
 	if err := os.Remove(metaPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		_ = err
 	}
+	if err := os.Remove(path + ".generation"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = err
+	}
 }
 
 // enforceBudgetLocked walks the cache directory, sums the
@@ -742,6 +815,7 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 		if err := os.Remove(metaPath); err == nil {
 			_ = err
 		}
+		_ = os.Remove(e.path + ".generation")
 	}
 	return nil
 }
@@ -771,7 +845,7 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 			if f.IsDir() {
 				continue
 			}
-			if strings.HasSuffix(f.Name(), ".meta") {
+			if strings.HasSuffix(f.Name(), ".meta") || strings.HasSuffix(f.Name(), ".generation") {
 				continue
 			}
 			info, err := f.Info()
