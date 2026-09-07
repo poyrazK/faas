@@ -5,13 +5,43 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/oci"
 )
+
+func TestRunFailsClosedWhenFunctionRunnerMissing(t *testing.T) {
+	t.Setenv("FAAS_DATABASE_URL", "postgres://localhost/faas")
+	for _, name := range []string{
+		"FAAS_FUNCTION_RUNNER_GO124",
+		"FAAS_FUNCTION_RUNNER_GO124_ALPINE",
+		"FAAS_FUNCTION_RUNNER_NODE24",
+		"FAAS_FUNCTION_RUNNER_PYTHON312",
+		"FAAS_FUNCTION_RUNNER_PYTHON313",
+	} {
+		t.Setenv(name, "/bin/sh")
+	}
+	t.Setenv("FAAS_FUNCTION_RUNNER_NODE22", "")
+
+	err := defaultDeps().run(context.Background(), slog.Default())
+	var missing *daemonenv.MissingError
+	if !errors.As(err, &missing) {
+		t.Fatalf("run error = %T %v, want MissingError", err, err)
+	}
+	if missing.ExitCode() != 2 {
+		t.Fatalf("missing runner exit code = %d, want 2", missing.ExitCode())
+	}
+	if len(missing.Names) != 1 || missing.Names[0] != "FAAS_FUNCTION_RUNNER_NODE22" {
+		t.Fatalf("missing names = %v, want [FAAS_FUNCTION_RUNNER_NODE22]", missing.Names)
+	}
+}
 
 // TestOciPullTimeout covers the FAAS_OCI_PULL_TIMEOUT_SECONDS knob —
 // valid value honors, invalid/empty/non-positive fall back to

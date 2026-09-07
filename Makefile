@@ -630,7 +630,10 @@ ansible-scale-check: ## Render the example manifest and RUN scale_check.yml (not
 	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i $(CURDIR)/.cache/ansible-scale-check/inventory/hosts.ini scale_check.yml
 
 .PHONY: env-contract-check
+# Keep both the static delivery-path scanner and the generated contract tests
+# behind one target so CI and local verification exercise the same gate.
 env-contract-check: ## Every FAAS_* a daemon reads is declared + delivered; docs/ops/env-contract.md in sync — ADR-143
+	bash scripts/ci/check_env_contract.sh
 	$(GO) test -count=1 ./pkg/daemonunitspec/ -run 'TestEnvContract|TestDaemonsYAML'
 
 .PHONY: verify-fleet
