@@ -73,6 +73,20 @@ func (f *fakeBackend) Get(_ context.Context, key string) (io.ReadCloser, error) 
 
 func (f *fakeBackend) Delete(context.Context, string) error { return nil }
 
+type fakeLocalBackend struct {
+	*fakeBackend
+	local    map[string]bool
+	resolved []string
+}
+
+func (f *fakeLocalBackend) LocalPath(key string) (string, bool, error) {
+	f.resolved = append(f.resolved, key)
+	if f.local[key] {
+		return "/cache/" + key, true, nil
+	}
+	return "", false, nil
+}
+
 type fakeMetrics struct{ outcomes []string }
 
 func (f *fakeMetrics) ObserveFanout(outcome, region string) {
@@ -171,6 +185,31 @@ func TestSyncJobRejectsIncompleteKeys(t *testing.T) {
 	job := state.SnapshotReplicaJob{StorageKey: "snap/dep/mem"}
 	if err := syncJob(context.Background(), &fakeBackend{}, job); err == nil {
 		t.Fatal("syncJob accepted incomplete storage keys")
+	}
+}
+
+func TestSyncJobDoesNotReadResidentArtifacts(t *testing.T) {
+	backend := &fakeLocalBackend{
+		fakeBackend: &fakeBackend{objects: map[string][]byte{
+			"snap/dep/vmstate": []byte("vmstate"),
+		}},
+		local: map[string]bool{
+			"snap/dep/mem":       true,
+			"apps/acme/dep.ext4": true,
+		},
+	}
+	job := state.SnapshotReplicaJob{
+		StorageKey: "snap/dep/mem", VMStateStorageKey: "snap/dep/vmstate",
+		LayerStorageKeys: []string{"apps/acme/dep.ext4"},
+	}
+	if err := syncJob(context.Background(), backend, job); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := backend.gets, []string{"snap/dep/vmstate"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("Get calls = %v, want %v", got, want)
+	}
+	if len(backend.resolved) != 3 {
+		t.Fatalf("LocalPath calls = %v, want all three keys", backend.resolved)
 	}
 }
 
