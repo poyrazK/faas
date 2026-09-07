@@ -61,8 +61,9 @@ PRs from forks are **refused**. The webhook posts a
 app row is provisioned. This is deliberate: we cannot
 guarantee that untrusted code from a fork will not reach the
 build VM without a per-install override. The GitHub App needs
-`Issues:write` to maintain the single preview status comment on
-the PR's issue thread; it does not need `Pull requests:write`.
+`Deployments:write` for the deployment timeline and `Issues:write`
+to maintain the single preview status comment on the PR's issue
+thread; it does not need `Pull requests:write`.
 
 ## Dashboard
 
@@ -81,6 +82,12 @@ and includes the preview URL, current lifecycle status, commit SHA,
 and one-click destroy link. A hidden marker makes webhook retries and
 repeated synchronize events idempotent instead of creating duplicate
 comments. The Check Run remains the source of build-stage status.
+
+Each preview deployment also appears in GitHub's Deployments timeline
+with a stable environment URL and deployment/log links. Status updates
+reuse the same provider deployment across retries, so GitHub consumers
+see one `queued` → `in_progress` → `success`/`failure` lifecycle rather
+than a new deployment row for every phase.
 
 ## Operational notes
 

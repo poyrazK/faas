@@ -40,6 +40,126 @@ func TestChecksAPI_PhaseMapping(t *testing.T) {
 	}
 }
 
+type fakeGitHubDeploymentStore struct {
+	id    int64
+	saves int
+}
+
+func (f *fakeGitHubDeploymentStore) GitHubDeploymentID(_ context.Context, _ string) (int64, error) {
+	if f.id == 0 {
+		return 0, ErrGitHubDeploymentNotFound
+	}
+	return f.id, nil
+}
+
+func (f *fakeGitHubDeploymentStore) SaveGitHubDeploymentID(_ context.Context, _ string, id int64) error {
+	f.id = id
+	f.saves++
+	return nil
+}
+
+func TestChecksAPI_WriteGitHubDeploymentStatus_IsStableAcrossRetries(t *testing.T) {
+	var paths []string
+	var createBody map[string]any
+	var statusBodies []map[string]any
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		body, _ := io.ReadAll(r.Body)
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/deployments") {
+			_ = json.Unmarshal(body, &createBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":4242,"environment":"preview/demo"}`))
+			return
+		}
+		var statusBody map[string]any
+		_ = json.Unmarshal(body, &statusBody)
+		statusBodies = append(statusBodies, statusBody)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":5252}`))
+	}))
+	defer fake.Close()
+
+	store := &fakeGitHubDeploymentStore{}
+	tokens := NewTokenCache(fakeFetcher(func(_ context.Context, _ int64) (string, time.Time, error) {
+		return "ghs_deploy_token", time.Now().Add(time.Hour), nil
+	}), time.Minute)
+	c, err := NewChecksAPI(tokens, &singleHostClient{base: fake.Client(), api: fake.URL}, &fakeBindings{id: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.WithGitHubDeploymentStore(store)
+	update := GitHubDeploymentUpdate{
+		LocalDeploymentID:     "deployment-1",
+		InstallationID:        99,
+		RepoFullName:          "octo/api",
+		CommitSHA:             "deadbeef",
+		Ref:                   "deadbeef",
+		Environment:           "preview/demo",
+		Status:                "building",
+		Description:           "Gregale deployment deployment-1 for demo",
+		TargetURL:             "https://gregale.dev/deployments/deployment-1",
+		EnvironmentURL:        "https://demo.gregale.dev",
+		LogURL:                "https://gregale.dev/logs/deployment-1",
+		TransientEnvironment:  true,
+		ProductionEnvironment: false,
+	}
+	if err := c.WriteGitHubDeploymentStatus(context.Background(), update); err != nil {
+		t.Fatalf("first deployment status: %v", err)
+	}
+	if store.id != 4242 || store.saves != 1 {
+		t.Fatalf("store = id %d saves %d, want id 4242 and one save", store.id, store.saves)
+	}
+	if len(paths) != 3 || paths[0] != "GET /repos/octo/api/deployments" ||
+		paths[1] != "POST /repos/octo/api/deployments" ||
+		paths[2] != "POST /repos/octo/api/deployments/4242/statuses" {
+		t.Fatalf("request paths = %#v", paths)
+	}
+	if createBody["ref"] != "deadbeef" || createBody["environment"] != "preview/demo" || createBody["transient_environment"] != true {
+		t.Fatalf("create body = %#v", createBody)
+	}
+	if !strings.Contains(createBody["description"].(string), "gregale-deployment:deployment-1") {
+		t.Fatalf("create description missing stable marker: %#v", createBody["description"])
+	}
+	if len(statusBodies) != 1 || statusBodies[0]["state"] != "in_progress" {
+		t.Fatalf("status bodies = %#v", statusBodies)
+	}
+
+	update.Status = "live"
+	if err := c.WriteGitHubDeploymentStatus(context.Background(), update); err != nil {
+		t.Fatalf("retry deployment status: %v", err)
+	}
+	if len(paths) != 4 || paths[3] != "POST /repos/octo/api/deployments/4242/statuses" {
+		t.Fatalf("retry request paths = %#v", paths)
+	}
+	if len(statusBodies) != 2 || statusBodies[1]["state"] != "success" {
+		t.Fatalf("retry status bodies = %#v", statusBodies)
+	}
+}
+
+func TestGitHubDeploymentStateMapping(t *testing.T) {
+	cases := map[string]string{
+		"pending": "queued", "building": "in_progress", "imaging": "in_progress",
+		"snapshotting": "in_progress", "live": "success", "failed": "failure",
+		"cancelled": "inactive", "superseded": "inactive",
+	}
+	for status, want := range cases {
+		got, ok := githubDeploymentState(status)
+		if !ok || got != want {
+			t.Errorf("githubDeploymentState(%q) = %q, %v; want %q, true", status, got, ok, want)
+		}
+	}
+	if got, ok := githubDeploymentState("deleted"); ok || got != "" {
+		t.Errorf("unknown state = %q, %v; want empty, false", got, ok)
+	}
+}
+
 // TestChecksAPI_PreviewPhaseTitle pins the preview-specific
 // title copy (issue #272 / ADR-094). The PR UI uses the
 // Check Run title to render the row — keeping "Preview X"
