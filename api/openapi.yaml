@@ -2368,7 +2368,6 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
-
     patch:
       tags: [apps]
       operationId: updateApp
