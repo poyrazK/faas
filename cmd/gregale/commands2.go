@@ -1350,12 +1350,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
 			return 1
 		}
-		return cmdDeployRepoSourceRefContext(ctx, slug, *repo, *ref, api.DeployAnnotations{
+		return cmdDeployRepoSourceRefContextWithWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:     *reason,
 			Tag:        *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy),
 			PRNumber:   *prNumber,
-		})
+		}, waitForDeploy)
 	}
 
 	// --template materializes an embedded starter project. For function
