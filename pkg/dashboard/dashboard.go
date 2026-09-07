@@ -1213,6 +1213,7 @@ type AppMetricsView struct {
 // request analytics API. It deliberately mirrors only aggregate fields;
 // request IDs and trace data belong to the debugger surface.
 type RequestAnalyticsView struct {
+	GroupBy               string
 	Since                 string
 	From                  string
 	Until                 string
@@ -1225,6 +1226,9 @@ type RequestAnalyticsView struct {
 	P95MS                 int
 	P99MS                 int
 	Routes                []RequestAnalyticsRouteView
+	Groups                []RequestAnalyticsGroupView
+	GroupsLimit           int
+	GroupsTruncated       bool
 	RoutesLimit           int
 	RoutesTruncated       bool
 	AsOf                  string
@@ -1239,6 +1243,18 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+}
+
+type RequestAnalyticsGroupView struct {
+	Value         string
+	Method        string
+	Requests      int64
+	ErrorRequests int64
+	ErrorRatePct  float64
+	ColdBoots     int64
+	P50MS         int
+	P95MS         int
+	P99MS         int
 }
 
 type RequestAnalyticsRouteView struct {

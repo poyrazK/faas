@@ -1560,10 +1560,12 @@ delete from oidc_exchanged_tokens where id = $1;
 -- passes it explicitly.
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
-    status, latency_ms, cold_boot, trace_id, received_at, count
+    status, latency_ms, cold_boot, trace_id, received_at, count,
+    ua_family, referrer_host, country
 ) VALUES (
     $1, $2, $3, $4, $5,
-    $6, $7, $8, $9, $10, $11
+    $6, $7, $8, $9, $10, $11,
+    $12, $13, $14
 );
 
 -- name: ListRequestTelemetryByApp :many
@@ -1722,6 +1724,90 @@ JOIN percentiles USING (route, method)
 ORDER BY totals.requests DESC, totals.method ASC, totals.route ASC
 LIMIT $5;
 
+-- name: RequestTelemetryAnalyticsByDimension :many
+-- Top-N customer analytics grouped by one of the bounded dimensions. Rows
+-- outside the top-N are folded into __other__ so a customer cannot turn this
+-- endpoint into an unbounded cardinality surface. Counts and percentiles use
+-- the publisher's collapsed row weight.
+WITH filtered AS (
+    SELECT
+        CASE sqlc.arg('group_by')::text
+            WHEN 'country' THEN country
+            WHEN 'referrer_host' THEN referrer_host
+            WHEN 'ua_family' THEN ua_family
+            WHEN 'status' THEN status::text
+            ELSE route
+        END::text AS dimension,
+        CASE WHEN sqlc.arg('group_by')::text = 'route' THEN method ELSE '' END AS method,
+        latency_ms,
+        cold_boot,
+        status,
+        count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), top_groups AS (
+    SELECT dimension, method
+    FROM filtered
+    GROUP BY dimension, method
+    ORDER BY SUM(request_count) DESC, dimension ASC, method ASC
+    LIMIT sqlc.arg('limit')::int
+), assigned AS (
+    SELECT
+        CASE WHEN top_groups.dimension IS NULL THEN '__other__' ELSE filtered.dimension END AS dimension,
+        CASE
+            WHEN top_groups.dimension IS NULL OR sqlc.arg('group_by')::text <> 'route' THEN ''
+            ELSE filtered.method
+        END AS method,
+        filtered.latency_ms,
+        filtered.cold_boot,
+        filtered.status,
+        filtered.request_count
+    FROM filtered
+    LEFT JOIN top_groups
+      ON top_groups.dimension = filtered.dimension
+     AND top_groups.method = filtered.method
+), latency_values AS (
+    SELECT dimension, method, latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    GROUP BY dimension, method, latency_ms
+), ranked AS (
+    SELECT dimension, method, latency_ms, sample_count,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT dimension,
+           method,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY dimension, method
+), totals AS (
+    SELECT dimension,
+           method,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM assigned
+    GROUP BY dimension, method
+)
+SELECT totals.dimension,
+       totals.method,
+       totals.requests,
+       totals.error_requests,
+       totals.cold_boots,
+       percentiles.p50_ms,
+       percentiles.p95_ms,
+       percentiles.p99_ms
+FROM totals
+JOIN percentiles USING (dimension, method)
+ORDER BY totals.requests DESC, totals.dimension ASC, totals.method ASC;
+
 -- name: RequestTelemetryAnalyticsTimeseries :many
 -- Zero-filled UTC hourly request analytics for customer charts. The
 -- recorder collapses rows by count, so all totals and percentile ranks
@@ -1784,6 +1870,123 @@ FROM buckets AS b
 LEFT JOIN totals AS t USING (bucket_start)
 LEFT JOIN percentiles AS p USING (bucket_start)
 ORDER BY b.bucket_start ASC;
+
+-- name: RequestTelemetryAnalyticsTimeseriesGrouped :many
+-- Zero-filled hourly series for a bounded top-N analytics dimension. The
+-- group set is selected over the whole window, then every selected group is
+-- zero-filled per hour. This keeps charts stable while preserving the same
+-- retention and cardinality bounds as the overview query.
+WITH buckets AS (
+    SELECT generate_series(
+        date_bin('1 hour', sqlc.arg('received_at')::timestamptz, 'epoch'::timestamptz),
+        date_bin('1 hour', sqlc.arg('received_at_2')::timestamptz - interval '1 microsecond', 'epoch'::timestamptz),
+        interval '1 hour'
+    )::timestamptz AS bucket_start
+), filtered AS (
+    SELECT date_bin('1 hour', received_at, 'epoch'::timestamptz) AS bucket_start,
+           CASE sqlc.arg('group_by')::text
+               WHEN 'country' THEN country
+               WHEN 'referrer_host' THEN referrer_host
+               WHEN 'ua_family' THEN ua_family
+               WHEN 'status' THEN status::text
+               ELSE route
+           END::text AS dimension,
+           CASE WHEN sqlc.arg('group_by')::text = 'route' THEN method ELSE '' END AS method,
+           latency_ms,
+           cold_boot,
+           status,
+           count::bigint AS request_count
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= sqlc.arg('received_at')::timestamptz
+      AND received_at <  sqlc.arg('received_at_2')::timestamptz
+      AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
+      AND (sqlc.arg('method')::text = '' OR method = sqlc.arg('method')::text)
+), top_groups AS (
+    SELECT dimension, method
+    FROM filtered
+    GROUP BY dimension, method
+    ORDER BY SUM(request_count) DESC, dimension ASC, method ASC
+    LIMIT sqlc.arg('limit')::int
+), group_set AS (
+    SELECT dimension, method FROM top_groups
+    UNION ALL
+    SELECT '__other__', ''
+    WHERE EXISTS (
+        SELECT 1
+        FROM filtered
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM top_groups
+            WHERE top_groups.dimension = filtered.dimension
+              AND top_groups.method = filtered.method
+        )
+    )
+), assigned AS (
+    SELECT filtered.bucket_start,
+           CASE WHEN top_groups.dimension IS NULL THEN '__other__' ELSE filtered.dimension END AS dimension,
+           CASE
+               WHEN top_groups.dimension IS NULL OR sqlc.arg('group_by')::text <> 'route' THEN ''
+               ELSE filtered.method
+           END AS method,
+           filtered.latency_ms,
+           filtered.cold_boot,
+           filtered.status,
+           filtered.request_count
+    FROM filtered
+    LEFT JOIN top_groups
+      ON top_groups.dimension = filtered.dimension
+     AND top_groups.method = filtered.method
+), latency_values AS (
+    SELECT bucket_start, dimension, method, latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    GROUP BY bucket_start, dimension, method, latency_ms
+), ranked AS (
+    SELECT bucket_start, dimension, method, latency_ms, sample_count,
+           SUM(sample_count) OVER (PARTITION BY bucket_start, dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY bucket_start, dimension, method) AS total
+    FROM latency_values
+), percentiles AS (
+    SELECT bucket_start,
+           dimension,
+           method,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.50), 0)::int AS p50_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95), 0)::int AS p95_ms,
+           COALESCE(MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.99), 0)::int AS p99_ms
+    FROM ranked
+    GROUP BY bucket_start, dimension, method
+), totals AS (
+    SELECT bucket_start,
+           dimension,
+           method,
+           COALESCE(SUM(request_count), 0)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+    FROM assigned
+    GROUP BY bucket_start, dimension, method
+)
+SELECT b.bucket_start,
+       g.dimension,
+       g.method,
+       COALESCE(t.requests, 0)::bigint AS requests,
+       COALESCE(t.error_requests, 0)::bigint AS error_requests,
+       COALESCE(t.cold_boots, 0)::bigint AS cold_boots,
+       COALESCE(p.p50_ms, 0)::int AS p50_ms,
+       COALESCE(p.p95_ms, 0)::int AS p95_ms,
+       COALESCE(p.p99_ms, 0)::int AS p99_ms
+FROM buckets AS b
+CROSS JOIN group_set AS g
+LEFT JOIN totals AS t
+  ON t.bucket_start = b.bucket_start
+ AND t.dimension = g.dimension
+ AND t.method = g.method
+LEFT JOIN percentiles AS p
+  ON p.bucket_start = b.bucket_start
+ AND p.dimension = g.dimension
+ AND p.method = g.method
+ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 
 -- PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
 -- read patterns. The cron in cmd/apid/debug_regression_cron.go composes

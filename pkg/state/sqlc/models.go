@@ -1408,6 +1408,9 @@ type RequestTelemetry struct {
 	SpansSummary []byte
 	ReceivedAt   pgtype.Timestamptz
 	Count        int32
+	UaFamily     string
+	ReferrerHost string
+	Country      string
 }
 
 type RequestTelemetry202608 struct {
@@ -1424,6 +1427,9 @@ type RequestTelemetry202608 struct {
 	SpansSummary []byte
 	ReceivedAt   pgtype.Timestamptz
 	Count        int32
+	UaFamily     string
+	ReferrerHost string
+	Country      string
 }
 
 type RequestTelemetry202609 struct {
@@ -1440,6 +1446,9 @@ type RequestTelemetry202609 struct {
 	SpansSummary []byte
 	ReceivedAt   pgtype.Timestamptz
 	Count        int32
+	UaFamily     string
+	ReferrerHost string
+	Country      string
 }
 
 type RequestTelemetry202610 struct {
@@ -1456,6 +1465,9 @@ type RequestTelemetry202610 struct {
 	SpansSummary []byte
 	ReceivedAt   pgtype.Timestamptz
 	Count        int32
+	UaFamily     string
+	ReferrerHost string
+	Country      string
 }
 
 type RequestTelemetryDefault struct {
@@ -1472,6 +1484,9 @@ type RequestTelemetryDefault struct {
 	SpansSummary []byte
 	ReceivedAt   pgtype.Timestamptz
 	Count        int32
+	UaFamily     string
+	ReferrerHost string
+	Country      string
 }
 
 type RuntimeConfigEntry struct {

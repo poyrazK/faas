@@ -2962,8 +2962,9 @@ func (c *Client) GetAppRequestAnalytics(ctx context.Context, slug, since string)
 // window. Since accepts a duration (24h, 7d) or an RFC3339 start timestamp;
 // Until is an optional RFC3339 exclusive upper bound.
 type AppRequestAnalyticsOptions struct {
-	Since string
-	Until string
+	Since   string
+	Until   string
+	GroupBy string
 }
 
 // GetAppRequestAnalyticsOpts returns the bounded historical request analytics
@@ -2978,6 +2979,9 @@ func (c *Client) GetAppRequestAnalyticsOpts(ctx context.Context, slug string, op
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
 	}
+	if opts.GroupBy != "" {
+		q.Set("group_by", opts.GroupBy)
+	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
@@ -2989,10 +2993,11 @@ func (c *Client) GetAppRequestAnalyticsOpts(ctx context.Context, slug string, op
 // hourly series. Route and Method must be supplied together; empty values
 // request the app-wide series.
 type AppRequestAnalyticsTimeseriesOptions struct {
-	Since  string
-	Until  string
-	Route  string
-	Method string
+	Since   string
+	Until   string
+	Route   string
+	Method  string
+	GroupBy string
 }
 
 // GetAppRequestAnalyticsTimeseries returns the zero-filled hourly request
@@ -3013,6 +3018,9 @@ func (c *Client) GetAppRequestAnalyticsTimeseries(ctx context.Context, slug stri
 	}
 	if opts.Method != "" {
 		q.Set("method", opts.Method)
+	}
+	if opts.GroupBy != "" {
+		q.Set("group_by", opts.GroupBy)
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
