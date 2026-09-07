@@ -4161,6 +4161,10 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	// PostgreSQL's app-status trigger retires all snapshots and their
+	// replicas when an app is deleted. Keep the in-memory backend in lockstep
+	// so a deleted app can never continue serving a cached wake.
+	m.markAppSnapshotsStaleLocked(id)
 	return a, nil
 }
 
@@ -4309,6 +4313,9 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	// Mirror the PostgreSQL lifecycle trigger that makes snapshots belonging
+	// to a deleted app unusable and drops their replica rows.
+	m.markAppSnapshotsStaleLocked(id)
 	return a, nil
 }
 
