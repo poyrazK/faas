@@ -7049,11 +7049,22 @@ type DebugCompareResponse struct {
 	Routes []DebugCompareRouteStats `json:"routes"`
 }
 
-// DebugReplayResponse is the wire envelope for the debug replay
-// endpoint. PR-B returns the underlying mirror invocation
-// identifier; PR-C's LLM-synthesis layer will populate the prose
-// body. PR-B deliberately keeps the response shape minimal — the
-// real value of replay surfaces in PR-C.
+// Debug replay metadata is carried through the durable invocation envelope
+// rather than persisted as raw request headers/body. Telemetry deliberately
+// excludes credentials and bodies; these platform-owned headers let schedd's
+// gateway dispatch the request through the matching ADR-125 mirror rule.
+const (
+	DebugReplayRequestIDHeader     = "x-faas-debug-replay-request-id"
+	DebugReplayDeploymentIDHeader  = "x-faas-debug-replay-deployment-id"
+	DebugReplayMirrorRuleIDHeader  = "x-faas-debug-replay-mirror-rule-id"
+	DebugReplaySourceStatusHeader  = "x-faas-debug-replay-source-status"
+	DebugReplaySourceLatencyHeader = "x-faas-debug-replay-source-latency-ms"
+	DebugReplayTraceIDHeader       = "x-faas-debug-replay-trace-id"
+)
+
+// DebugReplayResponse is the wire envelope for the debug replay endpoint.
+// MirrorInvocationID is the durable invocation id used to poll the replay;
+// the invocation completes with the mirror comparison result envelope.
 type DebugReplayResponse struct {
 	MirrorInvocationID string `json:"mirror_invocation_id,omitempty"`
 	Status             string `json:"status"`

@@ -292,6 +292,23 @@ func (c *Client) AdmitMirrorInstance(ctx context.Context, appID, mirrorDeploymen
 	return resp.GetInstanceId(), resp.GetWakeId(), nil
 }
 
+// AdmitMirrorInstanceTarget is the replay-specific sibling of
+// AdmitMirrorInstance. It preserves the legacy two-value method for the
+// customer hot path while exposing the full forwarding target to the
+// debugger's asynchronous replay worker.
+func (c *Client) AdmitMirrorInstanceTarget(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (instanceID, nodeID, deploymentID, wakeID string, port int, err error) {
+	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{
+		AppId:        appID,
+		DeploymentId: mirrorDeploymentID,
+		IsMirror:     true,
+		MirrorRuleId: mirrorRuleID,
+	})
+	if err != nil {
+		return "", "", "", "", 0, liftErr(err)
+	}
+	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int(resp.GetPort()), nil
+}
+
 // ReportActivity flushes batched last_request_at and request-count deltas to schedd. Returns
 // the number of rows schedd applied (touches for parked/gone instances are
 // silently dropped on its side).

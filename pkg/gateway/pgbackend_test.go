@@ -905,6 +905,29 @@ func TestPGBackend_LookupMirrorRules_CacheHitMiss(t *testing.T) {
 	}
 }
 
+func TestPGBackend_LookupMirrorRuleForReplayUsesAuthoritativeStore(t *testing.T) {
+	store := &fakeMirrorStore{rows: map[string][]gateway.MirrorRuleRow{
+		"app-1": {{ID: "r-1", AccountID: "acct-1", AppID: "app-1",
+			SourceDeploymentID: "dep-src", MirrorDeploymentID: "dep-mir",
+			Percent: 100, Enabled: true}},
+	}}
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, gateway.NewFakeScheduler(""), nil).
+		WithMirrorStore(store)
+
+	rule, ok, err := b.LookupMirrorRuleForReplay(context.Background(), "app-1", "r-1")
+	if err != nil || !ok || rule.ID != "r-1" {
+		t.Fatalf("initial replay lookup = %+v, ok=%v, err=%v", rule, ok, err)
+	}
+	// A replay must not trust the hot-path cache after an operator disables
+	// the rule. The second lookup re-reads the store and returns unsupported.
+	store.mu.Lock()
+	store.rows["app-1"][0].Enabled = false
+	store.mu.Unlock()
+	if _, ok, err := b.LookupMirrorRuleForReplay(context.Background(), "app-1", "r-1"); err != nil || ok {
+		t.Fatalf("disabled replay lookup = ok=%v err=%v, want unsupported", ok, err)
+	}
+}
+
 // TestPGBackend_RefreshMirrorRules_PerAppIsolation (issue #72 /
 // ADR-125 PR-A3) — refreshing app A does not disturb app B's
 // cached rules. RefreshMirrorRules keys by appID so a customer's

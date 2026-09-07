@@ -2,13 +2,53 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type replayTestBackend struct {
+	rule          gateway.MirrorRuleRow
+	target        gateway.Target
+	scheduleCalls atomic.Int32
+}
+
+func (b *replayTestBackend) Lookup(context.Context, string) (gateway.App, bool) {
+	return gateway.App{ID: b.rule.AppID, AccountID: b.rule.AccountID}, true
+}
+
+func (b *replayTestBackend) Pick(string) gateway.PickResult {
+	return gateway.PickResult{Target: b.target, OK: true, Picked: b.target.DeploymentID}
+}
+
+func (*replayTestBackend) HealthyCount(string) int { return 1 }
+
+func (*replayTestBackend) Admit(context.Context, string, string, string, string, int) (string, gateway.WakeMethod, bool, error) {
+	return "wake-source", gateway.WakeMethodColdBoot, false, nil
+}
+
+func (b *replayTestBackend) LookupMirrorRules(context.Context, string) ([]gateway.MirrorRuleRow, bool) {
+	return []gateway.MirrorRuleRow{b.rule}, true
+}
+
+func (b *replayTestBackend) ScheduleMirror(context.Context, string, string, string) (string, string, error) {
+	return "legacy-instance", "legacy-wake", nil
+}
+
+func (b *replayTestBackend) LookupMirrorRuleForReplay(context.Context, string, string) (gateway.MirrorRuleRow, bool, error) {
+	return b.rule, true, nil
+}
+
+func (b *replayTestBackend) ScheduleMirrorTarget(context.Context, string, string, string) (gateway.Target, error) {
+	b.scheduleCalls.Add(1)
+	return b.target, nil
+}
 
 func TestSynthAdapterForwardInvocationStampsPlatformHeaders(t *testing.T) {
 	a := &synthAdapter{
@@ -56,5 +96,88 @@ func TestSynthAdapterForwardInvocationStampsPlatformHeaders(t *testing.T) {
 	}
 	if out.State != state.InvocationDispatching {
 		t.Fatalf("state = %q, want dispatching", out.State)
+	}
+}
+
+func TestSynthAdapterDebugReplayUsesMirrorTargetAndStripsMetadata(t *testing.T) {
+	b := &replayTestBackend{
+		rule: gateway.MirrorRuleRow{
+			ID:                 "rule-1",
+			AccountID:          "acct-1",
+			AppID:              "app-1",
+			SourceDeploymentID: "dep-source",
+			MirrorDeploymentID: "dep-mirror",
+			Enabled:            true,
+		},
+		target: gateway.Target{NodeID: "node-mirror", InstanceID: "instance-mirror", DeploymentID: "dep-mirror"},
+	}
+	metadata, err := json.Marshal(map[string]string{
+		api.DebugReplayRequestIDHeader:     "request-1",
+		api.DebugReplayDeploymentIDHeader:  "dep-source",
+		api.DebugReplayMirrorRuleIDHeader:  "rule-1",
+		api.DebugReplaySourceStatusHeader:  "200",
+		api.DebugReplaySourceLatencyHeader: "12",
+		api.DebugReplayTraceIDHeader:       "trace-1",
+	})
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	a := &synthAdapter{
+		backend: b,
+		forward: func(target gateway.Target) http.Handler {
+			if target != b.target {
+				t.Fatalf("target = %#v, want mirror target %#v", target, b.target)
+			}
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				if len(body) != 0 {
+					t.Errorf("replay body = %q, want empty body", body)
+				}
+				for _, key := range []string{
+					api.DebugReplayRequestIDHeader,
+					api.DebugReplayDeploymentIDHeader,
+					api.DebugReplayMirrorRuleIDHeader,
+				} {
+					if got := r.Header.Get(key); got != "" {
+						t.Errorf("replay leaked %s=%q to mirror", key, got)
+					}
+				}
+				if got := r.Header.Get("X-Trace-Id"); got != "trace-1" {
+					t.Errorf("trace header = %q, want retained trace id", got)
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+		},
+	}
+	out, status, err := a.InvokeWithStatus(context.Background(), "app-1", state.Invocation{
+		ID:        "inv-1",
+		AppID:     "app-1",
+		AccountID: "acct-1",
+		Source:    state.InvocationReplay,
+		Method:    http.MethodPost,
+		Path:      "/replayed",
+		Payload:   []byte(`{"sensitive":"discard"}`),
+		Headers:   metadata,
+	})
+	if err != nil {
+		t.Fatalf("InvokeWithStatus: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if b.scheduleCalls.Load() != 1 {
+		t.Fatalf("ScheduleMirrorTarget calls = %d, want 1", b.scheduleCalls.Load())
+	}
+	var result struct {
+		SourceStatusCode int  `json:"source_status_code"`
+		MirrorStatusCode int  `json:"mirror_status_code"`
+		StatusDiff       bool `json:"status_diff"`
+		Crashed          bool `json:"crashed"`
+	}
+	if err := json.Unmarshal(out.Result, &result); err != nil {
+		t.Fatalf("decode replay result %q: %v", out.Result, err)
+	}
+	if result.SourceStatusCode != 200 || result.MirrorStatusCode != 200 || result.StatusDiff || result.Crashed {
+		t.Fatalf("replay result = %+v, want matching healthy statuses", result)
 	}
 }
