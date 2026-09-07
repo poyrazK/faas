@@ -3482,6 +3482,11 @@ type Store interface {
 	// 'ok' state. Used by the alert evaluator's cert_expiry_seconds
 	// metric branch (issue #1233, ADR-123).
 	MinCertExpiryForApp(ctx context.Context, accountID, appID string) (int64, error)
+	// CountFailedCertIssuancesSince counts custom domains whose certificate
+	// has remained in the failed state since before `since`. The evaluator
+	// passes now-15m, so the metric represents failures that have persisted
+	// beyond F2's notification threshold. An empty appID scopes to the account.
+	CountFailedCertIssuancesSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
 
 	// RefreshCertExpiryStates walks tenant_surfaces for rows with
 	// cert_state='issued', upserts

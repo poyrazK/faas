@@ -2227,8 +2227,9 @@ type OperatorIntent struct {
 // slice and the alert_rules_metric_chk DB CHECK mirror these byte-for-byte
 // (migrations/00349_alert_rules_extend_metrics_chk.sql).
 // Issue #1395 B3 adds new_error_fingerprint, cold_wake_rate_pct, and
-// daily_cost_cents from the durable observability rollups. Issue #1398
-// O2 adds the ADR-082 multi-window SLO burn-rate signal.
+// daily_cost_cents from the durable observability rollups. F2 adds
+// cert_issuance_failed, backed by custom_domains.cert_failed_at. Issue
+// #1398 O2 adds the ADR-082 multi-window SLO burn-rate signal.
 type AlertMetric string
 
 const (
@@ -2243,6 +2244,7 @@ const (
 	AlertMetricAccountSpendEUR     AlertMetric = "account_spend_eur"
 	AlertMetricFailedDeployments   AlertMetric = "deployment_failed"
 	AlertMetricCertExpirySeconds   AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed  AlertMetric = "cert_issuance_failed"
 	AlertMetricQueueDepth          AlertMetric = "queue_depth"
 	AlertMetricNewErrorFingerprint AlertMetric = "new_error_fingerprint"
 	AlertMetricColdWakeRatePct     AlertMetric = "cold_wake_rate_pct"

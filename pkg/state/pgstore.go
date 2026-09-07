@@ -8090,7 +8090,8 @@ func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token s
 		`insert into custom_domains (domain, app_id, challenge_token) values ($1, $2, $3)
 		 returning domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
 		          cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
-		          coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz)`,
+		          coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz),
+		          coalesce(cert_failed_at, 'epoch'::timestamptz)`,
 		domain, appID, token)
 	d := CustomDomain{}
 	if err := scanCustomDomain(row, &d); err != nil {
@@ -8103,7 +8104,8 @@ func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain
 	row := s.pool.QueryRow(ctx,
 		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
 		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
-		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz)
+		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz),
+		        coalesce(cert_failed_at, 'epoch'::timestamptz)
 		   from custom_domains where domain = $1`, domain)
 	d := CustomDomain{}
 	if err := scanCustomDomain(row, &d); err != nil {
@@ -8116,7 +8118,8 @@ func (s *PgStore) ListDomainsForApp(ctx context.Context, appID string) ([]Custom
 	rows, err := s.pool.Query(ctx,
 		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
 		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
-		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz)
+		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz),
+		        coalesce(cert_failed_at, 'epoch'::timestamptz)
 		   from custom_domains where app_id = $1 order by domain`, appID)
 	if err != nil {
 		return nil, err
@@ -8129,7 +8132,8 @@ func (s *PgStore) ListDomainsForAccount(ctx context.Context, accountID string) (
 	rows, err := s.pool.Query(ctx,
 		`select d.domain, d.app_id, d.challenge_token, coalesce(d.verified_at, 'epoch'::timestamptz),
 		        d.cert_status, coalesce(d.cert_expires_at, 'epoch'::timestamptz),
-		        coalesce(d.cert_last_error, ''), coalesce(d.dns_last_checked_at, 'epoch'::timestamptz)
+		        coalesce(d.cert_last_error, ''), coalesce(d.dns_last_checked_at, 'epoch'::timestamptz),
+		        coalesce(d.cert_failed_at, 'epoch'::timestamptz)
 		 from custom_domains d join apps a on a.id = d.app_id
 		 where a.account_id = $1 order by d.domain`, accountID)
 	if err != nil {
@@ -8146,7 +8150,8 @@ func (s *PgStore) ListUnverifiedCustomDomains(ctx context.Context) ([]CustomDoma
 	rows, err := s.pool.Query(ctx, `
 		select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
 		       cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
-		       coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz)
+		       coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz),
+		       coalesce(cert_failed_at, 'epoch'::timestamptz)
 		  from custom_domains
 		 where verified_at is null
 		 order by domain`)
@@ -8174,7 +8179,13 @@ func (s *PgStore) UpdateCustomDomainCertStatus(ctx context.Context, domain strin
 		   set cert_status = $2,
 		       cert_expires_at = $3,
 		       cert_last_error = $4,
-		       dns_last_checked_at = $5
+		       dns_last_checked_at = $5,
+		       cert_failed_at = case
+		         when $2 = 'failed' and cert_status is distinct from 'failed'
+		           then coalesce($5, now())
+		         when $2 = 'failed' then cert_failed_at
+		         else null
+		       end
 		 where domain = $1`, domain, string(status), nullableTime(expiresAt), nullableStr(lastError), nullableTime(dnsCheckedAt))
 	if err != nil {
 		return err
@@ -17939,10 +17950,10 @@ type customDomainScanner interface {
 }
 
 func scanCustomDomain(row customDomainScanner, d *CustomDomain) error {
-	var expiresAt, dnsCheckedAt time.Time
+	var expiresAt, dnsCheckedAt, failedAt time.Time
 	var status string
 	if err := row.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &d.VerifiedAt,
-		&status, &expiresAt, &d.CertLastError, &dnsCheckedAt); err != nil {
+		&status, &expiresAt, &d.CertLastError, &dnsCheckedAt, &failedAt); err != nil {
 		return err
 	}
 	d.CertStatus = CustomDomainCertStatus(status)
@@ -17951,6 +17962,9 @@ func scanCustomDomain(row customDomainScanner, d *CustomDomain) error {
 	}
 	if !dnsCheckedAt.Equal(time.Unix(0, 0).UTC()) {
 		d.DNSLastCheckedAt = dnsCheckedAt
+	}
+	if !failedAt.Equal(time.Unix(0, 0).UTC()) {
+		d.CertFailedAt = failedAt
 	}
 	return nil
 }

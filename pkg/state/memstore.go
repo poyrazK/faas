@@ -7283,10 +7283,21 @@ func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string
 	if !ok {
 		return ErrNotFound
 	}
+	previous := d.CertStatus
 	d.CertStatus = status
 	d.CertExpiresAt = expiresAt
 	d.CertLastError = lastError
 	d.DNSLastCheckedAt = dnsCheckedAt
+	if status == CustomDomainCertFailed {
+		if previous != CustomDomainCertFailed || d.CertFailedAt.IsZero() {
+			d.CertFailedAt = dnsCheckedAt
+			if d.CertFailedAt.IsZero() {
+				d.CertFailedAt = time.Now().UTC()
+			}
+		}
+	} else {
+		d.CertFailedAt = time.Time{}
+	}
 	m.domains[domain] = d
 	return nil
 }
@@ -15513,6 +15524,26 @@ func (m *MemStore) MinCertExpiryForApp(_ context.Context, accountID, appID strin
 		return -1, nil
 	}
 	return *minSec, nil
+}
+
+// CountFailedCertIssuancesSince mirrors the F2 Postgres query. `since` is
+// the cutoff for a failure episode: only domains that have remained failed
+// since at or before that instant are counted.
+func (m *MemStore) CountFailedCertIssuancesSince(_ context.Context, accountID, appID string, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, d := range m.domains {
+		if d.CertStatus != CustomDomainCertFailed || d.CertFailedAt.IsZero() || d.CertFailedAt.After(since) {
+			continue
+		}
+		app, ok := m.apps[d.AppID]
+		if !ok || app.AccountID != accountID || (appID != "" && app.ID != appID) {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 // RefreshCertExpiryStates walks every tenant_surfaces row whose

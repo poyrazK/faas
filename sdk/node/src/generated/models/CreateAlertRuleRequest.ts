@@ -8,7 +8,7 @@
 export type CreateAlertRuleRequest = {
   name: string;
   enabled?: boolean;
-  metric: 'error_rate_pct' | 'latency_p50_ms' | 'latency_p95_ms' | 'latency_p99_ms' | 'cold_start_pct' | 'request_count' | 'failed_invocations' | 'api_up' | 'account_spend_eur' | 'deployment_failed' | 'cert_expiry_seconds' | 'queue_depth' | 'new_error_fingerprint' | 'cold_wake_rate_pct' | 'daily_cost_cents' | 'slo_burn_rate';
+  metric: 'error_rate_pct' | 'latency_p50_ms' | 'latency_p95_ms' | 'latency_p99_ms' | 'cold_start_pct' | 'request_count' | 'failed_invocations' | 'api_up' | 'account_spend_eur' | 'deployment_failed' | 'cert_expiry_seconds' | 'cert_issuance_failed' | 'queue_depth' | 'new_error_fingerprint' | 'cold_wake_rate_pct' | 'daily_cost_cents' | 'slo_burn_rate';
   comparison: 'gt' | 'gte' | 'lt' | 'lte';
   threshold: number;
   window_spec: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
@@ -27,4 +27,3 @@ export type CreateAlertRuleRequest = {
    */
   action?: 'webhook' | 'rollback' | 'demote' | 'promote';
 };
-
