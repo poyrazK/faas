@@ -66,6 +66,11 @@ import (
 //	FAAS_OCI_USERNAME             oci-only — optional Basic-Auth user for token endpoint
 //	FAAS_OCI_PASSWORD             oci-only — optional Basic-Auth password
 //	FAAS_OCI_TIMEOUT_SECONDS      oci-only — per-request timeout (default 60)
+//	FAAS_STORAGE_SNAPSHOT_COMPRESSION
+//	                                oci-only — remote encoding for snapshot
+//	                                memory: "none" (default) | "zstd". Readers
+//	                                always accept both formats, allowing a safe
+//	                                reader-first rolling deployment.
 //	FAAS_REQUIRE_SHARED_ARTIFACTS  when "1"/"true", require the OCI backend
 //	                                with FAAS_STORAGE_LOCAL_PREFIXES=none.
 //	                                This is the production split-node gate:
@@ -322,6 +327,19 @@ func ociBackendFromEnv() (StorageBackend, error) {
 			return nil, fmt.Errorf("storage: FAAS_OCI_TIMEOUT_SECONDS=%q: must be a positive integer", v)
 		}
 		opts = append(opts, WithTimeout(time.Duration(n)*time.Second))
+	}
+	compression := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_STORAGE_SNAPSHOT_COMPRESSION")))
+	switch compression {
+	case "", snapshotCompressionNone:
+	case snapshotCompressionZstd:
+		opts = append(opts, WithSnapshotCompression(compression))
+	default:
+		return nil, fmt.Errorf(
+			"storage: FAAS_STORAGE_SNAPSHOT_COMPRESSION=%q: want %q or %q",
+			compression,
+			snapshotCompressionNone,
+			snapshotCompressionZstd,
+		)
 	}
 	oci, err := NewOCIRegistryStorageBackend(opts...)
 	if err != nil {
