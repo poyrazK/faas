@@ -104,6 +104,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		CanaryTotalSteps:      src.CanaryTotalSteps,
 		CanaryStepStartedAt:   &stepStartedAt,
 		CanaryStages:          append(json.RawMessage(nil), src.CanaryStages...),
+		InferredProfile:       append(json.RawMessage(nil), src.InferredProfile...),
 		RolloutState:          rolloutState,
 		RolloutStartedAt:      rolloutStartedAt,
 		RolloutCompletedAt:    nil,

@@ -152,9 +152,9 @@ def sync_detailed(
       `event: end` terminal with `archive_complete` /
       `archive_missing` / `archive_degraded` reasons) so the SDK
       decoder treats the two paths interchangeably. Archive is
-      gated by `Plan.LogArchiveEnabled()` — Free customers receive
-      402 + `plan_log_archive_not_allowed`. The per-plan retention
-      cap (Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
+      gated by `Plan.LogArchiveEnabled()` — Free customers receive a
+      one-day archive window. The per-plan retention cap (Free 1d /
+      Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
       outside the window with 403 + `log_archive_retention_exceeded`.
 
     Args:
@@ -227,9 +227,9 @@ def sync(
       `event: end` terminal with `archive_complete` /
       `archive_missing` / `archive_degraded` reasons) so the SDK
       decoder treats the two paths interchangeably. Archive is
-      gated by `Plan.LogArchiveEnabled()` — Free customers receive
-      402 + `plan_log_archive_not_allowed`. The per-plan retention
-      cap (Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
+      gated by `Plan.LogArchiveEnabled()` — Free customers receive a
+      one-day archive window. The per-plan retention cap (Free 1d /
+      Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
       outside the window with 403 + `log_archive_retention_exceeded`.
 
     Args:
@@ -297,9 +297,9 @@ async def asyncio_detailed(
       `event: end` terminal with `archive_complete` /
       `archive_missing` / `archive_degraded` reasons) so the SDK
       decoder treats the two paths interchangeably. Archive is
-      gated by `Plan.LogArchiveEnabled()` — Free customers receive
-      402 + `plan_log_archive_not_allowed`. The per-plan retention
-      cap (Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
+      gated by `Plan.LogArchiveEnabled()` — Free customers receive a
+      one-day archive window. The per-plan retention cap (Free 1d /
+      Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
       outside the window with 403 + `log_archive_retention_exceeded`.
 
     Args:
@@ -370,9 +370,9 @@ async def asyncio(
       `event: end` terminal with `archive_complete` /
       `archive_missing` / `archive_degraded` reasons) so the SDK
       decoder treats the two paths interchangeably. Archive is
-      gated by `Plan.LogArchiveEnabled()` — Free customers receive
-      402 + `plan_log_archive_not_allowed`. The per-plan retention
-      cap (Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
+      gated by `Plan.LogArchiveEnabled()` — Free customers receive a
+      one-day archive window. The per-plan retention cap (Free 1d /
+      Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
       outside the window with 403 + `log_archive_retention_exceeded`.
 
     Args:

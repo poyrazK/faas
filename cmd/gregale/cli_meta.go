@@ -209,6 +209,7 @@ var cliCommands = []cliCommand{
 		Short:   "List your apps",
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
+			{Name: "restore", Short: "Restore an app during its deletion grace window"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
 			{Name: "streaming-cap", Short: "Per-app streaming classification probe (ADR-102 D6)"},
 			{Name: "-q", Short: "Delete one app (positional: <slug>)"},
@@ -786,6 +787,17 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
 			{Name: "account", Short: "account-wide roll-up"},
+		},
+		Positionals: []string{"<slug>"},
+	},
+	{
+		Name:    "analytics",
+		DocSlug: "analytics",
+		Short:   "Historical request analytics (analytics <slug> [--since 24h] [--by route|country|referrer_host|ua_family|status])",
+		Flags: []cliFlag{
+			{Name: "since", Short: "lookback window", Value: "WINDOW"},
+			{Name: "until", Short: "exclusive RFC3339 end", Value: "TIMESTAMP"},
+			{Name: "by", Short: "grouping dimension", Value: "DIMENSION", ClosedSet: []string{"route", "country", "referrer_host", "ua_family", "status"}},
 		},
 		Positionals: []string{"<slug>"},
 	},

@@ -150,6 +150,12 @@ jobs:
       - name: build
         run: make build
 
+      # S2 PR-2b: a pure nil-return MemStore method can make a handler test
+      # pass without exercising the production store. Keep the small static
+      # tripwire in the fast lint/build job so every PR sees it.
+      - name: MemStore stub guard
+        run: make memstore-stubs-check
+
       # M8's operator acceptance is a real EX44 run, not a unit-test fixture.
       # Keep the shape check on every PR, and require a fresh committed PASS
       # record whenever a PR claims completion with the `m8-done` label.

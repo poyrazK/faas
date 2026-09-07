@@ -263,7 +263,7 @@ through unchanged. No GDPR code change.
 ### D6. Quota: `EnvVarsMax` keeps its per-app meaning; per-scope cap deferred
 
 The quota `Limits.EnvVarsMax` continues to bound **total env rows across
-all scopes** for an app. Free 8 / Hobby 32 / Pro 64 / Scale 256 are the
+all scopes** for an app. Free 16 / Hobby 32 / Pro 64 / Scale 256 are the
 same numbers; they bound the sum of `default + staging + preview + …`.
 A per-scope cap (`EnvScopesMax`) is **not introduced** in this ADR:
 

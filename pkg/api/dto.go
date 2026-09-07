@@ -582,7 +582,7 @@ type AppResponse struct {
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
 	// MaxConcurrency (the per-app instance cap, spec §6.2-1) — this
-	// is per-VM. Free 1, Hobby 5, Pro 25, Scale 80. Surfaced so
+	// is per-VM. Free 4, Hobby 5, Pro 25, Scale 80. Surfaced so
 	// dashboards / CLI can show "what's the bound for one VM on
 	// this plan" without the customer reading limits.go. Concurrency
 	// above 1 is the customer's runner/process responsibility — see
@@ -600,7 +600,12 @@ type AppResponse struct {
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
 	Status       string `json:"status"`
-	URL          string `json:"url"`
+	// DeletedAt and DeleteGraceUntil are populated for a soft-deleted
+	// app so clients can show the restore deadline. They are omitted
+	// for live apps.
+	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
+	DeleteGraceUntil *time.Time `json:"delete_grace_until,omitempty"`
+	URL              string     `json:"url"`
 	// Manifest is the runner-scaffold payload (env, healthz path,
 	// entrypoint). Surfaced so the dashboard's app detail page can
 	// show the function handler + env without a separate round-trip.
@@ -1741,8 +1746,9 @@ type DeploymentResponse struct {
 	// ensures the value is a valid slug; the handler validates
 	// scopeFromBody before storing via api.ValidateScope.
 	Scope string `json:"scope,omitempty"`
-	// BuildPlan (issue #961 / Mega-A PR-2) carries the
-	// framework + runtime + version + entrypoint + port + class
+	// BuildPlan (issue #961 / zero-config profile PR) carries the
+	// compatibility framework family + runtime + version + effective
+	// entrypoint + port + health path + class
 	// that the build pipeline detected or that the deployment
 	// was created with. nil when the deployment is an image
 	// deploy (no source tarball to detect from) — omitempty
@@ -1870,6 +1876,7 @@ type BuildPlan struct {
 	Version    string `json:"version,omitempty"`
 	Entrypoint string `json:"entrypoint,omitempty"`
 	Port       int    `json:"port,omitempty"`
+	HealthPath string `json:"health_path,omitempty"`
 	Class      string `json:"class,omitempty"` // app|function
 }
 
@@ -6845,6 +6852,21 @@ type RequestAnalyticsRoute struct {
 	P99MS         int     `json:"p99_ms"`
 }
 
+// RequestAnalyticsGroup is one top-N aggregate for the selected analytics
+// dimension. Value is a route for group_by=route, an ISO country, hostname,
+// normalized user-agent family, or status code for the other groupings.
+type RequestAnalyticsGroup struct {
+	Value         string  `json:"value"`
+	Method        string  `json:"method,omitempty"`
+	Requests      int64   `json:"requests"`
+	ErrorRequests int64   `json:"error_requests"`
+	ErrorRatePct  float64 `json:"error_rate_pct"`
+	ColdBoots     int64   `json:"cold_boots"`
+	P50MS         int     `json:"p50_ms"`
+	P95MS         int     `json:"p95_ms"`
+	P99MS         int     `json:"p99_ms"`
+}
+
 // RequestAnalyticsResponse is the bounded historical request analytics
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
@@ -6861,6 +6883,10 @@ type RequestAnalyticsResponse struct {
 	P50MS           int                     `json:"p50_ms"`
 	P95MS           int                     `json:"p95_ms"`
 	P99MS           int                     `json:"p99_ms"`
+	GroupBy         string                  `json:"group_by"`
+	Groups          []RequestAnalyticsGroup `json:"groups"`
+	GroupsLimit     int                     `json:"groups_limit"`
+	GroupsTruncated bool                    `json:"groups_truncated"`
 	Routes          []RequestAnalyticsRoute `json:"routes"`
 	RoutesLimit     int                     `json:"routes_limit"`
 	RoutesTruncated bool                    `json:"routes_truncated"`
@@ -6881,20 +6907,30 @@ type RequestAnalyticsTimeseriesPoint struct {
 	P99MS         int     `json:"p99_ms"`
 }
 
+// RequestAnalyticsTimeseriesSeries is one zero-filled hourly series for a
+// selected top-N analytics group.
+type RequestAnalyticsTimeseriesSeries struct {
+	Value  string                            `json:"value"`
+	Method string                            `json:"method,omitempty"`
+	Points []RequestAnalyticsTimeseriesPoint `json:"points"`
+}
+
 // RequestAnalyticsTimeseriesResponse is the zero-filled hourly series used
 // for customer-facing request analytics charts. The effective window is
 // bounded by the account's telemetry retention.
 type RequestAnalyticsTimeseriesResponse struct {
-	Slug          string                            `json:"slug"`
-	Route         string                            `json:"route,omitempty"`
-	Method        string                            `json:"method,omitempty"`
-	Since         string                            `json:"since"`
-	From          string                            `json:"from"`
-	Until         string                            `json:"until"`
-	WindowClamped bool                              `json:"window_clamped"`
-	Bucket        string                            `json:"bucket"`
-	Points        []RequestAnalyticsTimeseriesPoint `json:"points"`
-	AsOf          string                            `json:"as_of"`
+	Slug          string                             `json:"slug"`
+	Route         string                             `json:"route,omitempty"`
+	Method        string                             `json:"method,omitempty"`
+	GroupBy       string                             `json:"group_by,omitempty"`
+	Since         string                             `json:"since"`
+	From          string                             `json:"from"`
+	Until         string                             `json:"until"`
+	WindowClamped bool                               `json:"window_clamped"`
+	Bucket        string                             `json:"bucket"`
+	Points        []RequestAnalyticsTimeseriesPoint  `json:"points"`
+	Series        []RequestAnalyticsTimeseriesSeries `json:"series,omitempty"`
+	AsOf          string                             `json:"as_of"`
 }
 
 // DebugRegressionItem is one row of debug_regression_observations

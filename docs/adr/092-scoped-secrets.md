@@ -233,7 +233,7 @@ through unchanged. No GDPR code change.
 ### D6. Quota: `SecretCountMax` keeps its per-app-across-all-scopes meaning
 
 The quota `Limits.SecretCountMax` continues to bound **total secret
-rows across all scopes** for an app. Free 3 / Hobby 25 / Pro 50 /
+rows across all scopes** for an app. Free 8 / Hobby 25 / Pro 50 /
 Scale 100 are the same numbers; they bound the sum of `default + prod
 + staging + …`. A per-scope cap (`SecretScopesMax`) is **not
 introduced** in this ADR:
@@ -242,8 +242,8 @@ introduced** in this ADR:
   the same reason: the per-app quota bounds blast radius well, and a
   customer cannot wedge a runaway process by creating 10,000 staging
   scopes because the total row count is still capped.
-- A Free-tier customer with 2 prod secrets + 2 staging secrets = 4
-  total exceeds the cap of 3 and gets `ErrPlanLimitSecrets`. Same
+- A Free-tier customer with 4 prod secrets + 4 staging secrets = 8
+  total reaches the cap; the next write gets `ErrPlanLimitSecrets`. Same
   posture as env: total row count is the cap, not per-scope.
 
 **The cross-scope posture is pinned at the wire surface** by

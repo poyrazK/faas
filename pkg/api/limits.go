@@ -22,6 +22,10 @@ import (
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
+	// AppDeleteGraceDays is the restore window for customer app deletes.
+	// App metadata and deployment artifacts remain available during this
+	// period, after which the grace sweeper permanently removes the app.
+	AppDeleteGraceDays = 7
 	// Bounds for operator-specified object-storage safety policies; no customer
 	// allowance or price is inferred when the policy is missing.
 	MaxObjectStoragePolicyValue         int64 = 1 << 60
@@ -248,7 +252,7 @@ type Limits struct {
 	// queue. Surfaced on GET /v1/apps/{slug} as concurrency_per_vm
 	// so dashboards + CLI can render the platform's per-VM bound
 	// without reading limits.go. Spec §13 hard-limits table.
-	ConcurrencyPerVMBound int // Free 1, Hobby 5, Pro 25, Scale 80
+	ConcurrencyPerVMBound int // Free 4, Hobby 5, Pro 25, Scale 80
 
 	// Runtime shape.
 	VCPU         int // firecracker vcpu_count (spec §4.4)
@@ -381,12 +385,12 @@ type Limits struct {
 	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
 	// SecretCountMax bounds the (app_id, scope, key) row count across every
 	// scope the customer has minted — ADR-090 D6 parallel posture for the
-	// secret surface (ADR-092). A Free-tier customer with 2 prod secrets +
-	// 2 staging secrets = 4 total exceeds the cap of 3 and gets 403
+	// secret surface (ADR-092). A Free-tier customer with 4 prod secrets +
+	// 4 staging secrets = 8 total reaches the cap; the next PUT gets 403
 	// CodePlanLimitSecrets on the next PUT. SecretValueMaxBytes bounds the
 	// plaintext value the customer may PUT — apid rejects larger values
 	// with 413 CodeSecretValueTooLarge before sealing.
-	SecretCountMax      int // max secrets per app across all scopes (Free 3, Hobby 25, Pro 50, Scale 100)
+	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 
 	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
@@ -397,7 +401,7 @@ type Limits struct {
 	// (ADR-090 D6). EnvValueMaxBytes bounds the per-value byte cap.
 	// Per-plan values are tuned to cover typical 12-factor config
 	// surface without letting one app monopolise the table.
-	EnvVarsMax       int // max env vars per app across all scopes (Free 8, Hobby 32, Pro 64, Scale 256)
+	EnvVarsMax       int // max env vars per app across all scopes (Free 16, Hobby 32, Pro 64, Scale 256)
 	EnvValueMaxBytes int // per-value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 
 	// TrustedSignerCountMax bounds the (app_id, signer_name) row count
@@ -1361,21 +1365,20 @@ type Limits struct {
 	LivenessWindowSeconds int
 
 	// LogArchiveEnabled (issue #562) gates the per-plan log
-	// archive + read-back surface (FAAS_LOG_ARCHIVE_*). Free is
-	// off — the S3 backend + read-back path is a paid-tier
-	// feature (the abuse-floor tier doesn't need cross-process
-	// log persistence; the ring buffer is enough). Hobby/Pro/
-	// Scale opt in. The plan-level gate is read by apid's
+	// archive + read-back surface (FAAS_LOG_ARCHIVE_*). Free now
+	// receives a one-day archive window so a first-week demo can
+	// inspect logs after a cold wake; Hobby/Pro/Scale retain their
+	// wider windows. The plan-level gate is read by apid's
 	// bgBefore wire-up (cmd/apid/main.go) and by the gatewayd-internal
-	// bucket-proxy handler (issue #562 PR-B) so a Free-tier
-	// customer's read-back request returns 402 immediately
-	// without burning a bucket request.
+	// bucket-proxy handler (issue #562 PR-B) so a plan without
+	// archive entitlement returns 402 immediately without burning
+	// a bucket request.
 	LogArchiveEnabled bool
 	// LogArchiveRetentionDaysMax is the per-plan ceiling on
-	// FAAS_LOG_ARCHIVE_RETENTION_DAYS. Hobby gets 7, Pro 30,
-	// Scale 90 — matches the typical incident-window expectations
-	// per tier (Hobby's "last week", Pro's "this month", Scale's
-	// "this quarter"). 0 means "no archive on this plan" (Free).
+	// FAAS_LOG_ARCHIVE_RETENTION_DAYS. Free gets 1 day, Hobby 7,
+	// Pro 30, Scale 90 — matches the typical incident-window
+	// expectations per tier (Free's "first-week demo", Hobby's
+	// "last week", Pro's "this month", Scale's "this quarter").
 	LogArchiveRetentionDaysMax int
 
 	// AppErrorsRetentionDays (ADR-096 / customer-facing automatic
@@ -1568,12 +1571,11 @@ var planLimits = map[Plan]Limits{
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
 		RAMMB:          128,
-		// ConcurrencyPerVMBound (issue #559): Free is the
-		// single-concurrency tier — one VM serves one request at a
-		// time. Mirrors MaxConcurrency (= 1) because a Free customer
-		// cannot have more than one VM per app anyway, so the
-		// per-VM and per-app bounds collapse to the same number.
-		ConcurrencyPerVMBound: 1,
+		// ConcurrencyPerVMBound (issue #559): Free allows four
+		// concurrent requests per VM. This keeps the demo tier useful
+		// for small bursts while MaxConcurrency (= 1) still limits a
+		// Free app to one VM.
+		ConcurrencyPerVMBound: 4,
 		// AppLayerMaxMB 256 — Free is the lowest cap tier; spec §1 ("App-
 		// layer build ... Free 256 MB") and the limits table both read 256
 		// (PR #241 spec-drift audit, 2026-07-26). This is a no-op
@@ -1581,16 +1583,16 @@ var planLimits = map[Plan]Limits{
 		AppLayerMaxMB:         256,
 		SourceTarballMaxMB:    100,
 		VCPU:                  2,
-		IdleTimeoutS:          30,
+		IdleTimeoutS:          60,
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       5,
 		PriceMillicents:       0,
 		RateLimitRPS:          5,
 		RateLimitBurst:        20,
 		EgressMbit:            10,
-		SecretCountMax:        3,
+		SecretCountMax:        8,
 		SecretValueMaxBytes:   4 * 1024,
-		EnvVarsMax:            8,
+		EnvVarsMax:            16,
 		EnvValueMaxBytes:      4 * 1024,
 		// TrustedSignerCountMax: Free keeps the open-deploy posture;
 		// signature enforcement is a regulated-workload feature that
@@ -1878,18 +1880,14 @@ var planLimits = map[Plan]Limits{
 		// Window=0) cause `Plan.LivenessAllowed()` to return false
 		// via the fail-closed default — see §Comment at
 		// LivenessPeriodSeconds.
-		// Log archive (issue #562): Free is the abuse-floor tier
-		// and doesn't get the S3 archive + read-back surface —
-		// the in-process ring buffer is the only log surface. The
-		// shipper's bgBefore closure fails closed on this gate
-		// (returns immediately on ctx.Done()).
-		LogArchiveEnabled:          false,
-		LogArchiveRetentionDaysMax: 0,
+		// Log archive (issue #562): Free gets a one-day S3 archive
+		// + read-back window so demos can inspect logs after a cold
+		// wake. The wider incident windows remain paid-tier benefits.
+		LogArchiveEnabled:          true,
+		LogArchiveRetentionDaysMax: 1,
 		// ADR-096 error grouping. Free = 1-day retention, 50
-		// fingerprints, 25 request rows per fingerprint — the
-		// abuse-floor tier. Retention MUST be <= the log-archive
-		// retention above (which is 0 for Free; "no archive, no
-		// grouped errors either" is the consistent posture).
+		// fingerprints, 25 request rows per fingerprint. Retention
+		// MUST be <= the one-day log-archive retention above.
 		AppErrorsRetentionDays:                1,
 		AppErrorsMaxFingerprintsPerApp:        50,
 		AppErrorsMaxRequestRowsPerFingerprint: 25,
@@ -4685,8 +4683,8 @@ func (p Plan) LivenessAllowed() bool {
 }
 
 // LogArchiveEnabled (issue #562) reports whether the plan
-// ships logs to S3. Free returns false (the abuse-floor tier
-// has no archive + read-back surface). Unknown plans fail
+// ships logs to S3. Free returns true with a one-day retention
+// window so demo workloads can inspect recent logs. Unknown plans fail
 // closed to false so a missing plan row never silently
 // enables the shipper + bucket-proxy surface.
 func (p Plan) LogArchiveEnabled() bool {
@@ -4698,8 +4696,8 @@ func (p Plan) LogArchiveEnabled() bool {
 }
 
 // LogArchiveRetentionDaysMax (issue #562) returns the
-// per-plan ceiling on FAAS_LOG_ARCHIVE_RETENTION_DAYS. 0
-// for Free (no archive); the apid bgBefore closure uses
+// per-plan ceiling on FAAS_LOG_ARCHIVE_RETENTION_DAYS. Free's
+// ceiling is one day; the apid bgBefore closure uses
 // this to clamp the configured value at boot so an operator
 // can't set a higher retention than the plan allows.
 func (p Plan) LogArchiveRetentionDaysMax() int {
@@ -5865,7 +5863,7 @@ func (p Plan) MaxMinInstances() int {
 
 // ConcurrencyPerVMBound returns the platform-advertised upper
 // bound on concurrent in-flight requests one VM can handle at the
-// listener layer (issue #559). Free 1, Hobby 5, Pro 25, Scale 80.
+// listener layer (issue #559). Free 4, Hobby 5, Pro 25, Scale 80.
 // Distinct from MaxConcurrency (the per-app *instance* cap, spec
 // §6.2-1) — this is per-VM. Unknown plans fail closed (return 0) —
 // same contract as MaxMinInstances above.

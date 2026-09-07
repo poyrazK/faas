@@ -4,7 +4,7 @@ package runnerparity
 // contract for the guest runners (issue #559 / AC #3). The runner's
 // `http.ListenAndServe` dispatches each accepted connection on its own
 // goroutine, so a single VM can serve the platform's
-// `concurrency_per_vm` bound (Free 1, Hobby 5, Pro 25, Scale 80) at the
+// `concurrency_per_vm` bound (Free 4, Hobby 5, Pro 25, Scale 80) at the
 // listener layer. The customer *handler process* may still serialize
 // internally (sync subprocess-per-request), but the listener's own
 // goroutine fan-out is what defines the per-VM bound — and that's what

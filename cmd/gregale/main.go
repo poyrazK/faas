@@ -151,6 +151,9 @@ func run(args []string) (status int) {
 		if len(args) > 1 && args[1] == "ls" {
 			return cmdApps()
 		}
+		if len(args) > 1 && args[1] == subRestore {
+			return cmdAppsRestore(args[2:])
+		}
 		// `gregale apps routes <slug>` — ADR-093 Tier B item #2
 		// operator entry point. Must come before the default
 		// fall-through so a slug-shaped token ("routes") is never
@@ -396,6 +399,10 @@ func run(args []string) (status int) {
 		// Tier C: --account flips to GET /v1/account/metrics
 		// (account-wide aggregate).
 		return cmdMetrics(args[1:])
+	case "analytics":
+		// Customer-facing historical request analytics with bounded
+		// route/country/referrer/client/status groupings.
+		return cmdAnalytics(args[1:])
 	case "throttle-suggestions":
 		// Phase 4 D2: CLI twin for GET /v1/apps/{slug}/throttle-suggestions.
 		// Mirrors the read-only recommender + dry-run preview.

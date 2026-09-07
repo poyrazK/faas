@@ -728,6 +728,13 @@ type App struct {
 	// silently skipped.
 	AutoscaleTargetCPUPct int
 	Status                AppStatus
+	// DeletedAt records when customer-initiated soft deletion began.
+	// It is nil for live apps and for legacy tombstones created before
+	// the app restore grace window was introduced.
+	DeletedAt *time.Time
+	// DeleteGraceUntil is the deadline before the tombstone may be
+	// permanently removed. Restore is accepted only before this time.
+	DeleteGraceUntil *time.Time
 	// ProjectID is the parent project for apps that came from a
 	// multi-workload repo (ADR-050). Empty for standalone apps; the
 	// apps.project_id column is nullable. ON DELETE SET NULL so a
@@ -1813,6 +1820,10 @@ type Deployment struct {
 	// after the readiness probe. Raw JSON keeps state independent of the API
 	// hosting receipt package.
 	APIHostingReceipt json.RawMessage `json:"api_hosting_receipt,omitempty"`
+	// InferredProfile is the versioned, non-secret source profile captured from
+	// the exact archive accepted for this deployment. It is kept as raw JSON so
+	// state does not depend on the framework-profile package's API shape.
+	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot

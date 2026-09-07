@@ -76,7 +76,7 @@ audit-kind signal that says "config change" vs "credential change".
 `pkg/api/limits.go` as plan-level fields:
 | Plan | EnvVarsMax | EnvValueMaxBytes |
 |---|---|---|
-| Free | 8 | 4 KiB |
+| Free | 16 | 4 KiB |
 | Hobby | 32 | 8 KiB |
 | Pro | 64 | 16 KiB |
 | Scale | 256 | 32 KiB |
@@ -121,7 +121,7 @@ Pinned by `cmd/apid/handlers_env_test.go::TestEnv_RedeployPreservesEnv`.
 - `pkg/api/apikey.go::validScopes` adds two entries; the `//go:embed
   pkg/apid/openapi.yaml` mirror tracks via `make spec-sync`.
 - `pkg/api/limits.go` gains `EnvVarsMax` + `EnvValueMaxBytes`
-  per plan; the limits test pins the four plan values (Free 8/4K,
+  per plan; the limits test pins the four plan values (Free 16/4K,
   Hobby 32/8K, Pro 64/16K, Scale 256/32K).
 - Migration 00061 + 00063 ship in one PR. The cross-PR slot gate
   (PR #377 / ADR-041) carries the new numbers; `make

@@ -706,7 +706,7 @@ func TestStatusForCode_AlertRules(t *testing.T) {
 
 // TestErrPlanLogArchiveNotAllowed pins the 402 the gatewayd-internal
 // archive read-back handler emits when the customer's plan has
-// LogArchiveEnabled() == false (Free today, issue #562). The
+// LogArchiveEnabled() == false (issue #562). The
 // shape mirrors TestErrPlanAlertRulesNotAllowed: stable code
 // + a Plan-named detail line. The dashboard surfaces the upsell
 // copy ("upgrade to Hobby or above to query historical logs

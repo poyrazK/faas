@@ -3,7 +3,7 @@
 //
 // Eleven assertions, in order:
 //
-//   1.  Seed the Free-plan app + per-app-across-all-scopes cap (3).
+//   1.  Seed the Free-plan app + per-app-across-all-scopes cap (8).
 //   2.  PUT secret "ALPHA" at scope=prod.
 //   3.  PUT secret "ALPHA" at scope=staging.
 //   4.  PUT secret "BETA"  at scope=default.
@@ -14,7 +14,7 @@
 //   9.  PUT ?scope=NOT-A-valid-scope! — server rejects with 400 env_scope_invalid.
 //  10.  GET ?scope=__all__   — nested secrets_by_scope map carries all three
 //                              scopes, each with the right keys.
-//  11.  Quota: 4th secret on Free (cap 3 across all scopes) → 403 plan_limit_secrets.
+//  11.  Quota: 9th secret on Free (cap 8 across all scopes) → 403 plan_limit_secrets.
 //
 // Why this is KVM-free: apid owns the secret row + scope query; the wire
 // surface is HTTP. schedd/vmmd are not in the loop, so the wake-paths
@@ -31,6 +31,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -74,12 +75,12 @@ func TestSecretsScopeSurfacePg(t *testing.T) {
 		"FAAS_HOST_AGE_IDENTITY_PATH=" + identityPath,
 	})
 
-	// Assertion 1: seed Free account + app + record the cap (3 across scopes).
+	// Assertion 1: seed Free account + app + record the cap (8 across scopes).
 	const plan = api.PlanFree
 	key := h.SeedAccount(context.Background(), plan, "scope-surface")
 	limits := api.MustLimitsFor(plan)
-	if limits.SecretCountMax < 3 {
-		t.Fatalf("Free SecretCountMax=%d, want >=3 for this test", limits.SecretCountMax)
+	if limits.SecretCountMax < 8 {
+		t.Fatalf("Free SecretCountMax=%d, want >=8 for this test", limits.SecretCountMax)
 	}
 	const slug = "scope-surf-app"
 	if code := statusOnly(t, h, key, http.MethodPost, "/v1/apps",
@@ -210,7 +211,7 @@ func TestSecretsScopeSurfacePg(t *testing.T) {
 
 	// Assertion 9: PUT ?scope=NOT-A-valid-scope! → 400 env_scope_invalid.
 	// The scope shape check is enforced before any DB work, so this
-	// runs on the (already 3/3-quota) main app without needing a
+	// runs on the main app without needing a
 	// fresh one — invalid-shape failures don't count against quota.
 	assertProblemAPID(t, h, key, http.MethodPut,
 		"/v1/apps/"+slug+"/secrets/EXTRA?scope=NOT-A-valid-scope!",
@@ -266,11 +267,15 @@ func TestSecretsScopeSurfacePg(t *testing.T) {
 		t.Errorf("scope=__all__: count=%d, want %d", respAll.Count, wantTotal)
 	}
 
-	// Assertion 11: quota counts across scopes — 4th PUT must 403
-	// plan_limit_secrets because Free cap = 3 and we already wrote
-	// ALPHA@prod + ALPHA@staging + BETA@default = 3 rows.
+	// Assertion 11: quota counts across scopes — 9th PUT must 403
+	// plan_limit_secrets because Free cap = 8. We already wrote
+	// ALPHA@prod + ALPHA@staging + BETA@default = 3 rows; fill the
+	// remaining five slots across named scopes before the boundary check.
 	//
-	// The key name "GAMMA" is the new (4th) key — re-PUT of an existing
+	for i := 0; i < limits.SecretCountMax-3; i++ {
+		putAt("qa-prod", fmt.Sprintf("FILL_%d", i), "v-fill")
+	}
+	// The key name "GAMMA" is the new (9th) key — re-PUT of an existing
 	// key would re-upsert (off-by-one rule) and NOT count against quota,
 	// so a fresh key is what proves the cross-scope posture.
 	//

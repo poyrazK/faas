@@ -17,16 +17,15 @@ T = TypeVar("T", bound="BuildPlan")
 
 @_attrs_define
 class BuildPlan:
-    """Auto-detected build plan surfaced on DeploymentResponse (issue #961 / Mega-A PR-2). Same shape the CLI's pre-ship
-    `Detected:` line prints; populated by apid via `pkg/markers.DetectFromTarball` against the spooled source tarball.
-    Embedded on DeploymentResponse; never returned by a dedicated route.
+    """Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the exact
+    source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection when the
+    spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route.
 
     """
 
     framework: BuildPlanFramework
-    """Framework detected from the source tarball's top-level markers. `unknown` means no marker was found
-    (monorepo / custom build); the wire renders this as `Detected: …, framework=unknown` rather than dropping the
-    response."""
+    """Compatibility framework family derived from the persisted source profile. `unknown` means no supported
+    framework was inferred (monorepo / custom build)."""
     runtime: None | str | Unset = UNSET
     """Runtime the app is pinned to (eg `node22`, `python312`). Echoed from app.Runtime. nil for apps without a
     runtime set (image deploys)."""
@@ -34,9 +33,13 @@ class BuildPlan:
     """Framework version extracted from the detected marker (eg `package.json` `engines.node`, `requirements.txt`
     head pin). nil when the marker has no version or framework is `unknown`."""
     entrypoint: None | str | Unset = UNSET
-    """Entrypoint override (create-time only). nil when the customer did not supply one."""
+    """Effective start command from the persisted source profile, replaced by an explicit entrypoint override when
+    supplied."""
     port: int | None | Unset = UNSET
-    """Listen-port override (create-time only). nil when the customer did not supply one."""
+    """Effective listen port from the persisted source profile, replaced by an explicit port override when
+    supplied."""
+    health_path: None | str | Unset = UNSET
+    """Effective readiness path selected by the source profile or deployment override."""
     class_: BuildPlanClassType1 | BuildPlanClassType2Type1 | BuildPlanClassType3Type1 | None | Unset = UNSET
     """App class from `app.Type` — `app` for plain apps, `function` for function rewrites (spec §4.2)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -68,6 +71,12 @@ class BuildPlan:
         else:
             port = self.port
 
+        health_path: None | str | Unset
+        if isinstance(self.health_path, Unset):
+            health_path = UNSET
+        else:
+            health_path = self.health_path
+
         class_: None | str | Unset
         if isinstance(self.class_, Unset):
             class_ = UNSET
@@ -95,6 +104,8 @@ class BuildPlan:
             field_dict["entrypoint"] = entrypoint
         if port is not UNSET:
             field_dict["port"] = port
+        if health_path is not UNSET:
+            field_dict["health_path"] = health_path
         if class_ is not UNSET:
             field_dict["class"] = class_
 
@@ -141,6 +152,15 @@ class BuildPlan:
 
         port = _parse_port(d.pop("port", UNSET))
 
+        def _parse_health_path(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        health_path = _parse_health_path(d.pop("health_path", UNSET))
+
         def _parse_class_(
             data: object,
         ) -> BuildPlanClassType1 | BuildPlanClassType2Type1 | BuildPlanClassType3Type1 | None | Unset:
@@ -182,6 +202,7 @@ class BuildPlan:
             version=version,
             entrypoint=entrypoint,
             port=port,
+            health_path=health_path,
             class_=class_,
         )
 

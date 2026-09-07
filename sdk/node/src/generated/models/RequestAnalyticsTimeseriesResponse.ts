@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RequestAnalyticsTimeseriesPoint } from './RequestAnalyticsTimeseriesPoint.js';
+import type { RequestAnalyticsTimeseriesSeries } from './RequestAnalyticsTimeseriesSeries.js';
 /**
  * Zero-filled UTC hourly request analytics for
  * `GET /v1/apps/{slug}/analytics/timeseries`. The effective window is
@@ -40,6 +41,8 @@ export type RequestAnalyticsTimeseriesResponse = {
    */
   bucket: '1h';
   points: Array<RequestAnalyticsTimeseriesPoint>;
+  group_by?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status';
+  series?: Array<RequestAnalyticsTimeseriesSeries>;
   /**
    * UTC time when the series response was assembled.
    */

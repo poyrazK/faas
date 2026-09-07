@@ -18,6 +18,18 @@ import (
 
 func hostingReceiptProfile(app state.App, dep state.Deployment) frameworkprofile.Profile {
 	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: string(markers.FrameworkUnknown), Port: api.DefaultAppPort, HealthPath: "/healthz"}
+	if len(dep.InferredProfile) > 0 {
+		var persisted frameworkprofile.Profile
+		if err := json.Unmarshal(dep.InferredProfile, &persisted); err == nil && persisted.Version != "" {
+			profile = persisted
+		}
+	}
+	if profile.Port <= 0 {
+		profile.Port = api.DefaultAppPort
+	}
+	if profile.HealthPath == "" {
+		profile.HealthPath = "/healthz"
+	}
 	if app.Manifest.Port > 0 {
 		profile.Port = app.Manifest.Port
 	}
@@ -32,14 +44,15 @@ func hostingReceiptProfile(app state.App, dep state.Deployment) frameworkprofile
 			profile.HealthPath = check.Path
 		}
 	}
-	profile.StartCommand = strings.TrimSpace(app.StartCommand)
-	if profile.StartCommand == "" {
+	if start := strings.TrimSpace(app.StartCommand); start != "" {
+		profile.StartCommand = start
+	} else if len(app.Manifest.Entrypoint) > 0 {
 		profile.StartCommand = strings.Join(app.Manifest.Entrypoint, " ")
 	}
 	if dep.OverridePort > 0 {
 		profile.Port = dep.OverridePort
 	}
-	if dep.SourcePath != "" {
+	if len(dep.InferredProfile) == 0 && dep.SourcePath != "" {
 		if _, err := os.Stat(dep.SourcePath); err == nil {
 			if fw, err := markers.DetectFromTarballAtRoot(dep.SourcePath, dep.SourceRoot); err == nil {
 				profile.Framework = string(fw)
@@ -62,11 +75,24 @@ func buildHostingReceipt(app state.App, dep state.Deployment, smoke apihostingre
 		SchemaVersion: apihostingreceipt.SchemaVersion,
 		DeploymentID:  dep.ID,
 		AppID:         app.ID,
+		AppURL:        hostingAppURL(app.Slug),
 		Source:        apihostingreceipt.Source{Kind: string(dep.Kind), URL: safeSourceURL(dep.SourceURL), CommitSHA: dep.CommitSHA, ImageDigest: dep.ImageDigest},
 		Profile:       hostingReceiptProfile(app, dep),
 		Artifact:      apihostingreceipt.Artifact{RootfsKey: dep.RootfsKey, RootfsBytes: dep.RootfsBytes},
 		Smoke:         smoke,
 	}
+}
+
+func hostingAppURL(slug string) string {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return ""
+	}
+	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
+	if domain == "" {
+		domain = "gregale.dev"
+	}
+	return "https://" + slug + "." + domain
 }
 
 func safeSourceURL(raw string) string {

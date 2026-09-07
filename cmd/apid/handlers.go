@@ -643,7 +643,9 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// ux_spec §6.5: per-app floor the reaper honors when
 		// parking idle instances. Pro/Scale only (apid gates).
 		MinInstances: a.MinInstances,
-		Status:       string(a.Status), URL: appURLForDomain(a.Slug, s.domain),
+		Status:       string(a.Status), DeletedAt: a.DeletedAt,
+		DeleteGraceUntil: a.DeleteGraceUntil,
+		URL:              appURLForDomain(a.Slug, s.domain),
 		Manifest: api.AppManifest{
 			Entrypoint:       a.Manifest.Entrypoint,
 			Env:              a.Manifest.Env,

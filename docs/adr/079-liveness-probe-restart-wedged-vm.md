@@ -34,7 +34,7 @@ the existing readiness path at `healthcheck_path`.
 
 Wedged guests (busy-loop ignoring SIGTERM, deadlocked runner,
 leaked FD) sit resident billing RAM-hours while serving 5xx.
-The §13 idle reaper at 30/60/300/600 s by plan is too slow for
+The §13 idle reaper at 60/60/300/600 s by plan is too slow for
 a customer-facing outage. Cloud Run's primitive here is a
 health-check-driven replace; we're matching that surface.
 

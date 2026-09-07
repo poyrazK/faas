@@ -2126,7 +2126,17 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 	if err != nil {
 		return api.AppManifest{}, err
 	}
-	manifest.Port = sc.Port
+	if sc.Port != 0 {
+		// The legacy single-port override remains authoritative for the
+		// sidecar's serving endpoint. Preserve the new protocol-aware shape
+		// by projecting it as one TCP listener.
+		manifest.Port = sc.Port
+		manifest.Ports = []api.WorkloadPort{{
+			Name:     fmt.Sprintf("tcp-%d", sc.Port),
+			Port:     sc.Port,
+			Protocol: api.WorkloadPortTCP,
+		}}
+	}
 	return manifest, nil
 }
 
@@ -2538,7 +2548,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		if appErr != nil {
 			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
 		}
-		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: app.Manifest.Healthz, ErrorCode: "smoke_not_configured"}
+		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(app, dep), ErrorCode: "smoke_not_configured"}
 		if smoke.Path == "" {
 			smoke.Path = defaultHealthzPath
 		}

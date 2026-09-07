@@ -63,6 +63,12 @@ func (m *MemStore) RequestTelemetryAnalyticsSummary(_ context.Context, _ sqlc.Re
 	return sqlc.RequestTelemetryAnalyticsSummaryRow{}, errMemStoreRequestTelemetry
 }
 
+// RequestTelemetryAnalyticsByDimension (customer request analytics) —
+// MemStore stub. Postgres-only because request_telemetry is partitioned.
+func (m *MemStore) RequestTelemetryAnalyticsByDimension(_ context.Context, _ sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
 // RequestTelemetryAnalyticsByRoute (customer request analytics) — MemStore
 // stub. Postgres-only because request_telemetry is a partitioned SQL table.
 func (m *MemStore) RequestTelemetryAnalyticsByRoute(_ context.Context, _ sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
@@ -73,6 +79,12 @@ func (m *MemStore) RequestTelemetryAnalyticsByRoute(_ context.Context, _ sqlc.Re
 // MemStore stub. Postgres-only because request_telemetry is a partitioned
 // SQL table.
 func (m *MemStore) RequestTelemetryAnalyticsTimeseries(_ context.Context, _ sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
+// RequestTelemetryAnalyticsTimeseriesGrouped (customer request analytics) —
+// MemStore stub. Postgres-only because request_telemetry is partitioned.
+func (m *MemStore) RequestTelemetryAnalyticsTimeseriesGrouped(_ context.Context, _ sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
 	return nil, errMemStoreRequestTelemetry
 }
 
