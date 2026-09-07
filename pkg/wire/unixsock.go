@@ -86,17 +86,20 @@ func ListenOrRecreate(path string, uid, gid int, mode os.FileMode) (net.Listener
 
 // ListenOrRecreateByName is the convenience entrypoint: looks up the daemon's
 // uid and the `faas` group gid, then calls ListenOrRecreate. Returns an error
-// (and a nil listener) if either lookup fails — call sites that want to
-// tolerate missing groups can use ListenOrRecreate with explicit integer ids.
+// (and a nil listener) if either lookup fails, except under the explicit test
+// escape hatch documented below.
 //
 // Tests that drive daemons through the cmd/e2e harness on a CI runner or
 // dev box without the ansible bootstrap set SkipGroupLookupEnv; in that
-// case the daemon falls back to gid=0 and skips the chown, so the unix
-// socket still binds (production deployments always have the `faas`
-// group, so this fallback is test-only).
+// case the daemon skips ownership changes when either the daemon user or
+// `faas` group is absent, so the unix socket still binds. Production
+// deployments never set this test-only escape hatch.
 func ListenOrRecreateByName(path, daemonUser string) (net.Listener, error) {
 	uid, err := lookupUserUID(daemonUser)
 	if err != nil {
+		if os.Getenv(SkipGroupLookupEnv) != "" {
+			return listenSkipChown(path, DefaultSocketMode)
+		}
 		return nil, fmt.Errorf("wire: lookup uid for %q: %w", daemonUser, err)
 	}
 	gid, err := lookupGroupGID(DefaultSocketGroup)

@@ -49,6 +49,19 @@ func TestListenOrRecreateByName_UnknownUser(t *testing.T) {
 	}
 }
 
+func TestListenOrRecreateByName_TestHarnessSkipsMissingOwnership(t *testing.T) {
+	t.Setenv(wire.SkipGroupLookupEnv, "1")
+	sock := filepath.Join(shortDir(t), "nope.sock")
+	l, err := wire.ListenOrRecreateByName(sock, "definitely_not_a_real_user_xyzzy")
+	if err != nil {
+		t.Fatalf("ListenOrRecreateByName: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	if got := l.Addr().Network(); got != "unix" {
+		t.Fatalf("network = %q, want unix", got)
+	}
+}
+
 func TestLookupGroupGID_KnownGroup(t *testing.T) {
 	// The current user always has a primary group; resolve it and confirm
 	// LookupGroupGID returns (>0, true) — the positive branch the existing
