@@ -416,7 +416,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 		// A malformed platform-generated envelope cannot recover by retrying;
 		// surface the scheduler sentinel so the durable row is terminally
 		// failed instead of churning forever.
-		return inv, 0, fmt.Errorf("%w: %v", schedpkg.ErrPermanentInvoke, err)
+		return inv, 0, fmt.Errorf("%w: %w", schedpkg.ErrPermanentInvoke, err)
 	}
 	rule, ok, err := a.lookupReplayRule(ctx, appID, metadata[api.DebugReplayMirrorRuleIDHeader])
 	if err != nil {
