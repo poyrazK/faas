@@ -960,6 +960,9 @@ type Limits struct {
 	// is false (a Free customer's POST hits the gate before the store
 	// is touched).
 	TenantSurfacesAllowed bool
+	// WildcardDomainsAllowed gates customer-owned wildcard custom domains.
+	// DNS-01 issuance and suffix routing are reserved for Pro and Scale.
+	WildcardDomainsAllowed bool
 
 	// DataPlacementHintsPerApp (ADR-098 §D5) caps how many
 	// inferred/explicit data_upstreams rows one app may hold. The
@@ -1757,6 +1760,7 @@ var planLimits = map[Plan]Limits{
 		TenantSurfacesPerAccount:  0,
 		TenantHostnamesPerSurface: 0,
 		TenantSurfacesAllowed:     false,
+		WildcardDomainsAllowed:    false,
 		// Data-placement hints (ADR-098 §D5): Free is gated off —
 		// the handler returns 402 CodePlanLimitDataUpstreams before
 		// any regex match. The 0 here is a defence-in-depth value
@@ -2114,6 +2118,7 @@ var planLimits = map[Plan]Limits{
 		TenantSurfacesPerAccount:  1,
 		TenantHostnamesPerSurface: 10,
 		TenantSurfacesAllowed:     true,
+		WildcardDomainsAllowed:    false,
 		// Data-placement hints (ADR-098 §D5): Hobby unlocks the
 		// capture path with a 3-hint cap per app.
 		DataPlacementHintsPerApp: 3,
@@ -2473,6 +2478,7 @@ var planLimits = map[Plan]Limits{
 		TenantSurfacesPerAccount:  5,
 		TenantHostnamesPerSurface: 50,
 		TenantSurfacesAllowed:     true,
+		WildcardDomainsAllowed:    true,
 		// Data-placement hints (ADR-098 §D5): Pro unlocks the
 		// capture path with a 10-hint cap per app.
 		DataPlacementHintsPerApp: 10,
@@ -2834,6 +2840,7 @@ var planLimits = map[Plan]Limits{
 		TenantSurfacesPerAccount:  25,
 		TenantHostnamesPerSurface: 250,
 		TenantSurfacesAllowed:     true,
+		WildcardDomainsAllowed:    true,
 		// Data-placement hints (ADR-098 §D5): Scale unlocks the
 		// capture path with a 50-hint cap per app — large enough
 		// for a multi-DB SaaS (primary + replicas + read-only +
@@ -5368,6 +5375,13 @@ func (p Plan) CronLimitPerAccount() int {
 		return 0
 	}
 	return l.CronLimitPerAccount
+}
+
+// WildcardDomainsAllowed reports whether the plan may attach customer-owned
+// wildcard domains. Unknown plans fail closed.
+func (p Plan) WildcardDomainsAllowed() bool {
+	l, ok := LimitsFor(p)
+	return ok && l.WildcardDomainsAllowed
 }
 
 // CorsPresetsPerAccount returns the per-account CORS preset cap

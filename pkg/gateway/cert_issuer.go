@@ -37,3 +37,10 @@ type CertIssuer interface {
 	// swallows so a transient CA outage can't block the edge.
 	RequestCertForSurface(ctx context.Context, surfaceID string) error
 }
+
+// WildcardCertIssuer is an optional extension implemented by engines that can
+// mint a customer-owned wildcard certificate with DNS-01. It is separate from
+// CertIssuer so existing surface-only test doubles and adapters remain valid.
+type WildcardCertIssuer interface {
+	RequestCertForWildcardDomain(ctx context.Context, domain string) error
+}

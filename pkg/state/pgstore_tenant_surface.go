@@ -507,6 +507,31 @@ func (s *PgStore) ListTenantHostnamesForSurface(ctx context.Context, surfaceID s
 	return scanTenantHostnames(rows)
 }
 
+// ListTenantSurfaceHostnames returns every hostname reserved by a non-deleted
+// tenant surface. Tenant hostnames are globally unique, so F4 wildcard
+// reservation checks this account-independent set.
+func (s *PgStore) ListTenantSurfaceHostnames(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		select h.hostname
+		  from tenant_hostnames h
+		  join tenant_surfaces s on s.id = h.surface_id
+		 where s.status <> 'deleted'
+		 order by h.hostname`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var hostname string
+		if err := rows.Scan(&hostname); err != nil {
+			return nil, err
+		}
+		out = append(out, hostname)
+	}
+	return out, rows.Err()
+}
+
 // ListVerifiedTenantHostnamesForSurface — SAN assembly hot path.
 // Sort-by-hostname is deterministic so re-mints produce identical
 // (primary, sans) tuples.

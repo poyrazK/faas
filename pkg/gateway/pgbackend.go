@@ -1650,6 +1650,19 @@ func (b *PGBackend) RequestCertForSurface(ctx context.Context, surfaceID string)
 	return b.certIssuer.RequestCertForSurface(ctx, surfaceID)
 }
 
+// RequestCertForWildcardDomain delegates the optional F4 DNS-01 mint path.
+// Backends without a wildcard-capable issuer remain a safe no-op.
+func (b *PGBackend) RequestCertForWildcardDomain(ctx context.Context, domain string) error {
+	if b == nil || b.certIssuer == nil {
+		return nil
+	}
+	issuer, ok := b.certIssuer.(WildcardCertIssuer)
+	if !ok {
+		return nil
+	}
+	return issuer.RequestCertForWildcardDomain(ctx, domain)
+}
+
 // resolveSched picks the schedd client that should service appID
 // (Phase 2 / Gate A). Returns the per-node client when both hooks
 // are configured AND the app has a non-empty NodeID; otherwise

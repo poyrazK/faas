@@ -78,7 +78,14 @@ func (r pgRouter) appBySlug(ctx context.Context, slug string) (gateway.App, bool
 func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, bool, error) {
 	dom, err := r.store.DomainByName(ctx, host)
 	if errors.Is(err, state.ErrNotFound) {
-		return gateway.App{}, false, nil
+		// Wildcard rows are a separate optional seam so narrow test doubles
+		// and older adapters keep the exact-domain behavior unchanged.
+		if ws, ok := r.store.(state.CustomDomainWildcardStore); ok {
+			dom, err = ws.WildcardDomainForHost(ctx, host)
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			return gateway.App{}, false, nil
+		}
 	}
 	if err != nil {
 		return gateway.App{}, false, err
@@ -429,6 +436,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyInstanceChanged,
 		db.NotifyAppChanged,
 		db.NotifyDomainChanged,
+		db.NotifyDomainVerify,
 		db.NotifyKeyChanged,
 		db.NotifyDeploymentChanged,
 		db.NotifyEdgeRuleChanged,
@@ -551,6 +559,24 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		}
 	case db.NotifyDomainChanged:
 		inv.FlushRoutes()
+	case db.NotifyDomainVerify:
+		// F4 wildcard rows are minted eagerly after DNS ownership is
+		// confirmed. Keep this optional so existing invalidators and
+		// exact-domain-only deployments remain source-compatible.
+		var p struct {
+			Domain string `json:"domain"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.Domain == "" {
+			log.Warn("gatewayd: bad domain_verify payload", "payload", n.Payload)
+			return
+		}
+		if requester, ok := inv.(interface {
+			RequestCertForWildcardDomain(context.Context, string) error
+		}); ok {
+			if err := requester.RequestCertForWildcardDomain(ctx, p.Domain); err != nil {
+				log.Warn("gatewayd: wildcard cert mint failed", "domain", p.Domain, "err", err)
+			}
+		}
 	case db.NotifyKeyChanged:
 		// Issue #477 / ADR-079. A key rotation across the
 		// platform could change which api_keys resolve

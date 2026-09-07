@@ -1740,6 +1740,54 @@ func TestCreateDomain_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateDomain_WildcardPlanGate(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "wildcard-hobby")
+	rec := e.do(t, "POST", "/v1/domains",
+		api.CreateCustomDomainRequest{Domain: "*.example.com", AppID: appID}, nil)
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodeWildcardDomainsNotAllowed)
+}
+
+func TestCreateDomain_WildcardRejectsTenantSurfaceOverlap(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "wildcard-overlap")
+	limits, ok := api.LimitsFor(e.acct.Plan)
+	if !ok {
+		t.Fatal("missing plan limits")
+	}
+	surf, err := e.store.CreateTenantSurfaceIfUnderQuota(context.Background(), state.CreateTenantSurfaceParams{
+		AccountID: e.acct.ID, AppID: appID, Name: "customers",
+	}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateTenantHostnameIfUnderQuota(context.Background(), state.CreateTenantHostnameParams{
+		SurfaceID: surf.ID, Hostname: "api.example.com", ChallengeToken: "tok",
+	}, limits); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "POST", "/v1/domains",
+		api.CreateCustomDomainRequest{Domain: "*.example.com", AppID: appID}, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeWildcardDomainTenantSurfaceOverlap)
+}
+
+func TestCreateDomain_WildcardCanonicalTXTRecord(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "wildcard-txt")
+	rec := e.do(t, "POST", "/v1/domains",
+		api.CreateCustomDomainRequest{Domain: "*.Example.COM", AppID: appID}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CustomDomainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Domain != "*.example.com" || !strings.HasPrefix(out.TXTRecord, "_faas-verify.example.com") {
+		t.Fatalf("wildcard response = %+v", out)
+	}
+}
+
 // TestCreateDomain_BadJSON: missing fields → 400.
 func TestCreateDomain_BadJSON(t *testing.T) {
 	e := setup(t, api.PlanHobby)

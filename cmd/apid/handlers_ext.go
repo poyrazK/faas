@@ -1962,13 +1962,39 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			"Bad request", "domain and app_id are required"))
 		return
 	}
+	domain := strings.ToLower(strings.TrimSpace(req.Domain))
+	if err := state.ValidateCustomDomainName(domain); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid domain", err.Error()))
+		return
+	}
 	app, err := s.store.AppByID(r.Context(), req.AppID)
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
 		return
 	}
+	limits, limitsOK := api.LimitsFor(acct.Plan)
+	if !limitsOK {
+		api.WriteProblem(w, api.ErrCapacity("unknown plan"))
+		return
+	}
+	if state.IsWildcardCustomDomain(domain) {
+		if !limits.WildcardDomainsAllowed {
+			api.WriteProblem(w, api.ErrWildcardDomainsNotAllowed(acct.Plan))
+			return
+		}
+		overlaps, hostname, err := s.wildcardTenantSurfaceOverlap(r.Context(), acct.ID, domain)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not check tenant-surface overlap"))
+			return
+		}
+		if overlaps {
+			api.WriteProblem(w, api.ErrWildcardDomainTenantSurfaceOverlap(domain, hostname))
+			return
+		}
+	}
 	token := randomToken(16)
-	d, err := s.store.CreateCustomDomain(r.Context(), strings.ToLower(req.Domain), app.ID, token)
+	d, err := s.store.CreateCustomDomain(r.Context(), domain, app.ID, token)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Domain taken", err.Error()))
@@ -1990,6 +2016,46 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		"domain": d.Domain,
 	})
 	writeJSON(w, http.StatusAccepted, domainResponse(d))
+}
+
+// wildcardTenantSurfaceOverlap checks the non-deleted tenant-surface hostname
+// set before a wildcard row is inserted. Hostnames are intentionally checked
+// even while their TXT challenge is pending: the reservation must not become
+// ambiguous when the hostname verifies later.
+func (s *server) wildcardTenantSurfaceOverlap(ctx context.Context, accountID, domain string) (bool, string, error) {
+	if hs, ok := s.store.(state.TenantSurfaceHostnameStore); ok {
+		hostnames, err := hs.ListTenantSurfaceHostnames(ctx)
+		if err != nil {
+			return false, "", err
+		}
+		for _, hostname := range hostnames {
+			if state.WildcardMatchesHost(domain, hostname) {
+				return true, hostname, nil
+			}
+		}
+		return false, "", nil
+	}
+	// Narrow adapters predating F4 may not expose the global read seam. Their
+	// account-scoped listing still preserves the invariant for the local owner.
+	surfaces, err := s.store.ListTenantSurfacesForAccount(ctx, accountID)
+	if err != nil {
+		return false, "", err
+	}
+	for _, surface := range surfaces {
+		if surface.Status == state.SurfaceStatusDeleted {
+			continue
+		}
+		hostnames, err := s.store.ListTenantHostnamesForSurface(ctx, surface.ID)
+		if err != nil {
+			return false, "", err
+		}
+		for _, hostname := range hostnames {
+			if state.WildcardMatchesHost(domain, hostname.Hostname) {
+				return true, hostname.Hostname, nil
+			}
+		}
+	}
+	return false, "", nil
 }
 
 func (s *server) listDomains(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -2130,7 +2196,8 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 		}
 		return resp, nil
 	}
-	cert, err := dialCert(ctx, d.Domain)
+	dialDomain, _ := state.WildcardProbeHost(d.Domain)
+	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
 		resp.CertStatus = classifyCertError(err)
 		if resp.CertLastError == "" {
@@ -4345,7 +4412,7 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 		r.VerifiedAt = d.VerifiedAt.UTC().Format(time.RFC3339)
 	}
 	if d.ChallengeToken != "" {
-		r.TXTRecord = "_faas-verify." + d.Domain + `  TXT  "` + d.ChallengeToken + `"`
+		r.TXTRecord = state.CustomDomainChallengeName(d.Domain) + `  TXT  "` + d.ChallengeToken + `"`
 	}
 	if !d.CertExpiresAt.IsZero() {
 		r.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)

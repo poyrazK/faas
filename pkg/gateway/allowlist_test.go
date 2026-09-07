@@ -76,6 +76,21 @@ func TestPGAllowlist_AllowsVerifiedDomain(t *testing.T) {
 	}
 }
 
+func TestPGAllowlistWithWildcard_AllowsVerifiedSubdomain(t *testing.T) {
+	custom := newFakeDomainLookup()
+	wildcard := func(_ context.Context, host string) (any, error) {
+		if host == "api.example.com" {
+			return fakeCustomDomain{verifiedAt: time.Now()}, nil
+		}
+		return nil, ErrNotFound
+	}
+	al := NewPGAllowlistWithWildcard(custom.DomainByName, wildcard, nil, nil, nil, "", "", quietLogger())
+	ok, err := al(context.Background(), "api.example.com")
+	if err != nil || !ok {
+		t.Fatalf("wildcard allowlist = %v, %v; want true/nil", ok, err)
+	}
+}
+
 func TestPGAllowlist_DeniesUnverified(t *testing.T) {
 	store := newFakeDomainLookup()
 	store.put("pending.example.com", false) // exists but TXT challenge unresolved

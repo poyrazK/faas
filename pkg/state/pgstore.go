@@ -8114,6 +8114,29 @@ func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain
 	return d, nil
 }
 
+// WildcardDomainForHost returns the most-specific wildcard row whose
+// suffix strictly contains host. The leading dot in substr(domain, 2) makes
+// the match label-boundary safe ("badexample.com" cannot match
+// "*.example.com").
+func (s *PgStore) WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error) {
+	row := s.pool.QueryRow(ctx,
+		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
+		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
+		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz),
+		        coalesce(cert_failed_at, 'epoch'::timestamptz)
+		   from custom_domains
+		  where domain like '*.%'
+		    and lower($1) like '%' || lower(substr(domain, 2))
+		    and lower($1) <> lower(substr(domain, 3))
+		  order by length(domain) desc
+		  limit 1`, host)
+	d := CustomDomain{}
+	if err := scanCustomDomain(row, &d); err != nil {
+		return CustomDomain{}, mapErr(err)
+	}
+	return d, nil
+}
+
 func (s *PgStore) ListDomainsForApp(ctx context.Context, appID string) ([]CustomDomain, error) {
 	rows, err := s.pool.Query(ctx,
 		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),

@@ -316,3 +316,35 @@ func (i *TenantSurfaceCertIssuer) RequestCertForSurface(ctx context.Context, sur
 	i.emitCertTransition(ctx, surf.ID, surf.AccountID, state.CertStatePending, state.CertStateIssued, "", "success")
 	return nil
 }
+
+// RequestCertForWildcardDomain mints one customer-owned wildcard certificate
+// with the same DNS-01 LetsEncrypt issuer used by tenant surfaces. The custom
+// domain row remains the source of truth for lifecycle state; this optional
+// method is invoked by gatewayd-internal on domain_verify notifications.
+func (i *TenantSurfaceCertIssuer) RequestCertForWildcardDomain(ctx context.Context, domain string) error {
+	if i == nil || i.store == nil || !state.IsWildcardCustomDomain(domain) {
+		return nil
+	}
+	d, err := i.store.DomainByName(ctx, domain)
+	if err != nil {
+		return nil
+	}
+	if !d.Verified() {
+		return nil
+	}
+	if err := i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertPending, time.Time{}, "", d.DNSLastCheckedAt); err != nil {
+		return err
+	}
+	if i.le == nil {
+		errMsg := "cert engine unwired: wildcard DNS-01 issuer is not configured"
+		_ = i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt)
+		return nil
+	}
+	notAfter, err := i.le.Issue(ctx, domain)
+	if err != nil {
+		errMsg := fmt.Sprintf("certmagic wildcard Issue: %v", err)
+		_ = i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt)
+		return err
+	}
+	return i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertIssued, notAfter, "", d.DNSLastCheckedAt)
+}
