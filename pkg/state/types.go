@@ -3571,7 +3571,7 @@ type ComputeNode struct {
 	LastRecoveryOutcome *string
 }
 
-// NodeLifecycle is the 4-state enum from 00579. Constants mirror the
+// NodeLifecycle is the compute-node controller state. Constants mirror the
 // SQL values so the schedd-side switch statements can use named
 // identifiers without re-typing strings. Order matters for sort
 // predicates in the recovery arbiter's listings — keep 'active' first
@@ -3579,16 +3579,18 @@ type ComputeNode struct {
 type NodeLifecycle string
 
 const (
-	NodeLifecycleActive      NodeLifecycle = "active"
-	NodeLifecycleDraining    NodeLifecycle = "draining"
-	NodeLifecycleUnavailable NodeLifecycle = "unavailable"
-	NodeLifecycleRecovering  NodeLifecycle = "recovering"
+	NodeLifecycleActive        NodeLifecycle = "active"
+	NodeLifecycleDraining      NodeLifecycle = "draining"
+	NodeLifecycleForceDraining NodeLifecycle = "force_draining"
+	NodeLifecycleMaintenance   NodeLifecycle = "maintenance"
+	NodeLifecycleUnavailable   NodeLifecycle = "unavailable"
+	NodeLifecycleRecovering    NodeLifecycle = "recovering"
 )
 
 // IsAdmitting returns true for lifecycle states that the placement
-// chooser should consider when assigning new wakes. 'draining' is
-// intentionally excluded: a node in operator-initiated drain must
-// not receive new traffic until the operator explicitly reactives it.
+// chooser should consider when assigning new wakes. Drain and maintenance
+// states are intentionally excluded: an operator-held node must not receive
+// new traffic until the operator explicitly reactivates it.
 func (l NodeLifecycle) IsAdmitting() bool {
 	return l == NodeLifecycleActive || l == NodeLifecycleRecovering
 }

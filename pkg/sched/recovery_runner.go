@@ -56,6 +56,7 @@ func (r *RecoveryRunner) Tick(ctx context.Context) error {
 	var firstErr error
 	for _, node := range nodes {
 		if node.Lifecycle != state.NodeLifecycleDraining &&
+			node.Lifecycle != state.NodeLifecycleForceDraining &&
 			node.Lifecycle != state.NodeLifecycleUnavailable &&
 			node.Lifecycle != state.NodeLifecycleRecovering {
 			continue
@@ -90,7 +91,7 @@ func (r *RecoveryRunner) Tick(ctx context.Context) error {
 
 		completedAt := r.now().UTC()
 		switch node.Lifecycle {
-		case state.NodeLifecycleDraining:
+		case state.NodeLifecycleDraining, state.NodeLifecycleForceDraining:
 			if err := r.store.NodeMarkDrainCompleted(ctx, node.ID, completedAt); err != nil {
 				if !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) {
 					r.rememberError(&firstErr, fmt.Errorf("sched: recovery: complete drain %s: %w", node.ID, err))

@@ -14020,8 +14020,8 @@ func (s *PgStore) NodeListDrainable(ctx context.Context) ([]ComputeNode, error) 
 	return out, nil
 }
 
-// NodeMarkDrainCompleted stamps drain_completed_at + flips lifecycle
-// to 'active' (CAS on 'draining').
+// NodeMarkDrainCompleted stamps drain_completed_at + holds lifecycle in
+// 'maintenance' (CAS on a draining state).
 func (s *PgStore) NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error {
 	uid, err := uuid.Parse(id)
 	if err != nil {
