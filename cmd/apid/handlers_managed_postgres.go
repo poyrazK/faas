@@ -158,6 +158,10 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresProblem(w, err)
 		return
 	}
+	s.audit.Emit(r.Context(), "managed_postgres.database.created", &acct.ID, map[string]any{
+		"database_id": database.ID, "name": database.Name, "state": database.State,
+		"service_class": database.Spec.Class, "storage_limit_bytes": database.Spec.StorageLimitBytes,
+	})
 	writeJSON(w, http.StatusCreated, managedPostgresView(database))
 }
 
@@ -184,6 +188,9 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresProblem(w, err)
 		return
 	}
+	s.audit.Emit(r.Context(), "managed_postgres.database.deleted", &acct.ID, map[string]any{
+		"database_id": database.ID, "state": database.State,
+	})
 	writeJSON(w, http.StatusOK, managedPostgresView(database))
 }
 
@@ -221,6 +228,10 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
+	s.audit.Emit(r.Context(), "managed_postgres.database.restored", &acct.ID, map[string]any{
+		"database_id": database.ID, "source_database_id": source.ID,
+		"point_in_time": pit.UTC().Format(time.RFC3339Nano),
+	})
 	writeJSON(w, http.StatusCreated, managedPostgresView(database))
 }
 
@@ -261,6 +272,10 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		managedPostgresProblem(w, err)
 		return
 	}
+	s.audit.Emit(r.Context(), "managed_postgres.binding.created", &acct.ID, map[string]any{
+		"binding_id": binding.ID, "database_id": binding.DatabaseID, "app_id": binding.AppID,
+		"scope": binding.Scope, "access": binding.Access,
+	})
 	writeJSON(w, http.StatusCreated, managedPostgresBindingView(binding))
 }
 
@@ -287,5 +302,8 @@ func (s *server) deleteManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		managedPostgresProblem(w, err)
 		return
 	}
+	s.audit.Emit(r.Context(), "managed_postgres.binding.deleted", &acct.ID, map[string]any{
+		"binding_id": binding.ID, "database_id": binding.DatabaseID, "app_id": binding.AppID,
+	})
 	writeJSON(w, http.StatusOK, managedPostgresBindingView(binding))
 }
