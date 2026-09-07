@@ -21,6 +21,26 @@ func TestIsLiveQualificationEnabledFailsClosed(t *testing.T) {
 	}
 }
 
+func TestIsLifecycleQualificationEnabledRequiresLiveStagingGate(t *testing.T) {
+	values := map[string]string{
+		managedpostgres.EnvironmentEnv:            "staging",
+		"FAAS_MANAGED_POSTGRES_QUALIFY_LIVE":      "true",
+		"FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE": "true",
+	}
+	if !isLifecycleQualificationEnabled(func(key string) string { return values[key] }) {
+		t.Fatal("expected lifecycle qualification gate to open")
+	}
+	values[managedpostgres.EnvironmentEnv] = "production"
+	if isLifecycleQualificationEnabled(func(key string) string { return values[key] }) {
+		t.Fatal("lifecycle qualification gate opened outside staging")
+	}
+	values[managedpostgres.EnvironmentEnv] = "staging"
+	values["FAAS_MANAGED_POSTGRES_QUALIFY_LIVE"] = "false"
+	if isLifecycleQualificationEnabled(func(key string) string { return values[key] }) {
+		t.Fatal("lifecycle qualification gate opened without live qualification")
+	}
+}
+
 func TestQualificationSpecUsesConservativeCapabilities(t *testing.T) {
 	backend := managedpostgres.Backend{
 		Region: "eu-central-1",

@@ -221,6 +221,18 @@ schedule. Read-only bindings require a provider-returned read-only endpoint;
 provider CA material fails closed until a portable second-secret/file contract
 exists rather than being silently discarded.
 
+## Staging lifecycle qualification follow-up
+
+The isolated qualification command may run a second control-plane smoke after
+the provider checks pass. `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` is
+accepted only with the existing staging/live qualification gate and exercises
+database creation and readiness, binding credential issuance, binding cleanup,
+and database cleanup through the provider-neutral services. It uses an
+in-memory catalog plus a non-persistent credential sink, so the report proves
+lease and idempotency boundaries without writing a customer secret. The
+customer provisioning gate remains dark until an operator reviews both the
+provider and lifecycle reports.
+
 ## Consequences
 
 Gregale can add Neon, Xata, Prisma Postgres, a traditional managed PostgreSQL
