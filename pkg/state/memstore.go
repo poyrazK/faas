@@ -3797,6 +3797,7 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 			}
 		}
 	}
+	ramChanged := p.RAMMB != nil && *p.RAMMB != a.RAMMB
 	if p.RAMMB != nil {
 		a.RAMMB = *p.RAMMB
 	}
@@ -4044,6 +4045,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 		}
 	}
 	m.apps[id] = a
+	if ramChanged {
+		m.markAppSnapshotsStaleLocked(id)
+	}
 	return a, nil
 }
 
@@ -5290,6 +5294,17 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 func (m *MemStore) markDeploymentSnapshotsStaleLocked(deploymentID string) {
 	for i := range m.snapshots {
 		if m.snapshots[i].DeploymentID != deploymentID {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
+}
+
+func (m *MemStore) markAppSnapshotsStaleLocked(appID string) {
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if !ok || deployment.AppID != appID {
 			continue
 		}
 		m.snapshots[i].Stale = true
