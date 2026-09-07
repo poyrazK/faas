@@ -468,6 +468,46 @@ type AppDomainsData struct {
 	ErrorMessage string
 }
 
+// AppInstancesData is the dashboard-facing payload for the per-app
+// instances page. The page combines the durable instance rows with the
+// wake-boot event metadata and deployment lifecycle fields that already
+// exist in the control plane. Lifecycle actions are app-scoped (park, wake,
+// restart), because schedd owns the individual instance state machine.
+type AppInstancesData struct {
+	App          AppListItem
+	AppStatus    string
+	Instances    []InstancePageItem
+	ActionCSRF   string
+	Action       string
+	WakeID       string
+	ErrorMessage string
+}
+
+// InstancePageItem is the safe dashboard projection of one instance. It
+// deliberately carries no guest credentials or namespace internals; node,
+// wake method, liveness restart count, and parked reason are the customer
+// useful diagnostics from #1395 B6.
+type InstancePageItem struct {
+	ID                   string
+	DeploymentID         string
+	State                string
+	StateClass           string
+	StateGlyph           string
+	StateLabel           string
+	NodeID               string
+	HostIP               string
+	RAMMB                int
+	WakeID               string
+	WakeMethod           string
+	WakeTier             string
+	LivenessRestartCount int
+	ParkedReason         string
+	StartedAt            string
+	LastRequestAt        string
+	ParkedAt             string
+	TerminalAt           string
+}
+
 // DomainPageItem is one custom-domain row on the app domains page.
 type DomainPageItem struct {
 	Domain           string

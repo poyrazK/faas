@@ -64,6 +64,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/env|secrets → environment + secrets editor
 //	GET /dashboard/apps/{slug}/errors → grouped errors + drill-down
 //	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
+//	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
@@ -102,6 +103,11 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G6 / issue #1397 — per-app instances and lifecycle controls.
+			if islug, ok := parseAppInstancesPath(slug); ok {
+				s.renderAppInstances(w, r, log, acct, islug)
+				return
+			}
 			// G5 / issue #1397 — custom domains with durable TLS status
 			// and cached domain-doctor checks.
 			if dslug, ok := parseAppDomainsPath(slug); ok {
