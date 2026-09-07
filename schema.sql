@@ -1205,7 +1205,7 @@ CREATE TABLE public.app_webhook_deliveries (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_webhook_deliveries_attempt_chk CHECK (((attempt >= 0) AND (attempt <= 8))),
-    CONSTRAINT app_webhook_deliveries_event_chk CHECK ((event = ANY (ARRAY['cron.fired'::text, 'cron.fired.manually'::text, 'app.deployed'::text, 'app.scaled'::text, 'app.parked'::text, 'app.woken'::text]))),
+    CONSTRAINT app_webhook_deliveries_event_chk CHECK ((event = ANY (ARRAY['cron.fired'::text, 'cron.fired.manually'::text, 'app.created'::text, 'app.deleted'::text, 'app.deployed'::text, 'app.scaled'::text, 'app.parked'::text, 'app.woken'::text, 'build.succeeded'::text, 'build.failed'::text, 'deployment.failed'::text, 'rollout.aborted'::text, 'error.new'::text, 'job.finished'::text, 'preview.created'::text, 'budget.threshold'::text]))),
     CONSTRAINT app_webhook_deliveries_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'in_flight'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
 );
 
