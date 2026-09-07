@@ -286,10 +286,6 @@ func (b *Builderd) unregisterActiveVM(buildID string) {
 // claim cleanup defer in processClaimedBuild because the worker context is
 // already cancelled by the time shutdown reaches this method.
 func (b *Builderd) Drain(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	b.lifecycleMu.Lock()
 	b.draining = true
 	buildIDs := make([]string, 0, len(b.activeVMs))

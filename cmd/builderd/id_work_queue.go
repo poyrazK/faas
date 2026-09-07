@@ -92,9 +92,6 @@ func (q *idWorkQueue) WaitContext(ctx context.Context) error {
 	if q == nil {
 		return nil
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	done := make(chan struct{})
 	go func() {
 		q.wg.Wait()

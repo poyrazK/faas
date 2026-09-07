@@ -370,14 +370,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	var shutdownOnce sync.Once
-	shutdown := func() {
+	shutdown := func(shutdownBase context.Context) {
 		shutdownOnce.Do(func() {
 			builderdProbe.Drain("builderd", log)
 			// Stop queue handlers before waiting on builderd so their
 			// already-cancelled work contexts can unwind and requeue claims.
 			stopNotificationWorkers()
 			stopRun()
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			shutdownCtx, shutdownCancel := context.WithTimeout(shutdownBase, 30*time.Second)
 			defer shutdownCancel()
 			if err := b.Drain(shutdownCtx); err != nil {
 				log.Warn("builderd: build drain incomplete", "err", err)
@@ -389,8 +389,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("builderd: notification queue drain incomplete", "queue", "cancel", "err", err)
 			}
 			if httpSrv != nil {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				//nolint:contextcheck // shutdown ctx must outlive the already-cancelled caller ctx.
+				stopCtx, stopCancel := context.WithTimeout(shutdownBase, 5*time.Second)
 				if err := httpSrv.Shutdown(stopCtx); err != nil {
 					log.Warn("builderd: metrics shutdown", "err", err)
 				}
@@ -402,11 +401,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	for {
 		select {
 		case <-ctx.Done():
-			shutdown()
+			shutdown(context.WithoutCancel(ctx))
 			return nil
 		case n, ok := <-notifCh:
 			if !ok {
-				shutdown()
+				shutdown(context.WithoutCancel(ctx))
 				return nil
 			}
 			if n.Channel != db.NotifyBuildQueued {
