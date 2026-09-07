@@ -2329,7 +2329,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// wake-tier-mix counter so the dashboard shows the ratio of warm
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
-	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan))
+	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), app.RAMMB)
 	if !haveSnap {
 		// Only a deployment that has had a snapshot can be said to have
 		// missed one. This avoids starting the exponential backoff on a
@@ -5767,6 +5767,34 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 			}
 		}
 	}
+
+	// The app's resource shape can change while this VM is still running.
+	// Snapshots are Firecracker machine-state artifacts, so publishing the
+	// old VM after a RAM change would create a row that cannot safely restore
+	// with the app's current machine configuration. Retire the old VM instead;
+	// the next request cold-boots the current shape and produces a compatible
+	// snapshot on its next park.
+	app, err := e.store.AppByID(ctx, ins.AppID)
+	if err != nil {
+		return fmt.Errorf("sched: park: load current app shape: %w", err)
+	}
+	if app.RAMMB != ins.RAMMB {
+		e.log.Info("sched: park: discard instance after RAM change",
+			"instance", ins.ID,
+			"instance_ram_mb", ins.RAMMB,
+			"app_ram_mb", app.RAMMB)
+		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
+		if destroyErr != nil {
+			e.log.Warn("sched: park: destroy RAM-incompatible instance", "instance", ins.ID, "err", destroyErr)
+		}
+		e.ledger.Release(ins.ID)
+		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_resource_mismatch", "ram_changed")
+		if destroyErr != nil {
+			return fmt.Errorf("sched: park: destroy RAM-incompatible instance %s: %w", ins.ID, destroyErr)
+		}
+		return nil
+	}
+
 	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
 	vmstate := filepath.Join(SnapDir(), strings.TrimPrefix(vmstateKey, "snap/"))
@@ -5812,7 +5840,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	// already Destroyed the VM and transitioned the row to STOPPED
 	// (the state machine forbids PARKED→STOPPED, so the warm
 	// failure must land BEFORE the PARKED transition).
-	warmInfo, warmErr := e.captureWarmSnapshotLocked(ctx, ins)
+	warmInfo, warmErr := e.captureWarmSnapshotLocked(ctx, ins, app)
 	if warmErr != nil {
 		// Init blob on disk is orphaned — the next wake cold-boots
 		// (ADR-005) and PR C's GC sweep evicts the orphaned init row.
@@ -5922,14 +5950,10 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 // still live at this point — Destroy releases the jailer / cgroup /
 // netns / chroot cleanly. The init capture NEVER runs in this branch
 // (the caller returns early). The next wake cold-boots (ADR-005).
-func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instance) (SnapshotBytes, error) {
-	// Gate 1 + 2: the easy cheap read. Load app + account once so
-	// the warm-failure path can also seal the audit row with the
-	// correct app/account pair.
-	app, err := e.store.AppByID(ctx, ins.AppID)
-	if err != nil {
-		return SnapshotBytes{}, fmt.Errorf("sched: warm capture: load app: %w", err)
-	}
+func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instance, app state.App) (SnapshotBytes, error) {
+	// Gate 1 + 2: the cheap configuration checks. snapshotAndPark loaded
+	// the app immediately before entering SNAPSHOTTING so the resource-shape
+	// check and warm-capture gates use the same view of the app.
 	if !app.WarmSnapshotEnabled {
 		return SnapshotBytes{}, nil
 	}
@@ -6342,10 +6366,10 @@ func (e *Engine) loadAPIEnv(ctx context.Context, accountID, appID, scope string)
 // ADR-074). Returning the tier from this function — instead of
 // calling the metric accessor directly — keeps the function
 // testable without a metric registry.
-func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan string) (state.Snapshot, bool, string) {
+func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan string, expectedRAMMB int) (state.Snapshot, bool, string) {
 	if !planAllowsWarm(plan) {
 		snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
-		if err != nil || snap.Stale || snap.FCVersion != e.fcVer {
+		if err != nil || snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
 			return state.Snapshot{}, false, wakeTierColdBootFallback
 		}
 		return snap, true, wakeTierInit
@@ -6354,14 +6378,41 @@ func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan s
 	// already ranks warm > init, but checking tier explicitly lets us
 	// distinguish warm-wake from init-wake for the operator metric.
 	warm, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierWarm)
-	if err == nil && !warm.Stale && warm.FCVersion == e.fcVer {
+	if err == nil && !warm.Stale && warm.FCVersion == e.fcVer && e.snapshotMatchesRAM(ctx, warm, expectedRAMMB) {
 		return warm, true, wakeTierWarm
 	}
 	snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
-	if err != nil || snap.Stale || snap.FCVersion != e.fcVer {
+	if err != nil || snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
 		return state.Snapshot{}, false, wakeTierColdBootFallback
 	}
 	return snap, true, wakeTierInit
+}
+
+// snapshotMatchesRAM rejects machine-state artifacts created for a different
+// Firecracker memory size. Zero-byte metadata is accepted for legacy rows
+// whose writers did not record mem_bytes; vmmd remains the compatibility gate
+// for those snapshots. A known mismatch is retired immediately so subsequent
+// wakes skip it without repeating the failed selection.
+func (e *Engine) snapshotMatchesRAM(ctx context.Context, snap state.Snapshot, expectedRAMMB int) bool {
+	if snap.MemBytes <= 0 || expectedRAMMB <= 0 {
+		return true
+	}
+	expectedBytes := int64(expectedRAMMB) << 20
+	if snap.MemBytes == expectedBytes {
+		return true
+	}
+	if err := e.store.MarkSnapshotStale(ctx, snap.ID); err != nil {
+		e.log.Warn("wake: mark RAM-incompatible snapshot stale",
+			"snapshot_id", snap.ID,
+			"deployment_id", snap.DeploymentID,
+			"err", err)
+	}
+	e.log.Warn("wake: reject RAM-incompatible snapshot",
+		"snapshot_id", snap.ID,
+		"deployment_id", snap.DeploymentID,
+		"snapshot_mem_bytes", snap.MemBytes,
+		"expected_mem_bytes", expectedBytes)
+	return false
 }
 
 // planAllowsWarm is a thin wrapper that resolves the plan's

@@ -42,7 +42,7 @@ func TestInitialWakeBurstOverlapsAfterVerification(t *testing.T) {
 			store := state.NewMemStore()
 			_, app, dep := seedApp(t, store, api.PlanPro, 256, 3)
 			if restore {
-				if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 1, StorageKey: SnapshotMemKey(dep.ID)}); err != nil {
+				if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 256 << 20, StorageKey: SnapshotMemKey(dep.ID)}); err != nil {
 					t.Fatal(err)
 				}
 			}
