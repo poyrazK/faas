@@ -51,7 +51,9 @@
 // Out of scope (here, deferred to a follow-up ADR):
 //   - TTL-based eviction. ADR-054 §Consequences names this as
 //     a v1.1 tightening; not load-bearing for the Tier 1 slice.
-//   - Compression. Storage is cheap; v1 is a 1:1 mirror.
+//   - On-disk cache compression. The OCI parent may encode its remote snapshot
+//     memory layer, but Put and Get keep this cache as the original sparse
+//     Firecracker file so local restores never pay decompression latency.
 //
 // Tier A5 / ADR-066 cross-node pull path. The cache is the
 // warm path for cross-node live-instance migration:

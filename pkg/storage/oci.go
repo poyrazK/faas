@@ -13,11 +13,13 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -54,6 +56,11 @@ type OCIRegistryStorageBackend struct {
 	pw       string       // optional Basic-Auth password
 	ua       string       // User-Agent header on every request
 	timeout  time.Duration
+	// snapshotCompression controls the encoding used for snapshot memory
+	// blobs in the remote registry. LocalCacheBackend wraps this backend in
+	// production, so its origin-node file remains an uncompressed sparse
+	// snapshot that Firecracker can restore directly.
+	snapshotCompression string
 
 	// tokenCache maps "realm|service|scope" → cachedToken. Entries are
 	// populated on the first 401 challenge and refreshed on expiry
@@ -180,6 +187,16 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
+// WithSnapshotCompression selects the remote encoding for snapshot memory
+// blobs. Empty and "none" keep the legacy byte-for-byte representation;
+// "zstd" enables fast Zstandard compression. Get always understands both
+// representations so readers can roll out before writers are enabled.
+func WithSnapshotCompression(encoding string) Option {
+	return func(o *OCIRegistryStorageBackend) {
+		o.snapshotCompression = strings.ToLower(strings.TrimSpace(encoding))
+	}
+}
+
 // NewOCIRegistryStorageBackend validates the registry is set and
 // returns a usable backend. Empty registry is rejected — silent default
 // would publish into whatever the operator happened to leave in
@@ -192,6 +209,13 @@ func NewOCIRegistryStorageBackend(opts ...Option) (*OCIRegistryStorageBackend, e
 	}
 	for _, opt := range opts {
 		opt(o)
+	}
+	switch o.snapshotCompression {
+	case "", snapshotCompressionNone:
+		o.snapshotCompression = snapshotCompressionNone
+	case snapshotCompressionZstd:
+	default:
+		return nil, fmt.Errorf("%w: unsupported snapshot compression %q", ErrInvalidKey, o.snapshotCompression)
 	}
 	if o.registry == "" {
 		return nil, fmt.Errorf("%w: empty registry (set FAAS_OCI_REGISTRY or pass WithRegistry)", ErrInvalidKey)
@@ -403,7 +427,22 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 	// hashed it where it lay — deleting that file would destroy the
 	// caller's data (the read-through cache's spool, or a snapshot blob
 	// on the capture path).
-	tmpPath, digestHex, ownsTmp, err := o.bufferAndHash(ctx, key, r)
+	var layerAnnotations map[string]string
+	var tmpPath, digestHex string
+	var ownsTmp bool
+	if o.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key) {
+		var uncompressedSize int64
+		tmpPath, digestHex, uncompressedSize, err = o.compressSnapshot(ctx, key, r)
+		ownsTmp = true
+		if err == nil {
+			layerAnnotations = map[string]string{
+				layerEncodingAnnotation:         snapshotCompressionZstd,
+				layerUncompressedSizeAnnotation: strconv.FormatInt(uncompressedSize, 10),
+			}
+		}
+	} else {
+		tmpPath, digestHex, ownsTmp, err = o.bufferAndHash(ctx, key, r)
+	}
 	if err != nil {
 		return err
 	}
@@ -435,7 +474,13 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 
 	// Push the image manifest last so a partially-written key isn't
 	// visible until the layer blob is committed.
-	manifestJSON, err := buildImageManifest(configDigest, "sha256:"+digestHex, tmpPathSize(tmpPath), key)
+	manifestJSON, err := buildImageManifest(
+		configDigest,
+		"sha256:"+digestHex,
+		tmpPathSize(tmpPath),
+		key,
+		layerAnnotations,
+	)
 	if err != nil {
 		return fmt.Errorf("storage: oci put %q: build manifest: %w", key, err)
 	}
@@ -472,11 +517,41 @@ func (o *OCIRegistryStorageBackend) Get(ctx context.Context, key string) (io.Rea
 	if digest == "" {
 		return nil, fmt.Errorf("storage: oci get %q: manifest layer has no digest", key)
 	}
+	layer := manifest.Layers[0]
+	encoding := layer.Annotations[layerEncodingAnnotation]
+	var uncompressedSize int64
+	switch encoding {
+	case "", snapshotCompressionNone:
+	case snapshotCompressionZstd:
+		rawSize := layer.Annotations[layerUncompressedSizeAnnotation]
+		uncompressedSize, err = strconv.ParseInt(rawSize, 10, 64)
+		if err != nil || uncompressedSize <= 0 {
+			return nil, fmt.Errorf(
+				"storage: oci get %q: invalid zstd uncompressed size %q",
+				key,
+				rawSize,
+			)
+		}
+	default:
+		return nil, fmt.Errorf("storage: oci get %q: unsupported layer encoding %q", key, encoding)
+	}
 	body, err := o.fetchBlob(ctx, repo, digest)
 	if err != nil {
 		return nil, fmt.Errorf("storage: oci get %q: %w", key, err)
 	}
-	return body, nil
+	if encoding != snapshotCompressionZstd {
+		return body, nil
+	}
+	decoder, err := zstd.NewReader(body, zstd.WithDecoderConcurrency(1))
+	if err != nil {
+		_ = body.Close()
+		return nil, fmt.Errorf("storage: oci get %q: start zstd decoder: %w", key, err)
+	}
+	return &decodedBlobReadCloser{
+		decoder:      decoder,
+		source:       body,
+		expectedSize: uncompressedSize,
+	}, nil
 }
 
 // --- Delete ------------------------------------------------------------
@@ -711,6 +786,13 @@ var manifestAccept = strings.Join([]string{
 // distribution-spec-compliant ones surface it for tooling.
 const blobMediaType = "application/vnd.oci.image.layer.v1.tar+gzip"
 
+const (
+	snapshotCompressionNone         = "none"
+	snapshotCompressionZstd         = "zstd"
+	layerEncodingAnnotation         = "dev.gregale.storage.encoding"
+	layerUncompressedSizeAnnotation = "dev.gregale.storage.uncompressed-size"
+)
+
 // configMediaType is the OCI image config media type for the stub
 // blob we push alongside each artifact.
 const configMediaType = "application/vnd.oci.image.config.v1+json"
@@ -740,16 +822,22 @@ type imageManifest struct {
 		Size      int64  `json:"size"`
 	} `json:"config"`
 	Layers []struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-		Size      int64  `json:"size"`
+		Annotations map[string]string `json:"annotations,omitempty"`
+		MediaType   string            `json:"mediaType"`
+		Digest      string            `json:"digest"`
+		Size        int64             `json:"size"`
 	} `json:"layers"`
 }
 
 // buildImageManifest renders the single-arch image manifest v1 JSON.
 // digest is the layer's "sha256:<hex>" form; configDigest is the same
 // for the config blob; size is the layer's byte count.
-func buildImageManifest(configDigest, layerDigest string, size int64, key string) ([]byte, error) {
+func buildImageManifest(
+	configDigest, layerDigest string,
+	size int64,
+	key string,
+	layerAnnotations map[string]string,
+) ([]byte, error) {
 	m := imageManifest{
 		SchemaVersion: 2,
 		MediaType:     imageManifestMediaType,
@@ -764,11 +852,70 @@ func buildImageManifest(configDigest, layerDigest string, size int64, key string
 	m.Config.Digest = configDigest
 	m.Config.Size = int64(len(configStubJSON))
 	m.Layers = append(m.Layers, struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-		Size      int64  `json:"size"`
-	}{MediaType: blobMediaType, Digest: layerDigest, Size: size})
+		Annotations map[string]string `json:"annotations,omitempty"`
+		MediaType   string            `json:"mediaType"`
+		Digest      string            `json:"digest"`
+		Size        int64             `json:"size"`
+	}{Annotations: layerAnnotations, MediaType: blobMediaType, Digest: layerDigest, Size: size})
 	return json.Marshal(m)
+}
+
+// isSnapshotMemoryKey limits compression to Firecracker memory files. VM
+// state and every other artifact remain byte-for-byte compatible with older
+// readers. planSnapshotKey validates the complete key shape before Put calls
+// this helper.
+func isSnapshotMemoryKey(key string) bool {
+	return strings.HasPrefix(key, "snap/") && strings.HasSuffix(key, "/mem")
+}
+
+// compressSnapshot writes one fast Zstandard frame to a temporary file while
+// hashing the compressed representation that the registry stores. Compression
+// concurrency is deliberately one per capture: concurrent parks must not each
+// consume every host CPU. Snapshot memory is mostly zero pages, so the fastest
+// level still removes nearly all upload bytes.
+func (o *OCIRegistryStorageBackend) compressSnapshot(
+	ctx context.Context,
+	key string,
+	r io.Reader,
+) (path, hexDigest string, uncompressedSize int64, err error) {
+	f, err := osCreateTemp("", "faas-oci-snapshot-*.zst")
+	if err != nil {
+		return "", "", 0, fmt.Errorf("storage: oci put %q: create zstd tmp: %w", key, err)
+	}
+	path = f.Name()
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			_ = f.Close()
+			_ = removeTmp(path)
+		}
+	}()
+
+	h := sha256.New()
+	encoder, err := zstd.NewWriter(
+		io.MultiWriter(f, h),
+		zstd.WithEncoderLevel(zstd.SpeedFastest),
+		zstd.WithEncoderConcurrency(1),
+	)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("storage: oci put %q: create zstd encoder: %w", key, err)
+	}
+	uncompressedSize, copyErr := copyContext(ctx, encoder, r)
+	closeErr := encoder.Close()
+	if copyErr != nil {
+		return "", "", 0, fmt.Errorf("storage: oci put %q: compress snapshot: %w", key, copyErr)
+	}
+	if closeErr != nil {
+		return "", "", 0, fmt.Errorf("storage: oci put %q: finish zstd stream: %w", key, closeErr)
+	}
+	if err := f.Sync(); err != nil {
+		return "", "", 0, fmt.Errorf("storage: oci put %q: fsync zstd tmp: %w", key, err)
+	}
+	if err := f.Close(); err != nil {
+		return "", "", 0, fmt.Errorf("storage: oci put %q: close zstd tmp: %w", key, err)
+	}
+	succeeded = true
+	return path, hex.EncodeToString(h.Sum(nil)), uncompressedSize, nil
 }
 
 // --- low-level registry plumbing --------------------------------------
@@ -1179,6 +1326,63 @@ func (t *tmpCloser) Close() error {
 		return rerr
 	}
 	return nil
+}
+
+// decodedBlobReadCloser ties the streaming decoder to the verified compressed
+// temporary file returned by fetchBlob. Closing it releases decoder buffers,
+// closes the file, and removes the scratch file.
+type decodedBlobReadCloser struct {
+	decoder      *zstd.Decoder
+	source       io.ReadCloser
+	expectedSize int64
+	readSize     int64
+	reachedEOF   bool
+}
+
+func (d *decodedBlobReadCloser) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if d.reachedEOF {
+		return 0, io.EOF
+	}
+	remaining := d.expectedSize - d.readSize
+	if remaining == 0 {
+		var extra [1]byte
+		n, err := d.decoder.Read(extra[:])
+		if n > 0 {
+			return 0, fmt.Errorf(
+				"zstd layer decompressed past declared size %d",
+				d.expectedSize,
+			)
+		}
+		if errors.Is(err, io.EOF) {
+			d.reachedEOF = true
+		}
+		return 0, err
+	}
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+	}
+	n, err := d.decoder.Read(p)
+	d.readSize += int64(n)
+	if errors.Is(err, io.EOF) {
+		d.reachedEOF = true
+		if d.readSize != d.expectedSize {
+			return n, fmt.Errorf(
+				"zstd layer decompressed to %d bytes, want %d: %w",
+				d.readSize,
+				d.expectedSize,
+				io.ErrUnexpectedEOF,
+			)
+		}
+	}
+	return n, err
+}
+
+func (d *decodedBlobReadCloser) Close() error {
+	d.decoder.Close()
+	return d.source.Close()
 }
 
 // deleteManifest DELETEs the manifest at (repo, tag). A 404 is a
