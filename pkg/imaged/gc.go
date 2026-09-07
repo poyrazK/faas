@@ -56,9 +56,10 @@ type deleteTarget struct {
 // wrong one when a rollback-and-redeploy lands in the same
 // nanosecond".
 //
-// Soft-deleted apps (status='deleted') are filtered out by the SQL
-// layer in Store.ListSnapshotsForGC, so we don't have to handle
-// them here. Same for stale rows.
+// Deleted apps and unusable terminal deployments are returned by the store
+// specifically so this function can evict them without letting them consume
+// a retention-floor slot, even when lifecycle triggers already marked those
+// rows stale. Other stale rows are handled by the retention sweep.
 //
 // Replaces the legacy perAppKeepCurrentPrevious (spec §4.6 current +
 // previous) which ignored tier entirely.

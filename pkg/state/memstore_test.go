@@ -2138,7 +2138,7 @@ func TestMemStore_ListSnapshotsForGC(t *testing.T) {
 	}
 }
 
-func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
+func TestMemStore_ListSnapshotsForGC_IncludesDeletedAppForCleanup(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
 	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
@@ -2157,9 +2157,15 @@ func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, _ := m.ListSnapshotsForGC(ctx)
-	if len(rows) != 0 {
-		t.Errorf("deleted app's snapshot leaked into GC: %d rows", len(rows))
+	rows, err := m.ListSnapshotsForGC(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("deleted app's snapshot missing from GC cleanup: %d rows", len(rows))
+	}
+	if rows[0].AppStatus != AppDeleted {
+		t.Errorf("AppStatus = %q, want %q", rows[0].AppStatus, AppDeleted)
 	}
 }
 

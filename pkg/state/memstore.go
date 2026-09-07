@@ -9457,8 +9457,9 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 	return ErrNotFound
 }
 
-// ListSnapshotsForGC joins snapshots → deployments → apps in-memory and
-// filters out snapshots belonging to soft-deleted apps (apps.status='deleted').
+// ListSnapshotsForGC joins snapshots → deployments → apps in-memory.
+// Deleted apps and terminal deployments remain visible so imaged can reclaim
+// their rows and storage artifacts.
 // MemStore doesn't index the join; the O(N×M) scan is fine for the test
 // harness, which seeds at most a few dozen rows. The slice is sorted
 // newest-first to match PgStore.
@@ -9475,15 +9476,20 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 	}
 	var out []SnapshotForGC
 	for _, s := range m.snapshots {
-		if s.Stale {
-			continue
-		}
 		dep, ok := depByID[s.DeploymentID]
 		if !ok {
 			continue
 		}
 		app, ok := appByID[dep.AppID]
-		if !ok || app.Status == AppDeleted {
+		if !ok {
+			continue
+		}
+		// Lifecycle triggers mark snapshots stale as soon as an app is
+		// deleted or a deployment becomes unusable. Keep those terminal rows
+		// in this projection so the immediate GC pass can remove their files;
+		// ordinary stale rows remain owned by the retention sweep.
+		if s.Stale && app.Status != AppDeleted &&
+			dep.Status != DeployFailed && dep.Status != DeployCancelled {
 			continue
 		}
 		out = append(out, SnapshotForGC{
@@ -9493,10 +9499,12 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			AccountID:    app.AccountID,
 			// B1.1: forward the slug so imaged's GC doesn't have to
 			// re-resolve it per eviction (was O(2N) extra SQL).
-			AppSlug:   app.Slug,
-			FCVersion: s.FCVersion,
-			MemBytes:  s.MemBytes,
-			DiskBytes: s.DiskBytes,
+			AppSlug:          app.Slug,
+			AppStatus:        app.Status,
+			DeploymentStatus: dep.Status,
+			FCVersion:        s.FCVersion,
+			MemBytes:         s.MemBytes,
+			DiskBytes:        s.DiskBytes,
 			// Issue #470 / ADR-055: forward the tier so the GC loop's
 			// perAppKeepCurrentPrevious can keep (current warm +
 			// previous init) per warm-tier app and (current init +

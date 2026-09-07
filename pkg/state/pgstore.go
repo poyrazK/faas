@@ -12219,10 +12219,9 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 }
 
 // ListSnapshotsForGC returns every non-stale snapshot joined with its
-// deployment + app + account, ordered newest-first. The SQL filter on
-// apps.status='deleted' is what implements "soft-deleted apps' snapshots
-// are GC-eligible" — the row delete cascade in DeleteAccount only touches
-// rows, not on-disk files, so imaged still has to scrub them.
+// deployment + app + account, ordered newest-first. Snapshots made stale by a
+// deleted app or an unusable terminal deployment remain in the result because
+// imaged needs the join metadata to remove their on-disk files immediately.
 //
 // The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
 // ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k
@@ -12246,13 +12245,14 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
 	rows, err := s.pool.Query(ctx,
 		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
-		        s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
+		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
 		        a.warm_snapshot_enabled
 		   from snapshots s
 		   join deployments d on d.id = s.deployment_id
 		   join apps a       on a.id = d.app_id
 		  where s.stale = false
-		    and a.status <> 'deleted'
+		     or a.status = 'deleted'
+		     or d.status in ('failed', 'cancelled')
 		  order by s.created_at desc
 		  limit 10000`)
 	if err != nil {
@@ -12263,7 +12263,7 @@ func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, erro
 	for rows.Next() {
 		var r SnapshotForGC
 		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
-			&r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
+			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
 			&r.AppWarmSnapshotEnabled); err != nil {
 			return nil, err
 		}
