@@ -3,6 +3,7 @@ package frameworkprofile
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -79,13 +80,13 @@ func readProfileFiles(archivePath, logicalRoot string) (fstest.MapFS, bool, erro
 	}
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			return nil, false, fmt.Errorf("framework profile read archive: %w", err)
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		name := strings.TrimPrefix(hdr.Name, "./")

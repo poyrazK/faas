@@ -3793,13 +3793,6 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 	return api.BuildResponse{}, false
 }
 
-// terminalExitForDeployment applies the same rendering rules as the
-// in-stream `event: status` branch, but uses the polled deployment
-// row (which has the canonical Error string from the DB).
-func terminalExitForDeployment(d api.DeploymentResponse) int {
-	return terminalExitForDeploymentAs(d, d.AppID)
-}
-
 func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
 	if d.Status == statusLive {
 		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
