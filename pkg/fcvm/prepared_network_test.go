@@ -94,6 +94,10 @@ func TestPreparedNetworkDuplicateInstanceKeepsOriginalLease(t *testing.T) {
 func TestPreparedNetworkPolicyAndExpiry(t *testing.T) {
 	m, p := testPreparedPool(t, 2)
 	policy := fillTestPreparedPool(t, m, p, 100)
+	original := map[string]bool{}
+	for _, entry := range p.ready {
+		original[entry.lease.Instance] = true
+	}
 	other := policy
 	other.egressMbit = 250
 	if p.claim("wrong-rate", other) != nil {
@@ -105,10 +109,14 @@ func TestPreparedNetworkPolicyAndExpiry(t *testing.T) {
 	if p.claim("expired", policy) != nil {
 		t.Fatal("expired network claimed")
 	}
-	p.observed = time.Now().Add(-2 * preparedNetworkTTL)
 	p.fill()
-	if len(p.ready) != 0 || len(m.alloc.reserved) != 0 {
-		t.Fatal("idle cache refreshed expired resources")
+	if len(p.ready) != 2 || len(m.alloc.reserved) != 2 {
+		t.Fatal("observed policy was not kept warm after entry expiry")
+	}
+	for _, entry := range p.ready {
+		if original[entry.lease.Instance] {
+			t.Fatal("expired prepared network was reused instead of refreshed")
+		}
 	}
 	for _, req := range []WakeRequest{
 		{Plan: "scale", ExportDir: "/builder"}, {Plan: "scale", StaticEgressIP: "1.2.3.4"},
@@ -125,8 +133,8 @@ func TestPreparedNetworkRefreshesOldSpareBeforeHardExpiry(t *testing.T) {
 	policy := fillTestPreparedPool(t, m, p, 100)
 	old := p.ready[0]
 	young := p.ready[1].lease.Instance
-	// A recent wake keeps demand active, but an unused spare can be older
-	// than the other entries after repeated bursts smaller than capacity.
+	// An unused spare can be older than the other entries after repeated
+	// bursts smaller than capacity.
 	p.ready[0].created = time.Now().Add(-3 * preparedNetworkTTL / 4)
 	p.observe(policy)
 	p.fill()
@@ -193,7 +201,7 @@ func TestPreparedNetworkTeardownFailureRetainsSlot(t *testing.T) {
 	m, p := testPreparedPool(t, 1)
 	fillTestPreparedPool(t, m, p, 250)
 	p.removed = func(netns.Config) bool { return false }
-	p.observed = time.Now().Add(-2 * preparedNetworkTTL)
+	p.desired = nil
 	p.fill()
 	if len(p.retired) != 1 || len(m.alloc.reserved) != 1 || len(p.ready) != 0 {
 		t.Fatal("failed teardown released reserved identity")
