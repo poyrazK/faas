@@ -1188,6 +1188,18 @@ type AppManifest struct {
 	Favicon          []byte            `json:"favicon,omitempty"`
 	RobotsTxt        string            `json:"robots_txt,omitempty"`
 	HeadWakes        bool              `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string            `json:"crawler_policy,omitempty"`
+}
+
+// EffectiveCrawlerPolicy returns the persisted policy or the backwards-
+// compatible wake default for legacy app rows.
+func (m AppManifest) EffectiveCrawlerPolicy() string {
+	switch m.CrawlerPolicy {
+	case "cached", "block":
+		return m.CrawlerPolicy
+	default:
+		return "wake"
+	}
 }
 
 // IsZero reports whether the manifest carries no runner or lifecycle fields.
@@ -1199,7 +1211,7 @@ func (m AppManifest) IsZero() bool {
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == ""
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
@@ -3774,6 +3786,7 @@ type Event struct {
 //     absent-value convention.
 type WakeBootMeta struct {
 	Trigger            string // pkg/sched/triggers.go closed enum; "" if absent
+	TriggerClass       string // issue #1398 — request source class; "" for non-request wakes
 	Method             string // restore or cold_boot; "" if absent
 	Tier               string // warm, init, or cold_boot_fallback; "" if absent
 	QueuedCount        int    // ledger.Concurrency at admit; 0 if absent

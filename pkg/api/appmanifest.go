@@ -159,6 +159,32 @@ type AppManifest struct {
 	// HeadWakes opts the app into waking for HEAD / instead of receiving the
 	// parked-app edge answer.
 	HeadWakes bool `json:"head_wakes,omitempty"`
+	// CrawlerPolicy controls known monitor/crawler cold requests. Empty is
+	// equivalent to wake for backwards compatibility.
+	CrawlerPolicy string `json:"crawler_policy,omitempty"`
+}
+
+const (
+	CrawlerPolicyWake   = "wake"
+	CrawlerPolicyCached = "cached"
+	CrawlerPolicyBlock  = "block"
+)
+
+func (m AppManifest) EffectiveCrawlerPolicy() string {
+	switch m.CrawlerPolicy {
+	case CrawlerPolicyCached, CrawlerPolicyBlock:
+		return m.CrawlerPolicy
+	default:
+		return CrawlerPolicyWake
+	}
+}
+
+func (m AppManifest) ValidateCrawlerPolicy() error {
+	if m.CrawlerPolicy == "" || m.CrawlerPolicy == CrawlerPolicyWake ||
+		m.CrawlerPolicy == CrawlerPolicyCached || m.CrawlerPolicy == CrawlerPolicyBlock {
+		return nil
+	}
+	return fmt.Errorf("crawler_policy must be one of wake, cached, block")
 }
 
 // WorkloadPortProtocol is the transport protocol for a workload listener.
@@ -364,6 +390,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.Entrypoint[0] == "" {
 		return fmt.Errorf("app manifest: empty entrypoint[0]")
+	}
+	if err := m.ValidateCrawlerPolicy(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)

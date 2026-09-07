@@ -44,6 +44,10 @@ export type AppWakeTimelineResponse = {
    */
   trigger_histogram: Record<string, number>;
   /**
+   * trigger_class → N count of bounded user-agent classifications. Empty {} on a fresh app, never null.
+   */
+  trigger_class_histogram: Record<string, number>;
+  /**
    * Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break).
    */
   rows: Array<WakeTimelineJSONRow>;
@@ -52,4 +56,3 @@ export type AppWakeTimelineResponse = {
    */
   as_of: string;
 };
-

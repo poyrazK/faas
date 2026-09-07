@@ -91,6 +91,18 @@ type Client struct {
 // they appear on *Client; the compiler will refuse to drift.
 var _ ScheddClient = (*Client)(nil)
 
+// withWakeCorrelation forwards the request-derived trigger class without
+// widening the scheduler RPC surface. Internal scheduler callers continue to
+// send only the trigger enum and therefore carry no class.
+func withWakeCorrelation(ctx context.Context, trigger string) context.Context {
+	fields, ok := wire.FromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	fields.Trigger = trigger
+	return wire.WithCorrelationOutgoing(ctx, fields)
+}
+
 // Dial opens a lazy gRPC connection to schedd's unix socket. As with vmmd
 // (ADR-015) the socket's 0660/group-`faas` DAC is the only auth in v1.0, so the
 // transport uses insecure credentials over a trusted local socket. The
@@ -192,6 +204,7 @@ func (c *Client) Wake(ctx context.Context, appID, deploymentID, scope string) (i
 // deployment (legacy single-deployment path). Additive per
 // ADR-016.
 func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, err error) {
+	ctx = withWakeCorrelation(ctx, trigger)
 	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger})
 	if err != nil {
 		return "", "", "", "", 0, false, 0, liftErr(err)
@@ -229,7 +242,8 @@ func (c *Client) AdmitInstances(ctx context.Context, appID, scope, trigger strin
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, callErr := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{
+			callCtx := withWakeCorrelation(ctx, trigger)
+			resp, callErr := c.cli.AdmitInstance(callCtx, &scheddpb.AdmitInstanceRequest{
 				AppId:             appID,
 				Scope:             scope,
 				Trigger:           trigger,
@@ -265,6 +279,7 @@ func (c *Client) AdmitInstances(ctx context.Context, appID, scope, trigger strin
 // trigger (ADR-127): forwarded to the leader's Engine.Wake call and
 // stamped on the emitted wake.boot_started / wake.boot_completed events.
 func (c *Client) EnsureWake(ctx context.Context, appID, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, port int, err error) {
+	ctx = withWakeCorrelation(ctx, trigger)
 	resp, err := c.cli.EnsureWake(ctx, &scheddpb.EnsureWakeRequest{AppId: appID, Trigger: trigger})
 	if err != nil {
 		return "", "", "", "", 0, 0, liftErr(err)

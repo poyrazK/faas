@@ -1633,7 +1633,18 @@ create instance transitions or `usage_minutes` rows.
 |---|---|---|---|
 | `gateway_edge_answered_total` | `kind` | `pkg/gateway/metrics.go::ObserveEdgeAnswered` | Counter of gateway answers that bypass an app instance. `kind` is closed to `favicon`, `robots`, and `head`; edge answers are telemetry-only and never billed as resident compute. |
 
-### 12.7 CORS preflight edge answers (issue #1398 M4)
+### 12.7 Known monitor and crawler wakes (issue #1398 M3)
+
+The gateway classifies request User-Agents into the bounded set `user`,
+`monitor`, `crawler`, `preview_bot`, and `unknown`. The class is carried
+through wake correlation metadata and recorded on `wake.boot_started` /
+`wake.boot_completed` events and per-app wake-timeline analytics. Apps may set
+`crawler_policy` to `wake` (default), `cached` (serve only a fresh edge cache
+hit), or `block` (503 with `Retry-After: 60`); cached and blocked misses never
+enter the wake path. The CLI reports the monitor/crawler count and an
+idle-timeout-based resident-cost estimate in `gregale app <slug>`.
+
+### 12.8 CORS preflight edge answers (issue #1398 M4)
 
 When a matching `kind=cors` rule (including a resolved CORS preset) receives
 an `OPTIONS` request, the gateway returns `204` with the resolved

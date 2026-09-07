@@ -917,8 +917,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return gateway.App{}, false, err
 			}
-			favicon, robotsTxt, headWakes := edgeAnswersFromManifest(app.Manifest)
-			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
+			favicon, robotsTxt, headWakes, crawlerPolicy := edgeAnswersFromManifest(app.Manifest)
+			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1786,7 +1786,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return gateway.App{}, false
 		}
-		favicon, robotsTxt, headWakes := edgeAnswersFromManifest(app.Manifest)
+		favicon, robotsTxt, headWakes, crawlerPolicy := edgeAnswersFromManifest(app.Manifest)
 		return gateway.App{
 			ID:                 app.ID,
 			AccountID:          app.AccountID,
@@ -1810,6 +1810,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Favicon:         favicon,
 			RobotsTxt:       robotsTxt,
 			HeadWakes:       headWakes,
+			CrawlerPolicy:   crawlerPolicy,
 		}, true
 	}, deps.edgeRulesAudit)
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.

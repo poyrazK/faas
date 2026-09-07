@@ -61,5 +61,8 @@ export type AppManifest = {
    * Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer.
    */
   head_wakes?: boolean;
+  /**
+   * Effective policy for known monitor/crawler requests.
+   */
+  crawler_policy?: 'wake' | 'cached' | 'block';
 };
-

@@ -9194,6 +9194,9 @@ func (m *MemStore) LookupBootStartedForWakes(_ context.Context, wakeIDs []string
 		if t, ok := payload["trigger"].(string); ok {
 			meta.Trigger = t
 		}
+		if tc, ok := payload["trigger_class"].(string); ok {
+			meta.TriggerClass = tc
+		}
 		if method, ok := payload["method"].(string); ok {
 			meta.Method = method
 		}

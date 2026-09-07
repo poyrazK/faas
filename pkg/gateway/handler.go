@@ -256,6 +256,9 @@ type App struct {
 	// HeadWakes opts this app into the legacy behaviour of waking for
 	// HEAD / instead of answering from the edge while parked.
 	HeadWakes bool
+	// CrawlerPolicy controls known monitor/crawler requests. Empty is the
+	// backwards-compatible wake policy.
+	CrawlerPolicy string
 }
 
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
@@ -4863,6 +4866,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	triggerClass := ClassifyWakeTrigger(r)
+	// Preserve the bounded classification across the gateway → schedd gRPC
+	// boundary. The scheduler includes it in wake.boot_started metadata.
+	fields, _ := wire.FromContext(r.Context())
+	fields.TriggerClass = string(triggerClass)
+	r = r.WithContext(wire.WithContext(r.Context(), fields))
 	// Wake-tier transparency is useful on every response, including auth,
 	// rate-limit, redirect, and cached responses that return before the wake
 	// gate. The later wake path replaces this hot default after admission.
@@ -5145,7 +5154,18 @@ haveApp:
 	// preflight OPTIONS) so preflight responses are never
 	// cached — an OPTIONS cached against the wrong Origin is a
 	// real CORS bypass.
+	if isNonUserTriggerClass(triggerClass) && normalizeCrawlerPolicy(app.CrawlerPolicy) == "block" {
+		writeCrawlerPolicyResponse(w, "block")
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if served, rule := h.applyEdgeRuleCache(w, r, app, rec); served {
+		return
+	} else if isNonUserTriggerClass(triggerClass) && normalizeCrawlerPolicy(app.CrawlerPolicy) == "cached" {
+		// A fresh kind=cache hit returned above. A miss (including a stale
+		// entry) must not fall through to stale-while-waking or the wake gate.
+		writeCrawlerPolicyResponse(w, "cached")
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	} else if rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
 		// Stash the matched rule before installing the cache writer so a

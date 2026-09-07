@@ -38,6 +38,10 @@ export type WakeTimelineJSONRow = {
    */
   trigger?: string;
   /**
+   * Bounded User-Agent classification for the request that caused the wake.
+   */
+  trigger_class?: 'user' | 'monitor' | 'crawler' | 'preview_bot' | 'unknown';
+  /**
    * Wake method (restore or cold_boot), when telemetry is available.
    */
   method?: string;
@@ -66,4 +70,3 @@ export type WakeTimelineJSONRow = {
    */
   ready_in_ms?: number;
 };
-

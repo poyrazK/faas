@@ -12,7 +12,7 @@ import (
 // Old servers ignore desired_instances and still return their primary target.
 func (c *Client) EnsureWakeCapacity(ctx context.Context, appID, trigger string, desired int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, port int)) error {
 	desired = max(1, min(desired, api.ScaleUpMaxBurstPerTick))
-	response, err := c.cli.EnsureWake(ctx, &scheddpb.EnsureWakeRequest{AppId: appID, Trigger: trigger, DesiredInstances: int32(desired)})
+	response, err := c.cli.EnsureWake(withWakeCorrelation(ctx, trigger), &scheddpb.EnsureWakeRequest{AppId: appID, Trigger: trigger, DesiredInstances: int32(desired)})
 	if err != nil {
 		return liftErr(err)
 	}

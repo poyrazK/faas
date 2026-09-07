@@ -351,7 +351,7 @@ func (s *Server) emitBootStartedMirror(ctx context.Context, instanceID, method s
 	if s.events == nil {
 		return
 	}
-	var wakeID, appID, trigger string
+	var wakeID, appID, trigger, triggerClass string
 	var queued, conc int
 	if fields, ok := wire.FromContext(ctx); ok {
 		wakeID = fields.WakeID
@@ -361,6 +361,7 @@ func (s *Server) emitBootStartedMirror(ctx context.Context, instanceID, method s
 		// queue / concurrency context as the canonical schedd
 		// emit. Pre-ADR-123 schedd peers leave these empty.
 		trigger = fields.Trigger
+		triggerClass = fields.TriggerClass
 		queued = fields.QueuedCount
 		conc = fields.ConcurrencyAtAdmit
 	}
@@ -372,6 +373,7 @@ func (s *Server) emitBootStartedMirror(ctx context.Context, instanceID, method s
 		Method:             method,
 		RequestedAt:        time.Now().UTC(), // best-effort stamp (vmmd doesn't have schedd's startedAt)
 		Trigger:            trigger,
+		TriggerClass:       triggerClass,
 		QueuedCount:        queued,
 		ConcurrencyAtAdmit: conc,
 	})

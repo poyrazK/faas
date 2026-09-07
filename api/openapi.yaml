@@ -14115,6 +14115,11 @@ components:
           type: boolean
           default: false
           description: "Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."
+        crawler_policy:
+          type: string
+          enum: [wake, cached, block]
+          default: wake
+          description: "Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake."
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -14287,6 +14292,10 @@ components:
         head_wakes:
           type: [boolean, "null"]
           description: "Opt into waking a parked app for HEAD /. Omit for no change."
+        crawler_policy:
+          type: [string, "null"]
+          enum: [wake, cached, block, null]
+          description: "Policy for known monitor/crawler requests. Omit for no change."
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -14726,6 +14735,11 @@ components:
           type: boolean
           default: false
           description: "Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."
+        crawler_policy:
+          type: string
+          enum: [wake, cached, block]
+          default: wake
+          description: "Effective policy for known monitor/crawler requests."
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
@@ -21230,6 +21244,10 @@ components:
         trigger:
           type: string
           description: "Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on pre-PR-A fleet rows."
+        trigger_class:
+          type: string
+          enum: [user, monitor, crawler, preview_bot, unknown]
+          description: "Bounded User-Agent classification for the request that caused the wake. Empty/absent on pre-M3 fleet rows."
         method:
           type: string
           description: "Wake method (restore or cold_boot), when telemetry is available."
@@ -21273,12 +21291,12 @@ components:
         the at_capacity flag is true. Pre-PR-A fleet rows
         contribute to `wake_count_24h` but not the denominator.
       type: object
-      required: [app, wake_count_24h, wake_count_with_meta, at_capacity_count, at_capacity_pct, trigger_histogram, rows, as_of]
+      required: [app, wake_count_24h, wake_count_with_meta, at_capacity_count, at_capacity_pct, trigger_histogram, trigger_class_histogram, rows, as_of]
       properties:
         app: { $ref: '#/components/schemas/WakeTimelineApp' }
         wake_count_24h:
           type: integer
-          description: "Number of instance rows in the trailing 24h window (after the descending-cutoff break)."
+          description: "Number of instance rows in the trailing 24h window (after the descending-cutoff break; the endpoint examines up to 100 recent rows)."
         wake_count_with_meta:
           type: integer
           description: "Denominator for at_capacity_pct — count of rows where the events.wake.boot_started LEFT JOIN succeeded."
@@ -21294,9 +21312,13 @@ components:
           type: object
           additionalProperties: { type: integer }
           description: "trigger → N count of WakeBootMeta.Trigger values across the meta-bearing rows. Empty {} on a fresh app, never null."
+        trigger_class_histogram:
+          type: object
+          additionalProperties: { type: integer }
+          description: "trigger_class → N count of known user/monitor/crawler/preview_bot/unknown classifications. Empty {} on a fresh app, never null."
         rows:
           type: array
-          description: "Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break)."
+          description: "Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break) and capped at 100 recent rows."
           items: { $ref: '#/components/schemas/WakeTimelineJSONRow' }
         as_of:
           type: string
