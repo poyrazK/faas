@@ -338,6 +338,11 @@ type server struct {
 	// any OAuth env — the per-handler 503 path is then exercised
 	// on every redirect.
 	oauthConfig auth.SignInConfig
+	// googleIDVerifier validates the signed Google ID token before the
+	// callback uses the access-token userinfo endpoint. It is constructed
+	// once per apid process so the JWKS cache is shared across sign-ins;
+	// tests may replace it with a deterministic verifier.
+	googleIDVerifier googleIDTokenVerifier
 	// reconcileSvc is the apid-side workload mutation primitive
 	// (PR-G, repo decomposition Phase 5). Built once per daemon
 	// from store + audit (actor="apid" via audit.pkgAuditor()) so
@@ -883,7 +888,8 @@ func newServerWithDeps(
 		// paths. s.loadOrg treats a nil resolver as pass-through
 		// (cmd/apid/auth_facade.go::loadOrg), so LoadOrg is
 		// inert for those tests — no DB call attempted.
-		orgResolver: maybeStoreBackedResolver(store),
+		orgResolver:      maybeStoreBackedResolver(store),
+		googleIDVerifier: newGoogleIDTokenVerifier(log),
 		// oauthConfig (issue #419 / ADR-046) is left at the
 		// zero value here (both providers Disabled); production
 		// wires the env-resolved config via (*server).WithOAuthConfig
