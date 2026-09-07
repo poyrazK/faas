@@ -309,7 +309,7 @@ func sourceCodeFiles(fsys fs.FS) []string {
 	files := []string{}
 	_ = fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		if entry.IsDir() {
 			base := filepath.Base(name)
@@ -367,7 +367,7 @@ func pythonSourceFiles(fsys fs.FS) []string {
 	files := []string{}
 	_ = fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		if entry.IsDir() {
 			base := filepath.Base(name)
@@ -406,9 +406,7 @@ func pythonSourceFiles(fsys fs.FS) []string {
 func pythonModuleName(name string) string {
 	name = filepath.ToSlash(strings.TrimSuffix(name, ".py"))
 	name = strings.TrimPrefix(name, "./")
-	if strings.HasSuffix(name, "/__init__") {
-		name = strings.TrimSuffix(name, "/__init__")
-	}
+	name = strings.TrimSuffix(name, "/__init__")
 	return strings.ReplaceAll(name, "/", ".")
 }
 
