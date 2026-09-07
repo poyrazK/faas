@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func TestMemStoreCronOptionsAndActiveCount(t *testing.T) {
 	if updated.Timezone != "UTC" || updated.SkipIfRunning || updated.Schedule != schedule || updated.Path != path || updated.Enabled || !updated.CreatedAt.Equal(createdAt) {
 		t.Fatalf("updated cron options = %+v", updated)
 	}
-	if _, err := m.UpdateCronWithOptions(ctx, "missing", nil, nil, nil, nil, nil, nil); err != ErrNotFound {
+	if _, err := m.UpdateCronWithOptions(ctx, "missing", nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing cron update error = %v", err)
 	}
 
