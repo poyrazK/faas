@@ -260,7 +260,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
 	errc := make(chan error, 6)
 	go func() {
-		errc <- l.runTicks(ctx, l.cfg.SampleInterval, func(c context.Context) error {
+		errc <- l.runTicksImmediately(ctx, l.cfg.SampleInterval, func(c context.Context) error {
 			// PR-A (ADR-060, issue #515): capture the
 			// returned rows so the closure can emit
 			// meterd_floor_applied_total{plan} once per
@@ -421,22 +421,41 @@ func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(c
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
-			start := time.Now()
-			err := tick(ctx)
-			l.ops.Observe(name, time.Since(start), err)
-			// Keep the timestamp as the last attempt for backwards-compatible
-			// diagnostics; lastTickErr separately makes the health verdict
-			// distinguish an attempted-but-failed tick from a healthy one.
-			l.recordTick(name, start, err)
-			if err != nil {
-				l.log.Warn("meter: "+name+" tick", "err", err)
-			}
+			l.runTick(ctx, tick, name)
 		}
 	}
 }
 
-// runQuotaTicks walks every account once per quota interval and applies
-// the per-plan ladder. The first per-account error is logged + skipped
+// runTicksImmediately runs the first pass during process startup, then uses
+// the normal interval. The core sample loop uses this path so /readyz proves
+// its dependencies without racing deployctl's one-minute readiness timeout.
+// Maintenance loops keep runTicks' delayed-first-pass behavior.
+func (l *Loop) runTicksImmediately(ctx context.Context, interval time.Duration, tick func(context.Context) error, name string) error {
+	select {
+	case <-ctx.Done():
+		return nil
+	default:
+	}
+	l.runTick(ctx, tick, name)
+	return l.runTicks(ctx, interval, tick, name)
+}
+
+func (l *Loop) runTick(ctx context.Context, tick func(context.Context) error, name string) {
+	start := time.Now()
+	err := tick(ctx)
+	l.ops.Observe(name, time.Since(start), err)
+	// Keep the timestamp as the last attempt for backwards-compatible
+	// diagnostics; lastTickErr separately makes the health verdict
+	// distinguish an attempted-but-failed tick from a healthy one.
+	l.recordTick(name, start, err)
+	if err != nil {
+		l.log.Warn("meter: "+name+" tick", "err", err)
+	}
+}
+
+// runQuotaTicks walks every account once at startup and once per quota
+// interval after that, applying the per-plan ladder. The first per-account
+// error is logged + skipped
 // (one bad account shouldn't stop the rest). Records the last tick
 // timestamp under "quota" — separate from runTicks because quota sweeps
 // a list rather than a single tick body.
@@ -448,6 +467,12 @@ func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(c
 // inline to make the silent counter explicit — a future
 // meterd_quota_errors_total counter is in the survey follow-ups.
 func (l *Loop) runQuotaTicks(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return nil
+	default:
+	}
+	l.runQuotaTick(ctx)
 	t := time.NewTicker(l.cfg.QuotaInterval)
 	defer t.Stop()
 	for {
@@ -455,12 +480,16 @@ func (l *Loop) runQuotaTicks(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
-			start := time.Now()
-			l.runQuotaOnce(ctx)
-			l.ops.Observe("quota", time.Since(start), nil)
-			l.recordTick("quota", start, nil)
+			l.runQuotaTick(ctx)
 		}
 	}
+}
+
+func (l *Loop) runQuotaTick(ctx context.Context) {
+	start := time.Now()
+	l.runQuotaOnce(ctx)
+	l.ops.Observe("quota", time.Since(start), nil)
+	l.recordTick("quota", start, nil)
 }
 
 // RunQuotaOnce is the test seam for the per-account quota loop. It

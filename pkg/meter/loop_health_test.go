@@ -220,6 +220,62 @@ func TestLoop_Readiness_NeverFiredTracksOnlyCoreTicks(t *testing.T) {
 	}
 }
 
+// TestLoop_RunMakesCoreReadinessImmediate pins the deployment contract: the
+// production sample and quota intervals are one minute, while deployctl allows
+// one minute for a daemon to become ready. Both core passes must therefore run
+// at startup instead of waiting for their first ticker edge.
+func TestLoop_RunMakesCoreReadinessImmediate(t *testing.T) {
+	t.Parallel()
+	cfg := &meter.Config{}
+	cfg.Defaults()
+	cfg.SampleInterval = time.Hour
+	cfg.QuotaInterval = time.Hour
+	cfg.StripeInterval = time.Hour
+	loop := meter.NewLoop(
+		state.NewMemStore(),
+		nil,
+		&fakeParker{},
+		nil,
+		&fakeNotifier{},
+		nil,
+		nil,
+		nil,
+		nil,
+		time.Now,
+		discardLog(),
+		cfg,
+		wire.NewOpsMetrics("meter_test_startup_readiness"),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- loop.Run(ctx) }()
+
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(time.Millisecond)
+	defer poll.Stop()
+	for !loop.Readiness(time.Now()).Healthy {
+		select {
+		case <-poll.C:
+		case <-deadline.C:
+			cancel()
+			<-done
+			t.Fatal("core loops did not make startup readiness healthy")
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop returned %v, want nil on cancel", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not return after cancellation")
+	}
+}
+
 // TestLoop_Health_RecordsLastTick — LastTick(name) returns the wall-
 // clock time of the named tick's last successful run; ok==true, the
 // timestamp is within the brief-run window, and the recorded value is
