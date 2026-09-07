@@ -534,15 +534,13 @@ func TestRenderer_ResolvesComputeOnlyDaemons(t *testing.T) {
 			}
 		}
 	}
-	// And it MUST emit the compute-only set. (builderd is NOT
-	// in the registry because vmmd spawns it per-build; the
-	// renderer's role filter mirrors the registry.)
+	// And it MUST emit the complete compute-only set.
 	gotPaths := map[string]bool{}
 	for _, o := range report.Outputs {
 		gotPaths[filepath.Base(o.Path)] = true
 	}
 	for _, want := range []string{
-		"vmmd.toml", "imaged.toml", "gatewayd-internal.toml",
+		"vmmd.toml", "imaged.toml", "builderd.toml", "gatewayd-internal.toml",
 		"faas-cp.slice",
 	} {
 		if !gotPaths[want] {
