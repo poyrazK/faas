@@ -215,10 +215,17 @@ func relocateRenderedDBURL(t *testing.T, configPath, dsn string) {
 	if err != nil {
 		t.Fatalf("read rendered apid config: %v", err)
 	}
-	if strings.Count(string(body), production) != 1 {
-		t.Fatalf("rendered apid config does not contain exactly one production-local db_url")
+	testDatabase := `db_url = ` + fmt.Sprintf("%q", dsn)
+	switch {
+	case strings.Count(string(body), production) == 1 && strings.Count(string(body), testDatabase) == 0:
+		body = []byte(strings.Replace(string(body), production, testDatabase, 1))
+	case strings.Count(string(body), production) == 0 && strings.Count(string(body), testDatabase) == 1:
+		// Single-box manifests preserve their declared DSN; it already targets
+		// the isolated schema and needs no relocation.
+		return
+	default:
+		t.Fatalf("rendered apid config does not contain exactly one recognized db_url")
 	}
-	body = []byte(strings.Replace(string(body), production, `db_url = `+fmt.Sprintf("%q", dsn), 1))
 	if err := os.WriteFile(configPath, body, 0o640); err != nil {
 		t.Fatalf("relocate rendered apid db_url: %v", err)
 	}
