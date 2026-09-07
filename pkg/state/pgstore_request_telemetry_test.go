@@ -248,6 +248,9 @@ func TestPgStoreRequestTelemetry_BaselineP95WeightsCollapsedRows(t *testing.T) {
 			TraceID:      pgtype.Text{},
 			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
 			Count:        row.count,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
 		}); err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
