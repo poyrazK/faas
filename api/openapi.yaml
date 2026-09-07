@@ -3209,8 +3209,9 @@ paths:
       operationId: listAppDebugRequests
       summary: Per-app request telemetry (ADR-127 / PR-A).
       description: |
-        Recent request rows for an app — status, latency_ms, route,
-        method, deployment_id, cold_boot, trace_id, received_at.
+        Recent request telemetry rows for an app — status, latency_ms, route,
+        method, deployment_id, cold_boot, trace_id, received_at, and the
+        number of original requests represented by each collapsed row.
         PR-A ships the read endpoint only; the write-side (publisher
         → gRPC IncrementRequestTelemetry → apid receiver → sqlc
         INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -3233,6 +3234,11 @@ paths:
           required: false
           schema: { type: [integer, 'null'], minimum: 1, maximum: 200, default: 20 }
           description: "Page size, default 20, max 200."
+        - name: route
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 256 }
+          description: "Exact route-template filter."
       responses:
         '200':
           description: Page of recent request telemetry rows.
@@ -3240,6 +3246,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DebugTelemetryListResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -13602,7 +13609,8 @@ components:
         # validateUpdateApp, so the read-back never carries a
         # "::ffff:" prefix. Always present (serialised as `[]`
         # when empty, never `null`); NOT in `required:` so the
-        # empty case stays the contract for Free/Hobby.
+        # empty case stays the contract for every plan (Free cannot
+        # set the field; Hobby+ may clear it explicitly).
         egress_allowlist:
           description: "Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies."
           type: array
@@ -14062,9 +14070,9 @@ components:
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
         # omitted → no change; non-null array → atomic
-        # overwrite (empty array clears). Pro/Scale only;
-        # Free/Hobby PATCH → 403 plan_egress_allowlist_not_
-        # allowed. Plan caps: Pro 16 entries, Scale 64.
+        # overwrite (empty array clears). Hobby/Pro/Scale;
+        # Free PATCH → 403 plan_egress_allowlist_not_allowed.
+        # Plan caps: Hobby 8 entries, Pro 16, Scale 64.
         # PR-C widens the pattern from IPv4-only to v4+v6
         # (ADR-032 already shipped the handler-side acceptance
         # but the spec wasn't updated; pre-PR-C the validator
@@ -19277,7 +19285,7 @@ components:
       required: [extra, plan_cap, max_extra]
       properties:
         extra: { type: integer, minimum: 0, description: "Effective additive budget currently in force. 0 = no override; the plan cap is authoritative." }
-        plan_cap: { type: integer, minimum: 0, description: "Plan cap on apps.egress_allowlist CIDR count (Pro 16, Scale 64; Free/Hobby 0 — those plans don't unlock the knob at all)." }
+        plan_cap: { type: integer, minimum: 0, description: "Plan cap on apps.egress_allowlist CIDR count (Hobby 8, Pro 16, Scale 64; Free 0)." }
         max_extra: { type: integer, minimum: 0, description: "Global ceiling on the per-account override (api.MaxAccountEgressAllowlistExtra = 1024). Flat across plans; the validator rejects out-of-range values with `account_egress_allowlist_extra_out_of_range`." }
 
     # ─── Audit events (IAM-4 / ADR-035) ──────────────────────────────────
@@ -22878,7 +22886,7 @@ components:
     DebugTelemetryRequestItem:
       type: object
       description: "One row per gateway-served request, persisted by the recorder (PR-A)."
-      required: [id, deployment_id, route, method, status, latency_ms, cold_boot, received_at]
+      required: [id, deployment_id, route, method, status, latency_ms, count, cold_boot, received_at]
       properties:
         id: { type: string, format: uuid }
         deployment_id: { type: string, format: uuid }
@@ -22886,6 +22894,7 @@ components:
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
         status: { type: integer, minimum: 100, maximum: 599 }
         latency_ms: { type: integer, minimum: 0 }
+        count: { type: integer, minimum: 1, description: "Number of original requests represented by this collapsed telemetry row." }
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
         received_at: { type: string, format: date-time }

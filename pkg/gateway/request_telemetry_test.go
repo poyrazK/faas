@@ -12,7 +12,7 @@
 //   - Publisher Wake() drains immediately (no flush-interval wait)
 //   - Publisher Stop drains the final batch synchronously
 //   - Publisher nil ship drops rows + counts them
-//   - collapseRequestTelemetry pass-through (PR-A contract)
+//   - collapseRequestTelemetry aggregation and count preservation
 //
 // The Handler.observe → Recorder.RecordFromObserve path is
 // covered end-to-end by handler_request_telemetry_test.go
@@ -95,7 +95,12 @@ func TestRequestTelemetryRecorder_RingFIFOOrder(t *testing.T) {
 }
 
 func TestRequestTelemetryRecorder_RingOverflowOverwritesOldest(t *testing.T) {
-	rec := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 4}, nopLog())
+	var overwriteCallbacks atomic.Int64
+	rec := NewRequestTelemetryRecorder(RequestTelemetryConfig{
+		Enabled:     true,
+		RingSize:    4,
+		OnOverwrite: func() { overwriteCallbacks.Add(1) },
+	}, nopLog())
 	// Fill with latency 0..3 (4 rows == capacity).
 	for i := 0; i < 4; i++ {
 		row := makeRow()
@@ -118,6 +123,12 @@ func TestRequestTelemetryRecorder_RingOverflowOverwritesOldest(t *testing.T) {
 		if row.LatencyMS != want[i] {
 			t.Errorf("batch[%d]: expected latency %d, got %d", i, want[i], row.LatencyMS)
 		}
+	}
+	if got, want := rec.OverwrittenTotal(), int64(3); got != want {
+		t.Errorf("OverwrittenTotal = %d, want %d", got, want)
+	}
+	if got, want := overwriteCallbacks.Load(), int64(3); got != want {
+		t.Errorf("overwrite callback count = %d, want %d", got, want)
 	}
 }
 
@@ -327,6 +338,35 @@ func TestRequestTelemetryPublisher_WakeDrainsImmediately(t *testing.T) {
 	}
 }
 
+func TestRequestTelemetryRecorder_WakeHookTriggersNearFull(t *testing.T) {
+	// RingSize=4 arms the wake hook at two pending rows. The callback
+	// should wake the publisher without waiting for its long ticker.
+	rec := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 4}, nopLog())
+	ship := &fakeShip{}
+	pub := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{
+		Enabled:        true,
+		FlushInterval:  10 * time.Second,
+		FlushBatchSize: 8,
+		MaxRetries:     1,
+	}, rec, ship.Ship, nopLog())
+	rec.SetWakeHook(pub.Wake)
+	pub.Start(context.Background())
+	defer pub.Stop()
+
+	rec.RecordFromObserve(makeRow())
+	rec.RecordFromObserve(makeRow())
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ship.TotalRows() == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := ship.TotalRows(); got != 2 {
+		t.Fatalf("expected near-full wake to ship 2 rows, got %d", got)
+	}
+}
+
 func TestRequestTelemetryPublisher_StopDrainsFinalBatch(t *testing.T) {
 	// Long flush interval + enqueue + Stop. The final drain in
 	// run() must ship the rows synchronously before doneCh closes.
@@ -350,6 +390,29 @@ func TestRequestTelemetryPublisher_StopDrainsFinalBatch(t *testing.T) {
 	}
 	if got := pub.ShippedTotal(); got != 4 {
 		t.Fatalf("expected ShippedTotal=4, got %d", got)
+	}
+}
+
+func TestRequestTelemetryPublisher_StopDrainsAllBatches(t *testing.T) {
+	rec := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 32}, nopLog())
+	ship := &fakeShip{}
+	pub := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{
+		Enabled:        true,
+		FlushInterval:  10 * time.Second,
+		FlushBatchSize: 4,
+		MaxRetries:     1,
+	}, rec, ship.Ship, nopLog())
+	pub.Start(context.Background())
+	for i := 0; i < 10; i++ {
+		rec.RecordFromObserve(makeRow())
+	}
+	pub.Stop()
+
+	if got, want := ship.TotalRows(), 10; got != want {
+		t.Fatalf("Stop shipped %d rows, want %d", got, want)
+	}
+	if got, want := pub.ShippedTotal(), int64(10); got != want {
+		t.Fatalf("ShippedTotal = %d, want %d", got, want)
 	}
 }
 
@@ -379,19 +442,70 @@ func TestRequestTelemetryPublisher_NilShipDropsRows(t *testing.T) {
 	}
 }
 
-func TestCollapseRequestTelemetry_PassThroughForPRA(t *testing.T) {
-	// PR-A: collapseRequestTelemetry is a no-op. PR-B will replace
-	// it with an aggregate. Pin the behavior so future changes
-	// don't silently regress PR-A's contract.
-	rows := []RequestTelemetryRow{makeRow(), makeRow(), makeRow()}
-	got := collapseRequestTelemetry(rows)
-	if len(got) != len(rows) {
-		t.Fatalf("expected pass-through len %d, got %d", len(rows), len(got))
+func TestRequestTelemetryPublisher_CountsOriginalRequests(t *testing.T) {
+	row := makeRow()
+	row.Count = 10
+	rec := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 4}, nopLog())
+	rec.RecordFromObserve(row)
+	ship := &fakeShip{}
+	pub := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{
+		Enabled:        true,
+		FlushBatchSize: 4,
+		MaxRetries:     1,
+	}, rec, ship.Ship, nopLog())
+	pub.tick(context.Background())
+
+	if got, want := pub.ShippedTotal(), int64(10); got != want {
+		t.Fatalf("ShippedTotal = %d, want %d original requests", got, want)
 	}
-	for i := range rows {
-		if got[i].Route != rows[i].Route {
-			t.Errorf("row %d: route changed across collapse", i)
-		}
+	if got, want := pub.DroppedTotal(), int64(0); got != want {
+		t.Fatalf("DroppedTotal = %d, want %d", got, want)
+	}
+}
+
+func TestRequestTelemetryPublisher_DroppedCountsOriginalRequests(t *testing.T) {
+	row := makeRow()
+	row.Count = 10
+	rec := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 4}, nopLog())
+	rec.RecordFromObserve(row)
+	ship := &alwaysFailShip{err: errors.New("apid unreachable")}
+	pub := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{
+		Enabled:        true,
+		FlushBatchSize: 4,
+		MaxRetries:     1,
+	}, rec, ship.Ship, nopLog())
+	pub.tick(context.Background())
+
+	if got, want := pub.DroppedTotal(), int64(10); got != want {
+		t.Fatalf("DroppedTotal = %d, want %d original requests", got, want)
+	}
+}
+
+func TestCollapseRequestTelemetry_AggregatesAndPreservesCounts(t *testing.T) {
+	base := makeRow()
+	base.ReceivedAt = time.Date(2026, 9, 6, 12, 34, 10, 0, time.UTC)
+	first := base
+	first.Count = 3
+	first.LatencyMS = 20
+	second := base
+	second.Count = 5
+	second.LatencyMS = 80
+	third := base
+	third.ReceivedAt = base.ReceivedAt.Add(2 * time.Minute)
+	third.Count = 2
+	rows := []RequestTelemetryRow{first, second, third}
+	got := collapseRequestTelemetry(rows)
+	if len(got) != 2 {
+		t.Fatalf("expected two minute buckets, got %d", len(got))
+	}
+	if got[0].Count != 8 {
+		t.Errorf("aggregated Count = %d, want 8", got[0].Count)
+	}
+	if got[0].LatencyMS != 80 {
+		t.Errorf("aggregated LatencyMS = %d, want max 80", got[0].LatencyMS)
+	}
+	if got[1].Count != 2 {
+		t.Errorf("second bucket Count = %d, want 2", got[1].Count)
 	}
 }
 

@@ -110,7 +110,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		}
 	}
 	if req.EgressAllowlist != nil {
-		// Plan tier first: a Free/Hobby PATCH must surface 403 even
+		// Plan tier first: a Free PATCH must surface 403 even
 		// if the request would otherwise be a malformed 400.
 		if !acct.Plan.EgressAllowlistAllowed() {
 			return api.ErrPlanEgressAllowlistNotAllowed(acct.Plan)

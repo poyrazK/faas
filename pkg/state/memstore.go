@@ -4317,9 +4317,10 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
-	// Keep child rows intact while the tombstone is restorable. The app-status
-	// gate prevents serving it, and the retained snapshot metadata remains
-	// available to imaged's GC projection.
+	// App deletion retires snapshot replicas immediately, but keeps the
+	// snapshot rows available to GC. The PostgreSQL lifecycle trigger uses
+	// the same split: deleted-app snapshots are not wake-eligible, yet their
+	// metadata must remain visible so imaged can remove the backing files.
 	for i := range m.snapshots {
 		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
 		if ok && deployment.AppID == id {
@@ -9725,15 +9726,20 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 	}
 	var out []SnapshotForGC
 	for _, s := range m.snapshots {
-		if s.Stale {
-			continue
-		}
 		dep, ok := depByID[s.DeploymentID]
 		if !ok {
 			continue
 		}
 		app, ok := appByID[dep.AppID]
 		if !ok {
+			continue
+		}
+		// Lifecycle triggers mark snapshots stale as soon as an app is
+		// deleted or a deployment becomes unusable. Keep those terminal rows
+		// in this projection so the immediate GC pass can remove their files;
+		// ordinary stale rows remain owned by the retention sweep.
+		if s.Stale && app.Status != AppDeleted &&
+			dep.Status != DeployFailed && dep.Status != DeployCancelled {
 			continue
 		}
 		out = append(out, SnapshotForGC{

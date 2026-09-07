@@ -972,6 +972,10 @@ type Manager struct {
 	// Warn and continue (the next cache event will re-trigger
 	// the reload).
 	hostRenderer HostRenderer
+	// hostPolicyMu serializes read-copy-swap updates to the shared active
+	// host policy so concurrent static-egress and SMTP allowlist changes
+	// cannot overwrite each other's fields.
+	hostPolicyMu sync.Mutex
 }
 
 // HostRenderer is the narrow seam the vmmd Manager uses to push
@@ -981,8 +985,8 @@ type Manager struct {
 // nftables write is gated through the existing watcher's
 // staging-dir + atomic-replace pipeline.
 type HostRenderer interface {
-	// Render writes the current HostPolicy (including the
-	// freshly-pushed StaticEgressRules) to the staging file,
+	// Render writes the current HostPolicy (including freshly-pushed
+	// StaticEgressRules and SMTPAllowlistRules) to the staging file,
 	// validates via nft -c -f, atomic-replaces /etc/nftables.conf,
 	// and reloads the kernel ruleset. Returns nil on a clean
 	// reload; non-nil on any step (caller logs + continues).
@@ -1062,6 +1066,8 @@ func (m *Manager) rebuildHostStaticEgressRules(ctx context.Context) {
 	if m.hostRenderer == nil {
 		return
 	}
+	m.hostPolicyMu.Lock()
+	defer m.hostPolicyMu.Unlock()
 	m.perVMHostIPMu.RLock()
 	perVM := make(map[string]netip.Addr, len(m.perVMHostIP))
 	for k, v := range m.perVMHostIP {
@@ -1119,6 +1125,69 @@ func (m *Manager) rebuildHostStaticEgressRules(ctx context.Context) {
 	}
 	if err := m.hostRenderer.Render(ctx); err != nil {
 		m.log.Warn("fcvm: rebuildHostStaticEgressRules reload failed; live ruleset unchanged",
+			"err", err, "rules", len(rules))
+	}
+}
+
+// rebuildHostSMTPAllowlistRules projects the authoritative per-app CIDR
+// allowlists onto the host firewall. The host layer needs the VM's host-side
+// lease address to scope the exception; the per-netns rules remain the primary
+// enforcement point. Rules are rebuilt on every live-map or allowlist mutation
+// so a PATCH takes effect without a cold wake.
+func (m *Manager) rebuildHostSMTPAllowlistRules(ctx context.Context) {
+	if m.hostRenderer == nil {
+		return
+	}
+	m.hostPolicyMu.Lock()
+	defer m.hostPolicyMu.Unlock()
+	m.perAppAllowlistMu.RLock()
+	perApp := make(map[string][]netip.Prefix, len(m.perAppAllowlist))
+	for appID, prefixes := range m.perAppAllowlist {
+		cp := make([]netip.Prefix, len(prefixes))
+		copy(cp, prefixes)
+		perApp[appID] = cp
+	}
+	m.perAppAllowlistMu.RUnlock()
+
+	var rules []netns.SMTPAllowlistRule
+	m.mu.Lock()
+	for _, inst := range m.live {
+		if inst.AppID == "" || !inst.Lease.HostIP.IsValid() || !inst.Lease.HostIP.Is4() {
+			continue
+		}
+		allowlist, ok := perApp[inst.AppID]
+		if !ok {
+			continue
+		}
+		effective := m.mergeOperatorBundle(allowlist)
+		var v4 []netip.Prefix
+		for _, p := range effective {
+			if p.IsValid() && p.Addr().Is4() && p.Bits() > 0 {
+				v4 = append(v4, p)
+			}
+		}
+		if len(v4) == 0 {
+			continue
+		}
+		rules = append(rules, netns.SMTPAllowlistRule{
+			SourceIP:     inst.Lease.HostIP,
+			Destinations: v4,
+			AccountID:    inst.AccountID,
+			AppID:        inst.AppID,
+		})
+	}
+	m.mu.Unlock()
+
+	cur := netns.ActiveHostPolicyForRender()
+	if cur == nil {
+		m.log.Warn("fcvm: rebuildHostSMTPAllowlistRules: ActiveHostPolicy pointer is nil; rules not installed")
+		return
+	}
+	next := *cur
+	next.SMTPAllowlistRules = rules
+	netns.SwapActiveHostPolicy(next)
+	if err := m.hostRenderer.Render(ctx); err != nil {
+		m.log.Warn("fcvm: rebuildHostSMTPAllowlistRules reload failed; live ruleset unchanged",
 			"err", err, "rules", len(rules))
 	}
 }
@@ -1503,6 +1572,9 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
 	m.mu.Unlock()
+	if ok {
+		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(lifecycle))
+	}
 	if m.diskMetrics != nil {
 		m.diskMetrics.Delete(instance)
 	}
@@ -2789,14 +2861,14 @@ type WakeRequest struct {
 	preparedSecretsEnvJSON []byte
 	preparedAPIEnvJSON     []byte
 	// EgressAllowlist (ADR-031, tier-2 of the network roadmap): per-app
-	// outbound IPv4 allowlist. Each entry is a CIDR string (e.g.
+	// outbound IPv4/v6 allowlist. Each entry is a CIDR string (e.g.
 	// "1.2.3.0/24"); empty slice = current behaviour (no allowlist rule
 	// emitted, every non-deny destination is reachable). When non-empty,
-	// the per-netns forward chain gains a single
-	//   `iifname "tap0" ip daddr { <CIDRs> } accept`
-	// rule after the lateral-movement deny + SMTP drops; deny > allow on
-	// overlap, so a typoed RFC1918 CIDR still gets dropped. Plan-gated
-	// upstream — Free/Hobby never get here; Pro ≤ 16; Scale ≤ 64. The
+	// the per-netns forward chain gains a destination accept rule after
+	// lateral-movement denies. For IPv4 it excludes TCP port 25 so
+	// allowlisted destinations can use submission ports 465/587 while
+	// port 25 remains universally blocked. Plan-gated upstream — Free
+	// never get here; Hobby ≤ 8; Pro ≤ 16; Scale ≤ 64. The
 	// caller (apid) is responsible for size + per-plan gating.
 	EgressAllowlist []string
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
@@ -3722,6 +3794,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.exportDirs[req.Instance] = req.ExportDir
 	}
 	m.mu.Unlock()
+	m.rebuildHostSMTPAllowlistRules(ctx)
 	m.log.Info("wake ok", "instance", req.Instance, "method", method.String(),
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),
 		"setup_network_ms", timings.netnsTapMs, "restore_ms", timings.restoreMs,
@@ -4025,6 +4098,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	// whose Lease.Slot was just freed.
 	delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	m.mu.Unlock()
+	m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
 	if m.diskMetrics != nil {
 		m.diskMetrics.Delete(instance)
 	}
@@ -4208,6 +4282,9 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
 	m.mu.Unlock()
+	if ok {
+		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
+	}
 	if m.diskMetrics != nil {
 		m.diskMetrics.Delete(instance)
 	}
@@ -4248,6 +4325,9 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
 	m.mu.Unlock()
+	if ok {
+		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
+	}
 	if m.diskMetrics != nil {
 		m.diskMetrics.Delete(instance)
 	}
@@ -4866,6 +4946,9 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 		inst.AllowlistHandleV6 = nh.v6
 	}
 	m.mu.Unlock()
+	// Keep the defense-in-depth host exception in sync with the live
+	// per-netns allowlist. Port 25 remains denied by the host policy.
+	m.rebuildHostSMTPAllowlistRules(ctx)
 	return nil
 }
 

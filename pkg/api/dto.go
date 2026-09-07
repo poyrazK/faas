@@ -178,9 +178,9 @@ type UpdateAppRequest struct {
 	// roadmap) is the per-app outbound IP allowlist. Each entry is
 	// a CIDR string ("1.2.3.0/24" for v4, "2001:db8::/32" for v6);
 	// the slice replaces the full list (atomic full-overwrite at the
-	// apps row). Plan-gated upstream (Free/Hobby return 403
+	// apps row). Plan-gated upstream (Free returns 403
 	// plan_egress_allowlist_not_allowed); size-capped at
-	// plan.EgressAllowlistMaxSize() (Pro 16, Scale 64) — v4 + v6
+	// plan.EgressAllowlistMaxSize() (Hobby 8, Pro 16, Scale 64) — v4 + v6
 	// entries share the same count budget. Empty slice / nil
 	// pointer = clear the allowlist (back to the default-accept
 	// chain policy). The non-/0 contract is enforced by the DB
@@ -6806,9 +6806,19 @@ type DebugTelemetryRequestItem struct {
 	Method       string  `json:"method"`
 	Status       int     `json:"status"`
 	LatencyMS    int     `json:"latency_ms"`
+	Count        int     `json:"count"`
 	ColdBoot     bool    `json:"cold_boot"`
 	TraceID      *string `json:"trace_id"`
 	ReceivedAt   string  `json:"received_at"`
+}
+
+// DebugTelemetryListOptions controls the server-side filters for a request
+// telemetry list. Zero values preserve the endpoint defaults. Limit is
+// bounded by the API to 1..200 when supplied.
+type DebugTelemetryListOptions struct {
+	Since string
+	Route string
+	Limit int
 }
 
 // DebugTelemetryListResponse is the wire envelope for the debug

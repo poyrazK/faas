@@ -5,8 +5,8 @@
 // pkg/netns/config_test.go pin the argv SHAPE; this file pins the
 // *runtime* contract: when an app pins an egress allowlist, the
 // resulting nft ruleset inside the per-netns forward chain has the
-// allowlist rule wired in AFTER the lateral-movement deny + SMTP
-// drops. The empty-allowlist case is its own gate — chain-policy
+// allowlist rule wired in AFTER the lateral-movement deny but BEFORE
+// the SMTP drop (with TCP/25 excluded). The empty-allowlist case is its own gate — chain-policy
 // accept must still be the only thing that governs egress, no rule
 // installed at all. ADR-032 mirrors the assertion for v6: the v6
 // allowlist rule must land on the `ip6 faas forward` chain AFTER
@@ -84,24 +84,25 @@ func TestMetalAllowlistRuleInstalled(t *testing.T) {
 	}
 	ruleset := string(out)
 
-	// Anchor on the unique SMTP drop rule — it's always present and
-	// comes before the deny rule, so we use it as the stable marker.
+	// Anchor on the unique SMTP drop rule — it's always present. The
+	// v4 allowlist exception now precedes it so submission ports can
+	// be explicitly enabled without weakening the universal port-25 deny.
 	smtpLine := `iifname "tap0" tcp dport { 25, 465, 587 } drop`
 	smtpIdx := strings.Index(ruleset, smtpLine)
 	if smtpIdx < 0 {
 		t.Fatalf("expected SMTP drop rule in ruleset, none found:\n%s", ruleset)
 	}
-	// Allowlist: nft emits `iifname "tap0" ip daddr { CIDR, CIDR } accept`
+	// Allowlist: nft emits `iifname "tap0" ip daddr { CIDR, CIDR } … accept`
 	// with spaces after commas and sorted CIDR order. Verify the allowlist
-	// CIDRs appear in an accept rule after the SMTP marker.
-	afterSMTP := ruleset[smtpIdx:]
+	// CIDRs appear in an accept rule before the SMTP marker.
+	beforeSMTP := ruleset[:smtpIdx]
 	for _, cidr := range []string{"1.2.3.0/24", "8.8.8.0/24"} {
-		if !strings.Contains(afterSMTP, cidr) {
-			t.Fatalf("allowlist CIDR %q missing from ruleset after SMTP marker:\n%s", cidr, ruleset)
+		if !strings.Contains(beforeSMTP, cidr) {
+			t.Fatalf("allowlist CIDR %q missing from ruleset before SMTP marker:\n%s", cidr, ruleset)
 		}
 	}
-	if !strings.Contains(afterSMTP, "accept") {
-		t.Fatalf("no accept rule found after SMTP marker in:\n%s", ruleset)
+	if !strings.Contains(beforeSMTP, "accept") {
+		t.Fatalf("no allowlist accept rule found before SMTP marker in:\n%s", ruleset)
 	}
 }
 
