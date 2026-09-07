@@ -77,7 +77,7 @@ func (e *operatorHTTPError) Error() string {
 
 func cmdOperatorAuthDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(osStderr, "gregalectl auth: missing subcommand; want login|step-up|status|logout")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth: missing subcommand; want login|step-up|status|logout")
 		return 2
 	}
 	switch args[0] {
@@ -90,7 +90,7 @@ func cmdOperatorAuthDispatch(args []string) int {
 	case "logout":
 		return cmdOperatorAuthLogout(args[1:])
 	default:
-		fmt.Fprintf(osStderr, "gregalectl auth: unknown subcommand %q\n", args[0])
+		_, _ = fmt.Fprintf(osStderr, "gregalectl auth: unknown subcommand %q\n", args[0])
 		return 2
 	}
 }
@@ -103,36 +103,36 @@ func cmdOperatorAuthLogin(args []string) int {
 		return 2
 	}
 	if strings.TrimSpace(*email) == "" {
-		fmt.Fprintln(osStderr, "gregalectl auth login: --email required")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth login: --email required")
 		return 2
 	}
 	if err := validateOperatorBaseURL(apidBase()); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth login:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth login:", err)
 		return 2
 	}
 	password, err := readOperatorSecret("Password: ")
 	if err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth login:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth login:", err)
 		return 1
 	}
 	sess := operatorSession{BaseURL: apidBase(), Email: strings.ToLower(strings.TrimSpace(*email))}
 	client := newOperatorHTTPClient(&sess)
 	var login api.PasswordLoginResponse
 	if err := client.doJSON(context.Background(), http.MethodPost, "/login", api.PasswordLoginRequest{Email: sess.Email, Password: password}, &login, false, nil); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth login:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth login:", err)
 		return 1
 	}
 	if sess.Cookie == "" {
-		fmt.Fprintln(osStderr, "gregalectl auth login: apid did not issue a session cookie")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth login: apid did not issue a session cookie")
 		return 1
 	}
 	totp, err := readOperatorSecret("TOTP code: ")
 	if err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth login:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth login:", err)
 		return 1
 	}
 	if err := client.verifyMFA(context.Background(), totp); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth login:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth login:", err)
 		return 1
 	}
 	sess.AccountID = login.AccountID
@@ -141,10 +141,10 @@ func cmdOperatorAuthLogin(args []string) int {
 		sess.ExpiresAt = time.Now().UTC().Add(7 * 24 * time.Hour)
 	}
 	if err := saveOperatorSession(sess); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth login: save session:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth login: save session:", err)
 		return 1
 	}
-	fmt.Fprintf(osStdout, "operator session ready for %s; step-up valid for 5 minutes\n", sess.Email)
+	_, _ = fmt.Fprintf(osStdout, "operator session ready for %s; step-up valid for 5 minutes\n", sess.Email)
 	return 0
 }
 
@@ -156,27 +156,27 @@ func cmdOperatorAuthStepUp(args []string) int {
 	}
 	sess, err := loadOperatorSession()
 	if err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth step-up:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth step-up:", err)
 		return 1
 	}
 	if sess.fromEnv {
-		fmt.Fprintln(osStderr, "gregalectl auth step-up: cannot refresh a session supplied by FAAS_OPERATOR_SESSION; use 'auth login' with a session file")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth step-up: cannot refresh a session supplied by FAAS_OPERATOR_SESSION; use 'auth login' with a session file")
 		return 1
 	}
 	totp, err := readOperatorSecret("TOTP code: ")
 	if err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth step-up:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth step-up:", err)
 		return 1
 	}
 	if err := newOperatorHTTPClient(&sess).verifyMFA(context.Background(), totp); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth step-up:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth step-up:", err)
 		return 1
 	}
 	if err := saveOperatorSession(sess); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth step-up: save session:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth step-up: save session:", err)
 		return 1
 	}
-	fmt.Fprintln(osStdout, "operator step-up valid for 5 minutes")
+	_, _ = fmt.Fprintln(osStdout, "operator step-up valid for 5 minutes")
 	return 0
 }
 
@@ -188,12 +188,12 @@ func cmdOperatorAuthStatus(args []string) int {
 	}
 	sess, err := loadOperatorSession()
 	if err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth status:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth status:", err)
 		return 1
 	}
 	var account api.AccountResponse
 	if err := newOperatorHTTPClient(&sess).doJSON(context.Background(), http.MethodGet, "/v1/account", nil, &account, false, nil); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth status:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth status:", err)
 		return 1
 	}
 	stepUpUntil := sess.SteppedUpAt.Add(5 * time.Minute)
@@ -213,7 +213,7 @@ func cmdOperatorAuthStatus(args []string) int {
 	if status.StepUpValid {
 		stepUp = "valid until " + stepUpUntil.Format(time.RFC3339)
 	}
-	fmt.Fprintf(osStdout, "email=%s\naccount_id=%s\nbase_url=%s\nstep_up=%s\n", account.Email, account.ID, sess.BaseURL, stepUp)
+	_, _ = fmt.Fprintf(osStdout, "email=%s\naccount_id=%s\nbase_url=%s\nstep_up=%s\n", account.Email, account.ID, sess.BaseURL, stepUp)
 	return 0
 }
 
@@ -226,27 +226,27 @@ func cmdOperatorAuthLogout(args []string) int {
 	sess, err := loadOperatorSession()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(osStdout, "no operator session")
+			_, _ = fmt.Fprintln(osStdout, "no operator session")
 			return 0
 		}
-		fmt.Fprintln(osStderr, "gregalectl auth logout:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth logout:", err)
 		return 1
 	}
 	client := newOperatorHTTPClient(&sess)
 	var csrf api.CSRFTokenResponse
 	if err := client.doJSON(context.Background(), http.MethodGet, "/v1/auth/csrf?action=auth.logout", nil, &csrf, false, nil); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth logout:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth logout:", err)
 		return 1
 	}
 	if err := client.doJSON(context.Background(), http.MethodPost, "/v1/auth/logout", map[string]string{"csrf_token": csrf.CSRFToken}, nil, false, []*http.Cookie{{Name: "faas_csrf", Value: csrf.CSRFToken}}); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth logout:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth logout:", err)
 		return 1
 	}
 	if err := deleteOperatorSession(); err != nil {
-		fmt.Fprintln(osStderr, "gregalectl auth logout: remove local session:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth logout: remove local session:", err)
 		return 1
 	}
-	fmt.Fprintln(osStdout, "operator session revoked")
+	_, _ = fmt.Fprintln(osStdout, "operator session revoked")
 	return 0
 }
 
@@ -455,9 +455,9 @@ func readOperatorSecret(prompt string) (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return "", errors.New("interactive terminal required")
 	}
-	fmt.Fprint(osStderr, prompt)
+	_, _ = fmt.Fprint(osStderr, prompt)
 	raw, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(osStderr)
+	_, _ = fmt.Fprintln(osStderr)
 	if err != nil {
 		return "", err
 	}
@@ -468,7 +468,7 @@ func emitOperatorJSON(value any) int {
 	enc := json.NewEncoder(osStdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(value); err != nil {
-		fmt.Fprintln(osStderr, err)
+		_, _ = fmt.Fprintln(osStderr, err)
 		return 1
 	}
 	return 0
