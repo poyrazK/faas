@@ -88,7 +88,7 @@ func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID str
 }
 
 func (s *PgStore) TouchObjectS3Credential(ctx context.Context, credentialID string, usedAt time.Time) error {
-	n, err := sqlc.New().ObjectS3CredentialTouch(ctx, s.pool, sqlc.ObjectS3CredentialTouchParams{ID: mustPgUUID(credentialID), LastUsedAt: pgtype.Timestamptz{Time: usedAt.UTC(), Valid: true}})
+	n, err := sqlc.New().ObjectS3CredentialTouch(ctx, s.pool, sqlc.ObjectS3CredentialTouchParams{ID: mustPgUUID(credentialID), UsedAt: pgtype.Timestamptz{Time: usedAt.UTC(), Valid: true}})
 	if err != nil {
 		return mapErr(err)
 	}

@@ -6900,18 +6900,19 @@ func (q *Queries) ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectS3CredentialTouch = `-- name: ObjectS3CredentialTouch :execrows
-UPDATE object_storage_s3_credentials SET last_used_at=$2
-WHERE id=$1 AND status='active'
-  AND (last_used_at IS NULL OR last_used_at < $2 - interval '1 minute')
+UPDATE object_storage_s3_credentials
+SET last_used_at=$1::timestamptz
+WHERE id=$2 AND status='active'
+  AND (last_used_at IS NULL OR last_used_at < $1::timestamptz - interval '1 minute')
 `
 
 type ObjectS3CredentialTouchParams struct {
-	ID         pgtype.UUID
-	LastUsedAt pgtype.Timestamptz
+	UsedAt pgtype.Timestamptz
+	ID     pgtype.UUID
 }
 
 func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error) {
-	result, err := db.Exec(ctx, objectS3CredentialTouch, arg.ID, arg.LastUsedAt)
+	result, err := db.Exec(ctx, objectS3CredentialTouch, arg.UsedAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}

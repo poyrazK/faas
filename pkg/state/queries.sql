@@ -2950,9 +2950,10 @@ JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
 WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready';
 
 -- name: ObjectS3CredentialTouch :execrows
-UPDATE object_storage_s3_credentials SET last_used_at=$2
-WHERE id=$1 AND status='active'
-  AND (last_used_at IS NULL OR last_used_at < $2 - interval '1 minute');
+UPDATE object_storage_s3_credentials
+SET last_used_at=sqlc.arg(used_at)::timestamptz
+WHERE id=sqlc.arg(id) AND status='active'
+  AND (last_used_at IS NULL OR last_used_at < sqlc.arg(used_at)::timestamptz - interval '1 minute');
 
 -- name: ObjectS3CredentialListForRekey :many
 SELECT * FROM object_storage_s3_credentials
