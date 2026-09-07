@@ -19,7 +19,7 @@ ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_chk CHECK (metric IN (
     'cold_start_pct', 'request_count', 'failed_invocations', 'api_up',
     'account_spend_eur', 'deployment_failed', 'cert_expiry_seconds',
     'cert_issuance_failed', 'queue_depth', 'new_error_fingerprint',
-    'cold_wake_rate_pct', 'daily_cost_cents', 'canary_stuck_step',
+    'cold_wake_rate_pct', 'daily_cost_cents', 'slo_burn_rate', 'canary_stuck_step',
     'safedeploy_audit_emit_failing', 'deployment_audit_gc_failing',
     'canary_fleet_in_flight_high'
 ));
@@ -29,7 +29,7 @@ ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_chk CHECK (metric 
     'error_rate_pct', 'latency_p95_ms', 'cold_start_pct', 'api_up',
     'account_spend_eur', 'deployment_failed', 'cert_expiry_seconds',
     'cert_issuance_failed', 'queue_depth', 'new_error_fingerprint',
-    'daily_cost_cents', 'canary_stuck_step',
+    'daily_cost_cents', 'slo_burn_rate', 'canary_stuck_step',
     'safedeploy_audit_emit_failing', 'deployment_audit_gc_failing',
     'canary_fleet_in_flight_high'
 ));
@@ -40,7 +40,7 @@ ALTER TABLE alert_presets DROP CONSTRAINT IF EXISTS alert_presets_metric_chk;
 ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_chk CHECK (metric IN (
     'error_rate_pct', 'latency_p95_ms', 'cold_start_pct', 'api_up',
     'account_spend_eur', 'deployment_failed', 'cert_expiry_seconds',
-    'queue_depth', 'new_error_fingerprint', 'daily_cost_cents',
+    'queue_depth', 'new_error_fingerprint', 'daily_cost_cents', 'slo_burn_rate',
     'canary_stuck_step', 'safedeploy_audit_emit_failing',
     'deployment_audit_gc_failing', 'canary_fleet_in_flight_high'
 ));
@@ -51,7 +51,7 @@ ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_chk CHECK (metric IN (
     'cold_start_pct', 'request_count', 'failed_invocations', 'api_up',
     'account_spend_eur', 'deployment_failed', 'cert_expiry_seconds',
     'queue_depth', 'new_error_fingerprint', 'cold_wake_rate_pct',
-    'daily_cost_cents', 'canary_stuck_step', 'safedeploy_audit_emit_failing',
+    'daily_cost_cents', 'slo_burn_rate', 'canary_stuck_step', 'safedeploy_audit_emit_failing',
     'deployment_audit_gc_failing', 'canary_fleet_in_flight_high'
 ));
 
