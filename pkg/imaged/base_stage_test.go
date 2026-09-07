@@ -66,8 +66,8 @@ type baseHarness struct {
 // has its own dedicated tests (TestEnsureBaseExt4_WithParentRef_*
 // in vmmclient_test.go).
 //
-// ADR-053: the Debian-backed node/python runtime rows are excluded. Their
-// parentRef non-empty triggers the parent-ref branch, which
+// ADR-053: rows derived from base-debian-parent are excluded. Their non-empty
+// ParentRef triggers the parent-ref branch, which
 // requires the parent's DiffIDs to be a strict prefix of the
 // runtime's — the minimal test puller doesn't arrange that. The
 // parent runtime itself stays in this slice because its
@@ -822,11 +822,11 @@ func TestEnsureBases_NilRefsIsNoOp(t *testing.T) {
 // promise of "every runtime base auto-stages on imaged startup".
 //
 // ADR-053: 7 rows now (added RuntimeDebianParent at index 0). The
-// Debian-backed node/python runtime rows declare ParentRef:
-// BaseRefDebianParent and would otherwise pull the parent's tree via the
-// parent-ref branch. Node22 is standalone Alpine and intentionally stays on
-// the full-chain path. The parent row stays first so its stage failure aborts
-// the loop before any Debian-backed child is attempted.
+// Debian-backed Node 24 and Python 3.12 rows declare ParentRef:
+// BaseRefDebianParent and pull the parent's tree via the parent-ref branch.
+// Node 22 (Alpine) and Python 3.13 (Wolfi) are standalone full-chain rows.
+// The parent row stays first so its stage failure aborts the loop before any
+// Debian-backed child is attempted.
 func TestDefaultRuntimeBaseRefs_HasExpectedRuntimes(t *testing.T) {
 	want := []string{
 		RuntimeDebianParent,
@@ -846,16 +846,15 @@ func TestDefaultRuntimeBaseRefs_HasExpectedRuntimes(t *testing.T) {
 		if r.EnvOverride == "" {
 			t.Errorf("row %d (%s) EnvOverride empty", i, r.Runtime)
 		}
-		// ADR-053: Debian-backed node/python rows MUST declare
-		// ParentRef=BaseRefDebianParent. Node22 is the intentional
-		// Alpine exception; musl cannot share the Debian parent.
+		// ADR-053: only OCI chains derived from the Debian parent may use
+		// ParentRef. The Alpine and Wolfi runtimes are standalone.
 		switch r.Runtime {
-		case RuntimeNode24, RuntimePython312, RuntimePython313:
+		case RuntimeNode24, RuntimePython312:
 			if r.ParentRef != BaseRefDebianParent {
 				t.Errorf("row %d (%s) ParentRef = %q, want %q (ADR-053)",
 					i, r.Runtime, r.ParentRef, BaseRefDebianParent)
 			}
-		case RuntimeNode22, RuntimeDebianParent, RuntimeGo124, RuntimeGo124Alpine:
+		case RuntimeNode22, RuntimeDebianParent, RuntimeGo124, RuntimeGo124Alpine, RuntimePython313:
 			if r.ParentRef != "" {
 				t.Errorf("row %d (%s) ParentRef = %q, want empty (legacy path)",
 					i, r.Runtime, r.ParentRef)
