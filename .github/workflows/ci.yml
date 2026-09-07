@@ -1366,6 +1366,40 @@ jobs:
       - name: packer validate -syntax-only
         run: make image-validate
 
+  boot-contract:
+    # Issue #1529 S3: execute production-shaped daemon boot contracts in a
+    # dedicated job. Keep this separate from the name-sharded e2e jobs so a
+    # new TestBootContract_* cannot compile successfully without ever running.
+    name: boot-contract (production config)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      FAAS_SKIP_PG_TESTS: ""
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      - name: boot-contract tests
+        run: go test -race -count=1 -timeout=15m -run '^TestBootContract_' ./cmd/e2e/...
+
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
     runs-on: ubuntu-latest
