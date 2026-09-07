@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -95,9 +96,22 @@ func defaultDeps() runDeps {
 		lvUsedPct:  imaged.DefaultLvFcUsedPct(imaged.LvFcName),
 		detectFC:   imaged.DetectFirecrackerVersion,
 		now:        time.Now,
-		configPath: "/etc/faas/imaged.toml",
+		configPath: imagedConfigPath(flag.Lookup),
 		loadConfig: LoadConfig,
 	}
+}
+
+func imagedConfigPath(lookup func(string) *flag.Flag) string {
+	const fallback = "/etc/faas/imaged.toml"
+	if lookup == nil {
+		return fallback
+	}
+	if configFlag := lookup("config"); configFlag != nil {
+		if path := configFlag.Value.String(); path != "" {
+			return path
+		}
+	}
+	return fallback
 }
 
 func run(ctx context.Context, log *slog.Logger) error {

@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,6 +17,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/oci"
 )
+
+func TestImagedConfigPath_UsesStandardConfigFlag(t *testing.T) {
+	flags := flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+	flags.String("config", "/etc/faas/imaged.toml", "")
+	if err := flags.Parse([]string{"--config", "/tmp/rendered/imaged.toml"}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	if got := imagedConfigPath(flags.Lookup); got != "/tmp/rendered/imaged.toml" {
+		t.Fatalf("config path = %q, want rendered path", got)
+	}
+	if got := imagedConfigPath(func(string) *flag.Flag { return nil }); got != "/etc/faas/imaged.toml" {
+		t.Fatalf("fallback config path = %q", got)
+	}
+}
 
 func TestRunFailsClosedWhenFunctionRunnerMissing(t *testing.T) {
 	t.Setenv("FAAS_DATABASE_URL", "postgres://localhost/faas")
