@@ -420,3 +420,4 @@ export type { WorkflowStepResponse } from './WorkflowStepResponse.js';
 export type { WorkflowStepSpec } from './WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './WorkflowTriggerSpec.js';
 export type { WorkloadDependency } from './WorkloadDependency.js';
+export type { WorkloadPort } from './WorkloadPort.js';
