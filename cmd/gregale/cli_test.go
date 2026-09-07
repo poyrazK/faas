@@ -1482,6 +1482,55 @@ func TestCmdDeploy_RequireAuthn_CarryThrough(t *testing.T) {
 	}
 }
 
+func TestCmdDeploy_NoRequireAuthn_OpensPublicURL(t *testing.T) {
+	var gotCreate api.CreateAppRequest
+	var gotPatch api.UpdateAppRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			if err := json.NewDecoder(r.Body).Decode(&gotCreate); err != nil {
+				http.Error(w, "bad json", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "public-app"})
+		case r.URL.Path == "/v1/apps/public-app" && r.Method == http.MethodPatch:
+			if err := json.NewDecoder(r.Body).Decode(&gotPatch); err != nil {
+				http.Error(w, "bad json", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "public-app"})
+		case r.URL.Path == "/v1/apps/public-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
+		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: status\ndata: {\"status\":\"live\"}\n\n")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-r.Context().Done()
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := cmdDeployTarball([]string{
+		"--image", "registry.x/app@sha256:abc",
+		"--name", "public-app",
+		"--no-require-authn",
+	}); code != 0 {
+		t.Fatalf("cmdDeploy --no-require-authn exit = %d, want 0", code)
+	}
+	if gotCreate.RequireAuthn == nil || *gotCreate.RequireAuthn {
+		t.Fatalf("CreateApp RequireAuthn = %v, want pointer to false", gotCreate.RequireAuthn)
+	}
+	if gotPatch.PublicAuth == nil || gotPatch.PublicAuth.Mode != api.AppPublicAuthModeOpen {
+		t.Fatalf("PATCH PublicAuth = %+v, want mode=open", gotPatch.PublicAuth)
+	}
+}
+
 // TestCmdDeploy_RequireAuthn_Mutex pins that --require-authn and
 // --no-require-authn together is a usage error, matching the same
 // mutex at cmdApp / cmdAppScale. Returns exit 1 BEFORE any HTTP
