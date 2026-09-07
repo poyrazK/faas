@@ -335,7 +335,7 @@ func TestHandleSnapshotWritten(t *testing.T) {
 		Payload: `{"deployment_id":"` + dep.ID + `",` +
 			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate",` +
 			`"storage_key":"snap/` + dep.ID + `/mem",` +
-			`"mem_bytes":134217728,` +
+			`"mem_bytes":536870912,` +
 			`"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
 	})
 
@@ -350,7 +350,7 @@ func TestHandleSnapshotWritten(t *testing.T) {
 	if snap.FCVersion != "firecracker-1.10" {
 		t.Errorf("FCVersion = %q, want firecracker-1.10", snap.FCVersion)
 	}
-	if snap.MemBytes != 134217728 || snap.StorageKey != state.SnapMemKey(dep.ID) {
+	if snap.MemBytes != 536870912 || snap.StorageKey != state.SnapMemKey(dep.ID) {
 		t.Errorf("snapshot row wrong: %+v", snap)
 	}
 	// Issue #470 / PR #470-FU-B: tier defaults to "init" when the
@@ -387,7 +387,7 @@ func TestHandleSnapshotWritten_Tier(t *testing.T) {
 		Payload: `{"deployment_id":"` + dep.ID + `",` +
 			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate",` +
 			`"storage_key":"snap/` + dep.ID + `/warm/mem",` +
-			`"mem_bytes":134217728,` +
+			`"mem_bytes":536870912,` +
 			`"vmstate_bytes":40960,"fc_version":"firecracker-1.10",` +
 			`"tier":"warm"}`,
 	})
@@ -416,7 +416,7 @@ func TestHandleSnapshotWrittenIdempotent(t *testing.T) {
 	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
 	n := db.Notification{
 		Channel: db.NotifySnapshotWritten,
-		Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"snap/` + dep.ID + `/mem","mem_bytes":1,"fc_version":"firecracker-1.10"}`,
+		Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"snap/` + dep.ID + `/mem","mem_bytes":268435456,"fc_version":"firecracker-1.10"}`,
 	}
 	h.HandleNotification(context.Background(), n)
 	h.HandleNotification(context.Background(), n) // redelivery must not error out

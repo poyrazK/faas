@@ -2499,6 +2499,23 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
 	}
+	app, err := h.store.AppByID(ctx, dep.AppID)
+	if err != nil {
+		return fmt.Errorf("imaged: load app for snapshot: %w", err)
+	}
+	// Firecracker restore requires the memory artifact to match the VM's
+	// configured RAM exactly. An app update can race a snapshot notification,
+	// so validate again at the sole snapshot-row writer rather than relying
+	// only on schedd's pre-capture check. Zero is retained for legacy writers
+	// that did not report mem_bytes.
+	expectedMemBytes := int64(app.RAMMB) << 20
+	if p.MemBytes > 0 && app.RAMMB > 0 && p.MemBytes != expectedMemBytes {
+		if state.IsSnapshotCaptureKey(p.StorageKey) {
+			h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: p.StorageKey})
+		}
+		return fmt.Errorf("imaged: snapshot RAM mismatch: deployment %s has %d bytes, app requires %d",
+			p.DeploymentID, p.MemBytes, expectedMemBytes)
+	}
 
 	snap := state.Snapshot{
 		DeploymentID: p.DeploymentID,
@@ -2544,10 +2561,6 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	// The public smoke is the last readiness gate. Persist its evidence before
 	// flipping the deployment live so a live row always has an auditable receipt.
 	if h.hostingSmoke != nil || func() bool { _, ok := h.store.(state.DeploymentHostingReceiptStore); return ok }() {
-		app, appErr := h.store.AppByID(ctx, dep.AppID)
-		if appErr != nil {
-			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
-		}
 		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(app, dep), ErrorCode: "smoke_not_configured"}
 		if smoke.Path == "" {
 			smoke.Path = defaultHealthzPath

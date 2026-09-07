@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -12,6 +13,46 @@ import (
 // Hides the cache listing capability: cleanup must use recorded keys even
 // when none of the compute-node blobs are cached on the control plane.
 type snapshotUnlistedBackend struct{ storage.StorageBackend }
+
+func TestSnapshotPublicationRejectsRAMMismatchAndCleansCandidate(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "snapshot-ram@example.com", "pro")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "snapshot-ram", RAMMB: 256, MaxConcurrency: 3, IdleTimeoutS: 60})
+	dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+	be := mustLocalStorage(t, t.TempDir())
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be)
+	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "wrong-ram")
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	err := h.handleSnapshotWritten(ctx, snapshotWrittenPayload{
+		DeploymentID: dep.ID,
+		StorageKey:   key,
+		FCVersion:    "1.10.0",
+		Tier:         state.SnapshotTierInit,
+		MemBytes:     128 << 20,
+	})
+	if err == nil || !strings.Contains(err.Error(), "snapshot RAM mismatch") {
+		t.Fatalf("handleSnapshotWritten error = %v, want RAM mismatch", err)
+	}
+	if _, err := store.LatestSnapshot(ctx, dep.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("RAM-incompatible snapshot was published: %v", err)
+	}
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		rc, err := be.Get(ctx, part)
+		if err == nil {
+			_ = rc.Close()
+			t.Fatalf("RAM-incompatible snapshot artifact remains: %s", part)
+		}
+		if !storage.IsNotFound(err) {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestSnapshotPublicationConflictPreservesWinnerAndCleansCandidate(t *testing.T) {
 	ctx := context.Background()
