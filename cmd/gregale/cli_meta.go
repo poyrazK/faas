@@ -662,7 +662,9 @@ var cliCommands = []cliCommand{
 		Flags:   []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}},
 		Subcommands: []cliSub{
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)"},
-			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets"},
+			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Flags: []cliFlag{
+				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next wake)"},
+			}},
 			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)"},
 		},
 	},

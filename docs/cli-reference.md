@@ -917,7 +917,11 @@ Pull sealed-secret keys to a .env skeleton (values blank)
 
 ### env push
 
-Push KEY=VALUE pairs to sealed secrets
+Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
+
+| Flag | Meaning | |
+|---|---|---|
+| `--restart` | restart app after applying changes (otherwise changes apply on next wake) |  |
 
 ### env diff
 
