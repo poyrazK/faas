@@ -386,6 +386,41 @@ func TestConvergeServiceReplicas_AdmitsDeficit(t *testing.T) {
 	}
 }
 
+func TestConvergeServiceReplicasSpreadsAcrossComputeNodes(t *testing.T) {
+	store := state.NewMemStore()
+	localID, remoteID := seedTwoNodes(t, store)
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 2, Desired: 2},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A normal request wake would follow this valid sticky-warm hint. Service
+	// reconciliation must ignore it so a two-node fleet provides failure
+	// isolation for the desired replica set.
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithWarmAffinity(NewWarmAffinity(time.Minute))
+	e.warmAffinity.RecordWake(app.ID, localID)
+	e.convergeServiceReplicas(context.Background(), dep.ID)
+
+	instances, err := store.ListInstancesForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byNode := map[string]int{}
+	for _, ins := range instances {
+		if ins.Mode == string(state.InstanceModeService) && state.State(ins.State).CountsForConcurrency() {
+			byNode[ins.NodeID]++
+		}
+	}
+	if byNode[localID] != 1 || byNode[remoteID] != 1 {
+		t.Fatalf("service replicas by node = %+v, want one on each compute node (%s, %s)", byNode, localID, remoteID)
+	}
+}
+
 func TestConvergeServiceReplicas_IgnoresNonServiceInstances(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
