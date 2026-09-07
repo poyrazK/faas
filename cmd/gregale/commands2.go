@@ -1114,7 +1114,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// existing --require-authn / --no-require-authn mutex shape
 	// at commands2.go:791-799.
 	diff := fs.Bool("diff", false, "preview what would change without deploying")
-	diffJSON := fs.Bool("json", false, "emit JSON output (only with --diff)")
+	// `--dry-run` is the discoverable deploy-preflight spelling. Keep
+	// `--diff` as the compatibility spelling, but make the intent clear
+	// to users who are asking "will this deploy work?" rather than
+	// inspecting a state diff. Both paths are strictly read-only: no
+	// CreateApp, upload, deployment, or other write is allowed after the
+	// authenticated client is acquired.
+	dryRun := fs.Bool("dry-run", false, "run deploy preflight without uploading or changing remote state")
+	diffJSON := fs.Bool("json", false, "emit JSON output (with --diff or --dry-run)")
 	diffStrict := fs.Bool("strict", false, "exit non-zero on schema/quota/env breaks (default with --diff)")
 	diffLenient := fs.Bool("lenient", false, "exit zero even on breaks; --diff still renders them")
 	serverDiff := fs.Bool("server-diff", false, "compute the diff on apid via POST /v1/apps/{slug}/diff (PR-1) instead of locally")
@@ -1149,13 +1156,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--doctor-strict] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff] [--doctor-strict] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
 	// run() consumes the global --json before dispatch. Keep the
 	// deploy-local --json spelling equivalent for the diff path,
 	// whose renderer uses a separate option field.
 	*diffJSON = *diffJSON || jsonOutput
+	preview, previewErr := normalizeDeployPreviewFlags(*dryRun, *diff)
+	if previewErr != nil {
+		return printErr("Invalid flags", previewErr)
+	}
+	// Normalise the new spelling before any source resolution. This keeps
+	// the existing, well-tested read-only diff path as the single
+	// implementation while making `gregale deploy --dry-run` safe by
+	// construction.
+	*diff = preview
 	// --strict / --lenient mutex. Same rationale as
 	// --require-authn / --no-require-authn above.
 	if *diffStrict && *diffLenient {
@@ -1299,6 +1315,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customer can run `gregale deploy --github --name my-app` without
 	// a --ref. The slug is the only required input.
 	if *githubSnippet {
+		if *dryRun {
+			return printErr("Invalid flags", fmt.Errorf("--dry-run cannot be combined with --github"))
+		}
 		return cmdDeployGithubSnippet([]string{"--app", slug})
 	}
 
@@ -1307,6 +1326,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// in PR-B; the server resolves the install token from
 	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
 	if *repo != "" {
+		if *dryRun {
+			return printErr("Invalid flags", fmt.Errorf("--dry-run is not supported with --repo; use a local source with --path or --worktree"))
+		}
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --repo"))
 		}
@@ -1781,10 +1803,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	// Deploy-diff short-circuit (PR-0 of the deploy-diff cluster).
+	// Deploy preview short-circuit (PR-0 of the deploy-diff cluster).
 	// Runs AFTER authedClient so the SDK reads can resolve, and
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
-	// happen. --diff never ships a deploy.
+	// happen. --diff and --dry-run never ship a deploy.
 	if *diff {
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --diff"))

@@ -558,6 +558,7 @@ var cliCommands = []cliCommand{
 			{Name: "no-wait", Short: "return after deployment is queued"},
 			{Name: "secret-scan", Short: "scan .env files before packing", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			{Name: "diff", Short: "preview what would change without deploying"},
+			{Name: "dry-run", Short: "run deploy preflight without uploading or changing remote state"},
 			{Name: "strict", Short: "fail on diff schema/quota/env breaks"},
 			{Name: "lenient", Short: "return success even when diff has breaks"},
 			{Name: "server-diff", Short: "compute deploy diff on apid"},
