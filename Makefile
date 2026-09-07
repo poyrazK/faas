@@ -976,7 +976,7 @@ sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Cli
 	@$(GO) run ./cmd/sdk-coverage
 
 .PHONY: object-storage-qualify
-object-storage-qualify: ## Operator-only: run the opt-in live S3-compatible provider qualification
+object-storage-qualify: ## Operator-only: run the opt-in live object-storage provider qualification
 	@FAAS_OBJECT_STORAGE_LIVE_TEST=1 $(GO) test ./pkg/objectstorage -run '^TestLiveProviderQualification$$' -count=1 -v
 
 .PHONY: managed-postgres-qualify

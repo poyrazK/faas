@@ -24,7 +24,7 @@ import (
 //	go test ./pkg/objectstorage -run '^TestLiveProviderQualification$' -count=1 -v
 //
 // The test exercises only the Provider interface, so the same qualification
-// applies to OVH, AWS, R2, Ceph RGW, or another compatible backend selected by
+// applies to GCS, OVH, AWS, R2, Ceph RGW, or another backend selected by
 // the registry's default region. It intentionally does not call the Gregale
 // API: API auth/quotas are covered by the existing unit and end-to-end suites.
 func TestLiveProviderQualification(t *testing.T) {
@@ -105,8 +105,8 @@ func TestLiveProviderQualification(t *testing.T) {
 	}
 	assertObjectListed(t, ctx, backend.Provider, bucket, "qualification/", singleKey, int64(len(singlePayload)))
 
-	// Five MiB is the minimum non-final part size required by AWS S3 and is
-	// accepted by the other qualified S3-compatible services. The second part
+	// Five MiB is the minimum non-final part size required by the S3 and GCS XML
+	// multipart protocols. The second part
 	// is deliberately small so this remains a cheap qualification run.
 	partOne := bytes.Repeat([]byte("a"), 5<<20)
 	partTwo := []byte("last-part")
