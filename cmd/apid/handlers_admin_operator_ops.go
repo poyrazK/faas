@@ -343,65 +343,7 @@ func (s *server) postObsNodeActivate(w http.ResponseWriter, r *http.Request, acc
 }
 
 func (s *server) postObsNodeMutation(w http.ResponseWriter, r *http.Request, acct state.Account, action string, forced bool) {
-	if allowed, prob := s.adminAllows(acct); !allowed {
-		api.WriteProblem(w, prob)
-		return
-	}
-	if r.URL.Query().Get("confirm") != "true" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "confirm required", "?confirm=true is required for compute-node state changes"))
-		return
-	}
-	reason := r.URL.Query().Get("reason")
-	if reason == "" {
-		reason = "operator_" + strings.ReplaceAll(action, "-", "_")
-	}
-	if len(reason) > obsOpsReasonMaxLen || !obsOpsReasonShape.MatchString(reason) {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid reason", "reason must match [a-z0-9_]{1,64}"))
-		return
-	}
-	node, err := s.store.ComputeNodeByName(r.Context(), r.PathValue("name"))
-	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Node not found", err.Error()))
-		return
-	}
-	instances, err := s.store.ListInstancesOnNodeID(r.Context(), node.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not inspect node instances"))
-		return
-	}
-	liveInstances := countObsLiveInstances(instances)
-	previousActive := node.Active
-	if action == "activate" {
-		err = s.store.SetComputeNodeActive(r.Context(), node.ID, true)
-	} else {
-		err = s.store.MarkComputeNodeInactive(r.Context(), node.ID)
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not change compute-node state"))
-		return
-	}
-	if s.audit != nil {
-		subject := node.ID
-		s.audit.Emit(r.Context(), "operator.action.node_"+strings.ReplaceAll(action, "-", "_"), &subject, map[string]any{
-			"actor":           acct.ID,
-			"node_id":         node.ID,
-			"node_name":       node.Name,
-			"previous_active": previousActive,
-			"active":          action == "activate",
-			"live_instances":  liveInstances,
-			"forced":          forced,
-			"reason":          reason,
-		})
-	}
-	writeJSON(w, http.StatusOK, api.ObsNodeMutationResponse{
-		OK:             true,
-		Node:           node.Name,
-		PreviousActive: previousActive,
-		Active:         action == "activate",
-		LiveInstances:  liveInstances,
-		Forced:         forced,
-		Reason:         reason,
-	})
+	s.enqueueObsNodeMutation(w, r, acct, action, forced)
 }
 
 func (s *server) nodeNames(ctx context.Context) map[string]string {

@@ -28,18 +28,13 @@ faasctl nodes drain --all --status
 
 ## Drill 1 — Heartbeat gap → node.unavailable
 
-Step 1: Stale the heartbeat on fsn-b by 120s. Default
-staleness = 90s, so the next schedd tick must flip it.
+Step 1: On the disposable drill fleet, pause vmmd on fsn-b long enough to
+cross the 90s heartbeat threshold. This exercises the real failure path
+without changing database state by hand.
 
 ```bash
-# Pre-condition: StaleHeartbeat(fsn-b, 2m). Skips the real
-# failure for safety — the unit-tier test
-# TestTwoNode_HeartbeatGapFlipsLifecycleUnavailable runs the
-# same scenario end-to-end without production risk.
-psql -h /run/postgresql -U faas -c "
-UPDATE compute_nodes
-SET last_heartbeat_at = now() - interval '120 seconds'
-WHERE name = 'fsn-b'"
+ssh fsn-b 'sudo systemctl kill -s SIGSTOP faas-vmmd'
+# Wait at least 120s, then continue to observation.
 ```
 
 Step 2: Observe the recovery timeline.
@@ -52,6 +47,12 @@ faasctl events list --topic=recovery --since=5m
 
 Expected outcome: lifecycle='unavailable', event row present,
 no customer-facing 5xx on fsn-a traffic.
+
+Resume vmmd after the unavailable transition is visible:
+
+```bash
+ssh fsn-b 'sudo systemctl kill -s SIGCONT faas-vmmd'
+```
 
 ## Drill 2 — Drain cascade
 

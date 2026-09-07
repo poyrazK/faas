@@ -1,11 +1,16 @@
 from typing import Literal
 
-OperatorIntentResponseKind = Literal["force_cold_boot", "force_park", "force_restart"]
+OperatorIntentResponseKind = Literal[
+    "force_cold_boot", "force_park", "force_restart", "node_activate", "node_drain", "node_force_drain"
+]
 
 OPERATOR_INTENT_RESPONSE_KIND_VALUES: set[OperatorIntentResponseKind] = {
     "force_cold_boot",
     "force_park",
     "force_restart",
+    "node_activate",
+    "node_drain",
+    "node_force_drain",
 }
 
 

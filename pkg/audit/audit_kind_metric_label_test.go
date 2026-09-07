@@ -109,6 +109,24 @@ func TestAuditKindMetricLabel_OperatorActionForceColdBoot(t *testing.T) {
 	}
 }
 
+func TestAuditKindMetricLabel_NodeLifecycleIntents(t *testing.T) {
+	for _, tt := range []struct {
+		kind string
+		want string
+	}{
+		{"operator.action.node_drain", "node_drain"},
+		{"operator.action.node_force_drain", "node_force_drain"},
+		{"operator.action.node_activate", "node_activate"},
+		{"operator.action.node_drain.outcome", "node_drain.outcome"},
+		{"operator.action.node_force_drain.outcome", "node_force_drain.outcome"},
+		{"operator.action.node_activate.outcome", "node_activate.outcome"},
+	} {
+		if got := auditKindMetricLabel(tt.kind); got != tt.want {
+			t.Errorf("auditKindMetricLabel(%q) = %q, want %q", tt.kind, got, tt.want)
+		}
+	}
+}
+
 // TestAuditKindMetricLabel_UnknownKindCollapsesToOther pins the
 // cardinality bound. A free-text kind that doesn't match any
 // case in the switch MUST collapse to "other" so the audit

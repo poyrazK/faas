@@ -6501,16 +6501,20 @@ type OperatorIntentAcceptedResponse struct {
 // force_cold_boot (warm + init tiers walked). On failure,
 // Error carries the bounded dispatch error message (1 KB cap).
 type OperatorIntentResponse struct {
-	IntentID           string     `json:"intent_id"`
-	Kind               string     `json:"kind"`
-	Status             string     `json:"status"`
-	TargetID           string     `json:"target_id"`
-	AccountID          string     `json:"account_id,omitempty"`
-	RequestedAt        time.Time  `json:"requested_at"`
-	StartedAt          *time.Time `json:"started_at,omitempty"`
-	FinishedAt         *time.Time `json:"finished_at,omitempty"`
-	Error              string     `json:"error,omitempty"`
-	SnapIDsMarkedStale []string   `json:"snap_ids_marked_stale,omitempty"`
+	IntentID           string          `json:"intent_id"`
+	Kind               string          `json:"kind"`
+	Status             string          `json:"status"`
+	TargetID           string          `json:"target_id"`
+	AccountID          string          `json:"account_id,omitempty"`
+	ActorID            string          `json:"actor_id"`
+	Reason             string          `json:"reason"`
+	Metadata           json.RawMessage `json:"metadata"`
+	TraceID            string          `json:"trace_id,omitempty"`
+	RequestedAt        time.Time       `json:"requested_at"`
+	StartedAt          *time.Time      `json:"started_at,omitempty"`
+	FinishedAt         *time.Time      `json:"finished_at,omitempty"`
+	Error              string          `json:"error,omitempty"`
+	SnapIDsMarkedStale []string        `json:"snap_ids_marked_stale,omitempty"`
 }
 
 // SweepStuckBuildsResponse is the wire shape returned by POST

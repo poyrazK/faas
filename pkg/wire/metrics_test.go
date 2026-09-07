@@ -2209,7 +2209,10 @@ func TestOpsMetrics_AuditLogWriteTotalPreInstantiated(t *testing.T) {
 	kinds := []string{
 		"force_park", "force_cold_boot", "force_restart",
 		"force_park.outcome", "force_cold_boot.outcome",
-		"force_restart.outcome", "other",
+		"force_restart.outcome",
+		"node_drain", "node_force_drain", "node_activate",
+		"node_drain.outcome", "node_force_drain.outcome", "node_activate.outcome",
+		"other",
 	}
 	for _, e := range endpoints {
 		for _, k := range kinds {

@@ -316,19 +316,10 @@ the channel listener is wedged (restart schedd).
 
 #### Premature teardown (extend a preview past grace)
 
-The 24h grace is a contract; the way to extend a preview is
-to bump `preview_expires_at` directly. The janitor re-evaluates
-on every tick — a 5-minute pause is the worst-case drift
-between the bump and the next sweep.
-
-```bash
-psql -U faas -d faas -c "
-  UPDATE apps
-     SET preview_expires_at = now() + interval '24 hours'
-   WHERE slug = 'pr-42-myapp'
-     AND preview_of_slug = 'myapp'
-     AND preview_pr_state IN ('open', 'closed');"
-```
+The 24h grace is a contract. There is not yet a typed preview-extension
+operation, so normal operations must not change the row directly. Escalate
+to the preview owner; if customer impact requires an emergency extension,
+declare break-glass and follow [database repair](../break-glass/database-repair.md).
 
 #### Stale row stuck in 'closed' for too long
 

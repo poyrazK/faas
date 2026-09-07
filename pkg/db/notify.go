@@ -463,8 +463,8 @@ const (
 	//   migrations/00243 fires on every INSERT/UPDATE/DELETE of
 	//   either table, including verified flips).
 	NotifyTenantSurfaceChanged = "tenant_surface_changed"
-	// NotifyOperatorIntent {"intent_id":uuid, "kind":"force_park|
-	//                       force_cold_boot", "target_id":uuid}
+	// NotifyOperatorIntent {"intent_id":uuid, "kind":closed-vocabulary,
+	//                       "target_id":uuid}
 	//   apid → schedd (PR #1099 P2 redesign, ADR-127): a row
 	//   was inserted into operator_intents (migrations/00431).
 	//   schedd's operator-intent subscriber

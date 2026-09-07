@@ -113,6 +113,71 @@ func TestInsertClaimMark_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestApplyNodeOperatorIntent_LifecycleTransitions(t *testing.T) {
+	tests := []struct {
+		name    string
+		kind    state.OperatorIntentKind
+		initial state.NodeLifecycle
+		want    state.NodeLifecycle
+	}{
+		{name: "drain", kind: state.OperatorIntentKindNodeDrain, initial: state.NodeLifecycleActive, want: state.NodeLifecycleDraining},
+		{name: "force drain", kind: state.OperatorIntentKindNodeForceDrain, initial: state.NodeLifecycleRecovering, want: state.NodeLifecycleUnavailable},
+		{name: "activate", kind: state.OperatorIntentKindNodeActivate, initial: state.NodeLifecycleUnavailable, want: state.NodeLifecycleActive},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			node, err := store.CreateComputeNode(ctx, state.ComputeNode{
+				Name:      "node-a",
+				TargetURL: "unix:///run/faas/vmmd.sock",
+				Lifecycle: tt.initial,
+			})
+			if err != nil {
+				t.Fatalf("seed node: %v", err)
+			}
+			intent := state.OperatorIntent{Kind: tt.kind, TargetID: node.ID}
+			if err := applyNodeOperatorIntent(ctx, store, intent); err != nil {
+				t.Fatalf("apply node intent: %v", err)
+			}
+			got, err := store.NodeGet(ctx, node.ID)
+			if err != nil {
+				t.Fatalf("read node: %v", err)
+			}
+			if got.Lifecycle != tt.want {
+				t.Fatalf("lifecycle=%q, want %q", got.Lifecycle, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyNodeOperatorIntent_ActivateRefusesControllerOwnedState(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name:      "node-draining",
+		TargetURL: "unix:///run/faas/vmmd.sock",
+		Lifecycle: state.NodeLifecycleDraining,
+	})
+	if err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	err = applyNodeOperatorIntent(ctx, store, state.OperatorIntent{
+		Kind:     state.OperatorIntentKindNodeActivate,
+		TargetID: node.ID,
+	})
+	if err == nil {
+		t.Fatal("activate unexpectedly cancelled a controller-owned drain")
+	}
+	got, getErr := store.NodeGet(ctx, node.ID)
+	if getErr != nil {
+		t.Fatalf("read node: %v", getErr)
+	}
+	if got.Lifecycle != state.NodeLifecycleDraining {
+		t.Fatalf("rejected activate mutated lifecycle=%q", got.Lifecycle)
+	}
+}
+
 // TestFIFOClaimOrdering pins the FIFO invariant: two pending
 // rows are claimed in requested_at ASC order. A regression
 // here would let a slow row overtake a fast one — not a

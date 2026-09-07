@@ -51,7 +51,9 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -161,6 +163,15 @@ func (l *Loop) processOperatorIntent(ctx context.Context, intent state.OperatorI
 		// click was an idempotent no-op. See Engine.ForceRestart
 		// for the full state-machine contract.
 		snapIDs, err = l.engine.ForceRestart(ctx, intent.TargetID, intent.Reason)
+	case state.OperatorIntentKindNodeDrain,
+		state.OperatorIntentKindNodeForceDrain,
+		state.OperatorIntentKindNodeActivate:
+		// Fleet-level node operations are applied by schedd, next to
+		// the recovery runner that owns the resulting migration work.
+		// The durable intent is already present before this lifecycle
+		// CAS can run, so a successful mutation can never be orphaned
+		// from its actor, reason, preflight, and trace metadata.
+		err = applyNodeOperatorIntent(ctx, l.engine.Store(), intent)
 	default:
 		// Should be impossible — the schema CHECK rejects any
 		// unknown kind — but if we somehow receive one, stamp
@@ -222,10 +233,17 @@ func (l *Loop) processOperatorIntent(ctx context.Context, intent state.OperatorI
 			"actor":                 intent.ActorID,
 			"intent_id":             intent.ID,
 			"target_id":             intent.TargetID,
+			"reason":                intent.Reason,
 			"result":                resultLabel,
 			"started_at":            intent.StartedAt,
 			"finished_at":           time.Now().UTC(),
 			"snap_ids_marked_stale": snapIDs,
+		}
+		if len(intent.Metadata) > 0 {
+			var metadata any
+			if json.Unmarshal(intent.Metadata, &metadata) == nil {
+				data["metadata"] = metadata
+			}
 		}
 		// PR-#TBD / C3 — propagate the OTel W3C trace_id from
 		// the inbound HTTP request (apid → row) onto the
@@ -242,6 +260,52 @@ func (l *Loop) processOperatorIntent(ctx context.Context, intent state.OperatorI
 			data["error"] = err.Error()
 		}
 		l.audit.Emit(ctx, outcomeKind, intent.AccountID, data)
+	}
+}
+
+// applyNodeOperatorIntent converts one closed-vocabulary fleet intent into a
+// compare-and-swap lifecycle transition. Re-reading at dispatch time closes
+// the gap between the API preflight and the controller action. Reaching the
+// desired state is idempotent success; incompatible controller-owned states
+// fail loudly and remain visible on the intent row.
+func applyNodeOperatorIntent(ctx context.Context, store state.Store, intent state.OperatorIntent) error {
+	node, err := store.NodeGet(ctx, intent.TargetID)
+	if err != nil {
+		return fmt.Errorf("operator_intent: read compute node: %w", err)
+	}
+	current := node.Lifecycle
+	if current == "" {
+		if node.Active {
+			current = state.NodeLifecycleActive
+		} else {
+			current = state.NodeLifecycleUnavailable
+		}
+	}
+
+	switch intent.Kind {
+	case state.OperatorIntentKindNodeDrain:
+		if current == state.NodeLifecycleDraining {
+			return nil
+		}
+		if current != state.NodeLifecycleActive {
+			return fmt.Errorf("operator_intent: node_drain requires active lifecycle, got %s", current)
+		}
+		return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleDraining)
+	case state.OperatorIntentKindNodeForceDrain:
+		if current == state.NodeLifecycleUnavailable {
+			return nil
+		}
+		return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleUnavailable)
+	case state.OperatorIntentKindNodeActivate:
+		if current == state.NodeLifecycleActive {
+			return nil
+		}
+		if current != state.NodeLifecycleUnavailable {
+			return fmt.Errorf("operator_intent: node_activate refuses controller-owned lifecycle %s", current)
+		}
+		return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleActive)
+	default:
+		return fmt.Errorf("operator_intent: unsupported node kind %s", intent.Kind)
 	}
 }
 

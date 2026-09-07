@@ -2155,26 +2155,27 @@ const (
 	// schedd claims via FOR UPDATE SKIP LOCKED LIMIT 1 and
 	// dispatches by kind.
 	OperatorIntentKindForceRestart OperatorIntentKind = "force_restart"
+	// Compute-node lifecycle operations are fleet-level intents. The
+	// node UUID is TargetID and AccountID is nil. schedd applies the
+	// lifecycle CAS before stamping the intent terminal, so every
+	// successful operator mutation has a durable actor/reason/result row.
+	OperatorIntentKindNodeDrain      OperatorIntentKind = "node_drain"
+	OperatorIntentKindNodeForceDrain OperatorIntentKind = "node_force_drain"
+	OperatorIntentKindNodeActivate   OperatorIntentKind = "node_activate"
 )
 
 // OperatorIntent is one row of operator_intents (migrations/00431).
-// PR #1099 P2 redesign: apid (the only producer) inserts on
-// POST /v1/admin/instances/{id}/force-park or
-// POST /v1/admin/apps/{slug}/force-cold-boot, emits
-// `db.NotifyOperatorIntent`, returns 202 Accepted. schedd (the only
-// consumer) claims the row via ClaimPendingOperatorIntent
-// (FOR UPDATE SKIP LOCKED LIMIT 1), dispatches by kind
-// (force_park → Engine.Park, force_cold_boot →
-// Engine.ForceColdBootNextWake, force_restart → Engine.ForceRestart),
-// then transitions status to terminal.
+// apid inserts customer-workload or fleet-level node intents, emits
+// db.NotifyOperatorIntent, and returns 202 Accepted. schedd claims the row
+// via ClaimPendingOperatorIntent (FOR UPDATE SKIP LOCKED LIMIT 1), dispatches
+// the closed kind, then transitions status to terminal.
 //
 // Invariant: a single row represents a single admin-action attempt.
 // Admin actions are deliberate re-clicks, not retries, so there is
 // no per-request idempotency wrapper — two clicks produce two intents.
 //
-// Target_id is free-text (NOT a uuid column) because it is either an
-// instance_id (force_park) OR a deployment_id (force_cold_boot). The
-// kind column disambiguates.
+// Target_id is free-text (NOT a uuid column) because it can be an instance,
+// deployment, or compute-node identifier. The kind column disambiguates.
 //
 // TraceID is the OTel W3C 32-char hex identifier shared with the
 // inbound HTTP request (apid) and the terminal outcome audit row
@@ -2186,7 +2187,7 @@ type OperatorIntent struct {
 	ID                 string
 	Kind               OperatorIntentKind
 	TargetID           string
-	AccountID          *string // nil for fleet-level actions (e.g. reclaim_build); set for per-account actions
+	AccountID          *string // nil for fleet-level actions; set for per-account actions
 	ActorID            string
 	Reason             string
 	Metadata           json.RawMessage
