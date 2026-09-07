@@ -66,6 +66,36 @@ func TestInitialWakeDemandUsesAutoscaleTarget(t *testing.T) {
 	}
 }
 
+func TestInitialWakeDemandAddsBoundedColdBurstHeadroom(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		inflight  int64
+		arrivals  int
+		maximum   int
+		targetRPS int
+		want      int
+	}{
+		{name: "single request", inflight: 1, arrivals: 1, maximum: 20, targetRPS: 15, want: 1},
+		{name: "below half target", inflight: 7, arrivals: 7, maximum: 20, targetRPS: 15, want: 1},
+		{name: "half target queued", inflight: 8, arrivals: 8, maximum: 20, targetRPS: 15, want: 2},
+		{name: "app capped at one", inflight: 8, arrivals: 8, maximum: 1, targetRPS: 15, want: 1},
+		{name: "target disabled", inflight: 8, arrivals: 8, maximum: 20, targetRPS: 0, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHandlerWith(&fakeBackend{}, NewMetrics(), nil)
+			state := h.burstPressure.state("app")
+			state.inflight.Store(tc.inflight)
+			now := time.Now()
+			for i := 0; i < tc.arrivals; i++ {
+				state.recordArrival(now)
+			}
+			if got := h.initialWakeDemand("app", tc.maximum, api.PlanScale, tc.targetRPS); got != tc.want {
+				t.Fatalf("initial wake demand = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 type blockedInitialCapacity struct {
 	started chan struct{}
 	finish  chan struct{}

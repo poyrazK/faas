@@ -24,7 +24,20 @@ func (h *Handler) initialWakeDemand(appID string, maxConcurrency int, plan api.P
 		return 1
 	}
 	state := h.burstPressure.state(appID)
-	desired := desiredBurstInstancesForApp(state, App{AutoscaleTargetRPS: autoscaleTargetRPS}, limits.ConcurrencyPerVMBound, maxConcurrency, time.Now())
+	now := time.Now()
+	desired := desiredBurstInstancesForApp(state, App{AutoscaleTargetRPS: autoscaleTargetRPS}, limits.ConcurrencyPerVMBound, maxConcurrency, now)
+	// A cold leader evaluates demand before the normal burst worker can observe
+	// a sustained rate. If at least half of one instance's one-second request
+	// target is already queued, start one sibling in the same scheduler batch.
+	// Keeping this headroom at two avoids multiplying capacity for a short
+	// cluster, while a lone cold request continues to restore one instance.
+	if autoscaleTargetRPS > 0 && maxConcurrency > 1 && state.inflight.Load() >= 2 {
+		arrivals := state.recentArrivals(now)
+		threshold := int64((autoscaleTargetRPS + 1) / 2)
+		if arrivals >= threshold && desired < 2 {
+			desired = 2
+		}
+	}
 	if desired < 1 {
 		return 1
 	}
