@@ -202,6 +202,25 @@ func TestRenderer_ComputePKIIncludesPrivateEndpointSAN(t *testing.T) {
 	if cert.Subject.CommonName != "fsn-2.faas" {
 		t.Fatalf("vmmd server CN = %q, want fsn-2.faas", cert.Subject.CommonName)
 	}
+
+	certPEM, err = os.ReadFile(filepath.Join(dir, "tls", "gatewayd", "apid-client.crt"))
+	if err != nil {
+		t.Fatalf("read gatewayd apid client cert: %v", err)
+	}
+	block, _ = pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("gatewayd apid client cert is not PEM")
+	}
+	cert, err = x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse gatewayd apid client cert: %v", err)
+	}
+	if cert.Subject.CommonName != "fsn-2.faas" {
+		t.Fatalf("gatewayd apid client CN = %q, want fsn-2.faas", cert.Subject.CommonName)
+	}
+	if !containsString(cert.DNSNames, "gatewayd.faas") || !containsString(cert.DNSNames, "fsn-2.gregale.dev") {
+		t.Fatalf("gatewayd apid client SANs = %v, want role and endpoint identities", cert.DNSNames)
+	}
 }
 
 func TestRenderer_PKITrustOnlyDoesNotRequireCAKey(t *testing.T) {

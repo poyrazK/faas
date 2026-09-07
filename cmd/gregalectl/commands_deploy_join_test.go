@@ -401,7 +401,7 @@ func TestCopyTrustBundleNeverCopiesCAKey(t *testing.T) {
 	extra := pki.AltNames{DNSNames: []string{"fsn-2.gregale.dev"}}
 	for _, role := range pki.RolesForBox(roleComputeOnly) {
 		var err error
-		if role.Directory == "vmmd" {
+		if pki.RoleUsesNodeIdentity(role) {
 			err = pki.EnsureLeafWithCNAndSANs(source, role, "fsn-2.faas", caCert, caKey, false, extra)
 		} else {
 			err = pki.EnsureLeafWithSANs(source, role, caCert, caKey, false, extra)
@@ -564,7 +564,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	for _, role := range pki.RolesForBox(roleComputeOnly) {
 		var err error
-		if role.Directory == "vmmd" {
+		if pki.RoleUsesNodeIdentity(role) {
 			err = pki.EnsureLeafWithCNAndSANs(pkiDir, role, "fsn-2.faas", caCertObj, caKeyObj, false, pki.AltNames{DNSNames: []string{"fsn-2.gregale.dev"}})
 		} else {
 			err = pki.EnsureLeafWithSANs(pkiDir, role, caCertObj, caKeyObj, false, pki.AltNames{DNSNames: []string{"fsn-2.gregale.dev"}})
