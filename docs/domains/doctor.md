@@ -97,6 +97,13 @@ row when available (the cert engine is the SOLE writer of
 legacy `custom_domains` rows with no surface, the doctor dials
 port-443 live to read the cert SANs.
 
+For a previously verified legacy domain, a definite
+`points_to_gregale=fail` result revokes `verified_at`, stores
+`cert_status=dns_drifted`, and emits one `domain.drifted` audit event per
+drift episode. The existing 30-second doctor cadence is stricter than the
+daily recheck requirement, so the dashboard warning normally appears well
+within 24 hours. Publishing the TXT challenge again restores verification.
+
 ## Operator controls
 
 | Env var | Default | Effect |

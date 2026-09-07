@@ -2045,6 +2045,11 @@ const (
 	CustomDomainCertIssued   CustomDomainCertStatus = "issued"
 	CustomDomainCertRenewing CustomDomainCertStatus = "renewing"
 	CustomDomainCertFailed   CustomDomainCertStatus = "failed"
+	// CustomDomainCertDNSDrifted means a previously verified domain no
+	// longer points at Gregale. The verification timestamp is cleared at
+	// the same time, so gateway routing stops until the TXT challenge is
+	// satisfied again.
+	CustomDomainCertDNSDrifted CustomDomainCertStatus = "dns_drifted"
 )
 
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
@@ -2091,7 +2096,7 @@ type DomainDoctorObservation struct {
 	ObservedTarget  string
 	ObservedAAAA    string
 	CAAObserved     string
-	CertState       string // none|pending|issued|failed|dial_failed
+	CertState       string // none|pending|issued|failed|dial_failed|dns_drifted
 	CertNotAfter    time.Time
 	LastError       string
 	DNSCheckedAt    time.Time
