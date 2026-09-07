@@ -53,7 +53,7 @@ ADR-070) bounds the metric cardinality at 10 series per daemon.
 
 ### 1. Enable `--collector.systemd` in node_exporter
 
-`deploy/ansible/roles/node_exporter/files/node_exporter.service`
+`deploy/ansible/roles/node_exporter/templates/node_exporter.service.j2`
 adds `--collector.systemd` to `ExecStart`. node_exporter exposes
 `node_systemd_restart_count{name, type}` and `node_systemd_unit_state{name, state}`
 from systemd's D-Bus interface. The Prometheus scrape config
