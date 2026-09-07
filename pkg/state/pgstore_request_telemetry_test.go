@@ -144,6 +144,9 @@ func TestPgStoreRequestTelemetry_PerDeployment(t *testing.T) {
 	if rows[0].Route != "POST /bar" {
 		t.Errorf("PerDeployment.Route = %q, want %q", rows[0].Route, "POST /bar")
 	}
+	if rows[0].Count != 1 {
+		t.Errorf("PerDeployment.Count = %d, want 1", rows[0].Count)
+	}
 }
 
 // TestPgStoreRequestTelemetry_BaselineP95 pins the regression-
@@ -210,6 +213,66 @@ func TestPgStoreRequestTelemetry_BaselineP95(t *testing.T) {
 	// 185; if it drifts, the canary baseline drifts too.
 	if rows[0].P95Ms != 185 {
 		t.Errorf("BaselineP95.P95Ms = %d, want 185 (percentile_cont(0.95) over [10,50,200] = 50 + 0.9*(200-50))", rows[0].P95Ms)
+	}
+}
+
+// TestPgStoreRequestTelemetry_BaselineP95WeightsCollapsedRows verifies that
+// the regression baseline expands the gateway publisher's `count` weight.
+// One stored row represents 100 fast requests and another represents one
+// slow request. Treating stored rows as samples would report a p95 near the
+// slow value; the expanded 101-request distribution correctly reports the
+// fast latency for p95.
+func TestPgStoreRequestTelemetry_BaselineP95WeightsCollapsedRows(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+
+	app := uuid.NewString()
+	dep := uuid.NewString()
+	now := time.Now().UTC()
+	rows := []struct {
+		latency int32
+		count   int32
+	}{
+		{latency: 10, count: 100},
+		{latency: 200, count: 1},
+	}
+	for i, row := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, uuid.NewString()), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, app), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, dep), Valid: true},
+			Route:        "GET /weighted",
+			Method:       "GET",
+			Status:       200,
+			LatencyMs:    row.latency,
+			ColdBoot:     false,
+			TraceID:      pgtype.Text{},
+			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:        row.count,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
+		}); err != nil {
+			t.Fatalf("Insert %d: %v", i, err)
+		}
+	}
+
+	got, err := store.RequestTelemetryBaselineP95ByRoute(ctx, sqlc.RequestTelemetryBaselineP95ByRouteParams{
+		AppID:        pgtype.UUID{Bytes: parseUUID(t, app), Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: parseUUID(t, dep), Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("BaselineP95: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("BaselineP95: got %d rows, want 1", len(got))
+	}
+	if got[0].N != 101 {
+		t.Errorf("BaselineP95.N = %d, want 101 (100 + 1 collapsed requests)", got[0].N)
+	}
+	if got[0].P95Ms != 10 {
+		t.Errorf("BaselineP95.P95Ms = %d, want 10 (weighted p95 over 100x10ms + 1x200ms)", got[0].P95Ms)
 	}
 }
 

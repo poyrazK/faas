@@ -5581,8 +5581,9 @@ type Store interface {
 
 	// RequestTelemetryByDeployment backs the per-deployment
 	// drilldown and the regression detector (PR-B cron). Uses
-	// request_telemetry_app_dep_received_idx. Same limit contract
-	// as ListRequestTelemetryByApp.
+	// request_telemetry_app_dep_received_idx and returns each row's
+	// publisher Count weight. Same limit contract as
+	// ListRequestTelemetryByApp.
 	RequestTelemetryByDeployment(ctx context.Context, arg sqlc.RequestTelemetryByDeploymentParams) ([]sqlc.RequestTelemetryByDeploymentRow, error)
 
 	// RequestTelemetryBaselineP95ByRoute backs the regression

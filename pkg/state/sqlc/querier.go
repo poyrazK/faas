@@ -906,19 +906,21 @@ type Querier interface {
 	// zero-filled per hour. This keeps charts stable while preserving the same
 	// retention and cardinality bounds as the overview query.
 	RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]RequestTelemetryAnalyticsTimeseriesGroupedRow, error)
-	// Per-route p50/p95/p99 latency + row count for the
+	// Per-route p50/p95/p99 latency + represented request count for the
 	// compare endpoint and the regression detector (ADR-127 PR-B
 	// cron + PR Debugger UX v1 compare handler). Single index scan
 	// over the existing request_telemetry_app_dep_received_idx
 	// (PR-A migration 00427) so the four aggregates share one
-	// window. percentile_cont is the canonical Postgres window-
-	// function call; COUNT(*) gives the consistent row count
-	// over the same scan so p50/p95/p99 and n can never disagree
-	// about which rows contributed.
+	// window. The recorder collapses burst traffic into rows with a
+	// `count` weight; expand that weight mathematically instead of
+	// treating each aggregate row as one request. The rank/floor
+	// formulation below is equivalent to percentile_cont over the
+	// expanded multiset, without materializing one row per request.
 	RequestTelemetryBaselineP95ByRoute(ctx context.Context, db DBTX, arg RequestTelemetryBaselineP95ByRouteParams) ([]RequestTelemetryBaselineP95ByRouteRow, error)
 	// Per-deployment drilldown. Used by gregale debug compare and the
-	// regression detector (PR-B). Uses
-	// request_telemetry_app_dep_received_idx.
+	// regression detector (PR-B). Includes the publisher's `count`
+	// weight so callers can report request totals rather than stored
+	// aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
 	RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryByDeploymentParams) ([]RequestTelemetryByDeploymentRow, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
