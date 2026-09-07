@@ -2449,6 +2449,10 @@ func (s *server) handler() http.Handler {
 	// applying the same app-scoped park/wake/restart transitions as the
 	// v1 endpoints.
 	mux.Handle("POST /dashboard/apps/{slug}/instances/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardInstanceAction))))
+	// G7 / issue #1397 — queue dead-letter replay. The handler verifies
+	// the dashboard's named CSRF envelope before delegating to the same
+	// account-scoped store transition as the JSON API endpoint.
+	mux.Handle("POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardQueueDeadLetterReplay))))
 	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
 	// named CSRF cookie and the same rollback core as the REST endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollback))))
