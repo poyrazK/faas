@@ -31,6 +31,17 @@ package main
 
 import "github.com/onebox-faas/faas/pkg/api"
 
+// cliAudience controls how a command is presented in the customer binary.
+// The complete manifest remains authoritative for dispatch, man pages, and
+// compatibility checks; audience only affects the default discovery surface.
+type cliAudience uint8
+
+const (
+	cliAudienceCustomer cliAudience = iota
+	cliAudienceOperator
+	cliAudienceCompatibility
+)
+
 // cliCommand is one top-level gregale command.
 type cliCommand struct {
 	// Name is the literal the user types: "apps", "delayed-task", etc.
@@ -62,6 +73,58 @@ type cliCommand struct {
 	// (free|hobby|pro|scale). Mirrors api.Plans so the manifest is the
 	// source of truth for completion of the plan literal.
 	ClosedSet []string
+	// Audience controls whether the command is shown in the default customer
+	// help/completion surface. Non-customer entries remain callable so existing
+	// scripts do not break, and remain in the manifest for man pages and drift
+	// tests.
+	Audience cliAudience
+}
+
+// customerCliCommands returns the commands intended for normal application
+// developers. Keep the full cliCommands manifest intact: hidden operator and
+// legacy entries still need completion/man/dispatch coverage.
+func customerCliCommands() []cliCommand {
+	commands := make([]cliCommand, 0, len(cliCommands))
+	for _, command := range cliCommands {
+		if command.Audience == cliAudienceCustomer {
+			commands = append(commands, command)
+		}
+	}
+	return commands
+}
+
+func advancedCliCommands() []cliCommand {
+	commands := make([]cliCommand, 0, len(cliCommands))
+	for _, command := range cliCommands {
+		if command.Audience != cliAudienceCustomer {
+			commands = append(commands, command)
+		}
+	}
+	return commands
+}
+
+// cliHelpGroup maps the customer command vocabulary to the workflow sections
+// used by root help. Operator and compatibility entries intentionally fall
+// through to Advanced so `gregale help --all` keeps them discoverable without
+// making them part of the normal customer path.
+func cliHelpGroup(command cliCommand) string {
+	if command.Audience != cliAudienceCustomer {
+		return "Advanced"
+	}
+	switch command.Name {
+	case "account", "billing", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "usage", "version", "completion", "man", "whoami":
+		return "Core"
+	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
+		return "API"
+	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache":
+		return "Data"
+	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
+		return "Delivery"
+	case "alerts", "analytics", "audit-events", "debug", "logs", "metrics", "slo", "status", "tail", "throttle-suggestions":
+		return "Observe"
+	default:
+		return "Core"
+	}
 }
 
 // hasSlugFirst reports whether the first positional is the <slug>
@@ -135,9 +198,9 @@ var templateNames13 = []string{
 }
 
 // cliCommands is the manifest. One entry per top-level command in
-// main.go's run() switch. Order matches the dispatch table roughly
-// (operator-vs-customer split is intentional — operator commands sit
-// at the bottom of `gregale help` today, the manifest mirrors that).
+// main.go's run() switch. Order matches the dispatch table roughly. Audience
+// metadata drives the default customer help/completion projection without
+// removing compatibility entries from this manifest.
 //
 // When you add a command to main.go, add it here too. The drift test
 // catches the omission; the manifest-drift guard is the load-bearing
@@ -157,9 +220,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "admin",
-		DocSlug: "admin",
-		Short:   "Operator-only billing ops (admin credit|refund|consume-credits)",
+		Name:     "admin",
+		DocSlug:  "admin",
+		Short:    "Operator-only billing ops (admin credit|refund|consume-credits)",
+		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "credit", Short: "Issue a billing credit", Flags: []cliFlag{
 				{Name: "reason", Short: "credit reason text", Req: true, Value: "text"},
@@ -685,6 +749,7 @@ var cliCommands = []cliCommand{
 		Name:        dispatchInspect,
 		DocSlug:     "inspect",
 		Short:       "Read-only operator surface (inspect <slug> --upstreams [--scope <scope>] [--json])",
+		Audience:    cliAudienceOperator,
 		Positionals: []string{"<slug>"},
 		// Leaf-selectors are flags on this verb, not positional
 		// sub-verbs (issue #952 UX: `gregale inspect <slug>
@@ -901,9 +966,10 @@ var cliCommands = []cliCommand{
 		// subcommand `gregale rollouts recover <slug>` is
 		// the canonical caller; the route is mounted at
 		// POST /v1/apps/{slug}/rollouts/recover (apid).
-		Name:    "rollouts",
-		DocSlug: "rollouts",
-		Short:   "Operator manual rollout recovery (rollouts recover <slug> --action advance|promote|abort --reason <text>)",
+		Name:     "rollouts",
+		DocSlug:  "rollouts",
+		Short:    "Operator manual rollout recovery (rollouts recover <slug> --action advance|promote|abort --reason <text>)",
+		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "recover", Short: "Manually advance / promote / abort a stuck rollout (operator escape hatch)"},
 		},
@@ -953,9 +1019,10 @@ var cliCommands = []cliCommand{
 		// Compatibility surface for installation-scoped secrets used by
 		// legacy non-GitHub senders. Standard GitHub App webhooks use the
 		// single platform App secret documented in ADR-012 §8.
-		Name:    "github-webhook-secret",
-		DocSlug: "github-webhook-secret",
-		Short:   "Manage legacy installation-scoped webhook secrets (admin)",
+		Name:     "github-webhook-secret",
+		DocSlug:  "github-webhook-secret",
+		Short:    "Manage legacy installation-scoped webhook secrets (admin)",
+		Audience: cliAudienceCompatibility,
 		Subcommands: []cliSub{
 			{Name: "set", Short: "Rotate the secret for one installation_id"},
 		},
@@ -1040,9 +1107,10 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<slug>"},
 	},
 	{
-		Name:    "mail",
-		DocSlug: "mail-dry-run",
-		Short:   "Mail operator dry-run (issue #246 acceptance item 6): `gregale mail dry-run [--unsubscribe-url URL]` renders every production template against a fixture account + day and writes the wire payload as JSON. The eyeball gate before flipping a box to FAAS_MAIL_TRANSPORT=resend.",
+		Name:     "mail",
+		DocSlug:  "mail-dry-run",
+		Short:    "Mail operator dry-run (issue #246 acceptance item 6): `gregale mail dry-run [--unsubscribe-url URL]` renders every production template against a fixture account + day and writes the wire payload as JSON. The eyeball gate before flipping a box to FAAS_MAIL_TRANSPORT=resend.",
+		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "dry-run", Short: "render every mail template against a fixture; print wire JSON"},
 		},
