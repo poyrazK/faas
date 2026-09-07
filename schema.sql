@@ -1727,7 +1727,7 @@ CREATE TABLE public.custom_domains (
     cert_expires_at timestamp with time zone,
     cert_last_error text,
     dns_last_checked_at timestamp with time zone,
-    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text])))
+    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text])))
 );
 
 

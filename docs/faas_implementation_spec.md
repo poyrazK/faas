@@ -845,6 +845,7 @@ The list below covers **all** customer-facing kinds as of PR #291. Prior kinds (
 | `app.rolled_back` | apid `handlers_ext.go::rollbackApp` | `{app_id, from: deployment_id, to: deployment_id}` |
 | `domain.added` | apid `handlers_ext.go::createDomain` | `{app_id, domain}` — `domain` is the canonical lowercased form stored on the row |
 | `domain.removed` | apid `handlers_ext.go::deleteDomain` | `{app_id, domain}` |
+| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once when a verified domain's CNAME leaves Gregale and verification is revoked |
 | `cron.created` | apid `handlers_ext.go::createCron` | `{cron_id, app_id, schedule, path, enabled}` — only emitted on the success path; the PR #340 plan-tier gate (402) suppresses this row for Free accounts |
 | `cron.updated` | apid `handlers_ext.go::updateCron` | `{cron_id, app_id, old, new}` |
 | `cron.deleted` | apid `handlers_ext.go::deleteCron` | `{cron_id, app_id}` |

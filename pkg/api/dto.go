@@ -2384,8 +2384,8 @@ type CustomDomainResponse struct {
 	CertExpiresAt    string `json:"cert_expires_at,omitempty"`
 	CertLastError    string `json:"cert_last_error,omitempty"`
 	DNSLastCheckedAt string `json:"dns_last_checked_at,omitempty"`
-	// CertStatus is the durable TLS lifecycle (pending, issued, renewing, or
-	// failed). The per-domain show endpoint may temporarily override it with
+	// CertStatus is the durable TLS lifecycle (pending, issued, renewing,
+	// failed, or dns_drifted). The per-domain show endpoint may temporarily override it with
 	// a live "dial_failed:<reason>" probe result; list/status remain durable.
 	CertStatus string `json:"cert_status,omitempty"`
 }
