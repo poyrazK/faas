@@ -9,12 +9,19 @@ import (
 )
 
 type nodeAwareFlowFallback struct {
-	warmed int
-	count  int64
+	warmed    int
+	warmCalls int
+	warmedIDs []string
+	count     int64
 }
 
 func (f *nodeAwareFlowFallback) Warm(_ context.Context, instances []state.Instance) error {
 	f.warmed = len(instances)
+	f.warmCalls++
+	f.warmedIDs = f.warmedIDs[:0]
+	for _, instance := range instances {
+		f.warmedIDs = append(f.warmedIDs, instance.ID)
+	}
 	return nil
 }
 
@@ -64,5 +71,41 @@ func TestNodeAwareFlowCounterWarmForwardsLocalReader(t *testing.T) {
 	}
 	if fallback.warmed != len(instances) {
 		t.Fatalf("fallback warmed %d instances, want %d", fallback.warmed, len(instances))
+	}
+}
+
+func TestNodeAwareFlowCounterWarmOnlyForMissingRemoteTelemetry(t *testing.T) {
+	cache := NewNodeTelemetryCache()
+	now := time.Unix(500, 0)
+	cache.Replace("node-a", now, now, []NodeTelemetry{{InstanceID: "vm-remote"}})
+	fallback := &nodeAwareFlowFallback{}
+	counter := NewNodeAwareFlowCounter(cache, fallback)
+	counter.now = func() time.Time { return now }
+
+	instances := []state.Instance{{ID: "vm-remote"}, {ID: "vm-missing"}}
+	if err := counter.Warm(context.Background(), instances); err != nil {
+		t.Fatalf("Warm: %v", err)
+	}
+	if fallback.warmCalls != 1 || fallback.warmed != 1 || len(fallback.warmedIDs) != 1 || fallback.warmedIDs[0] != "vm-missing" {
+		t.Fatalf("fallback warm = calls:%d count:%d ids:%v, want one call for vm-missing", fallback.warmCalls, fallback.warmed, fallback.warmedIDs)
+	}
+
+	cache.Replace("node-a", now, now, []NodeTelemetry{{InstanceID: "vm-remote"}, {InstanceID: "vm-missing"}})
+	if err := counter.Warm(context.Background(), instances); err != nil {
+		t.Fatalf("Warm with complete telemetry: %v", err)
+	}
+	if fallback.warmCalls != 1 {
+		t.Fatalf("complete remote telemetry invoked fallback; calls=%d, want 1", fallback.warmCalls)
+	}
+}
+
+func TestNodeAwareFlowCounterWarmEmptyFleetSkipsFallback(t *testing.T) {
+	fallback := &nodeAwareFlowFallback{}
+	counter := NewNodeAwareFlowCounter(nil, fallback)
+	if err := counter.Warm(context.Background(), nil); err != nil {
+		t.Fatalf("Warm: %v", err)
+	}
+	if fallback.warmCalls != 0 {
+		t.Fatalf("empty fleet invoked fallback %d times, want 0", fallback.warmCalls)
 	}
 }
