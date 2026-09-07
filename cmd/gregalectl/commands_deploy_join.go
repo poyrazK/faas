@@ -667,8 +667,9 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_release_sbom_source":      sbom,
 		"faas_join_builder_base_ref":         builderBaseRef,
 		// A clean provider-created host does not have the release binary or
-		// rendered daemon configuration yet. Defer only the service restart
-		// handlers until node_join.yml has installed and rendered both.
+		// rendered daemon configuration yet. Defer bootstrap service handlers
+		// and readiness verification until node_join.yml has installed and
+		// rendered both; its final play restarts and verifies every daemon.
 		"faas_join_defer_service_handlers": true,
 	}
 	varsPath := filepath.Join(tempRoot, "join-vars.json")
