@@ -295,6 +295,18 @@ type AppErrorRequest struct {
 	Redactions    []string
 }
 
+type AppLogDrain struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Kind             string
+	TargetUrl        string
+	AuthHeaderSealed []byte
+	Enabled          bool
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type AppOpenapiDoc struct {
 	AppID          pgtype.UUID
 	AccountID      pgtype.UUID
