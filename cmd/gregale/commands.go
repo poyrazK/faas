@@ -124,9 +124,13 @@ func cmdLogin(args []string) int {
 //
 // Spec §2.2: the CLI is the source of truth for the polling cadence;
 // the server-side limit is 5 min (cliAuthCodeTTL in handlers_cli_auth.go).
+// loginPollBackoff is the wait between cli-auth exchange attempts.
+// Package-level so tests can shrink it; production keeps 1 s.
+var loginPollBackoff = 1 * time.Second
+
 func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeResponse) int {
 	expiry, _ := time.Parse(time.RFC3339, codeResp.ExpiresAt)
-	backoff := 1 * time.Second
+	backoff := loginPollBackoff
 	for {
 		if !expiry.IsZero() && time.Now().After(expiry.Add(2*time.Second)) {
 			PrintFail(os.Stderr, "Code expired. Run 'gregale login' again.")

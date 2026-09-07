@@ -276,7 +276,7 @@ func managedServicesFixture(t *testing.T, prefix string) []byte {
 // TestApplyProject_Inputs_NoAuth pins 401 for a request with no
 // Authorization header.
 func TestApplyProject_Inputs_NoAuth(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -295,7 +295,7 @@ func TestApplyProject_Inputs_NoAuth(t *testing.T) {
 // a valid token but a missing scope. The exact scope name lives
 // in pkg/api; we just assert the status code.
 func TestApplyProject_Inputs_BadScope(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -319,7 +319,7 @@ func TestApplyProject_Inputs_BadScope(t *testing.T) {
 // e2etest.Harness.SetMFARequired if it exists, otherwise the
 // test is a no-op pin.
 func TestApplyProject_Inputs_MFARequired(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -344,7 +344,7 @@ func TestApplyProject_Inputs_MFARequired(t *testing.T) {
 // apply is idempotent — the second apply is treated as a no-op
 // (or at minimum, returns 200/OK rather than 409).
 func TestApplyProject_Inputs_PlanTokenReuseSameValue(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -368,7 +368,7 @@ func TestApplyProject_Inputs_PlanTokenReuseSameValue(t *testing.T) {
 // with a DIFFERENT plan_token from the one returned by the first
 // apply trips plan_token_mismatch (409).
 func TestApplyProject_Inputs_PlanTokenMismatch(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -393,7 +393,7 @@ func TestApplyProject_Inputs_PlanTokenMismatch(t *testing.T) {
 // re-apply that minted a new token) returns 409 stale. We
 // approximate "older token" by using a synthetic 64-hex token.
 func TestApplyProject_Inputs_PlanTokenStale(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -418,7 +418,7 @@ func TestApplyProject_Inputs_PlanTokenStale(t *testing.T) {
 // applies with the SAME Idempotency-Key return the SAME
 // project_id (the second is treated as a replay of the first).
 func TestApplyProject_Inputs_IdempotencyKeyReplay(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -452,7 +452,7 @@ func TestApplyProject_Inputs_IdempotencyKeyReplay(t *testing.T) {
 // return 409 idempotency_mismatch (the safety net for retry
 // storms that change payload mid-retry).
 func TestApplyProject_Inputs_IdempotencyKeyDifferentBody(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -482,7 +482,7 @@ func TestApplyProject_Inputs_IdempotencyKeyDifferentBody(t *testing.T) {
 // tarball containing `..` in entry names is rejected — the apply
 // returns 4xx and creates zero project rows.
 func TestApplyProject_Inputs_PathTraversalRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -506,7 +506,7 @@ func TestApplyProject_Inputs_PathTraversalRejected(t *testing.T) {
 // TestApplyProject_Inputs_AbsolutePathRejected pins that a
 // tarball with absolute entry paths is rejected.
 func TestApplyProject_Inputs_AbsolutePathRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -530,7 +530,7 @@ func TestApplyProject_Inputs_AbsolutePathRejected(t *testing.T) {
 // with a symlink pointing outside the extract root is rejected.
 // This is the canonical Zip-Slip port to tar.
 func TestApplyProject_Inputs_SymlinkRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -553,7 +553,7 @@ func TestApplyProject_Inputs_SymlinkRejected(t *testing.T) {
 // TestApplyProject_Inputs_EntryCountCap pins that a tarball with
 // more than MaxApplyEntries entries is rejected (server cap).
 func TestApplyProject_Inputs_EntryCountCap(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -583,7 +583,7 @@ func TestApplyProject_Inputs_EntryCountCap(t *testing.T) {
 // (sha256 of the staged tarball) that builderd uses to detect
 // drift between staging and claim.
 func TestApplyProject_Inputs_BodyHashStable(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -615,7 +615,7 @@ func TestApplyProject_Inputs_BodyHashStable(t *testing.T) {
 // (leading `./`) extracts the same way as `services` — and the
 // apply succeeds.
 func TestApplyProject_Inputs_PathCanonicalised(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -653,7 +653,7 @@ func TestApplyProject_Inputs_PathCanonicalised(t *testing.T) {
 // plan but the apply creates ZERO apps for it. Only the
 // `cronJobs:` block produces workloads.
 func TestApplyProject_Inputs_ManagedReportedNotProvisioned(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -687,7 +687,7 @@ func TestApplyProject_Inputs_ManagedReportedNotProvisioned(t *testing.T) {
 // project.created. The dashboard renders this; missing →
 // "applied but no audit trail".
 func TestApplyProject_Inputs_AuditProjectCreated(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -715,7 +715,7 @@ func TestApplyProject_Inputs_AuditProjectCreated(t *testing.T) {
 // new workload in a 2nd apply emits workload.added. We exercise
 // it with a single-apply first, then a 2-workload re-apply.
 func TestApplyProject_Inputs_AuditWorkloadAdded(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -745,7 +745,7 @@ func TestApplyProject_Inputs_AuditWorkloadAdded(t *testing.T) {
 // TestApplyProject_Inputs_AuditWorkloadRemoved pins that
 // removing a workload in a 2nd apply emits workload.removed.
 func TestApplyProject_Inputs_AuditWorkloadRemoved(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -775,7 +775,7 @@ func TestApplyProject_Inputs_AuditWorkloadRemoved(t *testing.T) {
 // TestApplyProject_Inputs_AuditWorkloadChanged pins that
 // changing a workload's source emits workload.changed.
 func TestApplyProject_Inputs_AuditWorkloadChanged(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -808,7 +808,7 @@ func TestApplyProject_Inputs_AuditWorkloadChanged(t *testing.T) {
 // events. Cross-account leakage would be a §11 security
 // violation.
 func TestApplyProject_Inputs_AuditAccountScoped(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

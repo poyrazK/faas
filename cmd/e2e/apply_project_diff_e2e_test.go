@@ -117,7 +117,7 @@ func twoWorkloadChangedFixture(t *testing.T, prefix string) []byte {
 // net for a class of bugs where the diff engine treats every
 // apply as `changed all`.
 func TestApplyProject_Diff_Unchanged(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -163,7 +163,7 @@ func TestApplyProject_Diff_Unchanged(t *testing.T) {
 // more workload than the 1st. The new workload gets a build row;
 // existing workloads do not.
 func TestApplyProject_Diff_Added(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -195,7 +195,7 @@ func TestApplyProject_Diff_Added(t *testing.T) {
 // IS NOT NULL — schema-dependent). Existing workloads do not
 // re-build.
 func TestApplyProject_Diff_Removed(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -241,7 +241,7 @@ func TestApplyProject_Diff_Removed(t *testing.T) {
 // workload's deployment row is superseded and a new build is
 // enqueued for it.
 func TestApplyProject_Diff_Changed(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -282,7 +282,7 @@ func TestApplyProject_Diff_Changed(t *testing.T) {
 // applies must be soft-deleted, not crash with 500. The fix
 // lives in pkg/reconcile; this test asserts the wire surface.
 func TestApplyProject_Diff_CronSoftDeleted(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -352,7 +352,7 @@ func TestApplyProject_Diff_CronSoftDeleted(t *testing.T) {
 // contract: after removal, GET /v1/domains for the app returns
 // empty. We assert at the DB level here for CI-safety.
 func TestApplyProject_Diff_DomainCascade(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -390,7 +390,7 @@ func TestApplyProject_Diff_DomainCascade(t *testing.T) {
 // TestApplyProject_Diff_EnvCascade pins the same cascade for
 // env vars: removing a workload drops its env vars too.
 func TestApplyProject_Diff_EnvCascade(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

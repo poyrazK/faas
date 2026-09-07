@@ -908,21 +908,15 @@ func TestBuild_TranslatesTarballCapToProblem(t *testing.T) {
 		t.Fatalf("mkdir staging: %v", err)
 	}
 	tarball := filepath.Join(dir, "src.tar.gz")
-	// 256 MiB body, over Free's 256 MiB cap. The cap is enforced against
-	// the declared header size, so we don't need to stream 256 MiB through
-	// io.CopyN — just a header that claims 256 MiB. The tar file itself
-	// remains small; only the cap check runs against the declared size.
-	writeGzTar(t, tarball, "handler.js", bytes.Repeat([]byte("z"), 256*1024*1024))
+	// Shrink Free's cap to 1 MiB and ship a 2 MiB body. The cap is applied
+	// to the cumulative unpacked size, so this takes the same path as a
+	// 300 MiB tarball against the production 256 MiB cap without writing
+	// hundreds of megabytes through gzip on every run.
+	limits := withAppLayerCapMB(t, api.PlanFree, 1)
+	writeGzTar(t, tarball, "handler.js", bytes.Repeat([]byte("z"), 2*1024*1024))
 
-	limits, ok := api.LimitsFor(api.PlanFree)
-	if !ok {
-		t.Fatal("api.LimitsFor(Free) not ok")
-	}
-
-	// Override the build's plan cap to a tiny value so the post-unpack
-	// cap matches the tarball. We don't go through the apid-side
-	// SourceTarballMaxMB gate — Build() applies the cap directly from
-	// in.Plan/AppLayerMaxMB.
+	// We don't go through the apid-side SourceTarballMaxMB gate — Build()
+	// applies the cap directly from in.Plan via limitsFor.
 	b := NewBuilder(&fakeRunner{})
 	// Build a manifest that fits, no OCI layers. The only path that
 	// matters is the tarball-cap path.

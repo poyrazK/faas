@@ -42,7 +42,7 @@ import (
 //     EdgeRuleMaintenanceRetryAfterSeconds constant)
 //   - Problem.detail contains the app slug (per-tenant visibility)
 func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -149,7 +149,7 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 // gate is checked FIRST in handler.go so the customer never sees a
 // different Problem.code from the fine-grained rule.
 func TestAppsMaintenanceMode_E2E_CoarseGateBeatsEdgeRule(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

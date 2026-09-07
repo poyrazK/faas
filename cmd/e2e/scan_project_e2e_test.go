@@ -298,7 +298,7 @@ func workloadNames(plan api.PlanResponse) []string {
 // The (RootDir, Name) merge key keeps the two `api` and two
 // `worker` entries separate — see pkg/reposcan/scan.go Workload.Key.
 func TestScanProject_MultiTierFixture_UnderQuota(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -394,7 +394,7 @@ func TestScanProject_MultiTierFixture_UnderQuota(t *testing.T) {
 // (per pkg/api/limits.go PlanFree). The app-count check stays
 // under cap (5/1), so the only failing axis is the cron gate.
 func TestScanProject_FreePlan_CronNotAllowed(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -442,7 +442,7 @@ func TestScanProject_FreePlan_CronNotAllowed(t *testing.T) {
 // signal). The filter accepts a comma-separated workload name
 // list; entries not matching are dropped.
 func TestScanProject_OnlyFilter_ManagedUnaffected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -481,7 +481,7 @@ func TestScanProject_OnlyFilter_ManagedUnaffected(t *testing.T) {
 // regression in the multipart-extract-seam pair is caught at CI
 // time, not on the EX44 box.
 func TestScanProject_NestedTarballEntries(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

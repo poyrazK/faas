@@ -41,7 +41,7 @@ import (
 // against the real PgStore + migrations + apid HTTP handler. No KVM, no
 // FC, no guest — this half of §14 M5 is purely a control-plane test.
 func TestQuotaMatrixPg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return // pgtest already t.Skip'd
 	}

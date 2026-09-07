@@ -211,7 +211,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			SBOMStorageKey:      in.SBOMStorageKey,
 		})
 	}
-	limits, ok := api.LimitsFor(in.Plan)
+	limits, ok := limitsFor(in.Plan)
 	if !ok {
 		return BuildResult{}, fmt.Errorf("rootfs: unknown plan %q", in.Plan)
 	}
@@ -1211,3 +1211,9 @@ func InjectFunctionRunner(staging, runnerPath string) error {
 	}
 	return nil
 }
+
+// limitsFor resolves the plan limits a build enforces (app-layer cap,
+// tarball cap). Package-level so tests can shrink the cap to a few MiB and
+// exercise the violation paths without writing hundreds of megabytes to
+// disk; production always resolves through api.LimitsFor.
+var limitsFor = api.LimitsFor

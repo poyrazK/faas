@@ -158,7 +158,7 @@ func scanProjectMultipartWithExclude(t *testing.T, h *e2etest.Harness,
 // — the same scan fixture without exclude produces a non-empty
 // will_deploy for the multi-tier case).
 func TestScanExclude_BrandNewExcluded(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -219,7 +219,7 @@ func TestScanExclude_BrandNewExcluded(t *testing.T) {
 // the operator's intent is "this is long-term excluded; do not
 // touch on this deploy."
 func TestScanExclude_ExistingAppRescued(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -324,7 +324,7 @@ func TestScanExclude_ExistingAppRescued(t *testing.T) {
 // three "service" workloads (api, worker, web) and assert the
 // partition honours the multi-slug shape.
 func TestScanExclude_MultiSlug(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -375,7 +375,7 @@ func TestScanExclude_MultiSlug(t *testing.T) {
 // before the scan engine runs (defence-in-depth — applying an
 // overlapping pair would silently flip the trust model).
 func TestScanExclude_OnlyMutexRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -411,7 +411,7 @@ func TestScanExclude_OnlyMutexRejected(t *testing.T) {
 // typo on `--exclude=payments-apii` would silently apply the
 // deploy without the exclusion.
 func TestScanExclude_UnknownSlugRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

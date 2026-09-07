@@ -315,6 +315,7 @@ func TestCmdLogin_CodeExpired(t *testing.T) {
 // pending, then 410 consumed on the second call. Polling path stops
 // with the consumed error (not the expired one).
 func TestCmdLogin_CodeConsumed_Race(t *testing.T) {
+	fastLoginPoll(t)
 	var exchangeCalls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -389,6 +390,7 @@ func TestCmdLogin_ServerUnreachable(t *testing.T) {
 // must be >= 3s (proves the loop isn't tight-looping). The CLI
 // uses a 1s time.After backoff per iteration.
 func TestCmdLogin_PollingBackoff(t *testing.T) {
+	fastLoginPoll(t)
 	plaintext := testAPIKey('d')
 	var exchangeCalls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -433,8 +435,11 @@ func TestCmdLogin_PollingBackoff(t *testing.T) {
 		t.Fatalf("cmdLogin polling = %d, want 0", code)
 	}
 	dur := time.Since(start)
-	if dur < 3*time.Second {
-		t.Errorf("polling duration = %v, want >= 3s (backoff is 1s/iteration)", dur)
+	// Three pending responses ⇒ at least three backoff waits before the
+	// fourth call succeeds. The backoff is shrunk by fastLoginPoll, so
+	// this pins the per-iteration wait without sleeping through seconds.
+	if dur < 3*loginPollBackoff {
+		t.Errorf("polling duration = %v, want >= %v (three backoff iterations)", dur, 3*loginPollBackoff)
 	}
 	if got := atomic.LoadInt32(&exchangeCalls); got != 4 {
 		t.Errorf("exchange calls = %d, want 4 (3 pending + 1 success)", got)
