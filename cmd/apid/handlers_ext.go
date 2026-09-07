@@ -31,7 +31,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
@@ -2449,6 +2448,20 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 
 // --- crons -----------------------------------------------------------------
 
+const defaultCronTimezone = "UTC"
+
+func normalizeCronTimezone(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultCronTimezone, nil
+	}
+	loc, err := time.LoadLocation(raw)
+	if err != nil {
+		return "", err
+	}
+	return loc.String(), nil
+}
+
 func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -2459,7 +2472,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
 		return
 	}
-	timezone, err := sched.NormalizeTimezone(req.Timezone)
+	timezone, err := normalizeCronTimezone(req.Timezone)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
 		return
@@ -2570,7 +2583,7 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	var timezone string
 	if req.Timezone != nil {
 		var err error
-		timezone, err = sched.NormalizeTimezone(*req.Timezone)
+		timezone, err = normalizeCronTimezone(*req.Timezone)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
 			return
@@ -4366,7 +4379,7 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 
 func cronResponse(c state.Cron) api.CronResponse {
 	if c.Timezone == "" {
-		c.Timezone = sched.DefaultCronTimezone
+		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
 		ID:            c.ID,
