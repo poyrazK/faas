@@ -110,6 +110,13 @@ func TestApplyLayerWhiteout(t *testing.T) {
 	}
 }
 
+func TestApplyLayerRejectsEmptyWhiteout(t *testing.T) {
+	dst := t.TempDir()
+	if err := ApplyLayerGz(dst, gzLayer(t, []entry{{name: ".wh."}})); err == nil {
+		t.Fatal("empty whiteout should be rejected")
+	}
+}
+
 func TestApplyLayerOpaqueWhiteout(t *testing.T) {
 	dst := t.TempDir()
 	if err := ApplyLayerGz(dst, gzLayer(t, []entry{

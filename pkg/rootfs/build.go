@@ -229,7 +229,10 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	defer func() { _ = os.RemoveAll(staging) }()
 
 	for i, layer := range in.Layers {
-		if err := ApplyLayerGz(staging, layer); err != nil {
+		// The app artifact becomes overlayfs' upper directory after
+		// stageAppUpper. Preserve OCI whiteouts as overlayfs markers so a
+		// deletion can hide a path supplied by the shared base drive.
+		if err := ApplyLayerGzWithOverlayWhiteouts(staging, layer); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
 	}
