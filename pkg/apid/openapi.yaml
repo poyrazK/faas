@@ -13925,14 +13925,14 @@ components:
           type: [string, "null"]
           format: byte
           maxLength: 43692
-          description: "Optional base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."
+          description: "Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."
         robots_txt:
           type: [string, "null"]
-          description: "Optional per-app robots.txt body; empty uses the platform allow-all default."
+          description: "Create-time per-app robots.txt body; empty uses the platform allow-all default."
         head_wakes:
           type: boolean
           default: false
-          description: "Opt into waking a parked app for HEAD / instead of receiving the cached edge answer."
+          description: "Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -14536,14 +14536,14 @@ components:
           type: [string, "null"]
           format: byte
           maxLength: 43692
-          description: "Optional base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."
+          description: "Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."
         robots_txt:
           type: [string, "null"]
-          description: "Optional per-app robots.txt body; empty uses the platform allow-all default."
+          description: "Persisted per-app robots.txt body; empty uses the platform allow-all default."
         head_wakes:
           type: boolean
           default: false
-          description: "Opt into waking a parked app for HEAD / instead of receiving the cached edge answer."
+          description: "Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
