@@ -68,13 +68,12 @@ func recordLayerEntrySkipped() {
 // entry whose path would escape dst (path traversal is a build-input attack
 // surface, spec §9.1).
 //
-// Note: whiteouts here delete from the staging tree, which is correct for one app
-// layer removing a file introduced by a lower app layer. Hiding a file that lives
-// in the shared BASE (drive0) requires an overlayfs char-device whiteout created
-// at mkfs time under root — tracked separately; the common add-only app never
-// hits it.
+// ApplyLayer materializes whiteouts by deleting from the staging tree, which is
+// correct while assembling a complete rootfs or base. The two-drive app path
+// uses ApplyLayerGzWithOverlayWhiteouts so deletions also hide paths supplied by
+// the shared BASE (drive0) after guest-init mounts the upper filesystem.
 func ApplyLayer(dst string, tr *tar.Reader) error {
-	return ApplyLayerWithResolver(dst, tr, nil)
+	return applyLayer(dst, tr, layerApplyOptions{})
 }
 
 // ApplyLayerWithResolver is the Resolver-aware sibling of ApplyLayer
@@ -85,6 +84,24 @@ func ApplyLayer(dst string, tr *tar.Reader) error {
 // out-of-range resolved uid/gid are clamped through the existing
 // inOwnershipRange gate (ADR-136).
 func ApplyLayerWithResolver(dst string, tr *tar.Reader, res Resolver) error {
+	return applyLayer(dst, tr, layerApplyOptions{resolver: res})
+}
+
+// ApplyLayerWithOverlayWhiteouts applies one app layer into an overlayfs upper
+// tree. Unlike ApplyLayer, whiteouts are retained as overlayfs markers so a
+// file that exists only in the shared base drive remains hidden at runtime.
+// The ordinary ApplyLayer path intentionally keeps its materialized-tree
+// semantics because it is used while assembling a complete rootfs or base.
+func ApplyLayerWithOverlayWhiteouts(dst string, tr *tar.Reader) error {
+	return applyLayer(dst, tr, layerApplyOptions{preserveWhiteouts: true})
+}
+
+type layerApplyOptions struct {
+	resolver          Resolver
+	preserveWhiteouts bool
+}
+
+func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -119,21 +136,46 @@ func ApplyLayerWithResolver(dst string, tr *tar.Reader, res Resolver) error {
 			base := filepath.Base(archiveName)
 			switch {
 			case opaque:
-				// Opaque dir: drop everything currently under its parent.
-				if err := clearDir(filepath.Dir(target)); err != nil {
-					return err
+				if opts.preserveWhiteouts {
+					if err := applyOverlayOpaque(filepath.Dir(target)); err != nil {
+						return fmt.Errorf("rootfs: opaque whiteout %s: %w", filepath.Dir(target), err)
+					}
+				} else {
+					// Opaque dir: drop everything currently under its parent.
+					if err := clearDir(filepath.Dir(target)); err != nil {
+						return err
+					}
 				}
 				continue
 			case strings.HasPrefix(base, whiteoutPrefix):
 				// Delete the named sibling from lower layers.
-				victim := filepath.Join(filepath.Dir(target), strings.TrimPrefix(base, whiteoutPrefix))
-				if err := os.RemoveAll(victim); err != nil {
-					return fmt.Errorf("rootfs: whiteout %s: %w", victim, err)
+				victimName := strings.TrimPrefix(base, whiteoutPrefix)
+				if victimName == "" {
+					return fmt.Errorf("rootfs: invalid empty whiteout %q", hdr.Name)
+				}
+				if opts.preserveWhiteouts {
+					if err := applyOverlayWhiteout(filepath.Dir(target), victimName, target); err != nil {
+						return fmt.Errorf("rootfs: whiteout %s: %w", victimName, err)
+					}
+				} else {
+					victim := filepath.Join(filepath.Dir(target), victimName)
+					if err := os.RemoveAll(victim); err != nil {
+						return fmt.Errorf("rootfs: whiteout %s: %w", victim, err)
+					}
 				}
 				continue
 			}
 
-			if err := applyEntry(dst, target, hdr, tr, res); err != nil {
+			if opts.preserveWhiteouts {
+				// A later layer recreating a previously whiteouted path
+				// must remove the sibling marker; otherwise overlayfs would
+				// continue hiding the new upper entry.
+				marker := filepath.Join(filepath.Dir(target), whiteoutPrefix+filepath.Base(target))
+				if err := os.RemoveAll(marker); err != nil {
+					return fmt.Errorf("rootfs: clear replacement whiteout %s: %w", marker, err)
+				}
+			}
+			if err := applyEntry(dst, target, hdr, tr, opts.resolver); err != nil {
 				return err
 			}
 			continue
@@ -151,12 +193,22 @@ func ApplyLayerGz(dst string, r io.Reader) error {
 // ApplyLayerGz (ADR-142 §Decision 1). Delegates to
 // ApplyLayerWithResolver after gunzip.
 func ApplyLayerGzWithResolver(dst string, r io.Reader, res Resolver) error {
+	return applyLayerGz(dst, r, layerApplyOptions{resolver: res})
+}
+
+// ApplyLayerGzWithOverlayWhiteouts is the gzip-compressed counterpart to
+// ApplyLayerWithOverlayWhiteouts.
+func ApplyLayerGzWithOverlayWhiteouts(dst string, r io.Reader) error {
+	return applyLayerGz(dst, r, layerApplyOptions{preserveWhiteouts: true})
+}
+
+func applyLayerGz(dst string, r io.Reader, opts layerApplyOptions) error {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("rootfs: gzip: %w", err)
 	}
 	defer func() { _ = zr.Close() }()
-	return ApplyLayerWithResolver(dst, tar.NewReader(zr), res)
+	return applyLayer(dst, tar.NewReader(zr), opts)
 }
 
 const (
