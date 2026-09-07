@@ -151,6 +151,16 @@ func TestEnvContract_Sorted(t *testing.T) {
 		if v.Source == EnvSourceSecretsEnv && !strings.Contains(v.Note, "/etc/faas/") {
 			t.Errorf("%s: secrets-env entries must name the delivering file in Note", v.Name)
 		}
+		if v.Required && v.Default != "" {
+			t.Errorf("%s: required entries cannot have a default", v.Name)
+		}
+		if v.Validate != "" {
+			switch v.Validate {
+			case EnvValidationPathExists, EnvValidationSocket, EnvValidationURL, EnvValidationInt:
+			default:
+				t.Errorf("%s: unknown validation kind %q", v.Name, v.Validate)
+			}
+		}
 	}
 }
 
@@ -358,10 +368,14 @@ func renderEnvContractDoc() string {
 	} {
 		fmt.Fprintf(&b, "| `%s` | %s |\n", s.src, s.desc)
 	}
-	b.WriteString("\n| Variable | Owners | Source | Note |\n|---|---|---|---|\n")
+	b.WriteString("\n| Variable | Owners | Source | Required | Default | Validate | Note |\n|---|---|---|---|---|---|---|\n")
 	for _, v := range EnvContract {
 		note := strings.ReplaceAll(v.Note, "|", "\\|")
-		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s |\n", v.Name, strings.Join(v.Owners, ", "), v.Source, note)
+		required := ""
+		if v.Required {
+			required = "yes"
+		}
+		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s | %s | `%s` | %s |\n", v.Name, strings.Join(v.Owners, ", "), v.Source, required, v.Default, v.Validate, note)
 	}
 	return b.String()
 }

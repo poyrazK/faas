@@ -213,11 +213,19 @@ func withTestMailTransport(t *testing.T) {
 	t.Setenv("FAAS_MAIL_FROM", "test@gregale.test")
 }
 
+// withTestStore supplies the explicit in-memory seam that production no
+// longer gets from defaultDeps. The daemon path must wire PgStore after the
+// database opens; lifecycle tests intentionally bypass that step.
+func withTestStore(deps *runDeps) {
+	deps.store = func() state.Store { return state.NewMemStore() }
+}
+
 func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
 	withTestHMACFiles(t)
 	withBillingKeysForTest(t)
 	withTestMailTransport(t)
 	deps := defaultDeps()
+	withTestStore(&deps)
 	deps.listen = func(_, _ string) (net.Listener, error) {
 		return nil, errors.New("addr in use")
 	}
@@ -337,6 +345,7 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 func TestRunWithDeps_SeedFailureReturns(t *testing.T) {
 	withTestHMACFiles(t)
 	deps := defaultDeps()
+	withTestStore(&deps)
 	deps.getenv = func(k string) string {
 		if k == "FAAS_DEV_TOKEN" {
 			return "garbage"
@@ -361,6 +370,7 @@ func TestRunWithDeps_ServeError(t *testing.T) {
 	_ = ln.Close()
 
 	deps := defaultDeps()
+	withTestStore(&deps)
 	deps.listen = func(_, _ string) (net.Listener, error) { return ln, nil }
 
 	done := make(chan error, 1)
@@ -402,19 +412,14 @@ func TestDefaultDeps_ReturnExpected(t *testing.T) {
 	if d.listen == nil {
 		t.Error("defaultDeps().listen is nil")
 	}
-	if d.store == nil {
-		t.Error("defaultDeps().store is nil")
+	if d.store != nil {
+		t.Error("defaultDeps().store must be nil until run() wires PgStore")
 	}
 	if d.getenv == nil {
 		t.Error("defaultDeps().getenv is nil")
 	}
 	if d.newSrv == nil {
 		t.Error("defaultDeps().newSrv is nil")
-	}
-	// Sanity: store() returns a usable Store.
-	s := d.store()
-	if s == nil {
-		t.Error("defaultDeps().store() returned nil")
 	}
 	srv := d.newSrv(":0", http.NewServeMux(), nil)
 	if srv.ReadHeaderTimeout == 0 {

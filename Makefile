@@ -200,6 +200,10 @@ check-state-coverage: ## Assert pkg/state coverage ≥ 70% from existing profile
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
 	bash scripts/ci/check_memstore_stubs.sh
 
+.PHONY: env-contract-check
+env-contract-check: ## Fail undeclared FAAS_* reads or required vars without an Ansible delivery path (issue #1529 / PR-3b)
+	bash scripts/ci/check_env_contract.sh
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
 # (no separate Make variable — keeping the table adjacent to the verifier
