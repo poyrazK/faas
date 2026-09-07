@@ -18,6 +18,12 @@ func (f startupVerifierFunc) Verify(ctx context.Context, layer, sig string) erro
 	return f(ctx, layer, sig)
 }
 
+type startupDeploymentListerFunc func(context.Context) ([]state.Deployment, error)
+
+func (f startupDeploymentListerFunc) ListAllDeployments(ctx context.Context) ([]state.Deployment, error) {
+	return f(ctx)
+}
+
 func TestPrepareAttestationsBoundsWorkAndKeepsFailuresIsolated(t *testing.T) {
 	deps := []state.Deployment{{Status: state.DeployLive, RootfsKey: "one"}, {Status: state.DeployLive, RootfsKey: "two"}, {Status: state.DeployLive, RootfsKey: "bad"}, {Status: state.DeployLive, RootfsKey: "one"}, {Status: state.DeployFailed, RootfsKey: "excluded"}}
 	var mu sync.Mutex
@@ -62,5 +68,40 @@ func TestPrepareAttestationsCancellationCannotOpenReadiness(t *testing.T) {
 	err := prepareLayerAttestations(ctx, []state.Deployment{{Status: state.DeployLive, RootfsKey: "one"}}, verify, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want cancellation", err)
+	}
+}
+
+func TestStartLayerAttestationWarmDoesNotBlockReadiness(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	verify := startupVerifierFunc(func(context.Context, string, string) error {
+		close(started)
+		<-release
+		return nil
+	})
+	done := startLayerAttestationWarm(
+		context.Background(),
+		startupDeploymentListerFunc(func(context.Context) ([]state.Deployment, error) {
+			return []state.Deployment{{Status: state.DeployLive, RootfsKey: "slow-remote-layer"}}, nil
+		}),
+		verify,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background attestation warm did not start")
+	}
+	select {
+	case <-done:
+		t.Fatal("background attestation warm completed before verifier was released")
+	default:
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("background attestation warm did not finish")
 	}
 }
