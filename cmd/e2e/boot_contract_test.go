@@ -60,6 +60,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 		t.Fatalf("decode rendered apid unit: %v", err)
 	}
 	configPath := renderedConfigPath(t, unit, etcDir)
+	relocateRenderedDBURL(t, configPath, dsn)
 
 	socketDir, err := os.MkdirTemp("", "faas-boot-apid-*")
 	if err != nil {
@@ -201,6 +202,22 @@ func renderedConfigPath(t *testing.T, unit daemonunit.Unit, etcDir string) strin
 	}
 	t.Fatalf("rendered ExecStart has no --config: %q", unit.ExecStart)
 	return ""
+}
+
+func relocateRenderedDBURL(t *testing.T, configPath, dsn string) {
+	t.Helper()
+	const production = `db_url = "postgres:///faas?host=/run/postgresql&user=faas"`
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read rendered apid config: %v", err)
+	}
+	if strings.Count(string(body), production) != 1 {
+		t.Fatalf("rendered apid config does not contain exactly one production-local db_url")
+	}
+	body = []byte(strings.Replace(string(body), production, `db_url = `+fmt.Sprintf("%q", dsn), 1))
+	if err := os.WriteFile(configPath, body, 0o640); err != nil {
+		t.Fatalf("relocate rendered apid db_url: %v", err)
+	}
 }
 
 func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath, hostAgePath, hostHMACPath, advisorySocket, root string) []string {
