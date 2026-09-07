@@ -1970,6 +1970,7 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 			})
 		}
 		if h.metrics != nil {
+			h.metrics.ObserveCORSPreflightEdge(app.ID)
 			h.metrics.ObserveEdgeRuleMatch("cors", "match")
 			// PR-B: preflight 204 short-circuit is a successful apply
 			// (the gate fired and wrote its response). CORS preflight
