@@ -908,26 +908,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (default-local / tests) means there is no durable view to gate
 	// on, so the sweep is skipped entirely rather than run blind.
 	if store != nil {
+		isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
+			ins, err := store.InstanceByID(ctx, instanceID)
+			if err != nil {
+				// A row that is genuinely gone is not live; anything else is
+				// unknown and must not authorise resource removal.
+				if errors.Is(err, state.ErrNotFound) {
+					return false, nil
+				}
+				return false, err
+			}
+			return state.IsLive(ins.State), nil
+		}
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
 			Runner:   wire.ExecRunner{},
 			Log:      log,
-			IsLive: func(ctx context.Context, instanceID string) (bool, error) {
-				ins, err := store.InstanceByID(ctx, instanceID)
-				if err != nil {
-					// A row that is genuinely gone is not live;
-					// anything else is unknown and must not
-					// authorise a kill.
-					if errors.Is(err, state.ErrNotFound) {
-						return false, nil
-					}
-					return false, err
-				}
-				// state.IsLive is the documented single source of
-				// truth for the live set, so a future state added
-				// there is honoured here without a second edit.
-				return state.IsLive(ins.State), nil
-			},
+			IsLive:   isLiveInstance,
 		})
 		if err != nil {
 			log.Warn("vmmd: orphan reap failed", "err", err)
@@ -937,6 +934,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"skipped_live", rep.SkippedLive,
 				"skipped_young", rep.SkippedYoung,
 				"skipped_unknown", rep.SkippedUnknown)
+		}
+		if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
+			cloneRep, cloneErr := fcvm.ReapOrphanedLayerClones(ctx, fcvm.LayerCloneReapOptions{
+				Root:   cacheBackend.Root(),
+				IsLive: isLiveInstance,
+				Log:    log,
+			})
+			if cloneErr != nil {
+				log.Warn("vmmd: orphan layer clone reap failed", "err", cloneErr)
+			} else if cloneRep.Scanned > 0 {
+				log.Info("vmmd: orphan layer clone reap complete",
+					"scanned", cloneRep.Scanned, "reaped", cloneRep.Reaped,
+					"reclaimed_logical_bytes", cloneRep.ReclaimedLogicalBytes,
+					"skipped_live", cloneRep.SkippedLive,
+					"skipped_young", cloneRep.SkippedYoung,
+					"skipped_unknown", cloneRep.SkippedUnknown,
+					"failed", cloneRep.Failed)
+			}
 		}
 	}
 

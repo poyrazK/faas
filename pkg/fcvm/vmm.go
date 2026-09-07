@@ -3725,7 +3725,7 @@ func (v *JailerVMM) stageWritableAs(root, src, name string, uid, gid int, instan
 	if instance == "" {
 		return stageWritableAs(root, src, name, uid, gid)
 	}
-	clone, cloned, err := reflinkCloneTemp(src)
+	clone, cloned, err := reflinkCloneTemp(src, instance)
 	if err != nil {
 		return "", fmt.Errorf("reflink writable %s: %w", src, err)
 	}
@@ -3953,7 +3953,7 @@ const ficloneIoctl = 0x40049409
 // false when the filesystem does not support FICLONE; callers then use their
 // portable copy path. Keeping the clone beside src is what guarantees both
 // files are on the same reflink-capable filesystem.
-func reflinkCloneTemp(src string) (path string, cloned bool, err error) {
+func reflinkCloneTemp(src, instance string) (path string, cloned bool, err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return "", false, err
@@ -3963,7 +3963,7 @@ func reflinkCloneTemp(src string) (path string, cloned bool, err error) {
 			err = closeErr
 		}
 	}()
-	out, err := os.CreateTemp(filepath.Dir(src), ".faas-layer-*")
+	out, err := os.CreateTemp(filepath.Dir(src), layerCloneTempPattern(instance))
 	if err != nil {
 		return "", false, err
 	}
@@ -3981,6 +3981,17 @@ func reflinkCloneTemp(src string) (path string, cloned bool, err error) {
 		return "", false, nil
 	}
 	return path, true, nil
+}
+
+func layerCloneTempPattern(instance string) string {
+	if !looksLikeInstanceID(instance) {
+		return ".faas-layer-*"
+	}
+	// Include the durable instance id so a replacement vmmd can safely
+	// recover clones whose in-memory materialisedTmp ownership was lost
+	// across a daemon restart. ReapOrphanedLayerClones applies the same
+	// durable liveness gate as the jail sweep before removing one.
+	return ".faas-layer-" + instance + "-*"
 }
 
 //nolint:forbidigo // src/dst are vetted slot/instance-id paths under /srv/fc — vmmd is the sole writer of this directory; the tmpfs jail root means symlink-attack would require root (which vmmd already has, by spec §11). Copy is an internal migration helper, not a customer-path surface.

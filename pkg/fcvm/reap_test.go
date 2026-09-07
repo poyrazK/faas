@@ -210,6 +210,82 @@ func TestReapOrphanedJails_MissingJailRootIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestReapOrphanedLayerClones_UsesDurableLivenessGate(t *testing.T) {
+	root := t.TempDir()
+	bucket := filepath.Join(root, "a3")
+	if err := os.MkdirAll(bucket, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unknownID := "dddddddd-4444-4444-8444-dddddddddddd"
+	youngID := "eeeeeeee-5555-4555-8555-eeeeeeeeeeee"
+	old := time.Now().Add(-time.Hour)
+	writeClone := func(dir, id, suffix, body string, modTime time.Time) string {
+		t.Helper()
+		path := filepath.Join(dir, ".faas-layer-"+id+"-"+suffix)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	dead := writeClone(bucket, idDead, "101", "dead", old)
+	live := writeClone(bucket, idLive, "102", "live", old)
+	unknown := writeClone(bucket, unknownID, "103", "unknown", old)
+	young := writeClone(bucket, youngID, "104", "young", time.Now())
+	legacy := filepath.Join(bucket, ".faas-layer-105")
+	if err := os.WriteFile(legacy, []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Candidate-looking files outside a two-hex cache bucket are outside the
+	// bounded cache namespace and must not be traversed.
+	backup := filepath.Join(root, "operator-backup")
+	if err := os.MkdirAll(backup, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ignored := writeClone(backup, idDead, "106", "ignored", old)
+
+	rep, err := ReapOrphanedLayerClones(context.Background(), LayerCloneReapOptions{
+		Root: root,
+		IsLive: func(_ context.Context, id string) (bool, error) {
+			switch id {
+			case idLive:
+				return true, nil
+			case unknownID:
+				return false, errors.New("store unavailable")
+			default:
+				return false, nil
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("ReapOrphanedLayerClones: %v", err)
+	}
+	if rep.Scanned != 4 || rep.Reaped != 1 || rep.ReclaimedLogicalBytes != int64(len("dead")) ||
+		rep.SkippedLive != 1 || rep.SkippedUnknown != 1 || rep.SkippedYoung != 1 || rep.Failed != 0 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if _, err := os.Stat(dead); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("dead clone still exists: %v", err)
+	}
+	for _, path := range []string{live, unknown, young, legacy, ignored} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("safe clone %q was removed: %v", path, err)
+		}
+	}
+}
+
+func TestReapOrphanedLayerClones_RefusesUngatedSweep(t *testing.T) {
+	root := t.TempDir()
+	if _, err := ReapOrphanedLayerClones(context.Background(), LayerCloneReapOptions{Root: root}); err == nil {
+		t.Fatal("nil IsLive was accepted")
+	}
+	if _, err := ReapOrphanedLayerClones(context.Background(), LayerCloneReapOptions{IsLive: alwaysDead}); err == nil {
+		t.Fatal("empty root was accepted")
+	}
+}
+
 // --- process discovery -------------------------------------------------
 
 // fakeProc writes a /proc-shaped tree so the cmdline scan can be tested
