@@ -88,3 +88,52 @@ func TestAnalyzeUnknownAndLoopbackWarning(t *testing.T) {
 		t.Fatalf("warnings = %+v, want framework_not_detected and loopback_bind_possible", got.Warnings)
 	}
 }
+
+func TestAnalyzeNodeUsesDeclaredPackageManagerAndHealthRoute(t *testing.T) {
+	got, err := Analyze(fstest.MapFS{
+		"package.json":   &fstest.MapFile{Data: []byte(`{"packageManager":"pnpm@9.12.0","dependencies":{"express":"^5"},"scripts":{"start":"node src/server.js"}}`)},
+		"pnpm-lock.yaml": &fstest.MapFile{Data: []byte("lockfileVersion: 9\n")},
+		"src/server.js":  &fstest.MapFile{Data: []byte(`app.get("/readyz", (_req, res) => res.send("ok")); app.listen(process.env.PORT);`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PackageManager != "pnpm" || got.StartCommand != "pnpm run start" {
+		t.Fatalf("profile = %+v, want pnpm start command", got)
+	}
+	if got.HealthPath != "/readyz" {
+		t.Fatalf("health path = %q, want /readyz", got.HealthPath)
+	}
+}
+
+func TestAnalyzePythonUsesNestedApplicationEntrypoint(t *testing.T) {
+	got, err := Analyze(fstest.MapFS{
+		"pyproject.toml": &fstest.MapFile{Data: []byte("[project]\ndependencies = ['fastapi', 'uvicorn']\n")},
+		"uv.lock":        &fstest.MapFile{Data: []byte("version = 1\n")},
+		"src/api.py":     &fstest.MapFile{Data: []byte("from fastapi import FastAPI\napi = FastAPI()\n@api.get('/health')\ndef health(): return {'ok': True}\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PackageManager != "uv" || got.StartCommand != "uvicorn src.api:api --host 0.0.0.0 --port $PORT" {
+		t.Fatalf("profile = %+v, want uv + nested FastAPI entrypoint", got)
+	}
+	if got.HealthPath != "/health" {
+		t.Fatalf("health path = %q, want /health", got.HealthPath)
+	}
+}
+
+func TestAnalyzeWarnsForDevelopmentNodeCommand(t *testing.T) {
+	got, err := Analyze(fstest.MapFS{
+		"package.json": &fstest.MapFile{Data: []byte(`{"dependencies":{"express":"^5"},"scripts":{"start":"next dev"}}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, warning := range got.Warnings {
+		if warning.Code == "development_start_command" {
+			return
+		}
+	}
+	t.Fatalf("warnings = %+v, want development_start_command", got.Warnings)
+}

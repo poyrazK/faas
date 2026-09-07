@@ -562,6 +562,7 @@ var cliCommands = []cliCommand{
 			{Name: "lenient", Short: "return success even when diff has breaks"},
 			{Name: "server-diff", Short: "compute deploy diff on apid"},
 			{Name: "doctor-strict", Short: "run doctor before deploy and abort on errors"},
+			{Name: "no-doctor", Short: "skip the automatic local doctor preflight"},
 		},
 	},
 	{
