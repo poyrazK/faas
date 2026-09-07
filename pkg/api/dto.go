@@ -6930,8 +6930,9 @@ type DebugCompareRequest struct {
 
 // DebugCompareRouteStats is the per-route stats row in the
 // compare response. P50/P95/P99 are computed from the same
-// percentile_cont aggregate as RequestTelemetryBaselineP95ByRoute
-// (PR-A). Count is the row count in the window for that route.
+// count-weighted percentile aggregate as
+// RequestTelemetryBaselineP95ByRoute (PR-A). Count is the
+// represented request count in the window for that route.
 type DebugCompareRouteStats struct {
 	Route     string `json:"route"`
 	SourceP50 int    `json:"source_p50_ms"`

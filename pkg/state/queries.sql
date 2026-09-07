@@ -1597,9 +1597,10 @@ LIMIT 1;
 
 -- name: RequestTelemetryByDeployment :many
 -- Per-deployment drilldown. Used by gregale debug compare and the
--- regression detector (PR-B). Uses
--- request_telemetry_app_dep_received_idx.
-SELECT id, route, method, status, latency_ms, cold_boot, trace_id, received_at
+-- regression detector (PR-B). Includes the publisher's `count`
+-- weight so callers can report request totals rather than stored
+-- aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
+SELECT id, route, method, status, latency_ms, count, cold_boot, trace_id, received_at
 FROM request_telemetry
 WHERE app_id = $1
   AND deployment_id = $2
@@ -1609,26 +1610,81 @@ ORDER BY received_at DESC
 LIMIT $5;
 
 -- name: RequestTelemetryBaselineP95ByRoute :many
--- Per-route p50/p95/p99 latency + row count for the
+-- Per-route p50/p95/p99 latency + represented request count for the
 -- compare endpoint and the regression detector (ADR-127 PR-B
 -- cron + PR Debugger UX v1 compare handler). Single index scan
 -- over the existing request_telemetry_app_dep_received_idx
 -- (PR-A migration 00427) so the four aggregates share one
--- window. percentile_cont is the canonical Postgres window-
--- function call; COUNT(*) gives the consistent row count
--- over the same scan so p50/p95/p99 and n can never disagree
--- about which rows contributed.
+-- window. The recorder collapses burst traffic into rows with a
+-- `count` weight; expand that weight mathematically instead of
+-- treating each aggregate row as one request. The rank/floor
+-- formulation below is equivalent to percentile_cont over the
+-- expanded multiset, without materializing one row per request.
+WITH weighted AS (
+    SELECT route,
+           latency_ms,
+           SUM(count::bigint) AS weight
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND deployment_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+    GROUP BY route, latency_ms
+), ranked AS (
+    SELECT route,
+           latency_ms,
+           SUM(weight) OVER (
+               PARTITION BY route
+               ORDER BY latency_ms
+               ROWS UNBOUNDED PRECEDING
+           ) AS cumulative,
+           SUM(weight) OVER (PARTITION BY route) AS total
+    FROM weighted
+), targets AS (
+    SELECT route,
+           total,
+           (total - 1)::numeric * 0.50 AS p50_rank,
+           (total - 1)::numeric * 0.95 AS p95_rank,
+           (total - 1)::numeric * 0.99 AS p99_rank
+    FROM ranked
+    GROUP BY route, total
+), values_at_rank AS (
+    SELECT r.route,
+           t.total,
+           t.p50_rank,
+           t.p95_rank,
+           t.p99_rank,
+           MIN(r.latency_ms) FILTER (
+               WHERE r.cumulative > floor(t.p50_rank)
+           ) AS p50_low,
+           MIN(r.latency_ms) FILTER (
+               WHERE r.cumulative > ceil(t.p50_rank)
+           ) AS p50_high,
+           MIN(r.latency_ms) FILTER (
+               WHERE r.cumulative > floor(t.p95_rank)
+           ) AS p95_low,
+           MIN(r.latency_ms) FILTER (
+               WHERE r.cumulative > ceil(t.p95_rank)
+           ) AS p95_high,
+           MIN(r.latency_ms) FILTER (
+               WHERE r.cumulative > floor(t.p99_rank)
+           ) AS p99_low,
+           MIN(r.latency_ms) FILTER (
+               WHERE r.cumulative > ceil(t.p99_rank)
+           ) AS p99_high
+    FROM ranked AS r
+    JOIN targets AS t USING (route)
+    GROUP BY r.route, t.total, t.p50_rank, t.p95_rank, t.p99_rank
+)
 SELECT route,
-       percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int AS p50_ms,
-       percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95_ms,
-       percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::int AS p99_ms,
-       COUNT(*)::bigint                                              AS n
-FROM request_telemetry
-WHERE app_id = $1
-  AND deployment_id = $2
-  AND received_at >= $3
-  AND received_at <  $4
-GROUP BY route;
+       (p50_low + (p50_high - p50_low) *
+           (p50_rank - floor(p50_rank)))::int AS p50_ms,
+       (p95_low + (p95_high - p95_low) *
+           (p95_rank - floor(p95_rank)))::int AS p95_ms,
+       (p99_low + (p99_high - p99_low) *
+           (p99_rank - floor(p99_rank)))::int AS p99_ms,
+       total::bigint AS n
+FROM values_at_rank;
 
 -- name: RequestTelemetryAnalyticsSummary :one
 -- Customer-facing request analytics over a bounded retention window.
