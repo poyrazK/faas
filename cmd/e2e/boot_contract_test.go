@@ -81,7 +81,10 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate host age identity: %v", err)
 	}
-	writeBootKey(t, hostAgePath, []byte(identity.String()+"\n"), 0o400)
+	// GenerateAndSaveHostKey writes the raw age identity with no trailing
+	// newline; keep the boot fixture byte-for-byte equivalent because the
+	// production loader intentionally parses the credential strictly.
+	writeBootKey(t, hostAgePath, []byte(identity.String()), 0o400)
 
 	mainAddr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
