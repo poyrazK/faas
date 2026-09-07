@@ -91,6 +91,7 @@ as part of PR #618's own embedded set; the new content at 131/132 is real, not a
 | Failure | Defence |
 |---|---|
 | Customer deploys with no override; trigger wakes N extra instances on first tick | Expected behaviour (ADR-060 "billed from t=0"); release note + dashboard banner |
+| Latest deployment becomes `failed`, `superseded`, or `cancelled` with no live replacement | Trigger skips it and meterd stops synthetic floor billing; terminal capacity cannot satisfy the configured floor |
 | Customer pins `deployments.min_instances=5` and `apps.min_instances=10` | Effective = 10; the trigger honours the higher; meter bills at 10 |
 | Customer pins `deployments.min_instances=8` on Free plan | PATCH handler returns 422 plan_min_instances_not_allowed |
 | Pre-00131 rows with NULL `instances.deployment_id` | `ConcurrencyForDeployment` predicate `deployment_id = $2` excludes NULL rows; under-counts but safe (engine backstop) |
