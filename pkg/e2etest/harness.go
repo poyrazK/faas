@@ -1239,7 +1239,7 @@ func moduleImportPath() (string, error) {
 	// Last-resort: parse go.mod manually.
 	data, rerr := os.ReadFile("go.mod")
 	if rerr != nil {
-		return "", fmt.Errorf("e2etest: cannot determine module path (go list: %v, go.mod: %w)", err, rerr)
+		return "", fmt.Errorf("e2etest: cannot determine module path (go list: %w, go.mod: %w)", err, rerr)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "module ") {
