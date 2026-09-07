@@ -105,6 +105,17 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// envOrFrom is envOr through runDeps.getenv. Boot-contract tests execute the
+// real binary, while unit tests can keep environment resolution deterministic.
+func envOrFrom(getenv func(string) string, key, fallback string) string {
+	if getenv != nil {
+		if v := getenv(key); v != "" {
+			return v
+		}
+	}
+	return fallback
+}
+
 // rekeyEnabledFromEnv reads FAAS_REKEY_ENABLED via the test seam
 // (deps.getenv) and parses the canonical truthy spellings.
 // Default false preserves the v1 no-op posture — operators who
@@ -1953,7 +1964,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// calls match.
 		sharedLimiter := peraccount.NewLimiter()
 		if deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false" {
-			rtSrv, rtLis, err := runRequestTelemetryServer(ctx, srv.store, srv.ops, log, sharedLimiter)
+			rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
+			rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter)
 			if err != nil {
 				_ = l.Close()
 				return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -1974,7 +1986,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// to disable — but doing so will break the OTel handler
 		// at the gateway, which is the intended safe default.
 		if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
-			authSrv, authLis, err := runAuthServer(ctx, srv.store, log)
+			authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
+			authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
 			if err != nil {
 				_ = l.Close()
 				return fmt.Errorf("apid: auth server: %w", err)
@@ -1997,7 +2010,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// OTel writer's write path (the auth + handler can
 		// still run; they just stop landing writes).
 		if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-			swSrv, swLis, err := runSpansWriterServer(ctx, srv.store, srv.ops, log, sharedLimiter)
+			swTarget := envOrFrom(deps.getenv, "FAAS_APID_OTEL_SPANS_WRITER_SOCKET", "/run/faas/otel_spans_writer.sock")
+			swSrv, swLis, err := runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter)
 			if err != nil {
 				_ = l.Close()
 				return fmt.Errorf("apid: otel spans writer server: %w", err)
@@ -2534,18 +2548,16 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // server (ADR-127 PR-B: gatewayd-internal → apid
 // IncrementRequestTelemetry streaming RPC). Listens on a unix
 // socket under /run/faas so the gateway-side dial is loopback-only
-// and TLS-free (single-box mode). The socket path is hard-coded
-// to /run/faas/request_telemetry.sock — gatewayd-internal dials
-// it via FAAS_APID_REQUEST_TELEMETRY_SOCKET env (defaulting to
-// the same path).
+// and TLS-free (single-box mode). FAAS_APID_REQUEST_TELEMETRY_SOCKET
+// overrides the default /run/faas/request_telemetry.sock path on both
+// ends of the connection.
 //
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter) (*grpc.Server, net.Listener, error) {
-	const sock = "/run/faas/request_telemetry.sock"
-	lis, err := wire.ListenOrRecreateByName(sock, "faas-apid")
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter) (*grpc.Server, net.Listener, error) {
+	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
@@ -2556,20 +2568,16 @@ func runRequestTelemetryServer(ctx context.Context, store state.Store, ops *wire
 
 // runSpansWriterServer brings up the SpansWriter gRPC server
 // (ADR-127 PR-D: gatewayd-public → apid WriteSpansSummary
-// unary RPC). Listens on /run/faas/otel_spans_writer.sock so
-// the gateway-side dial is loopback-only and TLS-free
-// (single-box mode). The socket path is hard-coded —
-// gatewayd-public dials it via FAAS_APID_OTEL_SPANS_WRITER_SOCKET
-// env (defaulting to the same path).
+// unary RPC). Listens on /run/faas/otel_spans_writer.sock by default;
+// FAAS_APID_OTEL_SPANS_WRITER_SOCKET overrides the path on both ends.
 //
 // Returns the server (caller calls Serve) and the listener.
 // Errors here are non-fatal: the caller logs and continues
 // without the spans_writer gRPC server (the apid HTTP listener
 // still serves; the gateway's OTel flush loop drops the entry
 // at the next tick).
-func runSpansWriterServer(ctx context.Context, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter) (*grpc.Server, net.Listener, error) {
-	const sock = "/run/faas/otel_spans_writer.sock"
-	lis, err := wire.ListenOrRecreateByName(sock, "faas-apid")
+func runSpansWriterServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter) (*grpc.Server, net.Listener, error) {
+	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("otel spans writer listen: %w", err)
 	}
@@ -2580,9 +2588,8 @@ func runSpansWriterServer(ctx context.Context, store state.Store, ops *wire.OpsM
 
 // runAuthServer brings up the Auth gRPC server (ADR-127 PR-D:
 // gatewayd-public → apid AuthenticateKey unary RPC). Listens on
-// /run/faas/auth.sock so the gateway-side dial is loopback-only
-// and TLS-free (single-box mode). The socket path is hard-coded
-// — gatewayd-public dials it via FAAS_APID_AUTH_SOCKET env.
+// /run/faas/auth.sock by default; FAAS_APID_AUTH_SOCKET overrides
+// the path on both ends.
 //
 // Returns the server (caller calls Serve) and the listener.
 // Errors here are non-fatal: the caller logs and continues
@@ -2590,9 +2597,8 @@ func runSpansWriterServer(ctx context.Context, store state.Store, ops *wire.OpsM
 // serves; the gateway's OTel handler refuses to start without
 // auth, so a missing auth server == a missing OTel surface,
 // which is the desired fail-closed posture).
-func runAuthServer(ctx context.Context, store state.Store, log *slog.Logger) (*grpc.Server, net.Listener, error) {
-	const sock = "/run/faas/auth.sock"
-	lis, err := wire.ListenOrRecreateByName(sock, "faas-apid")
+func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger) (*grpc.Server, net.Listener, error) {
+	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth listen: %w", err)
 	}
