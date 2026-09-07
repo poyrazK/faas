@@ -389,6 +389,15 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		}
 		if err := s.store.UpdateCustomDomainCertStatus(ctx, domain, status, obs.CertNotAfter, obs.LastError, dnsCheckedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
 			log.Warn("dns_poller: update custom-domain cert status failed", "domain", domain, "err", err)
+		} else if status == state.CustomDomainCertFailed {
+			if legacyErr == nil && legacy.CertStatus != state.CustomDomainCertFailed && s.ops != nil {
+				if counter := s.ops.CertIssuanceFailedTotal(); counter != nil {
+					counter.Inc()
+				}
+			}
+			if err := s.sendCertIssuanceFailedEmail(ctx, log, domain); err != nil && !errors.Is(err, state.ErrNotFound) {
+				log.Warn("dns_poller: certificate issuance-failed email skipped", "domain", domain, "err", err)
+			}
 		}
 	}
 	if err := s.store.UpsertDoctorObservation(ctx, obs); err != nil {

@@ -2058,6 +2058,15 @@ type CustomDomain struct {
 	CertExpiresAt    time.Time
 	CertLastError    string
 	DNSLastCheckedAt time.Time
+	// CertFailedAt is the start of the current failed-cert episode. It is
+	// intentionally separate from DNSLastCheckedAt: the doctor refreshes the
+	// latter every pass, while F2's notification threshold is measured from
+	// the first failed observation.
+	CertFailedAt time.Time
+	// CertFailureEmailAt is the in-memory mirror of the durable 24-hour
+	// notification cooldown. PgStore keeps this value in its column and does
+	// not need to expose it on customer-facing domain responses.
+	CertFailureEmailAt time.Time
 }
 
 // Verified reports whether the TXT challenge has been satisfied.
@@ -2238,8 +2247,9 @@ type OperatorIntent struct {
 // slice and the alert_rules_metric_chk DB CHECK mirror these byte-for-byte
 // (migrations/00349_alert_rules_extend_metrics_chk.sql).
 // Issue #1395 B3 adds new_error_fingerprint, cold_wake_rate_pct, and
-// daily_cost_cents from the durable observability rollups. Issue #1398
-// O2 adds the ADR-082 multi-window SLO burn-rate signal.
+// daily_cost_cents from the durable observability rollups. F2 adds
+// cert_issuance_failed, backed by custom_domains.cert_failed_at. Issue
+// #1398 O2 adds the ADR-082 multi-window SLO burn-rate signal.
 type AlertMetric string
 
 const (
@@ -2254,6 +2264,7 @@ const (
 	AlertMetricAccountSpendEUR     AlertMetric = "account_spend_eur"
 	AlertMetricFailedDeployments   AlertMetric = "deployment_failed"
 	AlertMetricCertExpirySeconds   AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed  AlertMetric = "cert_issuance_failed"
 	AlertMetricQueueDepth          AlertMetric = "queue_depth"
 	AlertMetricNewErrorFingerprint AlertMetric = "new_error_fingerprint"
 	AlertMetricColdWakeRatePct     AlertMetric = "cold_wake_rate_pct"
