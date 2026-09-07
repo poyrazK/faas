@@ -4161,10 +4161,14 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
-	// PostgreSQL's app-status trigger retires all snapshots and their
-	// replicas when an app is deleted. Keep the in-memory backend in lockstep
-	// so a deleted app can never continue serving a cached wake.
-	m.markAppSnapshotsStaleLocked(id)
+	// Retire replica placements immediately while preserving snapshot rows for
+	// GC and a possible restore during the grace window.
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if ok && deployment.AppID == id {
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+		}
+	}
 	return a, nil
 }
 
@@ -4313,9 +4317,15 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
-	// Mirror the PostgreSQL lifecycle trigger that makes snapshots belonging
-	// to a deleted app unusable and drops their replica rows.
-	m.markAppSnapshotsStaleLocked(id)
+	// Keep child rows intact while the tombstone is restorable. The app-status
+	// gate prevents serving it, and the retained snapshot metadata remains
+	// available to imaged's GC projection.
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if ok && deployment.AppID == id {
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+		}
+	}
 	return a, nil
 }
 
@@ -9620,6 +9630,12 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 		if s.DeploymentID != deploymentID || s.Stale {
 			continue
 		}
+		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
+			deployment.Status == DeployFailed || deployment.Status == DeployCancelled {
+			continue
+		} else if app, ok := m.apps[deployment.AppID]; !ok || app.Status == AppDeleted {
+			continue
+		}
 		if !found {
 			latest = s
 			found = true
@@ -9658,6 +9674,12 @@ func (m *MemStore) LatestSnapshotForTier(_ context.Context, deploymentID, tier s
 	found := false
 	for _, s := range m.snapshots {
 		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier {
+			continue
+		}
+		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
+			deployment.Status == DeployFailed || deployment.Status == DeployCancelled {
+			continue
+		} else if app, ok := m.apps[deployment.AppID]; !ok || app.Status == AppDeleted {
 			continue
 		}
 		if !found || s.CreatedAt.After(latest.CreatedAt) {
