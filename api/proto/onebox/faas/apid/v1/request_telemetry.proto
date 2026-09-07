@@ -114,6 +114,19 @@ message IncrementRequestTelemetryRequest {
   // clients leave this unset and the apid receiver defaults to
   // 1.
   int32 count = 11;
+
+  // ua_family — normalized browser/client family. Raw User-Agent values are
+  // never sent or stored. Closed values include chrome, edge, firefox, safari,
+  // opera, curl, wget, python, go, java, bot, other, and __unknown__.
+  string ua_family = 12;
+
+  // referrer_host — lower-case hostname only. Paths, queries, fragments, and
+  // the full Referrer URL are discarded at the gateway edge.
+  string referrer_host = 13;
+
+  // country — ISO 3166-1 alpha-2 uppercase country code from the existing
+  // trusted edge geo resolver, or __unknown__. The source IP is not retained.
+  string country = 14;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

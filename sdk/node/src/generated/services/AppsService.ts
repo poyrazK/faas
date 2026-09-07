@@ -396,7 +396,8 @@ export class AppsService {
    * Aggregated historical request analytics.
    * Returns an aggregate request overview for one app: total requests,
    * errors, cold boots, weighted p50/p95/p99 latency, and the top
-   * route/method combinations. This is the customer analytics surface;
+   * route/method combinations, or a bounded top-N grouping by country,
+   * referrer host, client family, or status. This is the customer analytics surface;
    * request identifiers and trace payloads remain on the debugger routes.
    *
    * `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -408,6 +409,9 @@ export class AppsService {
    *
    * Counts and percentiles include the recorder's collapsed row `count`,
    * so the result represents original requests rather than stored rows.
+   * Grouped results contain at most 50 groups plus `__other__`. Only a
+   * normalized User-Agent family, hostname-only referrer, and country code
+   * are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
    * The endpoint is read-only, IDOR-safe, and plan-gated by
    * `DebugTelemetryEnabled`.
    *
@@ -418,6 +422,7 @@ export class AppsService {
     slug,
     since = '24h',
     until,
+    groupBy = 'route',
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -431,6 +436,10 @@ export class AppsService {
      * Optional RFC3339 upper-bound timestamp for the historical window.
      */
     until?: string,
+    /**
+     * Bounded top-N grouping dimension. Defaults to route.
+     */
+    groupBy?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status',
   }): CancelablePromise<RequestAnalyticsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -441,6 +450,7 @@ export class AppsService {
       query: {
         'since': since,
         'until': until,
+        'group_by': groupBy,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -465,6 +475,8 @@ export class AppsService {
    * timestamp. `until` is an optional RFC3339 exclusive upper bound and
    * defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
    * by `DebugTelemetryEnabled`.
+   * Set `group_by` to country, referrer_host, ua_family, or status to
+   * receive zero-filled series for the top 50 groups plus `__other__`.
    *
    * @returns RequestAnalyticsTimeseriesResponse Zero-filled hourly request analytics buckets.
    * @throws ApiError
@@ -475,6 +487,7 @@ export class AppsService {
     until,
     route,
     method,
+    groupBy,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -496,6 +509,10 @@ export class AppsService {
      * Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods.
      */
     method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+    /**
+     * Return grouped series for the selected dimension. Omitted preserves the app-wide points shape; route/method filters require group_by=route or omission.
+     */
+    groupBy?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status',
   }): CancelablePromise<RequestAnalyticsTimeseriesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -508,6 +525,7 @@ export class AppsService {
         'until': until,
         'route': route,
         'method': method,
+        'group_by': groupBy,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

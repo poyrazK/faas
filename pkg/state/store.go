@@ -5587,8 +5587,10 @@ type Store interface {
 	// queries are retention-windowed and weight collapsed telemetry rows by
 	// their count column.
 	RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error)
+	RequestTelemetryAnalyticsByDimension(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error)
 	RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error)
 	RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error)
+	RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error)
 
 	// --- ADR-127 PR-B — regression observation persistence + dashboard reads ---
 

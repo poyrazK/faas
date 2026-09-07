@@ -2761,7 +2761,8 @@ paths:
       description: |
         Returns an aggregate request overview for one app: total requests,
         errors, cold boots, weighted p50/p95/p99 latency, and the top
-        route/method combinations. This is the customer analytics surface;
+        route/method combinations, or a bounded top-N grouping by country,
+        referrer host, client family, or status. This is the customer analytics surface;
         request identifiers and trace payloads remain on the debugger routes.
 
         `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -2773,6 +2774,9 @@ paths:
 
         Counts and percentiles include the recorder's collapsed row `count`,
         so the result represents original requests rather than stored rows.
+        Grouped results contain at most 50 groups plus `__other__`. Only a
+        normalized User-Agent family, hostname-only referrer, and country code
+        are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
         The endpoint is read-only, IDOR-safe, and plan-gated by
         `DebugTelemetryEnabled`.
       parameters:
@@ -2786,6 +2790,11 @@ paths:
           required: false
           schema: { type: string, format: date-time }
           description: "Optional RFC3339 upper-bound timestamp for the historical window."
+        - name: group_by
+          in: query
+          required: false
+          schema: { type: string, enum: [route, country, referrer_host, ua_family, status], default: route }
+          description: "Bounded top-N grouping dimension. Defaults to route."
       x-since: 2026-09
       responses:
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -2843,6 +2852,8 @@ paths:
         timestamp. `until` is an optional RFC3339 exclusive upper bound and
         defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
         by `DebugTelemetryEnabled`.
+        Set `group_by` to country, referrer_host, ua_family, or status to
+        receive zero-filled series for the top 50 groups plus `__other__`.
       parameters:
         - name: since
           in: query
@@ -2864,6 +2875,11 @@ paths:
           required: false
           schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
           description: "Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods."
+        - name: group_by
+          in: query
+          required: false
+          schema: { type: string, enum: [route, country, referrer_host, ua_family, status] }
+          description: "Return grouped series for the selected dimension. Omitted preserves the app-wide points shape; route/method filters require group_by=route or omission."
       x-since: 2026-09
       responses:
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -21099,13 +21115,28 @@ components:
         p95_ms: { type: integer, minimum: 0 }
         p99_ms: { type: integer, minimum: 0 }
 
+    RequestAnalyticsGroup:
+      type: object
+      description: "Bounded aggregate for a selected analytics dimension. Value is a route, country, hostname, normalized client family, status code, or __other__."
+      required: [value, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
+      properties:
+        value: { type: string }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+
     RequestAnalyticsResponse:
       type: object
       description: |
         Bounded historical request analytics for
         `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
         `[from, until)`, and the route list is capped at 50 rows.
-      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, routes, routes_limit, routes_truncated, as_of]
+      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, group_by, groups, groups_limit, groups_truncated, routes, routes_limit, routes_truncated, as_of]
       properties:
         slug: { type: string }
         since: { type: string, description: "Effective lookback duration after retention clamping." }
@@ -21119,6 +21150,12 @@ components:
         p50_ms: { type: integer, minimum: 0 }
         p95_ms: { type: integer, minimum: 0 }
         p99_ms: { type: integer, minimum: 0 }
+        group_by: { type: string, enum: [route, country, referrer_host, ua_family, status] }
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsGroup' }
+        groups_limit: { type: integer, minimum: 1, description: "Maximum number of top groups before __other__." }
+        groups_truncated: { type: boolean, description: "True when __other__ contains groups outside the top-N." }
         routes:
           type: array
           items: { $ref: '#/components/schemas/RequestAnalyticsRoute' }
@@ -21140,6 +21177,17 @@ components:
         p95_ms: { type: integer, minimum: 0 }
         p99_ms: { type: integer, minimum: 0 }
 
+    RequestAnalyticsTimeseriesSeries:
+      type: object
+      description: "A grouped request analytics series with its hourly points."
+      required: [value, points]
+      properties:
+        value: { type: string }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
+
     RequestAnalyticsTimeseriesResponse:
       type: object
       description: |
@@ -21159,6 +21207,10 @@ components:
         points:
           type: array
           items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
+        group_by: { type: string, enum: [route, country, referrer_host, ua_family, status] }
+        series:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesSeries' }
         as_of: { type: string, format: date-time, description: "UTC time when the series response was assembled." }
 
     AppSLOResponse:

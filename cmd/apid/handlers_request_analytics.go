@@ -32,12 +32,17 @@ import (
 )
 
 const requestAnalyticsRouteLimit = 50
+const requestAnalyticsGroupLimit = 50
 
 const requestAnalyticsRouteMaxLength = 256
 
 var requestAnalyticsMethods = map[string]struct{}{
 	"GET": {}, "POST": {}, "PUT": {}, "PATCH": {},
 	"DELETE": {}, "HEAD": {}, "OPTIONS": {},
+}
+
+var requestAnalyticsGroupBys = map[string]struct{}{
+	"route": {}, "country": {}, "referrer_host": {}, "ua_family": {}, "status": {},
 }
 
 // getAppRequestAnalytics serves the bounded, aggregated request analytics
@@ -62,7 +67,12 @@ func (s *server) getAppRequestAnalytics(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	response, err := s.requestAnalyticsResponse(r.Context(), app, acct, window)
+	groupBy, err := parseRequestAnalyticsGroupBy(r.URL.Query().Get("group_by"), "route")
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	response, err := s.requestAnalyticsResponse(r.Context(), app, acct, window, groupBy)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("request analytics"))
 		return
@@ -90,17 +100,36 @@ func (s *server) getAppRequestAnalyticsTimeseries(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	groupBy, err := parseRequestAnalyticsGroupBy(r.URL.Query().Get("group_by"), "")
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	route, method, err := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("route"), r.URL.Query().Get("method"))
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
-	response, err := s.requestAnalyticsTimeseriesResponse(r.Context(), app, acct, window, route, method)
+	if groupBy != "" && groupBy != "route" && (route != "" || method != "") {
+		api.WriteProblem(w, api.ErrValidation("route and method filters require group_by=route"))
+		return
+	}
+	response, err := s.requestAnalyticsTimeseriesResponse(r.Context(), app, acct, window, groupBy, route, method)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("request analytics timeseries"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func parseRequestAnalyticsGroupBy(raw, defaultValue string) (string, error) {
+	if raw == "" {
+		return defaultValue, nil
+	}
+	if _, ok := requestAnalyticsGroupBys[raw]; !ok {
+		return "", fmt.Errorf("group_by must be one of route, country, referrer_host, ua_family, status")
+	}
+	return raw, nil
 }
 
 // parseRequestAnalyticsRouteFilter validates the exact route-label/method pair used
@@ -208,7 +237,7 @@ func parseRequestAnalyticsDuration(raw string) (time.Duration, error) {
 	return 0, fmt.Errorf("invalid analytics duration")
 }
 
-func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow) (api.RequestAnalyticsResponse, error) {
+func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, groupBy string) (api.RequestAnalyticsResponse, error) {
 	params := sqlc.RequestTelemetryAnalyticsSummaryParams{
 		AppID:        stringToPgUUID(app.ID),
 		AccountID:    stringToPgUUID(acct.ID),
@@ -220,26 +249,27 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		return api.RequestAnalyticsResponse{}, err
 	}
 
-	routeRows, err := s.store.RequestTelemetryAnalyticsByRoute(ctx, sqlc.RequestTelemetryAnalyticsByRouteParams{
+	groupRows, err := s.store.RequestTelemetryAnalyticsByDimension(ctx, sqlc.RequestTelemetryAnalyticsByDimensionParams{
 		AppID:        params.AppID,
 		AccountID:    params.AccountID,
 		ReceivedAt:   params.ReceivedAt,
 		ReceivedAt_2: params.ReceivedAt_2,
-		Limit:        requestAnalyticsRouteLimit + 1,
+		GroupBy:      groupBy,
+		Limit:        requestAnalyticsGroupLimit,
 	})
 	if err != nil {
 		return api.RequestAnalyticsResponse{}, err
 	}
 
-	routesTruncated := len(routeRows) > requestAnalyticsRouteLimit
-	if routesTruncated {
-		routeRows = routeRows[:requestAnalyticsRouteLimit]
-	}
-	routes := make([]api.RequestAnalyticsRoute, 0, len(routeRows))
-	for _, row := range routeRows {
-		routes = append(routes, api.RequestAnalyticsRoute{
-			Route:         row.Route,
-			Method:        row.Method,
+	groups := make([]api.RequestAnalyticsGroup, 0, len(groupRows))
+	routes := make([]api.RequestAnalyticsRoute, 0, len(groupRows))
+	groupsTruncated := false
+	for _, row := range groupRows {
+		value := requestAnalyticsDimensionString(row.Dimension)
+		method := requestAnalyticsDimensionString(row.Method)
+		group := api.RequestAnalyticsGroup{
+			Value:         value,
+			Method:        method,
 			Requests:      row.Requests,
 			ErrorRequests: row.ErrorRequests,
 			ErrorRatePct:  requestErrorRatePct(row.Requests, row.ErrorRequests),
@@ -247,7 +277,25 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			P50MS:         int(row.P50Ms),
 			P95MS:         int(row.P95Ms),
 			P99MS:         int(row.P99Ms),
-		})
+		}
+		groups = append(groups, group)
+		if group.Value == "__other__" {
+			groupsTruncated = true
+			continue
+		}
+		if groupBy == "route" {
+			routes = append(routes, api.RequestAnalyticsRoute{
+				Route:         group.Value,
+				Method:        group.Method,
+				Requests:      group.Requests,
+				ErrorRequests: group.ErrorRequests,
+				ErrorRatePct:  group.ErrorRatePct,
+				ColdBoots:     group.ColdBoots,
+				P50MS:         group.P50MS,
+				P95MS:         group.P95MS,
+				P99MS:         group.P99MS,
+			})
+		}
 	}
 
 	return api.RequestAnalyticsResponse{
@@ -263,14 +311,21 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		P50MS:           int(summary.P50Ms),
 		P95MS:           int(summary.P95Ms),
 		P99MS:           int(summary.P99Ms),
+		GroupBy:         groupBy,
+		Groups:          groups,
+		GroupsLimit:     requestAnalyticsGroupLimit,
+		GroupsTruncated: groupsTruncated,
 		Routes:          routes,
 		RoutesLimit:     requestAnalyticsRouteLimit,
-		RoutesTruncated: routesTruncated,
+		RoutesTruncated: groupsTruncated && groupBy == "route",
 		AsOf:            window.AsOf.Format(time.RFC3339Nano),
 	}, nil
 }
 
-func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, route, method string) (api.RequestAnalyticsTimeseriesResponse, error) {
+func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, groupBy, route, method string) (api.RequestAnalyticsTimeseriesResponse, error) {
+	if groupBy != "" {
+		return s.requestAnalyticsGroupedTimeseriesResponse(ctx, app, acct, window, groupBy, route, method)
+	}
 	rows, err := s.store.RequestTelemetryAnalyticsTimeseries(ctx, sqlc.RequestTelemetryAnalyticsTimeseriesParams{
 		AppID:       stringToPgUUID(app.ID),
 		AccountID:   stringToPgUUID(acct.ID),
@@ -309,6 +364,69 @@ func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app sta
 	}, nil
 }
 
+func (s *server) requestAnalyticsGroupedTimeseriesResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, groupBy, route, method string) (api.RequestAnalyticsTimeseriesResponse, error) {
+	rows, err := s.store.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams{
+		AppID:       stringToPgUUID(app.ID),
+		AccountID:   stringToPgUUID(acct.ID),
+		ReceivedAt:  pgtype.Timestamptz{Time: window.From, Valid: true},
+		ReceivedAt2: pgtype.Timestamptz{Time: window.Until, Valid: true},
+		GroupBy:     groupBy,
+		Route:       route,
+		Method:      method,
+		Limit:       requestAnalyticsGroupLimit,
+	})
+	if err != nil {
+		return api.RequestAnalyticsTimeseriesResponse{}, err
+	}
+	type seriesKey struct{ value, method string }
+	seriesIndex := make(map[seriesKey]int)
+	series := make([]api.RequestAnalyticsTimeseriesSeries, 0, requestAnalyticsGroupLimit+1)
+	for _, row := range rows {
+		value := requestAnalyticsDimensionString(row.Dimension)
+		key := seriesKey{value: value, method: row.Method}
+		idx, ok := seriesIndex[key]
+		if !ok {
+			series = append(series, api.RequestAnalyticsTimeseriesSeries{Value: value, Method: row.Method})
+			idx = len(series) - 1
+			seriesIndex[key] = idx
+		}
+		series[idx].Points = append(series[idx].Points, api.RequestAnalyticsTimeseriesPoint{
+			Start:         timeFromPg(row.BucketStart),
+			Requests:      row.Requests,
+			ErrorRequests: row.ErrorRequests,
+			ErrorRatePct:  requestErrorRatePct(row.Requests, row.ErrorRequests),
+			ColdBoots:     row.ColdBoots,
+			P50MS:         int(row.P50Ms),
+			P95MS:         int(row.P95Ms),
+			P99MS:         int(row.P99Ms),
+		})
+	}
+	return api.RequestAnalyticsTimeseriesResponse{
+		Slug:          app.Slug,
+		Route:         route,
+		Method:        method,
+		GroupBy:       groupBy,
+		Since:         echoDebugSince(window.RequestedSince, window.Since),
+		From:          window.From.Format(time.RFC3339Nano),
+		Until:         window.Until.Format(time.RFC3339Nano),
+		WindowClamped: window.WindowClamped,
+		Bucket:        "1h",
+		Series:        series,
+		AsOf:          window.AsOf.Format(time.RFC3339Nano),
+	}, nil
+}
+
+func requestAnalyticsDimensionString(value any) string {
+	switch value := value.(type) {
+	case string:
+		return value
+	case []byte:
+		return string(value)
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
 func requestErrorRatePct(requests, errors int64) float64 {
 	if requests <= 0 {
 		return 0
@@ -320,7 +438,7 @@ func requestErrorRatePct(requests, errors int64) float64 {
 // the public endpoint into the app-detail template. It is intentionally
 // best-effort: the live metrics/SLO panels should remain usable during a
 // transient request_telemetry read failure.
-func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.Logger, app state.App, acct state.Account, selectedRoute, selectedMethod string) *dashboard.RequestAnalyticsView {
+func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.Logger, app state.App, acct state.Account, groupBy, selectedRoute, selectedMethod string) *dashboard.RequestAnalyticsView {
 	limits := api.MustLimitsFor(acct.Plan)
 	if !limits.DebugTelemetryEnabled {
 		return nil
@@ -340,7 +458,10 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		window.WindowClamped = true
 	}
 	var err error
-	response, err := s.requestAnalyticsResponse(ctx, app, acct, window)
+	if groupBy != "route" {
+		selectedRoute, selectedMethod = "", ""
+	}
+	response, err := s.requestAnalyticsResponse(ctx, app, acct, window, groupBy)
 	if err != nil {
 		log.Warn("dashboard renderAppDetail: request analytics", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		return nil
@@ -364,17 +485,24 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		})
 	}
 	selectedQuery := url.Values{}
+	if groupBy != "route" {
+		selectedQuery.Set("analytics_by", groupBy)
+	}
 	if selectedRoute != "" && selectedMethod != "" {
 		selectedQuery.Set("analytics_route", selectedRoute)
 		selectedQuery.Set("analytics_method", selectedMethod)
 	}
 	seriesQuery := url.Values{}
 	seriesQuery.Set("since", response.Since)
+	if groupBy != "route" {
+		seriesQuery.Set("group_by", groupBy)
+	}
 	if selectedRoute != "" && selectedMethod != "" {
 		seriesQuery.Set("route", selectedRoute)
 		seriesQuery.Set("method", selectedMethod)
 	}
 	view := &dashboard.RequestAnalyticsView{
+		GroupBy:         response.GroupBy,
 		Since:           response.Since,
 		From:            response.From,
 		Until:           response.Until,
@@ -387,6 +515,9 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		P95MS:           response.P95MS,
 		P99MS:           response.P99MS,
 		Routes:          routes,
+		Groups:          requestAnalyticsGroupViews(response.Groups),
+		GroupsLimit:     response.GroupsLimit,
+		GroupsTruncated: response.GroupsTruncated,
 		RoutesLimit:     response.RoutesLimit,
 		RoutesTruncated: response.RoutesTruncated,
 		AsOf:            response.AsOf,
@@ -395,7 +526,7 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		SelectedQuery:   selectedQuery.Encode(),
 		TimeseriesURL:   "/v1/apps/" + app.Slug + "/analytics/timeseries?" + seriesQuery.Encode(),
 	}
-	series, err := s.requestAnalyticsTimeseriesResponse(ctx, app, acct, window, selectedRoute, selectedMethod)
+	series, err := s.requestAnalyticsTimeseriesResponse(ctx, app, acct, window, "", selectedRoute, selectedMethod)
 	if err != nil {
 		log.Warn("dashboard renderAppDetail: request analytics timeseries", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		return view
@@ -424,4 +555,16 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		view.ColdBootSparklineHTML = views.RenderColdBootRateSparkline(coldBootPoints, 480, 100)
 	}
 	return view
+}
+
+func requestAnalyticsGroupViews(groups []api.RequestAnalyticsGroup) []dashboard.RequestAnalyticsGroupView {
+	views := make([]dashboard.RequestAnalyticsGroupView, 0, len(groups))
+	for _, group := range groups {
+		views = append(views, dashboard.RequestAnalyticsGroupView{
+			Value: group.Value, Method: group.Method, Requests: group.Requests,
+			ErrorRequests: group.ErrorRequests, ErrorRatePct: group.ErrorRatePct,
+			ColdBoots: group.ColdBoots, P50MS: group.P50MS, P95MS: group.P95MS, P99MS: group.P99MS,
+		})
+	}
+	return views
 }

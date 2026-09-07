@@ -21597,6 +21597,12 @@ func (s *PgStore) RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc
 	return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, s.pool, arg)
 }
 
+// RequestTelemetryAnalyticsByDimension backs the bounded top-N customer
+// analytics grouping surface.
+func (s *PgStore) RequestTelemetryAnalyticsByDimension(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsByDimension(ctx, s.pool, arg)
+}
+
 // RequestTelemetryAnalyticsByRoute backs the bounded top-route portion of
 // the customer-facing request analytics response.
 func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
@@ -21607,6 +21613,12 @@ func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc
 // analytics chart. The SQL query weights collapsed telemetry rows by count.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
 	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, s.pool, arg)
+}
+
+// RequestTelemetryAnalyticsTimeseriesGrouped backs zero-filled hourly series
+// for a bounded top-N analytics dimension.
+func (s *PgStore) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseriesGrouped(ctx, s.pool, arg)
 }
 
 // --- ADR-127 PR-B — regression observation persistence + dashboard reads ---

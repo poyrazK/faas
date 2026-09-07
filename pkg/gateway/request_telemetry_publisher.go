@@ -18,7 +18,8 @@
 //
 // Cardinality discipline lands HERE, not in the recorder. Before
 // shipping, the publisher collapses burst traffic by
-// (app_id, deployment_id, route, status, minute_bucket) to one
+// (app_id, deployment_id, route, status, analytics dimensions,
+// minute_bucket) to one
 // representative row + count — so a 1k-RPS endpoint at 100%
 // sampling lands as ~1 row/minute to Postgres instead of ~60k.
 
@@ -369,6 +370,9 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			Route:        row.Route,
 			Method:       row.Method,
 			Status:       row.Status,
+			UAFamily:     row.UAFamily,
+			ReferrerHost: row.ReferrerHost,
+			Country:      row.Country,
 			bucket:       bucket,
 		}.String()
 		idx, ok := bucketIdx[key]
@@ -407,6 +411,9 @@ type bucketKey struct {
 	Route        string
 	Method       string
 	Status       int
+	UAFamily     string
+	ReferrerHost string
+	Country      string
 	bucket       time.Time
 }
 
@@ -416,7 +423,8 @@ func (k bucketKey) String() string {
 	// encoding if the profiler flags it. (Profile showed < 1%
 	// of publisher CPU before the collapse; even at 2x with the
 	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d",
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%d",
 		k.AccountID, k.AppID, k.DeploymentID,
-		k.Route, k.Method, k.Status, k.bucket.Unix())
+		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
+		k.Country, k.bucket.Unix())
 }

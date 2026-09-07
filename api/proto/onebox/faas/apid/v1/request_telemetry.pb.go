@@ -97,7 +97,17 @@ type IncrementRequestTelemetryRequest struct {
 	// folded into this bucket. >= 1 (migration CHECK). Pre-PR-B
 	// clients leave this unset and the apid receiver defaults to
 	// 1.
-	Count         int32 `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`
+	Count int32 `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`
+	// ua_family — normalized browser/client family. Raw User-Agent values are
+	// never sent or stored. Closed values include chrome, edge, firefox, safari,
+	// opera, curl, wget, python, go, java, bot, other, and __unknown__.
+	UaFamily string `protobuf:"bytes,12,opt,name=ua_family,json=uaFamily,proto3" json:"ua_family,omitempty"`
+	// referrer_host — lower-case hostname only. Paths, queries, fragments, and
+	// the full Referrer URL are discarded at the gateway edge.
+	ReferrerHost string `protobuf:"bytes,13,opt,name=referrer_host,json=referrerHost,proto3" json:"referrer_host,omitempty"`
+	// country — ISO 3166-1 alpha-2 uppercase country code from the existing
+	// trusted edge geo resolver, or __unknown__. The source IP is not retained.
+	Country       string `protobuf:"bytes,14,opt,name=country,proto3" json:"country,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -209,6 +219,27 @@ func (x *IncrementRequestTelemetryRequest) GetCount() int32 {
 	return 0
 }
 
+func (x *IncrementRequestTelemetryRequest) GetUaFamily() string {
+	if x != nil {
+		return x.UaFamily
+	}
+	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetReferrerHost() string {
+	if x != nil {
+		return x.ReferrerHost
+	}
+	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -276,7 +307,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xf9\x02\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xd5\x03\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -292,7 +323,10 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\btrace_id\x18\t \x01(\tR\atraceId\x12-\n" +
 	"\x13received_at_unix_ms\x18\n" +
 	" \x01(\x03R\x10receivedAtUnixMs\x12\x14\n" +
-	"\x05count\x18\v \x01(\x05R\x05count\"c\n" +
+	"\x05count\x18\v \x01(\x05R\x05count\x12\x1b\n" +
+	"\tua_family\x18\f \x01(\tR\buaFamily\x12#\n" +
+	"\rreferrer_host\x18\r \x01(\tR\freferrerHost\x12\x18\n" +
+	"\acountry\x18\x0e \x01(\tR\acountry\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\xa3\x01\n" +

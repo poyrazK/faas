@@ -6843,6 +6843,21 @@ type RequestAnalyticsRoute struct {
 	P99MS         int     `json:"p99_ms"`
 }
 
+// RequestAnalyticsGroup is one top-N aggregate for the selected analytics
+// dimension. Value is a route for group_by=route, an ISO country, hostname,
+// normalized user-agent family, or status code for the other groupings.
+type RequestAnalyticsGroup struct {
+	Value         string  `json:"value"`
+	Method        string  `json:"method,omitempty"`
+	Requests      int64   `json:"requests"`
+	ErrorRequests int64   `json:"error_requests"`
+	ErrorRatePct  float64 `json:"error_rate_pct"`
+	ColdBoots     int64   `json:"cold_boots"`
+	P50MS         int     `json:"p50_ms"`
+	P95MS         int     `json:"p95_ms"`
+	P99MS         int     `json:"p99_ms"`
+}
+
 // RequestAnalyticsResponse is the bounded historical request analytics
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
@@ -6859,6 +6874,10 @@ type RequestAnalyticsResponse struct {
 	P50MS           int                     `json:"p50_ms"`
 	P95MS           int                     `json:"p95_ms"`
 	P99MS           int                     `json:"p99_ms"`
+	GroupBy         string                  `json:"group_by"`
+	Groups          []RequestAnalyticsGroup `json:"groups"`
+	GroupsLimit     int                     `json:"groups_limit"`
+	GroupsTruncated bool                    `json:"groups_truncated"`
 	Routes          []RequestAnalyticsRoute `json:"routes"`
 	RoutesLimit     int                     `json:"routes_limit"`
 	RoutesTruncated bool                    `json:"routes_truncated"`
@@ -6879,20 +6898,30 @@ type RequestAnalyticsTimeseriesPoint struct {
 	P99MS         int     `json:"p99_ms"`
 }
 
+// RequestAnalyticsTimeseriesSeries is one zero-filled hourly series for a
+// selected top-N analytics group.
+type RequestAnalyticsTimeseriesSeries struct {
+	Value  string                            `json:"value"`
+	Method string                            `json:"method,omitempty"`
+	Points []RequestAnalyticsTimeseriesPoint `json:"points"`
+}
+
 // RequestAnalyticsTimeseriesResponse is the zero-filled hourly series used
 // for customer-facing request analytics charts. The effective window is
 // bounded by the account's telemetry retention.
 type RequestAnalyticsTimeseriesResponse struct {
-	Slug          string                            `json:"slug"`
-	Route         string                            `json:"route,omitempty"`
-	Method        string                            `json:"method,omitempty"`
-	Since         string                            `json:"since"`
-	From          string                            `json:"from"`
-	Until         string                            `json:"until"`
-	WindowClamped bool                              `json:"window_clamped"`
-	Bucket        string                            `json:"bucket"`
-	Points        []RequestAnalyticsTimeseriesPoint `json:"points"`
-	AsOf          string                            `json:"as_of"`
+	Slug          string                             `json:"slug"`
+	Route         string                             `json:"route,omitempty"`
+	Method        string                             `json:"method,omitempty"`
+	GroupBy       string                             `json:"group_by,omitempty"`
+	Since         string                             `json:"since"`
+	From          string                             `json:"from"`
+	Until         string                             `json:"until"`
+	WindowClamped bool                               `json:"window_clamped"`
+	Bucket        string                             `json:"bucket"`
+	Points        []RequestAnalyticsTimeseriesPoint  `json:"points"`
+	Series        []RequestAnalyticsTimeseriesSeries `json:"series,omitempty"`
+	AsOf          string                             `json:"as_of"`
 }
 
 // DebugRegressionItem is one row of debug_regression_observations

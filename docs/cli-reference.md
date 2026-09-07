@@ -46,6 +46,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Tail app or deployment logs (--follow) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (gregale metrics &lt;slug&gt; [--range 5m] \| --account) |
+| [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
 | [`open`](#open) | Open the app&#39;s URL (or its dashboard page) in your browser |
 | [`orgs`](#orgs) | Manage orgs + members (orgs ls\|create\|info\|rm\|members ...\|keys ...\|transfer-ownership\|seat-usage\|invitations ...\|me) |
@@ -1097,6 +1098,19 @@ Per-app or account-wide metrics (gregale metrics &lt;slug&gt; [--range 5m] | --a
 |---|---|---|
 | `--range <WINDOW>` | window (5m\|15m\|1h\|6h\|24h\|7d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` |
 | `--account` | account-wide roll-up |  |
+
+
+## analytics
+
+Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route|country|referrer_host|ua_family|status])
+
+`gregale analytics <slug> [--since <WINDOW>] [--until <TIMESTAMP>] [--by <DIMENSION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <WINDOW>` | lookback window |  |
+| `--until <TIMESTAMP>` | exclusive RFC3339 end |  |
+| `--by <DIMENSION>` | grouping dimension | one of `route` · `country` · `referrer_host` · `ua_family` · `status` |
 
 
 ## mfa
