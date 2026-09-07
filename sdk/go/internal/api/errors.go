@@ -252,13 +252,13 @@ const (
 
 	// ADR-031 (tier-2 of the network roadmap) — per-app egress
 	// allowlist. Same gate shape as MinInstances: the feature is
-	// plan-locked (Pro/Scale only), and there are two distinct
+	// plan-locked (Hobby/Pro/Scale only), and there are two distinct
 	// failure modes that warrant distinct codes so the CLI can
 	// render actionable retry guidance.
 	//   * CodePlanEgressAllowlistNotAllowed = 403 "your plan does
-	//     not unlock this knob at all" (Free/Hobby).
+	//     not unlock this knob at all" (Free).
 	//   * CodeEgressAllowlistTooLong = 400 "the PATCH carries more
-	//     CIDRs than your plan caps" (Pro/Scale but the slice is
+	//     CIDRs than your plan caps" (Hobby/Pro/Scale but the slice is
 	//     too long; not a billing failure).
 	CodePlanEgressAllowlistNotAllowed = "plan_egress_allowlist_not_allowed"
 	CodeEgressAllowlistTooLong        = "egress_allowlist_too_long"
@@ -670,10 +670,10 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 		WithDocs(docsBase + "/apps#min-instances")
 }
 
-// ErrPlanEgressAllowlistNotAllowed (ADR-031) is returned when a Free or Hobby
+// ErrPlanEgressAllowlistNotAllowed (ADR-031) is returned when a Free
 // account tries to set apps.egress_allowlist. Same gate shape as
-// ErrPlanMinInstancesNotAllowed: the knob is plan-locked, and Pro/Scale
-// is where the operator surface lives. The plan is named in the body so
+// ErrPlanMinInstancesNotAllowed: the knob is plan-locked, and Hobby/Pro/Scale
+// are the paid tiers where the operator surface lives. The plan is named in the body so
 // a CLI prompt can render "upgrade to Pro to unlock this knob" without
 // a second lookup.
 func ErrPlanEgressAllowlistNotAllowed(p Plan) *Problem {

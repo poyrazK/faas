@@ -11,7 +11,7 @@ export type AccountEgressAllowlistExtraResponse = {
    */
   extra: number;
   /**
-   * Plan cap on apps.egress_allowlist CIDR count (Pro 16, Scale 64; Free/Hobby 0 — those plans don't unlock the knob at all).
+   * Plan cap on apps.egress_allowlist CIDR count (Hobby 8, Pro 16, Scale 64; Free 0).
    */
   plan_cap: number;
   /**

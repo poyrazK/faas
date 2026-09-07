@@ -251,6 +251,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxAsyncInvocationsPerAccount:     1000,
 			MaxAsyncInvocationDeadlineSeconds: 3600,
 			MaxAsyncResultRetentionSeconds:    604800,
+			EgressAllowlistAllowed:            true, EgressAllowlistMaxSize: 8,
 			// Issue #462 / ADR-058 / PR-A: Hobby unlocks the warm
 			// floor (MinInstancesAllowed) and the max_instances
 			// ceiling (MaxInstancesAllowed). Hobby is still
@@ -1129,9 +1130,9 @@ func TestPlanScaleUpTargetRPSAllowed(t *testing.T) {
 
 // TestPlanEgressAllowlistAllowed pins the per-plan gate that apid's
 // updateApp handler uses for the per-app egress allowlist (ADR-031).
-// Free/Hobby → false (no allowlist — abuse-desk hygiene is a Pro+
-// concern; the default scale-to-zero tenant never sees this surface);
-// Pro/Scale → true. Unknown plans must default to false (fail-closed
+// Free → false; Hobby/Pro/Scale → true. Hobby receives the small
+// eight-entry cap used for explicit SMTP destinations. Unknown plans
+// must default to false (fail-closed
 // — same contract as MinInstancesAllowed above).
 func TestPlanEgressAllowlistAllowed(t *testing.T) {
 	cases := []struct {
@@ -1139,7 +1140,7 @@ func TestPlanEgressAllowlistAllowed(t *testing.T) {
 		want bool
 	}{
 		{PlanFree, false},
-		{PlanHobby, false},
+		{PlanHobby, true},
 		{PlanPro, true},
 		{PlanScale, true},
 		{Plan("unknown"), false},
@@ -1198,15 +1199,15 @@ func TestPlanLogArchiveRetentionDaysMax(t *testing.T) {
 }
 
 // TestPlanEgressAllowlistMaxSize pins the per-plan CIDR cap (ADR-031).
-// Free/Hobby → 0 (no allowlist slot, the gate above rejects the
-// PATCH before this matters); Pro → 16; Scale → 64.
+// Free → 0; Hobby → 8 (the narrow SMTP destination budget); Pro → 16;
+// Scale → 64.
 func TestPlanEgressAllowlistMaxSize(t *testing.T) {
 	cases := []struct {
 		plan Plan
 		want int
 	}{
 		{PlanFree, 0},
-		{PlanHobby, 0},
+		{PlanHobby, 8},
 		{PlanPro, 16},
 		{PlanScale, 64},
 	}

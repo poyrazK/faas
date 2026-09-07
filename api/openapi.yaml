@@ -13589,7 +13589,8 @@ components:
         # validateUpdateApp, so the read-back never carries a
         # "::ffff:" prefix. Always present (serialised as `[]`
         # when empty, never `null`); NOT in `required:` so the
-        # empty case stays the contract for Free/Hobby.
+        # empty case stays the contract for every plan (Free cannot
+        # set the field; Hobby+ may clear it explicitly).
         egress_allowlist:
           description: "Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies."
           type: array
@@ -14049,9 +14050,9 @@ components:
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
         # omitted → no change; non-null array → atomic
-        # overwrite (empty array clears). Pro/Scale only;
-        # Free/Hobby PATCH → 403 plan_egress_allowlist_not_
-        # allowed. Plan caps: Pro 16 entries, Scale 64.
+        # overwrite (empty array clears). Hobby/Pro/Scale;
+        # Free PATCH → 403 plan_egress_allowlist_not_allowed.
+        # Plan caps: Hobby 8 entries, Pro 16, Scale 64.
         # PR-C widens the pattern from IPv4-only to v4+v6
         # (ADR-032 already shipped the handler-side acceptance
         # but the spec wasn't updated; pre-PR-C the validator
@@ -19264,7 +19265,7 @@ components:
       required: [extra, plan_cap, max_extra]
       properties:
         extra: { type: integer, minimum: 0, description: "Effective additive budget currently in force. 0 = no override; the plan cap is authoritative." }
-        plan_cap: { type: integer, minimum: 0, description: "Plan cap on apps.egress_allowlist CIDR count (Pro 16, Scale 64; Free/Hobby 0 — those plans don't unlock the knob at all)." }
+        plan_cap: { type: integer, minimum: 0, description: "Plan cap on apps.egress_allowlist CIDR count (Hobby 8, Pro 16, Scale 64; Free 0)." }
         max_extra: { type: integer, minimum: 0, description: "Global ceiling on the per-account override (api.MaxAccountEgressAllowlistExtra = 1024). Flat across plans; the validator rejects out-of-range values with `account_egress_allowlist_extra_out_of_range`." }
 
     # ─── Audit events (IAM-4 / ADR-035) ──────────────────────────────────

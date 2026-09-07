@@ -2126,7 +2126,7 @@ func TestUpdateEgressAllowlist_AppliesV4Patch(t *testing.T) {
 	if !run.ran(wantDelete) {
 		t.Errorf("missing %q in command stream", wantDelete)
 	}
-	wantAdd := `ip netns exec fc-i-1 nft add rule ip faas forward iifname tap0 ip daddr { 8.8.8.0/24 } accept`
+	wantAdd := `ip netns exec fc-i-1 nft add rule ip faas forward iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != 25 accept`
 	if !run.ran(wantAdd) {
 		t.Errorf("missing %q in command stream", wantAdd)
 	}
@@ -2140,6 +2140,55 @@ func TestUpdateEgressAllowlist_AppliesV4Patch(t *testing.T) {
 	if m.live["i-1"].AllowlistHandleV4 != 7 {
 		t.Errorf("cached v4 handle = %d, want 7 (capture is best-effort, no -a reader in tests)", m.live["i-1"].AllowlistHandleV4)
 	}
+}
+
+// TestUpdateEgressAllowlistRebuildsHostSMTPException keeps the host
+// defense-in-depth policy synchronized with a live app PATCH. The per-netns
+// rule is updated by the existing in-place path, while the host policy gains
+// a source-scoped 465/587 exception for the same destination CIDR.
+func TestUpdateEgressAllowlistRebuildsHostSMTPException(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	renderer := &fakeHostRenderer{}
+	m.SetHostRenderer(renderer)
+	oldPolicy := *netns.ActiveHostPolicyForRender()
+	defer netns.SwapActiveHostPolicy(oldPolicy)
+	inst := &Instance{
+		Lease: Lease{Instance: "i-smtp", HostIP: netip.MustParseAddr("10.100.0.2")},
+		Net:   netns.NewConfig("i-smtp", "fc-i-smtp", "vh", "vp", netip.MustParseAddr("10.100.0.2")),
+		AppID: "app-smtp", AccountID: "acct-smtp",
+	}
+	inst.Net.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	m.mu.Lock()
+	m.live[inst.Lease.Instance] = inst
+	m.mu.Unlock()
+	m.perAppAllowlistMu.Lock()
+	if m.perAppAllowlist == nil {
+		m.perAppAllowlist = make(map[string][]netip.Prefix)
+	}
+	m.perAppAllowlist[inst.AppID] = append([]netip.Prefix(nil), inst.Net.EgressAllowlist...)
+	m.perAppAllowlistMu.Unlock()
+
+	want := netip.MustParsePrefix("203.0.113.0/24")
+	if err := m.UpdateEgressAllowlist(context.Background(), inst.AppID, []netip.Prefix{want}); err != nil {
+		t.Fatalf("UpdateEgressAllowlist: %v", err)
+	}
+	pol := netns.ActiveHostPolicyForRender()
+	if len(pol.SMTPAllowlistRules) != 1 {
+		t.Fatalf("SMTPAllowlistRules len = %d, want 1", len(pol.SMTPAllowlistRules))
+	}
+	rule := pol.SMTPAllowlistRules[0]
+	if rule.SourceIP != inst.Lease.HostIP || rule.AppID != inst.AppID || rule.AccountID != inst.AccountID {
+		t.Errorf("host SMTP rule identity = %+v, want source/app/account %s/%s/%s", rule, inst.Lease.HostIP, inst.AppID, inst.AccountID)
+	}
+	if len(rule.Destinations) != 1 || rule.Destinations[0] != want {
+		t.Errorf("host SMTP destinations = %v, want [%s]", rule.Destinations, want)
+	}
+	renderer.mu.Lock()
+	if renderer.renderCalls != 1 {
+		t.Errorf("host renderer renderCalls = %d, want 1", renderer.renderCalls)
+	}
+	renderer.mu.Unlock()
 }
 
 // TestUpdateEgressAllowlist_SameAllowlistNoOp — redelivery.
