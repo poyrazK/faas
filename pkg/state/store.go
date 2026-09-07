@@ -1594,6 +1594,9 @@ type Store interface {
 	// sibling call after this returns.
 	AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (newLiveDeploymentID string, err error)
 	AppBySlug(ctx context.Context, slug string) (App, error)
+	// AppBySlugIncludingDeleted is the restore-side lookup. The normal
+	// AppBySlug intentionally hides tombstones from customer reads.
+	AppBySlugIncludingDeleted(ctx context.Context, slug string) (App, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)
 	// ListAllApps returns every non-deleted app on the box. schedd's reaper and
 	// cron loops walk this (one-box scale, spec §4.3); apid never calls it.
@@ -1936,6 +1939,16 @@ type Store interface {
 	// removes that race with a concurrent re-create rely on the
 	// updated_at timestamp: the later caller wins.
 	SoftDeleteAppCascade(ctx context.Context, id string) (App, error)
+	// ScheduleAppDeletion stamps the seven-day customer restore window and
+	// transitions the app to deleted atomically. It is idempotent.
+	ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error)
+	// RestoreApp clears the tombstone iff the app is still inside its grace
+	// window. Expired or non-deleted rows return ErrConflict.
+	RestoreApp(ctx context.Context, id string) (App, error)
+	// ListDeletedApps returns tombstones for the app grace sweeper.
+	ListDeletedApps(ctx context.Context) ([]App, error)
+	// DeleteAppPermanently removes an expired app and its dependent state.
+	DeleteAppPermanently(ctx context.Context, id string) error
 
 	// Projects (ADR-050, Phase 1).
 	//

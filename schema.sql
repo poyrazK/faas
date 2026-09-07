@@ -1294,6 +1294,8 @@ CREATE TABLE public.apps (
     static_egress_ip_set_at timestamp with time zone,
     preview_destroy_commented_at timestamp with time zone,
     app_protocol text DEFAULT 'http1'::text NOT NULL,
+    deleted_at timestamp with time zone,
+    delete_grace_until timestamp with time zone,
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
     CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
@@ -4968,6 +4970,11 @@ CREATE UNIQUE INDEX app_webhooks_app_target_uniq ON public.app_webhooks USING bt
 --
 
 CREATE INDEX apps_account_idx ON public.apps USING btree (account_id, status);
+
+-- Name: apps_delete_grace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_delete_grace_idx ON public.apps USING btree (delete_grace_until) WHERE ((status = 'deleted'::text) AND (delete_grace_until IS NOT NULL));
 
 
 --

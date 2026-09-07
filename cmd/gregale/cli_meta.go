@@ -209,6 +209,7 @@ var cliCommands = []cliCommand{
 		Short:   "List your apps",
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
+			{Name: "restore", Short: "Restore an app during its deletion grace window"},
 			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
 			{Name: "streaming-cap", Short: "Per-app streaming classification probe (ADR-102 D6)"},
 			{Name: "-q", Short: "Delete one app (positional: <slug>)"},
