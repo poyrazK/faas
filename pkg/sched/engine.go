@@ -6099,9 +6099,11 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return state.App{}, state.Account{}, api.Limits{}, state.Deployment{},
+			return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, errors.Join(
+				ErrPermanentWake,
 				api.NewProblem(404, api.CodeNotFound, "No live deployment",
-					"the app has no live deployment to wake")
+					"the app has no live deployment to wake"),
+			)
 		}
 		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{},
 			fmt.Errorf("sched: resolve app: live deployment: %w", err)
