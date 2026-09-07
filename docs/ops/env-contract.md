@@ -101,6 +101,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DOMAIN_DOCTOR_TTL_SECONDS` | apid | `runtime-config` |  |
 | `FAAS_DPA_PATH` | apid | `default` |  |
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |
+| `FAAS_E2E_API_HOSTING_SMOKE` | shared | `dev-only` | must never be set on a production host |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` | must never be set on a production host |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |
