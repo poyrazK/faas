@@ -1,3 +1,4 @@
+import datetime
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
@@ -8,18 +9,36 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_wake_timeline_response import AppWakeTimelineResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    since: datetime.datetime | Unset = UNSET,
+    until: datetime.datetime | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    json_since: str | Unset = UNSET
+    if not isinstance(since, Unset):
+        json_since = since.isoformat()
+    params["since"] = json_since
+
+    json_until: str | Unset = UNSET
+    if not isinstance(until, Unset):
+        json_until = until.isoformat()
+    params["until"] = json_until
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/apps/{slug}/wake-timeline".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -74,6 +93,8 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    since: datetime.datetime | Unset = UNSET,
+    until: datetime.datetime | Unset = UNSET,
 ) -> Response[AppWakeTimelineResponse | Problem]:
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
@@ -109,6 +130,8 @@ def sync_detailed(
 
     Args:
         slug (str):
+        since (datetime.datetime | Unset):
+        until (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,6 +143,8 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        since=since,
+        until=until,
     )
 
     response = client.get_httpx_client().request(
@@ -133,6 +158,8 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    since: datetime.datetime | Unset = UNSET,
+    until: datetime.datetime | Unset = UNSET,
 ) -> AppWakeTimelineResponse | Problem | None:
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
@@ -168,6 +195,8 @@ def sync(
 
     Args:
         slug (str):
+        since (datetime.datetime | Unset):
+        until (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,6 +209,8 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        since=since,
+        until=until,
     ).parsed
 
 
@@ -187,6 +218,8 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    since: datetime.datetime | Unset = UNSET,
+    until: datetime.datetime | Unset = UNSET,
 ) -> Response[AppWakeTimelineResponse | Problem]:
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
@@ -222,6 +255,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        since (datetime.datetime | Unset):
+        until (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -233,6 +268,8 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        since=since,
+        until=until,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -244,6 +281,8 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    since: datetime.datetime | Unset = UNSET,
+    until: datetime.datetime | Unset = UNSET,
 ) -> AppWakeTimelineResponse | Problem | None:
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
@@ -279,6 +318,8 @@ async def asyncio(
 
     Args:
         slug (str):
+        since (datetime.datetime | Unset):
+        until (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -292,5 +333,7 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            since=since,
+            until=until,
         )
     ).parsed

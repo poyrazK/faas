@@ -109,9 +109,10 @@ under the same `^[A-Z][A-Z0-9_]*$` SQL CHECK that gates sealed
 secrets. Migration 00063 widens `api_keys_scopes_vocab_chk` to admit
 `env:read` / `env:write` (both ship in the same PR so the DB CHECK
 never rejects a freshly-minted API key during the rollout window).
-Per-plan quotas (`EnvVarsMax` 8/32/64/256 Free–Scale,
+Per-plan quotas (`EnvVarsMax` 16/32/64/256 Free–Scale,
 `EnvValueMaxBytes` 4K/8K/16K/32K) live in `pkg/api/limits.go`
-alongside the secrets quota. Semantics: applies on next wake — no
+alongside the secrets quota (`SecretCountMax` 8/25/50/100) and the
+Free one-day log-archive/read-back entitlement. Semantics: applies on next wake — no
 snapshot invalidation, no new vmmd RPC. The wake path stages
 `/etc/faas/env.json` next to the existing `/etc/faas/secrets.env`
 sibling, and `guest/init::BuildEnvWithSecrets` gains a fourth

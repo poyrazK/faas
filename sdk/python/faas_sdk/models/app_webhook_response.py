@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_webhook_response_event_filter_item import (
+    AppWebhookResponseEventFilterItem,
+    check_app_webhook_response_event_filter_item,
+)
 from ..models.app_webhook_response_retry_policy import (
     AppWebhookResponseRetryPolicy,
     check_app_webhook_response_retry_policy,
@@ -38,7 +42,7 @@ class AppWebhookResponse:
     account_id: UUID
     target_url: str
     webhook_secret_sealed_masked: AppWebhookResponseWebhookSecretSealedMasked
-    event_filter: list[str]
+    event_filter: list[AppWebhookResponseEventFilterItem]
     retry_policy: AppWebhookResponseRetryPolicy
     enabled: bool
     created_at: datetime.datetime
@@ -56,7 +60,10 @@ class AppWebhookResponse:
 
         webhook_secret_sealed_masked: str = self.webhook_secret_sealed_masked
 
-        event_filter = self.event_filter
+        event_filter = []
+        for event_filter_item_data in self.event_filter:
+            event_filter_item: str = event_filter_item_data
+            event_filter.append(event_filter_item)
 
         retry_policy: str = self.retry_policy
 
@@ -100,7 +107,12 @@ class AppWebhookResponse:
             d.pop("webhook_secret_sealed_masked")
         )
 
-        event_filter = cast(list[str], d.pop("event_filter"))
+        event_filter = []
+        _event_filter = d.pop("event_filter")
+        for event_filter_item_data in _event_filter:
+            event_filter_item = check_app_webhook_response_event_filter_item(event_filter_item_data)
+
+            event_filter.append(event_filter_item)
 
         retry_policy = check_app_webhook_response_retry_policy(d.pop("retry_policy"))
 

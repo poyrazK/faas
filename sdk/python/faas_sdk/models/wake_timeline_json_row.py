@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.wake_timeline_json_row_kind import WakeTimelineJSONRowKind, check_wake_timeline_json_row_kind
+from ..models.wake_timeline_json_row_tier import WakeTimelineJSONRowTier, check_wake_timeline_json_row_tier
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="WakeTimelineJSONRow")
@@ -41,9 +42,15 @@ class WakeTimelineJSONRow:
     when false."""
     at: datetime.datetime | Unset = UNSET
     """RFC3339 UTC timestamp of the wake."""
+    wake_id: str | Unset = UNSET
+    """Wake-attempt correlation ID."""
     trigger: str | Unset = UNSET
     """Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on
     pre-PR-A fleet rows."""
+    method: str | Unset = UNSET
+    """Wake method (restore or cold_boot), when telemetry is available."""
+    tier: WakeTimelineJSONRowTier | Unset = UNSET
+    """Snapshot tier selected for the wake."""
     queued_count: int | Unset = UNSET
     """ledger.Concurrency at admit. 0 when absent."""
     concurrency_at_admit: int | Unset = UNSET
@@ -66,7 +73,15 @@ class WakeTimelineJSONRow:
         if not isinstance(self.at, Unset):
             at = self.at.isoformat()
 
+        wake_id = self.wake_id
+
         trigger = self.trigger
+
+        method = self.method
+
+        tier: str | Unset = UNSET
+        if not isinstance(self.tier, Unset):
+            tier = self.tier
 
         queued_count = self.queued_count
 
@@ -86,8 +101,14 @@ class WakeTimelineJSONRow:
         )
         if at is not UNSET:
             field_dict["at"] = at
+        if wake_id is not UNSET:
+            field_dict["wake_id"] = wake_id
         if trigger is not UNSET:
             field_dict["trigger"] = trigger
+        if method is not UNSET:
+            field_dict["method"] = method
+        if tier is not UNSET:
+            field_dict["tier"] = tier
         if queued_count is not UNSET:
             field_dict["queued_count"] = queued_count
         if concurrency_at_admit is not UNSET:
@@ -115,7 +136,18 @@ class WakeTimelineJSONRow:
         else:
             at = datetime.datetime.fromisoformat(_at)
 
+        wake_id = d.pop("wake_id", UNSET)
+
         trigger = d.pop("trigger", UNSET)
+
+        method = d.pop("method", UNSET)
+
+        _tier = d.pop("tier", UNSET)
+        tier: WakeTimelineJSONRowTier | Unset
+        if isinstance(_tier, Unset):
+            tier = UNSET
+        else:
+            tier = check_wake_timeline_json_row_tier(_tier)
 
         queued_count = d.pop("queued_count", UNSET)
 
@@ -129,7 +161,10 @@ class WakeTimelineJSONRow:
             at_capacity=at_capacity,
             at_capacity_present=at_capacity_present,
             at=at,
+            wake_id=wake_id,
             trigger=trigger,
+            method=method,
+            tier=tier,
             queued_count=queued_count,
             concurrency_at_admit=concurrency_at_admit,
             ready_in_ms=ready_in_ms,

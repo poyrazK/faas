@@ -29,9 +29,9 @@
 //     just as much as live).
 //   - The plan-gate is identical too. Plan.LogArchiveEnabled()
 //     is the only archive-specific check — and it sits at the top
-//     of this handler, before S3 is touched, so a Free customer
-//     gets a 402 the same way they would for any other
-//     plan-gated surface.
+//     of this handler, before S3 is touched, so a plan without
+//     archive entitlement gets a 402 the same way it would for any
+//     other plan-gated surface.
 //
 // Wire shape (issue #562 AC3): the read-back stream emits the
 // exact `event: log` envelope apislogs.RenderAppLogEvent writes,
@@ -209,9 +209,9 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
-	// Plan gate (issue #562 AC3 / Free = no archive). Free
-	// customers get a clean 402 + CodePlanLogArchiveNotAllowed;
-	// the SDK branch on that code surfaces the upsell copy.
+	// Plan gate (issue #562 AC3). Unknown/off-plan customers get a
+	// clean 402 + CodePlanLogArchiveNotAllowed; Free is entitled to
+	// the one-day demo window.
 	if !acct.Plan.LogArchiveEnabled() {
 		api.WriteProblem(w, api.ErrPlanLogArchiveNotAllowed(acct.Plan))
 		return
@@ -275,7 +275,8 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 // app_logs_test.go pattern (the live handler exposes
 // serveAppLogs as the seam; the auth chain runs in stream).
 func (h *ArchiveLogsHandler) streamUnauth(w http.ResponseWriter, r *http.Request, acct state.Account, appID string) {
-	// Plan gate (issue #562 AC3 / Free = no archive).
+	// Plan gate (issue #562 AC3). Free is entitled to the one-day
+	// demo window; unknown/off-plan plans fail closed.
 	if !acct.Plan.LogArchiveEnabled() {
 		api.WriteProblem(w, api.ErrPlanLogArchiveNotAllowed(acct.Plan))
 		return
@@ -327,10 +328,9 @@ func (h *ArchiveLogsHandler) streamUnauth(w http.ResponseWriter, r *http.Request
 func (h *ArchiveLogsHandler) withinRetention(plan api.Plan, day string) bool {
 	maxDays := plan.LogArchiveRetentionDaysMax()
 	if maxDays <= 0 {
-		// Plan has no archive (Free); the upstream
-		// LogArchiveEnabled() gate already refused, so this
-		// branch is unreachable in production. Defensive return
-		// false so an off-plan row never silently passes.
+		// A zero retention cap is an off-plan/unknown shape; the
+		// upstream LogArchiveEnabled() gate should already refuse it.
+		// Keep the defensive return false so it never silently passes.
 		return false
 	}
 	d, err := time.Parse(archiveQueryDateLayout, day)

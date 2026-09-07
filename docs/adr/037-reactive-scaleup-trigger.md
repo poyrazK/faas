@@ -16,7 +16,7 @@ reaper, separate PR).
 
 The platform's autoscaling today is "warm pool + idle reaper": an instance
 is admitted only when a request arrives with no routable target, and the
-reaper parks it when its per-app idle timeout (30 / 60 / 300 / 600 s)
+reaper parks it when its per-app idle timeout (60 / 60 / 300 / 600 s)
 elapses. The plan's `max_concurrency` is a *ceiling*, not a target — to
 get burst capacity, customers must pre-allocate `min_instances = N` and
 pay for N resident instances at all times, even at idle.

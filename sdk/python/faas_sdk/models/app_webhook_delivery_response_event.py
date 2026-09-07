@@ -1,6 +1,6 @@
 from typing import Literal
 
-CreateAppWebhookRequestEventFilterItem = Literal[
+AppWebhookDeliveryResponseEvent = Literal[
     "app.created",
     "app.deleted",
     "app.deployed",
@@ -19,7 +19,7 @@ CreateAppWebhookRequestEventFilterItem = Literal[
     "rollout.aborted",
 ]
 
-CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequestEventFilterItem] = {
+APP_WEBHOOK_DELIVERY_RESPONSE_EVENT_VALUES: set[AppWebhookDeliveryResponseEvent] = {
     "app.created",
     "app.deleted",
     "app.deployed",
@@ -39,9 +39,7 @@ CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequest
 }
 
 
-def check_create_app_webhook_request_event_filter_item(value: str) -> CreateAppWebhookRequestEventFilterItem:
-    if value in CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES:
+def check_app_webhook_delivery_response_event(value: str) -> AppWebhookDeliveryResponseEvent:
+    if value in APP_WEBHOOK_DELIVERY_RESPONSE_EVENT_VALUES:
         return value
-    raise TypeError(
-        f"Unexpected value {value!r}. Expected one of {CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES!r}"
-    )
+    raise TypeError(f"Unexpected value {value!r}. Expected one of {APP_WEBHOOK_DELIVERY_RESPONSE_EVENT_VALUES!r}")

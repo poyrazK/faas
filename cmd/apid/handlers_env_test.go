@@ -202,15 +202,16 @@ func TestEnvMutationInvalidatesRestorableSnapshot(t *testing.T) {
 }
 
 // TestEnv_QuotaExceeded_Free403 asserts the per-plan EnvVarsMax gate.
-// Free's limit is 8; the 9th distinct key must return 403
+// Free's limit is 16; the 17th distinct key must return 403
 // plan_limit_env_vars. Re-PUTs of an existing key are NOT new rows
 // (covered in the count-distinct-from-re-upsert test below).
 func TestEnv_QuotaExceeded_Free403(t *testing.T) {
 	e := setup(t, api.PlanFree)
 	app := createApp(t, e, "env-quota-app")
+	freeLimit := api.MustLimitsFor(api.PlanFree).EnvVarsMax
 
-	// PUT 8 distinct keys (Free's quota).
-	for i := 0; i < 8; i++ {
+	// PUT Free's quota worth of distinct keys.
+	for i := 0; i < freeLimit; i++ {
 		key := keyName(i)
 		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key,
 			api.PutAppEnvRequest{Value: "v"}, nil)
@@ -218,14 +219,14 @@ func TestEnv_QuotaExceeded_Free403(t *testing.T) {
 			t.Fatalf("PUT %s: %d %s", key, rec.Code, rec.Body.String())
 		}
 	}
-	// 9th must 403.
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/KEY_NINE",
+	// The next distinct key must 403.
+	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+keyName(freeLimit),
 		api.PutAppEnvRequest{Value: "v"}, nil)
 	if rec.Code != 403 {
-		t.Fatalf("9th PUT: %d %s, want 403", rec.Code, rec.Body.String())
+		t.Fatalf("over-quota PUT: %d %s, want 403", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "plan_limit_env_vars") {
-		t.Errorf("9th PUT body = %s, want plan_limit_env_vars", rec.Body.String())
+		t.Errorf("over-quota PUT body = %s, want plan_limit_env_vars", rec.Body.String())
 	}
 }
 
@@ -237,8 +238,9 @@ func TestEnv_QuotaCountedDistinctFromReUpsert(t *testing.T) {
 	e := setup(t, api.PlanFree)
 	app := createApp(t, e, "env-reupsert-app")
 
-	// Fill to quota with 8 distinct keys.
-	for i := 0; i < 8; i++ {
+	freeLimit := api.MustLimitsFor(api.PlanFree).EnvVarsMax
+	// Fill to quota with distinct keys.
+	for i := 0; i < freeLimit; i++ {
 		key := keyName(i)
 		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key,
 			api.PutAppEnvRequest{Value: "v1"}, nil)
@@ -252,11 +254,11 @@ func TestEnv_QuotaCountedDistinctFromReUpsert(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("re-PUT %s: %d %s, want 200", keyName(3), rec.Code, rec.Body.String())
 	}
-	// And the 9th distinct key still 403.
+	// And the next distinct key still 403.
 	rec = e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/NEW_KEY",
 		api.PutAppEnvRequest{Value: "v"}, nil)
 	if rec.Code != 403 {
-		t.Fatalf("9th distinct: %d %s, want 403", rec.Code, rec.Body.String())
+		t.Fatalf("over-quota distinct: %d %s, want 403", rec.Code, rec.Body.String())
 	}
 }
 
@@ -474,20 +476,20 @@ func TestEnv_RedeployPreservesEnv(t *testing.T) {
 
 // keyName produces a stable ^[A-Z][A-Z0-9_]*$ identifier for the i-th
 // loop iteration in the quota tests. KEY_ZERO, KEY_ONE, …; up to
-// KEY_TWENTY_NINE fits in the 32 KB per-key cap.
+// KEY_0, KEY_1, … fit in the 32 KB per-key cap.
 func keyName(i int) string {
 	return "KEY_" + intToLetters(i)
 }
 
 // intToLetters encodes 0→"ZERO", 1→"ONE", etc., so all keys stay
 // within the regex shape (no digits as the leading char). Bounded by
-// the test runner — only 8 distinct values are needed.
+// the test runner — the plan quota determines how many are needed.
 func intToLetters(i int) string {
 	names := []string{"ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE"}
 	if i < len(names) {
 		return names[i]
 	}
-	return "MISC"
+	return fmt.Sprintf("N%d", i)
 }
 
 // pin to silence unused imports if a future refactor trims.

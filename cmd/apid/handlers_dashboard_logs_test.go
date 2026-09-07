@@ -62,8 +62,8 @@ func TestDashboardHandler_AppLogs(t *testing.T) {
 			t.Errorf("body missing %q\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "Archived logs") {
-		t.Errorf("free-plan page unexpectedly rendered archive controls")
+	if !strings.Contains(body, "Archived logs") {
+		t.Errorf("free-plan page missing one-day archive controls")
 	}
 }
 

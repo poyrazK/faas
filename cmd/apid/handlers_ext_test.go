@@ -1136,7 +1136,7 @@ func TestGetApp_SurfacesConcurrencyPerVMBound(t *testing.T) {
 		plan api.Plan
 		want int
 	}{
-		{api.PlanFree, 1},
+		{api.PlanFree, 4},
 		{api.PlanHobby, 5},
 		{api.PlanPro, 25},
 		{api.PlanScale, 80},
