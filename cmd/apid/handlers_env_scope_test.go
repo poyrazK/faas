@@ -31,6 +31,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -296,18 +297,19 @@ func TestEnv_ScopeMalformed_400(t *testing.T) {
 // refactor that accidentally uses CountAppEnvInScope here would
 // let a customer bypass the cap by spreading rows across scopes.
 func TestEnv_Quota_AppliesAcrossScopes(t *testing.T) {
-	e := setup(t, api.PlanFree) // Free plan: 8 env vars per app
+	e := setup(t, api.PlanFree) // Free plan: 16 env vars per app
 	app := createApp(t, e, "env-quota-cross-scope")
+	freeLimit := api.MustLimitsFor(api.PlanFree).EnvVarsMax
 
-	// Fill the default scope to its cap: 8 rows.
-	for i := 0; i < 8; i++ {
-		key := []string{"A", "B", "C", "D", "E", "F", "G", "H"}[i]
+	// Fill the default scope to its cap.
+	for i := 0; i < freeLimit; i++ {
+		key := fmt.Sprintf("KEY_%d", i)
 		if rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key+"_KEY",
 			api.PutAppEnvRequest{Value: "v"}, nil); rec.Code != 200 {
 			t.Fatalf("PUT default %d: %d %s", i, rec.Code, rec.Body.String())
 		}
 	}
-	// A 9th row in a non-default scope must 403, not 200. The
+	// The next row in a non-default scope must 403, not 200. The
 	// quota path is per-app, not per-scope, per D6.
 	putRec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/STAGING_KEY?scope=staging",
 		api.PutAppEnvRequest{Value: "v"}, nil)

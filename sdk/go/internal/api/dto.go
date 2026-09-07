@@ -87,9 +87,9 @@ type UpdateAppRequest struct {
 	// roadmap) is the per-app outbound IP allowlist. Each entry is
 	// a CIDR string ("1.2.3.0/24" for v4, "2001:db8::/32" for v6);
 	// the slice replaces the full list (atomic full-overwrite at the
-	// apps row). Plan-gated upstream (Free/Hobby return 403
+	// apps row). Plan-gated upstream (Free returns 403
 	// plan_egress_allowlist_not_allowed); size-capped at
-	// plan.EgressAllowlistMaxSize() (Pro 16, Scale 64) — v4 + v6
+	// plan.EgressAllowlistMaxSize() (Hobby 8, Pro 16, Scale 64) — v4 + v6
 	// entries share the same count budget. Empty slice / nil
 	// pointer = clear the allowlist (back to the default-accept
 	// chain policy). The non-/0 contract is enforced by the DB
@@ -195,7 +195,7 @@ type AppResponse struct {
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
 	// MaxConcurrency (the per-app instance cap, spec §6.2-1) — this
-	// is per-VM. Free 1, Hobby 5, Pro 25, Scale 80. Surfaced so
+	// is per-VM. Free 4, Hobby 5, Pro 25, Scale 80. Surfaced so
 	// dashboards / CLI can show "what's the bound for one VM on
 	// this plan" without the customer reading limits.go. Concurrency
 	// above 1 is the customer's runner/process responsibility — see

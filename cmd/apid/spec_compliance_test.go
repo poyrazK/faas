@@ -110,46 +110,47 @@ var routeExclude = map[string]bool{
 	// entries for these same routes — both lists must move
 	// together (operator-only surface, admin scope +
 	// FAAS_ADMIN_EMAILS allowlist).
-	"POST /v1/admin/instances/{id}/force-park":                true, // PR #1099 P2a
-	"POST /v1/admin/apps/{slug}/force-cold-boot":              true, // PR #1099 P2b
-	"POST /v1/admin/instances/{id}/force-restart":             true, // PR #1105 P2d
-	"POST /v1/admin/builds/sweep-stuck":                       true, // PR #1099 P2c
-	"POST /v1/admin/ops/accounts/{id}/suspend":                true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":                true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":        true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":                   true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":             true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":                true, // operator-only node lifecycle control
-	"POST /v1/compute-nodes/{name}/drain":                     true, // Workstream B: canonical admin-scoped drain surface (ADR-137)
-	"GET /v1/compute-nodes/{name}/drain":                      true, // Workstream B: drain progress endpoint (ADR-137)
-	"GET /v1/admin/operator-intents/{id}":                     true, // PR #1099 P2.3
-	"GET /v1/events":                                          true, // SSE (cookie+Bearer, not s.auth)
-	"GET /login":                                              true, // dashboard magic-link GET (HTML form, browser-only)
-	"POST /logout":                                            true, // dashboard logout (HTML form, browser-only)
-	"GET /auth/verify":                                        true, // magic-link consume (legacy; PR #1 closed; kept for compat)
-	"GET /oauth/callback":                                     true, // GitHub App install callback
-	"GET /oauth/code-callback":                                true, // GitHub App user-to-server OAuth callback (PR-C)
-	"POST /dashboard/install/connect":                         true, // GitHub App "Connect GitHub" button (PR-C)
-	"GET /dashboard":                                          true, // HTML dashboard
-	"GET /dashboard/":                                         true, // HTML dashboard
-	"POST /dashboard/account/delete":                          true, // HTML form
-	"POST /dashboard/account/keys/{id}/delete":                true, // HTML form (issue #248)
-	"POST /dashboard/account/plan":                            true, // HTML form (issue #248)
-	"POST /dashboard/account/restore":                         true, // HTML form
-	"GET /dashboard/account/export":                           true, // session-auth twin of /v1/account/export
-	"GET /dashboard/account/dpa":                              true, // session-auth twin of DPA
-	"POST /dashboard/raise-overage-cap":                       true, // HTML form (issue #561)
-	"POST /dashboard/upgrade":                                 true, // HTML form (hosted-checkout hand-off)
-	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":         true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
-	"POST /dashboard/apps/{slug}/env":                         true, // HTML form, env editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/env/{key}/delete":            true, // HTML form, env editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets":                     true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets/{key}/delete":        true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":        true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/instances/{action}":          true, // HTML form, app lifecycle controls (issue #1397 G6)
-	"POST /dashboard/apps/{slug}/rollback":                    true, // HTML form, app rollback (issue #248)
-	"POST /dashboard/apps/{slug}/deployments/{id}/retry":      true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
-	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable": true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
+	"POST /v1/admin/instances/{id}/force-park":                   true, // PR #1099 P2a
+	"POST /v1/admin/apps/{slug}/force-cold-boot":                 true, // PR #1099 P2b
+	"POST /v1/admin/instances/{id}/force-restart":                true, // PR #1105 P2d
+	"POST /v1/admin/builds/sweep-stuck":                          true, // PR #1099 P2c
+	"POST /v1/admin/ops/accounts/{id}/suspend":                   true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":                   true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":           true, // operator-only tenant security control
+	"POST /v1/admin/ops/nodes/{name}/drain":                      true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":                true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":                   true, // operator-only node lifecycle control
+	"POST /v1/compute-nodes/{name}/drain":                        true, // Workstream B: canonical admin-scoped drain surface (ADR-137)
+	"GET /v1/compute-nodes/{name}/drain":                         true, // Workstream B: drain progress endpoint (ADR-137)
+	"GET /v1/admin/operator-intents/{id}":                        true, // PR #1099 P2.3
+	"GET /v1/events":                                             true, // SSE (cookie+Bearer, not s.auth)
+	"GET /login":                                                 true, // dashboard magic-link GET (HTML form, browser-only)
+	"POST /logout":                                               true, // dashboard logout (HTML form, browser-only)
+	"GET /auth/verify":                                           true, // magic-link consume (legacy; PR #1 closed; kept for compat)
+	"GET /oauth/callback":                                        true, // GitHub App install callback
+	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
+	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
+	"GET /dashboard":                                             true, // HTML dashboard
+	"GET /dashboard/":                                            true, // HTML dashboard
+	"POST /dashboard/account/delete":                             true, // HTML form
+	"POST /dashboard/account/keys/{id}/delete":                   true, // HTML form (issue #248)
+	"POST /dashboard/account/plan":                               true, // HTML form (issue #248)
+	"POST /dashboard/account/restore":                            true, // HTML form
+	"GET /dashboard/account/export":                              true, // session-auth twin of /v1/account/export
+	"GET /dashboard/account/dpa":                                 true, // session-auth twin of DPA
+	"POST /dashboard/raise-overage-cap":                          true, // HTML form (issue #561)
+	"POST /dashboard/upgrade":                                    true, // HTML form (hosted-checkout hand-off)
+	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":            true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
+	"POST /dashboard/apps/{slug}/env":                            true, // HTML form, env editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/env/{key}/delete":               true, // HTML form, env editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets":                        true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets/{key}/delete":           true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/instances/{action}":             true, // HTML form, app lifecycle controls (issue #1397 G6)
+	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": true, // HTML form, queue DLQ replay (issue #1397 G7)
+	"POST /dashboard/apps/{slug}/rollback":                       true, // HTML form, app rollback (issue #248)
+	"POST /dashboard/apps/{slug}/deployments/{id}/retry":         true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
+	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":    true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
 	// (session-cookie dashboard twin of the JSON route). Mirror the
 	// cmd/sdk-coverage/main.go::routeExclude entry for the same

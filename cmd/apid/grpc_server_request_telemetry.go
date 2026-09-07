@@ -184,6 +184,21 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 	if count < 1 {
 		count = 1
 	}
+	// Wire compatibility: older gateways do not send the additive dimension
+	// fields. Map proto3 empty defaults to the database sentinels so a rolling
+	// upgrade continues to insert rows while new gateways populate dimensions.
+	uaFamily := req.GetUaFamily()
+	if uaFamily == "" {
+		uaFamily = "__unknown__"
+	}
+	referrerHost := req.GetReferrerHost()
+	if referrerHost == "" {
+		referrerHost = "__none__"
+	}
+	country := req.GetCountry()
+	if country == "" {
+		country = "__unknown__"
+	}
 	insertErr := r.store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
 		AccountID:    state.NewPgtypeUUID(accountID),
 		AppID:        state.NewPgtypeUUID(appID),
@@ -196,6 +211,9 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		TraceID:      pgtype.Text{String: req.GetTraceId(), Valid: req.GetTraceId() != ""},
 		ReceivedAt:   state.NewPgtypeTime(msToTime(req.GetReceivedAtUnixMs())),
 		Count:        int32(count),
+		UaFamily:     uaFamily,
+		ReferrerHost: referrerHost,
+		Country:      country,
 	})
 	if insertErr != nil {
 		if isConstraintViolation(insertErr) {

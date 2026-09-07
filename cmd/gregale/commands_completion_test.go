@@ -707,6 +707,7 @@ func extractPrintUsageTopics() ([]printUsageSite, error) {
 	topicConsts := map[string]string{
 		"initCmdDocsTopic":                "init",
 		"metricsCmdDocsTopic":             "metrics",
+		"analyticsCmdDocsTopic":           "analytics",
 		"sloCmdDocsTopic":                 "slo",
 		"sloAccountCmdDocsTopic":          "account-slo",
 		"invocationCmdDocsTopic":          "invocations",

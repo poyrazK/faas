@@ -7,7 +7,7 @@ signal path).
 ## Context
 
 The current idle reaper (`pkg/sched/reaper.go::ReapIdle`) parks instances
-one-by-one against each instance's per-plan `idle_timeout` (30/60/300/600 s
+one-by-one against each instance's per-plan `idle_timeout` (60/60/300/600 s
 for Free/Hobby/Pro/Scale). For a 5-instance Pro app that served a 100 rps
 burst and then dropped to 0, all 5 instances stay resident until the
 **longest** idle cross the 300 s Pro timeout — burning `5 × (RAMMB + 8)` of

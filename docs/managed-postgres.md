@@ -18,6 +18,10 @@ database reservation boundary:
 | Pro | 3 | 50 GiB | 7 days | development, burstable |
 | Scale | 10 | 100 GiB | 7 days | development, burstable, production |
 
+All current plans use provider-managed compute suspension. Always-on database
+compute is not included in the bundled plans, and requests that disable
+scale-to-zero are rejected until a separately priced entitlement exists.
+
 The operator registry can set a lower global database or provider ceiling;
 customer limits never raise it. API keys use `postgres:read` for read/status
 operations and `postgres:manage` for create, restore, delete, and binding
@@ -101,7 +105,15 @@ The initial service-class mapping is:
 Only `single_zone` is advertised. Gregale does not claim a portable
 high-availability promise merely because Neon storage has internal redundancy.
 `scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
-suspension. PostgreSQL majors 14 through 18 are enabled.
+suspension. Customer requests cannot currently select `false`; the adapter
+retains the provider-neutral field for a future always-on entitlement.
+PostgreSQL majors 14 through 18 are enabled.
+
+The mutating qualification run also proves the runtime behavior: it connects
+to the disposable database, closes the connection, waits for Neon to report
+the endpoint as idle, reconnects, records wake latency, and only then allows
+the backend fingerprint to be approved. Configuration inspection alone is not
+sufficient evidence for a scale-to-zero promise.
 
 ## Safety boundary
 

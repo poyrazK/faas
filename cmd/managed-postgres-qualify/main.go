@@ -100,6 +100,9 @@ func qualificationSpec(backend managedpostgres.Backend, region string) (managedp
 	if err := capabilities.Validate(); err != nil {
 		return managedpostgres.Spec{}, err
 	}
+	if !capabilities.ScaleToZero {
+		return managedpostgres.Spec{}, managedpostgres.ErrUnsupported
+	}
 	major := capabilities.PostgresMajors[0]
 	for _, candidate := range capabilities.PostgresMajors[1:] {
 		if candidate > major {

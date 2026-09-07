@@ -45,7 +45,8 @@ import (
 // PR-B adds Count — the collapse aggregate. The recorder always sets
 // Count=1 (one observed request). The publisher's
 // collapseRequestTelemetry increments Count when multiple rows fold
-// into the same (app, deployment, route, method, status, minute)
+// into the same (app, deployment, route, method, status, dimensions,
+// minute) bucket.
 // bucket. The apid receiver passes Count verbatim to the sqlc
 // INSERT. Pre-PR-B clients (the recorder compiled against PR-A)
 // never set Count; Go zero-value 0 is corrected to 1 at the
@@ -63,6 +64,11 @@ type RequestTelemetryRow struct {
 	TraceID      string // W3C trace-id hex (32 chars); "" when unset
 	ReceivedAt   time.Time
 	Count        int // PR-B: collapse aggregate; >= 1 (CHECK in 00428). Recorder sets to 1.
+	// These dimensions are normalized at the edge. Raw User-Agent, referrer
+	// URLs, and IP addresses never enter this row or the gRPC payload.
+	UAFamily     string // normalized family, e.g. chrome, safari, bot
+	ReferrerHost string // lower-case hostname only; __none__ when absent
+	Country      string // ISO alpha-2 uppercase; __unknown__ when unavailable
 }
 
 // RequestTelemetryConfig bundles the knobs the recorder reads at

@@ -49,6 +49,14 @@ func TestManifestValidate(t *testing.T) {
 		{"empty argv0", AppManifest{Entrypoint: []string{""}}, false},
 		{"bad port", AppManifest{Entrypoint: []string{"x"}, Port: 70000}, false},
 		{"neg port", AppManifest{Entrypoint: []string{"x"}, Port: -1}, false},
+		{"protocol ports", AppManifest{Entrypoint: []string{"x"}, Ports: []WorkloadPort{
+			{Name: "http", Port: 8080, Protocol: WorkloadPortTCP},
+			{Name: "dns", Port: 8080, Protocol: WorkloadPortUDP},
+		}}, true},
+		{"duplicate protocol port", AppManifest{Entrypoint: []string{"x"}, Ports: []WorkloadPort{
+			{Name: "a", Port: 8080, Protocol: WorkloadPortTCP},
+			{Name: "b", Port: 8080, Protocol: WorkloadPortTCP},
+		}}, false},
 		// Issue #460 / ADR-053 — env_secrets refs (PR-B wiring). Ref names
 		// match ^[A-Z][A-Z0-9_]*$ (same grammar as pkg/api/dto.go's apid
 		// validation, mirrored to keep the manifest contract self-contained).
@@ -211,6 +219,7 @@ func TestManifestRoundTrip(t *testing.T) {
 		Env:        map[string]string{"NODE_ENV": "production"},
 		EnvSecrets: map[string]string{"DB_URL": "secret:DB_URL", "API_KEY": "secret:API_KEY"},
 		Port:       3000,
+		Ports:      []WorkloadPort{{Name: "http", Port: 3000, Protocol: WorkloadPortTCP}, {Name: "dns", Port: 53, Protocol: WorkloadPortUDP}},
 		Healthz:    "/healthz",
 	}
 	var buf bytes.Buffer
@@ -221,7 +230,7 @@ func TestManifestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Entrypoint[1] != "server.js" || out.Port != 3000 || out.Env["NODE_ENV"] != "production" {
+	if out.Entrypoint[1] != "server.js" || out.Port != 3000 || len(out.Ports) != 2 || out.Env["NODE_ENV"] != "production" {
 		t.Errorf("round trip mismatch: %+v", out)
 	}
 	if out.EnvSecrets["DB_URL"] != "secret:DB_URL" || out.EnvSecrets["API_KEY"] != "secret:API_KEY" {

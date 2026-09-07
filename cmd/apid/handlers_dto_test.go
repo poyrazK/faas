@@ -7,22 +7,23 @@
 //   - tarball with no recognised marker → Framework="unknown", Version=""
 //   - per-deployment override_entrypoint + override_port echo verbatim
 //
-// The handler calls markers.DetectFromTarball directly (not the
-// builderd shim) so FrameworkUnknown is a NON-error graceful
-// degradation; pre-PR-2 callers saw BuildPlan=nil because the
-// field didn't exist. Pre-PR-2 wire-equal callers see no diff
+// New rows use the persisted profile captured from the exact archive;
+// legacy rows keep the marker-detection fallback so FrameworkUnknown is a
+// NON-error graceful degradation. Pre-PR-2 wire-equal callers see no diff
 // (omitempty on the *BuildPlan pointer).
 
 package main
 
 import (
 	"archive/tar"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -176,6 +177,30 @@ func TestDeploymentResponse_BuildPlan_OverridesPopulated(t *testing.T) {
 	}
 	if resp.BuildPlan.Port != 3000 {
 		t.Errorf("port = %d, want 3000", resp.BuildPlan.Port)
+	}
+}
+
+func TestDeploymentResponse_BuildPlan_UsesPersistedProfileAfterSpoolCleanup(t *testing.T) {
+	srv := newServer(state.NewMemStore(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"gregale.dev", noopNotifier{})
+	raw, err := json.Marshal(frameworkprofile.Profile{
+		Version: frameworkprofile.Version, Framework: "fastapi", FrameworkVer: "0.115",
+		StartCommand: "uvicorn app:app --host 0.0.0.0 --port 8000", Port: 8000, HealthPath: "/ready", Inferred: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := state.Deployment{
+		ID: "d1", AppID: "a1", Kind: state.DeploymentKindTarball,
+		Status: state.DeployLive, InferredProfile: raw,
+	}
+	resp := srv.deploymentResponse(d, state.App{ID: "a1", Type: state.AppTypeApp})
+	if resp.BuildPlan == nil {
+		t.Fatalf("BuildPlan = nil; want persisted profile")
+	}
+	if resp.BuildPlan.Framework != "python" || resp.BuildPlan.Version != "0.115" || resp.BuildPlan.Entrypoint == "" || resp.BuildPlan.HealthPath != "/ready" {
+		t.Fatalf("BuildPlan = %+v; want persisted profile values", resp.BuildPlan)
 	}
 }
 

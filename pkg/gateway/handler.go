@@ -6005,6 +6005,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				// Route metrics are optional; the telemetry schema requires a label.
 				telemetryRoute = otherRouteLabel
 			}
+			uaFamily, referrerHost, country := h.requestTelemetryDimensions(r)
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
 				AccountID:    acctUUID,
 				AppID:        appUUID,
@@ -6016,6 +6017,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ColdBoot:     cold,
 				TraceID:      telemetryTraceID(requestID),
 				ReceivedAt:   time.Now(),
+				UAFamily:     uaFamily,
+				ReferrerHost: referrerHost,
+				Country:      country,
 			})
 		}
 	}

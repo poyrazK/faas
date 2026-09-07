@@ -217,7 +217,7 @@ func TestCmdSecrets_Set_NonZeroExitOnServerError(t *testing.T) {
 				Status: 403,
 				Code:   api.CodePlanLimitSecrets,
 				Title:  "Secret count limit reached",
-				Detail: "Free plan allows 3 secret(s) per app; you have 3.",
+				Detail: "Free plan allows 8 secret(s) per app; you have 8.",
 			}
 		},
 	}
@@ -442,13 +442,13 @@ func TestCmdSecrets_Set_QuotaStamp(t *testing.T) {
 			wantSub: []string{"x: 3/25 secrets"},
 		},
 		{
-			name: "free_plan_uses_free_cap_3",
+			name: "free_plan_uses_free_cap_8",
 			plan: fakeAccount{status: 200, body: api.AccountResponse{Plan: "free"}},
 			list: fakeList{status: 200, body: api.AppSecretListResponse{
 				Secrets: []api.AppSecretResponse{{Key: "K1"}},
-				Quota:   3, Count: 1,
+				Quota:   8, Count: 1,
 			}},
-			wantSub: []string{"x: 1/3 secrets"},
+			wantSub: []string{"x: 1/8 secrets"},
 		},
 		{
 			name: "plan_unknown_falls_back_to_bare_count",

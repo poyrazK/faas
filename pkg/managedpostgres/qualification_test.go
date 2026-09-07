@@ -72,6 +72,10 @@ func (p *qualificationProvider) RevokeCredentials(context.Context, CredentialReq
 	return nil
 }
 
+func (*qualificationProvider) ProbeScaleToZero(context.Context, string, CredentialMaterial) (ScaleToZeroProbeResult, error) {
+	return ScaleToZeroProbeResult{Suspended: true, Resumed: true, WakeLatency: 250 * time.Millisecond}, nil
+}
+
 func (p *qualificationProvider) Usage(_ context.Context, _ string, window UsageWindow) (Usage, error) {
 	p.usage++
 	return Usage{Window: window, Readings: []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: 1}}}, nil
@@ -112,8 +116,11 @@ func TestQualifyProviderExercisesLifecycleAndCleansUp(t *testing.T) {
 	if !provider.deleted || provider.provision != 2 || provider.inspect != 1 || provider.usage != 1 || provider.issue != 1 || provider.revoke != 1 || provider.delete != 2 {
 		t.Fatalf("provider calls = %+v", provider)
 	}
-	if len(report.Checks) != 20 {
+	if len(report.Checks) != 21 {
 		t.Fatalf("checks = %d (%+v)", len(report.Checks), report.Checks)
+	}
+	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS != 250 {
+		t.Fatalf("scale-to-zero evidence = %+v", report.ScaleToZero)
 	}
 }
 

@@ -19,7 +19,7 @@ T = TypeVar("T", bound="DebugTelemetryRequestItem")
 
 @_attrs_define
 class DebugTelemetryRequestItem:
-    """One collapsed telemetry row persisted by the recorder; count is the number of gateway-served requests represented by it."""
+    """One row per gateway-served request, persisted by the recorder (PR-A)."""
 
     id: UUID
     deployment_id: UUID
@@ -29,6 +29,7 @@ class DebugTelemetryRequestItem:
     status: int
     latency_ms: int
     count: int
+    """Number of original requests represented by this collapsed telemetry row."""
     cold_boot: bool
     received_at: datetime.datetime
     trace_id: None | str | Unset = UNSET

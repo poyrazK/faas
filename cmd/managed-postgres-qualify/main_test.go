@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -40,5 +41,22 @@ func TestQualificationSpecUsesConservativeCapabilities(t *testing.T) {
 	}
 	if spec.PostgresMajor != 17 || spec.StorageLimitBytes != 1<<30 || spec.RestoreWindowSeconds != 3600 || !spec.ScaleToZero {
 		t.Fatalf("spec = %+v", spec)
+	}
+}
+
+func TestQualificationSpecRequiresScaleToZero(t *testing.T) {
+	backend := managedpostgres.Backend{
+		Region: "eu-central-1",
+		Capabilities: managedpostgres.Capabilities{
+			PostgresMajors:     []int{16},
+			ServiceClasses:     []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment},
+			Availability:       []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
+			PointInTimeRestore: false,
+			MaxStorageBytes:    2 << 30,
+			UsageMeters:        []managedpostgres.Meter{managedpostgres.MeterComputeUnitSeconds},
+		},
+	}
+	if _, err := qualificationSpec(backend, backend.Region); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("qualificationSpec error = %v, want ErrUnsupported", err)
 	}
 }

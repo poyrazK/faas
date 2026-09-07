@@ -37,7 +37,7 @@ func TestLiveProviderLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := providerInterface.(*Provider)
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	resourceID := uuid.NewString()
 	providerResourceID := ""
@@ -87,6 +87,13 @@ func TestLiveProviderLifecycle(t *testing.T) {
 	}
 	if err := material.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	probe, err := provider.ProbeScaleToZero(ctx, observed.ProviderResourceID, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := probe.Validate(); err != nil {
+		t.Fatalf("scale-to-zero probe: %v", err)
 	}
 	if err := provider.RevokeCredentials(ctx, credentialRequest); err != nil {
 		t.Fatal(err)

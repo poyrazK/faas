@@ -884,6 +884,11 @@ type Querier interface {
 	// original deployment_id. ON CONFLICT DO NOTHING (rather than
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
+	// Top-N customer analytics grouped by one of the bounded dimensions. Rows
+	// outside the top-N are folded into __other__ so a customer cannot turn this
+	// endpoint into an unbounded cardinality surface. Counts and percentiles use
+	// the publisher's collapsed row weight.
+	RequestTelemetryAnalyticsByDimension(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByDimensionParams) ([]RequestTelemetryAnalyticsByDimensionRow, error)
 	// Top route/method rows for the customer analytics overview. `count` is
 	// weighted throughout the same way as RequestTelemetryAnalyticsSummary.
 	RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteParams) ([]RequestTelemetryAnalyticsByRouteRow, error)
@@ -896,6 +901,11 @@ type Querier interface {
 	// recorder collapses rows by count, so all totals and percentile ranks
 	// expand that weight rather than counting stored rows.
 	RequestTelemetryAnalyticsTimeseries(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsTimeseriesParams) ([]RequestTelemetryAnalyticsTimeseriesRow, error)
+	// Zero-filled hourly series for a bounded top-N analytics dimension. The
+	// group set is selected over the whole window, then every selected group is
+	// zero-filled per hour. This keeps charts stable while preserving the same
+	// retention and cardinality bounds as the overview query.
+	RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]RequestTelemetryAnalyticsTimeseriesGroupedRow, error)
 	// Per-route p50/p95/p99 latency + represented request count for the
 	// compare endpoint and the regression detector (ADR-127 PR-B
 	// cron + PR Debugger UX v1 compare handler). Single index scan

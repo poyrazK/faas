@@ -790,6 +790,17 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<slug>"},
 	},
 	{
+		Name:    "analytics",
+		DocSlug: "analytics",
+		Short:   "Historical request analytics (analytics <slug> [--since 24h] [--by route|country|referrer_host|ua_family|status])",
+		Flags: []cliFlag{
+			{Name: "since", Short: "lookback window", Value: "WINDOW"},
+			{Name: "until", Short: "exclusive RFC3339 end", Value: "TIMESTAMP"},
+			{Name: "by", Short: "grouping dimension", Value: "DIMENSION", ClosedSet: []string{"route", "country", "referrer_host", "ua_family", "status"}},
+		},
+		Positionals: []string{"<slug>"},
+	},
+	{
 		Name:    "mfa",
 		DocSlug: "mfa",
 		Short:   "Manage account MFA (mfa enroll|confirm|verify|recover|disable)",

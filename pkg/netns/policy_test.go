@@ -266,6 +266,37 @@ func TestHostPolicyForwardDeniesComeBeforeBroadAllow(t *testing.T) {
 	}
 }
 
+// TestHostPolicyRenderSMTPAllowlistScopesSubmissionPorts pins the narrow
+// Hobby SMTP exception. The source VM address and destination CIDRs must both
+// be present, the exception must follow the internal/private denies, and the
+// universal drop must still follow it so port 25 remains blocked.
+func TestHostPolicyRenderSMTPAllowlistScopesSubmissionPorts(t *testing.T) {
+	h := DefaultHostPolicy
+	h.SMTPAllowlistRules = []SMTPAllowlistRule{{
+		SourceIP:     netip.MustParseAddr("10.100.0.2"),
+		Destinations: []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")},
+		AccountID:    "acct-1",
+		AppID:        "app-1",
+	}}
+	forward := extractChain(t, h.Render(), "forward")
+	exception := `iifname "br-tenants" ip saddr 10.100.0.2 ip daddr { 203.0.113.0/24 } tcp dport { 465,587 } accept`
+	exIdx := strings.Index(forward, exception)
+	if exIdx < 0 {
+		t.Fatalf("forward chain missing SMTP exception %q:\n%s", exception, forward)
+	}
+	denyIdx := strings.Index(forward, "ip daddr 10.0.0.0/8 counter name")
+	if denyIdx < 0 || denyIdx >= exIdx {
+		t.Fatalf("SMTP exception must follow private-range deny (deny=%d exception=%d):\n%s", denyIdx, exIdx, forward)
+	}
+	smtpIdx := strings.Index(forward, "tcp dport { 25,465,587 } drop")
+	if smtpIdx < 0 || exIdx >= smtpIdx {
+		t.Fatalf("SMTP exception must precede universal SMTP drop (exception=%d drop=%d):\n%s", exIdx, smtpIdx, forward)
+	}
+	if strings.Contains(forward[exIdx:smtpIdx], "dport { 25") {
+		t.Fatalf("SMTP exception unexpectedly permits port 25:\n%s", forward[exIdx:smtpIdx])
+	}
+}
+
 // extractChain returns the body of the named filter chain (the lines
 // between `chain <name> {` and its matching depth-zero `}`). Used by
 // tests that need to assert per-rule ordering WITHOUT scanning other

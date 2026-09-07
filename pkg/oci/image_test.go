@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestLayersAboveBase(t *testing.T) {
@@ -111,6 +113,26 @@ func TestSingleTCPExposedPort(t *testing.T) {
 	}
 }
 
+func TestWorkloadPortsFromExposed(t *testing.T) {
+	got, err := WorkloadPortsFromExposed(map[string]struct{}{
+		"8080/tcp": {},
+		"53/udp":   {},
+		"bad/tcp":  {},
+	})
+	if err != nil {
+		t.Fatalf("WorkloadPortsFromExposed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d ports, want 2: %#v", len(got), got)
+	}
+	if got[0].Name != "udp-53" || got[0].Protocol != api.WorkloadPortUDP || got[0].Port != 53 {
+		t.Fatalf("first port = %#v, want udp-53/53", got[0])
+	}
+	if got[1].Name != "tcp-8080" || got[1].Protocol != api.WorkloadPortTCP || got[1].Port != 8080 {
+		t.Fatalf("second port = %#v, want tcp-8080/8080", got[1])
+	}
+}
+
 func TestParseConfigRejectsNonLayerRootfs(t *testing.T) {
 	if _, err := ParseConfig(strings.NewReader(`{"rootfs":{"type":"foreign"}}`)); err == nil {
 		t.Error("expected error on unsupported rootfs type")
@@ -143,13 +165,16 @@ func TestManifestFromConfig(t *testing.T) {
 func TestManifestFromConfig_ExposedPortSeedsServingPort(t *testing.T) {
 	m, err := ManifestFromConfig(Config{
 		Cmd:          []string{"/app/server"},
-		ExposedPorts: map[string]struct{}{"3000/tcp": {}},
+		ExposedPorts: map[string]struct{}{"3000/tcp": {}, "53/udp": {}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.Port != 3000 {
 		t.Fatalf("Port = %d, want 3000", m.Port)
+	}
+	if len(m.Ports) != 2 || m.Ports[0].Name != "udp-53" || m.Ports[1].Name != "tcp-3000" {
+		t.Fatalf("Ports = %#v, want deterministic tcp/udp declarations", m.Ports)
 	}
 }
 

@@ -125,3 +125,18 @@ func TestParseRequestAnalyticsRouteFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRequestAnalyticsGroupBy(t *testing.T) {
+	for _, value := range []string{"route", "country", "referrer_host", "ua_family", "status"} {
+		got, err := parseRequestAnalyticsGroupBy(value, "")
+		if err != nil || got != value {
+			t.Fatalf("group_by %q = %q, %v", value, got, err)
+		}
+	}
+	if got, err := parseRequestAnalyticsGroupBy("", "route"); err != nil || got != "route" {
+		t.Fatalf("default group_by = %q, %v", got, err)
+	}
+	if _, err := parseRequestAnalyticsGroupBy("ip", ""); err == nil {
+		t.Fatal("unsupported group_by accepted")
+	}
+}
