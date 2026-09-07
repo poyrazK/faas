@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -14,7 +15,7 @@ type capacityWakeScheduler interface {
 	EnsureWakeCapacity(ctx context.Context, appID, trigger string, desired int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, port int)) error
 }
 
-func (h *Handler) initialWakeDemand(appID string, maxConcurrency int, plan api.Plan) int {
+func (h *Handler) initialWakeDemand(appID string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int) int {
 	if h == nil || h.burstPressure == nil || appID == "" {
 		return 1
 	}
@@ -22,7 +23,8 @@ func (h *Handler) initialWakeDemand(appID string, maxConcurrency int, plan api.P
 	if !ok {
 		return 1
 	}
-	desired := desiredBurstInstances(h.burstPressure.state(appID).inflight.Load(), limits.ConcurrencyPerVMBound, maxConcurrency)
+	state := h.burstPressure.state(appID)
+	desired := desiredBurstInstancesForApp(state, App{AutoscaleTargetRPS: autoscaleTargetRPS}, limits.ConcurrencyPerVMBound, maxConcurrency, time.Now())
 	if desired < 1 {
 		return 1
 	}

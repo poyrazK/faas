@@ -47,9 +47,22 @@ func TestInitialWakeDemandUsesQueuedPressureAndBounds(t *testing.T) {
 		maximum, want int
 	}{{0, 20, 1}, {1, 20, 1}, {80, 20, 1}, {81, 20, 2}, {100, 1, 1}, {10000, 20, api.ScaleUpMaxBurstPerTick}} {
 		h.burstPressure.state("app").inflight.Store(tc.pressure)
-		if got := h.initialWakeDemand("app", tc.maximum, api.PlanScale); got != tc.want {
+		if got := h.initialWakeDemand("app", tc.maximum, api.PlanScale, 0); got != tc.want {
 			t.Errorf("pressure=%d max=%d got=%d want=%d", tc.pressure, tc.maximum, got, tc.want)
 		}
+	}
+}
+
+func TestInitialWakeDemandUsesAutoscaleTarget(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), nil)
+	state := h.burstPressure.state("app")
+	state.inflight.Store(1)
+	now := time.Now()
+	for i := 0; i < 31; i++ {
+		state.recordArrival(now)
+	}
+	if got := h.initialWakeDemand("app", 20, api.PlanScale, 15); got != 3 {
+		t.Fatalf("initial wake demand = %d, want 3", got)
 	}
 }
 

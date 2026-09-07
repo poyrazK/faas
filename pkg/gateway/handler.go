@@ -85,6 +85,10 @@ type App struct {
 	Plan api.Plan
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
+	// AutoscaleTargetRPS is the configured per-instance request-rate target.
+	// The gateway uses it as an immediate burst signal while schedd remains the
+	// authority for admissions and sustained autoscaling decisions.
+	AutoscaleTargetRPS int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -5316,7 +5320,7 @@ haveApp:
 			defer cancelWakePage()
 		}
 		//nolint:contextcheck // request ctx at handler boundary.
-		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan)
+		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS)
 		if err != nil {
 			if api.AcceptsHTML(r) && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
@@ -6762,7 +6766,7 @@ func (s *statusRecorder) finalFlush() {
 // prod app's. Empty = prod (legacy). When the cold-start path calls
 // coldStart and coldStart in turn calls Admit, scope is plumbed
 // through both paths.
-func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan) (cold bool, wakeID string, method WakeMethod, err error) {
+func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int) (cold bool, wakeID string, method WakeMethod, err error) {
 	// HealthyCount is intentionally process-local for the hot path, but an
 	// empty process-local cache is not authoritative in a multi-node fleet.
 	// The empty-cache reconciliation now runs inside coldStart's WakeGate
@@ -6772,7 +6776,7 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 	if h.backend.HealthyCount(appID) > 0 {
 		return false, "", WakeMethodUnspecified, nil
 	}
-	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan)
+	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan, autoscaleTargetRPS)
 	if err != nil {
 		return false, "", WakeMethodUnspecified, err
 	}
@@ -6783,7 +6787,7 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 // through the WakeGate's single-flight coalescing. shouldWake is held
 // under the gate lock and re-runs HealthyCount; if a peer's admit has
 // just landed, we skip the redundant cold boot.
-func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan) (bool, string, WakeMethod, error) {
+func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int) (bool, string, WakeMethod, error) {
 	var (
 		admittedWakeID string
 		cold           bool
@@ -6815,7 +6819,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			}
 			admit := func(admitCtx context.Context) error {
 				if ensurer, ok := h.backend.(capacityWarmEnsurer); ok && scope == "" {
-					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, sched.TriggerGateway, h.initialWakeDemand(appID, maxConcurrency, plan))
+					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, sched.TriggerGateway, h.initialWakeDemand(appID, maxConcurrency, plan, autoscaleTargetRPS))
 					if e != nil {
 						return e
 					}

@@ -30,9 +30,16 @@ type burstPressure struct {
 
 type burstPressureState struct {
 	inflight atomic.Int64
-	mu       sync.Mutex
-	worker   *burstGeneration
+
+	arrivalMu   sync.Mutex
+	arrivals    []int64
+	arrivalHead int
+
+	mu     sync.Mutex
+	worker *burstGeneration
 }
+
+const burstArrivalWindow = time.Second
 
 // burstGeneration represents one bounded capacity reconciliation. Keeping
 // the result on the generation (rather than on burstPressureState) prevents a
@@ -62,9 +69,49 @@ func (p *burstPressure) begin(appID string) func() {
 	if state == nil {
 		return func() {}
 	}
+	state.recordArrival(time.Now())
 	state.inflight.Add(1)
 	return func() {
 		state.inflight.Add(-1)
+	}
+}
+
+// recordArrival keeps an exact, bounded one-second arrival window. This is an
+// edge-local signal, so it reacts before schedd's periodic telemetry loop can
+// observe a new burst. The app rate limiter bounds the retained slice.
+func (s *burstPressureState) recordArrival(now time.Time) {
+	if s == nil {
+		return
+	}
+	s.arrivalMu.Lock()
+	defer s.arrivalMu.Unlock()
+	s.pruneArrivalsLocked(now.Add(-burstArrivalWindow).UnixNano())
+	s.arrivals = append(s.arrivals, now.UnixNano())
+}
+
+func (s *burstPressureState) recentArrivals(now time.Time) int64 {
+	if s == nil {
+		return 0
+	}
+	s.arrivalMu.Lock()
+	defer s.arrivalMu.Unlock()
+	s.pruneArrivalsLocked(now.Add(-burstArrivalWindow).UnixNano())
+	return int64(len(s.arrivals) - s.arrivalHead)
+}
+
+func (s *burstPressureState) pruneArrivalsLocked(cutoff int64) {
+	for s.arrivalHead < len(s.arrivals) && s.arrivals[s.arrivalHead] <= cutoff {
+		s.arrivalHead++
+	}
+	if s.arrivalHead == len(s.arrivals) {
+		s.arrivals = s.arrivals[:0]
+		s.arrivalHead = 0
+		return
+	}
+	if s.arrivalHead >= 256 && s.arrivalHead*2 >= len(s.arrivals) {
+		copy(s.arrivals, s.arrivals[s.arrivalHead:])
+		s.arrivals = s.arrivals[:len(s.arrivals)-s.arrivalHead]
+		s.arrivalHead = 0
 	}
 }
 
@@ -77,6 +124,25 @@ func desiredBurstInstances(inflight int64, perVM, maxInstances int) int {
 		return maxInstances
 	}
 	return int(desired)
+}
+
+func desiredBurstInstancesForApp(state *burstPressureState, app App, perVM, maxInstances int, now time.Time) int {
+	if state == nil {
+		return 0
+	}
+	desired := desiredBurstInstances(state.inflight.Load(), perVM, maxInstances)
+	if app.AutoscaleTargetRPS <= 0 || maxInstances <= 0 {
+		return desired
+	}
+	arrivals := state.recentArrivals(now)
+	byRPS := int((arrivals + int64(app.AutoscaleTargetRPS) - 1) / int64(app.AutoscaleTargetRPS))
+	if byRPS > maxInstances {
+		byRPS = maxInstances
+	}
+	if byRPS > desired {
+		return byRPS
+	}
+	return desired
 }
 
 // maybeBurstCapacity reconciles desired capacity before the request is
@@ -104,9 +170,8 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 		return waited, nil
 	}
 	for {
-		inflight := state.inflight.Load()
 		healthy := h.backend.HealthyCount(app.ID)
-		desired := desiredBurstInstances(inflight, perVM, maxInstances)
+		desired := desiredBurstInstancesForApp(state, app, perVM, maxInstances, time.Now())
 		if desired <= healthy {
 			return waited, nil
 		}
@@ -149,9 +214,8 @@ func (h *Handler) runBurstCapacity(ctx context.Context, app App, maxInstances, p
 
 	var workerErr error
 	for lifecycleCtx.Err() == nil {
-		inflight := state.inflight.Load()
 		healthy := h.backend.HealthyCount(app.ID)
-		desired := desiredBurstInstances(inflight, perVM, maxInstances)
+		desired := desiredBurstInstancesForApp(state, app, perVM, maxInstances, time.Now())
 		if desired <= healthy {
 			break
 		}

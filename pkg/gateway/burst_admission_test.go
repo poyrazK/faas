@@ -40,6 +40,28 @@ func TestDesiredBurstInstances(t *testing.T) {
 	}
 }
 
+func TestDesiredBurstInstancesUsesRecentArrivalRate(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	state := &burstPressureState{}
+	state.inflight.Store(1)
+	for i := 0; i < 16; i++ {
+		state.recordArrival(base.Add(time.Duration(i) * 30 * time.Millisecond))
+	}
+	app := App{AutoscaleTargetRPS: 15}
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(450*time.Millisecond)); got != 2 {
+		t.Fatalf("recent 16 requests at target 15 desired %d, want 2", got)
+	}
+	if got := desiredBurstInstancesForApp(state, App{}, 80, 20, base.Add(450*time.Millisecond)); got != 1 {
+		t.Fatalf("disabled RPS target desired %d, want concurrency-only 1", got)
+	}
+	if got := desiredBurstInstancesForApp(state, app, 80, 1, base.Add(450*time.Millisecond)); got != 1 {
+		t.Fatalf("app cap desired %d, want 1", got)
+	}
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(2*time.Second)); got != 1 {
+		t.Fatalf("expired arrivals desired %d, want concurrency-only 1", got)
+	}
+}
+
 func TestBurstPressureBalancesRequestCount(t *testing.T) {
 	var pressure burstPressure
 	releaseOne := pressure.begin("app-1")
@@ -47,6 +69,9 @@ func TestBurstPressureBalancesRequestCount(t *testing.T) {
 	state := pressure.state("app-1")
 	if got := state.inflight.Load(); got != 2 {
 		t.Fatalf("inflight after begin = %d, want 2", got)
+	}
+	if got := state.recentArrivals(time.Now()); got != 2 {
+		t.Fatalf("recent arrivals after begin = %d, want 2", got)
 	}
 	releaseOne()
 	releaseTwo()
