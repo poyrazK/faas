@@ -50,6 +50,9 @@ func (s *PgStore) ClaimCustomDomainCertFailureEmail(ctx context.Context, domain 
 	if domain == "" {
 		return false, ErrNotFound
 	}
+	at = at.UTC()
+	failedBefore := at.Add(-15 * time.Minute)
+	emailedBefore := at.Add(-24 * time.Hour)
 	var claimed string
 	err := s.pool.QueryRow(ctx, `
 		update custom_domains
@@ -57,10 +60,10 @@ func (s *PgStore) ClaimCustomDomainCertFailureEmail(ctx context.Context, domain 
 		 where domain = $1
 		   and cert_status = 'failed'
 		   and cert_failed_at is not null
-		   and cert_failed_at <= $2 - interval '15 minutes'
+		   and cert_failed_at <= $3
 		   and (last_cert_issuance_failed_email_at is null
-		        or last_cert_issuance_failed_email_at < $2 - interval '24 hours')
-		 returning domain`, domain, at.UTC()).Scan(&claimed)
+		        or last_cert_issuance_failed_email_at < $4)
+		 returning domain`, domain, at, failedBefore, emailedBefore).Scan(&claimed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
