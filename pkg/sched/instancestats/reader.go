@@ -216,8 +216,9 @@ type requestRateSample struct {
 }
 
 type requestRate struct {
-	rps   float64
-	valid bool
+	rps     float64
+	valid   bool
+	sampled time.Time
 }
 
 // NewReader returns a Reader with an empty snapshot. Safe to call
@@ -279,12 +280,19 @@ func (r *Reader) updateRequestRates(rows []InstanceStat) {
 			current.rate = previous.rate
 		} else if ok && current.sampled.After(previous.sampled) && current.count >= previous.count {
 			elapsed := current.sampled.Sub(previous.sampled).Seconds()
-			current.rate = requestRate{rps: float64(current.count-previous.count) / elapsed, valid: true}
+			current.rate = requestRate{
+				rps:     float64(current.count-previous.count) / elapsed,
+				valid:   true,
+				sampled: current.sampled,
+			}
 		}
 		if current.rate.valid {
 			value := nextRates[row.AppID]
 			value.rps += current.rate.rps
 			value.valid = true
+			if value.sampled.IsZero() || current.rate.sampled.Before(value.sampled) {
+				value.sampled = current.rate.sampled
+			}
 			nextRates[row.AppID] = value
 		}
 		r.previousRate[row.InstanceID] = current
@@ -312,6 +320,26 @@ func (r *Reader) RequestsPerSecond(appID string) (float64, bool) {
 		return 0, false
 	}
 	return rate.rps, true
+}
+
+// RequestRatesPerSecondAt returns a copy of every fresh, valid app-level
+// request rate. The caller supplies now so scheduler tests and the recent-load
+// mirror can share one clock. Repeated projections of the same telemetry frame
+// retain the frame's original sample time, so a stalled node stream cannot
+// refresh a zero rate indefinitely and trigger unsafe scale-in.
+func (r *Reader) RequestRatesPerSecondAt(now time.Time) map[string]float64 {
+	if r == nil {
+		return nil
+	}
+	r.rateMu.Lock()
+	defer r.rateMu.Unlock()
+	out := make(map[string]float64, len(r.requestRates))
+	for appID, rate := range r.requestRates {
+		if rate.valid && freshSample(rate.sampled, now) {
+			out[appID] = rate.rps
+		}
+	}
+	return out
 }
 
 // SnapshotAll returns every row in the latest snapshot, in

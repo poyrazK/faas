@@ -2187,9 +2187,9 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 	// built its own copy — cheap but a second O(N) walk on every
 	// tick for no reason.
 	// consideredAppIDs: every autoscale-enabled multi-instance app
-	// gets exactly one metric observation per tick (either `park`
-	// or `keep`). Apps absent from this set fall outside the
-	// aggressive path's scope — no metric, no audit.
+	// with a fresh load observation gets exactly one metric
+	// observation per tick (either `park` or `keep`). Apps without
+	// a signal defer to ReapIdle — no metric, no audit.
 	// desiredByApp: subset of considered apps where the rolling
 	// signal says we need > 0 instances. ReapAggressive is only
 	// asked about these apps. An app in consideredAppIDs but
@@ -2208,14 +2208,17 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		if a.AutoscaleTargetRPS <= 0 {
 			continue
 		}
-		consideredAppIDs[a.ID] = struct{}{}
 		// Always record desired (even when 0) so ReapAggressive
 		// can compute the surplus above max(floor, desired + 1).
 		// Apps absent from desiredByApp would be SKIPPED by
 		// ReapAggressive (the function's contract: apps not in the
 		// map defer to ReapIdle), which would silently keep all 5
 		// instances of a 100→0 rps burst alive.
-		desired := l.recentLoad.RecentDesiredReplicas(a.ID, now, a.AutoscaleTargetRPS)
+		desired, observed := l.recentLoad.RecentDesiredReplicasWithSignal(a.ID, now, a.AutoscaleTargetRPS)
+		if !observed {
+			continue
+		}
+		consideredAppIDs[a.ID] = struct{}{}
 		desiredByApp[a.ID] = desired
 	}
 	if len(consideredAppIDs) == 0 {

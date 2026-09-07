@@ -1502,16 +1502,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("min-instances floor reconciler enabled",
 		"interval", floorInterval,
 		"owner_node_id", ownerNodeID)
-	// Issue #171: wire the recent-load mirror off the same scraper so the
-	// reaper sees per-app RPS without duplicating the scraping wiring.
-	// It has no signal source when the optional endpoint is not configured.
-	if scraper != nil {
+	// Issue #171: wire the recent-load mirror off the same scraper and the
+	// VMMD telemetry reader. Split-box schedulers commonly leave the local
+	// gateway metrics URL empty; the telemetry fallback keeps scale-down
+	// symmetric with the scale-up trigger in that deployment shape.
+	if scraper != nil || reader != nil {
 		mirror := recentload.New(scraper, api.ScaleUpWindowSeconds, time.Second)
+		if reader != nil {
+			mirror.WithRateReader(reader)
+		}
 		loop.WithRecentLoad(mirror)
+		signalSource := "vmmd_telemetry"
+		if scraper != nil {
+			signalSource = "gateway_metrics+vmmd_telemetry"
+		}
 		log.Info("autoscale signal mirror enabled",
 			"metrics_url", cfg.GatewayMetricsURL,
+			"source", signalSource,
 			"window_s", api.ScaleUpWindowSeconds,
 			"aggressive", cfg.ReaperAggressive)
+	}
+	if scraper != nil {
 		// Issue #72 / ADR-124 / ADR-125 PR-A3 commit 4: mirror
 		// invocation_summary rollup + ledger retention sweep.
 		// Runs on the same interval as the scale-up triggers so

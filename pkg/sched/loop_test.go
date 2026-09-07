@@ -518,6 +518,36 @@ func TestLoopReaperAggressiveScalesDownOnDrop(t *testing.T) {
 	}
 }
 
+func TestLoopReaperAggressiveNoSignalDefersToIdle(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
+		SetAutoscaleTargetRPS: true,
+		AutoscaleTargetRPS:    intPtr(10),
+	}); err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	wakeN(t, engine, app.ID, 5)
+
+	// A wired mirror with neither a gateway observation nor fresh VMMD
+	// telemetry is an unavailable signal, not a measured zero traffic rate.
+	frozen := time.Now().Add(35 * time.Second)
+	loop := NewLoop(nil, engine, testLog()).
+		WithClock(func() time.Time { return frozen }).
+		WithRecentLoad(recentload.New(nil, 5, time.Second)).
+		WithReaperAggressive(true)
+	loop.runReaper(context.Background())
+
+	if running := liveCount(t, store, app.ID); running != 5 {
+		t.Errorf("running = %d, want 5 (no scale-down without a fresh signal)", running)
+	}
+	if vmm.snapshots != 0 {
+		t.Errorf("snapshots = %d, want 0", vmm.snapshots)
+	}
+}
+
 func TestLoopReaperAggressiveHonorsFloor(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
