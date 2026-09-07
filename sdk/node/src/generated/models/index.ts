@@ -266,6 +266,7 @@ export type { ObjectStorageUsage } from './ObjectStorageUsage.js';
 export type { ObjectStorageUsageReport } from './ObjectStorageUsageReport.js';
 export type { ObjectStorageUsageResponse } from './ObjectStorageUsageResponse.js';
 export type { ObsHealthResponse } from './ObsHealthResponse.js';
+export type { ObsNodeOperationPreflight } from './ObsNodeOperationPreflight.js';
 export type { OperatorIntentAcceptedResponse } from './OperatorIntentAcceptedResponse.js';
 export type { OperatorIntentResponse } from './OperatorIntentResponse.js';
 export type { OperatorRuntimeConfig } from './OperatorRuntimeConfig.js';

@@ -525,6 +525,7 @@ from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
 )
 from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
+from .obs_node_operation_preflight import ObsNodeOperationPreflight
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_response import OIDCExchangeResponse
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
@@ -1322,6 +1323,7 @@ __all__ = (
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
+    "ObsNodeOperationPreflight",
     "OIDCExchangeRequest",
     "OIDCExchangeResponse",
     "OperatorIntentAcceptedResponse",
