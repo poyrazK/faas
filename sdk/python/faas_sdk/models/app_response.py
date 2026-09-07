@@ -73,6 +73,8 @@ class AppResponse:
     """Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
     and placement controls."""
     idle_timeout_s: int | None | Unset = UNSET
+    deleted_at: datetime.datetime | None | Unset = UNSET
+    delete_grace_until: datetime.datetime | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -190,6 +192,22 @@ class AppResponse:
             idle_timeout_s = UNSET
         else:
             idle_timeout_s = self.idle_timeout_s
+
+        deleted_at: None | str | Unset
+        if isinstance(self.deleted_at, Unset):
+            deleted_at = UNSET
+        elif isinstance(self.deleted_at, datetime.datetime):
+            deleted_at = self.deleted_at.isoformat()
+        else:
+            deleted_at = self.deleted_at
+
+        delete_grace_until: None | str | Unset
+        if isinstance(self.delete_grace_until, Unset):
+            delete_grace_until = UNSET
+        elif isinstance(self.delete_grace_until, datetime.datetime):
+            delete_grace_until = self.delete_grace_until.isoformat()
+        else:
+            delete_grace_until = self.delete_grace_until
 
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
@@ -310,6 +328,10 @@ class AppResponse:
             field_dict["resource_profile"] = resource_profile
         if idle_timeout_s is not UNSET:
             field_dict["idle_timeout_s"] = idle_timeout_s
+        if deleted_at is not UNSET:
+            field_dict["deleted_at"] = deleted_at
+        if delete_grace_until is not UNSET:
+            field_dict["delete_grace_until"] = delete_grace_until
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -417,6 +439,40 @@ class AppResponse:
             return cast(int | None | Unset, data)
 
         idle_timeout_s = _parse_idle_timeout_s(d.pop("idle_timeout_s", UNSET))
+
+        def _parse_deleted_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                deleted_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return deleted_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        deleted_at = _parse_deleted_at(d.pop("deleted_at", UNSET))
+
+        def _parse_delete_grace_until(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                delete_grace_until_type_0 = datetime.datetime.fromisoformat(data)
+
+                return delete_grace_until_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        delete_grace_until = _parse_delete_grace_until(d.pop("delete_grace_until", UNSET))
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
@@ -591,6 +647,8 @@ class AppResponse:
             runtime=runtime,
             resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
+            deleted_at=deleted_at,
+            delete_grace_until=delete_grace_until,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,

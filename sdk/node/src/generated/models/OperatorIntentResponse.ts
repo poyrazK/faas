@@ -12,16 +12,28 @@
  */
 export type OperatorIntentResponse = {
   intent_id: string;
-  kind: 'force_park' | 'force_cold_boot' | 'force_restart';
+  kind: 'force_park' | 'force_cold_boot' | 'force_restart' | 'node_drain' | 'node_force_drain' | 'node_activate';
   status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   /**
-   * Instance UUID (force_park or force_restart) or deployment UUID (force_cold_boot).
+   * Instance UUID (force_park or force_restart), deployment UUID (force_cold_boot), or compute-node UUID (node lifecycle intents).
    */
   target_id: string;
   /**
-   * Owning account. NULL for fleet-level intents (e.g. P2c reclaim_build).
+   * Owning account. Omitted for fleet-level node lifecycle intents.
    */
   account_id?: string;
+  /**
+   * Admin account that requested the operation.
+   */
+  actor_id: string;
+  /**
+   * Bounded operator-supplied reason recorded with the intent.
+   */
+  reason: string;
+  /**
+   * Kind-specific preflight and desired-state metadata captured before dispatch.
+   */
+  metadata: Record<string, any>;
   requested_at: string;
   /**
    * Set when schedd claims the intent (pending → running).

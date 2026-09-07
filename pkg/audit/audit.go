@@ -329,6 +329,12 @@ func (a *Auditor) emit(ctx context.Context, actor, kind string, accountID *strin
 //	"operator.action.force_park.outcome"     → "force_park.outcome"
 //	"operator.action.force_cold_boot.outcome" → "force_cold_boot.outcome"
 //	"operator.action.force_restart.outcome"  → "force_restart.outcome"
+//	"operator.action.node_drain"             → "node_drain"
+//	"operator.action.node_force_drain"       → "node_force_drain"
+//	"operator.action.node_activate"          → "node_activate"
+//	"operator.action.node_drain.outcome"     → "node_drain.outcome"
+//	"operator.action.node_force_drain.outcome" → "node_force_drain.outcome"
+//	"operator.action.node_activate.outcome"  → "node_activate.outcome"
 //
 // Plus the apid request-side aliases (the apid handler emits use
 // the instance-oriented names "park_instance" and
@@ -358,13 +364,16 @@ func (a *Auditor) emit(ctx context.Context, actor, kind string, accountID *strin
 // /v1/admin/obs/health reads the resulting counters via PromQL.
 func auditKindMetricLabel(kind string) string {
 	const (
-		requestSuffix   = ".outcome"
-		verbPark        = "force_park"
-		verbColdBoot    = "force_cold_boot"
-		verbRestart     = "force_restart"
-		instancePark    = "park_instance"
-		instanceRestart = "restart_instance"
-		operatorPrefix  = "operator.action."
+		requestSuffix    = ".outcome"
+		verbPark         = "force_park"
+		verbColdBoot     = "force_cold_boot"
+		verbRestart      = "force_restart"
+		verbNodeDrain    = "node_drain"
+		verbNodeForce    = "node_force_drain"
+		verbNodeActivate = "node_activate"
+		instancePark     = "park_instance"
+		instanceRestart  = "restart_instance"
+		operatorPrefix   = "operator.action."
 	)
 	switch kind {
 	case operatorPrefix + verbPark:
@@ -379,6 +388,18 @@ func auditKindMetricLabel(kind string) string {
 		return verbColdBoot + requestSuffix
 	case operatorPrefix + verbRestart + requestSuffix:
 		return verbRestart + requestSuffix
+	case operatorPrefix + verbNodeDrain:
+		return verbNodeDrain
+	case operatorPrefix + verbNodeForce:
+		return verbNodeForce
+	case operatorPrefix + verbNodeActivate:
+		return verbNodeActivate
+	case operatorPrefix + verbNodeDrain + requestSuffix:
+		return verbNodeDrain + requestSuffix
+	case operatorPrefix + verbNodeForce + requestSuffix:
+		return verbNodeForce + requestSuffix
+	case operatorPrefix + verbNodeActivate + requestSuffix:
+		return verbNodeActivate + requestSuffix
 	// apid request-side aliases (instance-oriented). The
 	// schedd-side outcome audit emits these via the verb-
 	// oriented forms above; aliasing keeps both surfaces on

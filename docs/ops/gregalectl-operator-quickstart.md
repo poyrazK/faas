@@ -164,21 +164,23 @@ gregalectl compute-nodes list [--active-only] [--json]
 # Show one node's row + live_instance_count
 gregalectl compute-nodes show --node fsn-2 [--json]
 
-# Drain before a reboot
-gregalectl compute-nodes drain --node fsn-2
+# Inspect drain progress before a reboot
 gregalectl compute-nodes drain-status --node fsn-2   # exit 1 if live instances remain
-
-# Re-activate
-gregalectl compute-nodes activate --node fsn-2
-
-# Force-drain a stuck node (operator-acknowledged)
-gregalectl compute-nodes force-drain --node fsn-2 --yes
 ```
 
 `list` / `show` are read-only introspection added in Cluster C1
 (gregalectl mega-PR). The state package owns the underlying
 `ListComputeNodes` / `ComputeNodeByName` calls; the dispatcher never
 bypasses the schema.
+
+Use the Operations console Fleet page for `Drain`, `Force drain`, and
+`Activate`. These actions create a durable `operator_intents` receipt before
+schedd changes lifecycle state; the receipt retains actor, reason, trace,
+preflight impact, and terminal outcome. The legacy `gregalectl compute-nodes`
+mutation verbs write through the database-backed compatibility path and are
+reserved for the reviewed
+[`database-repair`](../break-glass/database-repair.md) procedure until they are
+migrated to the authenticated operator API.
 
 `target_url` is the VM manager endpoint. `gateway_target_url` is the
 separate private HTTP data-plane endpoint; the manifest/Ansible pipeline

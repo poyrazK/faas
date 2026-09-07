@@ -114,7 +114,12 @@ func TestRunOperatorIntentCompletenessTick_FixesColumnRef(t *testing.T) {
 	// query, but the in-memory `ratios` map defaults to 1.0 and
 	// the gauge Set() writes 1.0 for those. This is what
 	// /obs/health surfaces for "no traffic" kinds.
-	for _, k := range []string{"force_cold_boot", "force_restart", "force_park.outcome", "force_cold_boot.outcome", "force_restart.outcome"} {
+	for _, k := range []string{
+		"force_cold_boot", "force_restart",
+		"force_park.outcome", "force_cold_boot.outcome", "force_restart.outcome",
+		"node_drain", "node_force_drain", "node_activate",
+		"node_drain.outcome", "node_force_drain.outcome", "node_activate.outcome",
+	} {
 		want := `schedd_operator_action_trace_completeness_ratio{kind="` + k + `"} 1`
 		if !strings.Contains(body, want) {
 			t.Errorf("gauge %q not at vacuous default 1.0:\nmetrics body did not contain %q", k, want)

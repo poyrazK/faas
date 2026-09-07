@@ -3166,8 +3166,7 @@ type Store interface {
 	// powers GET /v1/admin/obs/health. Returns a map of kind → count
 	// for every operator_intents row that is "stuck running": status
 	// is still `running` but started_at is older than threshold. The
-	// map's keys cover the closed set
-	// {force_park, force_cold_boot, force_restart} plus any
+	// map's keys cover the closed operator-intent vocabulary plus any
 	// zero-count keys the caller asked for — caller-side
 	// initialization pins the operator-action vocabulary so the
 	// handler never has to special-case empty results.

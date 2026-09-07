@@ -1264,8 +1264,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv.WithOAuthConfig(oauthCfg)
 
-	// PR #1099 P2 redesign: force-park + force-cold-boot now route
-	// through the operator_intents table + pg_notify (migrations/00431,
+	// Workload force-actions and provider compute-node lifecycle actions
+	// route through operator_intents + pg_notify (migrations/00431,
 	// pkg/sched/operator_intent_subscriber.go). apid never imports
 	// pkg/scheddgrpc — the apid-control-plane-only depguard rule
 	// (.golangci.yml:41-58) is preserved. schedd is still the only

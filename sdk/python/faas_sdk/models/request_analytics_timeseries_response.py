@@ -11,6 +11,10 @@ from ..models.request_analytics_timeseries_response_bucket import (
     RequestAnalyticsTimeseriesResponseBucket,
     check_request_analytics_timeseries_response_bucket,
 )
+from ..models.request_analytics_timeseries_response_group_by import (
+    RequestAnalyticsTimeseriesResponseGroupBy,
+    check_request_analytics_timeseries_response_group_by,
+)
 from ..models.request_analytics_timeseries_response_method import (
     RequestAnalyticsTimeseriesResponseMethod,
     check_request_analytics_timeseries_response_method,
@@ -19,6 +23,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
+    from ..models.request_analytics_timeseries_series import RequestAnalyticsTimeseriesSeries
 
 
 T = TypeVar("T", bound="RequestAnalyticsTimeseriesResponse")
@@ -50,6 +55,8 @@ class RequestAnalyticsTimeseriesResponse:
     """Exact bounded route-label filter when a route-level series was requested."""
     method: RequestAnalyticsTimeseriesResponseMethod | Unset = UNSET
     """Exact method filter when a route-level series was requested."""
+    group_by: RequestAnalyticsTimeseriesResponseGroupBy | Unset = UNSET
+    series: list[RequestAnalyticsTimeseriesSeries] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +85,17 @@ class RequestAnalyticsTimeseriesResponse:
         if not isinstance(self.method, Unset):
             method = self.method
 
+        group_by: str | Unset = UNSET
+        if not isinstance(self.group_by, Unset):
+            group_by = self.group_by
+
+        series: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.series, Unset):
+            series = []
+            for series_item_data in self.series:
+                series_item = series_item_data.to_dict()
+                series.append(series_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -96,12 +114,17 @@ class RequestAnalyticsTimeseriesResponse:
             field_dict["route"] = route
         if method is not UNSET:
             field_dict["method"] = method
+        if group_by is not UNSET:
+            field_dict["group_by"] = group_by
+        if series is not UNSET:
+            field_dict["series"] = series
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
+        from ..models.request_analytics_timeseries_series import RequestAnalyticsTimeseriesSeries
 
         d = dict(src_dict)
         slug = d.pop("slug")
@@ -134,6 +157,22 @@ class RequestAnalyticsTimeseriesResponse:
         else:
             method = check_request_analytics_timeseries_response_method(_method)
 
+        _group_by = d.pop("group_by", UNSET)
+        group_by: RequestAnalyticsTimeseriesResponseGroupBy | Unset
+        if isinstance(_group_by, Unset):
+            group_by = UNSET
+        else:
+            group_by = check_request_analytics_timeseries_response_group_by(_group_by)
+
+        _series = d.pop("series", UNSET)
+        series: list[RequestAnalyticsTimeseriesSeries] | Unset = UNSET
+        if _series is not UNSET:
+            series = []
+            for series_item_data in _series:
+                series_item = RequestAnalyticsTimeseriesSeries.from_dict(series_item_data)
+
+                series.append(series_item)
+
         request_analytics_timeseries_response = cls(
             slug=slug,
             since=since,
@@ -145,6 +184,8 @@ class RequestAnalyticsTimeseriesResponse:
             as_of=as_of,
             route=route,
             method=method,
+            group_by=group_by,
+            series=series,
         )
 
         request_analytics_timeseries_response.additional_properties = d
