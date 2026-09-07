@@ -4028,11 +4028,12 @@ type Store interface {
 	// affected. Idempotent.
 	MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error)
 	// MarkAllSnapshotsStaleByAppProtocol flips every non-stale snapshot
-	// whose deployment's app.app_protocol ∈ appProtocols stale
+	// whose deployment's app.app_protocol ∈ appProtocols and whose
+	// base_image_version differs from currentBaseImageVersion stale
 	// (ADR-127 §D1, Layer 6 — imaged F3 sweep, the app-protocol
 	// dimension of the F2/F3 split). app_protocol=http1 snapshots are
 	// never affected. Idempotent.
-	MarkAllSnapshotsStaleByAppProtocol(ctx context.Context, appProtocols []string) (int64, error)
+	MarkAllSnapshotsStaleByAppProtocol(ctx context.Context, appProtocols []string, currentBaseImageVersion string) (int64, error)
 	// MarkSnapshotStaleByAppProtocol is the single-row mirror of
 	// MarkAllSnapshotsStaleByAppProtocol. Returns ErrNotFound when no
 	// snapshot matches the id AND the deployment's app.app_protocol

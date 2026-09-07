@@ -4419,8 +4419,12 @@ type Snapshot struct {
 	ID           string
 	DeploymentID string
 	FCVersion    string
-	MemBytes     int64
-	DiskBytes    int64
+	// BaseImageVersion pins the runner base generation used by HTTP/2 and
+	// gRPC snapshots. HTTP/1 restores do not depend on this field. Empty
+	// identifies a legacy row and forces one cold-boot re-prime for H2C.
+	BaseImageVersion string
+	MemBytes         int64
+	DiskBytes        int64
 	// StoredBytes is the physical filesystem allocation of the published
 	// mem + vmstate artifacts. Zero identifies legacy snapshot writers.
 	StoredBytes int64

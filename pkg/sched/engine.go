@@ -2329,7 +2329,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// wake-tier-mix counter so the dashboard shows the ratio of warm
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
-	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), app.RAMMB)
+	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
 	if !haveSnap {
 		// Only a deployment that has had a snapshot can be said to have
 		// missed one. This avoids starting the exponential backoff on a
@@ -6366,10 +6366,10 @@ func (e *Engine) loadAPIEnv(ctx context.Context, accountID, appID, scope string)
 // ADR-074). Returning the tier from this function — instead of
 // calling the metric accessor directly — keeps the function
 // testable without a metric registry.
-func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan string, expectedRAMMB int) (state.Snapshot, bool, string) {
+func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan string, expectedRAMMB int, appProtocol string) (state.Snapshot, bool, string) {
 	if !planAllowsWarm(plan) {
 		snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
-		if err != nil || snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
+		if err != nil || !e.snapshotCompatible(ctx, snap, expectedRAMMB, appProtocol) {
 			return state.Snapshot{}, false, wakeTierColdBootFallback
 		}
 		return snap, true, wakeTierInit
@@ -6378,14 +6378,24 @@ func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan s
 	// already ranks warm > init, but checking tier explicitly lets us
 	// distinguish warm-wake from init-wake for the operator metric.
 	warm, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierWarm)
-	if err == nil && !warm.Stale && warm.FCVersion == e.fcVer && e.snapshotMatchesRAM(ctx, warm, expectedRAMMB) {
+	if err == nil && e.snapshotCompatible(ctx, warm, expectedRAMMB, appProtocol) {
 		return warm, true, wakeTierWarm
 	}
 	snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
-	if err != nil || snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
+	if err != nil || !e.snapshotCompatible(ctx, snap, expectedRAMMB, appProtocol) {
 		return state.Snapshot{}, false, wakeTierColdBootFallback
 	}
 	return snap, true, wakeTierInit
+}
+
+func (e *Engine) snapshotCompatible(ctx context.Context, snap state.Snapshot, expectedRAMMB int, appProtocol string) bool {
+	if snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
+		return false
+	}
+	if appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC {
+		return snap.BaseImageVersion == fcvm.FAAS_BASE_IMAGE_VERSION
+	}
+	return true
 }
 
 // snapshotMatchesRAM rejects machine-state artifacts created for a different

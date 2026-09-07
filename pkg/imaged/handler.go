@@ -1359,11 +1359,12 @@ type snapshotWrittenPayload struct {
 	// ADR-025 axis 2). schedd populates it on the snapshot_written
 	// payload; imaged copies it onto the snapshots row so Wake can
 	// read it back without recomputing the canonical form.
-	StorageKey   string `json:"storage_key"`
-	MemBytes     int64  `json:"mem_bytes"`
-	VMStateBytes int64  `json:"vmstate_bytes"`
-	StoredBytes  int64  `json:"stored_bytes"`
-	FCVersion    string `json:"fc_version"`
+	StorageKey       string `json:"storage_key"`
+	MemBytes         int64  `json:"mem_bytes"`
+	VMStateBytes     int64  `json:"vmstate_bytes"`
+	StoredBytes      int64  `json:"stored_bytes"`
+	FCVersion        string `json:"fc_version"`
+	BaseImageVersion string `json:"base_image_version,omitempty"`
 	// Tier (issue #470 / PR #470-FU-B) is the snapshot tier this
 	// row belongs to: "init" (taken right after guest-init binds
 	// :8080; restore pays framework warmup) or "warm" (taken
@@ -2518,12 +2519,13 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	}
 
 	snap := state.Snapshot{
-		DeploymentID: p.DeploymentID,
-		FCVersion:    p.FCVersion,  // pins restore compatibility (ADR-005)
-		StorageKey:   p.StorageKey, // see snapshotWrittenPayload.StorageKey
-		MemBytes:     p.MemBytes,
-		DiskBytes:    p.VMStateBytes,
-		StoredBytes:  p.StoredBytes,
+		DeploymentID:     p.DeploymentID,
+		FCVersion:        p.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
+		BaseImageVersion: p.BaseImageVersion, // pins H2C runner/base compatibility
+		StorageKey:       p.StorageKey,       // see snapshotWrittenPayload.StorageKey
+		MemBytes:         p.MemBytes,
+		DiskBytes:        p.VMStateBytes,
+		StoredBytes:      p.StoredBytes,
 		// Tier (issue #470 / PR #470-FU-B). Empty payload falls
 		// back to "init" (the DB column default and the legacy
 		// pre-#470 behaviour); warm-tier rows are only ever
@@ -3497,8 +3499,9 @@ func (h *Handler) snapshotNonStaleByApp(ctx context.Context) (map[string]int64, 
 
 // MarkAppProtocolSnapshotsStale is the F3-app-protocol sweep
 // (ADR-127 §D1, Layer 6). Mirrors MarkFCSnapshotsStale but flips
-// every non-stale snapshot whose deployment's app.app_protocol ∈
-// {http2, grpc} stale. Called from runFCSweep AFTER F2 (the
+// non-stale {http2, grpc} snapshots made by an older runner base.
+// A current-generation row survives every imaged replica restart.
+// Called from runFCSweep AFTER F2 (the
 // Firecracker-version sweep). The two sweeps have different
 // triggers (F2 on FC upgrade per ADR-005; F3 on
 // FAAS_BASE_IMAGE_VERSION bump per ADR-127) and different audit
@@ -3521,7 +3524,7 @@ func (h *Handler) MarkAppProtocolSnapshotsStale(ctx context.Context) (int64, err
 	if err != nil {
 		return 0, fmt.Errorf("imaged: mark stale by app_protocol: pre-sweep list: %w", err)
 	}
-	n, err := h.store.MarkAllSnapshotsStaleByAppProtocol(ctx, h2cProtocols)
+	n, err := h.store.MarkAllSnapshotsStaleByAppProtocol(ctx, h2cProtocols, fcvm.FAAS_BASE_IMAGE_VERSION)
 	if err != nil {
 		return 0, fmt.Errorf("imaged: mark stale by app_protocol: %w", err)
 	}
