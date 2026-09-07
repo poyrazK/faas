@@ -56,12 +56,12 @@
       "id": "object-storage",
       "name": "Private object storage",
       "category": "data",
-      "description": "Use private S3-backed buckets and signed URLs from an API.",
+      "description": "Use private managed object buckets and signed URLs from an API.",
       "maturity": "preview",
       "plans": ["hobby", "pro", "scale"],
       "docs_url": "/docs/object-storage",
       "operator_flag": "s3_enabled",
-      "acceptance_test": "pkg/objectstorage/s3_test.go::TestS3ProtocolAndErrors"
+      "acceptance_test": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"
     },
     {
       "id": "pr-previews",

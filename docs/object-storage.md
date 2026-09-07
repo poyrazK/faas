@@ -1,22 +1,26 @@
 # Customer object storage preview
 
-Gregale can manage private S3-backed object buckets without operating storage
-nodes. Compute remains stateless: these are not VM volumes. The dashboard's
-Storage page keeps object buckets separate from snapshot/image-layer usage.
+Gregale can manage private object buckets on interchangeable managed providers
+without operating storage nodes. Compute remains stateless: these are not VM
+volumes. The dashboard's Storage page keeps object buckets separate from
+snapshot/image-layer usage.
 Architecture and launch boundaries: [ADR-151](adr/151-provider-neutral-object-storage.md).
 Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
 
 ## Enable a qualified backend
 
 1. Apply database migrations through the normal Gregale deployment process.
-2. Copy [the example](../deploy/object-storage.example.json) to an operator-owned
+2. Copy the [S3 example](../deploy/object-storage.example.json) or
+   [GCS example](../deploy/object-storage.gcs.example.json) to an operator-owned
    config path, e.g. `/etc/faas/object-storage.json`. Set the real namespace,
-   endpoint, region, and exact browser origins. Use a dedicated upstream
-   account/project, not one containing unrelated infrastructure buckets.
-3. Supply the named access/secret environment variables to **apid only**, through
-   the deployment's secret mechanism. Never put values in JSON, app envs, source
-   control, URLs, or logs. Optional `session_token_env` supports temporary
-   upstream credentials; restart/rotate before their expiration.
+   provider placement, region, and exact browser origins. Use a dedicated
+   upstream account/project, not one containing unrelated infrastructure buckets.
+3. For `s3`, supply the named access/secret environment variables to **apid
+   only** through the deployment's secret mechanism. For `gcs`, use Application
+   Default Credentials (ADC) and the configured service account; do not create a
+   downloaded key. Never put credentials in JSON, app envs, source control, URLs,
+   or logs. Optional S3 `session_token_env` supports temporary credentials;
+   restart/rotate before their expiration.
 4. Set `FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json` for apid and
    restart all replicas with identical settings. This loads provider configuration
    but does not enable provisioning or signing. Missing config disables the
@@ -123,8 +127,11 @@ ready-bucket inventory/orphan reconciliation, or automatic data migration.
 
 The identity needs bucket creation/deletion and CORS configuration; object
 list/get/put/delete; and multipart list/create/upload-part/complete/abort/head for
-Gregale buckets. Restrict it to `gregale-*` where supported; otherwise isolate
-the upstream project. Configure the provider's abort-incomplete-multipart
+Gregale buckets. GCS additionally requires the IAM Service Account Credentials
+API plus `iam.serviceAccounts.signBlob` on `gcs_service_account`; grant that
+permission to the ADC principal without exporting a private key. Restrict the
+identity to `gregale-*` where supported; otherwise isolate the upstream project.
+Configure the provider's abort-incomplete-multipart
 lifecycle rule as a backup with a window longer than Gregale's 24-hour session
 TTL. Enable provider/account public-access blocking where available. The driver
 creates buckets without public ACLs, but does not manage provider-specific
@@ -207,7 +214,7 @@ failed/partial/cyclic scans preserve the last observation. Inventory older
 than 15 minutes blocks new URLs. Large inventories that cannot complete inside
 these bounds fail closed and need a qualified inventory adapter before launch.
 
-The S3 data protocol cannot provide portable request/egress billing. Configure
+The data protocol cannot provide portable request/egress billing. Configure
 each backend's optional `usage_reports_path` to an **absolute, operator-owned
 regular JSON file**, readable by apid but not writable by customer workloads.
 A provider-specific exporter must atomically replace this file with an array
@@ -224,7 +231,7 @@ physical bucket/account mapping. The source must cover storage, requests,
 egress, and applicable provider charges in the declared EUR cost convention;
 do not import an account-total into each tenant or treat delayed/missing data
 as zero. Neither Gregale's compute MB-seconds nor inventory samples substitute
-for these billing quantities. **No OVH/AWS/R2 billing exporter is bundled yet**;
+for these billing quantities. **No GCS/OVH/AWS/R2 billing exporter is bundled yet**;
 the normalized import contract is provider-neutral, and a real exporter is
 still a deployment prerequisite.
 
@@ -233,7 +240,7 @@ and publish through `objectstorage.ExportUsageReports`. The helper validates
 that a batch belongs to one backend and UTC period, rejects duplicate account
 rows, and atomically replaces the configured report file with owner-only
 permissions. This keeps provider credentials, billing APIs, and attribution
-logic outside the generic S3 driver; the adapter remains responsible for
+logic outside the data drivers; the adapter remains responsible for
 obtaining authoritative data and mapping each physical Gregale bucket to one
 account.
 
@@ -290,12 +297,14 @@ required for paid launch; see [ADR-156](adr/156-object-storage-accounting.md).
 
 ## Provider configuration
 
-All entries use `driver: "s3"` when the backend meets the contract. `region` is
-Gregale's product region; `s3_region` is only an upstream signing/location
-setting. A matching name is not evidence of physical colocation.
+Use `driver: "s3"` for S3-compatible services and `driver: "gcs"` for native
+Google Cloud Storage. `region` is Gregale's product region. `s3_region` is only
+an S3 signing/location setting; `gcs_location` is the GCS bucket placement. A
+matching product-region name is not evidence of physical colocation.
 
 | Backend | Endpoint / signing region | Qualification notes |
 | --- | --- | --- |
+| Google Cloud Storage | Native endpoint, e.g. `EUROPE-WEST3` bucket location | Uses ADC/OAuth for control operations and IAM `signBlob` for V4 URLs; no HMAC or downloaded service-account key. XML multipart preserves the common 5 TiB/10,000-part contract. |
 | OVH US Virginia | `https://s3.us-east-va.io.cloud.ovh.us`, `us-east-va` | Example targets the US S3 service, not the legacy Swift endpoint. Verify project availability and selected storage class. |
 | AWS S3 Northern Virginia | `https://s3.us-east-1.amazonaws.com`, `us-east-1` | The driver omits CreateBucket LocationConstraint in this region. Use dedicated IAM permissions and account-level public-access blocking. |
 | Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com`, `auto` | Set `path_style: true`; account token must permit bucket management. R2's placement is not an AWS-style us-east-1 residency guarantee. |
@@ -306,9 +315,9 @@ R2 supports this subset, including CreateBucket, PutBucketCors, ListObjectsV2 an
 PutObject Content-MD5, with `auto` as its signing region; see
 [R2 S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/).
 These are configuration targets, not a claim of completed live-provider testing.
-Other providers may require a factory with different bucket provisioning/CORS
-operations while reusing the S3 data driver. Do not equate “S3-compatible” with
-identical IAM, retention or billing APIs.
+Other providers may require another factory while preserving the same Gregale
+API. Do not equate a common object-transfer protocol with identical IAM,
+retention or billing APIs.
 
 Only explicit HTTPS origins are accepted for CORS. For isolated local development,
 `allow_http: true` permits HTTP endpoints/origins. Production presigned URLs must
@@ -378,22 +387,22 @@ Only one live session exists per bucket/key; retry creation with the same key,
 size and content type to recover its Gregale ID. A different shape conflicts.
 Gregale never exposes the provider upload ID. Completion ETags are durably stored
 before the upstream call, making completion restart-safe. Sessions expire after
-24 hours; the recovery worker aborts expired upstream parts even while new S3
-operations are disabled. The upstream lifecycle rule is still required as a
-defense against control-plane outages.
+24 hours; the recovery worker aborts expired upstream parts even while new
+object-storage operations are disabled. The upstream lifecycle rule is still
+required as a defense against control-plane outages.
 
 Key rotation copies bucket grants to the successor so applications can switch
 credentials during the normal grace window. Store the resulting narrowly scoped
 Gregale key through the existing app-secret workflow when a workload needs to
 request signed URLs. Gregale does not inject it automatically and never gives a
-workload the operator's upstream S3 credential.
+workload the operator's upstream provider credential.
 
 ## Switch providers without rewriting the product
 
 Add a second backend with a new immutable `id` and `namespace`, then change
 `defaults.us-east-1` to that ID. New buckets use it. Existing buckets retain
 their recorded backend; keep its configuration and credentials available.
-Endpoint, Gregale/signing region, driver or namespace changes fence existing buckets
+Endpoint, provider placement, driver or namespace changes fence existing buckets
 with 503 instead of redirecting them. Rotate keys within the same namespace by
 changing secret values and restarting, not by changing the backend identity.
 
@@ -401,8 +410,8 @@ There is intentionally **no automatic existing-bucket migration**. A future
 migration worker must stop new writes/signing, wait out issued URLs, copy and
 verify objects/metadata, explicitly update placement, and retain rollback data.
 The registry and durable placement remove the API/UI rewrite, not the cost or
-operational risk of moving bytes. Native customer S3 keys require a separate
-tenant IAM adapter; never hand out the operator-wide credential.
+operational risk of moving bytes. Native customer S3/HMAC credentials require a
+separate tenant IAM adapter; never hand out the operator-wide credential.
 
 ## Qualification and launch checklist
 
@@ -430,8 +439,8 @@ tenant IAM adapter; never hand out the operator-wide credential.
   counts cannot meter actual usage. The optional rate card is only an estimate;
   plan allowances and invoice lines do not ship here.
 - Before paid/general availability, qualify the real provider usage exporter,
-  pricing/margin policy and budget cutoffs, tenant S3 keys if needed, and a
-  coordinated account-deletion workflow. Active buckets block account
+  pricing/margin policy and budget cutoffs, tenant native storage keys if needed,
+  and a coordinated account-deletion workflow. Active buckets block account
   hard-deletion; confirmed-deleted bucket metadata is purged with the account.
   Do not bypass these guards and orphan customer data.
 

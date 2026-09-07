@@ -2,7 +2,7 @@
 
 - **Status:** accepted for an opt-in preview; public launch pending provider qualification and billing integration.
 - **Date:** 2026-09-05
-- **Decision:** add customer-owned logical buckets backed by interchangeable S3 services, without adding persistent VM disks or operating storage nodes.
+- **Decision:** add customer-owned logical buckets backed by interchangeable managed object-storage services, without adding persistent VM disks or operating storage nodes.
 
 ## Context
 
@@ -17,15 +17,16 @@ financial-model rates are unchanged.
 
 `apid` owns the logical bucket catalog and validates account/app ownership.
 Buckets carry an environment scope for organization; scope is not an additional
-security boundary within an app. The provider package owns upstream S3 calls.
+security boundary within an app. The provider package owns upstream storage calls.
 SQLC-backed PostgreSQL rows persist backend ID, placement fingerprint and an
 opaque physical bucket name. No upstream secret is stored in customer records.
 
-Backend factories implement `objectstorage.Provider`. One generic S3 driver
-covers create/delete bucket, CORS, paginated object listing, object deletion and
-signed GET/PUT requests. Configuration separates Gregale region from the
-upstream signing region and endpoint. Credential references resolve at startup.
-Provider-specific IAM and billing APIs are deliberately outside this driver.
+Backend factories implement `objectstorage.Provider`. The generic S3 driver and
+native GCS driver cover create/delete bucket, CORS, paginated object listing,
+object deletion, signed GET/PUT requests, and multipart uploads. Configuration
+separates Gregale region from provider placement. S3 resolves named credentials;
+GCS uses ADC/OAuth and IAM `signBlob`, without an HMAC or downloaded private key.
+Provider-specific billing APIs remain outside the data drivers.
 
 The default mapping selects placement only when reserving a new bucket. An old
 bucket always resolves its stored backend ID and fingerprint. Removing or
@@ -41,8 +42,8 @@ Nonempty deletion fails and restores access; successful deletion leaves a
 tombstone. App deletion is rejected while active buckets exist. There is no
 recursive deletion, automatic migration, or automatic orphan cleanup.
 
-Objects travel directly between client and S3. Signed URLs expire in five
-minutes by default (15-minute ceiling), are reusable bearer capabilities, and
+Objects travel directly between client and the selected provider. Signed URLs
+expire in five minutes by default (15-minute ceiling), are reusable bearer capabilities, and
 are never cached by the API. Uploads bind the declared size through signed
 Content-Length; zero-byte uploads bind the empty Content-MD5 digest. Exact CORS
 origins permit browser PUTs. Downloads are attachments. No customer gets the
@@ -78,8 +79,8 @@ S3 gateway design), not exposing the operator key.
 
 ## Validation
 
-Provider tests verify signatures, zero-byte integrity, S3 protocol requests,
-error sanitization and placement fencing. API tests exercise ownership, scopes,
+Provider tests verify signatures, zero-byte integrity, provider protocol
+requests, error sanitization and placement fencing. API tests exercise ownership, scopes,
 retries, deletion and default switching. MemStore/PostgreSQL tests cover quota
 races, leases, tombstones and app-deletion guards. Browser upload tests verify
 that Gregale credentials never accompany direct provider requests. Live backend
@@ -87,7 +88,7 @@ qualification remains a prerequisite; mocked protocol tests are not that proof.
 
 ## Consequences
 
-The dashboard and platform API remain unchanged when adding an S3 backend.
+The dashboard and platform API remain unchanged when adding a storage backend.
 Moving existing data still requires copying and verifying objects, stopping
 writes and waiting for old signed URLs to expire before an explicit cutover.
 Already-issued URLs continue to point at the old endpoint. No DNS trick can
