@@ -1709,7 +1709,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return fmt.Errorf("imaged: pull image config: %w", err)
 	}
 
-	manifest, err := manifestFromImageConfig(imageCfg)
+	manifest, err := manifestFromImageConfigWithApp(imageCfg, app)
 	if err != nil {
 		// Image declares neither Entrypoint nor Cmd — oci.ManifestFromConfig
 		// already wrapped it with ErrImageManifestInvalid; mark the deploy

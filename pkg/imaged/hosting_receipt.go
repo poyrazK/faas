@@ -18,11 +18,8 @@ import (
 
 func hostingReceiptProfile(app state.App, dep state.Deployment) frameworkprofile.Profile {
 	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: string(markers.FrameworkUnknown), Port: api.DefaultAppPort, HealthPath: "/healthz"}
-	if len(dep.InferredProfile) > 0 {
-		var persisted frameworkprofile.Profile
-		if err := json.Unmarshal(dep.InferredProfile, &persisted); err == nil && persisted.Version != "" {
-			profile = persisted
-		}
+	if persisted, ok := persistedProfile(dep); ok {
+		profile = persisted
 	}
 	if profile.Port <= 0 {
 		profile.Port = api.DefaultAppPort
