@@ -721,9 +721,9 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "debug",
 		DocSlug: "debug",
-		Short:   "Production debugger (ADR-127 / PR-B)",
+		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry (list|get|replay)"},
+			{Name: "requests", Short: "Per-request telemetry (list|get|evidence|replay)"},
 			{Name: "regressions", Short: "Active regression observations"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
 		},

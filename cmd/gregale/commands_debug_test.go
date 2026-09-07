@@ -79,9 +79,41 @@ func TestCmdDebugHelp(t *testing.T) {
 		t.Fatalf("cmdDebug(--help) = %d, want 0", code)
 	}
 	got := readStderr()
-	for _, want := range []string{"usage: gregale debug", "requests list", "regressions", "compare"} {
+	for _, want := range []string{"usage: gregale debug", "requests list", "requests evidence", "regressions", "compare"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestCmdDebugRequestsEvidenceUsesEvidenceEndpoint(t *testing.T) {
+	var got http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = *r.Clone(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.DebugRequestEvidenceResponse{
+			Request:     api.DebugTelemetryRequestItem{ID: "request-1", Route: "/checkout"},
+			Spans:       []api.DebugTelemetrySpan{{SpanID: "span-1", Name: "db.query", DurationNanos: 20_000_000}},
+			Explanation: api.DebugEvidenceExplanation{Status: "unobserved", Headline: "No active regression observation is available for this request."},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test")
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := cmdDebugRequestsEvidence([]string{"my-app", "request-1"}); code != 0 {
+		t.Fatalf("cmdDebugRequestsEvidence() = %d, want 0", code)
+	}
+	if got.URL.Path != "/v1/apps/my-app/debug/requests/request-1/evidence" {
+		t.Fatalf("request path = %q", got.URL.Path)
+	}
+	if !strings.Contains(stdout.String(), `"db.query"`) {
+		t.Fatalf("JSON output missing span: %s", stdout.String())
 	}
 }

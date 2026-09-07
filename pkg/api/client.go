@@ -4310,6 +4310,14 @@ func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (De
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppDebugRequestEvidence returns bounded, redacted span evidence and a
+// deterministic explanation for one request telemetry row.
+func (c *Client) GetAppDebugRequestEvidence(ctx context.Context, slug, reqID string) (DebugRequestEvidenceResponse, error) {
+	var out DebugRequestEvidenceResponse
+	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/evidence"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // ListAppDebugRegressions returns the active regression
 // observations for an app (ADR-127 / PR-B). Ordered by
 // regression_factor DESC, last_detected_at DESC (worst first).

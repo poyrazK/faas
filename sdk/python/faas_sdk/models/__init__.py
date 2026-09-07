@@ -245,13 +245,17 @@ from .data_upstream_response_source import DataUpstreamResponseSource
 from .debug_compare_request import DebugCompareRequest
 from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
+from .debug_evidence_explanation import DebugEvidenceExplanation
+from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
 from .debug_regression_item import DebugRegressionItem
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_response import DebugReplayResponse
 from .debug_replay_response_status import DebugReplayResponseStatus
+from .debug_request_evidence_response import DebugRequestEvidenceResponse
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
 from .debug_telemetry_request_item_method import DebugTelemetryRequestItemMethod
+from .debug_telemetry_span import DebugTelemetrySpan
 from .delayed_task_request import DelayedTaskRequest
 from .delayed_task_request_payload import DelayedTaskRequestPayload
 from .delayed_task_response import DelayedTaskResponse
@@ -1059,13 +1063,17 @@ __all__ = (
     "DebugCompareRequest",
     "DebugCompareResponse",
     "DebugCompareRouteStats",
+    "DebugEvidenceExplanation",
+    "DebugEvidenceExplanationStatus",
     "DebugRegressionItem",
     "DebugRegressionsResponse",
     "DebugReplayResponse",
     "DebugReplayResponseStatus",
+    "DebugRequestEvidenceResponse",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
     "DebugTelemetryRequestItemMethod",
+    "DebugTelemetrySpan",
     "DelayedTaskRequest",
     "DelayedTaskRequestPayload",
     "DelayedTaskResponse",

@@ -2025,7 +2025,7 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 
 const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at
+       cold_boot, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2
@@ -2052,6 +2052,7 @@ type GetRequestTelemetryByAppAndIDRow struct {
 	ColdBoot     bool
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
+	SpansSummary []byte
 }
 
 // Direct request drill-down for the customer debugger. The app_id
@@ -2076,6 +2077,7 @@ func (q *Queries) GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, ar
 		&i.ColdBoot,
 		&i.TraceID,
 		&i.ReceivedAt,
+		&i.SpansSummary,
 	)
 	return i, err
 }

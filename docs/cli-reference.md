@@ -37,7 +37,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`inspect`](#inspect) | Read-only operator surface (inspect &lt;slug&gt; --upstreams [--scope &lt;scope&gt;] [--json]) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]) |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
-| [`debug`](#debug) | Production debugger (ADR-127 / PR-B) |
+| [`debug`](#debug) | Production debugger (ADR-127) |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
 | [`invoices`](#invoices) | List issued invoices |
 | [`keys`](#keys) | Manage API keys (keys list\|add\|rm\|rotate\|grace-window) |
@@ -989,13 +989,13 @@ Show one invocation
 
 ## debug
 
-Production debugger (ADR-127 / PR-B)
+Production debugger (ADR-127)
 
 `gregale debug [<subcommand>] <slug>`
 
 ### debug requests
 
-Per-request telemetry (list|get|replay)
+Per-request telemetry (list|get|evidence|replay)
 
 ### debug regressions
 

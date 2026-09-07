@@ -19,6 +19,7 @@ import type { DebugCompareRequest } from '../models/DebugCompareRequest.js';
 import type { DebugCompareResponse } from '../models/DebugCompareResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
+import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenceResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
@@ -1000,6 +1001,51 @@ export class AppsService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/requests/{req_id}',
+      path: {
+        'slug': slug,
+        'req_id': reqId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get request evidence and explanation (ADR-127).
+   * Returns bounded, redacted span evidence for one request and
+   * links it to a matching active regression observation when one
+   * exists. Database statements are sanitized fingerprints; raw
+   * attributes, status messages, request bodies, and headers are
+   * never returned. The explanation is deterministic and suitable
+   * as input to a future asynchronous synthesis layer. Plan-gated
+   * by DebugTelemetryEnabled.
+   *
+   * @returns DebugRequestEvidenceResponse Request evidence and deterministic explanation.
+   * @throws ApiError
+   */
+  public static getAppDebugRequestEvidence({
+    slug,
+    reqId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Telemetry record UUID whose evidence should be retrieved.
+     */
+    reqId: string,
+  }): CancelablePromise<DebugRequestEvidenceResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/requests/{req_id}/evidence',
       path: {
         'slug': slug,
         'req_id': reqId,

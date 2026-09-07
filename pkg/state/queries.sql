@@ -1589,7 +1589,7 @@ LIMIT $4;
 -- predicate is the database-side tenant boundary; the handler has
 -- already resolved the slug through the caller's account.
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at
+       cold_boot, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2

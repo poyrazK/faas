@@ -3299,6 +3299,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/requests/{req_id}/evidence:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: req_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: "Telemetry record UUID whose evidence should be retrieved."
+    get:
+      tags: [apps]
+      operationId: getAppDebugRequestEvidence
+      summary: Get request evidence and explanation (ADR-127).
+      description: |
+        Returns bounded, redacted span evidence for one request and
+        links it to a matching active regression observation when one
+        exists. Database statements are sanitized fingerprints; raw
+        attributes, status messages, request bodies, and headers are
+        never returned. The explanation is deterministic and suitable
+        as input to a future asynchronous synthesis layer. Plan-gated
+        by DebugTelemetryEnabled.
+      responses:
+        '200':
+          description: Request evidence and deterministic explanation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugRequestEvidenceResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/regressions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -23027,6 +23060,50 @@ components:
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
         received_at: { type: string, format: date-time }
+
+    DebugTelemetrySpan:
+      type: object
+      description: "Bounded, redacted span evidence. DB statements are sanitized fingerprints."
+      required: [trace_id, span_id, name, kind, duration_nanos]
+      properties:
+        trace_id: { type: string, maxLength: 256 }
+        span_id: { type: string, maxLength: 256 }
+        parent_span_id: { type: string, maxLength: 256 }
+        name: { type: string, maxLength: 256 }
+        kind: { type: string, maxLength: 256 }
+        duration_nanos: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, maxLength: 256 }
+        db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
+
+    DebugEvidenceExplanation:
+      type: object
+      description: "Deterministic explanation generated from the safe evidence payload."
+      required: [status, headline]
+      properties:
+        status: { type: string, enum: [regression_detected, unobserved] }
+        headline: { type: string }
+        primary_span:
+          oneOf:
+            - $ref: '#/components/schemas/DebugTelemetrySpan'
+            - type: "null"
+
+    DebugRequestEvidenceResponse:
+      type: object
+      description: "Request metadata, bounded span evidence, matching regression, and explanation."
+      required: [request, spans, spans_truncated, explanation, generated_at]
+      properties:
+        request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+        regression:
+          oneOf:
+            - $ref: '#/components/schemas/DebugRegressionItem'
+            - type: "null"
+        spans:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/DebugTelemetrySpan' }
+        spans_truncated: { type: boolean }
+        explanation: { $ref: '#/components/schemas/DebugEvidenceExplanation' }
+        generated_at: { type: string, format: date-time }
 
     DebugRegressionsResponse:
       type: object
