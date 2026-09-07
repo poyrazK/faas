@@ -696,7 +696,9 @@ jobs:
           # hermetic (no Postgres, Docker, or network), so a cached pass is
           # the same observation a re-run would make. Pushes to main re-run
           # everything and shuffle test order to surface order dependence.
-          GO_TEST_FRESHNESS: ${{ github.event_name == 'pull_request' && '' || '-count=1 -shuffle=on' }}
+          # (Expression shape matters: an empty string is falsy in GitHub
+          # expressions, so `cond && '' || X` always yields X.)
+          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
@@ -757,7 +759,7 @@ jobs:
       - name: unit tests (pure Go shard 2)
         env:
           # See pure shard 1: PRs use Go's test cache; main re-runs + shuffles.
-          GO_TEST_FRESHNESS: ${{ github.event_name == 'pull_request' && '' || '-count=1 -shuffle=on' }}
+          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
