@@ -5356,10 +5356,9 @@ haveApp:
 		}
 	}
 	// The first request above guarantees one routable target. Reconcile the
-	// request pressure accumulated by the whole burst before forwarding so
-	// requests do not all pile onto that first target while sibling VMs are
-	// still restoring. The admission worker is detached internally, but this
-	// request remains cancellable by its own budget.
+	// request pressure accumulated by the whole burst. Additional capacity is
+	// admitted in the background once a healthy target exists; the forwarding
+	// concurrency gate bounds work on that target while siblings become ready.
 	//nolint:contextcheck // request ctx at handler boundary.
 	waitedForBurst, burstErr := h.maybeBurstCapacity(r.Context(), app, limits.MaxConcurrency, limits.ConcurrencyPerVMBound)
 	if burstErr != nil {

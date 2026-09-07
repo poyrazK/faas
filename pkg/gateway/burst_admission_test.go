@@ -234,7 +234,7 @@ func TestMaybeBurstCapacityStartsOneDeduplicatedWorker(t *testing.T) {
 	}
 }
 
-func TestMaybeBurstCapacityWaitsForReadyTarget(t *testing.T) {
+func TestMaybeBurstCapacityDoesNotBlockReadyTarget(t *testing.T) {
 	b := &blockingBurstBackend{
 		burstTestBackend: &burstTestBackend{
 			fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}},
@@ -249,10 +249,14 @@ func TestMaybeBurstCapacityWaitsForReadyTarget(t *testing.T) {
 	state.inflight.Store(81)
 	defer state.inflight.Store(0)
 
-	result := make(chan error, 1)
+	type result struct {
+		waited bool
+		err    error
+	}
+	results := make(chan result, 1)
 	go func() {
-		_, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80)
-		result <- err
+		waited, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80)
+		results <- result{waited: waited, err: err}
 	}()
 
 	select {
@@ -261,19 +265,30 @@ func TestMaybeBurstCapacityWaitsForReadyTarget(t *testing.T) {
 		t.Fatal("burst admission worker did not start")
 	}
 	select {
-	case err := <-result:
-		t.Fatalf("maybeBurstCapacity returned before target readiness: %v", err)
-	case <-time.After(25 * time.Millisecond):
+	case got := <-results:
+		if got.err != nil {
+			t.Fatalf("maybeBurstCapacity: %v", got.err)
+		}
+		if got.waited {
+			t.Fatal("ready target was invalidated while background capacity was pending")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("maybeBurstCapacity blocked a ready target")
+	}
+	select {
+	case <-b.admitted:
+		t.Fatal("admission completed before backend release")
+	default:
 	}
 
 	close(b.release)
 	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("maybeBurstCapacity: %v", err)
+	case got := <-b.admitted:
+		if got != 1 {
+			t.Fatalf("burst admission count = %d, want 1", got)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("maybeBurstCapacity did not return after target became ready")
+		t.Fatal("background admission did not finish")
 	}
 }
 
@@ -392,6 +407,10 @@ func TestBurstCapacityUsesExistingTargetsWhenExpansionStalls(t *testing.T) {
 			defer cancel()
 			if _, err := h.maybeBurstCapacity(ctx, b.app, 20, 80); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("maybeBurstCapacity = %v, want %v", err, tt.wantErr)
+			}
+			deadline := time.Now().Add(time.Second)
+			for b.burstCalls.Load() != 1 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
 			}
 			if got := b.burstCalls.Load(); got != 1 {
 				t.Fatalf("admissions = %d, want one bounded attempt", got)

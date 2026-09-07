@@ -184,11 +184,10 @@ func desiredBurstInstancesForApp(state *burstPressureState, app App, perVM, maxI
 }
 
 // maybeBurstCapacity reconciles desired capacity before the request is
-// forwarded. There is still only one detached admission worker per app, but
-// callers join its generation and wait until enough routable targets exist.
-// This is the important distinction between a burst signal and burst
-// admission: a request must not consume its entire wall-clock budget while
-// extra capacity is merely being created in the background.
+// forwarded. There is only one detached admission worker per app. Requests
+// wait for that generation when the app has no routable capacity; once at
+// least one healthy target exists, expansion continues in the background and
+// forwarding is bounded by the ordinary per-VM concurrency limit.
 // waited tells the caller to discard any target selected before reconciliation.
 func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances, perVM int) (waited bool, err error) {
 	if h == nil || h.backend == nil || h.burstPressure == nil || app.ID == "" || maxInstances <= 0 || perVM <= 0 {
@@ -222,6 +221,14 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 			go h.runBurstCapacity(ctx, app, maxInstances, perVM, state, generation, admitter)
 		}
 		state.mu.Unlock()
+
+		// Additional replicas improve burst throughput, but they are not a
+		// prerequisite for serving this request. Waiting here made every
+		// request in a cold burst consume its wall-clock budget while a
+		// sibling restore or overflow cold boot was still in progress.
+		if healthy > 0 {
+			return false, nil
+		}
 
 		waited = true
 		select {

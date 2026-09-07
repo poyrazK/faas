@@ -122,10 +122,12 @@ func TestInitialCapacityGenerationPreventsDuplicateExpansion(t *testing.T) {
 	go func() { _, _, _, err := h.ensureInitialWarm(ctx, initial, "app", "", "gateway", 2); done <- err }()
 	<-initial.started
 	b.AddTarget(Target{NodeID: "node", InstanceID: "first"}) // First RUNNING notify arrives before batch completion.
-	waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Millisecond)
-	defer waitCancel()
-	if _, err := h.maybeBurstCapacity(waitCtx, b.app, 3, 80); err == nil {
-		t.Error("capacity waiter did not join initial generation")
+	waited, err := h.maybeBurstCapacity(ctx, b.app, 3, 80)
+	if err != nil {
+		t.Fatalf("ready target blocked by initial generation: %v", err)
+	}
+	if waited {
+		t.Fatal("ready target was invalidated by initial generation")
 	}
 	select {
 	case <-b.admitted:
