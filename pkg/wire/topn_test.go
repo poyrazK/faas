@@ -41,7 +41,9 @@ import (
 
 // TestTopTenantRPS_BoundedCardinality asserts the gauge exposition
 // never exceeds topAccountSetCap + 1 (1001) series even under fuzzed
-// load with 50 000 distinct account ids (acceptance #5).
+// load with 5 000 distinct account ids (acceptance #5; five times the cap —
+// the bound is exercised as soon as the set overflows, and 50 000 ids cost
+// minutes under -race on a CI runner).
 //
 // Implementation note: the gauge series count is read from the
 // Prometheus /metrics body (render helper). Counting by body lines
@@ -52,7 +54,7 @@ func TestTopTenantRPS_BoundedCardinality(t *testing.T) {
 	if testing.Short() {
 		t.Skip("fuzz-heavy; skipped in -short")
 	}
-	const totalIDs = 50_000
+	const totalIDs = 5_000
 	m := wire.NewOpsMetrics("apid")
 	for i := 0; i < totalIDs; i++ {
 		m.ObserveTopTenantRPS(fmt.Sprintf("acct-%08x", i))
@@ -70,7 +72,7 @@ func TestTopTenantRPS_BoundedCardinality(t *testing.T) {
 		t.Fatalf("gauge exposition has %d series; bound is 1001 (topAccountSetCap=1000 + 1 overflow)", count)
 	}
 	// The "other" overflow bucket must be present, because we drove
-	// 50 000 ids through a 1000-cap set.
+	// 5 000 ids through a 1000-cap set.
 	if !strings.Contains(body, `apid_top_tenant_rps{account_id="other"}`) {
 		t.Errorf("expected other overflow series in:\n%s", body)
 	}
