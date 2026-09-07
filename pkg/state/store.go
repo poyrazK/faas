@@ -4038,8 +4038,8 @@ type Store interface {
 	// snapshot matches the id AND the deployment's app.app_protocol
 	// ∈ appProtocols. Empty appProtocols is an error (caller bug).
 	MarkSnapshotStaleByAppProtocol(ctx context.Context, snapshotID string, appProtocols []string) error
-	// MarkOldSnapshotsStale marks the given snapshot IDs stale (per-app
-	// "current + previous" enforcement, run before DeleteSnapshotsByID).
+	// MarkOldSnapshotsStale marks the given snapshot IDs stale (the imaged
+	// rollback-window GC calls this immediately before DeleteSnapshotsByID).
 	MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error)
 	// DeleteSnapshotsStaleOlderThan removes rows where stale=true AND
 	// created_at < now()-retention. Used by imaged's F2 startup sweep

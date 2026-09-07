@@ -1,7 +1,7 @@
 // Package imaged — daemon loop. The Loop is the M8 readiness glue: it owns
 // the LISTEN subscriber (notifications arrive as db.Notification), the
-// nightly GC tick (spec §4.6: keep current+previous per app, fleet budget
-// pressure evicts biggest accounts first), and the one-shot FC-version
+// nightly GC tick (spec §4.6: keep the bounded rollback window per app,
+// fleet budget pressure evicts biggest accounts first), and the one-shot FC-version
 // sweep (spec §4.4: "on FC upgrade, mark all snapshots stale", ADR-005).
 //
 // All filesystem + state mutation goes through Handler. The Loop only
@@ -210,9 +210,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 }
 
-// runGCTick is the F1 GC body. Always runs the per-app "current +
-// previous" cleanup. When lv-fc usage is at or above the alarm threshold,
-// also walks biggest accounts first until pressure is relieved.
+// runGCTick is the F1 GC body. Always runs the per-app rollback-window
+// cleanup. When lv-fc usage is at or above the alarm threshold, also walks
+// biggest accounts first until pressure is relieved.
 func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 	l.gcMu.Lock()
 	defer l.gcMu.Unlock()
@@ -234,15 +234,11 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 		return
 	}
 
-	// Step A: per-app per-tier floor. Always runs.
-	// Issue #470 / PR C / ADR-074: replaced
-	// perAppKeepCurrentPrevious with perAppKeepTierFloor so
-	// warm-enabled apps keep 2 warm + 2 init and warm-disabled
-	// apps drop all warm rows + keep 2 init only. The legacy
-	// function is preserved for the property-test suite
-	// (pkg/imaged/gc_test.go keeps both call sites) and for
-	// pre-#470 fleet replay.
-	stale := perAppKeepTierFloor(rows)
+	// Step A: bounded rollback window. The current deployment plus the two
+	// previous generations retain their restore material; older rows are
+	// reclaimed. The legacy perAppKeepTierFloor remains available for replay
+	// and characterization tests of the pre-window policy.
+	stale := perAppKeepRollbackWindow(rows, api.SnapshotRollbackRetentionDeployments)
 	if len(stale) > 0 {
 		if err := l.deleteSnapshotsAndFiles(ctx, stale); err != nil {
 			l.log.Warn("imaged: per-app gc", "err", err)
@@ -445,7 +441,7 @@ func (l *Loop) runAppProtocolSweep(ctx context.Context) {
 }
 
 // deleteSnapshotsAndFiles is the shared cleanup helper. Takes the tuples
-// produced by perAppKeepCurrentPrevious / evictOldestFromHeaviestAccount;
+// produced by the rollback-window / pressure policies;
 // each tuple carries the snap row id (for MarkOldSnapshotsStale /
 // DeleteSnapshotsByID) and the deployment id (for the storage key
 // under sched.SnapshotMemKey / sched.SnapshotVMStateKey). Marks the rows
@@ -466,12 +462,11 @@ func (l *Loop) runAppProtocolSweep(ctx context.Context) {
 // storage key — warm-tier targets delete WarmSnapMemKey +
 // WarmSnapVMStateKey (under /snap/<dep>/warm/), init-tier targets
 // delete SnapMemKey + SnapVMStateKey (under /snap/<dep>/). The
-// per-app ext4 layer (drive1, sched.AppLayerKey) is shared across
-// tiers for a given (app, deployment) pair and is always removed
-// when both tiers' rows have been evicted — but here we delete on
-// every row to keep the layer discard idempotent against partial
-// progress (an init row is always paired with its warm sibling
-// once a deployment is replaced).
+// per-app ext4 layer (drive1, sched.AppLayerKey) is shared across tiers for a
+// deployment. It is removed only after the deployment has no remaining
+// non-stale snapshot row; keeping it alongside the retained rows is what
+// makes a historical rollback restore fast instead of falling back to cold
+// boot because drive1 was already discarded on supersede.
 func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) error {
 	if len(ts) == 0 {
 		return nil
@@ -522,18 +517,34 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		if legacyLocal != nil {
 			l.deleteLegacyLocalSnapshot(ctx, legacyLocal, t.DeploymentID, memKey, vmstateKey)
 		}
+	}
+	// A deployment may have one init and one warm row. Only discard its
+	// shared app layer after both rows are gone; otherwise the surviving tier
+	// would point at a drive1 that no longer exists and every restore would
+	// degrade into a cold boot.
+	seenDeployments := make(map[string]deleteTarget, len(ts))
+	for _, t := range ts {
+		seenDeployments[t.DeploymentID] = t
+	}
+	for deploymentID, t := range seenDeployments {
+		if _, err := l.store.LatestSnapshot(ctx, deploymentID); err == nil {
+			continue
+		} else if !errors.Is(err, state.ErrNotFound) {
+			l.log.Warn("imaged: gc layer retention lookup", "deployment", deploymentID, "err", err)
+			continue
+		}
 		// Per-app ext4 (drive1) — derive the key the same way buildImageLayer
-		// writes it. B1.1 (issue #195): AppSlug is now on SnapshotForGC;
+		// writes it. B1.1 (issue #195): AppSlug is on SnapshotForGC;
 		// an empty AppSlug here is an invariant violation (the projection
 		// JOIN broke) — log loudly and skip the ext4 delete rather than
 		// silently paying 2 SQL round-trips per row to re-resolve it.
 		if t.AppSlug == "" {
 			l.log.Warn("imaged: gc evict without slug, skipping ext4 delete",
-				"snapshot", t.ID, "deployment", t.DeploymentID)
+				"snapshot", t.ID, "deployment", deploymentID)
 			continue
 		}
-		if err := be.Delete(ctx, sched.AppLayerKey(t.AppSlug, t.DeploymentID)); err != nil {
-			l.log.Warn("imaged: gc remove ext4", "deployment", t.DeploymentID, "err", err)
+		if err := be.Delete(ctx, sched.AppLayerKey(t.AppSlug, deploymentID)); err != nil {
+			l.log.Warn("imaged: gc remove ext4", "deployment", deploymentID, "err", err)
 		}
 	}
 	// Best-effort: if the backend supports LocalArtifactLister (it does

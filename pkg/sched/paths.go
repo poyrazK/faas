@@ -27,8 +27,8 @@ var snapDir = "/srv/fc/snap"
 
 // SnapDir returns the per-deployment snapshot blob directory root. imaged
 // uses this for F5 filesystem cleanup (delete the snap dir when a deployment
-// falls out of the "current + previous" retention window or when its app
-// is soft-deleted).
+// falls out of the bounded rollback retention window or when its app is
+// soft-deleted).
 func SnapDir() string { return snapDir }
 
 // baseKey returns the StorageBackend key for the drive0 shared base

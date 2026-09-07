@@ -1253,16 +1253,13 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		if err := h.handleDeployment(ctx, p); err != nil {
 			h.log.Warn("imaged: deploy failed", "app", p.AppID, "deployment", p.To, "err", err)
 		}
-		// F5 / F-02: when apid supersedes a deployment, drop the per-app
-		// layer ext4 so appsRoot doesn't accumulate orphans. The snapshot
-		// blob is KEPT (one-click rollback needs it) and GC'd by the
-		// nightly sweep. F-02: prior code passed keepSnap=false here,
-		// deleting the blob and forcing every rollback across a supersede
-		// to cold-boot — fixed to keepSnap=true.
+		// Retain the superseded deployment's app layer and snapshot material
+		// together. The bounded GC window decides when both can be discarded;
+		// deleting drive1 at supersede time would make the retained snapshot
+		// unusable and turn an otherwise-fast rollback into a cold boot.
 		if p.Status == string(state.DeploySuperseded) && p.To != "" {
-			if err := h.cleanupDeploymentFiles(ctx, p.To, true /* keepSnap */); err != nil {
-				h.log.Warn("imaged: cleanup superseded", "deployment", p.To, "err", err)
-			}
+			h.log.Debug("imaged: superseded deployment retained for rollback window",
+				"deployment", p.To)
 		}
 	// PR-B: NotifyBuildQueued arm removed (builderd owns the channel now).
 	case db.NotifySnapshotBoot:
@@ -3223,16 +3220,15 @@ func pullBlobWithAuth(ctx context.Context, mp oci.ManifestPuller, repo, digest s
 // filesystem is the cache. Missing files log Warn, never fail (ADR-005:
 // cold boot must always work, even if a stale filesystem lingers).
 //
-// Cleanup fires on two events:
-//   - deployment superseded → drop the per-app ext4 (drive1). The snapshot
-//     blob is KEPT so one-click rollback stays instant; the GC evicts it
-//     when it falls out of the "current + previous" window.
-//   - app soft-deleted → drop the ext4 AND the snap blobs for every
-//     deployment of the app. Best-effort.
+// App soft-delete cleanup drops the ext4 AND the snap blobs for every
+// deployment of the app. Superseded deployments are intentionally left
+// intact here; the imaged GC owns the bounded rollback window and removes
+// both artifacts together once no restoreable snapshot remains.
 
 // cleanupDeploymentFiles removes the on-disk artifacts for a single deployment.
-// keepSnap=true leaves the snapshot blob (one-click rollback) and only removes
-// the per-app ext4.
+// It remains available for explicit destructive cleanup paths and tests;
+// normal supersede notifications are handled by the rollback-window GC so a
+// retained snapshot never loses its drive1 layer.
 func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID string, keepSnap bool) error {
 	dep, err := h.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {

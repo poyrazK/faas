@@ -347,13 +347,14 @@ func TestEvictOldestFromHeaviestAccount_PicksHeaviestAccount(t *testing.T) {
 		row("a2-1", "app-B", "d-1", "acct-2", "app-b", state.SnapshotTierInit, true, t0.Add(3*time.Second), 10000, 100),
 		row("a2-2", "app-B", "d-2", "acct-2", "app-b", state.SnapshotTierInit, true, t0.Add(4*time.Second), 10000, 100),
 		row("a2-3", "app-B", "d-3", "acct-2", "app-b", state.SnapshotTierInit, true, t0.Add(5*time.Second), 10000, 100),
+		row("a2-4", "app-B", "d-4", "acct-2", "app-b", state.SnapshotTierInit, true, t0.Add(6*time.Second), 10000, 100),
 	}
 	got := evictOldestFromHeaviestAccount(rows)
 	if len(got) != 1 {
 		t.Fatalf("got %d, want 1", len(got))
 	}
 	// The heavy account is acct-2; its oldest evictable row is a2-1
-	// (the per-tier floor keeps the 2 newest, so a2-1 is dropped).
+	// (the rollback window keeps the 3 newest generations, so a2-1 is dropped).
 	if got[0].ID != "a2-1" {
 		t.Errorf("heavy-account pick: got %s, want a2-1", got[0].ID)
 	}
@@ -370,9 +371,11 @@ func TestEvictOldestFromHeaviestAccount_AccountTieBreakerOnBytes(t *testing.T) {
 		row("z-1", "app-A", "d-1", "acct-Z", "app-a", state.SnapshotTierInit, true, t0, 500, 500),
 		row("z-2", "app-A", "d-2", "acct-Z", "app-a", state.SnapshotTierInit, true, t0.Add(time.Second), 500, 500),
 		row("z-3", "app-A", "d-3", "acct-Z", "app-a", state.SnapshotTierInit, true, t0.Add(2*time.Second), 500, 500),
+		row("z-4", "app-A", "d-4", "acct-Z", "app-a", state.SnapshotTierInit, true, t0.Add(3*time.Second), 500, 500),
 		row("a-1", "app-B", "d-1", "acct-A", "app-b", state.SnapshotTierInit, true, t0, 500, 500),
 		row("a-2", "app-B", "d-2", "acct-A", "app-b", state.SnapshotTierInit, true, t0.Add(time.Second), 500, 500),
 		row("a-3", "app-B", "d-3", "acct-A", "app-b", state.SnapshotTierInit, true, t0.Add(2*time.Second), 500, 500),
+		row("a-4", "app-B", "d-4", "acct-A", "app-b", state.SnapshotTierInit, true, t0.Add(3*time.Second), 500, 500),
 	}
 	got := evictOldestFromHeaviestAccount(rows)
 	if len(got) != 1 {
@@ -396,10 +399,12 @@ func TestEvictOldestFromHeaviestAccount_OldestAcrossAppsPerAccount(t *testing.T)
 		row("a-1", "app-A", "d-1", "acct-1", "app-a", state.SnapshotTierInit, true, t0, 100, 200),
 		row("a-2", "app-A", "d-2", "acct-1", "app-a", state.SnapshotTierInit, true, t0.Add(time.Second), 100, 200),
 		row("a-3", "app-A", "d-3", "acct-1", "app-a", state.SnapshotTierInit, true, t0.Add(2*time.Second), 100, 200),
+		row("a-4", "app-A", "d-4", "acct-1", "app-a", state.SnapshotTierInit, true, t0.Add(3*time.Second), 100, 200),
 		// App-B in heavy acct: 3 init, oldest is b-1 (older than a-1).
 		row("b-1", "app-B", "d-1", "acct-1", "app-b", state.SnapshotTierInit, true, t0.Add(-time.Second), 100, 200),
 		row("b-2", "app-B", "d-2", "acct-1", "app-b", state.SnapshotTierInit, true, t0, 100, 200),
 		row("b-3", "app-B", "d-3", "acct-1", "app-b", state.SnapshotTierInit, true, t0.Add(time.Second), 100, 200),
+		row("b-4", "app-B", "d-4", "acct-1", "app-b", state.SnapshotTierInit, true, t0.Add(2*time.Second), 100, 200),
 	}
 	got := evictOldestFromHeaviestAccount(rows)
 	if len(got) != 1 {
@@ -420,9 +425,11 @@ func TestEvictOldestFromHeaviestAccount_SingleEviction_NotArray(t *testing.T) {
 		row("a-1", "app-A", "d-1", "acct-1", "app-a", state.SnapshotTierInit, true, t0, 100, 200),
 		row("a-2", "app-A", "d-2", "acct-1", "app-a", state.SnapshotTierInit, true, t0.Add(time.Second), 100, 200),
 		row("a-3", "app-A", "d-3", "acct-1", "app-a", state.SnapshotTierInit, true, t0.Add(2*time.Second), 100, 200),
+		row("a-4", "app-A", "d-4", "acct-1", "app-a", state.SnapshotTierInit, true, t0.Add(3*time.Second), 100, 200),
 		row("b-1", "app-B", "d-1", "acct-1", "app-b", state.SnapshotTierInit, true, t0.Add(-time.Second), 100, 200),
 		row("b-2", "app-B", "d-2", "acct-1", "app-b", state.SnapshotTierInit, true, t0, 100, 200),
 		row("b-3", "app-B", "d-3", "acct-1", "app-b", state.SnapshotTierInit, true, t0.Add(time.Second), 100, 200),
+		row("b-4", "app-B", "d-4", "acct-1", "app-b", state.SnapshotTierInit, true, t0.Add(2*time.Second), 100, 200),
 	}
 	got := evictOldestFromHeaviestAccount(rows)
 	if len(got) > 1 {

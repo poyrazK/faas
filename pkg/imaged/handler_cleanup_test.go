@@ -1,8 +1,9 @@
 package imaged
 
-// F5 cleanup tests — supersede hook drops the per-app ext4 but keeps the
-// snap blob (one-click rollback fast); delete-app hook drops every per-app
-// ext4 layer + snap blob for the app's deployments.
+// F5 cleanup tests — the explicit supersede cleanup helper drops the per-app
+// ext4 while keeping snapshot blobs; production supersede notifications now
+// retain both artifacts until the bounded rollback window expires. Delete-app
+// cleanup still drops every per-app ext4 layer + snapshot blob.
 //
 // Issue #96: the fixtures (ext4 files, snapshot blobs) live in the
 // StorageBackend now, not on disk. The tests build a per-test
