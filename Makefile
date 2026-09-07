@@ -166,13 +166,11 @@ generate-diff: ## Print drift between generated and committed (no exit 1)
 
 .PHONY: test
 test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM needed.
-	# -timeout=18m: ./cmd/e2e under -race walks pkg/e2etest.buildApid
-	# per test (unique -o path → cache miss). PR #541 (apply-time build
-	# enqueue, ADR-068) added ~50 themed apply e2e tests, pushing the
-	# cumulative cmd/e2e wall past the previous 15m ceiling on the
-	# `unit tests` CI job. The dedicated `e2e (cmd/e2e, no metal)` job
-	# also bumped to 20m for the same reason. Memory:
-	# cmd-e2e-coverage-timeout-edge.md
+	# -timeout=18m: headroom for ./cmd/e2e under -race. The daemon
+	# binaries are now linked once per test process
+	# (pkg/e2etest.EnsureSharedBinaries) rather than once per test, so
+	# the e2e wall is dominated by the tests themselves; the ceiling is
+	# kept generous for slow runners. Memory: cmd-e2e-coverage-timeout-edge.md
 	$(GO) test -race -count=1 -timeout=18m $(PKGS)
 
 .PHONY: test-state-coverage
