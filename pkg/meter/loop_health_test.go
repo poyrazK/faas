@@ -163,6 +163,17 @@ func TestLoop_Health_ReportsFailedBillingTick(t *testing.T) {
 			t.Fatal("billing failure was not reported within 3s")
 		}
 	}
+	// The core loops must be fresh before asserting readiness. Their one-minute
+	// production cadence is the activation gate; the failed hourly provider
+	// push remains a /healthz diagnostic and must not block a clean restart.
+	for !loop.Readiness(time.Now()).Healthy {
+		select {
+		case <-poll.C:
+		case <-deadline.C:
+			t.Fatal("core metering loops did not become ready within 3s")
+		}
+	}
+	ready := loop.Readiness(time.Now())
 	cancel()
 	select {
 	case err := <-done:
@@ -182,6 +193,30 @@ func TestLoop_Health_ReportsFailedBillingTick(t *testing.T) {
 	}
 	if _, ok := loop.LastTick("stripe"); !ok {
 		t.Fatal("LastTick(stripe) = false after failed billing tick")
+	}
+	if !ready.Healthy {
+		t.Fatalf("Readiness = false with fresh sample/quota ticks (status=%+v)", ready)
+	}
+	if _, ok := ready.Ticks["stripe"]; ok {
+		t.Fatalf("Readiness ticks include hourly provider loop: %+v", ready.Ticks)
+	}
+}
+
+func TestLoop_Readiness_NeverFiredTracksOnlyCoreTicks(t *testing.T) {
+	t.Parallel()
+	loop, _ := newHealthFixture(t, true)
+	status := loop.Readiness(time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC))
+	if status.Healthy {
+		t.Fatal("Readiness = true on fresh Loop, want false")
+	}
+	want := []string{"quota", "sample"}
+	got := append([]string(nil), status.Stale...)
+	sort.Strings(got)
+	if !equalStrings(got, want) {
+		t.Fatalf("Readiness stale ticks = %v, want %v", got, want)
+	}
+	if len(status.Ticks) != len(want) {
+		t.Fatalf("Readiness ticks = %v, want only %v", status.Ticks, want)
 	}
 }
 

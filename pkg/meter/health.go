@@ -60,6 +60,24 @@ func (l *Loop) Health(now time.Time) HealthStatus {
 	if l.partitionCreate == nil {
 		delete(intervals, "upstream_part")
 	}
+	return l.health(now, intervals)
+}
+
+// Readiness computes the process-readiness verdict used by meterd's /readyz
+// endpoint. Only the sample and quota loops gate activation: they exercise the
+// database, schedd, and core metering path within the normal one-minute startup
+// window. Hourly provider push, dunning, and partition-maintenance loops remain
+// part of Health so their stale or failed state is still visible to operators,
+// but a newly restarted daemon does not have to wait an hour before a release
+// can be activated.
+func (l *Loop) Readiness(now time.Time) HealthStatus {
+	return l.health(now, map[string]time.Duration{
+		"sample": l.cfg.SampleInterval,
+		"quota":  l.cfg.QuotaInterval,
+	})
+}
+
+func (l *Loop) health(now time.Time, intervals map[string]time.Duration) HealthStatus {
 	s := HealthStatus{Failed: make(map[string]string), Ticks: make(map[string]string, len(intervals))}
 	for name, interval := range intervals {
 		threshold := StaleAfterMultiplier * interval
