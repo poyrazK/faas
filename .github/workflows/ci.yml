@@ -1398,7 +1398,19 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
       - name: boot-contract tests
-        run: go test -race -count=1 -timeout=15m -run '^TestBootContract_' ./cmd/e2e/...
+        # GitHub-hosted runners retain CAP_SYS_ADMIN in CapBnd even though the
+        # unprivileged runner user has no effective capabilities. Production
+        # faas-imaged.service removes it from CapabilityBoundingSet and refuses
+        # to boot when it is reachable. Reproduce that security boundary before
+        # dropping back to the runner uid for the test process.
+        run: |
+          sudo -E setpriv \
+            --bounding-set=-sys_admin \
+            --reuid "$(id -u)" \
+            --regid "$(id -g)" \
+            --init-groups \
+            --no-new-privs \
+            -- go test -race -count=1 -timeout=15m -run '^TestBootContract_' ./cmd/e2e/...
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
