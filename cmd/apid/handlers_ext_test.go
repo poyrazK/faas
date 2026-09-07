@@ -700,6 +700,25 @@ func TestUpdateAppEgressAllowlist_FreeGate(t *testing.T) {
 	assertProblem(t, rec, 403, api.CodePlanEgressAllowlistNotAllowed)
 }
 
+// TestUpdateAppEgressAllowlist_HobbySMTPBudget verifies the report's narrow
+// Hobby exception: an explicit destination list is accepted up to the eight
+// CIDR budget, while the existing validator still rejects the ninth entry.
+func TestUpdateAppEgressAllowlist_HobbySMTPBudget(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "hobby-smtp")
+	allow := make([]string, 8)
+	for i := range allow {
+		allow[i] = fmt.Sprintf("203.0.%d.0/24", i)
+	}
+	rec := e.do(t, "PATCH", "/v1/apps/hobby-smtp", api.UpdateAppRequest{EgressAllowlist: &allow}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("eight-entry Hobby allowlist: status %d: %s", rec.Code, rec.Body)
+	}
+	allow = append(allow, "198.51.100.0/24")
+	rec = e.do(t, "PATCH", "/v1/apps/hobby-smtp", api.UpdateAppRequest{EgressAllowlist: &allow}, nil)
+	assertProblem(t, rec, 400, api.CodeEgressAllowlistTooLong)
+}
+
 // TestUpdateAppEgressAllowlist_FreeGate_EmptySlice locks the
 // plan-tier gate for the empty-slice form: a Free plan PATCHing
 // `egress_allowlist: []` (an explicit "clear the allowlist") must
