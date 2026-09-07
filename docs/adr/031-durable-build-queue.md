@@ -150,17 +150,15 @@
     leak rows to `queued` forever. Acceptable pre-beta, ship-blocker
     for the beta cohort.
 
-- **Out-of-scope follow-ups (deferred to PR-C or later):**
+- **Resolved follow-ups:**
 
-  - **Stuck-running build recovery.** A row in `status='running'`
-    whose builderd died is not auto-requeued today. The spec §4.5
-    build timeout is 10 min; a stall longer than that is
-    operator-visible only. The fix is a one-line SQL sweep
-    (`update builds set status='queued', started_at=NULL where
-    status='running' and started_at < now() - interval '15
-    minutes'`) added either to the existing worker tick or to
-    schedd's watchdog (`pkg/sched/watchdog.go::sweepRuns` is the
-    structural template).
+  - **Graceful builderd shutdown.** A planned daemon shutdown now
+    flips readiness to draining, stops new claims, cancels active
+    builder VMs, and requeues claims that are still owned by the
+    stopping process. The stuck-running reaper remains the fallback
+    for hard crashes where no shutdown path can run.
+
+- **Out-of-scope follow-ups (deferred to PR-C or later):**
   - **Multi-builderd horizontal scale.** `SKIP LOCKED` makes
     concurrent pollers safe at the SQL layer, but the
     `1 + 1 opportunistic` slot budget is per-process. Two
