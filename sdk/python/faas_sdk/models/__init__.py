@@ -268,6 +268,7 @@ from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
 from .deployment_response_deployed_via_type_1 import DeploymentResponseDeployedViaType1
 from .deployment_response_deployed_via_type_2_type_1 import DeploymentResponseDeployedViaType2Type1
 from .deployment_response_deployed_via_type_3_type_1 import DeploymentResponseDeployedViaType3Type1
+from .deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
 from .deployment_response_last_auto_rollback_reason_type_1 import DeploymentResponseLastAutoRollbackReasonType1
 from .deployment_response_last_auto_rollback_reason_type_2_type_1 import (
     DeploymentResponseLastAutoRollbackReasonType2Type1,
@@ -1060,6 +1061,7 @@ __all__ = (
     "DeploymentResponseDeployedViaType1",
     "DeploymentResponseDeployedViaType2Type1",
     "DeploymentResponseDeployedViaType3Type1",
+    "DeploymentResponseHostingReceiptType0",
     "DeploymentResponseLastAutoRollbackReasonType1",
     "DeploymentResponseLastAutoRollbackReasonType2Type1",
     "DeploymentResponseLastAutoRollbackReasonType3Type1",

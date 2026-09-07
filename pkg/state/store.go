@@ -259,6 +259,13 @@ type CanaryAdvancer interface {
 	AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error)
 }
 
+// DeploymentHostingReceiptStore is optional so existing narrow Store test
+// doubles remain source-compatible. Production stores implement it; callers
+// type-assert before persisting a hosting receipt.
+type DeploymentHostingReceiptStore interface {
+	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
+}
+
 // RecoverRolloutStuckAfter (issue #976 / ADR-122 / SAFE-RELEASES-R +
 // production-leveling Stream C) is the canned stuck-detection
 // window the RecoverRollout method uses to gate action="advance".

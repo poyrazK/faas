@@ -105,6 +105,21 @@
        widget fits the URL exactly without a separate label. */
     .badge.preview-live   { background: #d1fae5; color: #065f46; }
     .badge.preview-closed { background: #f3f4f6; color: #6b7280; }
+    /* API-hosting receipt (PR #1491 follow-up): durable readiness evidence
+       sits beside the deployment metadata so operators can answer whether
+       the public API was actually verified before reaching for logs. */
+    .hosting-receipt {
+      border-left: 3px solid #2563eb;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+      background: #eff6ff;
+    }
+    .hosting-receipt dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 0; }
+    .hosting-receipt dt { color: #6b7280; }
+    .hosting-receipt dd { margin: 0; }
+    .badge.smoke-verified { background: #d1fae5; color: #065f46; }
+    .badge.smoke-failed   { background: #fee2e2; color: #991b1b; }
+    .badge.smoke-skipped  { background: #f3f4f6; color: #6b7280; }
     .preview-host {
       font-family: ui-monospace, Menlo, monospace;
       font-size: 0.85rem;
@@ -271,6 +286,34 @@
             <span class="deployer-field muted">(preview closed — deploy {{.Data.Deployment.Status}})</span>
           {{end}}
         </p>
+      {{end}}
+
+      {{with .Data.HostingReceipt}}
+      <section class="hosting-receipt" data-cluster="hosting-receipt">
+        <h2>Hosting readiness</h2>
+        <p>
+          {{if eq .SmokeStatus "verified"}}<span class="badge smoke-verified">verified</span>
+          {{else if eq .SmokeStatus "failed"}}<span class="badge smoke-failed">failed</span>
+          {{else}}<span class="badge smoke-skipped">{{.SmokeStatus}}</span>{{end}}
+          post-readiness API check
+        </p>
+        <dl>
+          {{if .AppURL}}<dt>App URL</dt><dd><a href="{{.AppURL}}" target="_blank" rel="noopener"><code>{{.AppURL}}</code></a></dd>{{end}}
+          {{if .SmokePath}}<dt>Health path</dt><dd><code>{{.SmokePath}}</code></dd>{{end}}
+          {{if .SmokeStatusCode}}<dt>Status code</dt><dd><code>{{.SmokeStatusCode}}</code></dd>{{end}}
+          {{if .SmokeLatencyMS}}<dt>Latency</dt><dd><code>{{.SmokeLatencyMS}} ms</code></dd>{{end}}
+          {{if .SmokeVerifiedAt}}<dt>Verified at</dt><dd><code>{{.SmokeVerifiedAt}}</code></dd>{{end}}
+          {{if .Framework}}<dt>Profile</dt><dd><code>{{.Framework}}{{if .FrameworkVer}} {{.FrameworkVer}}{{end}}</code> · port <code>{{.Port}}</code></dd>{{end}}
+          {{if .SourceKind}}<dt>Source</dt><dd><code>{{.SourceKind}}</code>{{if .SourceURL}} · <code>{{.SourceURL}}</code>{{end}}</dd>{{end}}
+          {{if .CommitSHA}}<dt>Commit</dt><dd><code>{{.CommitSHA}}</code></dd>{{end}}
+          {{if .ImageDigest}}<dt>Image</dt><dd><code>{{.ImageDigest}}</code></dd>{{end}}
+          {{if .SmokeErrorCode}}<dt>Error code</dt><dd><code>{{.SmokeErrorCode}}</code></dd>{{end}}
+          {{if .SmokeError}}<dt>Details</dt><dd>{{.SmokeError}}</dd>{{end}}
+        </dl>
+        {{if eq .SmokeStatus "failed"}}
+          <p><a href="/dashboard/apps/{{$.Data.App.Slug}}/logs?deployment={{$.Data.Deployment.ID}}">View deployment logs →</a></p>
+        {{end}}
+      </section>
       {{end}}
 
       {{ with .Data.Stages }}

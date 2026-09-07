@@ -46,7 +46,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `default` |  |
-| `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, githubd, shared | `envfile` |  |
+| `FAAS_API_HOSTING_SMOKE_URL` | imaged | `default` | optional public origin for post-readiness API hosting smoke verification |
+| `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, githubd, imaged, shared | `envfile` |  |
 | `FAAS_APPS_ROOT` | imaged, shared | `default` |  |
 | `FAAS_APP_ERRORS_ENABLED` | apid, gatewayd-internal | `runtime-config` |  |
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |

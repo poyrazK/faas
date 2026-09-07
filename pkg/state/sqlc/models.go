@@ -711,6 +711,7 @@ type Deployment struct {
 	SnapshotMissCount        int32
 	SnapshotMissLastAt       pgtype.Timestamptz
 	SnapshotMissBackoffUntil pgtype.Timestamptz
+	ApiHostingReceipt        []byte
 }
 
 type DeploymentAudit struct {

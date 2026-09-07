@@ -784,6 +784,58 @@ func TestRender_DeploymentDetail_LegacyRowRenders(t *testing.T) {
 	}
 }
 
+// TestRender_DeploymentDetail_HostingReceipt pins the post-readiness
+// evidence card: operators should see the verified health check, public URL,
+// source identity, and a direct logs link when the smoke gate failed.
+func TestRender_DeploymentDetail_HostingReceipt(t *testing.T) {
+	rec := httptest.NewRecorder()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	page := dashboard.Page{
+		Title: "Deployment d-receipt",
+		Body:  "deployment_detail",
+		Data: dashboard.DeploymentDetailData{
+			App: dashboard.AppListItem{Slug: "receipt-app"},
+			Deployment: dashboard.DeploymentItem{
+				ID:     "d-receipt",
+				Status: "failed",
+			},
+			HostingReceipt: &dashboard.HostingReceiptView{
+				AppURL:          "https://receipt-app.apps.gregale.dev",
+				SourceKind:      "github",
+				SourceURL:       "github://acme/receipt-app@deadbeef",
+				CommitSHA:       "deadbeef",
+				Framework:       "fastapi",
+				Port:            8080,
+				HealthPath:      "/healthz",
+				SmokeStatus:     "failed",
+				SmokePath:       "/healthz",
+				SmokeStatusCode: 503,
+				SmokeLatencyMS:  1200,
+				SmokeErrorCode:  "smoke_timeout",
+				SmokeError:      "health check did not return a successful response",
+			},
+		},
+	}
+	if err := dashboard.Render(rec, log, "", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-cluster="hosting-receipt"`,
+		"Hosting readiness",
+		"smoke-failed",
+		"https://receipt-app.apps.gregale.dev",
+		"fastapi",
+		"503",
+		"smoke_timeout",
+		`href="/dashboard/apps/receipt-app/logs?deployment=d-receipt"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
 // TestRender_DeploymentDetail_StagesPresent — A2 (ADR-117 v2
 // follow-on). Pins the positive path: when Stages is non-nil with
 // a BodyHTML, the deployment_detail template renders the section
