@@ -16,8 +16,34 @@ type startupLayerVerifier interface {
 	Verify(context.Context, string, string) error
 }
 
-// Verify live deployment layers before listening for wakes. This primes only
-// successful cryptographic attestations, without booting or restoring a VM.
+type startupDeploymentLister interface {
+	ListAllDeployments(context.Context) ([]state.Deployment, error)
+}
+
+// startLayerAttestationWarm primes verified layers without holding schedd's
+// readiness gate behind remote storage. The verifier is already attached to
+// the engine before this starts, so every wake remains fail-closed while the
+// best-effort cache warm runs in the background.
+func startLayerAttestationWarm(ctx context.Context, lister startupDeploymentLister, verifier startupLayerVerifier, log *slog.Logger) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deployments, err := lister.ListAllDeployments(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Warn("startup: list layer attestations for warm", "err", err)
+			}
+			return
+		}
+		if err := prepareLayerAttestations(ctx, deployments, verifier, log); err != nil && ctx.Err() == nil {
+			log.Warn("startup: layer attestation warm failed", "err", err)
+		}
+	}()
+	return done
+}
+
+// Verify live deployment layers to prime only successful cryptographic
+// attestations, without booting or restoring a VM.
 // A broken tenant artifact remains rejected by the ordinary wake verifier;
 // it does not prevent unrelated valid deployments from becoming available.
 func prepareLayerAttestations(ctx context.Context, deployments []state.Deployment, verifier startupLayerVerifier, log *slog.Logger) error {
