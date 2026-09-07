@@ -20,7 +20,12 @@
 -- +goose StatementBegin
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'compute_node_lifecycle') THEN
+    -- Resolve through the search_path (to_regtype), exactly as the
+    -- ADD COLUMN below resolves the type name. A database-wide
+    -- pg_type.typname lookup sees a sibling schema's type, skips the
+    -- CREATE, and the ADD COLUMN fails — the per-schema test isolation
+    -- in pkg/db/pgtest hit exactly that (schema_scoped_guards_test.go).
+    IF to_regtype('compute_node_lifecycle') IS NULL THEN
         CREATE TYPE compute_node_lifecycle AS ENUM (
             'active',
             'draining',
