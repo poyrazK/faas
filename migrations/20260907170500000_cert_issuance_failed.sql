@@ -1,4 +1,4 @@
--- filename: 20260907100000000_cert_issuance_failed.sql
+-- filename: 20260907170500000_cert_issuance_failed.sql
 -- +goose Up
 
 -- F2 (issue #1397): retain the start of the current certificate failure
