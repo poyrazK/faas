@@ -98,6 +98,10 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + renderRoot,
 		"TMPDIR=" + socketDir,
+		// The production unit loads /etc/faas/sealed.env, whose deployment
+		// contract requires DATABASE_URL even when apid.toml carries the local
+		// control-plane socket DSN. Use the isolated test DSN for that entry.
+		"DATABASE_URL=" + dsn,
 		"FAAS_SKIP_SOCKET_GROUP=1",
 		"FAAS_APID_LISTEN=" + mainAddr,
 		"FAAS_APID_METRICS_ADDR=" + controlAddr,
