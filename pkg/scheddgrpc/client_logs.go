@@ -125,6 +125,7 @@ func (a *logStreamAdapter) Recv() (LogFrame, error) {
 		Seq:        resp.GetSeq(),
 		Stream:     resp.GetStream(),
 		Line:       resp.GetLine(),
+		Level:      resp.GetLevel(),
 		IsGap:      resp.GetIsGap(),
 		GapReason:  resp.GetGapReason(),
 	}

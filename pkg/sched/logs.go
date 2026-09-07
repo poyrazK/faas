@@ -61,6 +61,7 @@ type LogFrame struct {
 	Seq            int64
 	Stream         string
 	Line           string
+	Level          string
 	WrittenAt      time.Time
 	IsGap          bool
 	GapToWrittenAt time.Time
@@ -173,6 +174,7 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 					Seq:            line.Seq,
 					Stream:         line.Stream,
 					Line:           line.Line,
+					Level:          line.Level,
 					WrittenAt:      line.WrittenAt,
 					IsGap:          line.IsGap,
 					GapToWrittenAt: line.GapToWrittenAt,
@@ -188,6 +190,7 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 					frame.Seq = 0
 					frame.Stream = ""
 					frame.Line = ""
+					frame.Level = ""
 					frame.WrittenAt = time.Time{}
 				}
 				select {

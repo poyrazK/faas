@@ -3195,8 +3195,12 @@ type LogsResponse struct {
 	IsGap          bool                   `protobuf:"varint,5,opt,name=is_gap,json=isGap,proto3" json:"is_gap,omitempty"`
 	GapToWrittenAt *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=gap_to_written_at,json=gapToWrittenAt,proto3" json:"gap_to_written_at,omitempty"`
 	GapReason      string                 `protobuf:"bytes,7,opt,name=gap_reason,json=gapReason,proto3" json:"gap_reason,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// level is the canonical severity parsed from a structured JSON log line
+	// ("info", "warn", or "error"). Empty means the line was plain text or
+	// did not contain a recognised level. Additive per ADR-016.
+	Level         string `protobuf:"bytes,8,opt,name=level,proto3" json:"level,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LogsResponse) Reset() {
@@ -3274,6 +3278,13 @@ func (x *LogsResponse) GetGapToWrittenAt() *timestamppb.Timestamp {
 func (x *LogsResponse) GetGapReason() string {
 	if x != nil {
 		return x.GapReason
+	}
+	return ""
+}
+
+func (x *LogsResponse) GetLevel() string {
+	if x != nil {
+		return x.Level
 	}
 	return ""
 }
@@ -5291,7 +5302,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tsince_seq\x18\x02 \x01(\x03R\bsinceSeq\x12\x17\n" +
 	"\awake_id\x18\x03 \x01(\tR\x06wakeId\x12D\n" +
-	"\x10since_written_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0esinceWrittenAt\"\x84\x02\n" +
+	"\x10since_written_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0esinceWrittenAt\"\x9a\x02\n" +
 	"\fLogsResponse\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x16\n" +
 	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
@@ -5301,7 +5312,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x06is_gap\x18\x05 \x01(\bR\x05isGap\x12E\n" +
 	"\x11gap_to_written_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x0egapToWrittenAt\x12\x1d\n" +
 	"\n" +
-	"gap_reason\x18\a \x01(\tR\tgapReason\"A\n" +
+	"gap_reason\x18\a \x01(\tR\tgapReason\x12\x14\n" +
+	"\x05level\x18\b \x01(\tR\x05level\"A\n" +
 	"\x1eMountParentExt4ReadOnlyRequest\x12\x1f\n" +
 	"\vstorage_key\x18\x01 \x01(\tR\n" +
 	"storageKey\"A\n" +

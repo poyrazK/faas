@@ -14,6 +14,9 @@ package logbuf
 
 import (
 	"bytes"
+	"encoding/json"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,6 +55,7 @@ type Line struct {
 	Seq       int64     `json:"seq"`
 	Stream    string    `json:"stream"` // "stdout" or "stderr"
 	Line      string    `json:"line"`
+	Level     string    `json:"level,omitempty"` // canonical JSON severity: info, warn, or error
 	WrittenAt time.Time `json:"written_at"`
 }
 
@@ -293,6 +297,7 @@ func (r *Ring) commitLocked(stream, line string, now time.Time) {
 		Seq:       r.nextSeq,
 		Stream:    stream,
 		Line:      line,
+		Level:     detectLevel(line),
 		WrittenAt: now,
 	}
 	// Evict from head until totalBytes + len(line) <= maxBytes. We must
@@ -375,6 +380,95 @@ func (r *Ring) commitLocked(stream, line string, now time.Time) {
 	}
 	if dropped && r.onSlowSubscriber != nil {
 		r.onSlowSubscriber()
+	}
+}
+
+// detectLevel extracts a canonical severity from a structured JSON log line.
+// Plain text, malformed JSON, and JSON without a recognised level are left
+// unclassified (the empty string). The original line is never rewritten: the
+// level is additive metadata for the log stream and existing consumers keep
+// seeing the exact bytes emitted by the workload.
+//
+// Both the common `level` key (Pino, Zap, Logrus) and Cloud Logging's
+// `severity` key are accepted. Numeric Pino levels are mapped using its
+// conventional scale (10 trace, 20 debug, 30 info, 40 warn, 50 error,
+// 60 fatal). The public stream intentionally uses the existing three-level
+// vocabulary: trace/debug/notice become info, warning becomes warn, and
+// critical/alert/emergency/fatal become error.
+func detectLevel(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || trimmed[0] != '{' {
+		return ""
+	}
+	var record struct {
+		Level    json.RawMessage `json:"level"`
+		Severity json.RawMessage `json:"severity"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &record); err != nil {
+		return ""
+	}
+	best := ""
+	for _, raw := range []json.RawMessage{record.Level, record.Severity} {
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		if raw[0] == '"' {
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				continue
+			}
+			if level := normalizeLevel(value); level != "" && levelRank(level) > levelRank(best) {
+				best = level
+			}
+			continue
+		}
+		if number, err := strconv.Atoi(string(raw)); err == nil {
+			if level := normalizeNumericLevel(number); level != "" && levelRank(level) > levelRank(best) {
+				best = level
+			}
+		}
+	}
+	return best
+}
+
+func normalizeLevel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "trace", "debug", "info", "notice":
+		return "info"
+	case "warn", "warning":
+		return "warn"
+	case "error", "err", "fatal", "critical", "alert", "emergency":
+		return "error"
+	default:
+		return ""
+	}
+}
+
+func normalizeNumericLevel(value int) string {
+	switch {
+	case value >= 10 && value <= 30:
+		return "info"
+	case value == 30:
+		return "info"
+	case value == 40:
+		return "warn"
+	case value >= 50:
+		return "error"
+	default:
+		return ""
+	}
+}
+
+func levelRank(level string) int {
+	switch level {
+	case "error":
+		return 2
+	case "warn":
+		return 1
+	case "info":
+		return 0
+	default:
+		return -1
 	}
 }
 
